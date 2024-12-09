@@ -25,9 +25,11 @@ class SLRProblem:
             max_resources: dict[int, dict[str, int]], 
             default_input_slr: Optional[int] = None, 
             default_output_slr: Optional[int] = None, 
-            fixed_layer_mapping: dict[str | int, int] = {}
+            fixed_layer_mapping: dict[str | int, int] = {},
+            timeout: int = 600
         ):
-        self.results: dict[str, int] = None
+        self.optimized = False
+        self.timeout = timeout
         
         # Maximum resources. Mapping SLR -> resource type -> resource usage
         self.max_resources = max_resources
@@ -58,7 +60,7 @@ class SLRProblem:
                 model += layer_on_slr[fixed_layer][fixed_layer_mapping[fixed_layer]] == 1
         
         # Which SLR is a given layer on?
-        chosen_slr_of_layer = {layername: model.add_var(f"layer{layername}_chosen_slr", var_type=mip.INTEGER) for i in layer_resources.keys()}
+        self.chosen_slr_of_layer = chosen_slr_of_layer = {layername: model.add_var(f"layer{layername}_chosen_slr", var_type=mip.INTEGER) for i in layer_resources.keys()}
         for i in layer_resources.keys():
             model += chosen_slr_of_layer[layername] == xsum([slr * layer_on_slr[layername][slr] for slr in range(len(max_resources.keys()))])
         
@@ -107,13 +109,21 @@ class SLRProblem:
         
         # Try to minimize just that
         model.objective = slr_crossings_relative + max_diff
+        self.model = model
 
 
-    def optimize(self) -> None:
-        pass
+    # Execute optimization with the given timeout and return whether a feasible result was found
+    def optimize(self) -> bool:
+        result = self.model.optimize(self.timeout)
+        self.optimized = True
+        return result in [mip.OptimizationStatus.FEASIBLE, mip.OptimizationStatus.OPTIMAL]
+
 
     def get_results(self) -> Optional[dict[str, int]]:
-        return self.results
+        if self.optimized:
+            return {layername: self.chosen_slr_of_layer[layername].x for layername in self.layer_resources.keys()}
+        else:
+            return None
         
 
 
@@ -176,10 +186,17 @@ class AssignSLR(Transformation):
         index_to_name[-1] = model.graph.node[-1].name
 
         # The problem object
-        slr_model = SLRProblem()
+        slr_model = SLRProblem(
+            index_to_name,
+            layer_resources,
+            board_resources,
+        ) # TODO: Default SLR / fixed assignments
 
-        # Optimizie
-        slr_model.optimize()
+        # Optimize
+        if not slr_model.optimize():
+            # TODO: Throw error instead of only warning?
+            print(f"[WARNING] SLR Assignment did not find a feasible solution, SLR node attribute cannot be set")
+            return model, False
 
         # Results
         assignments = slr_model.get_results()
