@@ -29,7 +29,7 @@
 
 import numpy as np
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dataclasses_json import dataclass_json
 from enum import Enum
 from typing import Any, List, Optional
@@ -349,6 +349,16 @@ class DataflowBuildConfig:
     #: If set to True, FIFOs with impl_style=vivado will be kept during
     #: rtlsim, otherwise they will be replaced by RTL implementations.
     rtlsim_use_vivado_comps: Optional[bool] = True
+
+    #: If given this tells the model it must assign the SLRs of the first
+    #: or last layer to the given SLR
+    default_input_slr: Optional[int] = None
+    default_output_slr: Optional[int] = None
+
+    #: Fixed mappings of certain layers to SLRs. Can be done via node name or index. Useful to assign layers to HBM
+    #: banks etc.
+    layer_slr_mapping: dict[str | int, int] = field(default_factory=lambda: dict())
+
 
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:

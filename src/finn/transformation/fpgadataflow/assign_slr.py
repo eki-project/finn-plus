@@ -1,6 +1,7 @@
 import json
 from math import floor
 import os
+import time
 from typing import Optional
 import mip
 from qonnx.core.modelwrapper import ModelWrapper
@@ -131,10 +132,14 @@ class AssignSLR(Transformation):
     """If successful assigns the SLR node attribute of all nodes in the graph based on a solution given by an ILP solver or a handcrafted algorithm.
     This can be saved into a JSON to be read by the floorplanning transformation so that SLR assignments are possible in the vitis build flow"""
 
-    def __init__(self, cfg: DataflowBuildConfig, platform: Platform):
+    def __init__(self, cfg: DataflowBuildConfig, platform: Platform, default_in_slr: Optional[int], default_out_slr: Optional[int], fixed_slr_mapping: dict[str | int, int]):
         super().__init__()
         self.cfg = cfg
         self.platform = platform
+        self.default_input_slr = default_in_slr
+        self.default_output_slr = default_out_slr
+        self.fixed_slr_mapping = fixed_slr_mapping
+
     
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         estimate_dir = os.path.join(self.cfg.output_dir, "report")
@@ -190,7 +195,11 @@ class AssignSLR(Transformation):
             index_to_name,
             layer_resources,
             board_resources,
-        ) # TODO: Default SLR / fixed assignments
+            self.default_input_slr,
+            self.default_output_slr,
+            self.fixed_slr_mapping,
+            timeout=600
+        )
 
         # Optimize
         if not slr_model.optimize():

@@ -54,6 +54,7 @@ from qonnx.util.cleanup import cleanup_model
 from qonnx.util.config import extract_model_config_to_json
 from shutil import copy
 
+from finn.transformation.fpgadataflow.assign_slr import AssignSLR
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
@@ -121,6 +122,7 @@ from finn.transformation.qonnx.quant_act_to_multithreshold import (
 )
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
+from finn.util import platforms
 from finn.util.basic import (
     get_rtlsim_trace_depth,
     pyverilate_get_liveness_threshold_cycles,
@@ -530,6 +532,20 @@ def step_hw_ipgen(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
+def step_assign_slr(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Assign the slr node attribute based on a solution found by an ILP / MIP solver"""
+    model = model.transform(
+        AssignSLR(
+            cfg,
+            platforms[cfg.vitis_platform],
+            cfg.default_input_slr,
+            cfg.default_output_slr,
+            cfg.layer_slr_mapping
+        )
+    )
+    return model
+
+
 def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     """
     Depending on the auto_fifo_depths setting, do one of the following:
@@ -874,6 +890,7 @@ build_dataflow_step_lookup = {
     "step_generate_estimate_reports": step_generate_estimate_reports,
     "step_hw_codegen": step_hw_codegen,
     "step_hw_ipgen": step_hw_ipgen,
+    "step_assign_slr": step_assign_slr,
     "step_set_fifo_depths": step_set_fifo_depths,
     "step_create_stitched_ip": step_create_stitched_ip,
     "step_measure_rtlsim_performance": step_measure_rtlsim_performance,
