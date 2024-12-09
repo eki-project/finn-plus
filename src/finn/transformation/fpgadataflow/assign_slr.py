@@ -72,6 +72,42 @@ class SLRProblem:
             model += slr_diff_of_layer[layername] <= 1
             model += slr_diff_of_layer[layername] >= 0
 
+        # Minimize SLR connections
+        slr_crossings = model.add_var("slr_crossings", var_type=mip.INTEGER)
+        model += slr_crossings == xsum([slr_diff_of_layer[layername] for layername in layer_resources.keys()]) 
+        slr_crossings_relative = model.add_var("slr_crossings_rel", var_type=mip.CONTINUOUS)
+        model += slr_crossings_relative / layer_count # Max nr of crossings would be that a crossing happens from any layer to the next
+
+        # Calculate resource usage 
+        resource_per_slr = {}
+        for slr in range(self.slrs):
+            resource_per_slr[slr] = {}
+            for resname in self.considered_resources:
+                resource_per_slr[slr][resname] = model.add_var(f"resource_{resname}_on_slr{slr}", var_type=mip.INTEGER)
+                model += resource_per_slr[slr][resname] == xsum([layer_on_slr[i][slr] * layer_resources[layername][resname] for layername in layer_resources.keys()])
+
+        # Calculate resource usage relative / normalized per SLR and resource type
+        resource_per_slr_rel = {}
+        for slr in range(len(max_resources.keys())):
+            resource_per_slr_rel[slr] = {}
+            for resname in self.considered_resources:
+                resource_per_slr_rel[slr][resname] = model.add_var(f"resource_{resname}_on_slr{slr}_relative", var_type=mip.CONTINUOUS)
+                resource_per_slr_rel[slr][resname] = resource_per_slr[slr][resname] / max_resources[slr]
+            
+        # Get the highest relative utilization of any resource
+        max_diff = model.add_var("max_diff", var_type=mip.CONTINUOUS)
+        max_util_per_slr = [model.add_var(f"max_util_per_slr{slr}", var_type=mip.CONTINUOUS) for slr in range(self.slrs)]
+        for slr in range(self.slrs):
+            for resname in self.considered_resources:
+                model += max_util_per_slr[slr] >= resource_per_slr_rel[slr][resname]
+
+        # Calulcate largest difference to ideal
+        for slr in range(self.slrs):
+            model += max_diff >= max_util_per_slr[slr] - self.ideal_utilization
+        
+        # Try to minimize just that
+        model.objective = slr_crossings_relative + max_diff
+
 
     def optimize(self) -> None:
         pass
