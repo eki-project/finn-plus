@@ -2,6 +2,7 @@ import json
 from math import floor
 import os
 from typing import Optional
+import mip
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -17,11 +18,60 @@ class SLRProblem:
     
     The results are in the format of a dictionary mapping the node names to their assigned SLRs"""
 
-    def __init__(self, board: str, resources: dict[str, dict[str, int]]):
+    def __init__(
+            self, 
+            index_to_name: dict[int, str],                      # Map node indices of the graph to layer/node names
+            layer_resources: dict[str, dict[str, int]], 
+            max_resources: dict[int, dict[str, int]], 
+            default_input_slr: Optional[int] = None, 
+            default_output_slr: Optional[int] = None, 
+            fixed_layer_mapping: dict[str | int, int] = {}
+        ):
         self.results: dict[str, int] = None
         
+        # Maximum resources. Mapping SLR -> resource type -> resource usage
+        self.max_resources = max_resources
+        
         # Mapping node name -> resource type -> resource usage
-        self.resources: dict[str, dict[str, int]] = resources
+        self.layer_resources: dict[str, dict[str, int]] = layer_resources
+        layer_count = len(self.layer_resources.keys())
+
+        ###### MODEL ######
+        model = Model(sense=mip.MINIMIZE)
+
+        # Main variable matrix [layer][slr] = 0/1
+        layer_on_slr = {layername: [model.add_var(f"layer{layername}_on_slr{j}", var_type=mip.INTEGER) for j in range(self.slrs)] for layername in layer_resources.keys()}
+
+        # Every layer can only be on one SLR
+        for layername in layer_resources.keys():
+            model += xsum([layer_on_slr[layername][slr] for slr in max_resources.keys()]) == 1
+
+        # If we were given fixed mappings, apply them
+        if default_input_slr is not None:
+            model += layer_on_slr[index_to_name[0]][default_input_slr] == 1
+        if default_output_slr is not None:
+            model += layer_on_slr[index_to_name[-1]][default_input_slr] == 1
+        for fixed_layer in fixed_layer_mapping.keys():
+            if type(fixed_layer) == int:
+                model += layer_on_slr[index_to_name[fixed_layer]][fixed_layer_mapping[fixed_layer]] == 1
+            else:
+                model += layer_on_slr[fixed_layer][fixed_layer_mapping[fixed_layer]] == 1
+        
+        # Which SLR is a given layer on?
+        chosen_slr_of_layer = {layername: model.add_var(f"layer{layername}_chosen_slr", var_type=mip.INTEGER) for i in layer_resources.keys()}
+        for i in layer_resources.keys():
+            model += chosen_slr_of_layer[layername] == xsum([slr * layer_on_slr[layername][slr] for slr in range(len(max_resources.keys()))])
+        
+        # Consecutive layers need to be on consecutive SLRs (assumes SLRs are next to each other in order)
+        slr_diff_of_layer = {layername: model.add_var(f"connections_of_layer{layername}", var_type=mip.INTEGER) for layername in layer_resources.keys()}
+        for i in range(layer_count-1):
+            layername = index_to_name[i]
+            next_layername = index_to_name[i+1]
+            model += slr_diff_of_layer[layername] >= chosen_slr_of_layer[layername] - chosen_slr_of_layer[next_layername]
+            model += slr_diff_of_layer[layername] >= chosen_slr_of_layer[next_layername] - chosen_slr_of_layer[layername]
+            model += slr_diff_of_layer[layername] <= 1
+            model += slr_diff_of_layer[layername] >= 0
+
 
     def optimize(self) -> None:
         pass
@@ -80,6 +130,16 @@ class AssignSLR(Transformation):
 
 
         # Creation of the problem statement
+        max_resources = {}
+        for slr in range(len(board_resources)):
+            max_resources[slr] = board_resources[slr]
+        
+        index_to_name = {}
+        for i, node in enumerate(model.graph.node):
+            index_to_name[i] = node.name
+        index_to_name[-1] = model.graph.node[-1].name
+
+        # The problem object
         slr_model = SLRProblem()
 
         # Optimizie
