@@ -360,6 +360,11 @@ class DataflowBuildConfig:
     layer_slr_mapping: dict[str | int, int] = field(default_factory=lambda: dict())
 
 
+    #: Amount of seconds that a solver is allowed to run to find a good
+    #: SLR partitioning
+    slr_assign_timeout: int = 600
+
+
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:
             # use same clk for synth and hls if not explicitly specified

@@ -537,10 +537,11 @@ def step_assign_slr(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(
         AssignSLR(
             cfg,
-            platforms[cfg.vitis_platform],
+            platforms.platforms[cfg.vitis_platform],
             cfg.default_input_slr,
             cfg.default_output_slr,
-            cfg.layer_slr_mapping
+            cfg.layer_slr_mapping,
+            timeout=cfg.slr_assign_timeout
         )
     )
     return model

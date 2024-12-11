@@ -9,7 +9,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
-from finn.util.platforms import Platform
+from finn.util.platforms import Platform, platforms
 from mip import Model, xsum
 
 from typing import Optional
@@ -27,6 +27,7 @@ class SLRProblem:
             default_input_slr: Optional[int] = None, 
             default_output_slr: Optional[int] = None, 
             fixed_layer_mapping: dict[str | int, int] = {},
+            grouped_layers: list[list[str]] = [],
             timeout: int = 600
         ):
         self.optimized = False
@@ -74,6 +75,11 @@ class SLRProblem:
             model += slr_diff_of_layer[layername] >= chosen_slr_of_layer[next_layername] - chosen_slr_of_layer[layername]
             model += slr_diff_of_layer[layername] <= 1
             model += slr_diff_of_layer[layername] >= 0
+
+        # Grouped layers need to stay together
+        for nodelist in grouped_layers:
+            for i in range(len(nodelist-1)):
+                model += chosen_slr_of_layer[nodelist[i]] == chosen_slr_of_layer[nodelist[i+1]]
 
         # Minimize SLR connections
         slr_crossings = model.add_var("slr_crossings", var_type=mip.INTEGER)
@@ -132,13 +138,14 @@ class AssignSLR(Transformation):
     """If successful assigns the SLR node attribute of all nodes in the graph based on a solution given by an ILP solver or a handcrafted algorithm.
     This can be saved into a JSON to be read by the floorplanning transformation so that SLR assignments are possible in the vitis build flow"""
 
-    def __init__(self, cfg: DataflowBuildConfig, platform: Platform, default_in_slr: Optional[int], default_out_slr: Optional[int], fixed_slr_mapping: dict[str | int, int]):
+    def __init__(self, cfg: DataflowBuildConfig, platform: Platform, default_in_slr: Optional[int], default_out_slr: Optional[int], fixed_slr_mapping: dict[str | int, int], timeout: int = 600):
         super().__init__()
         self.cfg = cfg
         self.platform = platform
         self.default_input_slr = default_in_slr
         self.default_output_slr = default_out_slr
         self.fixed_slr_mapping = fixed_slr_mapping
+        self.timeout = timeout
 
     
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
@@ -198,7 +205,7 @@ class AssignSLR(Transformation):
             self.default_input_slr,
             self.default_output_slr,
             self.fixed_slr_mapping,
-            timeout=600
+            timeout=self.timeout,
         )
 
         # Optimize
