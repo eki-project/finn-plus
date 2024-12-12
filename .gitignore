@@ -96,3 +96,5 @@ MANIFEST
 
 # downloaded dep repos
 /deps/
+
+/outdated/
