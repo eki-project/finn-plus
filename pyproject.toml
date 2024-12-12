@@ -5,6 +5,10 @@ description = ""
 authors = ["Yaman Umuroglu"]
 readme = "README.md"
 
+packages = [
+    { include = "finn", from = "src" }
+]
+
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
 bitstring = "3.1.7"
