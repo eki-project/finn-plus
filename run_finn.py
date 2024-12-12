@@ -24,7 +24,7 @@ def get_repo(url, target, commit):
 
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("buildfile", action="store")
     args = parser.parse_args()
@@ -97,8 +97,10 @@ if __name__ == "__main__":
             "2d49cfc25766f07792c0b314489f21fe916b639b"
         ),
         "xil-bdf": (
-            
-        )
+           "https://github.com/Xilinx/XilinxBoardStore.git",
+            "8cf4bb674a919ac34e3d99d8d71a9e60af93d14e"
+        ),
+        "rfsoc4x2-bdf": ()
     }
     print(colored("Checking boardfiles...", "cyan"))
 
