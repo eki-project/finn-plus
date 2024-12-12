@@ -23,6 +23,52 @@ def get_repo(url, target, commit):
         sys.exit(1)
 
 
+def get_boardfiles(url, target, commit, loc):
+    # Where all boardfiles are directly stored
+    boardfiles = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deps", "board_files")
+
+    # Where we clone to beforehand
+    clonepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deps", target)
+
+    # Where the boardfiles lay in the cloned dir
+    locpath = os.path.join(clonepath, loc)
+
+    if not os.path.isdir(boardfiles):
+        os.mkdir(boardfiles)
+
+    exists = False
+    if os.path.isdir(clonepath):
+        exists = True
+        for f in os.listdir(locpath): 
+            if f in [".git", "README.md"]:
+                continue
+            if os.path.isfile(os.path.join(boardfiles, f)) or os.path.isdir(os.path.join(boardfiles, f)):
+                continue
+            else:
+                print(colored(f"Did not find all boardfiles required in {boardfiles} from {locpath}. Reinstalling...", "yellow"))
+                exists = False
+                break
+        if exists:
+            print(colored(f"Repository {target} already downloaded. Skipping...", "yellow"))
+            return
+
+    with open("install_log", 'w+') as f_log:
+        subprocess.run(f"git clone {url} {clonepath};cd {clonepath};git pull;git checkout {commit};cd {loc};cp -r * {boardfiles}", cwd=os.path.dirname(os.path.abspath(__file__)), shell=True, stdout=f_log, stderr=f_log)
+
+    if os.path.isdir(clonepath):  
+        for f in os.listdir(locpath): 
+            if os.path.isfile(os.path.join(boardfiles, f)) or os.path.isdir(os.path.join(boardfiles, f)):
+                continue
+            else:
+                print(colored(f"Failed installing {target}, could not find {f} in {boardfiles}. Log can be found in \"install_log\". Stopping...", "red", "on_white"))
+                sys.exit(1)
+        print(colored("Successfully installed ", "green") + colored(f"{target}", "green", "on_black"))
+        os.remove("install_log")
+    else:
+        print(colored(f"Failed properly cloning {target}. Log can be found in \"install_log\". Stopping...", "red", "on_white"))
+        sys.exit(1)
+
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -38,6 +84,21 @@ def main():
     if not os.path.isdir(depsdir):
         print(colored(f"Did not find deps directory. Creating...", "yellow"))
         os.mkdir(depsdir)
+
+
+    # Saving FINN specific global env vars
+    # TODO: In the future we shouldnt need this anymore
+    print(colored("Checking and backing up FINN specific environment variables...", "cyan"))
+    finn_specific_envvars = [
+        "FINN_ROOT",
+        "LIVENESS_THRESHOLD",
+    ]
+    preserved_envvars = {}
+    for envvar in finn_specific_envvars:
+        if envvar in os.environ.keys():
+            preserved_envvars[envvar] = os.environ[envvar]
+        else:
+            preserved_envvars[envvar] = None
 
 
     # Check all env variables
@@ -59,7 +120,8 @@ def main():
         if (var not in os.environ.keys()) or (os.environ[var] == ""):
             print(colored(f"Environment variable {var} not set or empty. Setting to default: ", "yellow") + colored(value, "light_red", "on_dark_grey"))
             os.environ[var] = value
-
+        else:
+            print(colored(f"Using existing environment variable {var}: {os.environ[var]}", "green"))
 
 
     # Installing dependencies if necessary
@@ -94,15 +156,30 @@ def main():
     boardfiles = {
         "avnet-bdf": (
             "https://github.com/Avnet/bdf.git",
-            "2d49cfc25766f07792c0b314489f21fe916b639b"
+            "2d49cfc25766f07792c0b314489f21fe916b639b",
+            "."
         ),
         "xil-bdf": (
            "https://github.com/Xilinx/XilinxBoardStore.git",
-            "8cf4bb674a919ac34e3d99d8d71a9e60af93d14e"
+            "8cf4bb674a919ac34e3d99d8d71a9e60af93d14e",
+            os.path.join("boards", "Xilinx", "rfsoc2x2")
         ),
-        "rfsoc4x2-bdf": ()
+        "rfsoc4x2-bdf": (
+            "https://github.com/RealDigitalOrg/RFSoC4x2-BSP.git",
+            "13fb6f6c02c7dfd7e4b336b18b959ad5115db696",
+            os.path.join("board_files", "rfsoc4x2")
+        ),
+        "kv260-som-bdf": (
+            "https://github.com/Xilinx/XilinxBoardStore.git",
+            "98e0d3efc901f0b974006bc4370c2a7ad8856c79",
+            os.path.join("boards", "Xilinx", "kv260_som")
+        ),
     }
     print(colored("Checking boardfiles...", "cyan"))
+    for target, data in boardfiles.items():
+        url, commit, loc = data
+        print(colored(f"Checking {target}...", "cyan"))
+        get_boardfiles(url, target, commit, loc)
 
 
 
@@ -111,6 +188,15 @@ def main():
 
 
     # Run the given dataflow
+    print(colored("Running FINN", "cyan"))
     directory = os.path.dirname(os.path.abspath(args.buildfile))
     buildfile = os.path.basename(args.buildfile)
     subprocess.run(f"python {buildfile}", cwd=directory, shell=True)
+
+    # Restore FINN specific env vars
+    print(colored("Restoring FINN run specific environment variables...", "cyan"))
+    for envvar, val in preserved_envvars.items():
+        if envvar is None:
+            os.environ.pop(envvar, None)
+        else:
+            os.environ[envvar] = val
