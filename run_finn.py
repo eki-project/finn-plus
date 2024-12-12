@@ -111,7 +111,6 @@ def main():
 
 
     # Run the given dataflow
-    poetry_python = subprocess.run("poetry env info -e", shell=True, stdout=subprocess.PIPE).stdout.decode("utf-8").replace("\n", "")
     directory = os.path.dirname(os.path.abspath(args.buildfile))
     buildfile = os.path.basename(args.buildfile)
-    subprocess.run(f"{poetry_python} {buildfile}", cwd=directory, shell=True)
+    subprocess.run(f"python {buildfile}", cwd=directory, shell=True)

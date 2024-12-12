@@ -8,6 +8,9 @@ readme = "README.md"
 packages = [
     { include = "finn", from = "src" }
 ]
+include = [
+    "run_finn.py"
+]
 
 [tool.poetry.scripts]
 finn = "run_finn:main"
