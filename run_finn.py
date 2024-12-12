@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import argparse
+import shutil
 import os
 import subprocess
 import sys
@@ -69,6 +70,33 @@ def get_boardfiles(url, target, commit, loc):
         sys.exit(1)
 
 
+def install_verilator():
+    with open("install_log", 'w+') as f:
+        subprocess(
+            "git clone https://github.com/verilator/verilator && cd verilator && git checkout v4.224 && autoconf && ./configure && make -j4 && make install",
+            shell=True,
+            stdout=f,
+            stderr=f
+        )
+
+
+def preserve_env_vars(finn_specific_envvars):
+    preserved_envvars = {}
+    for envvar in finn_specific_envvars:
+        if envvar in os.environ.keys():
+            preserved_envvars[envvar] = os.environ[envvar]
+        else:
+            preserved_envvars[envvar] = None
+    return preserved_envvars
+
+
+def restore_env_vars(preserved_envvars):
+    for envvar, val in preserved_envvars.items():
+        if envvar is None:
+            os.environ.pop(envvar)
+        else:
+            os.environ[envvar] = val
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -93,13 +121,15 @@ def main():
         "FINN_ROOT",
         "LIVENESS_THRESHOLD",
     ]
-    preserved_envvars = {}
-    for envvar in finn_specific_envvars:
-        if envvar in os.environ.keys():
-            preserved_envvars[envvar] = os.environ[envvar]
-        else:
-            preserved_envvars[envvar] = None
+    preserved_envvars = preserve_env_vars(finn_specific_envvars)
 
+    # Now that we preserved env vars we need to be able to reconstruct even if the user sends Ctrl+C
+    import signal
+    def sigint_handler(sig, frame):
+        print(colored(f"Restoring environment variables before exiting...", "red"))
+        restore_env_vars(preserved_envvars)
+        sys.exit(1)
+    signal.signal(signal.SIGINT, sigint_handler)
 
     # Check all env variables
     print(colored("Checking environment variables", "cyan"))
@@ -182,9 +212,17 @@ def main():
         get_boardfiles(url, target, commit, loc)
 
 
-
     # Install verilator
     print(colored("Checking verilator...", "cyan"))
+    if shutil.which("verilator") is None:
+        print(colored("Verilator not found, installing...", "cyan"))
+        install_verilator()
+        if shutil.which("verilator") is None:
+            print(colored(f"Verilator not found after attempted installation. Look into \"install_log\" for further info!", "red", "on_white"))
+            sys.exit(1)
+        print(colored("Successfully installed ", "green") + colored("verilator", "green", "on_black"))
+    else:
+        print(colored("Verilator found!", "green"))
 
 
     # Run the given dataflow
@@ -195,8 +233,3 @@ def main():
 
     # Restore FINN specific env vars
     print(colored("Restoring FINN run specific environment variables...", "cyan"))
-    for envvar, val in preserved_envvars.items():
-        if envvar is None:
-            os.environ.pop(envvar, None)
-        else:
-            os.environ[envvar] = val
