@@ -36,6 +36,7 @@ from finn.custom_op.fpgadataflow import templates
 from finn.util.basic import CppBuilder, get_rtlsim_trace_depth, make_build_dir
 from finn.util.hls import CallHLS
 from finn.util.pyverilator import make_single_source_file
+from finn.util.deps import find_deps
 
 try:
     from pyverilator import PyVerilator
@@ -229,17 +230,18 @@ class HLSBackend(ABC):
         finn.util.basic and executes the script to produce the executable."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         builder = CppBuilder()
+        deps = find_deps()
         # to enable additional debug features please uncommand the next line
         # builder.append_includes("-DDEBUG")
         builder.append_includes("-I$FINN_ROOT/src/finn/qnn-data/cpp")
-        builder.append_includes("-I$FINN_ROOT/deps/cnpy/")
-        builder.append_includes("-I$FINN_ROOT/deps/finn-hlslib")
+        builder.append_includes("-I" + os.path.join(deps, "cnpy"))
+        builder.append_includes("-I" + os.path.join(deps, "finn-hlslib"))
         builder.append_includes("-I$FINN_ROOT/custom_hls")
         builder.append_includes("-I{}/include".format(os.environ["HLS_PATH"]))
         builder.append_includes("--std=c++14")
         builder.append_includes("-O3")
         builder.append_sources(code_gen_dir + "/*.cpp")
-        builder.append_sources("$FINN_ROOT/deps/cnpy/cnpy.cpp")
+        builder.append_sources(os.path.join(deps, "cnpy", "cnpy.cpp"))
         builder.append_includes("-lz")
         builder.set_executable_path(code_gen_dir + "/node_model")
         builder.build(code_gen_dir)

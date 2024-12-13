@@ -9,7 +9,8 @@ packages = [
     { include = "finn", from = "src" }
 ]
 include = [
-    "run_finn.py"
+    "run_finn.py",
+    "src/finn/qnn-data/cpp/*"
 ]
 
 [tool.poetry.scripts]

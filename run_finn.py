@@ -7,14 +7,14 @@ import sys
 import psutil
 from termcolor import colored
 
-def get_repo(url, target, commit):
-    targetpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deps", target)
+def get_repo(url, target, commit, depspath):
+    targetpath = os.path.join(depspath, target)
     if os.path.isdir(targetpath):
         print(colored(f"Repository {target} already downloaded. Skipping...", "yellow"))
         return
 
     with open("install_log", 'w+') as f:
-        subprocess.run(f"git clone {url} {targetpath};cd {targetpath};git pull;git checkout {commit}", cwd=os.path.dirname(os.path.abspath(__file__)), shell=True, stdout=f, stderr=f)
+        subprocess.run(f"git clone {url} {targetpath};cd {targetpath};git pull;git checkout {commit}", shell=True, stdout=f, stderr=f)
 
     if os.path.isdir(targetpath):
         print(colored("Successfully installed ", "green") + colored(f"{target}", "green", "on_black"))
@@ -24,12 +24,12 @@ def get_repo(url, target, commit):
         sys.exit(1)
 
 
-def get_boardfiles(url, target, commit, loc):
+def get_boardfiles(url, target, commit, loc, depspath):
     # Where all boardfiles are directly stored
-    boardfiles = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deps", "board_files")
+    boardfiles = os.path.join(depspath, "board_files")
 
     # Where we clone to beforehand
-    clonepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deps", target)
+    clonepath = os.path.join(depspath, target)
 
     # Where the boardfiles lay in the cloned dir
     locpath = os.path.join(clonepath, loc)
@@ -54,7 +54,7 @@ def get_boardfiles(url, target, commit, loc):
             return
 
     with open("install_log", 'w+') as f_log:
-        subprocess.run(f"git clone {url} {clonepath};cd {clonepath};git pull;git checkout {commit};cd {loc};cp -r * {boardfiles}", cwd=os.path.dirname(os.path.abspath(__file__)), shell=True, stdout=f_log, stderr=f_log)
+        subprocess.run(f"git clone {url} {clonepath};cd {clonepath};git pull;git checkout {commit};cd {loc};cp -r * {boardfiles}", shell=True, stdout=f_log, stderr=f_log)
 
     if os.path.isdir(clonepath):  
         for f in os.listdir(locpath): 
@@ -73,14 +73,19 @@ def get_boardfiles(url, target, commit, loc):
 
 
 def install_verilator():
+    # TODO: MAKE TEMPORARY ADDITION TO PATH
     with open("install_log", 'w+') as f:
+        command = ""
+        if not os.path.isdir(os.path.join(os.path.dirname(__file__)), "verilator"):
+            command += "git clone https://github.com/verilator/verilator && "
         subprocess.run(
-            "git clone https://github.com/verilator/verilator && cd verilator && git checkout v4.224 && autoconf && ./configure && make -j4 && make install",
+            command + "cd verilator && git checkout v4.224 && autoconf && ./configure && make -j4",
             shell=True,
             stdout=f,
             stderr=f
         )
-
+        os.environ["PATH"] = os.environ["PATH"] 
+        print(colored(f"Verilator was cloned and setup. Please install it by going to finn-plus/verilator and calling \"sudo make install\"! Afterwards, re-run finn.", "red"))
 
 def preserve_env_vars(finn_specific_envvars):
     preserved_envvars = {}
@@ -103,18 +108,24 @@ def restore_env_vars(preserved_envvars):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("buildfile", action="store")
+    parser.add_argument("--local", "-l", help="Whether to store the deps locally (in $FINN_ROOT/deps). Useful for development. Otherwise everything is installed to $HOME/.finn/deps", action="store_true")
     args = parser.parse_args()
+
+    # Create dependency location
+    if args.local:
+        DEPSPATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "deps"))
+        print(colored(f"Using local depdendencies ($FINN_ROOT/deps/): {DEPSPATH}", "magenta", "on_black"))
+    else:
+        DEPSPATH = os.path.abspath(os.path.join(os.environ["HOME"], ".finn", "deps"))
+        print(colored(f"Using default depdendencies ($HOME/.finn/deps/): {DEPSPATH}", "magenta", "on_black"))
+    if not os.path.isdir(DEPSPATH):
+        print(colored(f"Dependency directory not existing, creating now..", "yellow"))
+        os.system(f"mkdir -p {DEPSPATH}")
 
 
     if not os.path.isfile(args.buildfile):
         print(colored(f"Could not find build file at: {args.buildfile}", "red", "on_white"))
         sys.exit(1)
-
-    depsdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "deps")
-    if not os.path.isdir(depsdir):
-        print(colored(f"Did not find deps directory. Creating...", "yellow"))
-        os.mkdir(depsdir)
-
 
     # Saving FINN specific global env vars
     # TODO: In the future we shouldnt need this anymore
@@ -136,11 +147,12 @@ def main():
     # Check all env variables
     print(colored("Checking environment variables", "cyan"))
     required_set = {
+        "FINN_ROOT": os.getcwd(),
         "FINN_BUILD_DIR": "/tmp/FINN_TMP",
         "PLATFORM_REPO_PATHS": "/opt/xilinx/platforms",
         "XRT_DEB_VERSION": "xrt_202220.2.14.354_22.04-amd64-xrt",
         "FINN_HOST_BUILD_DIR": "/tmp/FINN_TMP_HOST",
-        "OHMYXILINX": os.path.join(os.path.abspath(os.getcwd()), "deps", "oh-my-xilinx"),
+        "OHMYXILINX": os.path.join(DEPSPATH, "oh-my-xilinx"),
         "NUM_DEFAULT_WORKERS": str(int(psutil.cpu_count(logical=False) * 0.75)),
         "XILINX_LOCAL_USER_DATA": "no",
         "VIVADO_PATH": "/tools/Xilinx/Vivado/2022.1",
@@ -154,6 +166,8 @@ def main():
             os.environ[var] = value
         else:
             print(colored(f"Using existing environment variable {var}: {os.environ[var]}", "green"))
+    FINN_ROOT = os.environ["FINN_ROOT"]
+    print(colored(f"FINN_ROOT set to: {FINN_ROOT}", "magenta"))
 
 
     # Installing dependencies if necessary
@@ -180,7 +194,7 @@ def main():
     for target, data in deps.items():
         url, commit = data
         print(colored(f"Checking {target}...", "cyan"))
-        get_repo(url, target, commit)
+        get_repo(url, target, commit, DEPSPATH)
 
 
 
@@ -211,7 +225,7 @@ def main():
     for target, data in boardfiles.items():
         url, commit, loc = data
         print(colored(f"Checking {target}...", "cyan"))
-        get_boardfiles(url, target, commit, loc)
+        get_boardfiles(url, target, commit, loc, DEPSPATH)
 
 
     # Install verilator
