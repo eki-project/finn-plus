@@ -72,7 +72,7 @@ def get_boardfiles(url, target, commit, loc):
 
 def install_verilator():
     with open("install_log", 'w+') as f:
-        subprocess(
+        subprocess.run(
             "git clone https://github.com/verilator/verilator && cd verilator && git checkout v4.224 && autoconf && ./configure && make -j4 && make install",
             shell=True,
             stdout=f,
