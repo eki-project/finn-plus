@@ -58,6 +58,8 @@ def get_boardfiles(url, target, commit, loc):
 
     if os.path.isdir(clonepath):  
         for f in os.listdir(locpath): 
+            if f in [".git", "README.md"]:
+                continue
             if os.path.isfile(os.path.join(boardfiles, f)) or os.path.isdir(os.path.join(boardfiles, f)):
                 continue
             else:
