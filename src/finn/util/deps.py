@@ -13,3 +13,15 @@ def find_deps() -> str | None:
     if os.path.isdir(LOCALPATH):
         return LOCALPATH
     return None
+
+
+def find_rtllib() -> str | None:
+    """Find the rtllib folder 
+    First searches in ~/.finn, then in $FINN_ROOT"""
+    HOMEPATH = os.path.abspath(os.path.join(os.environ["HOME"], ".finn", "finn-rtllib"))
+    LOCALPATH = os.path.abspath(os.path.join(os.environ["FINN_ROOT"], "deps"))
+    if os.path.isdir(HOMEPATH):
+        return HOMEPATH
+    if os.path.isdir(LOCALPATH):
+        return LOCALPATH
+    return None

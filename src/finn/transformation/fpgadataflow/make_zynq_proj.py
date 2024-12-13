@@ -48,6 +48,7 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir, pynq_native_port_width, pynq_part_map
+from finn.util.deps import find_deps
 
 from . import templates
 
@@ -248,7 +249,7 @@ class MakeZYNQProject(Transformation):
                     pynq_part_map[self.platform],
                     config,
                     self.enable_debug,
-                )
+                ).replace("$BOARDFILES$", os.path.join(find_deps(), "board_files"))
             )
 
         # create a TCL recipe for the project

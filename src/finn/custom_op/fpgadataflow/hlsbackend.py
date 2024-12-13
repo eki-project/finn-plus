@@ -143,6 +143,7 @@ class HLSBackend(ABC):
         self.code_gen_dict["$CLKPERIOD$"] = [str(clk)]
         self.code_gen_dict["$DEFAULT_DIRECTIVES$"] = self.ipgen_default_directives()
         self.code_gen_dict["$EXTRA_DIRECTIVES$"] = self.ipgen_extra_directives()
+        self.code_gen_dict["$FINNHLSLIB$"] = [os.path.join(find_deps(), "finn-hlslib")]
 
         template = templates.ipgentcl_template
 

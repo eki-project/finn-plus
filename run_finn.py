@@ -147,7 +147,7 @@ def main():
     # Check all env variables
     print(colored("Checking environment variables", "cyan"))
     required_set = {
-        "FINN_ROOT": os.getcwd(),
+        "FINN_ROOT": os.path.dirname(__file__),
         "FINN_BUILD_DIR": "/tmp/FINN_TMP",
         "PLATFORM_REPO_PATHS": "/opt/xilinx/platforms",
         "XRT_DEB_VERSION": "xrt_202220.2.14.354_22.04-amd64-xrt",
