@@ -76,7 +76,7 @@ def install_verilator():
     # TODO: MAKE TEMPORARY ADDITION TO PATH
     with open("install_log", 'w+') as f:
         command = ""
-        if not os.path.isdir(os.path.join(os.path.dirname(__file__)), "verilator"):
+        if not os.path.isdir(os.path.join(os.path.dirname(__file__), "verilator")):
             command += "git clone https://github.com/verilator/verilator && "
         subprocess.run(
             command + "cd verilator && git checkout v4.224 && autoconf && ./configure && make -j4",
@@ -109,15 +109,21 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("buildfile", action="store")
     parser.add_argument("--local", "-l", help="Whether to store the deps locally (in $FINN_ROOT/deps). Useful for development. Otherwise everything is installed to $HOME/.finn/deps", action="store_true")
+    parser.add_argument("--tempslocal", "-t", help="If passed, the FINN_BUILD_DIR and FINN_HOST_BUILD_DIR will be automatically set to the directory the buildfile resides in", action="store_true")
+    parser.add_argument("--remove-temps", "-r", help="Whether to remove temporary files from FINN_BUILD_DIR and FINN_HOST_BUILD_DIR if the directories were already used before", action="store_true")
     args = parser.parse_args()
 
     # Create dependency location
     if args.local:
         DEPSPATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "deps"))
-        print(colored(f"Using local depdendencies ($FINN_ROOT/deps/): {DEPSPATH}", "magenta", "on_black"))
+        print(colored(f"Using local depdendencies ($FINN_ROOT/deps/): {DEPSPATH}", "magenta"))
     else:
-        DEPSPATH = os.path.abspath(os.path.join(os.environ["HOME"], ".finn", "deps"))
-        print(colored(f"Using default depdendencies ($HOME/.finn/deps/): {DEPSPATH}", "magenta", "on_black"))
+        if "FINN_DEPS" in os.environ.keys():
+            DEPSPATH = os.path.abspath(os.environ["FINN_DEPS"])
+            print(colored(f"Using depdendency folder specified in FINN_DEPS env var: {DEPSPATH}", "magenta"))
+        else:
+            DEPSPATH = os.path.abspath(os.path.join(os.environ["HOME"], ".finn", "deps"))
+            print(colored(f"Using fallback default depdendencies path ($HOME/.finn/deps/): {DEPSPATH}", "magenta"))
     if not os.path.isdir(DEPSPATH):
         print(colored(f"Dependency directory not existing, creating now..", "yellow"))
         os.system(f"mkdir -p {DEPSPATH}")
@@ -148,10 +154,10 @@ def main():
     print(colored("Checking environment variables", "cyan"))
     required_set = {
         "FINN_ROOT": os.path.dirname(__file__),
-        "FINN_BUILD_DIR": "/tmp/FINN_TMP",
+        "FINN_BUILD_DIR": "/tmp/FINN_TMP" if not args.tempslocal else os.path.join(os.path.dirname(args.buildfile), "FINN_TMP"),
         "PLATFORM_REPO_PATHS": "/opt/xilinx/platforms",
         "XRT_DEB_VERSION": "xrt_202220.2.14.354_22.04-amd64-xrt",
-        "FINN_HOST_BUILD_DIR": "/tmp/FINN_TMP_HOST",
+        "FINN_HOST_BUILD_DIR": "/tmp/FINN_TMP_HOST" if not args.tempslocal else os.path.join(os.path.dirname(args.buildfile), "FINN_TMP_HOST"),
         "OHMYXILINX": os.path.join(DEPSPATH, "oh-my-xilinx"),
         "NUM_DEFAULT_WORKERS": str(int(psutil.cpu_count(logical=False) * 0.75)),
         "XILINX_LOCAL_USER_DATA": "no",
@@ -167,7 +173,22 @@ def main():
         else:
             print(colored(f"Using existing environment variable {var}: {os.environ[var]}", "green"))
     FINN_ROOT = os.environ["FINN_ROOT"]
+    FINN_BUILD_DIR = os.environ["FINN_BUILD_DIR"]
+    FINN_HOST_DIR = os.environ["FINN_HOST_BUILD_DIR"]
     print(colored(f"FINN_ROOT set to: {FINN_ROOT}", "magenta"))
+    print(colored(f"Storing temporary files in:", "magenta"))
+    print(colored(f"\t{FINN_BUILD_DIR}", "magenta"))
+    print(colored(f"\t{FINN_HOST_DIR}", "magenta"))
+
+    if args.remove_temps:
+        if os.path.isdir(FINN_BUILD_DIR):
+            print(colored(f"Clearing old files from FINN_BUILD_DIR...", "yellow"))
+            for f in os.listdir(FINN_BUILD_DIR):
+                os.system("rm -r " + os.path.join(FINN_BUILD_DIR, f))
+        if os.path.isdir(FINN_HOST_DIR):
+            print(colored(f"Clearing old files from FINN_HOST_BUILD_DIR...", "yellow"))
+            for f in os.listdir(FINN_HOST_DIR):
+                os.systeme("rm -r " + os.path.join(FINN_HOST_DIR, f))
 
 
     # Installing dependencies if necessary
