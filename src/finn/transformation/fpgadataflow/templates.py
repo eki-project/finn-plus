@@ -29,7 +29,7 @@
 # flake8: noqa
 
 # template for the PYNQ shell integration configuration tcl script
-ip_config_tcl_template = """
+ip_config_tcl_template: str = """
 variable config_ip_repo
 variable config_ip_vlnv
 variable config_ip_bytes_in
@@ -80,7 +80,7 @@ set config_remote_cache "%s"
 set config_ip_fclk %f
 """
 
-call_pynqshell_makefile_template = """
+call_pynqshell_makefile_template: str = """
 #!/bin/bash
 cd %s
 export platform=%s
@@ -89,7 +89,7 @@ make %s
 cd %s
 """
 
-custom_zynq_shell_template = """
+custom_zynq_shell_template: str = """
 set FREQ_MHZ %s
 set NUM_AXILITE %d
 if {$NUM_AXILITE > 9} {
@@ -252,7 +252,7 @@ report_utilization -hierarchical -hierarchical_depth 4 -file synth_report.xml -f
 close_project
 """
 
-vitis_gen_xml_report_tcl_template = """
+vitis_gen_xml_report_tcl_template: str = """
 open_project $VITIS_PROJ_PATH$/_x/link/vivado/vpl/prj/prj.xpr
 open_run impl_1
 report_utilization -hierarchical -hierarchical_depth 5 -file $VITIS_PROJ_PATH$/synth_report.xml -format xml

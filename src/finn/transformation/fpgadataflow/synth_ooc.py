@@ -33,17 +33,18 @@ from shutil import copy2
 from finn.util.basic import make_build_dir
 from finn.util.vivado import out_of_context_synth
 
+from qonnx.core.modelwrapper import ModelWrapper
 
 class SynthOutOfContext(Transformation):
     """Run out-of-context Vivado synthesis on a stitched IP design."""
 
-    def __init__(self, part, clk_period_ns, clk_name="ap_clk"):
+    def __init__(self, part: str, clk_period_ns: float, clk_name: str="ap_clk"):
         super().__init__()
         self.part = part
         self.clk_period_ns = clk_period_ns
         self.clk_name = clk_name
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper]:
         def file_to_basename(x):
             return os.path.basename(os.path.realpath(x))
 

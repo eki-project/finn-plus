@@ -30,6 +30,7 @@
 import json
 import os
 import subprocess
+from typing import Optional
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -52,11 +53,12 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir
+from finn.util.platforms import Platform
 
 from . import templates
 
 
-def _check_vitis_envvars():
+def _check_vitis_envvars() -> None:
     assert "VITIS_PATH" in os.environ, "VITIS_PATH must be set for Vitis"
     assert "PLATFORM_REPO_PATHS" in os.environ, "PLATFORM_REPO_PATHS must be set for Vitis"
     assert (
@@ -76,7 +78,7 @@ class CreateVitisXO(Transformation):
         super().__init__()
         self.ip_name = ip_name
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         _check_vitis_envvars()
         vivado_proj_dir = model.get_metadata_prop("vivado_stitch_proj")
         stitched_ip_dir = vivado_proj_dir + "/ip"
@@ -160,11 +162,11 @@ class VitisLink(Transformation):
 
     def __init__(
         self,
-        platform,
-        f_mhz=200,
-        strategy=VitisOptStrategy.PERFORMANCE,
-        enable_debug=False,
-        fpga_memory_type="default",
+        platform: Platform,
+        f_mhz: int=200,
+        strategy: VitisOptStrategy=VitisOptStrategy.PERFORMANCE,
+        enable_debug: bool=False,
+        fpga_memory_type: str="default",
     ):
         super().__init__()
         self.platform = platform
@@ -173,7 +175,7 @@ class VitisLink(Transformation):
         self.enable_debug = enable_debug
         self.fpga_memory_type = fpga_memory_type
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         _check_vitis_envvars()
         # create a config file and empty list of xo files
         config = ["[connectivity]"]
@@ -367,15 +369,15 @@ class VitisBuild(Transformation):
 
     def __init__(
         self,
-        fpga_part,
-        period_ns,
-        platform,
-        strategy=VitisOptStrategy.PERFORMANCE,
-        enable_debug=False,
-        floorplan_file=None,
-        enable_link=True,
-        partition_model_dir=None,
-        fpga_memory_type=FpgaMemoryType.DEFAULT,
+        fpga_part: str,
+        period_ns: float,
+        platform: Platform,
+        strategy: VitisOptStrategy=VitisOptStrategy.PERFORMANCE,
+        enable_debug: bool=False,
+        floorplan_file: str=None,
+        enable_link: bool=True,
+        partition_model_dir: Optional[str]=None,
+        fpga_memory_type: FpgaMemoryType=FpgaMemoryType.DEFAULT,
     ):
         super().__init__()
         self.fpga_part = fpga_part
@@ -388,7 +390,7 @@ class VitisBuild(Transformation):
         self.partition_model_dir = partition_model_dir
         self.fpga_memory_type = fpga_memory_type
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         _check_vitis_envvars()
         # prepare at global level, then break up into kernels
         prep_transforms = [InsertIODMA(512), InsertDWC(), SpecializeLayers(self.fpga_part)]

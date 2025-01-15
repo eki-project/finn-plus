@@ -36,8 +36,10 @@ from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
 from finn.util.basic import get_dsp_block, is_versal
 
+from onnx.onnx_ml_pb2 import NodeProto
+from qonnx.core.modelwrapper import ModelWrapper
 
-def _determine_impl_style(node, fpgapart, model):
+def _determine_impl_style(node: NodeProto, fpgapart: str, model: ModelWrapper) -> str:
     optype = node.op_type
 
     # check if there is an HLS or RTL variant or both
@@ -180,7 +182,7 @@ def _determine_impl_style(node, fpgapart, model):
         )
 
 
-def _dwc_determine_impl_style(node):
+def _dwc_determine_impl_style(node: NodeProto) -> str:
     # when possible use rtl variant
     dwc = getCustomOp(node)
     dwc_in_width = dwc.get_nodeattr("inWidth")
@@ -194,7 +196,7 @@ def _dwc_determine_impl_style(node):
         return "hls"
 
 
-def _swg_hls_possible(node):
+def _swg_hls_possible(node: NodeProto) -> bool:
     # there are some constraints to
     # the HLS variant of the SWG
     # first constraint to check is
@@ -228,7 +230,7 @@ def _swg_hls_possible(node):
             return False
 
 
-def _mvu_rtl_possible(n, fpgapart, model):
+def _mvu_rtl_possible(n: NodeProto, fpgapart: str, model: ModelWrapper) -> bool:
     # Checks whether RTL-based MVU is supported
     # Currently, for DSP48 we only support computations up to
     # 8sx8u (8-bit signed weights x 8-bit (un)signed activations)
@@ -267,7 +269,7 @@ def _mvu_rtl_possible(n, fpgapart, model):
     return inp_width_in_range and weight_width_in_range
 
 
-def _vvu_rtl_possible(n, fpgapart):
+def _vvu_rtl_possible(n: NodeProto, fpgapart: str) -> bool:
     # Checks whether RTL-based VVU is supported
     # Currently, we only support RTL-VVU on DSP58 up to 8sx9s inputs
     # (8-bit signed weights x (9-bit signed OR 8-bit (un)signed) activations).
@@ -294,7 +296,7 @@ class SpecializeLayers(Transformation):
         super().__init__()
         self.fpgapart = fpgapart
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False

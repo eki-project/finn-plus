@@ -28,7 +28,7 @@
 
 # flake8: noqa
 
-pynq_driver_template = """
+pynq_driver_template: str = """
 # Copyright (c) 2020 Xilinx, Inc.
 # All rights reserved.
 #
