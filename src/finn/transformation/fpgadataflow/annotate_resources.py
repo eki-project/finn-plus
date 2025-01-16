@@ -26,6 +26,7 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+from typing import Optional
 import qonnx.custom_op.registry as registry
 from functools import partial
 from qonnx.core.modelwrapper import ModelWrapper
@@ -49,13 +50,13 @@ class AnnotateResources(Transformation):
     chosen mode (e.g. HLSSynthIP for hls) was previously run.
     """
 
-    def __init__(self, mode, fpgapart, override_res_dict=None):
+    def __init__(self, mode: str, fpgapart: str, override_res_dict: Optional[dict]=None):
         super().__init__()
         self.mode = mode
         self.fpgapart = fpgapart
         self.res_dict = override_res_dict
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         if self.mode == "estimate":
             res_fxn = partial(res_estimation, fpgapart=self.fpgapart)

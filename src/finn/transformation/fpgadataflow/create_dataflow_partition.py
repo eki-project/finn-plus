@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from typing import Optional
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -43,14 +44,14 @@ class CreateDataflowPartition(Transformation):
     that indicates the filename for the second graph that only contains
     dataflow nodes. No action is taken if there are no dataflow nodes."""
 
-    def __init__(self, partition_model_dir=None):
+    def __init__(self, partition_model_dir: Optional[str]=None):
         super().__init__()
         if partition_model_dir is None:
             self.partition_model_dir = make_build_dir("dataflow_partition_")
         else:
             self.partition_model_dir = partition_model_dir
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         def filter_fc_extw(x):
             if x.op_type == "IODMA_hls":
                 burst_mode = get_by_name(x.attribute, "burstMode")

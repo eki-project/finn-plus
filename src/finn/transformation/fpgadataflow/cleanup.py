@@ -31,6 +31,7 @@ import os
 import qonnx.custom_op.registry as registry
 import shutil
 from qonnx.transformation.base import Transformation
+from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
@@ -41,7 +42,7 @@ class CleanUp(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # delete PYNQ project, if any
         vivado_pynq_proj_dir = model.get_metadata_prop("vivado_pynq_proj")
         if vivado_pynq_proj_dir is not None and os.path.isdir(vivado_pynq_proj_dir):

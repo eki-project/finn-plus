@@ -32,6 +32,7 @@ import qonnx.core.data_layout as DataLayout
 import warnings
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import SortGraph
@@ -47,7 +48,7 @@ class InferConvInpGen(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -186,7 +187,7 @@ class InferThresholdingLayer(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -277,7 +278,7 @@ class InferThresholdingLayer(Transformation):
 class InferUpsample(Transformation):
     """Convert Upsample and Resize nodes to layers to UpsampleNearestNeighbour nodes."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -374,7 +375,7 @@ class InferUpsample(Transformation):
 class InferStreamingMaxPool(Transformation):
     """Convert MaxPoolNHWC layers to StreamingMaxPool HW layers."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -434,7 +435,7 @@ class InferStreamingMaxPool(Transformation):
 class InferAddStreamsLayer(Transformation):
     """Convert any Add into a AddStreams HW layer."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -525,7 +526,7 @@ class InferAddStreamsLayer(Transformation):
 class InferDuplicateStreamsLayer(Transformation):
     """Insert a DuplicateStreams HW layer for any tensor with fanout == 2"""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -683,7 +684,7 @@ class InferChannelwiseLinearLayer(Transformation):
         else:
             return DataType["INT64"]
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -807,7 +808,7 @@ class InferChannelwiseLinearLayer(Transformation):
 class InferLabelSelectLayer(Transformation):
     """Convert any TopK into a LabelSelect HW layer."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -865,7 +866,7 @@ class InferLabelSelectLayer(Transformation):
 class InferGlobalAccPoolLayer(Transformation):
     """Convert any GlobalAveragePool into a GlobalAccPool HW layer and a scalar Mul."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -956,7 +957,7 @@ class InferPool(Transformation):
     + pool(with kernel_shape == strides), plus Transpose layers to keep the original
     data layout."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1140,7 +1141,7 @@ class InferPool(Transformation):
 class InferLookupLayer(Transformation):
     """Convert Gather nodes with constant op0 into Lookup HW layers."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1194,7 +1195,7 @@ class InferConcatLayer(Transformation):
     """Convert suitable Concat nodes (operating on last/-1 axis)
     into StreamingConcat HW layers."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1254,7 +1255,7 @@ class InferStreamingEltwise(Transformation):
     """Convert eltwise Add, Sub or Sub -> Abs to StreamingEltwise layer
     with AddEltwise, SubEltwise or AbsDiffEltwise op."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1354,7 +1355,7 @@ class InferBinaryMatrixVectorActivation(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1484,7 +1485,7 @@ class InferQuantizedMatrixVectorActivation(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1624,7 +1625,7 @@ class InferVectorVectorActivation(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False

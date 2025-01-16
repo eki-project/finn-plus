@@ -43,7 +43,7 @@ class AnnotateCycles(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         # annotate node cycles
         for node in graph.node:
