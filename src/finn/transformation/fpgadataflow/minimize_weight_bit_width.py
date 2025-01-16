@@ -28,6 +28,7 @@
 
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
@@ -40,7 +41,7 @@ class MinimizeWeightBitWidth(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         for node in model.graph.node:
             if is_fpgadataflow_node(node):
                 inst = getCustomOp(node)

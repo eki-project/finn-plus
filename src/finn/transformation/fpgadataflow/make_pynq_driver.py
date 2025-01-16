@@ -35,6 +35,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import gen_finn_dt_tensor, roundup_to_integer_multiple
+from qonnx.core.datatype import BaseDataType
 
 import finn.util
 import finn.util.data_packing as dpk
@@ -47,7 +48,7 @@ from finn.util.data_packing import (
 from . import template_driver
 
 
-def to_external_tensor(init, w_dtype):
+def to_external_tensor(init: np.array, w_dtype: BaseDataType) -> np.array:
     """Return an appropriately formatted and packed numpy byte array for given
     external parameter tensor."""
 
@@ -76,11 +77,11 @@ class MakePYNQDriver(Transformation):
     under the runtime_weights/ subfolder of the pynq_driver_dir.
     """
 
-    def __init__(self, platform):
+    def __init__(self, platform: str):
         super().__init__()
         self.platform = platform
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # create a temporary folder for the generated driver
         pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)

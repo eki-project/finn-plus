@@ -34,6 +34,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import SortGraph
 from qonnx.util.basic import get_by_name
+from qonnx.core.modelwrapper import ModelWrapper
 
 
 class InsertIODMA(Transformation):
@@ -42,10 +43,10 @@ class InsertIODMA(Transformation):
 
     def __init__(
         self,
-        max_intfwidth=32,
-        insert_input=True,
-        insert_output=True,
-        insert_extmemw=True,
+        max_intfwidth: int=32,
+        insert_input: bool=True,
+        insert_output: bool=True,
+        insert_extmemw: bool=True,
     ):
         super().__init__()
         self.insert_input = insert_input
@@ -54,7 +55,7 @@ class InsertIODMA(Transformation):
         assert 2 ** math.log2(max_intfwidth) == max_intfwidth, "max_intfwidth must be a power of 2"
         self.max_intfwidth = max_intfwidth
 
-    def get_mem_init(self, weights, pe, simd):
+    def get_mem_init(self, weights: np.array, pe: int, simd: int) -> np.array:
         """
         Returns matrix ready for pack_innermost_dim_as_hex_string with
         reverse=False (finn.util.data_packing) to return the memory init file
@@ -93,7 +94,7 @@ class InsertIODMA(Transformation):
         reshaped_w = np.flip(reshaped_w, axis=-1)
         return reshaped_w
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         modified = False
         # only makes sense for a pure fpgadataflow graph -- so we check!
         all_nodes = list(model.graph.node)

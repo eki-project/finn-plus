@@ -30,15 +30,19 @@
 import copy
 import multiprocessing as mp
 import os
+from typing import Optional
 import qonnx.custom_op.registry as registry
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_num_default_workers
+from qonnx.core.modelwrapper import ModelWrapper
+
+from onnx.onnx_ml_pb2 import NodeProto
 
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import is_hls_node
 
 
-def _codegen_single_node(node, model):
+def _codegen_single_node(node: NodeProto, model: ModelWrapper) -> None:
     """Calls C++ code generation for one node. Resulting code can be used
     to simulate node using cppsim."""
 
@@ -68,7 +72,7 @@ class PrepareCppSim(Transformation):
     that contains generated C++ code that can be used to simulate node using cppsim.
     The subsequent transformation is CompileCppSim"""
 
-    def __init__(self, num_workers=None):
+    def __init__(self, num_workers: Optional[int]=None):
         super().__init__()
         if num_workers is None:
             self._num_workers = get_num_default_workers()
@@ -78,12 +82,12 @@ class PrepareCppSim(Transformation):
         if self._num_workers == 0:
             self._num_workers = mp.cpu_count()
 
-    def prepareCppSim_node(self, node):
+    def prepareCppSim_node(self, node: NodeProto) -> tuple[NodeProto, bool]:
         if is_hls_node(node):
             _codegen_single_node(node, self.model)
         return (node, False)
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # Remove old nodes from the current model
         self.model = copy.deepcopy(model)
         old_nodes = []

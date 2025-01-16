@@ -31,6 +31,7 @@ from onnx import TensorProto
 from onnx import helper as oh
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import get_by_name
 
 
@@ -41,13 +42,13 @@ class InsertTLastMarker(Transformation):
     More information available on the TLastMarker documentation.
     """
 
-    def __init__(self, both=False, external=True, dynamic=True):
+    def __init__(self, both: bool=False, external: bool=True, dynamic: bool=True):
         super().__init__()
         self.dyniters = dynamic
         self.external = external
         self.both = both
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # TODO only makes sense for a pure fpgadataflow graph -- check!
         graph_out_name = model.graph.output[0].name
         final_node = model.find_producer(graph_out_name)

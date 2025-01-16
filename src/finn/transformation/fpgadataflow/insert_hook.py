@@ -34,17 +34,20 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 
+from qonnx.core.modelwrapper import ModelWrapper
+from onnx.onnx_ml_pb2 import NodeProto
+
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
 
-def _is_hook_node(node):
+def _is_hook_node(node: NodeProto) -> bool:
     if node.op_type in ["CheckSum_hls"]:
         return True
     else:
         return False
 
 
-def _suitable_node(node):
+def _suitable_node(node: NodeProto) -> bool:
     if node is not None:
         if is_hls_node(node) or is_rtl_node(node):
             if not _is_hook_node(node):
@@ -64,7 +67,7 @@ class InsertHook(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper]:
         list_supported_hooks = ["checksum"]
         graph = model.graph
         node_ind = -1

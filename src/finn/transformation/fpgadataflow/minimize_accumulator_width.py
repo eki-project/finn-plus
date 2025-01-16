@@ -30,6 +30,7 @@
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
@@ -42,7 +43,7 @@ class MinimizeAccumulatorWidth(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         for node_id in range(len(model.graph.node)):
             # Since InferDataTypes potentially changes node attributes in each loop iterations,
             # the for-loop cannot loop over a list of a snapshot of the graph's node protos

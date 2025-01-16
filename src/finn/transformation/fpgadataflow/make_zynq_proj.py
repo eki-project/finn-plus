@@ -29,6 +29,7 @@
 
 import os
 import subprocess
+from typing import Optional
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -48,11 +49,12 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir, pynq_native_port_width, pynq_part_map
+from finn.util.platforms import Platform
 
 from . import templates
 
 
-def collect_ip_dirs(model, ipstitch_path):
+def collect_ip_dirs(model: ModelWrapper, ipstitch_path: str) -> list[str]:
     # collect list of all IP dirs
     ip_dirs = []
     need_memstreamer = False
@@ -88,12 +90,12 @@ class MakeZYNQProject(Transformation):
     value.
     """
 
-    def __init__(self, platform, enable_debug=False):
+    def __init__(self, platform: Platform, enable_debug: bool=False):
         super().__init__()
         self.platform = platform
         self.enable_debug = 1 if enable_debug else 0
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # create a config file and empty list of xo files
         config = []
         idma_idx = 0
@@ -302,10 +304,10 @@ class ZynqBuild(Transformation):
 
     def __init__(
         self,
-        platform,
-        period_ns,
-        enable_debug=False,
-        partition_model_dir=None,
+        platform: Platform,
+        period_ns: float,
+        enable_debug: bool=False,
+        partition_model_dir: Optional[str]=None,
     ):
         super().__init__()
         self.fpga_part = pynq_part_map[platform]
@@ -315,7 +317,7 @@ class ZynqBuild(Transformation):
         self.enable_debug = enable_debug
         self.partition_model_dir = partition_model_dir
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # first infer layouts
         model = model.transform(InferDataLayouts())
         # prepare at global level, then break up into kernels

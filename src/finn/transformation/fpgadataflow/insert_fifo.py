@@ -27,23 +27,27 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from typing import Collection, Optional
 import numpy as np
 import warnings
 from onnx import helper as oh
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.core.modelwrapper import ModelWrapper
+
+from onnx.onnx_ml_pb2 import NodeProto
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
 
-def _is_fifo_node(node):
+def _is_fifo_node(node: NodeProto) -> bool:
     if node.op_type.startswith("StreamingFIFO"):
         return True
     else:
         return False
 
 
-def _suitable_node(node):
+def _suitable_node(node: NodeProto) -> bool:
     if node is not None:
         if is_fpgadataflow_node(node):
             if not _is_fifo_node(node):
@@ -56,7 +60,7 @@ def _suitable_node(node):
         return False
 
 
-def _suitable_folded_shapes(ishape, oshape):
+def _suitable_folded_shapes(ishape: Collection, oshape: Collection) -> bool:
     matching_stream_width = ishape[-1] == oshape[-1]
     matching_size = np.prod(ishape) == np.prod(oshape)
     return matching_stream_width and matching_size
@@ -85,13 +89,13 @@ class InsertFIFO(Transformation):
     The other node attributes necessary to create a FIFO node are taken from the
     node the FIFO node is inserted after: 'folded_shape' and 'dtype'"""
 
-    def __init__(self, create_shallow_fifos=False, max_qsrl_depth=None, vivado_ram_style="auto"):
+    def __init__(self, create_shallow_fifos: bool=False, max_qsrl_depth: Optional[int]=None, vivado_ram_style: str="auto"):
         super().__init__()
         self.create_shallow_fifos = create_shallow_fifos
         self.max_qsrl_depth = max_qsrl_depth
         self.vivado_ram_style = vivado_ram_style
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper]:
         graph = model.graph
         node_ind = -1
         graph_modified = False
