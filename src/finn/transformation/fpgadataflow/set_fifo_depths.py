@@ -28,11 +28,13 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import math
+from typing import Any, Optional
 import numpy as np
 import warnings
 from onnx import TensorProto, helper
 from pyverilator.util.axi_utils import reset_rtlsim, toggle_clk
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import (
@@ -42,6 +44,7 @@ from qonnx.transformation.general import (
 )
 
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -50,30 +53,30 @@ from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
-from finn.util.pyverilator import pyverilate_stitched_ip, verilator_fifosim
+from finn.util.pyverilator import pyverilate_stitched_ip, verilator_fifosim, PyVerilator
 
 
-def reset_implementation(node):
+def reset_implementation(node: HWCustomOp) -> None:
     node.set_nodeattr("code_gen_dir_ipgen", "")
     node.set_nodeattr("ipgen_path", "")
     node.set_nodeattr("ip_path", "")
 
 
-def set_signal(sim, keyw, value):
+def set_signal(sim: Optional[PyVerilator], keyw: str, value: Any) -> None:
     for i in range(len(sim.inputs)):
         input_name = sim.inputs[i][0]
         if keyw in input_name:
             sim.io[input_name] = value
 
 
-def get_signal(sim, keyw):
+def get_signal(sim: PyVerilator, keyw: str) -> Any:
     for i in range(len(sim.outputs)):
         output_name = sim.outputs[i][0]
         if keyw in output_name:
             return sim.io[output_name]
 
 
-def optimize_depth(depth):
+def optimize_depth(depth: int) -> int:
     if depth <= 2:
         return 2
     if depth <= 32:
@@ -92,10 +95,10 @@ class RemoveShallowFIFOs(Transformation):
 
     # TODO add unit test
 
-    def __init__(self, shallow_threshold=0):
+    def __init__(self, shallow_threshold: int=0):
         self.shallow_threshold = shallow_threshold
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         shallow_fifos = []
         for node in model.graph.node:
             if len(node.input) > 0:
@@ -158,11 +161,11 @@ class CapConvolutionFIFODepths(Transformation):
 
     # TODO add unit test
 
-    def __init__(self, max_qsrl_depth=256):
+    def __init__(self, max_qsrl_depth: int=256):
         super().__init__()
         self.max_qsrl_depth = max_qsrl_depth
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # TODO move this to own transformation
         for node in model.graph.node:
             # look for following pattern:
@@ -239,13 +242,13 @@ class InsertAndSetFIFODepths(Transformation):
 
     def __init__(
         self,
-        fpgapart,
-        clk_ns=10.0,
-        max_qsrl_depth=256,
-        max_depth=None,
-        swg_exception=False,
-        vivado_ram_style="auto",
-        force_python_sim=False,
+        fpgapart: str,
+        clk_ns: float=10.0,
+        max_qsrl_depth: int=256,
+        max_depth: Optional[int]=None,
+        swg_exception: bool=False,
+        vivado_ram_style: str="auto",
+        force_python_sim: bool=False,
     ):
         super().__init__()
         self.fpgapart = fpgapart
@@ -256,7 +259,7 @@ class InsertAndSetFIFODepths(Transformation):
         self.vivado_ram_style = vivado_ram_style
         self.force_python_sim = force_python_sim
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # these optypes may potentially use external weights
         # we'll temporarily change them to use decoupled mode for FIFO sizing
         extw_optypes = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl"]
@@ -495,16 +498,16 @@ class InsertAndSetFIFODepths(Transformation):
         return (model, False)
 
 
-def get_fifo_split_configs(depth, max_qsrl_depth=256, max_vivado_depth=32768):
+def get_fifo_split_configs(depth: int, max_qsrl_depth: int=256, max_vivado_depth: int=32768) -> list[tuple[int, str]]:
     """Break non-power-of-2 sized FIFO depths into several ones"""
 
-    def floor_pow2(x):
+    def floor_pow2(x: int) -> int:
         if (x & (x - 1) == 0) and x != 0:
             return x
         else:
             return 1 << ((x - 1).bit_length() - 1)
 
-    def decompose_pow2(x):
+    def decompose_pow2(x: int) -> list[int]:
         if x <= max_qsrl_depth:
             return [x]
         else:
@@ -559,12 +562,12 @@ class SplitLargeFIFOs(Transformation):
 
     """
 
-    def __init__(self, max_qsrl_depth=256, max_vivado_depth=32768):
+    def __init__(self, max_qsrl_depth: int=256, max_vivado_depth: int=32768):
         super().__init__()
         self.max_qsrl_depth = max_qsrl_depth
         self.max_vivado_depth = max_vivado_depth
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False

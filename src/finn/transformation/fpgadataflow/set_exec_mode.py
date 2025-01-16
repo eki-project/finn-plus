@@ -28,6 +28,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import qonnx.custom_op.registry as registry
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
@@ -40,11 +41,11 @@ class SetExecMode(Transformation):
     for RTL components, by default the execution of the HW op parent is
     executed."""
 
-    def __init__(self, mode):
+    def __init__(self, mode: str):
         super().__init__()
         self.mode = mode
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         for node in model.graph.node:
             op_type = node.op_type
             if is_hls_node(node) or is_rtl_node(node):

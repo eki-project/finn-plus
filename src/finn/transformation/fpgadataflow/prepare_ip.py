@@ -28,15 +28,19 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
+from typing import Union
 import qonnx.custom_op.registry as registry
 import warnings
 from qonnx.transformation.base import Transformation
+from qonnx.core.modelwrapper import ModelWrapper
+
+from onnx.onnx_ml_pb2 import NodeProto
 
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
 
-def _codegen_single_node(node, model, fpgapart, clk):
+def _codegen_single_node(node: NodeProto, model: ModelWrapper, fpgapart: str, clk: Union[float, int]) -> None:
     """Calls C++ code generation for one node. Resulting code can be used
     to generate a Vivado IP block for the node."""
 
@@ -83,12 +87,12 @@ class PrepareIP(Transformation):
 
     """
 
-    def __init__(self, fpgapart, clk):
+    def __init__(self, fpgapart: str, clk: Union[float, int]):
         super().__init__()
         self.fpgapart = fpgapart
         self.clk = clk
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         for node in model.graph.node:
             if is_hls_node(node) or is_rtl_node(node):
                 _codegen_single_node(node, model, self.fpgapart, self.clk)

@@ -29,6 +29,7 @@
 
 import os
 import qonnx.custom_op.registry as registry
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
@@ -40,7 +41,7 @@ class ReplaceVerilogRelPaths(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> ModelWrapper:
         for node in model.graph.node:
             if is_hls_node(node) or is_rtl_node(node):
                 try:

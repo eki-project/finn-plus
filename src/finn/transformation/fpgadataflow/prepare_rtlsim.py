@@ -27,8 +27,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from typing import Optional
 import qonnx.custom_op.registry as registry
 from qonnx.transformation.base import NodeLocalTransformation
+from qonnx.core.modelwrapper import ModelWrapper
+
+from onnx.onnx_ml_pb2 import NodeProto
 
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
     ReplaceVerilogRelPaths,
@@ -55,14 +59,14 @@ class PrepareRTLSim(NodeLocalTransformation):
       NodeLocalTransformation for more details.
     """
 
-    def __init__(self, num_workers=None):
+    def __init__(self, num_workers: Optional[int]=None):
         super().__init__(num_workers=num_workers)
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         model = model.transform(ReplaceVerilogRelPaths())
         return super().apply(model)
 
-    def applyNodeLocal(self, node):
+    def applyNodeLocal(self, node: NodeProto) -> tuple[NodeProto, bool]:
         op_type = node.op_type
         if is_hls_node(node) or is_rtl_node(node):
             try:

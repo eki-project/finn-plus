@@ -27,18 +27,22 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from typing import Iterator
 import numpy as np
 import warnings
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
+from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
 
-def divisors(num):
+
+def divisors(num: int) -> Iterator[int]:
     for x in range(1, num + 1):
         if (num % x) == 0:
             yield x
@@ -81,13 +85,13 @@ class SetFolding(Transformation):
       unfolded before SIMD is increased
     """
 
-    def __init__(self, target_cycles_per_frame=1000, mvau_wwidth_max=36, two_pass_relaxation=True):
+    def __init__(self, target_cycles_per_frame: int=1000, mvau_wwidth_max: int=36, two_pass_relaxation: bool=True):
         super().__init__()
         self.target_cycles_per_frame = target_cycles_per_frame
         self.mvau_wwidth_max = mvau_wwidth_max
         self.two_pass_relaxation = two_pass_relaxation
 
-    def optimize_attribute_val(self, node_inst, max_val, attr_name):
+    def optimize_attribute_val(self, node_inst: HWCustomOp, max_val: int, attr_name: str) -> None:
         node_inst.set_nodeattr(attr_name, 1)
         for val in divisors(max_val):
             node_inst.set_nodeattr(attr_name, val)
@@ -96,7 +100,7 @@ class SetFolding(Transformation):
                 # finish if target met
                 break
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         # these ops use PE parallelism, up to a max value of NumChannels
         pe_ops = [
