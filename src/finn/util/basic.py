@@ -197,7 +197,7 @@ class CppBuilder:
         process_compile.communicate()
 
 
-def launch_process_helper(args, proc_env=None, cwd=None):
+def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
     """Helper function to launch a process in a way that facilitates logging
     stdout/stderr with Python loggers.
     Returns (cmd_out, cmd_err)."""
@@ -207,7 +207,7 @@ def launch_process_helper(args, proc_env=None, cwd=None):
         args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=proc_env, cwd=cwd
     ) as proc:
         (cmd_out, cmd_err) = proc.communicate()
-    if cmd_out is not None:
+    if cmd_out is not None and print_stdout is True:
         cmd_out = cmd_out.decode("utf-8")
         sys.stdout.write(cmd_out)
     if cmd_err is not None:

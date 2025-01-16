@@ -34,6 +34,7 @@ import pdb  # NOQA
 import sys
 import time
 import traceback
+import datetime
 from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.builder.build_dataflow_config import (
@@ -146,13 +147,14 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     for transform_step in build_dataflow_steps:
         try:
             step_name = transform_step.__name__
-            print("Running step: %s [%d/%d]" % (step_name, step_num, len(build_dataflow_steps)))
+            timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')
+            print("[%s] Running step: %s [%d/%d]" % (timestamp, step_name, step_num, len(build_dataflow_steps)))
             # redirect output to logfile
             if not cfg.verbose:
                 sys.stdout = stdout_logger
                 sys.stderr = stderr_logger
                 # also log current step name to logfile
-                print("Running step: %s [%d/%d]" % (step_name, step_num, len(build_dataflow_steps)))
+                print("[%s] Running step: %s [%d/%d]" % (timestamp, step_name, step_num, len(build_dataflow_steps)))
             # run the step
             step_start = time.time()
             model = transform_step(model, cfg)
