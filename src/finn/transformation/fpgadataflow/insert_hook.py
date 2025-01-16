@@ -67,7 +67,7 @@ class InsertHook(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper]:
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         list_supported_hooks = ["checksum"]
         graph = model.graph
         node_ind = -1

@@ -27,11 +27,13 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import json
+from typing import Optional
 import warnings
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import ApplyConfig
 from qonnx.util.basic import get_by_name
+from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.analysis.fpgadataflow.floorplan_params import floorplan_params
 from finn.util.basic import make_build_dir
@@ -51,11 +53,11 @@ class Floorplan(Transformation):
 
     """
 
-    def __init__(self, floorplan=None):
+    def __init__(self, floorplan: Optional[dict]=None):
         super().__init__()
         self.user_floorplan = floorplan
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # read in a user-specified floorplan or generate a default one
         if self.user_floorplan is None:
             self.user_floorplan = model.analysis(floorplan_params)

@@ -31,11 +31,15 @@ import json
 import multiprocessing as mp
 import os
 import subprocess
+from typing import Optional, Union
 import warnings
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import get_num_default_workers
 from shutil import copytree
+
+from onnx.onnx_ml_pb2 import NodeProto
 
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
     ReplaceVerilogRelPaths,
@@ -44,7 +48,7 @@ from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
 
-def is_external_input(model, node, i):
+def is_external_input(model: ModelWrapper, node: NodeProto, i: int) -> bool:
     # indicate whether input i of node should be made external
     # True only if input is unconnected and has no initializer
     # Only esception is second input of FC layers when mem_mode is external
@@ -61,7 +65,7 @@ def is_external_input(model, node, i):
     return False
 
 
-def is_external_output(model, node, i):
+def is_external_output(model: ModelWrapper, node: NodeProto, i: int) -> bool:
     # indicate whether output i of node should be made external
     # True only if output is unconnected
     consumers = model.find_consumers(node.output[i])
@@ -86,7 +90,7 @@ class CreateStitchedIP(Transformation):
     The packaged block design IP can be found under the ip subdirectory.
     """
 
-    def __init__(self, fpgapart, clk_ns, ip_name="finn_design", vitis=False, signature=[]):
+    def __init__(self, fpgapart: str, clk_ns: Union[float, int], ip_name: str="finn_design", vitis: bool=False, signature: list[str]=[]):
         super().__init__()
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
@@ -111,7 +115,7 @@ class CreateStitchedIP(Transformation):
             "axilite": [],
         }
 
-    def connect_clk_rst(self, node):
+    def connect_clk_rst(self, node: NodeProto) -> None:
         inst_name = node.name
         node_inst = getCustomOp(node)
         clock_intf_name = node_inst.get_verilog_top_module_intf_names()["clk"][0]
@@ -140,7 +144,7 @@ class CreateStitchedIP(Transformation):
                 % (inst_name, clock_intf_name)
             )
 
-    def connect_axi(self, node):
+    def connect_axi(self, node: NodeProto) -> None:
         inst_name = node.name
         node_inst = getCustomOp(node)
         axilite_intf_name = node_inst.get_verilog_top_module_intf_names()["axilite"]
@@ -172,7 +176,7 @@ class CreateStitchedIP(Transformation):
             self.intf_names["aximm"] = [(ext_if_name, aximm_intf_name[0][1])]
             self.has_aximm = True
 
-    def connect_m_axis_external(self, node, idx=None):
+    def connect_m_axis_external(self, node: NodeProto, idx: Optional[int]=None) -> None:
         inst_name = node.name
         node_inst = getCustomOp(node)
         output_intf_names = node_inst.get_verilog_top_module_intf_names()["m_axis"]
@@ -195,7 +199,7 @@ class CreateStitchedIP(Transformation):
             )
             self.m_axis_idx += 1
 
-    def connect_s_axis_external(self, node, idx=None):
+    def connect_s_axis_external(self, node: NodeProto, idx: Optional[int]=None) -> None:
         inst_name = node.name
         node_inst = getCustomOp(node)
         input_intf_names = node_inst.get_verilog_top_module_intf_names()["s_axis"]
@@ -217,7 +221,7 @@ class CreateStitchedIP(Transformation):
             )
             self.s_axis_idx += 1
 
-    def connect_ap_none_external(self, node):
+    def connect_ap_none_external(self, node: NodeProto) -> None:
         inst_name = node.name
         node_inst = getCustomOp(node)
         input_intf_names = node_inst.get_verilog_top_module_intf_names()["ap_none"]
@@ -231,7 +235,7 @@ class CreateStitchedIP(Transformation):
                 "set_property name %s [get_bd_ports %s_0]" % (input_intf_name, input_intf_name)
             )
 
-    def insert_signature(self, checksum_count):
+    def insert_signature(self, checksum_count: str) -> None:
         signature_vlnv = "AMD:user:axi_info_top:1.0"
         signature_name = "axi_info_top0"
         self.create_cmds.append(
@@ -278,7 +282,7 @@ class CreateStitchedIP(Transformation):
         self.connect_cmds.append("set_property name s_axilite_info [get_bd_intf_ports s_axi_0]")
         self.connect_cmds.append("assign_bd_address")
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # ensure non-relative readmemh .dat files
         model = model.transform(ReplaceVerilogRelPaths())
         ip_dirs = ["list"]

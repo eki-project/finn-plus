@@ -3,6 +3,7 @@ import warnings
 from onnx import TensorProto, helper
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import auto_pad_to_explicit_padding, get_by_name
+from qonnx.core.modelwrapper import ModelWrapper
 
 
 class InferPixelPaddingDeconv(Transformation):
@@ -15,7 +16,7 @@ class InferPixelPaddingDeconv(Transformation):
     See deconv test case under tests/fpgadataflow for an example.
     """
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False

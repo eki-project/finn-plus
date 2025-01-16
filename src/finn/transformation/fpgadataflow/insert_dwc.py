@@ -27,17 +27,19 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from onnx import helper as oh
+from onnx.onnx_ml_pb2 import NodeProto
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
 
-def _is_dwc_node(node):
+def _is_dwc_node(node: NodeProto) -> bool:
     return node.op_type.startswith("StreamingDataWidthConverter")
 
 
-def _suitable_node(node):
+def _suitable_node(node: NodeProto) -> bool:
     if node is not None:
         if is_fpgadataflow_node(node):
             if _is_dwc_node(node):
@@ -60,7 +62,7 @@ class InsertDWC(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = -1
         graph_modified = False

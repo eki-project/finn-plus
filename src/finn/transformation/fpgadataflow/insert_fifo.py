@@ -95,7 +95,7 @@ class InsertFIFO(Transformation):
         self.max_qsrl_depth = max_qsrl_depth
         self.vivado_ram_style = vivado_ram_style
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper]:
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = -1
         graph_modified = False

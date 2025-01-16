@@ -29,7 +29,7 @@
 
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name
-
+from qonnx.core.modelwrapper import ModelWrapper
 
 class ExternalizeParams(Transformation):
     """Create top-level graph inputs for IODMAs serving layers where weights are
@@ -38,7 +38,7 @@ class ExternalizeParams(Transformation):
     def __init__(self):
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph_modified = False
 
         def filter_fc_extw(x):
