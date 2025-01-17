@@ -121,7 +121,7 @@ def prepare_stitched_ip_for_verilator(model):
     return vivado_stitch_proj_dir
 
 
-def verilator_fifosim(model, n_inputs, max_iters=100000000):
+def verilator_fifosim(model, n_inputs, max_iters=100000000, verbose=False):
     """Create a Verilator model of stitched IP and use a simple C++
     driver to drive the input stream. Useful for FIFO sizing, latency
     and throughput measurement."""
@@ -238,7 +238,7 @@ def verilator_fifosim(model, n_inputs, max_iters=100000000):
         f.write(" ".join(make_args) + "\n")
 
     launch_process_helper(verilator_args, cwd=build_dir)
-    launch_process_helper(make_args, proc_env=proc_env, cwd=build_dir, print_stdout=False)
+    launch_process_helper(make_args, proc_env=proc_env, cwd=build_dir, print_stdout=verbose)
 
     sim_launch_args = ["./Vfinn_design_wrapper"]
     launch_process_helper(sim_launch_args, cwd=build_dir)

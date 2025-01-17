@@ -129,6 +129,10 @@ from finn.util.basic import (
 from finn.util.pyverilator import verilator_fifosim
 from finn.util.test import execute_parent
 
+def warning_on_one_line(message, category, filename, lineno, file=None, line=None):
+    return '%s:%s: %s: %s\n' % (filename, lineno, category.__name__, message)
+
+warnings.formatwarning = warning_on_one_line
 
 def verify_step(
     model: ModelWrapper,
@@ -689,6 +693,7 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
             DataflowOutputType.STITCHED_IP in cfg.generate_outputs
         ), "rtlsim_perf needs stitched IP"
         report_dir = cfg.output_dir + "/report"
+        verbose = cfg.verbose
         os.makedirs(report_dir, exist_ok=True)
         # prepare ip-stitched rtlsim
         rtlsim_model = deepcopy(model)
@@ -719,7 +724,7 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
             rtlsim_perf_dict = throughput_test_rtlsim(rtlsim_model, rtlsim_bs)
             rtlsim_perf_dict["latency_cycles"] = rtlsim_latency_dict["cycles"]
         else:
-            rtlsim_perf_dict = verilator_fifosim(model, rtlsim_bs)
+            rtlsim_perf_dict = verilator_fifosim(model, rtlsim_bs, verbose=verbose)
             # keep keys consistent between the Python and C++-styles
             cycles = rtlsim_perf_dict["cycles"]
             clk_ns = float(model.get_metadata_prop("clk_ns"))
