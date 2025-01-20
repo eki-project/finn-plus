@@ -43,7 +43,7 @@ class RoundAndClipThresholds(Transformation):
     annotation). Runs InferDataTypes() afterward to propagate any changes to the
     quantization data types."""
 
-    def apply(self, model: ModelWrapper):  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         graph_modified = False
         for index, node in enumerate(graph.node):

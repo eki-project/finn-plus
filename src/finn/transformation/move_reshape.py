@@ -2,6 +2,7 @@ import warnings
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name
+from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
@@ -11,7 +12,7 @@ class RemoveCNVtoFCFlatten(Transformation):
     For an NHWC-Conv to FC transition, the preceding transpose is absorbed.
     The flatten operation can also be implemented by a reshape node."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         graph_modified = False
         for n in graph.node:

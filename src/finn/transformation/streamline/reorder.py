@@ -30,9 +30,11 @@ import numpy as np
 import qonnx.core.data_layout as DataLayout
 import warnings
 from copy import deepcopy
-from onnx import TensorProto
+from onnx import NodeProto, TensorProto
 from onnx import helper as oh
+from onnx.onnx_ml_pb2 import GraphProto
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.core.onnx_exec import execute_node
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -48,7 +50,7 @@ class MoveAddPastMul(Transformation):
     The aim is to have them next to each other such that they can be collapsed into
     a single add."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -105,7 +107,7 @@ class MoveScalarMulPastMatMul(Transformation):
     """Move scalar mul operations past matmul operations. We want to have muls
     next to each other such that they can be collapsed into a single mul."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -159,7 +161,7 @@ class MoveScalarAddPastMatMul(Transformation):
     """Move scalar add operations past matmul operations. We want to have adds
     next to each other such that they can be collapsed into a single add."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -216,7 +218,7 @@ class MoveAddPastConv(Transformation):
     """Move scalar and channelwise add operations past conv operations. We want to have adds
     next to each other such that they can be collapsed into a single add."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -294,7 +296,7 @@ class MoveScalarMulPastConv(Transformation):
     """Move scalar mul operations past conv operations. We want to have muls
     next to each other such that they can be collapsed into a single mul."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -343,7 +345,7 @@ class MoveScalarMulPastConvTranspose(Transformation):
     """Move scalar mul operations past ConvTranspose operations. We want to have muls
     next to each other such that they can be collapsed into a single mul."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -392,7 +394,7 @@ class MoveMulPastDWConv(Transformation):
     """Move channelwise mul operations past depthwise conv operations. We want to have muls
     next to each other such that they can be collapsed into a single mul."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -454,7 +456,7 @@ class MoveMulPastMaxPool(Transformation):
     We want to have muls next to each other such that they can be collapsed into a
     single mul."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -525,7 +527,7 @@ class MoveLinearPastEltwiseAdd(Transformation):
     where x and y are dynamic inputs, A, B, C are constant tensors (in general).
     """
 
-    def move_node(self, graph, n, prod0, prod1, node_ind):
+    def move_node(self, graph: GraphProto, n: NodeProto, prod0: NodeProto, prod1: NodeProto, node_ind: int) -> None:
         # found! move one of the muls to output, remove the other one
         lin0_in0 = prod0.input[0]
         lin1_in0 = prod1.input[0]
@@ -545,7 +547,7 @@ class MoveLinearPastEltwiseAdd(Transformation):
         graph.node.remove(prod0)
         graph.node.insert(node_ind - 2, prod0)
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -606,7 +608,7 @@ class MoveScalarLinearPastInvariants(Transformation):
     GlobalAveragePool
     """
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -681,7 +683,7 @@ class MakeMaxPoolNHWC(Transformation):
     """Convert (MaxPool, NHWCTranspose) into (NHWCTranspose, MaxPoolNHWC)
     and (NCHWTranspose, MaxPool) into (MaxPoolNHWC, NCHWTranspose)."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -755,7 +757,7 @@ class MakeScaleResizeNHWC(Transformation):
     from NCHW to NHWC.
     """
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         for n in graph.node:
@@ -830,11 +832,11 @@ class MoveOpPastFork(Transformation):
     can be merged with nodes in the branches
     """
 
-    def __init__(self, op_name_list):
+    def __init__(self, op_name_list: list[str]) -> None:
         super().__init__()
         self.ops_to_move = op_name_list
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         graph_modified = False
         nodes = [n for n in graph.node]
@@ -899,29 +901,29 @@ class MoveOpPastFork(Transformation):
 
 
 class MoveAddPastFork(MoveOpPastFork):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(["Add"])
 
 
 class MoveMulPastFork(MoveOpPastFork):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(["Mul"])
 
 
 class MoveLinearPastFork(MoveOpPastFork):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(["Add", "Mul"])
 
 
 class MoveTransposePastFork(MoveOpPastFork):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(["Transpose"])
 
 
 class MoveMaxPoolPastMultiThreshold(Transformation):
     """Move MaxPool nodes past MultiThreshold nodes on linear segments of the graph."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -984,7 +986,7 @@ class MoveFlattenPastTopK(Transformation):
     """Move flatten node past a succeeding topk node, if the "axis" attribute in topk
     is set to -1 and the data layout before the flatten is NHWC with H=W=1"""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1044,7 +1046,7 @@ class MoveFlattenPastTopK(Transformation):
 class MoveFlattenPastAffine(Transformation):
     """Moves a node that implements a (1, -1) reshape past a MatMul, Mul or Add node."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         graph_modified = False
         node_ind = 0
@@ -1130,7 +1132,7 @@ class MoveFlattenPastAffine(Transformation):
 class MoveTransposePastScalarMul(Transformation):
     """Moves a Transpose node past a scalar Mul node"""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1197,12 +1199,12 @@ class MoveIdenticalOpPastJoinOp(Transformation):
     the join node.
     """
 
-    def __init__(self, identical_op_list, join_node_list):
+    def __init__(self, identical_op_list: list[str], join_node_list: list[str]) -> None:
         super().__init__()
         self.ops_to_move = identical_op_list
         self.join_node_op = join_node_list
 
-    def move_node(self, model, n, prod0, prod1):
+    def move_node(self, model: ModelWrapper, n: NodeProto, prod0: NodeProto, prod1: NodeProto) -> None:
         # Found! move one of the identical_ops to output, remove the other one
         identical_op0_in0 = prod0.input[0]
         identical_op1_in0 = prod1.input[0]
@@ -1226,7 +1228,7 @@ class MoveIdenticalOpPastJoinOp(Transformation):
 
         model.graph.node.remove(prod1)
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         graph_modified = False
         for n in graph.node:
@@ -1256,5 +1258,5 @@ class MoveIdenticalOpPastJoinOp(Transformation):
 
 
 class MoveTransposePastJoinAdd(MoveIdenticalOpPastJoinOp):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(["Transpose"], ["Add"])

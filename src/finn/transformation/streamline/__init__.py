@@ -40,6 +40,7 @@ from qonnx.transformation.general import (
 )
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.remove import RemoveIdentityOps
+from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.transformation.streamline.absorb import (
     Absorb1BitMulIntoConv,
@@ -69,7 +70,7 @@ from finn.transformation.streamline.sign_to_thres import ConvertSignToThres
 class Streamline(Transformation):
     """Apply the streamlining transform, see arXiv:1709.04060."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         streamline_transformations = [
             ConvertSubToAdd(),
             ConvertDivToMul(),

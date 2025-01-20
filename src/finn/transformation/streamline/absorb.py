@@ -26,11 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from typing import Collection
 import numpy as np
 import qonnx.core.data_layout as DataLayout
 import warnings
 from onnx import helper as oh
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
@@ -42,7 +44,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
     """Absorb scalar bias originating from signed int export back into
     MultiThreshold and re-evaluate the output datatype."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -104,7 +106,7 @@ class AbsorbAddIntoMultiThreshold(Transformation):
     """Absorb preceding Add ops into MultiThreshold by updating the threshold
     values. Only scalar/1D add vectors can be absorbed."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -141,7 +143,7 @@ class AbsorbMulIntoMultiThreshold(Transformation):
     """Absorb preceding Mul ops into MultiThreshold by updating the threshold
     values. Only *positive* scalar/1D mul vectors can be absorbed."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -180,7 +182,7 @@ class FactorOutMulSignMagnitude(Transformation):
     where the first node is a bipolar vector (of signs) and the second is a
     vector of magnitudes."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -218,7 +220,7 @@ class Absorb1BitMulIntoMatMul(Transformation):
     """Absorb bipolar or binary multiplications into the preciding matrix
     multiply."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -254,7 +256,7 @@ class Absorb1BitMulIntoMatMul(Transformation):
 class Absorb1BitMulIntoConv(Transformation):
     """Absorb bipolar or binary multiplications into the preciding convolution."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -296,7 +298,7 @@ class AbsorbTransposeIntoMultiThreshold(Transformation):
     """For (NCHWTranspose -> MultiThreshold) move Transpose past MultiThreshold
     and set its data_layout mode to NHWC."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -354,7 +356,7 @@ class AbsorbTransposeIntoFlatten(Transformation):
     dimension stays the same. Can also be applied if flatten is implemented implicitly
     by a reshape node with shape [1, -1] and the first input dimension is 1"""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         graph_modified = False
         node_ind = 0
@@ -415,7 +417,7 @@ class AbsorbScalarMulAddIntoTopK(Transformation):
     """Remove mul/add node prior to topk node if the op is scalar. Note that
     the TopK output probabilities will change, but the indices won't."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -454,7 +456,7 @@ class AbsorbConsecutiveTransposes(Transformation):
     """Remove (Transpose -> Transpose) patterns when the input and output
     of the pattern have the same layout."""
 
-    def are_opposite_permutations(self, perms1, perms2):
+    def are_opposite_permutations(self, perms1: Collection, perms2: Collection) -> bool:
         if len(perms1) != len(perms2):
             return False
         assert 0 <= max(perms2) < len(perms2), "invalid permutation"
@@ -466,7 +468,7 @@ class AbsorbConsecutiveTransposes(Transformation):
 
         return True
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         graph_modified = False
         for node in graph.node:
@@ -514,7 +516,7 @@ class AbsorbTransposeIntoResize(Transformation):
     """For (NCHWTranspose -> Resize) move Transpose past Resize and
     change the Resize node's attributes accordingly."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False

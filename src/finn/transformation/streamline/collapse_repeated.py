@@ -26,8 +26,10 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from typing import Any, Callable
 from onnx import helper as oh
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_shapes import InferShapes
 
@@ -37,12 +39,12 @@ class CollapseRepeatedOp(Transformation):
     a single operation. make_collapsed_param_fxn must take two tensors and
     return a tensor which gives the equivalent result using a single op."""
 
-    def __init__(self, op_name, make_collapsed_param_fxn):
+    def __init__(self, op_name: str, make_collapsed_param_fxn: Callable[[Any, Any], Any]) -> None:
         super().__init__()
         self.op_name = op_name
         self.make_collapsed_param_fxn = make_collapsed_param_fxn
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -97,12 +99,12 @@ class CollapseRepeatedOp(Transformation):
 class CollapseRepeatedAdd(CollapseRepeatedOp):
     """Collapse repeated adder node into a single operation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("Add", lambda x, y: y + x)
 
 
 class CollapseRepeatedMul(CollapseRepeatedOp):
     """Collapse repeated multiplier node into a single operation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("Mul", lambda x, y: y * x)

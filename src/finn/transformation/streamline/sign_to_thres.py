@@ -29,13 +29,14 @@
 import numpy as np
 from onnx import helper as oh
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 
 
 class ConvertSignToThres(Transformation):
     """Convert Sign node instances to MultiThreshold with threshold at 0."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         graph = model.graph
         graph_modified = False
         node_ind = 0
