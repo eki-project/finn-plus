@@ -261,7 +261,7 @@ class FactorOutMulSignMagnitude(Transformation):
 
 
 class Absorb1BitMulIntoMatMul(Transformation):
-    """Absorb bipolar or binary multiplications into the preciding matrix
+    """Absorb bipolar or binary multiplications into the preceding matrix
     multiply."""
 
     def apply(self, model):
@@ -270,16 +270,28 @@ class Absorb1BitMulIntoMatMul(Transformation):
         graph_modified = False
         for n in graph.node:
             node_ind += 1
-            if n.op_type == "MatMul":
+            # Note: Join-node test is implicitly covered by testing for the
+            # initializer below
+            # Note: This cannot handle fork-nodes, as only the first consumer is
+            # considered below.
+            # TODO: Fork-nodes could be handled if the muls are the same in all
+            #  branches, but this is not checked nor rewired at all right now.
+            if n.op_type == "MatMul" and not model.is_fork_node(n):
                 matmul_weight_name = n.input[1]
                 W = model.get_initializer(matmul_weight_name)
                 Wdt = model.get_tensor_datatype(matmul_weight_name)
-                assert W is not None, "Initializer for matmul weights is not set."
+                # Just skip matmuls with non-existing weight initializers
+                if W is None:
+                    continue
                 consumer = model.find_consumer(n.output[0])
+                # Note: Join-node test is implicitly covered by testing for the
+                # initializer below
                 if consumer is not None and consumer.op_type == "Mul":
                     mul_weight_name = consumer.input[1]
                     A = model.get_initializer(mul_weight_name)
-                    assert A is not None, "Initializer for mul weights is not set."
+                    # Just skip muls with non-existing scale initializers
+                    if A is None:
+                        continue
                     is_1bit = model.get_tensor_datatype(mul_weight_name).bitwidth() == 1
                     if is_1bit:
                         Wnew = A * W
@@ -298,7 +310,7 @@ class Absorb1BitMulIntoMatMul(Transformation):
 
 
 class Absorb1BitMulIntoConv(Transformation):
-    """Absorb bipolar or binary multiplications into the preciding convolution."""
+    """Absorb bipolar or binary multiplications into the preceding convolution."""
 
     def apply(self, model):
         graph = model.graph
@@ -306,16 +318,28 @@ class Absorb1BitMulIntoConv(Transformation):
         graph_modified = False
         for n in graph.node:
             node_ind += 1
-            if n.op_type == "Conv":
+            # Note: Join-node test is implicitly covered by testing for the
+            # initializer below
+            # Note: This cannot handle fork-nodes, as only the first consumer is
+            # considered below.
+            # TODO: Fork-nodes could be handled if the muls are the same in all
+            #  branches, but this is not checked nor rewired at all right now.
+            if n.op_type == "Conv" and not model.is_fork_node(n):
                 conv_weight_name = n.input[1]
                 W = model.get_initializer(conv_weight_name)
                 Wdt = model.get_tensor_datatype(conv_weight_name)
-                assert W is not None, "Initializer for conv weights is not set."
+                # Just skip convs with non-existing weight initializers
+                if W is None:
+                    continue
                 consumer = model.find_consumer(n.output[0])
+                # Note: Join-node test is implicitly covered by testing for the
+                # initializer below
                 if consumer is not None and consumer.op_type == "Mul":
                     mul_weight_name = consumer.input[1]
                     A = model.get_initializer(mul_weight_name)
-                    assert A is not None, "Initializer for mul weights is not set."
+                    # Just skip muls with non-existing scale initializers
+                    if A is None:
+                        continue
                     is_1bit = model.get_tensor_datatype(mul_weight_name).bitwidth() == 1
                     is_scalar = np.prod(A.shape) == 1
                     actual_ndims = len(tuple(filter(lambda x: x > 1, A.shape)))
