@@ -79,7 +79,7 @@ Singularity Image Build:
     - echo 'y' | docker builder prune
     - echo 'y' | apptainer cache clean
 
-FINN Test Suite:
+FINN Test Suite 2022.2:
   id_tokens:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
@@ -94,9 +94,15 @@ FINN Test Suite:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p normal -t $SLURM_TIMEOUT --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --mem 128G"
     PYTEST_PARALLEL: "$CPU_CORES"
     FINN_SINGULARITY: "$PATH_SINGULARITY_IMG/finn-plus/finn_dev.sif"
+    FINN_XILINX_VERSION: "2022.2"
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
     - module load system singularity
   script:
     - ./run-docker.sh quicktest.sh $TEST_SUITE
+
+FINN Test Suite 2024.1:
+  extends: FINN Test Suite 2022.2
+  variables:
+    FINN_XILINX_VERSION: "2024.1"
