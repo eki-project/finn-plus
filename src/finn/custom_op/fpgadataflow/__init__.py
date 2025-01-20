@@ -87,6 +87,12 @@ from finn.custom_op.fpgadataflow.thresholding import Thresholding
 from finn.custom_op.fpgadataflow.upsampler import UpsampleNearestNeighbour
 from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU
 
+from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
+from finn.custom_op.fpgadataflow.attention_heads import (
+    SplitMultiHeads, MergeMultiHeads
+)
+from finn.custom_op.fpgadataflow.replicate_stream import ReplicateStream
+
 # make sure new HLSCustomOp subclasses are imported here so that they get
 # registered and plug in correctly into the infrastructure
 custom_op["MVAU"] = MVAU
@@ -111,3 +117,7 @@ custom_op["StreamingDataWidthConverter"] = StreamingDataWidthConverter
 custom_op["StreamingEltwise"] = StreamingEltwise
 custom_op["StreamingMaxPool"] = StreamingMaxPool
 custom_op["UpsampleNearestNeighbour"] = UpsampleNearestNeighbour
+custom_op["ScaledDotProductAttention"] = ScaledDotProductAttention
+custom_op["SplitMultiHeads"] = SplitMultiHeads
+custom_op["MergeMultiHeads"] = MergeMultiHeads
+custom_op["ReplicateStream"] = ReplicateStream
