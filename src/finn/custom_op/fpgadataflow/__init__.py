@@ -54,6 +54,11 @@ def register_custom_op(cls):
 # Import the submodule containing specializations of ElementwiseBinaryOperation
 # Note: This will automatically register all decorated classes into this domain
 import finn.custom_op.fpgadataflow.elementwise_binary
+# Import the submodule containing the Squeeze operation
+# Note: This will automatically register all decorated classes into this domain
+import finn.custom_op.fpgadataflow.squeeze
+# Import the submodule containing the Unsqueeze operation
+import finn.custom_op.fpgadataflow.unsqueeze
 from finn.custom_op.fpgadataflow.addstreams import AddStreams
 from finn.custom_op.fpgadataflow.channelwise_op import ChannelwiseOp
 from finn.custom_op.fpgadataflow.concat import StreamingConcat

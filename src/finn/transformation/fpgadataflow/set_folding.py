@@ -121,6 +121,8 @@ class SetFolding(Transformation):
             "Thresholding_hls",
             "Thresholding_rtl",
             *ELEMENTWISE_BINARY_OPS,
+            "Squeeze_hls",
+            "Unsqueeze_hls"
         ]
         # these ops use SIMD parallelism, up to a max value of NumChannels
         # ConvolutionInputGenerator* has a special case when depthwise=1
