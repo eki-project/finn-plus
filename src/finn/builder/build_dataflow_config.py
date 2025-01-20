@@ -34,7 +34,8 @@ from dataclasses_json import dataclass_json
 from enum import Enum
 from typing import Any, List, Optional
 
-from finn.util.basic import alveo_default_platform, alveo_part_map, pynq_part_map
+from finn.util.basic import alveo_default_platform, part_map
+
 
 class AutoFIFOSizingMethod(str, Enum):
     "Select the type of automatic FIFO sizing strategy."
