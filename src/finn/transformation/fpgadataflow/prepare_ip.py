@@ -29,7 +29,6 @@
 
 import os
 import qonnx.custom_op.registry as registry
-import warnings
 from qonnx.transformation.base import Transformation
 
 from finn.util.basic import make_build_dir

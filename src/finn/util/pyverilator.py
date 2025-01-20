@@ -121,7 +121,9 @@ def prepare_stitched_ip_for_verilator(model):
     return vivado_stitch_proj_dir
 
 
-def verilator_fifosim(model, n_inputs, max_iters=100000000, verbose=False, disable_common_warnings=True):
+def verilator_fifosim(
+    model, n_inputs, max_iters=100000000, verbose=False, disable_common_warnings=True
+):
     """Create a Verilator model of stitched IP and use a simple C++
     driver to drive the input stream. Useful for FIFO sizing, latency
     and throughput measurement."""
@@ -188,8 +190,8 @@ def verilator_fifosim(model, n_inputs, max_iters=100000000, verbose=False, disab
     xpm_fifo = f"{vivado_path}/data/ip/xpm/xpm_fifo/hdl/xpm_fifo.sv"
     swg_pkg = os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_pkg.sv"
     verilog_file_arg = [swg_pkg, "finn_design_wrapper.v", xpm_memory, xpm_cdc, xpm_fifo]
-    
-    additional_verilator_args=[]
+
+    additional_verilator_args = []
     # disable common verilator warnings that should be harmless but commonly occur
     # in large quantities for Vivado HLS-generated verilog code
     if disable_common_warnings:
@@ -198,7 +200,7 @@ def verilator_fifosim(model, n_inputs, max_iters=100000000, verbose=False, disab
         additional_verilator_args += ["-Wno-IMPLICIT"]
         additional_verilator_args += ["-Wno-WIDTH"]
         additional_verilator_args += ["-Wno-COMBDLY"]
-        
+
     xpm_args.extend(additional_verilator_args)
 
     verilator_args = [
