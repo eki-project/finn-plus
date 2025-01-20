@@ -6,7 +6,7 @@ stages:
 variables:
   TEST_SUITE:
     description: "Select test suite to run"
-    value: "quicktest"
+    value: "full"
     options:
       - "quicktest"
       - "main"
@@ -18,7 +18,7 @@ variables:
     value: "8"
   SLURM_TIMEOUT:
     description: "Select SLURM timeout"
-    value: "0-24" # [days-hours]
+    value: "3-0" # [days-hours]
 
 workflow:
   rules:
