@@ -141,6 +141,10 @@ RUN pip install tclwrapper==0.0.1
 # assure that we have the right setuptools version
 RUN pip install setuptools==68.2.2
 
+# create a file to indicate presence of a Docker container
+# for compatibility between pyXSI installation and Singularity setup
+RUN touch /.dockerenv
+
 # extra environment variables for FINN compiler
 ENV VIVADO_IP_CACHE "/tmp/vivado_ip_cache"
 
