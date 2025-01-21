@@ -102,6 +102,27 @@ class VerificationStepType(str, Enum):
     STITCHED_IP_RTLSIM = "stitched_ip_rtlsim"
 
 
+class PartitioningStrategy(Enum):
+    # Strategy to partition based on the estimated resource
+    # utilization of the layers
+    RESOURCE_UTILIZATION = 0
+
+    # Partition based on the number of layers per device
+    # Much simpler but usable in case no estimates
+    # are available
+    LAYER_COUNT = 1
+
+
+@dataclass
+class PartitioningConfiguration:
+    # The number of FPGAs to use for Multi-FPGA. If left on -1,
+    # this will be determined automatically
+    num_fpgas: int = -1
+
+    # What strategy to use to partition the dataflow graph
+    partition_strategy: PartitioningStrategy = PartitioningStrategy.RESOURCE_UTILIZATION
+
+
 #: List of steps that will be run as part of the standard dataflow build, in the
 #: specified order. Use the `steps` as part of build config to restrict which
 #: steps will be run.
