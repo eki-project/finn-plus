@@ -91,7 +91,7 @@ FINN Test Suite 2022.2:
     # Otherwise run if there was no prior failure
     - when: on_success
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p normal -t $SLURM_TIMEOUT --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --mem 128G"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p normal -t $SLURM_TIMEOUT --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --mem 192G --exclusive"
     PYTEST_PARALLEL: "$CPU_CORES"
     FINN_SINGULARITY: "$PATH_SINGULARITY_IMG/finn-plus/finn_dev.sif"
     FINN_XILINX_VERSION: "2022.2"

@@ -12,7 +12,8 @@ elif [ $1 = "main" ]; then
   pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n $PYTEST_PARALLEL
 elif [ $1 = "rtlsim" ]; then
   echo "Running rtlsim test suite with pytest-parallel"
-  pytest -k rtlsim --workers $PYTEST_PARALLEL
+# there are end2end tests which also have rtlsim in their name, but not vice versa
+  pytest -k 'rtlsim and not end2end' --workers $PYTEST_PARALLEL
 elif [ $1 = "end2end" ]; then
   echo "Running end2end test suite with no parallelism"
 # filtering by name "end2end" is not sufficient, as the bnn tests need to be selected by a marker
