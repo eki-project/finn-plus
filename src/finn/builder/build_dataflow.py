@@ -45,22 +45,25 @@ from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
 
 
 # adapted from https://stackoverflow.com/a/39215961
-class StreamToLogger(object):
+class PrintLogger(object):
     """
-    Fake file-like stream object that redirects writes to a logger instance.
+    Create a custom stream handler that writes to both the console and the log file.
     """
 
-    def __init__(self, logger, level):
+    def __init__(self, logger, level, originalstream):
         self.logger = logger
         self.level = level
+        self.console = originalstream
         self.linebuf = ""
 
     def write(self, buf):
         for line in buf.rstrip().splitlines():
             self.logger.log(self.level, line.rstrip())
+        timestamp = datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S")
+        self.console.write(f"[{timestamp}] " + buf)
 
     def flush(self):
-        pass
+        self.console.flush()
 
 
 def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True):
@@ -140,34 +143,17 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         filemode="a",
     )
     log = logging.getLogger("build_dataflow")
-    stdout_logger = StreamToLogger(log, logging.INFO)
-    stderr_logger = StreamToLogger(log, logging.ERROR)
-    stdout_orig = sys.stdout
-    stderr_orig = sys.stderr
+    sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
+    sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
     for transform_step in build_dataflow_steps:
         try:
             step_name = transform_step.__name__
-            timestamp = datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S")
-            print(
-                "[%s] Running step: %s [%d/%d]"
-                % (timestamp, step_name, step_num, len(build_dataflow_steps))
-            )
-            # redirect output to logfile
-            if not cfg.verbose:
-                sys.stdout = stdout_logger
-                sys.stderr = stderr_logger
-                # also log current step name to logfile
-                print(
-                    "[%s] Running step: %s [%d/%d]"
-                    % (timestamp, step_name, step_num, len(build_dataflow_steps))
-                )
+            print(f"Running step: {step_name} [{step_num}/{len(build_dataflow_steps)}]")
+
             # run the step
             step_start = time.time()
             model = transform_step(model, cfg)
             step_end = time.time()
-            # restore stdout/stderr
-            sys.stdout = stdout_orig
-            sys.stderr = stderr_orig
             time_per_step[step_name] = step_end - step_start
             chkpt_name = "%s.onnx" % (step_name)
             if cfg.save_intermediate_models:
@@ -177,9 +163,6 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
                 model.save("%s/%s" % (intermediate_model_dir, chkpt_name))
             step_num += 1
         except:  # noqa
-            # restore stdout/stderr
-            sys.stdout = stdout_orig
-            sys.stderr = stderr_orig
             # print exception info and traceback
             extype, value, tb = sys.exc_info()
             traceback.print_exc()
