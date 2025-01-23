@@ -34,12 +34,8 @@ from pyverilator.util.axi_utils import _read_signal, reset_rtlsim, rtlsim_multi_
 from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 
+import finn.util.verilator_helper as verilator
 from finn.util.basic import pyverilate_get_liveness_threshold_cycles
-
-try:
-    from pyverilator import PyVerilator
-except ModuleNotFoundError:
-    PyVerilator = None
 
 log = logging.getLogger("hwcustomop")
 
@@ -135,7 +131,7 @@ class HWCustomOp(CustomOp):
         rtlsim_so = self.get_nodeattr("rtlsim_so")
         assert os.path.isfile(rtlsim_so), "Cannot find rtlsim library."
         # create PyVerilator wrapper
-        sim = PyVerilator(rtlsim_so)
+        sim = verilator.buildPyVerilator(rtlsim_so)
         return sim
 
     def node_res_estimation(self, fpgapart):

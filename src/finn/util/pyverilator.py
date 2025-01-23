@@ -29,7 +29,7 @@
 import numpy as np
 import os
 import shutil
-from pyverilator import PyVerilator
+import verilator_helper
 from qonnx.custom_op.registry import getCustomOp
 
 from finn.util.basic import (
@@ -191,17 +191,7 @@ def verilator_fifosim(
     swg_pkg = os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_pkg.sv"
     verilog_file_arg = [swg_pkg, "finn_design_wrapper.v", xpm_memory, xpm_cdc, xpm_fifo]
 
-    additional_verilator_args = []
-    # disable common verilator warnings that should be harmless but commonly occur
-    # in large quantities for Vivado HLS-generated verilog code
-    if disable_common_warnings:
-        additional_verilator_args += ["-Wno-STMTDLY"]
-        additional_verilator_args += ["-Wno-PINMISSING"]
-        additional_verilator_args += ["-Wno-IMPLICIT"]
-        additional_verilator_args += ["-Wno-WIDTH"]
-        additional_verilator_args += ["-Wno-COMBDLY"]
-
-    xpm_args.extend(additional_verilator_args)
+    xpm_args.extend(verilator_helper.commonVerilatorArgs)
 
     verilator_args = [
         "perl",
@@ -284,8 +274,7 @@ def pyverilate_stitched_ip(
         (which can be very verbose otherwise)
 
     """
-    if PyVerilator is None:
-        raise ImportError("Installation of PyVerilator is required.")
+    verilator_helper.checkForVerilator()
 
     vivado_stitch_proj_dir = prepare_stitched_ip_for_verilator(model)
     verilog_header_dir = vivado_stitch_proj_dir + "/pyverilator_vh"
@@ -298,14 +287,6 @@ def pyverilate_stitched_ip(
     build_dir = make_build_dir("pyverilator_ipstitched_")
 
     verilator_args = []
-    # disable common verilator warnings that should be harmless but commonly occur
-    # in large quantities for Vivado HLS-generated verilog code
-    if disable_common_warnings:
-        verilator_args += ["-Wno-STMTDLY"]
-        verilator_args += ["-Wno-PINMISSING"]
-        verilator_args += ["-Wno-IMPLICIT"]
-        verilator_args += ["-Wno-WIDTH"]
-        verilator_args += ["-Wno-COMBDLY"]
     # force inlining of all submodules to ensure we can read internal signals properly
     if read_internal_signals:
         verilator_args += ["--inline-mult", "0"]
@@ -322,7 +303,7 @@ def pyverilate_stitched_ip(
 
     swg_pkg = os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_pkg.sv"
 
-    sim = PyVerilator.build(
+    sim = verilator_helper.buildPyVerilator(
         [swg_pkg, top_module_file_name, xpm_fifo, xpm_memory, xpm_cdc],
         verilog_path=[vivado_stitch_proj_dir, verilog_header_dir],
         build_dir=build_dir,
@@ -332,4 +313,5 @@ def pyverilate_stitched_ip(
         read_internal_signals=read_internal_signals,
         extra_args=verilator_args + extra_verilator_args,
     )
+
     return sim

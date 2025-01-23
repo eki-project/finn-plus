@@ -32,15 +32,11 @@ import subprocess
 from abc import ABC, abstractmethod
 from qonnx.core.datatype import DataType
 
+import finn.util.verilator_helper as verilator
 from finn.custom_op.fpgadataflow import templates
 from finn.util.basic import CppBuilder, get_rtlsim_trace_depth, make_build_dir
 from finn.util.hls import CallHLS
 from finn.util.pyverilator import make_single_source_file
-
-try:
-    from pyverilator import PyVerilator
-except ModuleNotFoundError:
-    PyVerilator = None
 
 
 class HLSBackend(ABC):
@@ -89,8 +85,7 @@ class HLSBackend(ABC):
         for this node, sets the rtlsim_so attribute to its path and returns
         a PyVerilator wrapper around it."""
 
-        if PyVerilator is None:
-            raise ImportError("Installation of PyVerilator is required.")
+        verilator.checkForVerilator()
 
         verilog_files = self.get_all_verilog_filenames(abspath=True)
         single_src_dir = make_build_dir("rtlsim_" + self.onnx_node.name + "_")
@@ -99,7 +94,7 @@ class HLSBackend(ABC):
         make_single_source_file(verilog_files, target_file)
 
         # build the Verilator emu library
-        sim = PyVerilator.build(
+        sim = verilator.buildPyVerilator(
             self.get_verilog_top_module_name() + ".v",
             build_dir=tmp_build_dir,
             verilog_path=[single_src_dir],
