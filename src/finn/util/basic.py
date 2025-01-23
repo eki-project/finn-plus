@@ -26,9 +26,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import os
 import subprocess
-import sys
 import tempfile
 from qonnx.util.basic import roundup_to_integer_multiple
 
@@ -197,6 +197,9 @@ class CppBuilder:
         process_compile.communicate()
 
 
+log = logging.getLogger("launch_process_helper")
+
+
 def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
     """Helper function to launch a process in a way that facilitates logging
     stdout/stderr with Python loggers.
@@ -209,10 +212,10 @@ def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
         (cmd_out, cmd_err) = proc.communicate()
     if cmd_out is not None and print_stdout is True:
         cmd_out = cmd_out.decode("utf-8")
-        sys.stdout.write(cmd_out)
+        log.info(cmd_out)
     if cmd_err is not None:
         cmd_err = cmd_err.decode("utf-8")
-        sys.stderr.write(cmd_err)
+        log.critical(cmd_err)
     return (cmd_out, cmd_err)
 
 
