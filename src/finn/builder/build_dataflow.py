@@ -114,37 +114,42 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     """
     # if start_step is specified, override the input model
     if cfg.start_step is None:
-        print("Building dataflow accelerator from " + model_filename)
+        print(f"Building dataflow accelerator from {model_filename}")
         model = ModelWrapper(model_filename)
     else:
         intermediate_model_filename = resolve_step_filename(cfg.start_step, cfg, -1)
-        print(
-            "Building dataflow accelerator from intermediate checkpoint"
-            + intermediate_model_filename
+        out = (
+            f"Building dataflow accelerator from intermediate"
+            f" checkpoint {intermediate_model_filename}"
         )
+        print(out)
         model = ModelWrapper(intermediate_model_filename)
     assert type(model) is ModelWrapper
     finn_build_dir = os.environ["FINN_BUILD_DIR"]
 
-    print("Intermediate outputs will be generated in " + finn_build_dir)
-    print("Final outputs will be generated in " + cfg.output_dir)
-    print("Build log is at " + cfg.output_dir + "/build_dataflow.log")
+    print(f"Intermediate outputs will be generated in {finn_build_dir}")
+    print(f"Final outputs will be generated in {cfg.output_dir}")
+    print(f"Build log is at {cfg.output_dir}/build_dataflow.log")
     # create the output dir if it doesn't exist
-    if not os.path.exists(cfg.output_dir):
-        os.makedirs(cfg.output_dir)
-    step_num = 1
-    time_per_step = dict()
-    build_dataflow_steps = resolve_build_steps(cfg)
+    os.makedirs(cfg.output_dir, exist_ok=True)
+
     # set up logger
     logging.basicConfig(
         level=logging.DEBUG,
         format="[%(asctime)s] %(message)s",
-        filename=cfg.output_dir + "/build_dataflow.log",
+        filename=os.path.join(cfg.output_dir, "build_dataflow.log"),
         filemode="a",
     )
     log = logging.getLogger("build_dataflow")
+    # mirror stdout and stderr to log
     sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
     sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
+
+    # start processing
+    step_num = 1
+    time_per_step = dict()
+    build_dataflow_steps = resolve_build_steps(cfg)
+
     for transform_step in build_dataflow_steps:
         try:
             step_name = transform_step.__name__
@@ -155,16 +160,16 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             model = transform_step(model, cfg)
             step_end = time.time()
             time_per_step[step_name] = step_end - step_start
-            chkpt_name = "%s.onnx" % (step_name)
+            chkpt_name = f"{step_name}.onnx"
             if cfg.save_intermediate_models:
-                intermediate_model_dir = cfg.output_dir + "/intermediate_models"
+                intermediate_model_dir = os.path.join(cfg.output_dir, "intermediate_models")
                 if not os.path.exists(intermediate_model_dir):
                     os.makedirs(intermediate_model_dir)
-                model.save("%s/%s" % (intermediate_model_dir, chkpt_name))
+                model.save(os.path.join(intermediate_model_dir, chkpt_name))
             step_num += 1
         except:  # noqa
             # print exception info and traceback
-            extype, value, tb = sys.exc_info()
+            _, _, tb = sys.exc_info()
             traceback.print_exc()
             # start postmortem debug if configured
             if cfg.enable_build_pdb_debug:
@@ -174,7 +179,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             print("Build failed")
             return -1
 
-    with open(cfg.output_dir + "/time_per_step.json", "w") as f:
+    with open(os.path.join(cfg.output_dir, "time_per_step.json"), "w") as f:
         json.dump(time_per_step, f, indent=2)
     print("Completed successfully")
     return 0
