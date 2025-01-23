@@ -25,12 +25,14 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+import logging
 import math
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+log = logging.getLogger("streamingfifo")
 
 
 class StreamingFIFO(HWCustomOp):
@@ -86,7 +88,7 @@ class StreamingFIFO(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("dataType", idt.name)
         # data type stays the same
         model.set_tensor_datatype(node.output[0], idt)
@@ -106,7 +108,7 @@ class StreamingFIFO(HWCustomOp):
         depth = self.get_adjusted_depth()
         assert depth >= 1, """Depth is too low"""
         if depth > 256 and self.get_nodeattr("impl_style") == "rtl":
-            warnings.warn("Depth is high, set between 2 and 256 for efficient SRL implementation")
+            log.warning("Depth is high, set between 2 and 256 for efficient SRL implementation")
         return self.get_nodeattr("normal_shape")
 
     def get_normal_output_shape(self, ind=0):

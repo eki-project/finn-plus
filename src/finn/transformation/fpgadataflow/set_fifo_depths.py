@@ -27,9 +27,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import math
 import numpy as np
-import warnings
 from onnx import TensorProto, helper
 from pyverilator.util.axi_utils import reset_rtlsim, toggle_clk
 from qonnx.core.datatype import DataType
@@ -51,6 +51,8 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.pyverilator import pyverilate_stitched_ip, verilator_fifosim
+
+log = logging.getLogger("set_fifo_depths")
 
 
 def reset_implementation(node):
@@ -291,9 +293,9 @@ class InsertAndSetFIFODepths(Transformation):
                     modified_fc_nodes.append(node.onnx_node.name)
                     node.set_nodeattr("mem_mode", "internal_decoupled")
                     reset_implementation(node)
-                    warnings.warn(
-                        "Changed mem_mode from external to internal_decoupled for "
-                        + node.onnx_node.name
+                    log.warning(
+                        f"Changed mem_mode from external"
+                        f" to internal_decoupled for {node.onnx_node.name}"
                     )
 
         # insert stream infrastructure (DWC/FIFO)
@@ -375,7 +377,7 @@ class InsertAndSetFIFODepths(Transformation):
                     ncycles = ncycles - 1
 
             if not output_detected:
-                warnings.warn("No output detected, calculated FIFO depths may not be correct")
+                log.warning("No output detected, calculated FIFO depths may not be correct")
         else:
             # do rtlsim in C++ for FIFO sizing
             # determine # inputs for FIFO sizing according to topology type

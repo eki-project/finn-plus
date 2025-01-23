@@ -27,14 +27,16 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import numpy as np
 import os
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+
+log = logging.getLogger("checksum_hls")
 
 
 class CheckSum_hls(HWCustomOp, HLSBackend):
@@ -71,7 +73,7 @@ class CheckSum_hls(HWCustomOp, HLSBackend):
                 str(self.get_input_datatype().name),
                 str(idt.name),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         # set output datatype from property
         odt = self.get_output_datatype()

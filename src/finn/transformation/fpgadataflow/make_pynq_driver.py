@@ -26,11 +26,11 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import numpy as np
 import os
 import qonnx
 import shutil
-import warnings
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -45,6 +45,8 @@ from finn.util.data_packing import (
 )
 
 from . import template_driver
+
+log = logging.getLogger("make_pynq_driver")
 
 
 def to_external_tensor(init, w_dtype):
@@ -295,7 +297,7 @@ class MakePYNQDriver(Transformation):
                         node_inst.make_weight_file(fcl_w, "decoupled_runtime", w_filename)
                         rt_layer_ind += 1
                 elif node.op_type == "StreamingDataflowPartition":
-                    warnings.warn(
+                    log.warning(
                         """Nested StreamingDataflowPartition are not supported
                     """
                     )

@@ -26,9 +26,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import numpy as np
 import os
-import warnings
 from abc import abstractmethod
 from pyverilator.util.axi_utils import _read_signal, reset_rtlsim, rtlsim_multi_io
 from qonnx.custom_op.base import CustomOp
@@ -40,6 +40,8 @@ try:
     from pyverilator import PyVerilator
 except ModuleNotFoundError:
     PyVerilator = None
+
+log = logging.getLogger("hwcustomop")
 
 
 class HWCustomOp(CustomOp):
@@ -366,7 +368,7 @@ class HWCustomOp(CustomOp):
         # ensure rtlsim is ready
         assert self.get_nodeattr("rtlsim_so") != "", "rtlsim not ready for " + self.onnx_node.name
         if self.get_nodeattr("io_chrc_period") > 0:
-            warnings.warn("Skipping node %s: already has FIFO characteristic" % self.onnx_node.name)
+            log.warning(f"Skipping node {self.onnx_node.name}: already has FIFO characteristic")
             return
         exp_cycles = self.get_exp_cycles()
         n_inps = np.prod(self.get_folded_input_shape()[:-1])

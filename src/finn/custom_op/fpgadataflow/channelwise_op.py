@@ -26,14 +26,16 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import numpy as np
 import onnxruntime as rt
-import warnings
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import qonnx_make_model
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+log = logging.getLogger("channelwise_op")
 
 # ONNX i/o tensor shape assumptions for channelwise ops:
 # input 0 is the input tensor, shape (..., NumChannels)
@@ -59,7 +61,7 @@ def get_smallest_possible(vals):
         if (dt.min() <= vals).all() and (vals <= dt.max()).all():
             return dt
 
-    warnings.warn(
+    log.warning(
         """InferChannelwiseLinearLayer: Output values may not be
     representable with supported data types.
     Setting maximum width data type available.

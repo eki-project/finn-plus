@@ -26,12 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import math
 import numpy as np
 import onnx.numpy_helper as np_helper
 import qonnx.custom_op.general.xnorpopcount as xp
 import textwrap
-import warnings
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.util.basic import (
@@ -42,6 +42,8 @@ from qonnx.util.basic import (
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
+
+log = logging.getLogger("matrixvectoractivation")
 
 # ONNX i/o tensor shape assumptions for MatrixVectorActivation:
 # input 0 is the input tensor, shape (.., i_size) = (..., MW)
@@ -232,7 +234,7 @@ class MVAU(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         # set output datatype from property
         odt = self.get_output_datatype()
@@ -491,7 +493,7 @@ class MVAU(HWCustomOp):
             max_threshold = thresholds.max()
             # clip threshold values
             if max_threshold > acc_max or min_threshold < acc_min:
-                warnings.warn("Clipping some thresholds in %s" % self.onnx_node.name)
+                log.warning(f"Clipping some thresholds in {self.onnx_node.name}")
                 thresholds = np.clip(thresholds, acc_min, acc_max)
                 model.set_initializer(self.onnx_node.input[2], thresholds)
                 threshold_tensor = self.get_hw_compatible_threshold_tensor(thresholds)

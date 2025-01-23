@@ -27,9 +27,9 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
+import logging
 import numpy as np
 import qonnx.core.data_layout as DataLayout
-import warnings
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.registry import getCustomOp
@@ -39,6 +39,8 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 from qonnx.util.onnx import nchw_to_nhwc
+
+log = logging.getLogger("convert_to_hw_layers")
 
 
 class InferConvInpGen(Transformation):
@@ -60,7 +62,7 @@ class InferConvInpGen(Transformation):
                 i2c_out_shape = model.get_tensor_shape(i2c_output)
                 dt = model.get_tensor_datatype(i2c_input)
                 if not dt.is_integer():
-                    warnings.warn("%s : Input is not int. Can't infer ConvInpGen." % n.name)
+                    log.warning(f"{n.name} : Input is not int. Can't infer ConvInpGen.")
                     continue
                 i2c_inst = getCustomOp(n)
                 stride_h, stride_w = i2c_inst.get_nodeattr("stride")
@@ -130,7 +132,7 @@ class InferConvInpGen(Transformation):
                     is1D_unitx = ifm_dim_w == 1
                     downsample_2D = (not downsample_1D) and is_square_image and is_equal_stride
                     if not (downsample_1D or downsample_2D):
-                        warnings.warn(f"Couldn't infer Downsample from {n.name},check config.")
+                        log.warning(f"Couldn't infer Downsample from {n.name}, check config.")
                         continue
                     ConvInpGen_idim = max(ConvInpGen_idim_h, ConvInpGen_idim_w)
                     stride = max(stride_h, stride_w)
@@ -294,15 +296,11 @@ class InferUpsample(Transformation):
 
                 dt = model.get_tensor_datatype(n.input[0])
                 if not dt.is_integer():
-                    warnings.warn(
-                        "%s: Input not int. Can't infer UpsampleNearestNeighbour." % n.name
-                    )
+                    log.warning(f"{n.name}: Input not int. Can't infer UpsampleNearestNeighbour.")
                     continue
 
                 if model.get_tensor_layout(n.input[0]) != DataLayout.NHWC:
-                    warnings.warn(
-                        "%s: Input not NHWC. Can't infer UpsampleNearestNeighbour." % n.name
-                    )
+                    log.warning(f"{n.name}: Input not NHWC. Can't infer UpsampleNearestNeighbour.")
                     continue
 
                 # Check that the parameters are okay
@@ -391,7 +389,7 @@ class InferStreamingMaxPool(Transformation):
                 if k_h != s_h or k_w != s_w:
                     warn_str = """Stride is not equal to kernel. Node cannot be converted to
                         StreamingMaxPool layer."""
-                    warnings.warn(warn_str)
+                    log.warning(warn_str)
                     continue
                 ifm_ch = mp_in_shape[-1]
                 ifm_dim_h = mp_in_shape[1]
@@ -424,7 +422,7 @@ class InferStreamingMaxPool(Transformation):
                     graph.node.remove(node)
                     graph_modified = True
                 else:
-                    warnings.warn(node.name + ": could not convert to HW")
+                    log.warning(f"{node.name}: could not convert to HW")
         if graph_modified:
             model = model.transform(InferShapes())
             model = model.transform(InferDataTypes())
@@ -670,7 +668,7 @@ class InferChannelwiseLinearLayer(Transformation):
             if (dt.min() <= vals).all() and (vals <= dt.max()).all():
                 return dt
 
-        warnings.warn(
+        log.warning(
             """InferChannelwiseLinearLayer: Output values may not be
         representable with supported data types.
         Setting maximum width data type available.
@@ -719,7 +717,7 @@ class InferChannelwiseLinearLayer(Transformation):
                 # check if the shape of initializer is compatible
                 ll_cinit_shape = list(ll_cinit.shape)
                 if np.prod(ll_cinit_shape) == 1:
-                    warnings.warn("Broadcasting " + str(node.op_type) + "(" + node.name + ")")
+                    log.warning(f"Broadcasting {node.op_type} ({node.name})")
                     ll_cinit = np.full((ch), ll_cinit.flatten()[0])
                 elif np.prod(ll_cinit_shape) != ch or ll_cinit_shape[ch_index] != ch:
                     # parameter shape not compatible with Channelwise

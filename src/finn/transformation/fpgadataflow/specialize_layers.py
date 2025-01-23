@@ -26,8 +26,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import numpy as np
-import warnings
 from onnx import helper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -35,6 +35,8 @@ from qonnx.transformation.base import Transformation
 from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
 from finn.util.basic import get_dsp_block, is_versal
+
+log = logging.getLogger("specialize_layers")
 
 
 def _determine_impl_style(node, fpgapart, model):
@@ -95,7 +97,7 @@ def _determine_impl_style(node, fpgapart, model):
                         set to RTL variant."""
                     % node.name
                 )
-                warnings.warn(warn_str)
+                log.warning(warn_str)
                 return "rtl"
             else:
                 return "hls"
@@ -108,7 +110,7 @@ def _determine_impl_style(node, fpgapart, model):
                 node.op_type,
                 node.name,
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
             return "rtl"
         else:
             raise Exception(
@@ -126,7 +128,7 @@ def _determine_impl_style(node, fpgapart, model):
                             set to HLS variant.""" % (
                     node.name,
                 )
-                warnings.warn(warn_str)
+                log.warning(warn_str)
                 return "hls"
             else:
                 # user setting can be fulfilled
@@ -140,7 +142,7 @@ def _determine_impl_style(node, fpgapart, model):
                         thresholds are implemented as standalone layer""" % (
                     node.name,
                 )
-                warnings.warn(warn_str)
+                log.warning(warn_str)
                 return "hls"
         elif optype == "VVAU":
             if _vvu_rtl_possible(node, fpgapart):
@@ -152,7 +154,7 @@ def _determine_impl_style(node, fpgapart, model):
                         of this layer is only supported on Versal boards""" % (
                     node.name,
                 )
-                warnings.warn(warn_str)
+                log.warning(warn_str)
                 return "hls"
 
         if rtl_variant:
@@ -163,7 +165,7 @@ def _determine_impl_style(node, fpgapart, model):
                 node.op_type,
                 node.name,
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
             return "hls"
         else:
             raise Exception(

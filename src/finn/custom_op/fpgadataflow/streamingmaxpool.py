@@ -26,15 +26,17 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import numpy as np
 import onnxruntime as rt
-import warnings
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.maxpoolnhwc import compute_pool_output_dim
 from qonnx.util.basic import qonnx_make_model
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+log = logging.getLogger("streamingmaxpool")
 
 # TODO: consider splitting this into separate implementations for 1D and 2D
 # similar to what we do for ConvolutionInputGenerator
@@ -136,11 +138,9 @@ class StreamingMaxPool(HWCustomOp):
         # derived from StreamingMaxPool_Batch loop nest
         ifm_dim, k, ifm_ch = self.get_1d_attrs_normalized()
 
-        warnings.warn(
-            """Estimated latency for layer {} can be lower than
-             actual latency!""".format(
-                self.onnx_node.name
-            )
+        log.warning(
+            f"""Estimated latency for layer {self.onnx_node.name} can be lower than
+             actual latency!"""
         )
         if self.is_1d():
             _, _, _, nf, _ = self.get_folded_output_shape()
@@ -182,7 +182,7 @@ class StreamingMaxPool(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("dataType", idt.name)
         # data type stays the same
         model.set_tensor_datatype(node.output[0], idt)

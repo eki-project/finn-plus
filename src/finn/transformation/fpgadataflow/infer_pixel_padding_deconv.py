@@ -1,8 +1,10 @@
+import logging
 import numpy as np
-import warnings
 from onnx import TensorProto, helper
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import auto_pad_to_explicit_padding, get_by_name
+
+log = logging.getLogger("infer_pixel_padding_deconv")
 
 
 class InferPixelPaddingDeconv(Transformation):
@@ -25,9 +27,9 @@ class InferPixelPaddingDeconv(Transformation):
                 # conversion currently only supported for group=1
                 group = get_by_name(n.attribute, "group").i
                 if group != 1:
-                    warnings.warn(
-                        "%s : Only group=1 is currently supported. Can't infer PixelPaddingDeconv."
-                        % n.name
+                    log.warning(
+                        f"{n.name} : Only group=1 is currently supported.\
+                            Can't infer PixelPaddingDeconv."
                     )
                     continue
                 deconv_input = n.input[0]

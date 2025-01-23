@@ -25,12 +25,14 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+import logging
 import os
 import qonnx.custom_op.registry as registry
-import warnings
 import xml.etree.ElementTree as ET
 
 from finn.util.fpgadataflow import is_hls_node
+
+log = logging.getLogger("hls_synth_res_estimation")
 
 
 def hls_synth_res_estimation(model):
@@ -55,7 +57,7 @@ def hls_synth_res_estimation(model):
             inst = registry.getCustomOp(node)
             code_gen_dir = inst.get_nodeattr("code_gen_dir_ipgen")
             if code_gen_dir == "":
-                warnings.warn(
+                log.warning(
                     """Could not find report files, values will be set to zero
                     for this node. Please run "PrepareIP" transformation and
                     "HLSSynthIP" first to generate the report files"""
@@ -72,7 +74,7 @@ def hls_synth_res_estimation(model):
                         for child in item:
                             res_dict[node.name][child.tag] = child.text
                 else:
-                    warnings.warn(
+                    log.warning(
                         """Could not find report files, values will be set to zero
                         for this node. Please run "PrepareIP" transformation and
                         "HLSSynthIP" first to generate the report files"""

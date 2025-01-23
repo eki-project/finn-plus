@@ -28,10 +28,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import json
+import logging
 import multiprocessing as mp
 import os
 import subprocess
-import warnings
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_num_default_workers
@@ -42,6 +42,8 @@ from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
 )
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+
+log = logging.getLogger("create_stitched_ip")
 
 
 def is_external_input(model, node, i):
@@ -287,7 +289,7 @@ class CreateStitchedIP(Transformation):
         if self.signature:
             ip_dirs.append("$::env(FINN_ROOT)/finn-rtllib/axi_info")
         if model.graph.node[0].op_type not in ["StreamingFIFO_rtl", "IODMA_hls"]:
-            warnings.warn(
+            log.warning(
                 """First node is not StreamingFIFO or IODMA.
                 You may experience incorrect stitched-IP rtlsim or hardware
                 behavior. It is strongly recommended to insert FIFOs prior to
@@ -296,7 +298,7 @@ class CreateStitchedIP(Transformation):
         if model.graph.node[0].op_type == "StreamingFIFO_rtl":
             firstfifo = getCustomOp(model.graph.node[0])
             if firstfifo.get_nodeattr("impl_style") == "vivado":
-                warnings.warn(
+                log.warning(
                     """First FIFO has impl_style=vivado, which may cause
                     simulation glitches (e.g. dropping the first input sample
                     after reset)."""

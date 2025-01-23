@@ -27,8 +27,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import numpy as np
-import warnings
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
@@ -36,6 +36,8 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+
+log = logging.getLogger("set_folding")
 
 
 def divisors(num):
@@ -218,7 +220,7 @@ class SetFolding(Transformation):
                     max_simd = node_inst.get_nodeattr("NumChannels")
                     self.optimize_attribute_val(node_inst, max_simd, "SIMD")
             else:
-                warnings.warn("SetFolding doesn't know how to handle op_type " + op_type)
+                log.warning(f"SetFolding doesn't know how to handle op_type {op_type}")
 
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(AnnotateCycles())
@@ -230,9 +232,11 @@ class SetFolding(Transformation):
                 # to balance the entire dataflow pipeline instead
                 # no two_pass_relaxation this time -- no guarantee we'll
                 # converge otherwise
-                warnings.warn(
-                    "Node %s is bottleneck with %d cycles, running second pass"
-                    % (perf_dict["max_cycles_node_name"], perf_dict["max_cycles"])
+                max_cycles_node_name = perf_dict["max_cycles_node_name"]
+                max_cycles = perf_dict["max_cycles"]
+                log.warning(
+                    f"Node {max_cycles_node_name} is bottleneck with {max_cycles} cycles, \
+                        running second pass"
                 )
                 model = model.transform(
                     SetFolding(

@@ -1,9 +1,11 @@
-import warnings
+import logging
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
+
+log = logging.getLogger("move_reshape")
 
 
 class RemoveCNVtoFCFlatten(Transformation):
@@ -58,11 +60,11 @@ class RemoveCNVtoFCFlatten(Transformation):
                                     graph.node.remove(transp_node)
                                     graph_modified = True
                                 else:
-                                    warnings.warn(
+                                    log.warning(
                                         "Could not absorb transpose->flatten \
                                         into subsequent node"
                                     )
                         else:
-                            warnings.warn("Unsupported transpose node before flatten layer")
+                            log.warning("Unsupported transpose node before flatten layer")
 
         return (model, graph_modified)

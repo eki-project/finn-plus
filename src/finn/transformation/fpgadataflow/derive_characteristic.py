@@ -28,12 +28,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
+import logging
 import qonnx.custom_op.registry as registry
-import warnings
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import NodeLocalTransformation
 
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+
+log = logging.getLogger("derive_characteristic")
 
 
 class DeriveCharacteristic(NodeLocalTransformation):
@@ -82,12 +84,12 @@ class DeriveCharacteristic(NodeLocalTransformation):
             b0 = model.find_producer(addstrm_node.input[0])
             b1 = model.find_producer(addstrm_node.input[1])
             if (b0 is None) or (b1 is None):
-                warnings.warn("Found unsupported AddStreams, skipping")
+                log.warning("Found unsupported AddStreams, skipping")
                 return (model, run_again)
             b0_is_bypass = b0.op_type == "DuplicateStreams_hls"
             b1_is_bypass = b1.op_type == "DuplicateStreams_hls"
             if (not b0_is_bypass) and (not b1_is_bypass):
-                warnings.warn("Found unsupported AddStreams, skipping")
+                log.warning("Found unsupported AddStreams, skipping")
                 return (model, run_again)
             ds_node = b0 if b0_is_bypass else b1
             comp_branch_last = b1 if b0_is_bypass else b0
@@ -95,7 +97,7 @@ class DeriveCharacteristic(NodeLocalTransformation):
             ds_comp_bout = ds_node.output[0] if b0_is_bypass else ds_node.output[1]
             comp_branch_first = model.find_consumer(ds_comp_bout)
             if comp_branch_first is None or comp_branch_last is None:
-                warnings.warn("Found unsupported DuplicateStreams, skipping")
+                log.warning("Found unsupported DuplicateStreams, skipping")
                 return (model, run_again)
             comp_branch_last = registry.getCustomOp(comp_branch_last)
             comp_branch_first = registry.getCustomOp(comp_branch_first)
@@ -110,8 +112,8 @@ class DeriveCharacteristic(NodeLocalTransformation):
             ds_node_inst.set_nodeattr("io_characteristic", comp_branch_first_f * 2)
             addstrm_node_inst.set_nodeattr("io_chrc_period", period)
             addstrm_node_inst.set_nodeattr("io_characteristic", comp_branch_last_f * 2)
-            warnings.warn(f"Set {ds_node.name} chrc. from {comp_branch_first.onnx_node.name}")
-            warnings.warn(f"Set {addstrm_node.name} chrc. from {comp_branch_last.onnx_node.name}")
+            log.warning(f"Set {ds_node.name} chrc. from {comp_branch_first.onnx_node.name}")
+            log.warning(f"Set {addstrm_node.name} chrc. from {comp_branch_last.onnx_node.name}")
         return (model, run_again)
 
 
