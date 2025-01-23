@@ -124,9 +124,9 @@ class ConvolutionInputGenerator_hls(ConvolutionInputGenerator, HLSBackend):
                 return True
             else:
                 log.warning(
-                    f"{self.onnx_node.name}: Parallel window output variant is not supported for this node, \
-                     please inspect requirements in use_parallel_window_output method\
-                     of the custom_op"
+                    f"{self.onnx_node.name}: Parallel window output variant is not\
+                        supported for this node, please inspect requirements in\
+                            use_parallel_window_output method of the custom_op"
                 )
                 return False
         else:
