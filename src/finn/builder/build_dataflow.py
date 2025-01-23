@@ -134,12 +134,21 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     os.makedirs(cfg.output_dir, exist_ok=True)
 
     # set up logger
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="[%(asctime)s] %(message)s",
-        filename=os.path.join(cfg.output_dir, "build_dataflow.log"),
-        filemode="w",
-    )
+    logpath = os.path.join(cfg.output_dir, "build_dataflow.log")
+    if cfg.verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="[%(asctime)s]%(levelname)s: %(name)s: %(message)s",
+            filename=logpath,
+            filemode="w",
+        )
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="[%(asctime)s]%(levelname)s: %(message)s",
+            filename=logpath,
+            filemode="w",
+        )
     log = logging.getLogger("build_dataflow")
     # mirror stdout and stderr to log
     sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
