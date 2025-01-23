@@ -138,7 +138,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         level=logging.DEBUG,
         format="[%(asctime)s] %(message)s",
         filename=os.path.join(cfg.output_dir, "build_dataflow.log"),
-        filemode="a",
+        filemode="w",
     )
     log = logging.getLogger("build_dataflow")
     # mirror stdout and stderr to log

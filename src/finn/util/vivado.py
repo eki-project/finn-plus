@@ -26,9 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import os
 
 from finn.util.basic import launch_process_helper, which
+
+log = logging.getLogger("vivado.py")
 
 
 def out_of_context_synth(
@@ -69,7 +72,7 @@ def out_of_context_synth(
     ret["vivado_proj_folder"] = vivado_proj_folder
     for res_line in res_data:
         res_fields = res_line.split("=")
-        print(res_fields)
+        log.info(res_fields)
         try:
             ret[res_fields[0]] = float(res_fields[1])
         except ValueError:
