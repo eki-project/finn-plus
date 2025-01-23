@@ -29,9 +29,9 @@
 import numpy as np
 import os
 import shutil
-import verilator_helper
 from qonnx.custom_op.registry import getCustomOp
 
+import finn.util.verilator_helper as verilator
 from finn.util.basic import (
     get_rtlsim_trace_depth,
     launch_process_helper,
@@ -191,7 +191,7 @@ def verilator_fifosim(
     swg_pkg = os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_pkg.sv"
     verilog_file_arg = [swg_pkg, "finn_design_wrapper.v", xpm_memory, xpm_cdc, xpm_fifo]
 
-    xpm_args.extend(verilator_helper.commonVerilatorArgs)
+    xpm_args.extend(verilator.commonVerilatorArgs)
 
     verilator_args = [
         "perl",
@@ -274,7 +274,7 @@ def pyverilate_stitched_ip(
         (which can be very verbose otherwise)
 
     """
-    verilator_helper.checkForVerilator()
+    verilator.checkForVerilator()
 
     vivado_stitch_proj_dir = prepare_stitched_ip_for_verilator(model)
     verilog_header_dir = vivado_stitch_proj_dir + "/pyverilator_vh"
@@ -303,7 +303,7 @@ def pyverilate_stitched_ip(
 
     swg_pkg = os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_pkg.sv"
 
-    sim = verilator_helper.buildPyVerilator(
+    sim = verilator.buildPyVerilator(
         [swg_pkg, top_module_file_name, xpm_fifo, xpm_memory, xpm_cdc],
         verilog_path=[vivado_stitch_proj_dir, verilog_header_dir],
         build_dir=build_dir,
