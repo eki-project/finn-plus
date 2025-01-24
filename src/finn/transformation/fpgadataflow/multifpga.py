@@ -31,6 +31,9 @@ class PartitionForMultiFPGA(Transformation):
                in the model! (num_fpgas <= #Layers must be true)"
             )
 
+        # Notify other components that we do a Multi-FPGA build
+        model.set_metadata_prop("fpgamode", "multi")
+
         # Collecting groups
         # grouped_together_nodes = None  # get_grouped_layers(model)  # TODO: Implement
 
@@ -42,13 +45,13 @@ class PartitionForMultiFPGA(Transformation):
             re_hls_path = Path(self.report_dir) / "estimate_layer_resources_hls.json"
 
             # TODO: Custom exceptions
-            if not Path.isfile(re_path):
+            if not re_path.exists():
                 raise Exception(
                     f"Cannot find layer resource estimate in {re_path}. \
                   Check to make sure step_generate_estimate_reports and \
                   the corresponding output are set!"
                 )
-            if not Path.isfile(re_hls_path):
+            if not re_hls_path.exists():
                 raise Exception(
                     f"Cannot find layer resource estimate in {re_hls_path}. \
                   Check to make sure step_generate_estimate_reports and \
