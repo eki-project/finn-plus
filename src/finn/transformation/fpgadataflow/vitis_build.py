@@ -150,8 +150,9 @@ class CreateVitisXO(Transformation):
             bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         _, stderr_data = process_compile.communicate()
-        if stderr_data:
-            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
+        stderr_stripped = stderr_data.decode().strip()
+        if stderr_stripped != "" and stderr_stripped is not None:
+            log.critical(stderr_stripped)  # Decode bytes and log as critical
         assert os.path.isfile(xo_path), (
             "Vitis .xo file not created, check logs under %s" % vivado_proj_dir
         )
@@ -333,8 +334,9 @@ class VitisLink(Transformation):
             bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         _, stderr_data = process_compile.communicate()
-        if stderr_data:
-            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
+        stderr_stripped = stderr_data.decode().strip()
+        if stderr_stripped != "" and stderr_stripped is not None:
+            log.critical(stderr_stripped)  # Decode bytes and log as critical
         # TODO rename xclbin appropriately here?
         xclbin = link_dir + "/a.xclbin"
         assert os.path.isfile(xclbin), (
@@ -355,8 +357,9 @@ class VitisLink(Transformation):
             bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         _, stderr_data = process_genxml.communicate()
-        if stderr_data:
-            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
+        stderr_stripped = stderr_data.decode().strip()
+        if stderr_stripped != "" and stderr_stripped is not None:
+            log.critical(stderr_stripped)  # Decode bytes and log as critical
         # filename for the synth utilization report
         synth_report_filename = link_dir + "/synth_report.xml"
         model.set_metadata_prop("vivado_synth_rpt", synth_report_filename)

@@ -199,8 +199,9 @@ class CppBuilder:
             bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         _, stderr_data = process_compile.communicate()
-        if stderr_data:
-            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
+        stderr_stripped = stderr_data.decode().strip()
+        if stderr_stripped != "" and stderr_stripped is not None:
+            log.critical(stderr_stripped)  # Decode bytes and log as critical
 
 
 def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):

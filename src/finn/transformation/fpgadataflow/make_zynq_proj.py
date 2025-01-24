@@ -269,8 +269,9 @@ class MakeZYNQProject(Transformation):
             bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         _, stderr_data = process_compile.communicate()
-        if stderr_data:
-            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
+        stderr_stripped = stderr_data.decode().strip()
+        if stderr_stripped != "" and stderr_stripped is not None:
+            log.critical(stderr_stripped)  # Decode bytes and log as critical
         bitfile_name = vivado_pynq_proj_dir + "/finn_zynq_link.runs/impl_1/top_wrapper.bit"
         if not os.path.isfile(bitfile_name):
             raise Exception(

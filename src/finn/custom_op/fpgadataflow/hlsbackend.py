@@ -325,8 +325,9 @@ compilation transformations?
             executable_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         _, stderr_data = process_execute.communicate()
-        if stderr_data:
-            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
+        stderr_stripped = stderr_data.decode().strip()
+        if stderr_stripped != "" and stderr_stripped is not None:
+            log.critical(stderr_stripped)  # Decode bytes and log as critical
 
     def hls_sname(self):
         """Get the naming convention used by Vitis HLS for stream signals
