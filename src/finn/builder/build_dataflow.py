@@ -60,7 +60,7 @@ class PrintLogger(object):
         for line in buf.rstrip().splitlines():
             self.logger.log(self.level, line.rstrip())
             timestamp = datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S")
-            self.console.write(f"[{timestamp}] " + line.rstrip())
+            self.console.write(f"[{timestamp}] " + line)
 
     def flush(self):
         self.console.flush()
