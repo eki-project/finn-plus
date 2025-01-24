@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import numpy as np
 import os
 import subprocess
@@ -37,6 +38,8 @@ from finn.custom_op.fpgadataflow import templates
 from finn.util.basic import CppBuilder, get_rtlsim_trace_depth, make_build_dir
 from finn.util.hls import CallHLS
 from finn.util.pyverilator import make_single_source_file
+
+log = logging.getLogger("HLSBackend")
 
 
 class HLSBackend(ABC):
@@ -318,8 +321,12 @@ Found no executable for this node, did you run the codegen and
 compilation transformations?
             """
             )
-        process_execute = subprocess.Popen(executable_path, stdout=subprocess.PIPE)
-        process_execute.communicate()
+        process_execute = subprocess.Popen(
+            executable_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        _, stderr_data = process_execute.communicate()
+        if stderr_data:
+            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
 
     def hls_sname(self):
         """Get the naming convention used by Vitis HLS for stream signals

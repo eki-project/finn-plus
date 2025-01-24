@@ -27,10 +27,13 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
+import logging
 import os
 import subprocess
 
 from finn.util.basic import which
+
+log = logging.getLogger("hls")
 
 
 class CallHLS:
@@ -65,5 +68,9 @@ class CallHLS:
         f.write("cd {}\n".format(working_dir))
         f.close()
         bash_command = ["bash", self.ipgen_script]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
+        process_compile = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        _, stderr_data = process_compile.communicate()
+        if stderr_data:
+            logging.critical(stderr_data.decode().strip())  # Decode bytes and log as critical

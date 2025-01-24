@@ -607,8 +607,14 @@ close $ofile
             f.write("vivado -mode batch -source make_project.tcl\n")
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", make_project_sh]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
+        process_compile = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        (_, stderr_data) = process_compile.communicate()
+
+        if stderr_data:
+            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
+
         # wrapper may be created in different location depending on Vivado version
         if not os.path.isfile(wrapper_filename):
             # check in alternative location (.gen instead of .srcs)

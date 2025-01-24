@@ -73,7 +73,7 @@ class HLSSynthIP(NodeLocalTransformation):
                     # call the compilation function for this node
                     inst.ipgen_singlenode_code()
                 else:
-                    log.info("Using pre-existing IP for {node.name}")
+                    log.info(f"Using pre-existing IP for {node.name}")
                 # ensure that executable path is now set
                 assert (
                     inst.get_nodeattr("ipgen_path") != ""

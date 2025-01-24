@@ -28,6 +28,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import json
+import logging
 import os
 import subprocess
 from qonnx.core.modelwrapper import ModelWrapper
@@ -54,6 +55,8 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir
 
 from . import templates
+
+log = logging.getLogger("vitis_build")
 
 
 def _check_vitis_envvars():
@@ -143,8 +146,12 @@ class CreateVitisXO(Transformation):
             f.write("vivado -mode batch -source gen_xo.tcl\n")
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", package_xo_sh]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
+        process_compile = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        _, stderr_data = process_compile.communicate()
+        if stderr_data:
+            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
         assert os.path.isfile(xo_path), (
             "Vitis .xo file not created, check logs under %s" % vivado_proj_dir
         )
@@ -322,8 +329,12 @@ class VitisLink(Transformation):
             )
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", script]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
+        process_compile = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        _, stderr_data = process_compile.communicate()
+        if stderr_data:
+            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
         # TODO rename xclbin appropriately here?
         xclbin = link_dir + "/a.xclbin"
         assert os.path.isfile(xclbin), (
@@ -340,8 +351,12 @@ class VitisLink(Transformation):
             f.write("vivado -mode batch -source %s\n" % (link_dir + "/gen_report_xml.tcl"))
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", gen_rep_xml_sh]
-        process_genxml = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_genxml.communicate()
+        process_genxml = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        _, stderr_data = process_genxml.communicate()
+        if stderr_data:
+            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
         # filename for the synth utilization report
         synth_report_filename = link_dir + "/synth_report.xml"
         model.set_metadata_prop("vivado_synth_rpt", synth_report_filename)

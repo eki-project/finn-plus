@@ -27,6 +27,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import os
 import subprocess
 from qonnx.core.modelwrapper import ModelWrapper
@@ -50,6 +51,8 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir, pynq_native_port_width, pynq_part_map
 
 from . import templates
+
+log = logging.getLogger("make_zynq_proj")
 
 
 def collect_ip_dirs(model, ipstitch_path):
@@ -262,8 +265,12 @@ class MakeZYNQProject(Transformation):
 
         # call the synthesis script
         bash_command = ["bash", synth_project_sh]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
+        process_compile = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        _, stderr_data = process_compile.communicate()
+        if stderr_data:
+            log.critical(stderr_data.decode().strip())  # Decode bytes and log as critical
         bitfile_name = vivado_pynq_proj_dir + "/finn_zynq_link.runs/impl_1/top_wrapper.bit"
         if not os.path.isfile(bitfile_name):
             raise Exception(
