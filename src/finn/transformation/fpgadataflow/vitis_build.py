@@ -30,6 +30,7 @@
 import json
 import os
 import subprocess
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -149,6 +150,31 @@ class CreateVitisXO(Transformation):
             "Vitis .xo file not created, check logs under %s" % vivado_proj_dir
         )
         return (model, False)
+
+
+class VitisLinkConfiguration:
+    """Manages XO files, CU instantiations, stream connections,
+    port connections, Vivado props, etc.
+    It can output a linking configuration to pass to v++ and
+    create a shell script to run it"""
+
+    def __init__(self) -> None:
+        self.cu: list[str] = []
+        self.sc: dict[str, list[str]] = {}
+        self.xo: list[str] = []
+        self.vivado_section: str = "[vivado]\n"
+
+    def add_cu(self, kernel_name: str, cu_name: str) -> None:
+        pass
+
+    def add_sc(self, cu_sender: str, cu_receiver: str) -> None:
+        pass
+
+    def generate_config(self, path: Path) -> None:
+        pass
+
+    def generate_run_script(self, config_path: Path) -> None:
+        pass
 
 
 class VitisLink(Transformation):
