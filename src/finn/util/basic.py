@@ -85,7 +85,6 @@ part_map["V80"] = "xcv80-lsva4737-2MHP-e-s"
 
 log = logging.getLogger("basic")
 
-
 def get_rtlsim_trace_depth():
     """Return the trace depth for rtlsim via PyVerilator. Controllable
     via the RTLSIM_TRACE_DEPTH environment variable. If the env.var. is
