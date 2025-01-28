@@ -30,6 +30,7 @@
 import json
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -216,6 +217,22 @@ class VitisLinkConfiguration:
                     --save-temps \
                     --kernel_frequency {self.f_mhz}"
             )
+
+
+def execute_synthesis_parallel(configs: list[VitisLinkConfiguration], workers: int) -> None:
+    """Execute the list of synthesis in parallel. Can be used for faster design space
+    exploration or for Multi-FPGA applications.
+
+    This creates the necessary temp dirs by itself also"""
+
+    def run_link_config(config: VitisLinkConfiguration, index: int) -> None:
+        link_dir = Path(make_build_dir(f"parallel_link{index}_"))
+        config.generate_config(link_dir / "config.txt")
+        config.generate_run_script(link_dir / "config.txt")
+        subprocess.run("bash run_vitis_link.sh", shell=True, cwd=link_dir)
+
+    with ThreadPoolExecutor(max_workers=workers) as tpe:
+        tpe.map(run_link_config, enumerate(configs))
 
 
 class VitisLink(Transformation):
