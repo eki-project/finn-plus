@@ -1,6 +1,6 @@
 stages:
-  - update
-  - build
+  - sync
+  - singularity_build
   - test
 
 variables:
@@ -19,21 +19,32 @@ variables:
   SLURM_TIMEOUT:
     description: "Select SLURM timeout"
     value: "3-0" # [days-hours]
+  SLURM_PARTITION:
+    description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
+    value: "normal"
+  SLURM_QOS:
+    description: "Optional QoS option (include --qos, e.g., --qos express)"
+    value: ""
+  SINGULARITY_IMG_SELECT:
+    value: "finn_dev.sif"
 
 workflow:
   rules:
-    # Special handling for TEST_SUITE value "quicktest"
-    - if: $TEST_SUITE == "quicktest"
-      variables:
-        SLURM_TIMEOUT: "0-1" # Reduce timeout to 1 hour
-    # Run pipeline for all default sources
-    - when: always
+    # Run pipeline for GitHub PRs to dev (does not support PRs from forks)
+    - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "dev"
+    # Run pipeline for pushes to dev
+    - if: $CI_COMMIT_BRANCH == "dev"
+    # Run pipeline if manually triggered via API or web GUI
+    - if: $CI_PIPELINE_SOURCE == "api"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    # Run pipeline if scheduled (only for nightly sync of finn-dev)
+    - if: $CI_PIPELINE_SOURCE == "schedule"
 
 Sync finn-dev:
   id_tokens:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
-  stage: update
+  stage: sync
   tags:
     # Run where full Docker + Singularity is available
     - image_build
@@ -53,7 +64,7 @@ Singularity Image Build:
   id_tokens:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
-  stage: build
+  stage: singularity_build
   tags:
     # Run where full Docker + Singularity is available
     - image_build
@@ -61,19 +72,18 @@ Singularity Image Build:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
-    # Only run if relevant files changed
+    # Only run if relevant files changed relative to dev branch
     - changes:
-      - requirements.txt
-      - docker/Dockerfile.finn
-      - docker/finn_entrypoint.sh
-      - docker/quicktest.sh
-  before_script:
-    - FINN_SHA_SHORT=$(git rev-parse --short HEAD)
+        paths:
+          - requirements.txt
+          - docker/Dockerfile.finn
+          - docker/finn_entrypoint.sh
+          - docker/quicktest.sh
+        compare_to: "dev"
   script:
     - docker build --no-cache -f docker/Dockerfile.finn --tag=finn_docker_export .
     - apptainer build finn_singularity_image.sif docker-daemon://finn_docker_export:latest
-    - rsync -vh finn_singularity_image.sif $PATH_SINGULARITY_IMG_BUILD/finn-plus/finn_dev.sif
-    - rsync -vh finn_singularity_image.sif $PATH_SINGULARITY_IMG_BUILD/finn-plus/finn_$FINN_SHA_SHORT.sif
+    - rsync -vh finn_singularity_image.sif $PATH_SINGULARITY_IMG_BUILD/finn-plus/finn_$CI_COMMIT_REF_NAME.sif
   after_script: # Clean caches
     - echo 'y' | docker image prune
     - echo 'y' | docker builder prune
@@ -88,12 +98,22 @@ FINN Test Suite 2022.2:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
-    # Otherwise run if there was no prior failure
+    # Select different Singularity image if it deviates from default (dev branch)
+    - changes:
+        paths:
+          - requirements.txt
+          - docker/Dockerfile.finn
+          - docker/finn_entrypoint.sh
+          - docker/quicktest.sh
+        compare_to: "dev"
+      variables:
+        SINGULARITY_IMG_SELECT: "finn_$CI_COMMIT_REF_NAME.sif"
+    # Always run, as long as there was no prior failure
     - when: on_success
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p normal -t $SLURM_TIMEOUT --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --mem 192G --exclusive"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
     PYTEST_PARALLEL: "$CPU_CORES"
-    FINN_SINGULARITY: "$PATH_SINGULARITY_IMG/finn-plus/finn_dev.sif"
+    FINN_SINGULARITY: "$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT"
     FINN_XILINX_VERSION: "2022.2"
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)

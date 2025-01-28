@@ -17,7 +17,7 @@ elif [ $1 = "rtlsim" ]; then
 elif [ $1 = "end2end" ]; then
   echo "Running end2end test suite with no parallelism"
 # filtering by name "end2end" is not sufficient, as the bnn tests need to be selected by a marker
-  pytest -k end2end -m 'sanity_bnn or end2end or fpgadataflow or notebooks' --forked
+  pytest -k end2end --forked -m 'sanity_bnn or end2end or fpgadataflow or notebooks'
 elif [ $1 = "full" ]; then
   echo "Running full test suite, each step with appropriate parallelism"
   $0 main;
