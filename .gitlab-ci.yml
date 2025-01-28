@@ -74,12 +74,12 @@ Singularity Image Build:
       when: never
     # Only run if relevant files changed relative to dev branch
     - changes:
-      paths:
-        - requirements.txt
-        - docker/Dockerfile.finn
-        - docker/finn_entrypoint.sh
-        - docker/quicktest.sh
-      compare_to: "dev"
+        paths:
+          - requirements.txt
+          - docker/Dockerfile.finn
+          - docker/finn_entrypoint.sh
+          - docker/quicktest.sh
+        compare_to: "dev"
   script:
     - docker build --no-cache -f docker/Dockerfile.finn --tag=finn_docker_export .
     - apptainer build finn_singularity_image.sif docker-daemon://finn_docker_export:latest
@@ -107,8 +107,8 @@ FINN Test Suite 2022.2:
           - docker/finn_entrypoint.sh
           - docker/quicktest.sh
         compare_to: "dev"
-        variables:
-          SINGULARITY_IMG_SELECT: "finn_$CI_COMMIT_SHORT_SHA.sif"
+      variables:
+        SINGULARITY_IMG_SELECT: "finn_$CI_COMMIT_SHORT_SHA.sif"
     # Always run, as long as there was no prior failure
     - when: on_success
   variables:
