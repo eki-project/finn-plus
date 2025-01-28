@@ -712,11 +712,11 @@ class MoveScalarLinearPastInvariants(Transformation):
     # Op-types of currently supported invariants
     SUPPORTED_INVARIANTS = {
         "GlobalAveragePool",
-        "Identity"
+        "Identity",
         "Reshape",
         "Transpose",
         "Flatten",
-        "Expand"
+        "Expand",
         "Slice",
         "Squeeze",
         "Unsqueeze",
