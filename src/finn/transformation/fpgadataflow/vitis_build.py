@@ -158,23 +158,64 @@ class VitisLinkConfiguration:
     It can output a linking configuration to pass to v++ and
     create a shell script to run it"""
 
-    def __init__(self) -> None:
+    def __init__(self, platform: str, optimization_level: str, f_mhz: int) -> None:
         self.cu: list[str] = []
+        self.nk: list[tuple[str, str]] = []
         self.sc: dict[str, list[str]] = {}
+        self.sp: dict[str, str] = {}
         self.xo: list[str] = []
         self.vivado_section: str = "[vivado]\n"
+        self.platform: str = platform
+        self.optimization_level: str = optimization_level
+        self.f_mhz: int = f_mhz
 
     def add_cu(self, kernel_name: str, cu_name: str) -> None:
-        pass
+        self.cu.append(cu_name)
+        self.nk.append((kernel_name, cu_name))
 
     def add_sc(self, cu_sender: str, cu_receiver: str) -> None:
-        pass
+        if cu_sender not in self.sc.keys():
+            self.sc[cu_sender] = []
+        self.sc[cu_sender].append(cu_receiver)
+
+    def add_sp(self, cu_port_name: str, mem_type: str) -> None:
+        self.sp[cu_port_name] = mem_type
+
+    def add_vivado_line(self, line: str) -> None:
+        self.vivado_section += line
 
     def generate_config(self, path: Path) -> None:
-        pass
+        with path.open("w+") as f:
+            f.write("[connectivity]\n")
+            for kernel_name, cu_name in self.nk:
+                f.write(f"nk={kernel_name}:1:{cu_name}\n")
+
+            # origin_cu and target_cu already require the ports already being in the str
+            for origin_cu in self.sc.keys():
+                for target_cu in self.sc[origin_cu]:
+                    f.write(f"sc={origin_cu}:{target_cu}\n")
+
+            for sp_cu, sp_mem in self.sp.items():
+                f.write(f"sp={sp_cu}:{sp_mem}")
+
+            f.write(self.vivado_section + "\n")
 
     def generate_run_script(self, config_path: Path) -> None:
-        pass
+        xo_string = " ".join(self.xo)
+        runner_path = config_path.parent / "run_vitis_link.sh"
+        with runner_path.open("w+") as f:
+            f.write("#!/bin/bash\n")
+            f.write(
+                f"v++ \
+                    --target hw \
+                    --platform {self.platform} \
+                    --link {xo_string} \
+                    --config {config_path} \
+                    --optimize {self.optimization_level} \
+                    --report_level estimate \
+                    --save-temps \
+                    --kernel_frequency {self.f_mhz}"
+            )
 
 
 class VitisLink(Transformation):
