@@ -712,9 +712,11 @@ class MoveScalarLinearPastInvariants(Transformation):
     # Op-types of currently supported invariants
     SUPPORTED_INVARIANTS = {
         "GlobalAveragePool",
+        "Identity"
         "Reshape",
         "Transpose",
         "Flatten",
+        "Expand"
         "Slice",
         "Squeeze",
         "Unsqueeze",
@@ -741,7 +743,7 @@ class MoveScalarLinearPastInvariants(Transformation):
                 if prod0 is None:
                     continue
 
-                if prod0.op_type in ["Mul", "Add", "Div"]:
+                if prod0.op_type in ["Mul", "Div", "Add", "Sub"]:
                     # Cannot handle fork-nodes, try MoveLinearPastFork first
                     if model.is_fork_node(prod0):
                         warnings.warn(
