@@ -122,7 +122,7 @@ class SetFolding(Transformation):
             "Thresholding_rtl",
             *ELEMENTWISE_BINARY_OPS,
             "Squeeze_hls",
-            "Unsqueeze_hls"
+            "Unsqueeze_hls",
             "ReplicateStream_hls",
         ]
         # these ops use SIMD parallelism, up to a max value of NumChannels
