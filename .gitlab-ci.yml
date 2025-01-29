@@ -82,7 +82,7 @@ Singularity Image Build:
         compare_to: "dev"
   script:
     - docker build --no-cache -f docker/Dockerfile.finn --tag=finn_docker_export .
-    - apptainer build finn_singularity_image.sif docker-daemon://finn_docker_export:latest
+    - apptainer build --force finn_singularity_image.sif docker-daemon://finn_docker_export:latest
     - rsync -vh finn_singularity_image.sif $PATH_SINGULARITY_IMG_BUILD/finn-plus/finn_$CI_COMMIT_REF_SLUG.sif
   after_script: # Clean caches
     - echo 'y' | docker image prune
