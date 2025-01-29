@@ -29,6 +29,7 @@
 
 # template for single node execution
 docompute_template = """
+#define HLS_CONSTEXPR_ENABLE
 #define AP_INT_MAX_W $AP_INT_MAX_W$
 #include "cnpy.h"
 #include "npy2apintstream.hpp"
@@ -108,6 +109,7 @@ $SAVEASCNPY$
 
 # cpp file
 ipgen_template = """
+#define HLS_CONSTEXPR_ENABLE
 #define AP_INT_MAX_W $AP_INT_MAX_W$
 
 #include "bnn-library.h"
@@ -134,13 +136,15 @@ puts "HW source dir: $config_hwsrcdir"
 set config_proj_part "$FPGAPART$"
 set config_bnnlibdir "$::env(FINN_ROOT)/deps/finn-hlslib"
 puts "finn-hlslib dir: $config_bnnlibdir"
+set config_attentionlibdir "$::env(FINN_ROOT)/deps/attention-hlslib"
+puts "attention-hlslib dir: $config_attentionlibdir"
 set config_customhlsdir "$::env(FINN_ROOT)/custom_hls"
 puts "custom HLS dir: $config_customhlsdir"
 set config_toplevelfxn "$TOPFXN$"
 set config_clkperiod $CLKPERIOD$
 
 open_project $config_proj_name
-add_files $config_hwsrcdir/top_$TOPFXN$.cpp -cflags "-std=c++14 -I$config_bnnlibdir -I$config_customhlsdir"
+add_files $config_hwsrcdir/top_$TOPFXN$.cpp -cflags "-std=c++14 -I$config_bnnlibdir -I$config_customhlsdir -I$config_attentionlibdir"
 
 set_top $config_toplevelfxn
 open_solution sol1
