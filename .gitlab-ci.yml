@@ -83,7 +83,7 @@ Singularity Image Build:
   script:
     - docker build --no-cache -f docker/Dockerfile.finn --tag=finn_docker_export .
     - apptainer build finn_singularity_image.sif docker-daemon://finn_docker_export:latest
-    - rsync -vh finn_singularity_image.sif $PATH_SINGULARITY_IMG_BUILD/finn-plus/finn_$CI_COMMIT_REF_NAME.sif
+    - rsync -vh finn_singularity_image.sif $PATH_SINGULARITY_IMG_BUILD/finn-plus/finn_$CI_COMMIT_REF_SLUG.sif
   after_script: # Clean caches
     - echo 'y' | docker image prune
     - echo 'y' | docker builder prune
@@ -107,7 +107,7 @@ FINN Test Suite 2022.2:
           - docker/quicktest.sh
         compare_to: "dev"
       variables:
-        SINGULARITY_IMG_SELECT: "finn_$CI_COMMIT_REF_NAME.sif"
+        SINGULARITY_IMG_SELECT: "finn_$CI_COMMIT_REF_SLUG.sif"
     # Always run, as long as there was no prior failure
     - when: on_success
   variables:
