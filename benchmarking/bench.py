@@ -8,8 +8,6 @@ import onnxruntime as ort
 
 from dut.mvau import bench_mvau
 from dut.transformer import bench_transformer
-from dut.transformer_radioml import bench_transformer_radioml
-from dut.transformer_gpt import bench_transformer_gpt
 from dut.fifosizing import bench_fifosizing, bench_metafi_fifosizing, bench_resnet50_fifosizing
 
 
@@ -130,10 +128,6 @@ def main(config_name):
         # give bench subclass name directly in config?
         if config_select.startswith("mvau"):
             bench_object = bench_mvau(params, task_id, run_id, artifacts_dir, save_dir)
-        elif config_select.startswith("transformer_radioml"):
-            bench_object = bench_transformer_radioml(params, task_id, run_id, artifacts_dir, save_dir)
-        elif config_select.startswith("transformer_gpt"):
-            bench_object = bench_transformer_gpt(params, task_id, run_id, artifacts_dir, save_dir)
         elif config_select.startswith("transformer"):
             bench_object = bench_transformer(params, task_id, run_id, artifacts_dir, save_dir)
         elif config_select.startswith("fifosizing"):
