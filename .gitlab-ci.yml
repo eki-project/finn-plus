@@ -175,6 +175,16 @@ Bench (Manual):
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
+    # Select different Singularity image if it deviates from default (dev branch)
+    - changes:
+        paths:
+          - requirements.txt
+          - docker/Dockerfile.finn
+          - docker/finn_entrypoint.sh
+          - docker/quicktest.sh
+        compare_to: "dev"
+      variables:
+        SINGULARITY_IMG_SELECT: "finn_$CI_COMMIT_REF_SLUG.sif"
     - if: $MANUAL_CFG_PATH != ""
   trigger:
     include: benchmarking/bench-ci.yml
@@ -190,6 +200,16 @@ Bench:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
+    # Select different Singularity image if it deviates from default (dev branch)
+    - changes:
+        paths:
+          - requirements.txt
+          - docker/Dockerfile.finn
+          - docker/finn_entrypoint.sh
+          - docker/quicktest.sh
+        compare_to: "dev"
+      variables:
+        SINGULARITY_IMG_SELECT: "finn_$CI_COMMIT_REF_SLUG.sif"
     - if: $MANUAL_CFG_PATH == ""
   trigger:
     include: benchmarking/bench-ci.yml
