@@ -1055,8 +1055,13 @@ class bench():
             self.build_inputs["floorplan_path"] = self.params["floorplan_path"]
 
         ### BUILD SETUP ###
+        # TODO: select output products here, depending on what shall be tested
+        # TODO: set as much as possible here, e.g. verbose, debug, force_python, vitisopt, shell_flow
         cfg = self.step_build_setup()
         cfg.board = self.board
+        if "fifo_rtlsim_n" in self.params:
+            # TODO: determine automatically or replace by exact instr wrapper sim
+            cfg.rtlsim_batch_size=self.params["fifo_rtlsim_n"]
         if "folding_path" in self.build_inputs:
             cfg.folding_config_file = self.build_inputs["folding_path"]
         if "specialize_path" in self.build_inputs:
@@ -1071,5 +1076,5 @@ class bench():
         self.step_parse_builder_output(self.build_inputs["build_dir"])
 
         # Only run in-depth FIFO test if selected
-        if "fifo_rtlsim_n" in self.params:
+        if "fifo_throughput_factor_threshold" in self.params:
             self.step_fifotest(self.build_inputs["onnx_path"], cfg, self.build_inputs["build_dir"])

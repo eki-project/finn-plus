@@ -8,6 +8,8 @@
         "floorplan_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/floorplan_resnet50.json"],
 
         "board": ["U280"],
-        "clock_period_ns": [4]
+        "clock_period_ns": [4],
+
+        "fifo_rtlsim_n": [2]
     }
     ]

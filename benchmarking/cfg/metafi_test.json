@@ -5,6 +5,8 @@
         "folding_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/auto_folding_config _metaFi_f25.json"],
 
         "board": ["RFSoC2x2"],
-        "clock_period_ns": [10]
+        "clock_period_ns": [10],
+
+        "fifo_rtlsim_n": [10]
     }
     ]

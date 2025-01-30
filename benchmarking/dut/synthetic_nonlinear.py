@@ -301,7 +301,6 @@ class bench_synthetic_nonlinear(bench):
             target_fps=None,
             # general rtlsim settings
             force_python_rtlsim=False,
-            rtlsim_batch_size=self.params["rtlsim_n"],
             shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ, # TODO: generalize/adapt to new back-end
             generate_outputs=[
                 build_cfg.DataflowOutputType.ESTIMATE_REPORTS,

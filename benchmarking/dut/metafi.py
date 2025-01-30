@@ -57,7 +57,6 @@ class bench_metafi(bench):
 
             # general rtlsim settings
             force_python_rtlsim=False,
-            rtlsim_batch_size=self.params["rtlsim_n"],
 
             # folding_config_file=folding_config_file,
             # folding_config_file="/home/rz/project/finn-examples/build/vgg10-radioml/folding_config/auto_folding_config.json",
@@ -68,7 +67,7 @@ class bench_metafi(bench):
             #large_fifo_mem_style=build_cfg.LargeFIFOMemStyle.AUTO,
             # standalone_thresholds=True,
             # enable extra performance optimizations (physopt)
-            vitis_opt_strategy=build_cfg.VitisOptStrategyCfg.PERFORMANCE_BEST,
+            vitis_opt_strategy=build_cfg.VitisOptStrategy.PERFORMANCE_BEST,
             generate_outputs=[
                 build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
                 build_cfg.DataflowOutputType.STITCHED_IP,

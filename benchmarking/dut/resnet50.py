@@ -45,7 +45,7 @@ class bench_resnet50(bench):
             vitis_platform=alveo_default_platform[self.board], # TODO: generalize/adapt to new back-end
 
             # enable extra performance optimizations (physopt)
-            vitis_opt_strategy=build_cfg.VitisOptStrategyCfg.PERFORMANCE_BEST,
+            vitis_opt_strategy=build_cfg.VitisOptStrategy.PERFORMANCE_BEST,
             generate_outputs=[
                 build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
                 build_cfg.DataflowOutputType.STITCHED_IP,
