@@ -1,5 +1,6 @@
 [
     {
+        "dut": ["transformer"],
         "seed": [12],
 
         "calibration_passes": [32],

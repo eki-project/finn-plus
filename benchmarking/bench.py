@@ -7,9 +7,22 @@ import traceback
 import onnxruntime as ort
 
 from dut.mvau import bench_mvau
-from dut.transformer import bench_transformer
-from dut.fifosizing import bench_fifosizing, bench_metafi_fifosizing, bench_resnet50_fifosizing
+from dut.resnet50 import bench_resnet50
+from dut.metafi import bench_metafi
+from dut.synthetic_nonlinear import bench_synthetic_nonlinear
 
+dut = dict()
+dut["mvau"] = bench_mvau
+dut["resnet50"] = bench_resnet50
+dut["metafi"] = bench_metafi
+dut["synthetic_nonlinear"] = bench_synthetic_nonlinear
+
+# TODO: remove guard once transformer support has been fully merged
+try:
+    from dut.transformer import bench_transformer
+    dut["transformer"] = bench_transformer
+except ImportError:
+    pass
 
 def main(config_name):
     exit_code = 0
@@ -124,20 +137,16 @@ def main(config_name):
 
         log_dict = {"run_id": run_id, "task_id": task_id, "params": params}
 
-        # Determine which DUT to run TODO: do this lookup more generically?
-        # give bench subclass name directly in config?
-        if config_select.startswith("mvau"):
-            bench_object = bench_mvau(params, task_id, run_id, artifacts_dir, save_dir)
-        elif config_select.startswith("transformer"):
-            bench_object = bench_transformer(params, task_id, run_id, artifacts_dir, save_dir)
-        elif config_select.startswith("fifosizing"):
-            bench_object = bench_fifosizing(params, task_id, run_id, artifacts_dir, save_dir)
-        elif config_select.startswith("metafi_fifosizing"):
-            bench_object = bench_metafi_fifosizing(params, task_id, run_id, artifacts_dir, save_dir)
-        elif config_select.startswith("resnet50_fifosizing"):
-            bench_object = bench_resnet50_fifosizing(params, task_id, run_id, artifacts_dir, save_dir)
+        # Create bench object for respective DUT
+        if "dut" in params:
+            if params["dut"] in dut:
+                bench_object = dut[params["dut"]](params, task_id, run_id, artifacts_dir, save_dir)
+            else:
+                print("ERROR: unknown DUT specified")
+                return 1
         else:
-            print("ERROR: unknown DUT specified")
+            print("ERROR: no DUT specified")
+            return 1
 
         start_time = time.time()
         try:

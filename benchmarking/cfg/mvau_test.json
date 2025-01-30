@@ -1,5 +1,6 @@
 [
     {
+        "dut": ["mvau"],
         "idt": ["INT4","INT2"],
         "wdt": ["INT4"],
         "act": ["INT4"],
