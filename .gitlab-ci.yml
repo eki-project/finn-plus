@@ -198,7 +198,7 @@ Bench:
       pipeline_variables: true
   parallel:
     matrix:
-      - BENCH_CFG: [mvau_test]
+      - BENCH_CFG: [mvau_test, resnet50_test, metafi_test]
 
 #dev: mvau_test
 #fifo: fifosizing_test, metafi_fifosizing_test, resnet50_fifosizing_test

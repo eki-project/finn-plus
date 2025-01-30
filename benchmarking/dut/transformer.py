@@ -858,7 +858,7 @@ class bench_transformer(bench):
                     opset_version = 14, 
                     do_constant_folding = True)
 
-    def step_build(self):
+    def step_build_setup(self):
         #with open("params.yaml") as file:
         #    params = yaml.safe_load(file)
         # Seed all RNGs
@@ -910,7 +910,6 @@ class bench_transformer(bench):
             output_dir = self.build_inputs["build_dir"],
             stitched_ip_gen_dcp = False, # only needed for further manual integration
             synth_clk_period_ns = self.clock_period_ns,
-            board = self.board,
             shell_flow_type = shell_flow,
             folding_config_file = "folding.yaml",
             specialize_layers_config_file = "specialize_layers.json",
@@ -928,7 +927,7 @@ class bench_transformer(bench):
                 #build_cfg.DataflowOutputType.PYNQ_DRIVER, #TODO: currently broken (assert i_consumer.op_type == "StreamingDataflowPartition"), might be useful for functional verification on hw later
                 #build_cfg.DataflowOutputType.OOC_SYNTH, # requires stitched-ip, not needed because ZynqBuild/HarnessBuild is performed
                 #build_cfg.DataflowOutputType.BITFILE, # does not require stitched-ip, not needed because HarnessBuild is performed
-                #build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE, # not possible due to float components
+                #build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE, # not possible due to float components TODO: try with pyXSI
                 #build_cfg.DataflowOutputType.DEPLOYMENT_PACKAGE # not needed, just a copy operation
             ],
 
@@ -1041,25 +1040,23 @@ class bench_transformer(bench):
                 #test_step_build_platform # synthesis with instr wrapper
             ]
         )
-        # Run the build process on the dummy attention operator graph
-        # TODO: maybe let this function return the cfg only, so it can be modified by bench context
-        build.build_dataflow_cfg(self.build_inputs["onnx_path"], cfg)
 
-    def run(self):
-        self.steps_full_build_flow()
+        return cfg
 
-        # DEBUG code for live logging of long instr wrapper simulation:
-        # live_log_dir_path = os.path.join(self.save_dir, "vivado_sim_log", "run_%d" % (self.run_id), "vivado.log")
-        # os.makedirs(os.path.join(self.save_dir, "vivado_sim_log", "run_%d" % (self.run_id)), exist_ok=True)
-        # sim_output_dir = build_dir + "/instrwrap_sim"
-        # # Prepare bash script
-        # bash_script = os.getcwd() + "/run_vivado_sim.sh"
-        # with open(bash_script, "w") as script:
-        #     script.write("#!/bin/bash\n")
-        #     script.write("cd %s\n"%(sim_output_dir))
-        #     script.write("vivado -mode batch -source make_instrwrap_sim_proj.tcl &> %s\n"%(live_log_dir_path))
-        # # Run script
-        # print("Running Vivado simulation of instrumentation wrapper")
-        # sub_proc = subprocess.Popen(["bash", bash_script])
-        # sub_proc.communicate()
-        #######
+    #def run(self):
+    # self.steps_full_build_flow()
+    # DEBUG code for live logging of long instr wrapper simulation:
+    # live_log_dir_path = os.path.join(self.save_dir, "vivado_sim_log", "run_%d" % (self.run_id), "vivado.log")
+    # os.makedirs(os.path.join(self.save_dir, "vivado_sim_log", "run_%d" % (self.run_id)), exist_ok=True)
+    # sim_output_dir = build_dir + "/instrwrap_sim"
+    # # Prepare bash script
+    # bash_script = os.getcwd() + "/run_vivado_sim.sh"
+    # with open(bash_script, "w") as script:
+    #     script.write("#!/bin/bash\n")
+    #     script.write("cd %s\n"%(sim_output_dir))
+    #     script.write("vivado -mode batch -source make_instrwrap_sim_proj.tcl &> %s\n"%(live_log_dir_path))
+    # # Run script
+    # print("Running Vivado simulation of instrumentation wrapper")
+    # sub_proc = subprocess.Popen(["bash", bash_script])
+    # sub_proc.communicate()
+    #######

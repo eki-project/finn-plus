@@ -8,12 +8,6 @@
         "floorplan_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/floorplan_resnet50.json"],
 
         "board": ["U280"],
-        "clock_period_ns": [4],
-
-        "fifo_rtlsim_n": [2],
-        "fifo_throughput_factor_threshold": [0.9],
-        "fifo_reduction_skip_threshold": [1024],
-        "fifo_reduction_factor": [0.5],
-        "fifo_reduction_throughput_drop_threshold": [0.01]
+        "clock_period_ns": [4]
     }
     ]

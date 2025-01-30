@@ -1,5 +1,6 @@
 [
     {
+        "dut": "transformer",
         "seed": [12],
 
         "calibration_passes": [32],
@@ -18,6 +19,7 @@
         "dut_duplication": [1]
     },
     {
+        "dut": "transformer",
         "seed": [12],
 
         "calibration_passes": [32],
@@ -36,6 +38,7 @@
         "dut_duplication": [1]
     },
     {
+        "dut": "transformer",
         "seed": [12],
 
         "calibration_passes": [32],
@@ -54,6 +57,7 @@
         "dut_duplication": [1]
     },
     {
+        "dut": "transformer",
         "seed": [12],
 
         "calibration_passes": [32],
@@ -72,6 +76,7 @@
         "dut_duplication": [1]
     },
     {
+        "dut": "transformer",
         "seed": [12],
 
         "calibration_passes": [32],

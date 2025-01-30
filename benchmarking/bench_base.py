@@ -6,6 +6,7 @@ import json
 import time
 import traceback
 import glob
+import numpy as np
 from shutil import copy as shcopy
 from shutil import copytree
 import finn.core.onnx_exec as oxe
@@ -33,6 +34,7 @@ from qonnx.util.basic import (
     gen_finn_dt_tensor,
     roundup_to_integer_multiple,
 )
+import finn.builder.build_dataflow as build
 from finn.analysis.fpgadataflow.post_synth_res import post_synth_res
 from qonnx.core.modelwrapper import ModelWrapper
 from finn.builder.build_dataflow_config import DataflowBuildConfig
@@ -613,21 +615,22 @@ class bench():
         for (name, source_path) in self.local_artifacts_collection:
             self.save_local_artifact(name, source_path)
 
+    # only used in simple flow (TODO: unify)
     def step_make_model(self):
-        # may be implemented in subclass
         pass
-
+    
+    # only used in full build flow
     def step_export_onnx(self):
-        # may be implemented in subclass
         pass
 
-    def step_build(self):
-        # may be implemented in subclass
+    # only used in full build flow
+    def step_build_setup(self):
         pass
 
+    # defaults to full build flow
+    # may be overwritten by subclass (e.g., to call simple flow instead)
     def run(self):
-        # must be implemented in subclass
-        pass
+        self.steps_full_build_flow()
 
     def step_finn_estimate(self):
         # Gather FINN estimates
@@ -813,51 +816,172 @@ class bench():
     def step_parse_builder_output(self, build_dir):
         # Used to parse selected reports/logs into the output json dict for DUTs that use a full FINN builder flow
 
-        # COPY bitstreams and other outputs
-        # TODO: integrate better (e.g. as artifact) and remove redundant copy
-        # TODO: make this more configurable or switch to job/artifact based power measurement
-        # TODO: make compatible to new instr wrapper (or however we generate these outputs)
-        shcopy(os.path.join(build_dir, "harness/top_wrapper.bit"), 
-               os.path.join(self.save_dir_bitstreams, "run_%d.bit" % self.run_id))
-        shcopy(os.path.join(build_dir, "harness/top.hwh"), 
-               os.path.join(self.save_dir_bitstreams, "run_%d.hwh" % self.run_id))
-        shcopy(os.path.join(build_dir, "harness/synth_report.xml"), 
-               os.path.join(self.save_dir_bitstreams, "run_%d.xml" % self.run_id))
-        clock_period_mhz = int(1.0 / self.clock_period_ns * 1000.0)
-        measurement_settings = {"freq_mhz": clock_period_mhz}
-        with open(os.path.join(self.save_dir_bitstreams, "run_%d_settings.json"%self.run_id), "w") as f:
-            json.dump(measurement_settings, f, indent=2)
+        ### SAVE BITSTREAMS ###
+        if (os.path.exists(os.path.join(build_dir, "harness"))):
+            # TODO: integrate better (e.g. as artifact) and remove redundant copy
+            # TODO: make this more configurable or switch to job/artifact based power measurement
+            # TODO: make compatible to new instr wrapper (or however we generate these outputs)
+            shcopy(os.path.join(build_dir, "harness/top_wrapper.bit"), 
+                os.path.join(self.save_dir_bitstreams, "run_%d.bit" % self.run_id))
+            shcopy(os.path.join(build_dir, "harness/top.hwh"), 
+                os.path.join(self.save_dir_bitstreams, "run_%d.hwh" % self.run_id))
+            shcopy(os.path.join(build_dir, "harness/synth_report.xml"), 
+                os.path.join(self.save_dir_bitstreams, "run_%d.xml" % self.run_id))
+            clock_period_mhz = int(1.0 / self.clock_period_ns * 1000.0)
+            measurement_settings = {"freq_mhz": clock_period_mhz}
+            with open(os.path.join(self.save_dir_bitstreams, "run_%d_settings.json"%self.run_id), "w") as f:
+                json.dump(measurement_settings, f, indent=2)
+        else:
+            pass #TODO: warn/skip?
 
-        # CHECK FOR VERIFICATION STEP SUCCESS
-        # Collect all verification output filenames
-        outputs = glob.glob(os.path.join(build_dir, "verification_output/*.npy"))
-        # Extract the verification status for each verification output by matching
-        # to the SUCCESS string contained in the filename
-        status = all([
-            out.split("_")[-1].split(".")[0] == "SUCCESS" for out in outputs
-        ])
-   
-        # Construct a dictionary reporting the verification status as string
-        self.output_dict["builder_verification"] = {"verification": {True: "success", False: "fail"}[status]}
-        # TODO: mark job as failed if verification fails
+        ### CHECK FOR VERIFICATION STEP SUCCESS ###
+        if (os.path.exists(os.path.join(build_dir, "verification_output"))):
+            # Collect all verification output filenames
+            outputs = glob.glob(os.path.join(build_dir, "verification_output/*.npy"))
+            # Extract the verification status for each verification output by matching
+            # to the SUCCESS string contained in the filename
+            status = all([
+                out.split("_")[-1].split(".")[0] == "SUCCESS" for out in outputs
+            ])
+    
+            # Construct a dictionary reporting the verification status as string
+            self.output_dict["builder_verification"] = {"verification": {True: "success", False: "fail"}[status]}
+            # TODO: mark job as failed if verification fails
+        else:
+            pass #TODO: warn/skip?
 
-        # PARSE LOGS
-        report_path = os.path.join(build_dir, "harness/post_synth_resources.json") 
-        # TODO: check multiple possible sources for this log (e.g. if OOC synth or Zynbuild was run)
-        report_filter = "(top)"
-        # Open the report file
-        with open(report_path) as file:
-            # Load the JSON formatted report
-            report = pd.read_json(file, orient="index")
-        # Filter the reported rows according to some regex filter rule
-        report = report.filter(regex=report_filter, axis="rows")
-        # Generate a summary of the total resources
-        summary = report.sum()
+        ### PARSE SYNTH RESOURCE REPORT ###
+        if (os.path.exists(os.path.join(build_dir, "harness/post_synth_resources.json"))):
+            report_path = os.path.join(build_dir, "harness/post_synth_resources.json") 
+            # TODO: check multiple possible sources for this log (e.g. if OOC synth or Zynbuild was run)
+            report_filter = "(top)"
+            # Open the report file
+            with open(report_path) as file:
+                # Load the JSON formatted report
+                report = pd.read_json(file, orient="index")
+            # Filter the reported rows according to some regex filter rule
+            report = report.filter(regex=report_filter, axis="rows")
+            # Generate a summary of the total resources
+            summary = report.sum()
 
-        #TODO: parse finn estimates, hls estimates, step times, (rtlsim n=1, n=100)
-        #TODO: add vivado latency simulation for special transformer case
-        
-        self.output_dict["builder"] = summary.to_dict()
+            #TODO: parse finn estimates, hls estimates, step times, rtlsim performance(rtlsim n=1, n=100)
+            #TODO: optional simulation of instr wrapper instead of running on hw
+
+            self.output_dict["builder"] = summary.to_dict()
+        else:
+            pass #TODO: warn/skip?
+
+        ### ANALYZE FIFOs ###
+        fifo_info = {}
+        # TODO: skip if not present
+        model_final = ModelWrapper(build_dir + "/intermediate_models/step_create_stitched_ip.onnx")
+
+        fifo_info["fifo_depths"] = {}
+        fifo_info["fifo_sizes"] = {}
+        total_fifo_size = 0
+        for node in model_final.get_nodes_by_op_type("StreamingFIFO_rtl"):
+            node_inst = getCustomOp(node)
+            fifo_info["fifo_depths"][node.name] = node_inst.get_nodeattr("depth")
+            fifo_info["fifo_sizes"][node.name] = node_inst.get_instream_width() * node_inst.get_nodeattr("depth")
+            total_fifo_size += fifo_info["fifo_sizes"][node.name] 
+        fifo_info["total_fifo_size_kB"] = int(total_fifo_size / 8.0 / 1000.0)
+
+        self.output_dict["fifos"] = fifo_info
+
+    def step_fifotest(self, onnx_path, cfg, build_dir):
+        # requires certain output products (e.g., ESTIMATE_REPORTS, RTLSIM_PERFORMANCE)
+        # TODO: check them and skip/warn if missing
+        log = {}
+        # load performance reports
+        with open(build_dir + "/report/estimate_network_performance.json") as f:
+            est_data = json.load(f)
+        with open(build_dir + "/report/rtlsim_performance.json") as f:
+            sim_data = json.load(f) 
+
+        # check for deadlock
+        model_final = ModelWrapper(build_dir + "/intermediate_models/step_create_stitched_ip.onnx")
+        first_node = getCustomOp(model_final.find_consumer(model_final.graph.input[0].name))
+        last_node = getCustomOp(model_final.find_producer(model_final.graph.output[0].name))
+        input_txns_expected = np.prod(first_node.get_folded_input_shape()[:-1]) * self.params["fifo_rtlsim_n"]
+        output_txns_expected = np.prod(last_node.get_folded_output_shape()[:-1]) * self.params["fifo_rtlsim_n"]
+        deadlock = sim_data["N_IN_TXNS"] != input_txns_expected or sim_data["N_OUT_TXNS"] != output_txns_expected
+        log["deadlock"] = deadlock.tolist()
+
+        # check rtlsim throughput
+        throughput = sim_data["throughput[images/s]"]
+        stable_throughput = sim_data["stable_throughput[images/s]"]
+        estimated_throughput = est_data["estimated_throughput_fps"]
+        throughput_factor = throughput / estimated_throughput
+        stable_throughput_factor = stable_throughput / estimated_throughput
+
+        # TODO: Take throughput or stable_throughput?
+        throughput_pass = throughput_factor > self.params["fifo_throughput_factor_threshold"]
+
+        log["throughput_pass"] = throughput_pass
+        log["throughput"] = throughput
+        log["stable_throughput"] = stable_throughput
+        log["estimated_throughput"] = estimated_throughput
+
+        # reduce individual FIFO sizes by some amount and observe throughput drop or deadlock appear
+        fifo_reduction_pass = []
+        log["fifo_reduction_results"] = {}
+        model_orig = ModelWrapper(build_dir + "/intermediate_models/step_hw_ipgen.onnx")
+        for node_orig in model_orig.get_nodes_by_op_type("StreamingFIFO_rtl"):
+            model = copy.deepcopy(model_orig)
+            node = model.get_node_from_name(node_orig.name)
+            node_inst = getCustomOp(node)
+
+            # skip shallow FIFOs
+            # TODO: do we need to consider rounding-up of FIFO depths for impl_style=vivado?
+            if node_inst.get_nodeattr("depth") <= self.params["fifo_reduction_skip_threshold"]:
+                log["fifo_reduction_results"][node.name] = "skip"
+                continue
+
+            # reduce depth of current FIFO and reset generated code
+            node_inst.set_nodeattr("depth", int(node_inst.get_nodeattr("depth") * self.params["fifo_reduction_factor"]))
+            node_inst.set_nodeattr("code_gen_dir_ipgen", "")
+            node_inst.set_nodeattr("ip_path", "")
+            node_inst.set_nodeattr("ipgen_path", "")
+
+            # save model variation
+            tmp_output_dir_var = build_dir + "/variations/" + node.name
+            os.makedirs(tmp_output_dir_var)
+            model.save(tmp_output_dir_var + "/model.onnx")
+
+            # build again, only re-run necessary steps to save time
+            cfg.output_dir = tmp_output_dir_var
+            cfg.steps = ["step_hw_codegen", "step_create_stitched_ip", "step_measure_rtlsim_performance"]
+            build.build_dataflow_cfg(tmp_output_dir_var + "/model.onnx", cfg)
+
+            # load performance report
+            with open(tmp_output_dir_var + "/report/rtlsim_performance.json") as f:
+                sim_data = json.load(f)
+
+            # check for deadlock
+            model_final = ModelWrapper(tmp_output_dir_var + "/intermediate_models/step_create_stitched_ip.onnx")
+            first_node = getCustomOp(model_final.find_consumer(model_final.graph.input[0].name))
+            last_node = getCustomOp(model_final.find_producer(model_final.graph.output[0].name))
+            input_txns_expected = np.prod(first_node.get_folded_input_shape()[:-1]) * self.params["fifo_rtlsim_n"]
+            output_txns_expected = np.prod(last_node.get_folded_output_shape()[:-1]) * self.params["fifo_rtlsim_n"]
+            var_deadlock = sim_data["N_IN_TXNS"] != input_txns_expected or sim_data["N_OUT_TXNS"] != output_txns_expected
+
+            # check rtlsim throughput
+            var_throughput = sim_data["throughput[images/s]"]
+            var_stable_throughput = sim_data["stable_throughput[images/s]"]
+            # TODO: take throughput or stable_throughput?
+            throughput_drop = (throughput - var_throughput) / throughput
+
+            if var_deadlock:   
+                fifo_reduction_pass.append(True)
+                log["fifo_reduction_results"][node.name] = 1.0
+            elif throughput_drop > self.params["fifo_reduction_throughput_drop_threshold"]:
+                fifo_reduction_pass.append(True)
+                log["fifo_reduction_results"][node.name] = throughput_drop
+            else:
+                fifo_reduction_pass.append(False)
+                log["fifo_reduction_results"][node.name] = "fail (no drop)"
+
+        self.output_dict["fifos"]["fifotest"] = log
 
     def steps_simple_model_flow(self):
         # Default step sequence for benchmarking a simple model (mostly single operators/custom_ops)
@@ -898,6 +1022,7 @@ class bench():
     def steps_full_build_flow(self):
         # Default step sequence for benchmarking a full FINN builder flow
 
+        ### SETUP ###
         # Use a temporary dir for buildflow-related files (next to FINN_BUILD_DIR)
         # Ensure it exists but is empty (clear potential artifacts from previous runs)
         tmp_buildflow_dir = os.path.join(os.environ["PATH_WORKDIR"], "buildflow")
@@ -907,6 +1032,7 @@ class bench():
         os.makedirs(self.build_inputs["build_dir"], exist_ok=True)
         self.local_artifacts_collection.append(("build_output", self.build_inputs["build_dir"]))
 
+        ### MODEL CREATION/IMPORT ###
         if "model_dir" in self.params:
             # input ONNX model and verification input/output pairs are provided
             model_dir = self.params["model_dir"]
@@ -928,6 +1054,22 @@ class bench():
         if "floorplan_path" in self.params:
             self.build_inputs["floorplan_path"] = self.params["floorplan_path"]
 
-        self.step_build()
+        ### BUILD SETUP ###
+        cfg = self.step_build_setup()
+        cfg.board = self.board
+        if "folding_path" in self.build_inputs:
+            cfg.folding_config_file = self.build_inputs["folding_path"]
+        if "specialize_path" in self.build_inputs:
+            cfg.specialize_layers_config_file = self.build_inputs["specialize_path"]
+        if "floorplan_path" in self.build_inputs:
+            cfg.floorplan_path = self.build_inputs["floorplan_path"]
 
+        ### BUILD ###
+        build.build_dataflow_cfg(self.build_inputs["onnx_path"], cfg)
+
+        ### ANALYSIS ###
         self.step_parse_builder_output(self.build_inputs["build_dir"])
+
+        # Only run in-depth FIFO test if selected
+        if "fifo_rtlsim_n" in self.params:
+            self.step_fifotest(self.build_inputs["onnx_path"], cfg, self.build_inputs["build_dir"])

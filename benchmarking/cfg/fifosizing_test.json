@@ -1,5 +1,6 @@
 [
     {
+        "dut": "synthetic_nonlinear",
         "dim": [32],
         "kernel_size": [5],
         "ch": [4],
@@ -12,8 +13,8 @@
 
         "strategy": ["analytical", "rtlsim"],
 
-        "rtlsim_n": [10],
-        "throughput_factor_threshold": [0.9],
+        "fifo_rtlsim_n": [10],
+        "fifo_throughput_factor_threshold": [0.9],
         "fifo_reduction_skip_threshold": [64],
         "fifo_reduction_factor": [0.5],
         "fifo_reduction_throughput_drop_threshold": [0.01]
