@@ -65,12 +65,18 @@ RUN apt-get update && \
     python-is-python3 \
     python3-pip \
     python3-setuptools-scm \
-    python3-venv
+    python3-venv \
+    pybind11-dev \
+    libfmt-dev \
+    libboost-dev \
+    libjansson-dev \
+    libgetdata-dev \
+    libtinfo5
 RUN echo "StrictHostKeyChecking no" >> /etc/ssh/ssh_config
 RUN locale-gen "en_US.UTF-8"
 
 # install Verilator from source to get the right version
-RUN apt-get install -y git perl make autoconf g++ flex bison ccache libgoogle-perftools-dev numactl perl-doc libfl2 libfl-dev zlib1g zlib1g-dev
+RUN apt-get install -y git perl make autoconf g++-10 flex bison ccache libgoogle-perftools-dev numactl perl-doc libfl2 libfl-dev zlib1g zlib1g-dev
 RUN git clone https://github.com/verilator/verilator
 RUN cd verilator && \
     git checkout v4.224 && \
@@ -135,6 +141,10 @@ RUN pip install tclwrapper==0.0.1
 
 # assure that we have the right setuptools version
 RUN pip install setuptools==68.2.2
+
+# create a file to indicate presence of a Docker container
+# for compatibility between pyXSI installation and Singularity setup
+RUN touch /.dockerenv
 
 # extra environment variables for FINN compiler
 ENV VIVADO_IP_CACHE "/tmp/vivado_ip_cache"
