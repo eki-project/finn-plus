@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 import yaml
-from enum import EnumType
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -11,7 +10,7 @@ from finn.builder import build_dataflow_steps
 from finn.builder.build_dataflow_config import DataflowBuildConfig, DataflowOutputType
 
 
-def variant_from_str(enum_class: EnumType, variant: str) -> Any:
+def variant_from_str(enum_class, variant) -> Any:
     """If a variant exists in the given enum class, return it, else None"""
     if variant in enum_class.__members__.keys():
         return enum_class.__members__[variant]
@@ -34,7 +33,7 @@ def buildcfg_from_yaml(p: Path) -> DataflowBuildConfig | None:
 
     # Read yaml file
     with p.open() as f:
-        data = yaml.load(f)
+        data = yaml.load(f, yaml.Loader)
         if "general" not in data.keys():
             print('Missing "general" section in your build file')
             return None
@@ -50,7 +49,7 @@ def buildcfg_from_yaml(p: Path) -> DataflowBuildConfig | None:
 
         # Create basic cfg with all possible default arguments
         cfg = DataflowBuildConfig(
-            general["output_dir"], float(general["synth_clk_period_ns"], generate_outputs)
+            general["output_dir"], general["synth_clk_period_ns"], generate_outputs
         )
 
         # Change values with defaults now
@@ -76,8 +75,8 @@ def buildcfg_from_yaml(p: Path) -> DataflowBuildConfig | None:
         # Build steps list
         # Existing steps are simply passed
         # If the format is module_name.step_name, module_name is automatically imported
-        if "build_steps" in general.keys():
-            steps = general["build_steps"]
+        if "build_steps" in data.keys():
+            steps = data["build_steps"]
             used_steps = []
             for step in steps:
                 if step in build_dataflow_steps.build_dataflow_step_lookup.keys():
@@ -89,9 +88,17 @@ def buildcfg_from_yaml(p: Path) -> DataflowBuildConfig | None:
 
                     # Add the custom step module path to PATH so python can import it
                     # Assumes that build.py and custom_steps.py are in the same dir
-                    sys.path.append(p.parent)
+                    sys.path.append(str(p.parent.absolute()))
 
                     # Import the step and add it to the list
                     custom_step_module = import_module(mod_name)
-                    used_steps.append(custom_step_module.__getattr__(step_name))
+                    if step_name in dir(custom_step_module):
+                        used_steps.append(getattr(custom_step_module, step_name))
+                    else:
+                        print(
+                            f"Step {step} is neither an integrated step nor importable via module"
+                        )
+                        return None
+            cfg.steps = used_steps
         return cfg
+    return None
