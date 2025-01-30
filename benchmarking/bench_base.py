@@ -1059,9 +1059,25 @@ class bench():
         # TODO: set as much as possible here, e.g. verbose, debug, force_python, vitisopt, shell_flow
         cfg = self.step_build_setup()
         cfg.board = self.board
+        cfg.verbose = False
+        cfg.enable_build_pdb_debug = False
+        cfg.force_python_rtlsim = False
+
+        # "manual or "characterize" or "largefifo_rtlsim"
+        if "fifo_method" in self.params:
+            if self.params["fifo_method"] == "manual":
+                cfg.auto_fifo_depths = False
+            else:
+                cfg.auto_fifo_depths = True
+                cfg.auto_fifo_strategy = self.params["fifo_method"]
+        # only relevant for "characterize" method: "rtlsim" or "analytical"
+        if "fifo_strategy" in self.params:
+            cfg.characteristic_function_strategy = self.params["fifo_strategy"]
+
+        # TODO: determine automatically or replace by exact instr wrapper sim
         if "fifo_rtlsim_n" in self.params:
-            # TODO: determine automatically or replace by exact instr wrapper sim
             cfg.rtlsim_batch_size=self.params["fifo_rtlsim_n"]
+
         if "folding_path" in self.build_inputs:
             cfg.folding_config_file = self.build_inputs["folding_path"]
         if "specialize_path" in self.build_inputs:

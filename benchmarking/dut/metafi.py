@@ -47,23 +47,18 @@ class bench_metafi(bench):
             output_dir = self.build_inputs["build_dir"],
             synth_clk_period_ns = self.clock_period_ns,
             steps=steps,
-            verbose=False,
+
             target_fps=None, #23
             shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ, # TODO: generalize/adapt to new back-end
             #vitis_platform=vitis_platform,
 
-            auto_fifo_depths=False,
             split_large_fifos=False, # probably needed #TODO: account for this in FIFO reduction test
-
-            # general rtlsim settings
-            force_python_rtlsim=False,
 
             # folding_config_file=folding_config_file,
             # folding_config_file="/home/rz/project/finn-examples/build/vgg10-radioml/folding_config/auto_folding_config.json",
             # specialize_layers_config_file = "output_%s_%s" % (model_name, release_platform_name) + "/template_specialize_layers_config.json",
             # specialize_layers_config_file = "/home/rz/project/finn-examples/build/vgg10-radioml/specialize_layers_config/template_specialize_layers_config.json",
-            auto_fifo_strategy="characterize",
-            characteristic_function_strategy=self.params["strategy"],
+
             #large_fifo_mem_style=build_cfg.LargeFIFOMemStyle.AUTO,
             # standalone_thresholds=True,
             # enable extra performance optimizations (physopt)

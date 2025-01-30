@@ -7,6 +7,8 @@
         "board": ["RFSoC2x2"],
         "clock_period_ns": [10],
 
+        "fifo_method": ["largefifo_rtlsim"],
+
         "fifo_rtlsim_n": [10],
         "fifo_throughput_factor_threshold": [0.9],
         "fifo_reduction_skip_threshold": [1024],

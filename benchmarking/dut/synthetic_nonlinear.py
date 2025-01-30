@@ -291,16 +291,11 @@ class bench_synthetic_nonlinear(bench):
         cfg = build_cfg.DataflowBuildConfig(
             output_dir = self.build_inputs["build_dir"],
             synth_clk_period_ns = self.clock_period_ns,
-            verbose=False,
-            # only works with characterization-based FIFO-sizing
-            auto_fifo_depths=True,
-            auto_fifo_strategy="characterize",
-            characteristic_function_strategy=self.params["strategy"],
+
             split_large_fifos=False,
             # manual folding
             target_fps=None,
-            # general rtlsim settings
-            force_python_rtlsim=False,
+
             shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ, # TODO: generalize/adapt to new back-end
             generate_outputs=[
                 build_cfg.DataflowOutputType.ESTIMATE_REPORTS,

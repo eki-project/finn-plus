@@ -918,9 +918,6 @@ class bench_transformer(bench):
             mvau_wwidth_max = 2048,
             split_large_fifos = True,
 
-            verbose = False, # if True prints stdout and stderr to console instead of build_dataflow.log
-            enable_build_pdb_debug = False,
-
             generate_outputs=[
                 build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
                 build_cfg.DataflowOutputType.STITCHED_IP, # required for HarnessBuild, OOC_SYNTH, and RTLSIM

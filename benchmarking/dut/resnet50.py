@@ -40,7 +40,6 @@ class bench_resnet50(bench):
             synth_clk_period_ns = self.clock_period_ns,
             steps=resnet50_build_steps,
             shell_flow_type=build_cfg.ShellFlowType.VITIS_ALVEO, # TODO: generalize/adapt to new back-end
-            auto_fifo_depths=False,
             split_large_fifos=True,
             vitis_platform=alveo_default_platform[self.board], # TODO: generalize/adapt to new back-end
 

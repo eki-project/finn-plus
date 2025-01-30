@@ -11,7 +11,8 @@
         "lb_num_layers": [1],
         "rb_num_layers": [3],
 
-        "strategy": ["analytical", "rtlsim"],
+        "fifo_method": ["characterize"],
+        "fifo_strategy": ["analytical", "rtlsim"],
 
         "fifo_rtlsim_n": [10],
         "fifo_throughput_factor_threshold": [0.9],

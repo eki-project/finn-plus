@@ -7,6 +7,8 @@
         "board": ["RFSoC2x2"],
         "clock_period_ns": [10],
 
+        "fifo_method": ["manual"],
+
         "fifo_rtlsim_n": [10]
     }
     ]
