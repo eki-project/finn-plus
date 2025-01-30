@@ -26,7 +26,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import numpy as np
 import os
 import qonnx
@@ -38,6 +37,7 @@ from qonnx.util.basic import gen_finn_dt_tensor, roundup_to_integer_multiple
 
 import finn.util
 import finn.util.data_packing as dpk
+from finn.transformation import log
 from finn.util.basic import make_build_dir
 from finn.util.data_packing import (
     hexstring2npbytearray,
@@ -45,8 +45,6 @@ from finn.util.data_packing import (
 )
 
 from . import template_driver
-
-log = logging.getLogger("make_pynq_driver")
 
 
 def to_external_tensor(init, w_dtype):

@@ -27,15 +27,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import numpy as np
 from onnx import helper as oh
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
+from finn.transformation import log
 from finn.util.fpgadataflow import is_fpgadataflow_node
-
-log = logging.getLogger("insert_fifo")
 
 
 def _is_fifo_node(node):

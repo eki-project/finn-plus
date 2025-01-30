@@ -1,10 +1,9 @@
-import logging
 import numpy as np
 from onnx import TensorProto, helper
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import auto_pad_to_explicit_padding, get_by_name
 
-log = logging.getLogger("infer_pixel_padding_deconv")
+from finn.transformation import log
 
 
 class InferPixelPaddingDeconv(Transformation):

@@ -26,7 +26,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import numpy as np
 import os
 from abc import abstractmethod
@@ -35,9 +34,8 @@ from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 
 import finn.util.verilator_helper as verilator
+from finn.custom_op.fpgadataflow import log
 from finn.util.basic import pyverilate_get_liveness_threshold_cycles
-
-log = logging.getLogger("hwcustomop")
 
 
 class HWCustomOp(CustomOp):

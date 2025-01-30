@@ -138,7 +138,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     if cfg.verbose:
         logging.basicConfig(
             level=logging.DEBUG,
-            format="[%(asctime)s]%(levelname)s: %(name)s: %(message)s",
+            format="[%(asctime)s]%(levelname)s: %(pathname)s:%(lineno)d: %(message)s",
             filename=logpath,
             filemode="w",
         )

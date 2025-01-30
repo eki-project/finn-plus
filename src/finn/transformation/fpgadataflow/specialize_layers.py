@@ -26,7 +26,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import numpy as np
 from onnx import helper
 from qonnx.custom_op.registry import getCustomOp
@@ -34,9 +33,8 @@ from qonnx.transformation.base import Transformation
 
 from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
+from finn.transformation import log
 from finn.util.basic import get_dsp_block, is_versal
-
-log = logging.getLogger("specialize_layers")
 
 
 def _determine_impl_style(node, fpgapart, model):

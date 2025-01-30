@@ -26,14 +26,11 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
-import logging
 import os
 import subprocess
 
+from finn.transformation import log
 from finn.util.basic import which
-
-log = logging.getLogger("hls")
 
 
 class CallHLS:

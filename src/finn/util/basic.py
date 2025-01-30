@@ -26,11 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import os
 import subprocess
 import tempfile
 from qonnx.util.basic import roundup_to_integer_multiple
+
+from finn.util import log
 
 # test boards
 test_board_map = ["Pynq-Z1", "KV260_SOM", "ZCU104", "U250"]
@@ -82,9 +83,6 @@ part_map = {**pynq_part_map, **alveo_part_map}
 part_map["VEK280"] = "xcve2802-vsvh1760-2MP-e-S"
 part_map["VCK190"] = "xcvc1902-vsva2197-2MP-e-S"
 part_map["V80"] = "xcv80-lsva4737-2MHP-e-s"
-
-
-log = logging.getLogger("basic")
 
 
 def get_rtlsim_trace_depth():

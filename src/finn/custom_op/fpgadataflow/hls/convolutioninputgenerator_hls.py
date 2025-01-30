@@ -27,19 +27,17 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import math
 import numpy as np
 import os
 from qonnx.core.datatype import DataType
 
+from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.convolutioninputgenerator import (
     ConvolutionInputGenerator,
 )
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-
-log = logging.getLogger("convolutioninputgenerator_hls")
 
 # ONNX i/o tensor shape assumptions for ConvolutionInputGenerator1D:
 # input 0 is the input tensor, shape NHWC = (1, IFMDim_H, IFMDim_W, IFMChannels)

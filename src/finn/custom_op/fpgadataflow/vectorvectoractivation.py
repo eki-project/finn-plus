@@ -26,7 +26,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import math
 import numpy as np
 import onnx.numpy_helper as np_helper
@@ -39,10 +38,9 @@ from qonnx.util.basic import (
     roundup_to_integer_multiple,
 )
 
+from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
-
-log = logging.getLogger("vectorvectoractivation")
 
 
 class VVAU(HWCustomOp):

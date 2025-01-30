@@ -27,14 +27,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import os
 import qonnx.custom_op.registry as registry
 from qonnx.transformation.base import NodeLocalTransformation
 
+from finn.transformation import log
 from finn.util.fpgadataflow import is_hls_node
-
-log = logging.getLogger("hlssynth_ip")
 
 
 class HLSSynthIP(NodeLocalTransformation):

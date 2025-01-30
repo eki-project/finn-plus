@@ -28,14 +28,12 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-import logging
 import qonnx.custom_op.registry as registry
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import NodeLocalTransformation
 
+from finn.transformation import log
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
-
-log = logging.getLogger("derive_characteristic")
 
 
 class DeriveCharacteristic(NodeLocalTransformation):

@@ -25,19 +25,18 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-import logging
+
 import numpy as np
 import os
 import shutil
 from qonnx.core.datatype import DataType
 
 import finn.util.verilator_helper as verilator
+from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
 from finn.util.basic import get_rtlsim_trace_depth, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-
-log = logging.getLogger("streamingfifo_rtl")
 
 
 class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):

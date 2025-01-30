@@ -26,16 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
-import logging
 from qonnx.transformation.base import Transformation
 
+from finn.transformation import log
 from finn.transformation.qonnx.qonnx_activation_handlers import (
     QuantActBaseHandler,
     QuantIdentityHandler,
 )
-
-log = logging.getLogger("quant_act_to_multithreshold")
 
 
 def default_filter_function_generator(max_multithreshold_bit_width=8):

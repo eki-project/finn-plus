@@ -27,7 +27,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-import logging
 import numpy as np
 import qonnx.core.data_layout as DataLayout
 from onnx import TensorProto, helper
@@ -40,7 +39,7 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 from qonnx.util.onnx import nchw_to_nhwc
 
-log = logging.getLogger("convert_to_hw_layers")
+from finn.transformation import log
 
 
 class InferConvInpGen(Transformation):

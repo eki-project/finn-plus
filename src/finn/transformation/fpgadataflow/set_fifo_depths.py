@@ -27,7 +27,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import math
 import numpy as np
 from onnx import TensorProto, helper
@@ -42,6 +41,7 @@ from qonnx.transformation.general import (
 )
 
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
+from finn.transformation import log
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -51,8 +51,6 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.pyverilator import pyverilate_stitched_ip, verilator_fifosim
-
-log = logging.getLogger("set_fifo_depths")
 
 
 def reset_implementation(node):

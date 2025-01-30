@@ -26,7 +26,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import numpy as np
 import onnxruntime as rt
 from onnx import TensorProto, helper
@@ -34,9 +33,8 @@ from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.maxpoolnhwc import compute_pool_output_dim
 from qonnx.util.basic import qonnx_make_model
 
+from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
-
-log = logging.getLogger("streamingmaxpool")
 
 # TODO: consider splitting this into separate implementations for 1D and 2D
 # similar to what we do for ConvolutionInputGenerator

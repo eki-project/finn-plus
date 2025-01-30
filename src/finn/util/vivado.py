@@ -26,12 +26,10 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import os
 
+from finn.transformation import log
 from finn.util.basic import launch_process_helper, which
-
-log = logging.getLogger("vivado.py")
 
 
 def out_of_context_synth(

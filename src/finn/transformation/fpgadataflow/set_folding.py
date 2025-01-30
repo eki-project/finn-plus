@@ -27,17 +27,15 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import numpy as np
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
+from finn.transformation import log
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
-
-log = logging.getLogger("set_folding")
 
 
 def divisors(num):

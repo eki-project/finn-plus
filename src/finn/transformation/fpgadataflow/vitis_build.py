@@ -28,7 +28,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import json
-import logging
 import os
 import subprocess
 from qonnx.core.modelwrapper import ModelWrapper
@@ -41,6 +40,7 @@ from qonnx.transformation.general import (
 )
 
 from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
+from finn.transformation import log
 from finn.transformation.fpgadataflow.create_dataflow_partition import (
     CreateDataflowPartition,
 )
@@ -55,8 +55,6 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir
 
 from . import templates
-
-log = logging.getLogger("vitis_build")
 
 
 def _check_vitis_envvars():

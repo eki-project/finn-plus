@@ -27,16 +27,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import json
-import logging
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import ApplyConfig
 from qonnx.util.basic import get_by_name
 
 from finn.analysis.fpgadataflow.floorplan_params import floorplan_params
+from finn.transformation import log
 from finn.util.basic import make_build_dir
-
-log = logging.getLogger("floorplan")
 
 
 class Floorplan(Transformation):

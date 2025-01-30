@@ -26,7 +26,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import logging
 import numpy as np
 import os
 import subprocess
@@ -34,12 +33,10 @@ from abc import ABC, abstractmethod
 from qonnx.core.datatype import DataType
 
 import finn.util.verilator_helper as verilator
-from finn.custom_op.fpgadataflow import templates
+from finn.custom_op.fpgadataflow import log, templates
 from finn.util.basic import CppBuilder, get_rtlsim_trace_depth, make_build_dir
 from finn.util.hls import CallHLS
 from finn.util.pyverilator import make_single_source_file
-
-log = logging.getLogger("HLSBackend")
 
 
 class HLSBackend(ABC):
