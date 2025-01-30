@@ -1,6 +1,6 @@
 [
     {
-        "dut": "metafi",
+        "dut": ["metafi"],
         "model_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/model.onnx"],
         "folding_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/auto_folding_config _metaFi_f25.json"],
 

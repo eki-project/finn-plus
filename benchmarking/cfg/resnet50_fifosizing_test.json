@@ -1,6 +1,6 @@
 [
     {
-        "dut": "resnet50",
+        "dut": ["resnet50"],
 
         "model_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/resnet50_w1a2_exported.onnx"],
         "folding_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/U250_folding_config.json"],

@@ -1,6 +1,6 @@
 [
     {
-        "dut": "synthetic_nonlinear",
+        "dut": ["synthetic_nonlinear"],
         "dim": [32],
         "kernel_size": [5],
         "ch": [4],
