@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import sys
 import yaml
 from enum import EnumType
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+from finn.builder import build_dataflow_steps
 from finn.builder.build_dataflow_config import DataflowBuildConfig, DataflowOutputType
 
 
@@ -15,12 +18,21 @@ def variant_from_str(enum_class: EnumType, variant: str) -> Any:
     return None
 
 
+def try_insert_setting(
+    setting: str, general_config: dict, cfg: DataflowBuildConfig
+) -> DataflowBuildConfig:
+    if setting in general_config.keys() and setting in cfg.__dict__.keys():
+        cfg.__setattr__(setting, general_config[setting])
+    return cfg
+
+
 def buildcfg_from_yaml(p: Path) -> DataflowBuildConfig | None:
     """Convert a YAML build file to a dataflow build config as well as possible. If the
     given YAML file does not exist or is incorrect, this returns None"""
     if not p.exists():
         return None
 
+    # Read yaml file
     with p.open() as f:
         data = yaml.load(f)
         if "general" not in data.keys():
@@ -36,8 +48,50 @@ def buildcfg_from_yaml(p: Path) -> DataflowBuildConfig | None:
             variant_from_str(DataflowOutputType, output) for output in general["generate_outputs"]
         ]
 
+        # Create basic cfg with all possible default arguments
         cfg = DataflowBuildConfig(
             general["output_dir"], float(general["synth_clk_period_ns"], generate_outputs)
         )
 
+        # Change values with defaults now
+        general_settings = [
+            "standalone_thresholds",
+            "mvau_wwidth_max",
+            "target_fps",
+            "folding_two_pass_relaxation",
+            "board",
+            "shell_flow_type",
+            "vitis_platform",
+            "vitis_opt_strategy",
+            "specialize_layers_config_file",
+            "folding_config_file",
+            "auto_fifo_depths",
+            "split_large_fifos",
+            "rtlsim_batch_size",
+            "save_intermediate_models",
+        ]
+        for setting in general_settings:
+            cfg = try_insert_setting(setting, general, cfg)
+
+        # Build steps list
+        # Existing steps are simply passed
+        # If the format is module_name.step_name, module_name is automatically imported
+        if "build_steps" in general.keys():
+            steps = general["build_steps"]
+            used_steps = []
+            for step in steps:
+                if step in build_dataflow_steps.build_dataflow_step_lookup.keys():
+                    used_steps.append(step)
+                else:
+                    # The module name is everything except the last qualifier
+                    mod_name = ".".join(step.split(".")[:-1])
+                    step_name = step.split(".")[-1]
+
+                    # Add the custom step module path to PATH so python can import it
+                    # Assumes that build.py and custom_steps.py are in the same dir
+                    sys.path.append(p.parent)
+
+                    # Import the step and add it to the list
+                    custom_step_module = import_module(mod_name)
+                    used_steps.append(custom_step_module.__getattr__(step_name))
         return cfg
