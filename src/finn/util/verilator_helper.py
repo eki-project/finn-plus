@@ -11,6 +11,11 @@ commonVerilatorArgs = [
     "-Wno-IMPLICIT",
     "-Wno-WIDTH",
     "-Wno-COMBDLY",
+    "-Wno-WIDTHCONCAT",
+    "-Wno-UNPACKED",
+    "-Wno-TIMESCALEMOD",
+    "-Wno-MODDUP",
+    "-Wno-CASEINCOMPLETE",
 ]
 
 
