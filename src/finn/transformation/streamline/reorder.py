@@ -989,14 +989,15 @@ class MoveOpPastFork(Transformation):
                 for consumer_node in consumers[1:]:
                     # create new node
                     new_output_tensor_name = model.make_new_valueinfo_name()
-                    if op_init_param is None:
-                        new_inp_list = [n.input[0]]
-                    else:
-                        new_param_name = model.make_new_valueinfo_name()
-                        new_inp_list = [n.input[0], new_param_name]
-                        model.set_initializer(new_param_name, op_init_param)
+                    # DEBUG for missing init tensor type annotation on node copy
+                    #if op_init_param is None:
+                    #    new_inp_list = [n.input[0]]
+                    #else:
+                    #    new_param_name = model.make_new_valueinfo_name()
+                    #    new_inp_list = [n.input[0], new_param_name]
+                    #    model.set_initializer(new_param_name, op_init_param)
                     new_node = deepcopy(n)
-                    new_node.input[:] = new_inp_list
+                    #new_node.input[:] = new_inp_list
                     new_node.output[:] = [new_output_tensor_name]
                     graph.node.insert(node_ind, new_node)
                     node_ind += 1
