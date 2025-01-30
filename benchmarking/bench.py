@@ -139,8 +139,8 @@ def main(config_name):
 
         # Create bench object for respective DUT
         if "dut" in params:
-            if params.dut in dut:
-                bench_object = dut[params.dut](params, task_id, run_id, artifacts_dir, save_dir)
+            if params["dut"] in dut:
+                bench_object = dut[params["dut"]](params, task_id, run_id, artifacts_dir, save_dir)
             else:
                 print("ERROR: unknown DUT specified")
                 return 1
