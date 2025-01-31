@@ -123,8 +123,17 @@ Fetch Repos:
     key: $CI_COMMIT_SHA
     paths:
       - deps
+  variables:
+    SINGULARITY_IMG_SELECT: "finn_dev.sif" # default, may be overwritten by dotenv artifact
   script:
     - ./fetch-repos.sh
+    # Workaround for https://gitlab.com/gitlab-org/gitlab/-/issues/349538
+    # Passing artifacts from optional parent jobs to child pipelines is not supported
+    # Therefore, we pass the dotenv artifact from "Singularity Image Build" through this job
+    - echo SINGULARITY_IMG_SELECT=$SINGULARITY_IMG_SELECT > FINN_environment_passthrough.env
+  artifacts:
+    reports:
+      dotenv: FINN_environment_passthrough.env
 
 FINN Test Suite 2022.2:
   id_tokens:
@@ -148,7 +157,6 @@ FINN Test Suite 2022.2:
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
     PYTEST_PARALLEL: "$CPU_CORES"
-    SINGULARITY_IMG_SELECT: "finn_dev.sif" # may be overwritten by dotenv artifact
     FINN_XILINX_VERSION: "2022.2"
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
