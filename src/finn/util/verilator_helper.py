@@ -16,6 +16,7 @@ commonVerilatorArgs = [
     "-Wno-TIMESCALEMOD",
     "-Wno-MODDUP",
     "-Wno-CASEINCOMPLETE",
+    "-Wno-LITENDIAN",
 ]
 
 

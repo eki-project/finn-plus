@@ -195,12 +195,11 @@ class CppBuilder:
             f.write(bash_compile + "\n")
         bash_command = ["bash", self.compile_script]
         process_compile = subprocess.Popen(
-            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         _, stderr_data = process_compile.communicate()
-        stderr_stripped = stderr_data.decode().strip()
-        if stderr_stripped != "" and stderr_stripped is not None:
-            log.critical(stderr_stripped)  # Decode bytes and log as critical
+        if stderr_data.strip():
+            log.critical(stderr_data.strip())  # Decode bytes and log as critical
 
 
 def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
@@ -210,15 +209,13 @@ def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
     if proc_env is None:
         proc_env = os.environ.copy()
     with subprocess.Popen(
-        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=proc_env, cwd=cwd
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=proc_env, cwd=cwd, text=True
     ) as proc:
         (cmd_out, cmd_err) = proc.communicate()
-    if cmd_out is not None and print_stdout is True:
-        cmd_out = cmd_out.decode("utf-8")
-        log.info(cmd_out)
-    if cmd_err is not None:
-        cmd_err = cmd_err.decode("utf-8")
-        log.critical(cmd_err)
+    if cmd_out.strip() and print_stdout is True:
+        log.info(cmd_out.strip())
+    if cmd_err.strip():
+        log.critical(cmd_err.strip())
     return (cmd_out, cmd_err)
 
 
