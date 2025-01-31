@@ -175,7 +175,7 @@ def step_resnet50_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model.set_tensor_datatype(model.graph.input[0].name, DataType["UINT8"])
-    model = model.transform(InferDataLayouts())
+    #model = model.transform(InferDataLayouts())
     model = model.transform(DoubleToSingleFloat())
     model = model.transform(InferDataTypes())
     model = model.transform(SortGraph())
@@ -196,7 +196,7 @@ def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     ]
     for trn in to_hw_transformations:
         model = model.transform(trn())
-        model = model.transform(InferDataLayouts())
+        #model = model.transform(InferDataLayouts())
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(InferDataTypes())
 
