@@ -687,6 +687,10 @@ def Streamline():  # noqa: Uppercase
                     AbsorbMulIntoMultiThreshold(),
                     Absorb1BitMulIntoMatMul(),
                     Absorb1BitMulIntoConv(),
+                    MoveMulPastAdd(),
+                    AbsorbMulIntoMultiThreshold(),
+                    AbsorbAddIntoMultiThreshold(),
+                    MoveAddPastMul()
                 ]
             ),
             # Streamlining scales and biases forward through residual topologies
