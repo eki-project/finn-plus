@@ -1062,6 +1062,7 @@ class bench():
         cfg.verbose = False
         cfg.enable_build_pdb_debug = False
         cfg.force_python_rtlsim = False
+        #rtlsim_use_vivado_comps # TODO ?
 
         # "manual or "characterize" or "largefifo_rtlsim"
         if "fifo_method" in self.params:
