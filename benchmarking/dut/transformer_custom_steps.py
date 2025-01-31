@@ -687,10 +687,6 @@ def Streamline():  # noqa: Uppercase
                     AbsorbMulIntoMultiThreshold(),
                     Absorb1BitMulIntoMatMul(),
                     Absorb1BitMulIntoConv(),
-                    MoveMulPastAdd(),
-                    AbsorbMulIntoMultiThreshold(),
-                    AbsorbAddIntoMultiThreshold(),
-                    MoveAddPastMul()
                 ]
             ),
             # Streamlining scales and biases forward through residual topologies
@@ -864,6 +860,11 @@ def step_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
     # Note: Contains some sets of nested exhaustive transformations meant for
     # particular architectural patterns, e.g., residual topologies.
     model = model.transform(Streamline())
+    # DEBUG for streamlining after moving to MoveLinearPastFork with workaround applied
+    model = model.transform(MoveMulPastAdd())
+    model = model.transform(AbsorbMulIntoMultiThreshold())
+    model = model.transform(AbsorbAddIntoMultiThreshold())
+    model = model.transform(MoveAddPastMul())
     # If configured, run a verification of the transformed model on some
     # sample inputs
     if VerificationStepType.STREAMLINED_PYTHON in cfg._resolve_verification_steps():  # noqa
