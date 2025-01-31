@@ -38,9 +38,9 @@ from qonnx.util.basic import (
     roundup_to_integer_multiple,
 )
 
-from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
+from finn.util.logging import log
 
 
 class VVAU(HWCustomOp):

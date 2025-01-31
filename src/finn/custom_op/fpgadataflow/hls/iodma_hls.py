@@ -31,9 +31,9 @@ import math
 import numpy as np
 from qonnx.core.datatype import DataType
 
-from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 # the IODMA inerfaces a memory-mapped AXI interface and an AXI stream
 # direction "in": pulls data from AXI-MM to AXI stream

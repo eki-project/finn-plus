@@ -31,9 +31,9 @@ import os
 import qonnx.custom_op.registry as registry
 from qonnx.transformation.base import Transformation
 
-from finn.transformation import log
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+from finn.util.logging import log
 
 
 def _codegen_single_node(node, model, fpgapart, clk):

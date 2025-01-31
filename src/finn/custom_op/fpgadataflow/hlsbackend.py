@@ -33,9 +33,10 @@ from abc import ABC, abstractmethod
 from qonnx.core.datatype import DataType
 
 import finn.util.verilator_helper as verilator
-from finn.custom_op.fpgadataflow import log, templates
+from finn.custom_op.fpgadataflow import templates
 from finn.util.basic import CppBuilder, get_rtlsim_trace_depth, make_build_dir
 from finn.util.hls import CallHLS
+from finn.util.logging import log
 from finn.util.pyverilator import make_single_source_file
 
 

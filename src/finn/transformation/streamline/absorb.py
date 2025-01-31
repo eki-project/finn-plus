@@ -36,7 +36,7 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 
-from finn.transformation import log
+from finn.util.logging import log
 
 
 class AbsorbSignBiasIntoMultiThreshold(Transformation):

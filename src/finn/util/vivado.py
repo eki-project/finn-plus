@@ -28,8 +28,8 @@
 
 import os
 
-from finn.transformation import log
 from finn.util.basic import launch_process_helper, which
+from finn.util.logging import log
 
 
 def out_of_context_synth(

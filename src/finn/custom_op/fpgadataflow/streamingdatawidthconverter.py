@@ -30,8 +30,8 @@ import math
 import numpy as np
 from qonnx.core.datatype import DataType
 
-from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 # does not do anything at the ONNX node-by-node level, and input-output
 # tensor shapes are the same. performs data width conversion at the rtlsim level

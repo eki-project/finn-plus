@@ -40,7 +40,6 @@ from qonnx.transformation.general import (
 )
 
 from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
-from finn.transformation import log
 from finn.transformation.fpgadataflow.create_dataflow_partition import (
     CreateDataflowPartition,
 )
@@ -53,6 +52,7 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir
+from finn.util.logging import log
 
 from . import templates
 

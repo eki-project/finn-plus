@@ -29,8 +29,8 @@
 import numpy as np
 from qonnx.core.datatype import DataType
 
-from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class FMPadding(HWCustomOp):

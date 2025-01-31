@@ -2,8 +2,8 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name
 
-from finn.transformation import log
 from finn.util.fpgadataflow import is_fpgadataflow_node
+from finn.util.logging import log
 
 
 class RemoveCNVtoFCFlatten(Transformation):

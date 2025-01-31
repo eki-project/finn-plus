@@ -33,8 +33,8 @@ from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.maxpoolnhwc import compute_pool_output_dim
 from qonnx.util.basic import qonnx_make_model
 
-from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 # TODO: consider splitting this into separate implementations for 1D and 2D
 # similar to what we do for ConvolutionInputGenerator

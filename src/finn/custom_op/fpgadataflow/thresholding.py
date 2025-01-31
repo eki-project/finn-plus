@@ -31,8 +31,8 @@ from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.util.basic import interleave_matrix_outer_dim_from_partitions
 
-from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class Thresholding(HWCustomOp):

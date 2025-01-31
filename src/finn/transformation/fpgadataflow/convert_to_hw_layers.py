@@ -39,7 +39,7 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 from qonnx.util.onnx import nchw_to_nhwc
 
-from finn.transformation import log
+from finn.util.logging import log
 
 
 class InferConvInpGen(Transformation):

@@ -31,7 +31,7 @@ import subprocess
 import tempfile
 from qonnx.util.basic import roundup_to_integer_multiple
 
-from finn.util import log
+from finn.util.logging import log
 
 # test boards
 test_board_map = ["Pynq-Z1", "KV260_SOM", "ZCU104", "U250"]

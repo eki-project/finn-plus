@@ -29,8 +29,8 @@ import os
 import qonnx.custom_op.registry as registry
 import xml.etree.ElementTree as ET
 
-from finn.analysis import log
 from finn.util.fpgadataflow import is_hls_node
+from finn.util.logging import log
 
 
 def hls_synth_res_estimation(model):

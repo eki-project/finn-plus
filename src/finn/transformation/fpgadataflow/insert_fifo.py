@@ -32,8 +32,8 @@ from onnx import helper as oh
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
-from finn.transformation import log
 from finn.util.fpgadataflow import is_fpgadataflow_node
+from finn.util.logging import log
 
 
 def _is_fifo_node(node):

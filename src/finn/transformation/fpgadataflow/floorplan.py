@@ -33,8 +33,8 @@ from qonnx.transformation.general import ApplyConfig
 from qonnx.util.basic import get_by_name
 
 from finn.analysis.fpgadataflow.floorplan_params import floorplan_params
-from finn.transformation import log
 from finn.util.basic import make_build_dir
+from finn.util.logging import log
 
 
 class Floorplan(Transformation):

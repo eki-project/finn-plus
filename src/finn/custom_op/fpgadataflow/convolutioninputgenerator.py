@@ -34,8 +34,8 @@ from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
 
-from finn.custom_op.fpgadataflow import log
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 # ONNX i/o tensor shape assumptions for ConvolutionInputGenerator:
 # input 0 is the input tensor, shape NHWC = (1, IFMDim, IFMDim, IFMChannels)

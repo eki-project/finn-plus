@@ -31,8 +31,8 @@ import os
 import qonnx.custom_op.registry as registry
 from qonnx.transformation.base import NodeLocalTransformation
 
-from finn.transformation import log
 from finn.util.fpgadataflow import is_hls_node
+from finn.util.logging import log
 
 
 class HLSSynthIP(NodeLocalTransformation):

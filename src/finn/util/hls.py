@@ -29,8 +29,8 @@
 import os
 import subprocess
 
-from finn.transformation import log
 from finn.util.basic import which
+from finn.util.logging import log
 
 
 class CallHLS:

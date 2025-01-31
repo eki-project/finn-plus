@@ -33,9 +33,9 @@ from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
-from finn.transformation import log
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+from finn.util.logging import log
 
 
 def divisors(num):

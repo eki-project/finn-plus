@@ -28,11 +28,11 @@
 
 from qonnx.transformation.base import Transformation
 
-from finn.transformation import log
 from finn.transformation.qonnx.qonnx_activation_handlers import (
     QuantActBaseHandler,
     QuantIdentityHandler,
 )
+from finn.util.logging import log
 
 
 def default_filter_function_generator(max_multithreshold_bit_width=8):

@@ -28,7 +28,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import json
-import logging
 import numpy as np
 import os
 import shutil
@@ -125,10 +124,9 @@ from finn.util.basic import (
     get_rtlsim_trace_depth,
     pyverilate_get_liveness_threshold_cycles,
 )
+from finn.util.logging import log
 from finn.util.pyverilator import verilator_fifosim
 from finn.util.test import execute_parent
-
-log = logging.getLogger("build_dataflow_steps")
 
 
 def verify_step(
