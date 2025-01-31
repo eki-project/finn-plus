@@ -43,7 +43,7 @@ from finn.builder.build_dataflow_config import (
     default_build_dataflow_steps,
 )
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
-from finn.builder.yaml_to_cfg import run_finn_from_yaml
+from finn.builder.yaml_to_cfg import buildcfg_from_yaml
 
 
 # adapted from https://stackoverflow.com/a/39215961
@@ -239,7 +239,8 @@ def build(target: str, dir=False) -> None:
         build_dataflow_directory(str(t.absolute()))
     else:
         if target.endswith(".yml") or target.endswith(".yaml"):
-            run_finn_from_yaml(target)
+            cfg, model = buildcfg_from_yaml(Path(target))
+            build_dataflow_cfg(str(model), cfg)
         elif target.endswith(".py"):
             subprocess.run(
                 f"python -mpdb -cc -cq {target}", stdout=subprocess.PIPE, stderr=subprocess.PIPE

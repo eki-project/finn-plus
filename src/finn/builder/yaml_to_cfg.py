@@ -6,7 +6,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
-from finn.builder import build_dataflow, build_dataflow_steps
+from finn.builder import build_dataflow_steps
 from finn.builder.build_dataflow_config import (
     AutoFIFOSizingMethod,
     DataflowBuildConfig,
@@ -160,9 +160,3 @@ def buildcfg_from_yaml(p: Path) -> tuple[DataflowBuildConfig, Path] | None:
         cfg = process_steps(p, data, cfg, "verify_steps")
         return cfg, general["model"]
     return None
-
-
-def run_finn_from_yaml(buildfile: str) -> None:
-    """Entrypoint for the FINN flow when using a YAML build file"""
-    cfg, model = buildcfg_from_yaml(Path(buildfile))
-    build_dataflow.build_dataflow_cfg(str(model), cfg)
