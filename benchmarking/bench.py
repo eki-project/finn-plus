@@ -63,14 +63,13 @@ def main(config_name):
     os.makedirs(os.path.join(artifacts_dir, "tasks_output"), exist_ok=True)
     log_path = os.path.join(artifacts_dir, "tasks_output", "task_%d.json" % (task_id))
     
-    # save dir for saving bitstreams (and optionally full build artifacts for debugging (TODO))
-    # TODO: make this more configurable or switch to job/artifact based power measurement
+    # local save dir for large artifacts (e.g., build output, tmp dir dump for debugging)
     if job_id == 0:
         #DEBUG mode
         save_dir = experiment_dir + "_save"
     else:
-        save_dir = os.path.join("/scratch/hpc-prf-radioml/felix/jobs/",
-                            "CI_" + os.environ.get("CI_PIPELINE_IID") + "_" + os.environ.get("CI_PIPELINE_NAME"))
+        save_dir = os.path.join(os.environ.get("LOCAL_ARTIFACT_DIR"),
+                            "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + os.environ.get("CI_PIPELINE_NAME"))
     print("Saving additional artifacts in path: %s" % save_dir)
     os.makedirs(save_dir, exist_ok=True)
 

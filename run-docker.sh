@@ -318,7 +318,7 @@ else
   SINGULARITY_EXEC="${SINGULARITY_EXEC//"-v "/"-B "}"
   SINGULARITY_EXEC="${SINGULARITY_EXEC//"-w "/"--pwd "}"
   CMD_TO_RUN="$SINGULARITY_BASE $SINGULARITY_EXEC $FINN_SINGULARITY /usr/local/bin/finn_entrypoint.sh $DOCKER_CMD"
-  gecho "FINN_SINGULARITY is set, launching Singularity container instead of Docker"
+  gecho "FINN_SINGULARITY is set, launching Singularity container instead of Docker: $FINN_SINGULARITY"
 fi
 
 $CMD_TO_RUN
