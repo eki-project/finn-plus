@@ -18,16 +18,20 @@ from finn.builder.build_dataflow_config import (
 )
 
 
-def variant_from_str(enum_class, variant) -> Any:
+def variant_from_str(enum_class, variant: str) -> Any:
     """If a variant exists in the given enum class, return it, else None"""
     if variant in enum_class.__members__.keys():
         return enum_class.__members__[variant]
+    variants = ", ".join(list(enum_class.__members__.keys()))
+    print(f"Unknown variant of enum {enum_class}. Available variants are: " + variants)
     return None
 
 
 def try_insert_setting(
     setting: str, general_config: dict, cfg: DataflowBuildConfig
 ) -> DataflowBuildConfig | None:
+    """Try to insert the given setting into the given dataflowbuildconfig and
+    return the changed one. Returns None of an error occurs"""
     if setting in general_config.keys():
         if setting in cfg.__dict__.keys():
             cfg.__setattr__(setting, general_config[setting])
@@ -40,10 +44,12 @@ def try_insert_setting(
 def try_insert_setting_enum(
     enum_setting: tuple, general_config: dict, cfg: DataflowBuildConfig
 ) -> DataflowBuildConfig | None:
+    """Try to insert the given setting into the given dataflowbuildconfig and
+    return the changed one. Returns None of an error occurs"""
     setting_name, enum_type = enum_setting
-    if enum_setting in general_config.keys():
-        if enum_setting in cfg.__dict__.keys():
-            cfg.__setattr__(enum_setting, variant_from_str(enum_type, general_config[enum_setting]))
+    if setting_name in general_config.keys():
+        if setting_name in cfg.__dict__.keys():
+            cfg.__setattr__(setting_name, variant_from_str(enum_type, general_config[setting_name]))
         else:
             print(f"Unknown enum setting key {enum_setting}. Skipping")
             return None
