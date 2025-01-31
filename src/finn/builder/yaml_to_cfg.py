@@ -77,7 +77,7 @@ def process_steps(
     return cfg
 
 
-def buildcfg_from_yaml(p: Path) -> DataflowBuildConfig | None:
+def buildcfg_from_yaml(p: Path) -> tuple[DataflowBuildConfig, Path] | None:
     """Convert a YAML build file to a dataflow build config as well as possible. If the
     given YAML file does not exist or is incorrect, this returns None"""
     if not p.exists():
@@ -90,7 +90,7 @@ def buildcfg_from_yaml(p: Path) -> DataflowBuildConfig | None:
             print('Missing "general" section in your build file')
             return None
         general = data["general"]
-        for key in ["output_dir", "synth_clk_period_ns", "generate_outputs"]:
+        for key in ["model", "output_dir", "synth_clk_period_ns", "generate_outputs"]:
             if key not in general.keys():
                 print(f"Missing key {key} in your build file under the general section")
                 return None
@@ -158,10 +158,11 @@ def buildcfg_from_yaml(p: Path) -> DataflowBuildConfig | None:
         # If the format is module_name.step_name, module_name is automatically imported
         cfg = process_steps(p, data, cfg, "steps")
         cfg = process_steps(p, data, cfg, "verify_steps")
-        return cfg
+        return cfg, general["model"]
     return None
 
 
-def run_finn_from_yaml(buildfile: str, modelfile: str) -> None:
+def run_finn_from_yaml(buildfile: str) -> None:
     """Entrypoint for the FINN flow when using a YAML build file"""
-    build_dataflow.build_dataflow_cfg(modelfile, buildcfg_from_yaml(Path(buildfile)))
+    cfg, model = buildcfg_from_yaml(Path(buildfile))
+    build_dataflow.build_dataflow_cfg(str(model), cfg)
