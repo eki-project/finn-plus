@@ -644,7 +644,7 @@ class MoveScalarLinearPastInvariants(Transformation):
                 if prod0.op_type in ["Mul", "Div", "Add", "Sub"]:
                     # Cannot handle fork-nodes, try MoveLinearPastFork first
                     if model.is_fork_node(prod0):
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}:"
                             f" Skipping near match: {prod0.name} is a fork-node,"
                             f" try MoveLinearPastFork first"
