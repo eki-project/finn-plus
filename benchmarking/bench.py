@@ -163,6 +163,7 @@ def main(config_name):
             log_dict["status"] = "failed"
             print("Run failed: " + traceback.format_exc())
             exit_code = 1
+            # TODO: exception catch all in builder prevents internal failures from being caught here
 
         log_dict["total_time"] = int(time.time() - start_time)
         log_dict["output"] = output_dict
