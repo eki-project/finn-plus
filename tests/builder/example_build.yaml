@@ -1,0 +1,6 @@
+general:
+  synth_clk_period_ns: 5.5
+  generate_outputs:
+    - BITFILE
+  output_dir: .
+  model: model.onnx

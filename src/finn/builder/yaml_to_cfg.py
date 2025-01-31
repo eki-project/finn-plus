@@ -6,7 +6,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
-from finn.builder import build_dataflow_steps
+from finn.builder import build_dataflow_config, build_dataflow_steps
 from finn.builder.build_dataflow_config import (
     AutoFIFOSizingMethod,
     DataflowBuildConfig,
@@ -27,24 +27,26 @@ def variant_from_str(enum_class, variant) -> Any:
 
 def try_insert_setting(
     setting: str, general_config: dict, cfg: DataflowBuildConfig
-) -> DataflowBuildConfig:
+) -> DataflowBuildConfig | None:
     if setting in general_config.keys():
         if setting in cfg.__dict__.keys():
             cfg.__setattr__(setting, general_config[setting])
         else:
             print(f"Unknown setting key {setting}. Skipping")
+            return None
     return cfg
 
 
 def try_insert_setting_enum(
     enum_setting: tuple, general_config: dict, cfg: DataflowBuildConfig
-) -> DataflowBuildConfig:
+) -> DataflowBuildConfig | None:
     setting_name, enum_type = enum_setting
     if enum_setting in general_config.keys():
         if enum_setting in cfg.__dict__.keys():
             cfg.__setattr__(enum_setting, variant_from_str(enum_type, general_config[enum_setting]))
         else:
             print(f"Unknown enum setting key {enum_setting}. Skipping")
+            return None
     return cfg
 
 
@@ -73,7 +75,7 @@ def process_steps(
                 else:
                     print(f"Step {step} is neither an integrated step nor importable via module")
                     return None
-        cfg.steps = used_steps
+        cfg.__setattr__(step_type, used_steps)
     return cfg
 
 
@@ -81,6 +83,7 @@ def buildcfg_from_yaml(p: Path) -> tuple[DataflowBuildConfig, Path] | None:
     """Convert a YAML build file to a dataflow build config as well as possible. If the
     given YAML file does not exist or is incorrect, this returns None"""
     if not p.exists():
+        print(f"Config file {p} not found! Stopping.")
         return None
 
     # Read yaml file
@@ -103,6 +106,16 @@ def buildcfg_from_yaml(p: Path) -> tuple[DataflowBuildConfig, Path] | None:
         cfg = DataflowBuildConfig(
             general["output_dir"], general["synth_clk_period_ns"], generate_outputs
         )
+
+        # Check if there is an unknown setting
+        # TODO: Maybe rework?
+        yaml_only_keys = ["model", "f_mhz"]
+        for key in general.keys():
+            if key not in cfg.__dict__.keys() and key not in yaml_only_keys:
+                print(
+                    f"WARNING: Key {key} provided in the YAML file is not a\
+                    recognized setting for the DataflowBuildConfig. Ignoring..."
+                )
 
         # Change values with defaults now
         general_settings = [
@@ -141,6 +154,8 @@ def buildcfg_from_yaml(p: Path) -> tuple[DataflowBuildConfig, Path] | None:
         ]
         for setting in general_settings:
             cfg = try_insert_setting(setting, general, cfg)
+            if cfg is None:
+                return None
 
         # Setting the enums
         general_enum_settings = [
@@ -152,11 +167,18 @@ def buildcfg_from_yaml(p: Path) -> tuple[DataflowBuildConfig, Path] | None:
         ]
         for enum_setting in general_enum_settings:
             cfg = try_insert_setting_enum(enum_setting, general, cfg)
+            if cfg is None:
+                return None
 
         # Build steps list
         # Existing steps are simply passed
         # If the format is module_name.step_name, module_name is automatically imported
         cfg = process_steps(p, data, cfg, "steps")
         cfg = process_steps(p, data, cfg, "verify_steps")
+
+        # If there are no steps provided, use the default ones
+        if cfg.steps is None:
+            cfg.steps = build_dataflow_config.default_build_dataflow_steps
+
         return cfg, general["model"]
     return None
