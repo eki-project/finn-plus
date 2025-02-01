@@ -16,27 +16,17 @@ FINN Build:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: synth
-  rules:
-    # Select different Singularity image if it deviates from default (dev branch)
-    - changes:
-        paths:
-          - requirements.txt
-          - docker/Dockerfile.finn
-          - docker/finn_entrypoint.sh
-          - docker/quicktest.sh
-        compare_to: "dev"
-      variables:
-        SINGULARITY_IMG_SELECT: "finn_$CI_COMMIT_REF_SLUG.sif"
-    # Always run (when triggered), as long as there was no prior failure
-    - when: on_success
+  needs:
+    - job: Fetch Repos
+      pipeline: $PARENT_PIPELINE_ID
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --mem 128G --array 0-$( expr $PARALLEL_JOBS - 1 )"
     PYTEST_PARALLEL: "$CPU_CORES"
-    FINN_SINGULARITY: "$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT"
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
     - module load system singularity
+    - export FINN_SINGULARITY=$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT
   script:
     - ./run-docker.sh python benchmarking/bench.py $BENCH_CFG
   cache: 

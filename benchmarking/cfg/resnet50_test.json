@@ -7,7 +7,7 @@
         "specialize_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/U250_specialize_layers.json"],
         "floorplan_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/floorplan_resnet50.json"],
 
-        "board": ["U280"],
+        "board": ["U250"],
         "clock_period_ns": [4],
 
         "fifo_method": ["manual"],
