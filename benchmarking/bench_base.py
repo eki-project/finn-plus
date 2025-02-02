@@ -1089,7 +1089,7 @@ class bench():
             cfg.rtlsim_batch_size=self.params["rtlsim_n"]
 
         # Batch size used for FIFO sizing (largefifo_rtlsim only)
-        if "fifo_rtlsim_n":
+        if "fifo_rtlsim_n" in self.params:
             cfg.fifosim_n_inferences=self.params["fifo_rtlsim_n"]
 
         if "folding_path" in self.build_inputs:
