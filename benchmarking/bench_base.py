@@ -981,6 +981,8 @@ class bench():
                 fifo_reduction_pass.append(False)
                 log["fifo_reduction_results"][node.name] = "fail (no drop)"
 
+        if "fifos" not in self.output_dict:
+            self.output_dict["fifos"] = {}
         self.output_dict["fifos"]["fifotest"] = log
 
     def steps_simple_model_flow(self):
@@ -992,7 +994,11 @@ class bench():
         do_synth_power = self.params["do_synth_power"] if "do_synth_power" in self.params else False
 
         # Perform steps
-        model, dut_info = self.step_make_model()
+        make_model_result = self.step_make_model()
+        if make_model_result is None:
+            return
+        else:
+            model, dut_info = make_model_result
 
         # Save model for logging purposes
         # TODO: benchmarking infrastructure could be integrated deeper into ONNX IR and FINN custom_op/transformation infrastructure
