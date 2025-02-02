@@ -12,6 +12,6 @@
 
         "fifo_method": ["manual"],
 
-        "fifo_rtlsim_n": [2]
+        "rtlsim_n": [3]
     }
     ]
