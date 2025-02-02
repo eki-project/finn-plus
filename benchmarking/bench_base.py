@@ -902,8 +902,8 @@ class bench():
         model_final = ModelWrapper(build_dir + "/intermediate_models/step_create_stitched_ip.onnx")
         first_node = getCustomOp(model_final.find_consumer(model_final.graph.input[0].name))
         last_node = getCustomOp(model_final.find_producer(model_final.graph.output[0].name))
-        input_txns_expected = np.prod(first_node.get_folded_input_shape()[:-1]) * self.params["fifo_rtlsim_n"]
-        output_txns_expected = np.prod(last_node.get_folded_output_shape()[:-1]) * self.params["fifo_rtlsim_n"]
+        input_txns_expected = np.prod(first_node.get_folded_input_shape()[:-1]) * self.params["rtlsim_n"]
+        output_txns_expected = np.prod(last_node.get_folded_output_shape()[:-1]) * self.params["rtlsim_n"]
         deadlock = sim_data["N_IN_TXNS"] != input_txns_expected or sim_data["N_OUT_TXNS"] != output_txns_expected
         log["deadlock"] = deadlock.tolist()
 
@@ -961,8 +961,8 @@ class bench():
             model_final = ModelWrapper(tmp_output_dir_var + "/intermediate_models/step_create_stitched_ip.onnx")
             first_node = getCustomOp(model_final.find_consumer(model_final.graph.input[0].name))
             last_node = getCustomOp(model_final.find_producer(model_final.graph.output[0].name))
-            input_txns_expected = np.prod(first_node.get_folded_input_shape()[:-1]) * self.params["fifo_rtlsim_n"]
-            output_txns_expected = np.prod(last_node.get_folded_output_shape()[:-1]) * self.params["fifo_rtlsim_n"]
+            input_txns_expected = np.prod(first_node.get_folded_input_shape()[:-1]) * self.params["rtlsim_n"]
+            output_txns_expected = np.prod(last_node.get_folded_output_shape()[:-1]) * self.params["rtlsim_n"]
             var_deadlock = sim_data["N_IN_TXNS"] != input_txns_expected or sim_data["N_OUT_TXNS"] != output_txns_expected
 
             # check rtlsim throughput
@@ -1063,6 +1063,8 @@ class bench():
         cfg.enable_build_pdb_debug = False
         cfg.force_python_rtlsim = False
         #rtlsim_use_vivado_comps # TODO ?
+        #cfg.default_swg_exception
+        #cfg.large_fifo_mem_style
 
         # "manual or "characterize" or "largefifo_rtlsim"
         if "fifo_method" in self.params:
@@ -1075,9 +1077,14 @@ class bench():
         if "fifo_strategy" in self.params:
             cfg.characteristic_function_strategy = self.params["fifo_strategy"]
 
+        # Batch size used for RTLSim performance measurement (and in-depth FIFO test here)
         # TODO: determine automatically or replace by exact instr wrapper sim
-        if "fifo_rtlsim_n" in self.params:
-            cfg.rtlsim_batch_size=self.params["fifo_rtlsim_n"]
+        if "rtlsim_n" in self.params:
+            cfg.rtlsim_batch_size=self.params["rtlsim_n"]
+
+        # Batch size used for FIFO sizing (largefifo_rtlsim only)
+        if "fifo_rtlsim_n":
+            cfg.fifosim_n_inferences=self.params["fifo_rtlsim_n"]
 
         if "folding_path" in self.build_inputs:
             cfg.folding_config_file = self.build_inputs["folding_path"]

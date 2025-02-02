@@ -10,9 +10,11 @@
         "board": ["U250"],
         "clock_period_ns": [4],
 
+        "rtlsim_n": [10],
+
         "fifo_method": ["largefifo_rtlsim"],
 
-        "fifo_rtlsim_n": [2],
+        "fifo_rtlsim_n": [2, 4, 8],
         "fifo_throughput_factor_threshold": [0.9],
         "fifo_reduction_skip_threshold": [99999999999],
         "fifo_reduction_factor": [0.5],

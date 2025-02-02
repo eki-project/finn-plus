@@ -52,7 +52,7 @@ class bench_metafi(bench):
             shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ, # TODO: generalize/adapt to new back-end
             #vitis_platform=vitis_platform,
 
-            split_large_fifos=False, # probably needed #TODO: account for this in FIFO reduction test
+            split_large_fifos=True, # probably needed #TODO: account for this in FIFO reduction test
 
             # folding_config_file=folding_config_file,
             # folding_config_file="/home/rz/project/finn-examples/build/vgg10-radioml/folding_config/auto_folding_config.json",

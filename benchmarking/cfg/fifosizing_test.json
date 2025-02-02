@@ -14,7 +14,7 @@
         "fifo_method": ["characterize"],
         "fifo_strategy": ["analytical", "rtlsim"],
 
-        "fifo_rtlsim_n": [10],
+        "rtlsim_n": [10],
         "fifo_throughput_factor_threshold": [0.9],
         "fifo_reduction_skip_threshold": [64],
         "fifo_reduction_factor": [0.5],
