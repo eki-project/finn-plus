@@ -598,6 +598,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                     vivado_ram_style=cfg.large_fifo_mem_style,
                     force_python_sim=force_python_sim,
                     fifosim_input_throttle=cfg.fifosim_input_throttle,
+                    n_inferences=cfg.fifosim_n_inferences,
                 )
             )
             if cfg.fifosim_save_waveform:

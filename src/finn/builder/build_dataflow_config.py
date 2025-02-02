@@ -305,6 +305,9 @@ class DataflowBuildConfig:
     #: Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM
     fifosim_input_throttle: Optional[bool] = True
 
+    # DEBUG TESTING:
+    fifosim_n_inferences: Optional[int] = 2
+
     #: Enable saving waveforms from simulation-based FIFO sizing
     #: Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM
     fifosim_save_waveform: Optional[bool] = False
