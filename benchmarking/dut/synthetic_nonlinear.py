@@ -305,7 +305,3 @@ class bench_synthetic_nonlinear(bench):
         )
 
         return cfg
-
-    def step_parse_builder_output(self, build_dir):
-        # build output itself is not relevant here (yet)
-        pass

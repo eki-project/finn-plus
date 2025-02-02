@@ -150,23 +150,20 @@ def main(config_name):
         start_time = time.time()
         try:
             bench_object.run()
-            output_dict = bench_object.output_dict
-            if output_dict is None:
-                output_dict = {}
+            if not bench_object.output_dict:
                 log_dict["status"] = "skipped"
                 print("Run skipped")
             else:
                 log_dict["status"] = "ok"
                 print("Run completed")
         except Exception:
-            output_dict = {}
             log_dict["status"] = "failed"
             print("Run failed: " + traceback.format_exc())
             exit_code = 1
             # TODO: exception catch all in builder prevents internal failures from being caught here
 
         log_dict["total_time"] = int(time.time() - start_time)
-        log_dict["output"] = output_dict
+        log_dict["output"] = bench_object.output_dict
         log.append(log_dict)
         # overwrite output log file every time to allow early abort
         with open(log_path, "w") as f:
