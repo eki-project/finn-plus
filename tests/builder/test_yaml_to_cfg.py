@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pytest
 
 import shutil
@@ -28,19 +30,23 @@ def create_temp_build_file(prefix: str, template: str = "example_build.yaml") ->
     return copied
 
 
-def create_modified_build_file(
-    prefix: str, key_path: list[str | int], value: Any, template: str = "example_build.yaml"
-) -> Path:
-    """Create a temporary copy of a template build file, modifying a given key and
-    writing it back"""
-    copied = create_temp_build_file(prefix, template)
-    with copied.open() as f:
-        data = yaml.load(f, yaml.Loader)
-    assert data is not None
-    set_key(data, key_path, value)
-    with copied.open("w+") as f:
-        yaml.dump(data, f, yaml.Dumper, indent=2)
-    return copied
+def modify_config(p: Path, key_path: list[str | int], value: Any) -> None:
+    """Modify the given file with the given keypath and store it back"""
+    d = None
+    with p.open() as f:
+        d = yaml.load(f, yaml.Loader)
+    set_key(d, key_path, value)
+    with p.open("w+") as f:
+        yaml.dump(d, f, yaml.Dumper)
+
+
+@pytest.fixture
+def temporary_buildfile():  # noqa
+    """Fixture to provide a temporary yaml build file that gets cleaned up after the
+    test is done running"""
+    copied = create_temp_build_file("temp_")
+    yield copied
+    copied.unlink()
 
 
 @pytest.mark.yaml_builder
@@ -81,16 +87,13 @@ def test_yaml_to_enum(variant_and_expect_exist: tuple[str, bool]) -> None:
     "setting_value",
     [("shell_flow_type", "VITIS_ALVEO"), ("auto_fifo_strategy", "LARGEFIFO_RTLSIM")],
 )
-def test_yaml_enum_set_correctly(setting_value: tuple[str, str]) -> None:
+def test_yaml_enum_set_correctly(setting_value: tuple[str, str], temporary_buildfile: Path) -> None:
     setting, value = setting_value
-    copied = create_modified_build_file(
-        prefix=setting + "_enum_set_correctly", key_path=["general", setting], value=value
-    )
+    copied = temporary_buildfile
+    modify_config(p=copied, key_path=["general", setting], value=value)
     cfg, model = buildcfg_from_yaml(copied)
     assert cfg is not None
     assert cfg.__getattribute__(setting).name == value
-    # TODO: Move to teardown
-    copied.unlink()
 
 
 @pytest.mark.yaml_builder
@@ -100,15 +103,9 @@ def test_default_build_steps() -> None:
 
 
 @pytest.mark.yaml_builder
-def test_import_custom_step() -> None:
-    copied_yaml = create_modified_build_file(
-        prefix="import_custom_step",
-        key_path=["steps"],
-        value=["example_custom_steps.step_return_100"],
-    )
-    cfg, model = buildcfg_from_yaml(copied_yaml)
+def test_import_custom_step(temporary_buildfile: Path) -> None:
+    copied = temporary_buildfile
+    modify_config(copied, ["steps"], ["example_custom_steps.step_return_100"])
+    cfg, model = buildcfg_from_yaml(copied)
     print(cfg.steps)
     assert cfg.steps[0]() == 100
-
-    # TODO: Move this into setup, teardown methods
-    copied_yaml.unlink()
