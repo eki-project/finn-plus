@@ -75,6 +75,13 @@ def process_steps(
                 sys.path.append(str(p.parent.absolute()))
 
                 # Import the step and add it to the list
+                if mod_name == "":
+                    print(
+                        f'No module "{mod_name}" available to import step '
+                        f"{step_name} from. This may be caused by a typo in a default "
+                        "FINN step as well. "
+                    )
+                    return None
                 custom_step_module = import_module(mod_name)
                 if step_name in dir(custom_step_module):
                     used_steps.append(getattr(custom_step_module, step_name))
@@ -119,8 +126,8 @@ def buildcfg_from_yaml(p: Path) -> tuple[DataflowBuildConfig, Path] | None:
         for key in general.keys():
             if key not in cfg.__dict__.keys() and key not in yaml_only_keys:
                 print(
-                    f"WARNING: Key {key} provided in the YAML file is not a\
-                    recognized setting for the DataflowBuildConfig. Ignoring..."
+                    f"WARNING: Key {key} provided in the YAML file is not a"
+                    "recognized setting for the DataflowBuildConfig. Ignoring..."
                 )
 
         # Change values with defaults now
@@ -180,7 +187,11 @@ def buildcfg_from_yaml(p: Path) -> tuple[DataflowBuildConfig, Path] | None:
         # Existing steps are simply passed
         # If the format is module_name.step_name, module_name is automatically imported
         cfg = process_steps(p, data, cfg, "steps")
+        if cfg is None:
+            return None, general["model"]
         cfg = process_steps(p, data, cfg, "verify_steps")
+        if cfg is None:
+            return None, general["model"]
 
         # If there are no steps provided, use the default ones
         if cfg.steps is None:

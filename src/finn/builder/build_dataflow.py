@@ -240,11 +240,16 @@ def build(target: str, dir=False) -> None:
     else:
         if target.endswith(".yml") or target.endswith(".yaml"):
             cfg, model = buildcfg_from_yaml(Path(target))
+            if cfg is None:
+                print(
+                    "ERROR: An error occurred during conversion"
+                    "from YAML to BuildDataflowCfg. Stopping..."
+                )
+                sys.exit(1)
             build_dataflow_cfg(str(model), cfg)
         elif target.endswith(".py"):
-            subprocess.run(
-                f"python -mpdb -cc -cq {target}", stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
+            subprocess.run(f"python -mpdb -cc -cq {target}", shell=True)
+
         else:
             print(f"Unknown file ending for buildfile: {target}")
             print("Please specify either a YAML file or a python script")

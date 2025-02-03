@@ -109,3 +109,11 @@ def test_import_custom_step(temporary_buildfile: Path) -> None:
     cfg, model = buildcfg_from_yaml(copied)
     print(cfg.steps)
     assert cfg.steps[0]() == 100
+
+
+@pytest.mark.yaml_builder
+def test_fail_on_typo_in_stepname(temporary_buildfile: Path) -> None:
+    copied = temporary_buildfile
+    modify_config(copied, ["steps"], ["step_hw_igen"])
+    cfg, model = buildcfg_from_yaml(copied)
+    assert cfg is None
