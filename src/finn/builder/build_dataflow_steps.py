@@ -157,7 +157,7 @@ def verify_step(
             out_tensor_name = parent_model.graph.output[0].name
             exp_ishape = parent_model.get_tensor_shape(parent_model.graph.input[0].name)
             if in_npy.shape != exp_ishape:
-                log.info(
+                log.warning(
                     f"Verification input has shape {in_npy.shape} while model expects {exp_ishape}"
                 )
                 log.info("Attempting to force model shape on verification input")
@@ -169,7 +169,7 @@ def verify_step(
             out_tensor_name = model.graph.output[0].name
             exp_ishape = model.get_tensor_shape(inp_tensor_name)
             if in_npy.shape != exp_ishape:
-                log.info(
+                log.warning(
                     f"Verification input has shape {in_npy.shape} while model expects {exp_ishape}"
                 )
                 log.info("Attempting to force model shape on verification input")
@@ -182,7 +182,7 @@ def verify_step(
             out_npy = out_dict[out_tensor_name]
         exp_oshape = exp_out_npy.shape
         if out_npy.shape != exp_oshape:
-            log.info(
+            log.warning(
                 f"Verification input has shape {exp_oshape} while model expects {out_npy.shape}"
             )
             log.info("Attempting to force model shape on verification input")
