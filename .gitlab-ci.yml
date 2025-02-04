@@ -126,6 +126,8 @@ FINN Test Suite 2022.2:
     when: always
     paths:
       - reports/
+    reports:
+      junit: [reports/main.xml, reports/rtlsim.xml, reports/end2end.xml]
 
 FINN Test Suite 2024.1:
   extends: FINN Test Suite 2022.2
