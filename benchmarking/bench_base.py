@@ -1099,6 +1099,10 @@ class bench():
         if "floorplan_path" in self.build_inputs:
             cfg.floorplan_path = self.build_inputs["floorplan_path"]
 
+        # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
+        # TODO: make configurable or set on pipeline level?
+        os.environ["LIVENESS_THRESHOLD"] = "10000000"
+
         ### BUILD ###
         build.build_dataflow_cfg(self.build_inputs["onnx_path"], cfg)
 

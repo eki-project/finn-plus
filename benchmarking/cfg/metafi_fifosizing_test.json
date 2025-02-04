@@ -2,16 +2,53 @@
     {
         "dut": ["metafi"],
         "model_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/model.onnx"],
-        "folding_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/auto_folding_config _metaFi_f25.json"],
+        "folding_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/metafi_fifosizing_xsi_n2.json"],
 
         "board": ["RFSoC2x2"],
         "clock_period_ns": [10],
 
         "rtlsim_n": [10],
 
+        "fifo_method": ["manual"],
+
+        "fifo_rtlsim_n": [2],
+        "fifo_throughput_factor_threshold": [0.9],
+        "fifo_reduction_skip_threshold": [99999999999],
+        "fifo_reduction_factor": [0.5],
+        "fifo_reduction_throughput_drop_threshold": [0.01]
+    },
+    {
+        "dut": ["metafi"],
+        "model_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/model.onnx"],
+        "folding_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/auto_folding_config _metaFi_f25.json"],
+
+        "board": ["RFSoC2x2"],
+        "clock_period_ns": [10],
+
+        "rtlsim_n": [5],
+
         "fifo_method": ["largefifo_rtlsim"],
 
         "fifo_rtlsim_n": [2, 4, 8],
+        "fifo_throttle_factor": [0.5, 2],
+        "fifo_throughput_factor_threshold": [0.9],
+        "fifo_reduction_skip_threshold": [99999999999],
+        "fifo_reduction_factor": [0.5],
+        "fifo_reduction_throughput_drop_threshold": [0.01]
+    },
+    {
+        "dut": ["metafi"],
+        "model_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/model.onnx"],
+        "folding_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/auto_folding_config _metaFi_f25.json"],
+
+        "board": ["RFSoC2x2"],
+        "clock_period_ns": [10],
+
+        "rtlsim_n": [5],
+
+        "fifo_method": ["characterize"],
+        "fifo_strategy": ["rtlsim", "analytical"],
+
         "fifo_throughput_factor_threshold": [0.9],
         "fifo_reduction_skip_threshold": [99999999999],
         "fifo_reduction_factor": [0.5],
