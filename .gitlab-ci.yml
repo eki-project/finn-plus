@@ -121,6 +121,11 @@ FINN Test Suite 2022.2:
     - module load system singularity
   script:
     - ./run-docker.sh quicktest.sh $TEST_SUITE
+  artifacts:
+    name: "test_reports"
+    when: always
+    paths:
+      - reports/
 
 FINN Test Suite 2024.1:
   extends: FINN Test Suite 2022.2
