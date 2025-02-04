@@ -38,8 +38,7 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 
-# Protobuf onnx graph node type
-from onnx import NodeProto  # noqa
+from finn.transformation.util import group_inputs_by_category
 
 
 # Note: Old name kept for compatibility reasons but actually allows to absorb
@@ -178,19 +177,6 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
         # Transformed model and indication whether the transformation should be
         # applied again
         return model, graph_modified
-
-
-# Groups inputs by categories, i.e., groups dynamic inputs first, followed by
-# initializers. Keeps order of inputs in each category.
-def group_inputs_by_category(node: NodeProto, model: ModelWrapper):  # noqa
-    # First select all dynamic inputs, which are those without initializer
-    # tensor
-    dynamics = [i for i in node.input if model.get_initializer(i) is None]
-    # Select all input which are initializers, which, by exclusion, are all
-    # those not among the dynamic inputs
-    initializers = [i for i in node.input if i not in dynamics]
-    # Return lists of dynamic anc initializer inputs
-    return dynamics, initializers
 
 
 class AbsorbAddIntoMultiThreshold(Transformation):
