@@ -599,7 +599,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                     force_python_sim=force_python_sim,
                     fifosim_input_throttle=cfg.fifosim_input_throttle,
                     n_inferences=cfg.fifosim_n_inferences,
-                    fifo_throttle_factor=cfg.fifosim_fifo_throttle_factor,
+                    fifo_throttle_factor=cfg.fifo_throttle_factor,
                 )
             )
             if cfg.fifosim_save_waveform:

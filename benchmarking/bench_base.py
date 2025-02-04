@@ -1092,6 +1092,10 @@ class bench():
         if "fifo_rtlsim_n" in self.params:
             cfg.fifosim_n_inferences=self.params["fifo_rtlsim_n"]
 
+        # Manual correction factor for FIFO-Sim input throttling
+        if "fifo_throttle_factor" in self.params:
+            cfg.fifo_throttle_factor = self.params["fifo_throttle_factor"]
+
         if "folding_path" in self.build_inputs:
             cfg.folding_config_file = self.build_inputs["folding_path"]
         if "specialize_path" in self.build_inputs:
