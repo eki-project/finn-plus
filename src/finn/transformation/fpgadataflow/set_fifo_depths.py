@@ -298,6 +298,7 @@ class InsertAndSetFIFODepths(Transformation):
         force_python_sim=False,
         fifosim_input_throttle=True,
         n_inferences=2,
+        fifo_throttle_factor=1.0
     ):
         super().__init__()
         self.fpgapart = fpgapart
@@ -309,6 +310,7 @@ class InsertAndSetFIFODepths(Transformation):
         self.force_python_sim = force_python_sim
         self.fifosim_input_throttle = fifosim_input_throttle
         self.n_inferences = n_inferences
+        self.fifo_throttle_factor = fifo_throttle_factor
 
     def apply(self, model):
         # these optypes may potentially use external weights
@@ -459,7 +461,7 @@ class InsertAndSetFIFODepths(Transformation):
             if self.fifosim_input_throttle:
                 first_node = getCustomOp(model.graph.node[0])
                 inp_fold = np.prod(first_node.get_folded_input_shape()[:-1])
-                throttle_cycles = max(0, perf["max_cycles"] - inp_fold)
+                throttle_cycles = max(0, int(perf["max_cycles"]*self.fifo_throttle_factor) - inp_fold)
             else:
                 throttle_cycles = 0
 
