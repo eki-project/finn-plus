@@ -14,9 +14,6 @@ variables:
     options:
       - "none"
       - "quicktest"
-      - "main"
-      - "rtlsim"
-      - "end2end"
       - "full"
   CPU_CORES:
     description: "Select number of CPU cores and test workers"
@@ -84,7 +81,9 @@ Singularity Image Build:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
-    # Only run if relevant files changed relative to dev branch
+    # Always run for dev branch to ensure default image is up to date
+    - if: $CI_COMMIT_REF_SLUG == "dev"
+    # For other branches only run if relevant files changed relative to dev branch
     - changes:
         paths:
           - requirements.txt
@@ -161,10 +160,19 @@ FINN Test Suite 2022.2:
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
+    - chmod 755 ./test.sh
     - module load system singularity
+    - ulimit -s unlimited # Increase stack size limit
     - export FINN_SINGULARITY=$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT
   script:
-    - ./run-docker.sh quicktest.sh $TEST_SUITE
+    - ./run-docker.sh ./test.sh $TEST_SUITE
+  artifacts:
+    name: "test_reports"
+    when: always
+    paths:
+      - reports/
+    reports:
+      junit: reports/*.xml
 
 FINN Test Suite 2024.1:
   extends: FINN Test Suite 2022.2
