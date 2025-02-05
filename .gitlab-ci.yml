@@ -158,10 +158,11 @@ FINN Test Suite 2022.2:
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
+    - chmod 755 ./test.sh
     - module load system singularity
     - export FINN_SINGULARITY=$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT
   script:
-    - ./run-docker.sh test.sh $TEST_SUITE
+    - ./run-docker.sh ./test.sh $TEST_SUITE
   artifacts:
     name: "test_reports"
     when: always
