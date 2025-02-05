@@ -141,8 +141,11 @@ FINN Test Suite 2022.2:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
-    # Run if "full" test suite selected (and if previous jobs were successful)
-    - if: $TEST_SUITE == "full"
+    # Do not run if test suite has been deselected
+    - if: $TEST_SUITE == "none"
+      when: never
+    # Always run, as long as there was no prior failure
+    - when: on_success
   cache:
     key: $CI_COMMIT_SHA
     policy: pull
@@ -150,6 +153,7 @@ FINN Test Suite 2022.2:
       - deps
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
+    PYTEST_PARALLEL: "$CPU_CORES"
     FINN_XILINX_VERSION: "2022.2"
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
@@ -157,12 +161,7 @@ FINN Test Suite 2022.2:
     - module load system singularity
     - export FINN_SINGULARITY=$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT
   script:
-    - ./run-docker.sh bash
-    - pytest -k 'not (rtlsim or end2end)' --junitxml=$CI_PROJECT_DIR/reports/main.xml --html=$CI_PROJECT_DIRreports/main.html --reruns 2 --forked --dist worksteal -n $CPU_CORES
-    - pytest -k 'rtlsim and not end2end' --junitxml=$CI_PROJECT_DIR/reports/rtlsim.xml --html=$CI_PROJECT_DIR/reports/rtlsim.html --reruns 2 --forked --dist worksteal -n $CPU_CORES
-    - pytest -k 'end2end' -m 'sanity_bnn or end2end or fpgadataflow or notebooks' --junitxml=$CI_PROJECT_DIR/reports/end2end.xml --html=$CI_PROJECT_DIR/reports/end2end.html --reruns 2 --forked --dist loadfile -n $CPU_CORES
-    - pytest_html_merger -i $CI_PROJECT_DIR/reports/ -o $CI_PROJECT_DIR/reports/full_test_suite.html
-    - exit
+    - ./run-docker.sh test.sh $TEST_SUITE
   artifacts:
     name: "test_reports"
     when: always
@@ -170,19 +169,6 @@ FINN Test Suite 2022.2:
       - reports/
     reports:
       junit: reports/*.xml
-
-FINN Test Suite Quick:
-  extends: FINN Test Suite 2022.2
-  rules:
-    # Do not run on a schedule
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    # Run if "quick" test suite selected (and if previous jobs were successful)
-    - if: $TEST_SUITE == "quicktest"
-  script:
-    - ./run-docker.sh bash
-    - pytest -m 'not (vivado or slow or vitis or board or notebooks or bnn_pynq)' --junitxml=$CI_PROJECT_DIR/reports/quick.xml --html=$CI_PROJECT_DIR/reports/quick.html --reruns 2 --forked --dist worksteal -n $CPU_CORES
-    - exit
 
 FINN Test Suite 2024.1:
   extends: FINN Test Suite 2022.2
