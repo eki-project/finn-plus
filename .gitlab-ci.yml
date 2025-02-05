@@ -160,6 +160,7 @@ FINN Test Suite 2022.2:
     - cd $PATH_WORKDIR/finn-plus
     - chmod 755 ./test.sh
     - module load system singularity
+    - ulimit -s unlimited # Increase stack size limit
     - export FINN_SINGULARITY=$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT
   script:
     - ./run-docker.sh ./test.sh $TEST_SUITE
