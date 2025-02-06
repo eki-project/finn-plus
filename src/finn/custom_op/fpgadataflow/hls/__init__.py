@@ -54,13 +54,23 @@ def register_custom_op(cls):
 # flake8: noqa
 # Disable linting from here, as all import will be flagged E402 and maybe F401
 
+# Import the submodule containing specializations of ElementwiseBinaryOperation
+# Note: This will automatically register all decorated classes into this domain
+import finn.custom_op.fpgadataflow.hls.elementwise_binary_hls
+
 # Import the submodule containing the specialization of the Squeeze operation
 # Note: This will automatically register all decorated classes into this domain
 import finn.custom_op.fpgadataflow.hls.squeeze_hls
 
 # Import the submodule containing the specialization of the Unsqueeze operation
 import finn.custom_op.fpgadataflow.hls.unsqueeze_hls
+
 from finn.custom_op.fpgadataflow.hls.addstreams_hls import AddStreams_hls
+from finn.custom_op.fpgadataflow.hls.attention_heads_hls import (
+    MergeMultiHeads_hls,
+    SplitMultiHeads_hls,
+)
+from finn.custom_op.fpgadataflow.hls.attention_hls import ScaledDotProductAttention_hls
 from finn.custom_op.fpgadataflow.hls.channelwise_op_hls import ChannelwiseOp_hls
 from finn.custom_op.fpgadataflow.hls.checksum_hls import CheckSum_hls
 from finn.custom_op.fpgadataflow.hls.concat_hls import StreamingConcat_hls
@@ -77,6 +87,7 @@ from finn.custom_op.fpgadataflow.hls.labelselect_hls import LabelSelect_hls
 from finn.custom_op.fpgadataflow.hls.lookup_hls import Lookup_hls
 from finn.custom_op.fpgadataflow.hls.matrixvectoractivation_hls import MVAU_hls
 from finn.custom_op.fpgadataflow.hls.pool_hls import Pool_hls
+from finn.custom_op.fpgadataflow.hls.replicate_stream_hls import ReplicateStream_hls
 from finn.custom_op.fpgadataflow.hls.split_hls import StreamingSplit_hls
 from finn.custom_op.fpgadataflow.hls.streamingdatawidthconverter_hls import (
     StreamingDataWidthConverter_hls,
@@ -113,3 +124,8 @@ custom_op["TLastMarker_hls"] = TLastMarker_hls
 custom_op["UpsampleNearestNeighbour_hls"] = UpsampleNearestNeighbour_hls
 custom_op["MVAU_hls"] = MVAU_hls
 custom_op["VVAU_hls"] = VVAU_hls
+
+custom_op["ScaledDotProductAttention_hls"] = ScaledDotProductAttention_hls
+custom_op["SplitMultiHeads_hls"] = SplitMultiHeads_hls
+custom_op["MergeMultiHeads_hls"] = MergeMultiHeads_hls
+custom_op["ReplicateStream_hls"] = ReplicateStream_hls
