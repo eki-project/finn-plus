@@ -28,10 +28,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class StreamingEltwise(HWCustomOp):
@@ -117,7 +117,7 @@ class StreamingEltwise(HWCustomOp):
                 str(self.get_input_datatype(0)),
                 str(idt0),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType0", idt0.name)
         idt1 = model.get_tensor_datatype(node.input[1])
         if idt1 != self.get_input_datatype(1):
@@ -126,7 +126,7 @@ class StreamingEltwise(HWCustomOp):
                 str(self.get_input_datatype(1)),
                 str(idt1),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType1", idt1.name)
         # enforce output data type (calculated based on idt)
         odt = self.get_output_datatype()

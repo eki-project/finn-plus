@@ -29,11 +29,11 @@
 
 import os
 import qonnx.custom_op.registry as registry
-import warnings
 from qonnx.transformation.base import Transformation
 
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+from finn.util.logging import log
 
 
 def _codegen_single_node(node, model, fpgapart, clk):
@@ -53,10 +53,10 @@ def _codegen_single_node(node, model, fpgapart, clk):
             # ensure that there is generated code inside the dir
             inst.code_generation_ipgen(model, fpgapart, clk)
         else:
-            warnings.warn("Using pre-existing code for %s" % node.name)
+            log.info(f"Using pre-existing code for {node.name}")
     except KeyError:
         # exception if op_type is not supported
-        raise Exception("Custom op_type %s is currently not supported." % op_type)
+        raise Exception(f"Custom op_type {op_type} is currently not supported.")
 
 
 class PrepareIP(Transformation):

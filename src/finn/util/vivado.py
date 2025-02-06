@@ -29,6 +29,7 @@
 import os
 
 from finn.util.basic import launch_process_helper, which
+from finn.util.logging import log
 
 
 def out_of_context_synth(
@@ -69,7 +70,7 @@ def out_of_context_synth(
     ret["vivado_proj_folder"] = vivado_proj_folder
     for res_line in res_data:
         res_fields = res_line.split("=")
-        print(res_fields)
+        log.info(res_fields)
         try:
             ret[res_fields[0]] = float(res_fields[1])
         except ValueError:

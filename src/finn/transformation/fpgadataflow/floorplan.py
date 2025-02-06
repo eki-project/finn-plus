@@ -27,7 +27,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import json
-import warnings
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import ApplyConfig
@@ -35,6 +34,7 @@ from qonnx.util.basic import get_by_name
 
 from finn.analysis.fpgadataflow.floorplan_params import floorplan_params
 from finn.util.basic import make_build_dir
+from finn.util.logging import log
 
 
 class Floorplan(Transformation):
@@ -104,12 +104,9 @@ class Floorplan(Transformation):
                 node_inst.set_nodeattr("slr", node_slr)
 
         if unassigned_nodes > 0:
-            warnings.warn(
-                str(unassigned_nodes)
-                + " nodes have no entry in the provided floorplan,"
-                + " SLR was set to "
-                + str(default_slr)
-            )
+            warning_str = f"{unassigned_nodes} nodes have no entry in\
+                the provided floorplan, SLR was set to {default_slr}"
+            log.warning(warning_str)
 
         # partition id generation
         partition_cnt = 0

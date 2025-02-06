@@ -28,7 +28,6 @@
 
 import numpy as np
 import qonnx.core.data_layout as DataLayout
-import warnings
 from onnx import helper as oh
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.registry import getCustomOp
@@ -36,6 +35,8 @@ from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
+
+from finn.util.logging import log
 
 
 class AbsorbSignBiasIntoMultiThreshold(Transformation):
@@ -63,7 +64,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     T = model.get_initializer(threshold_name)
                     A = model.get_initializer(add_weight_name)
                     if (A is None) or (T is None):
-                        warnings.warn("Threshold or add bias not constant, skipping")
+                        log.warning("Threshold or add bias not constant, skipping")
                         continue
                     end_name = add_node.output[0]
                     # we can only absorb scalar adds
@@ -374,7 +375,7 @@ class AbsorbTransposeIntoFlatten(Transformation):
                     data_layout = model.get_tensor_layout(prod.input[0])
                     # check for the data layout to interpret input shape correctly
                     if data_layout is None:
-                        warnings.warn(
+                        log.warning(
                             """Data layout for input tensor of Transpose node is not set.
                                 To use AbsorbTransposeIntoFlatten transformation
                                 please set tensor data layout."""
@@ -428,7 +429,7 @@ class AbsorbScalarMulAddIntoTopK(Transformation):
                     param_name = prod.input[1]
                     A = model.get_initializer(param_name)
                     if A is None:
-                        warnings.warn("Param is not constant, skipping")
+                        log.warning("Param is not constant, skipping")
                         continue
                     is_scalar = all(x == 1 for x in A.shape)
                     is_scalar_pos_mul = is_scalar and (prod.op_type == "Mul") and A > 0

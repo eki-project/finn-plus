@@ -34,6 +34,7 @@ from pyverilator.util.axi_utils import reset_rtlsim, rtlsim_multi_io
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import roundup_to_integer_multiple
 
+import finn.util.verilator_helper as verilator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.thresholding import Thresholding
 from finn.util.basic import (
@@ -48,11 +49,6 @@ from finn.util.data_packing import (
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
-
-try:
-    from pyverilator import PyVerilator
-except ModuleNotFoundError:
-    PyVerilator = None
 
 
 class Thresholding_rtl(Thresholding, RTLBackend):
@@ -363,8 +359,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         for this node, sets the rtlsim_so attribute to its path and returns
         a PyVerilator wrapper around it."""
 
-        if PyVerilator is None:
-            raise ImportError("Installation of PyVerilator is required.")
+        verilator.checkForVerilator()
 
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         verilog_paths = [code_gen_dir]
@@ -378,7 +373,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
             shutil.copy(dat_file, single_src_dir)
 
         # build the Verilator emulation library
-        sim = PyVerilator.build(
+        sim = verilator.buildPyVerilator(
             verilog_files,
             build_dir=single_src_dir,
             verilog_path=verilog_paths,
