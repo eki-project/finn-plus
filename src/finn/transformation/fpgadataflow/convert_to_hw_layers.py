@@ -40,8 +40,10 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 from qonnx.util.onnx import nchw_to_nhwc
+
 # Module containing specializations of elementwise binary operations
 import finn.custom_op.fpgadataflow.elementwise_binary as elementwise_binary
+
 # Base class for all FINN custom ops, here just used for type-hinting
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
@@ -1999,13 +2001,9 @@ class InferSqueeze(Transformation):
                 inp, out = node.input[0], node.output[0]
                 # Set input/output shape and datatype node attributes required
                 # by FINN custom op
-                inst.set_nodeattr(
-                    "inp_dtype", str(model.get_tensor_datatype(inp))
-                )
+                inst.set_nodeattr("inp_dtype", str(model.get_tensor_datatype(inp)))
                 inst.set_nodeattr("inp_shape", model.get_tensor_shape(inp))
-                inst.set_nodeattr(
-                    "out_dtype", str(model.get_tensor_datatype(out))
-                )
+                inst.set_nodeattr("out_dtype", str(model.get_tensor_datatype(out)))
                 inst.set_nodeattr("out_shape", model.get_tensor_shape(out))
                 # Consider the graph to be modified, triggering exhaustive
                 # re-application of this transformation
@@ -2051,13 +2049,9 @@ class InferUnsqueeze(Transformation):
                 inp, out = node.input[0], node.output[0]
                 # Set input/output shape and datatype node attributes required
                 # by FINN custom op
-                inst.set_nodeattr(
-                    "inp_dtype", str(model.get_tensor_datatype(inp))
-                )
+                inst.set_nodeattr("inp_dtype", str(model.get_tensor_datatype(inp)))
                 inst.set_nodeattr("inp_shape", model.get_tensor_shape(inp))
-                inst.set_nodeattr(
-                    "out_dtype", str(model.get_tensor_datatype(out))
-                )
+                inst.set_nodeattr("out_dtype", str(model.get_tensor_datatype(out)))
                 inst.set_nodeattr("out_shape", model.get_tensor_shape(out))
                 # Consider the graph to be modified, triggering exhaustive
                 # re-application of this transformation
