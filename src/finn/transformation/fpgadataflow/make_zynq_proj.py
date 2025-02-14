@@ -45,6 +45,7 @@ from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
+from finn.transformation.fpgadataflow.instrumentation import GenerateInstrumentationIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir, pynq_native_port_width, pynq_part_map
@@ -102,6 +103,42 @@ class MakeZYNQProject(Transformation):
         axilite_idx = 0
         global_clk_ns = 0
         instance_names = {}
+
+        # instantiate instrumentation IP if it was generated
+        instr_ip_dir = model.get_metadata_prop("instrumentation_ipgen")
+        if instr_ip_dir is not None and os.path.isdir(instr_ip_dir):
+            use_instrumentation = True
+            # update IP repository
+            config.append(
+                "set_property ip_repo_paths "
+                "[concat [get_property ip_repo_paths [current_project]] [list %s]] "
+                "[current_project]" % instr_ip_dir
+            )
+            config.append("update_ip_catalog -rebuild -scan_changes")
+            # create instance
+            config.append(
+                "create_bd_cell -type ip -vlnv %s %s"
+                % ("xilinx.com:hls:instrumentation_wrapper:1.0", "instrumentation_wrap_0")
+            )
+            # connect clock % reset
+            config.append(
+                "connect_bd_net [get_bd_pins instrumentation_wrap_0/ap_clk] "
+                "[get_bd_pins smartconnect_0/aclk]"
+            )
+            config.append(
+                "connect_bd_net [get_bd_pins instrumentation_wrap_0/ap_rst_n] "
+                "[get_bd_pins smartconnect_0/aresetn]"
+            )
+            # connect AXI-lite control interface
+            config.append(
+                "connect_bd_intf_net [get_bd_intf_pins instrumentation_wrap_0/s_axi_ctrl] "
+                "[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]" % (axilite_idx)
+            )
+            config.append("assign_axi_addr_proc instrumentation_wrap_0/s_axi_ctrl")
+            axilite_idx += 1
+        else:
+            use_instrumentation = False
+
         for node in model.graph.node:
             assert node.op_type == "StreamingDataflowPartition", "Invalid link graph"
             sdp_node = getCustomOp(node)
@@ -150,7 +187,8 @@ class MakeZYNQProject(Transformation):
             # define kernel instances
             # name kernels connected to graph inputs as idmaxx
             # name kernels connected to graph outputs as odmaxx
-            if (producer is None) or (consumer == []):
+            # do not expect IDMA/ODMA when instrumentation is enabled
+            if not use_instrumentation and ((producer is None) or (consumer == [])):
                 # TODO not a good way of checking for external inp&out
                 # should look at the list of top-level in/out instead
                 if producer is None:
@@ -227,6 +265,26 @@ class MakeZYNQProject(Transformation):
                                 j,
                             )
                         )
+
+            # connect first/last dataflow partition to instrumentation wrapper
+            if use_instrumentation:
+                if producer is None:
+                    config.append(
+                        "connect_bd_intf_net [get_bd_intf_pins %s/s_axis_0] "
+                        "[get_bd_intf_pins instrumentation_wrap_0/finnix]"
+                        % (instance_names[node.name])
+                    )
+                if consumer == []:
+                    config.append(
+                        "connect_bd_intf_net [get_bd_intf_pins %s/m_axis_0] "
+                        "[get_bd_intf_pins instrumentation_wrap_0/finnox]"
+                        % (instance_names[node.name])
+                    )
+
+        # TODO: WORKAROUND, do not instantiate smartconnect when not needed!
+        if use_instrumentation:
+            config.append("delete_bd_objs [get_bd_cells smartconnect_0]")
+            aximm_idx = 1
 
         # create a temporary folder for the project
         vivado_pynq_proj_dir = make_build_dir(prefix="vivado_zynq_proj_")
@@ -305,6 +363,7 @@ class ZynqBuild(Transformation):
         platform,
         period_ns,
         enable_debug=False,
+        enable_instrumentation=False,
         partition_model_dir=None,
     ):
         super().__init__()
@@ -313,19 +372,27 @@ class ZynqBuild(Transformation):
         self.period_ns = period_ns
         self.platform = platform
         self.enable_debug = enable_debug
+        self.enable_instrumentation = enable_instrumentation
         self.partition_model_dir = partition_model_dir
 
     def apply(self, model):
         # first infer layouts
         model = model.transform(InferDataLayouts())
         # prepare at global level, then break up into kernels
-        prep_transforms = [
-            InsertIODMA(self.axi_port_width),
-            InsertDWC(),
-            SpecializeLayers(self.fpga_part),
-            Floorplan(),
-            CreateDataflowPartition(partition_model_dir=self.partition_model_dir),
-        ]
+        if self.enable_instrumentation:
+            prep_transforms = [
+                GenerateInstrumentationIP(self.fpga_part, self.period_ns),
+                Floorplan(),
+                CreateDataflowPartition(partition_model_dir=self.partition_model_dir),
+            ]
+        else:
+            prep_transforms = [
+                InsertIODMA(self.axi_port_width),
+                InsertDWC(),
+                SpecializeLayers(self.fpga_part),
+                Floorplan(),
+                CreateDataflowPartition(partition_model_dir=self.partition_model_dir),
+            ]
         for trn in prep_transforms:
             model = model.transform(trn)
             model = model.transform(GiveUniqueNodeNames())
@@ -337,7 +404,10 @@ class ZynqBuild(Transformation):
             sdp_node = getCustomOp(sdp_node)
             dataflow_model_filename = sdp_node.get_nodeattr("model")
             kernel_model = ModelWrapper(dataflow_model_filename)
-            kernel_model = kernel_model.transform(InsertFIFO())
+            # InsertFIFO at this stage interferes with tLastMarker
+            # TODO: is this really needed here at all?
+            if not self.enable_instrumentation:
+                kernel_model = kernel_model.transform(InsertFIFO())
             kernel_model = kernel_model.transform(SpecializeLayers(self.fpga_part))
             kernel_model = kernel_model.transform(GiveUniqueNodeNames(prefix))
             kernel_model.save(dataflow_model_filename)
