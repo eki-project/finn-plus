@@ -549,6 +549,29 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     `GiveUniqueNodeNames`.
     """
 
+    # Experimental live FIFO-sizing, overwrites all other FIFO-related behavior
+    if cfg.live_fifo_sizing:
+        # Create all DWCs and FIFOs normally
+        model = model.transform(InsertDWC())
+        model = model.transform(InsertFIFO(create_shallow_fifos=True))
+
+        # Specialize FIFOs to HLS back-end instead of default RTL back-end
+        for node in model.get_nodes_by_op_type("StreamingFIFO"):
+            node_inst = getCustomOp(node)
+            node_inst.set_nodeattr("preferred_impl_style", "hls")
+        model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
+
+        # Fix impl_style attribute
+        for node in model.get_nodes_by_op_type("StreamingFIFO_hls"):
+            node_inst = getCustomOp(node)
+            node_inst.set_nodeattr("impl_style", "virtual")
+
+        # Clean up model
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
+
+        return model
+
     if cfg.auto_fifo_depths:
         if cfg.auto_fifo_strategy == "characterize":
             model = model.transform(InsertDWC())
