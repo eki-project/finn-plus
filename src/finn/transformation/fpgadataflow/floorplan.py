@@ -99,9 +99,13 @@ class Floorplan(Transformation):
                 # if we have SLR assignment already. use that
                 if node_slr != -1:
                     continue
+                # if available, use the SLR of the preceding node
                 srcnode = model.find_producer(node.input[0])
-                node_slr = getCustomOp(srcnode).get_nodeattr("slr")
-                node_inst.set_nodeattr("slr", node_slr)
+                if srcnode is not None:
+                    node_slr = getCustomOp(srcnode).get_nodeattr("slr")
+                    node_inst.set_nodeattr("slr", node_slr)
+                else:
+                    node_inst.set_nodeattr("slr", default_slr)
 
         if unassigned_nodes > 0:
             warnings.warn(
