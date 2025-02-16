@@ -49,8 +49,6 @@ class bench_metafi(bench):
             steps=steps,
 
             target_fps=None, #23
-            shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ, # TODO: generalize/adapt to new back-end
-            #vitis_platform=vitis_platform,
 
             split_large_fifos=True, # probably needed #TODO: account for this in FIFO reduction test
 
