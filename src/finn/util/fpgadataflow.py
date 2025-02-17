@@ -28,6 +28,10 @@
 
 from qonnx.util.basic import get_by_name, is_finn_op
 
+from deps.qonnx.src.qonnx.custom_op.registry import getCustomOp
+from finn.custom_op.fpgadataflow.hls.matrixvectoractivation_hls import MVAU_hls
+from finn.custom_op.fpgadataflow.hls.vectorvectoractivation_hls import VVAU_hls
+
 
 def is_fpgadataflow_node(node):
     """Returns True if given node is fpgadataflow node. Otherwise False."""
@@ -69,3 +73,10 @@ def is_rtl_node(node):
                     is_node = True
 
     return is_node
+
+
+def fits_vitis_hls_stream(node):
+    """Return true if this fits a vitis hls stream max bitwidth (32768) and false if not. Also returns true if the node is not an MVAU_hls or VVAU_hls"""
+    node_op = getCustomOp(node)
+    if type(node_op) in [MVAU_hls, VVAU_hls]:
+        return node_op.get_weightstream_width() <= 2**15
