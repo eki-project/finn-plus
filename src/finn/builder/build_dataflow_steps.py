@@ -126,6 +126,7 @@ from finn.util.basic import (
     get_rtlsim_trace_depth,
     pyverilate_get_liveness_threshold_cycles,
 )
+from finn.util.fpgadataflow import fits_vitis_hls_stream
 from finn.util.pyverilator import verilator_fifosim
 from finn.util.test import execute_parent
 
@@ -443,9 +444,7 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
         # Check that the weights are not too wide for vitis hls
         for node in model.graph.node:
             node_op = getCustomOp(node)
-            if type(node_op) is MVAU_hls:
-                wstream_width = node_op.get_weightstream_width()
-                assert wstream_width <= 32768, f"MVAU_hls {node.name} exceeded maximum by Vitis HLS allowed weight stream width of 2^15 (32768) - it is {wstream_width} (SIMD * PE * Bitwidth)"
+            assert fits_vitis_hls_stream(node), f"{node.name} exceeded maximum by Vitis HLS allowed weight stream width of 2^15 (32768) - it is {node_op.get_weightstream_width()} (SIMD * PE * Bitwidth)"
 
     return model
 
@@ -465,12 +464,10 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(SetExecMode("cppsim"))
         verify_step(model, cfg, "folded_hls_cppsim", need_parent=True)
 
-        # Check that the weights are not too wide for vitis hls
-        for node in model.graph.node:
-            node_op = getCustomOp(node)
-            if type(node_op) is MVAU_hls:
-                wstream_width = node_op.get_weightstream_width()
-                assert wstream_width <= 32768, f"MVAU_hls {node.name} exceeded maximum by Vitis HLS allowed weight stream width of 2^15 (32768) - it is {wstream_width} (SIMD * PE * Bitwidth)"
+    # Check that the weights are not too wide for vitis hls
+    for node in model.graph.node:
+        node_op = getCustomOp(node)
+        assert fits_vitis_hls_stream(node), f"{node.name} exceeded maximum by Vitis HLS allowed weight stream width of 2^15 (32768) - it is {node_op.get_weightstream_width()} (SIMD * PE * Bitwidth)"
     return model
 
 
