@@ -1,5 +1,5 @@
-# Copyright (c) 2020 Xilinx, Inc.
-# Copyright (C) 2024, Advanced Micro Devices, Inc.
+# Copyright (C) 2020-2022 Xilinx, Inc.
+# Copyright (C) 2022-2025, Advanced Micro Devices, Inc.
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -108,6 +108,7 @@ from finn.transformation.fpgadataflow.set_fifo_depths import (
     InsertAndSetFIFODepths,
     RemoveShallowFIFOs,
     SplitLargeFIFOs,
+    xsi_fifosim,
 )
 from finn.transformation.fpgadataflow.set_folding import SetFolding
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
@@ -125,7 +126,6 @@ from finn.util.basic import (
     get_rtlsim_trace_depth,
     pyverilate_get_liveness_threshold_cycles,
 )
-from finn.util.pyverilator import verilator_fifosim
 from finn.util.test import execute_parent
 
 
@@ -209,11 +209,13 @@ def verify_step(
                 res_str,
             )
             np.save(verification_output_fn, out_npy)
+
         if cfg.verify_save_rtlsim_waveforms:
-            vcd_path = model.get_metadata_prop("rtlsim_trace")
-            if vcd_path is not None and os.path.isfile(vcd_path):
-                new_vcd_path = vcd_path.replace(".vcd", "_%d.vcd" % b)
-                shutil.move(vcd_path, new_vcd_path)
+            wdb_path = model.get_metadata_prop("rtlsim_trace")
+            if wdb_path is not None and os.path.isfile(wdb_path):
+                new_wdb_path = wdb_path.replace(".wdb", "_%d.wdb" % b)
+                shutil.move(wdb_path, new_wdb_path)
+
     print("Verification for %s : %s" % (step_name, res_to_str[all_res]))
 
 
@@ -248,6 +250,8 @@ def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
 
     # set top-level prop for stitched-ip rtlsim and launch
     verify_model.set_metadata_prop("exec_mode", "rtlsim")
+    # TODO make configurable
+    verify_model.set_metadata_prop("rtlsim_backend", "pyxsi")
     # TODO make configurable
     # verify_model.set_metadata_prop("rtlsim_trace", "trace.vcd")
     return verify_model
@@ -574,13 +578,12 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
             model = model.transform(GiveUniqueNodeNames())
             model = model.transform(GiveReadableTensorNames())
         elif cfg.auto_fifo_strategy == "largefifo_rtlsim":
-            # multi-in/out streams currently not supported in our C++ verilator driver
-            model_multi_io = len(model.graph.input) > 1 or len(model.graph.output) > 1
-            force_python_sim = model_multi_io or cfg.force_python_rtlsim
-            if model_multi_io:
-                warnings.warn(
-                    "Multi-in/out streams currently not supported "
-                    + "in FINN C++ verilator driver, falling back to Python"
+            force_python_sim = cfg.force_python_rtlsim
+            if cfg.fifosim_save_waveform:
+                report_dir = cfg.output_dir + "/report"
+                os.makedirs(report_dir, exist_ok=True)
+                model.set_metadata_prop(
+                    "rtlsim_trace", os.path.abspath(report_dir) + "/fifosim_trace.wdb"
                 )
             model = model.transform(
                 InsertAndSetFIFODepths(
@@ -589,6 +592,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                     swg_exception=cfg.default_swg_exception,
                     vivado_ram_style=cfg.large_fifo_mem_style,
                     force_python_sim=force_python_sim,
+                    fifosim_input_throttle=cfg.fifosim_input_throttle,
                 )
             )
             # InsertAndSetFIFODepths internally removes any shallow FIFOs
@@ -645,6 +649,8 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
     Depends on the DataflowOutputType.STITCHED_IP output product."""
 
     if DataflowOutputType.STITCHED_IP in cfg.generate_outputs:
+        report_dir = cfg.output_dir + "/report"
+        os.makedirs(report_dir, exist_ok=True)
         stitched_ip_dir = cfg.output_dir + "/stitched_ip"
         model = model.transform(
             CreateStitchedIP(
@@ -659,6 +665,16 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
             model.get_metadata_prop("vivado_stitch_proj"), stitched_ip_dir, dirs_exist_ok=True
         )
         print("Vivado stitched IP written into " + stitched_ip_dir)
+
+        if cfg.stitched_ip_gen_dcp:
+            copy(
+                model.get_metadata_prop("vivado_synth_rpt"),
+                report_dir + "/post_synth_resources_dcp.xml",
+            )
+            post_synth_resources = model.analysis(post_synth_res)
+            with open(report_dir + "/post_synth_resources_dcp.json", "w") as f:
+                json.dump(post_synth_resources, f, indent=2)
+
     if VerificationStepType.STITCHED_IP_RTLSIM in cfg._resolve_verification_steps():
         # prepare ip-stitched rtlsim
         verify_model = deepcopy(model)
@@ -672,9 +688,10 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
             int(estimate_network_performance["critical_path_cycles"] * 1.1)
         )
         if cfg.verify_save_rtlsim_waveforms:
-            report_dir = cfg.output_dir + "/report"
-            os.makedirs(report_dir, exist_ok=True)
-            verify_model.set_metadata_prop("rtlsim_trace", "%s/verify_rtlsim.vcd" % (report_dir))
+            verify_out_dir = cfg.output_dir + "/verification_output"
+            os.makedirs(verify_out_dir, exist_ok=True)
+            abspath = os.path.abspath(verify_out_dir)
+            verify_model.set_metadata_prop("rtlsim_trace", abspath + "/verify_rtlsim.wdb")
         verify_step(verify_model, cfg, "stitched_ip_rtlsim", need_parent=True)
         os.environ["LIVENESS_THRESHOLD"] = str(prev_liveness)
     return model
@@ -691,6 +708,16 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
         ), "rtlsim_perf needs stitched IP"
         report_dir = cfg.output_dir + "/report"
         os.makedirs(report_dir, exist_ok=True)
+        rtlsim_bs = int(cfg.rtlsim_batch_size)
+        orig_rtlsim_trace_depth = get_rtlsim_trace_depth()
+        assert rtlsim_bs > 0, "rtlsim batch size must be >0"
+        if cfg.verify_save_rtlsim_waveforms:
+            # set depth to 3 for layer-by-layer visibility
+            os.environ["RTLSIM_TRACE_DEPTH"] = "3"
+            model.set_metadata_prop(
+                "rtlsim_trace",
+                "%s/rtlsim_perf_batch_%d.wdb" % (os.path.abspath(report_dir), rtlsim_bs),
+            )
         # prepare ip-stitched rtlsim
         rtlsim_model = deepcopy(model)
         rtlsim_model = prepare_for_stitched_ip_rtlsim(rtlsim_model, cfg)
@@ -702,17 +729,7 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
                 "Multi-in/out streams currently not supported "
                 + "in FINN C++ verilator driver, falling back to Python"
             )
-        rtlsim_bs = int(cfg.rtlsim_batch_size)
-        orig_rtlsim_trace_depth = get_rtlsim_trace_depth()
         if force_python_rtlsim:
-            assert rtlsim_bs > 0, "rtlsim batch size must be >0"
-            if cfg.verify_save_rtlsim_waveforms:
-                # set depth to 3 for layer-by-layer visibility
-                os.environ["RTLSIM_TRACE_DEPTH"] = "3"
-                rtlsim_model.set_metadata_prop(
-                    "rtlsim_trace",
-                    "%s/rtlsim_perf_batch_%d.vcd" % (report_dir, rtlsim_bs),
-                )
             rtlsim_model.set_metadata_prop("extra_verilator_args", str(["-CFLAGS", "-O3"]))
             # run with single input to get latency
             rtlsim_latency_dict = throughput_test_rtlsim(rtlsim_model, 1)
@@ -720,7 +737,7 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
             rtlsim_perf_dict = throughput_test_rtlsim(rtlsim_model, rtlsim_bs)
             rtlsim_perf_dict["latency_cycles"] = rtlsim_latency_dict["cycles"]
         else:
-            rtlsim_perf_dict = verilator_fifosim(model, rtlsim_bs)
+            rtlsim_perf_dict = xsi_fifosim(model, rtlsim_bs)
             # keep keys consistent between the Python and C++-styles
             cycles = rtlsim_perf_dict["cycles"]
             clk_ns = float(model.get_metadata_prop("clk_ns"))
@@ -817,7 +834,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
             )
 
             post_synth_resources = model.analysis(post_synth_res)
-            with open(report_dir + "/post_synth_resources.json", "w") as f:
+            with open(report_dir + "/post_synth_resources_oocimpl.json", "w") as f:
                 json.dump(post_synth_resources, f, indent=2)
 
             vivado_pynq_proj_dir = model.get_metadata_prop("vivado_pynq_proj")

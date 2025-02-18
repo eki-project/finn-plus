@@ -10,6 +10,7 @@ import os
 
 # Python warning subsystem
 import warnings
+from functools import partial
 
 # Helper for creating ONNX nodes
 from onnx import helper as oh
@@ -19,6 +20,7 @@ from qonnx.core.datatype import DataType
 
 # QONNX wrapper to ONNX model graphs
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.general.quant import max_int, min_int
 
 # Utility for registering HWCustomOp implementations into the module scope
 from finn.custom_op.fpgadataflow import register_custom_op
@@ -221,7 +223,7 @@ class ElementwiseBinaryOperation(HWCustomOp):
         # integers (actually floats as the container type)
         # Note: This is relevant for logical ops, ==, <=, >=, etc.
         # Note: Somehow QONNX does not like boolean tensors
-        context[node.output[0]] = out.astype(np.float32)
+        context[node.output[0]] = out.astype(self.out_dtype.to_numpy_dt())
 
     # Executes elementwise operation in C++ simulation
     def _execute_node_cppsim(self, context, graph):  # noqa: graph unused
@@ -288,6 +290,8 @@ class ElementwiseBinaryOperation(HWCustomOp):
         super().toggle_clk(sim)
         # Run the RTL Simulation
         self.rtlsim_multi_io(sim, io_dict)
+        # free up resources
+        self.close_rtlsim(sim)
 
         # Collect the output from RTL simulation
         out = io_dict["outputs"]["out"]
@@ -436,9 +440,13 @@ class ElementwiseBinaryOperation(HWCustomOp):
     def minimize_weight_bit_width(self, model: ModelWrapper):
         # Check for an initializer providing the left hand side input
         lhs = model.get_initializer(self.onnx_node.input[0])
+        # weight bitwidth minimization doesn't make sense for float inputs
+        # so we'll skip those (at least until we have minifloat support)
+        old_lhs_dt = model.get_tensor_datatype(self.onnx_node.input[0])
+        # TODO move const bitwidth minimization to a utility function + reuse
         # If the left hand side input is provided as initializer, minimize the
         # bits used for storing this
-        if lhs is not None:
+        if lhs is not None and old_lhs_dt.is_integer():
             # Remember the "style" of receiving the input for further code
             # generation
             self.set_nodeattr("lhs_style", "const")
@@ -459,9 +467,10 @@ class ElementwiseBinaryOperation(HWCustomOp):
 
         # Check for an initializer providing the right hand side input
         rhs = model.get_initializer(self.onnx_node.input[1])
+        old_rhs_dt = model.get_tensor_datatype(self.onnx_node.input[1])
         # If the right hand side input is provided as initializer, minimize the
         # bits used for storing this
-        if rhs is not None:
+        if rhs is not None and old_rhs_dt.is_integer():
             # Remember the "style" of receiving the input for further code
             # generation
             self.set_nodeattr("rhs_style", "const")
@@ -469,8 +478,6 @@ class ElementwiseBinaryOperation(HWCustomOp):
             # the range of values which needs to be represented
             _min = rhs.min()
             _max = rhs.max()
-            assert _min != 0
-            assert _max != 0
             # Determine whether signed or unsigned type is required for
             # representing the weights and select the largest "signed magnitude"
             _mag = _max if _min > 0 else \
@@ -795,6 +802,164 @@ class ElementwiseBitwiseXor(ElementwiseBinaryOperation):
         # The product is treated as a signed type if either of the operands is
         # of a signed type.
         return DataType[f"INT{out_width}" if signed else f"UINT{out_width}"]
+
+
+# Derive a specialization to implement elementwise maximum of two inputs
+@register_custom_op
+class ElementwiseMaximum(ElementwiseBinaryOperation):
+    _operation = "Maximum", np.maximum, "({0} >= {1} ? {0} : {1})", None
+
+    def _derive_out_dtype(self, model: ModelWrapper):
+        if (not self.lhs_dtype.is_integer()) or (not self.rhs_dtype.is_integer()):
+            # if any of the inputs are float, make the output float as well
+            # TODO better float dtype resolution? (fp16 also possible)
+            return DataType["FLOAT32"]
+        else:
+            # Get the width of the data types of the inputs  # noqa: Duplicate
+            lhs_width = self.lhs_dtype.bitwidth()
+            rhs_width = self.rhs_dtype.bitwidth()
+            # Check whether the addition operation is a signed addition
+            signed = any([self.lhs_dtype.signed(), self.rhs_dtype.signed()])
+            # use the greater of the two input bitwidths for the output
+            out_width = max(lhs_width, rhs_width)
+            # The product is treated as a signed type if either of the operands is
+            # of a signed type.
+            return DataType[f"INT{out_width}" if signed else f"UINT{out_width}"]
+
+
+# Derive a specialization to implement elementwise minimum of two inputs
+@register_custom_op
+class ElementwiseMinimum(ElementwiseBinaryOperation):
+    _operation = "Minimum", np.minimum, "({0} <= {1} ? {0} : {1})", None
+
+    def _derive_out_dtype(self, model: ModelWrapper):
+        if (not self.lhs_dtype.is_integer()) or (not self.rhs_dtype.is_integer()):
+            # if any of the inputs are float, make the output float as well
+            # TODO better float dtype resolution? (fp16 also possible)
+            return DataType["FLOAT32"]
+        else:
+            # Get the width of the data types of the inputs  # noqa: Duplicate
+            lhs_width = self.lhs_dtype.bitwidth()
+            rhs_width = self.rhs_dtype.bitwidth()
+            # Check whether the addition operation is a signed addition
+            signed = any([self.lhs_dtype.signed(), self.rhs_dtype.signed()])
+            # use the greater of the two input bitwidths for the output
+            out_width = max(lhs_width, rhs_width)
+            # The product is treated as a signed type if either of the operands is
+            # of a signed type.
+            return DataType[f"INT{out_width}" if signed else f"UINT{out_width}"]
+
+
+# reference function for Python exec
+# note that the y argument is ignored, but needed
+# to make this pass as a binary op
+def float2int(x, y, bitwidth, narrow, signed):
+    min_val = min_int(signed, narrow, bitwidth)
+    max_val = max_int(signed, narrow, bitwidth)
+    x_rounded = np.round(x)
+    x_clipped = np.clip(x_rounded, min_val, max_val)
+    return x_clipped
+
+
+# TODO this is not really a binary op: it could be treated as unary (w/ attributes)
+# or as ternary (if we take in the min/max values as inputs)
+# Derive a specialization to implement elementwise conversion of float values
+# to integers of a particular specification (bitwidth, signedness, narrow_range)
+@register_custom_op
+class ElementwiseFloat2Int(ElementwiseBinaryOperation):
+
+    # Defines attributes which must be present on this node
+    def get_nodeattr_types(self):
+        # Start from parent operator class attributes
+        attrs = ElementwiseBinaryOperation.get_nodeattr_types(self)
+        # Update attributes dictionary for new custom operator
+        attrs.update({
+            # Bitwidth of output integers
+            "bitwidth": ("i", True, 0),
+            # Whether output integers are signed or unsigned
+            "signed": ("i", True, 0),
+            # Whether output integers use narrow-range
+            "narrow": ("i", True, 0),
+            # The rounding mode, which is used for the quant function
+            "rounding_mode": ("s", True, "ROUND"),
+        })
+        # Return updated attribute dictionary
+        return attrs
+
+    # since we use attributes to drive part of the function inputs,
+    # we cannot statically assign _operation like other subclasses
+    # instead, we override the properties accessed for codegen
+
+    @property
+    def npy_op(self) -> np.ufunc:
+        bitwidth = self.get_nodeattr("bitwidth")
+        signed = self.get_nodeattr("signed")
+        narrow = self.get_nodeattr("narrow")
+        return partial(float2int, bitwidth=bitwidth, narrow=narrow, signed=signed)
+
+    # C++ operation template available as property
+    @property
+    def cpp_op(self) -> str:
+        bitwidth = self.get_nodeattr("bitwidth")
+        signed = self.get_nodeattr("signed")
+        narrow = self.get_nodeattr("narrow")
+        min_val = min_int(signed, narrow, bitwidth)
+        max_val = max_int(signed, narrow, bitwidth)
+        return "clip(hls::round({0}), %d, %d)" % (min_val, max_val)
+
+    # RTL operation template available as property
+    @property
+    def rtl_op(self) -> str:
+        return None
+
+    def _derive_out_dtype(self, model: ModelWrapper):
+        # the attributes decide the output datatype
+        bitwidth = self.get_nodeattr("bitwidth")
+        signed = self.get_nodeattr("signed")
+        return DataType[f"INT{bitwidth}"] if signed else DataType[f"UINT{bitwidth}"]
+
+
+# TODO this is not really a binary op: it is unary
+# Derive a specialization to implement elementwise dtype casting
+@register_custom_op
+class ElementwiseFloatCast(ElementwiseBinaryOperation):
+
+    # Defines attributes which must be present on this node
+    def get_nodeattr_types(self):
+        # Start from parent operator class attributes
+        attrs = ElementwiseBinaryOperation.get_nodeattr_types(self)
+        # Update attributes dictionary for new custom operator
+        attrs.update({
+            # Target datatype for the cast
+            "target_dtype": ("s", True, ""),
+        })
+        # Return updated attribute dictionary
+        return attrs
+
+    # since we use attributes to drive part of the function inputs,
+    # we cannot statically assign _operation like other subclasses
+    # instead, we override the properties accessed for codegen
+
+    @property
+    def npy_op(self) -> np.ufunc:
+        target_dtype = DataType[self.get_nodeattr("target_dtype")]
+        return partial(np.cast, dtype=target_dtype.to_numpy_dt())
+
+    # C++ operation template available as property
+    @property
+    def cpp_op(self) -> str:
+        target_dtype = DataType[self.get_nodeattr("target_dtype")]
+        return "((%s) {0})" % (target_dtype.get_hls_datatype_str())
+
+    # RTL operation template available as property
+    @property
+    def rtl_op(self) -> str:
+        return None
+
+    def _derive_out_dtype(self, model: ModelWrapper):
+        # the attributes decide the output datatype
+        target_dtype = DataType[self.get_nodeattr("target_dtype")]
+        return target_dtype
 
 # TODO: ElementwiseBitShift - Requires extra attribute selecting the direction
 

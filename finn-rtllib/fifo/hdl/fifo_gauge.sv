@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright (C) 2022, Advanced Micro Devices, Inc.
+ * Copyright (C) 2024, Advanced Micro Devices, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,52 +27,72 @@
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * @brief	Queue-based unbounded FIFO drop-in for size-gauging simulation.
+ * @author	Thomas B. Preußer <thomas.preusser@amd.com>
  *****************************************************************************/
 
-module $TOP_MODULE_NAME$ (
-	(* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF in0_V:out_V, ASSOCIATED_RESET ap_rst_n" *)
-	(* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 ap_clk CLK" *)
-	input  ap_clk,
-	(* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
-	input  ap_rst_n,
-	input  [IN_WIDTH_PADDED-1:0] in0_V_TDATA,
-	input  in0_V_TVALID,
-	output in0_V_TREADY,
-	output [OUT_WIDTH_PADDED-1:0] out_V_TDATA,
-	output out_V_TVALID,
-	input  out_V_TREADY
+module fifo_gauge #(
+	int unsigned  WIDTH,
+	int unsigned  COUNT_WIDTH = 32
+)(
+	input	logic  clk,
+	input	logic  rst,
+
+	input	logic [WIDTH-1:0]  idat,
+	input	logic  ivld,
+	output	logic  irdy,
+
+	output	logic [WIDTH-1:0]  odat,
+	output	logic  ovld,
+	input	logic  ordy,
+
+	output	logic [COUNT_WIDTH-1:0]  count,
+	output	logic [COUNT_WIDTH-1:0]  maxcount
 );
 
-// top-level parameters (set via code-generation)
-parameter BIT_WIDTH = $BIT_WIDTH$;
-parameter SIMD = $SIMD$;
-parameter MMV_IN = $MMV_IN$;
-parameter MMV_OUT = $MMV_OUT$;
-parameter IN_WIDTH_PADDED = $IN_WIDTH_PADDED$;
-parameter OUT_WIDTH_PADDED = $OUT_WIDTH_PADDED$;
+	// The internal Queue serving as data buffer and an output register
+	logic [WIDTH-1:0]  Q[$] = {};
+	logic [COUNT_WIDTH-1:0]  Count    = 0;
+	logic [COUNT_WIDTH-1:0]  MaxCount = 0;
 
-// derived constants
-parameter BUF_IN_WIDTH = BIT_WIDTH * SIMD * MMV_IN;
-parameter BUF_OUT_WIDTH = BIT_WIDTH * SIMD * MMV_OUT;
+	logic  OVld = 0;
+	logic [WIDTH-1:0]  ODat = 'x;
 
-$TOP_MODULE_NAME$_impl #(
-	.BIT_WIDTH(BIT_WIDTH),
-	.SIMD(SIMD),
-	.MMV_IN(MMV_IN),
-	.MMV_OUT(MMV_OUT)
-) impl (
-	.ap_clk(ap_clk),
-	.ap_rst_n(ap_rst_n),
-	.in0_V_V_TDATA(in0_V_TDATA[BUF_IN_WIDTH-1:0]),
-	.in0_V_V_TVALID(in0_V_TVALID),
-	.in0_V_V_TREADY(in0_V_TREADY),
-	.out_V_V_TDATA(out_V_TDATA[BUF_OUT_WIDTH-1:0]),
-	.out_V_V_TVALID(out_V_TVALID),
-	.out_V_V_TREADY(out_V_TREADY)
-);
+	always_ff @(posedge clk) begin
+		if(rst) begin
+			Q        <= {};
+			Count    <= 0;
+			MaxCount <= 0;
+			OVld <= 0;
+			ODat <= 'x;
+		end
+		else begin
+			// Always take input
+			if(ivld)  Q.push_back(idat);
 
-if (OUT_WIDTH_PADDED > BUF_OUT_WIDTH) begin
-	assign out_V_TDATA[OUT_WIDTH_PADDED-1:BUF_OUT_WIDTH] = {(OUT_WIDTH_PADDED-BUF_OUT_WIDTH){1'b0}};
-end
+			// Take Count
+			Count <= Q.size;
+			if(Q.size > MaxCount)  MaxCount <= Q.size;
 
-endmodule : $TOP_MODULE_NAME$
+			// Offer output when available
+			if(!OVld || ordy) begin
+				if(Q.size == 0) begin
+					OVld <= 0;
+					ODat <= 'x;
+				end
+				else begin
+					OVld <= 1;
+					ODat <= Q.pop_front();
+				end
+			end
+		end
+	end
+	assign	irdy = 1;
+	assign	ovld = OVld;
+	assign	odat = ODat;
+
+	assign	count = Count;
+	assign	maxcount = MaxCount;
+
+endmodule : fifo_gauge

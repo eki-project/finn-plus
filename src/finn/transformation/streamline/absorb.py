@@ -345,6 +345,11 @@ class Absorb1BitMulIntoMatMul(Transformation):
                 matmul_weight_name = n.input[1]
                 W = model.get_initializer(matmul_weight_name)
                 Wdt = model.get_tensor_datatype(matmul_weight_name)
+                if W is None:
+                    # see if we can find a weight quantizer
+                    q_cand = model.find_producer(matmul_weight_name)
+                    if q_cand is not None and q_cand.op_type == "Quant":
+                        W = model.get_initializer(q_cand.input[0])
                 # Just skip matmuls with non-existing weight initializers
                 if W is None:
                     continue
@@ -360,10 +365,14 @@ class Absorb1BitMulIntoMatMul(Transformation):
                     is_1bit = model.get_tensor_datatype(mul_weight_name).bitwidth() == 1
                     if is_1bit:
                         Wnew = A * W
-                        assert (
-                            Wnew.shape == W.shape
-                        ), """Shape of new weights is not
-                        the same as the shape of the weight matrix before."""
+                        if Wnew.shape != W.shape:
+                            # may happen due to the 1-bit Mul param having extra dims
+                            # applying np.squeeze should solve the problem
+                            Wnew = np.squeeze(Wnew)
+                            assert (
+                                Wnew.shape == W.shape
+                            ), """Shape of new weights is not
+                            the same as the shape of the weight matrix before."""
                         check_fxn = np.vectorize(lambda x: Wdt.allowed(x))
                         # only absorb if permitted by W datatype
                         if check_fxn(Wnew).all():
@@ -393,6 +402,11 @@ class Absorb1BitMulIntoConv(Transformation):
                 conv_weight_name = n.input[1]
                 W = model.get_initializer(conv_weight_name)
                 Wdt = model.get_tensor_datatype(conv_weight_name)
+                if W is None:
+                    # see if we can find a weight quantizer
+                    q_cand = model.find_producer(conv_weight_name)
+                    if q_cand is not None and q_cand.op_type == "Quant":
+                        W = model.get_initializer(q_cand.input[0])
                 # Just skip convs with non-existing weight initializers
                 if W is None:
                     continue

@@ -28,6 +28,7 @@
 
 
 import math
+import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.registry import getCustomOp
@@ -117,6 +118,10 @@ class AvgPoolAndTruncToQuantAvgPool(Transformation):
     To the FINN op: QuantAvgPool2d
     """
 
+    def __init__(self, mul_atol=0.001):
+        super().__init__()
+        self.mul_atol = mul_atol
+
     def apply(self, model):
         graph = model.graph
         node_ind = 0
@@ -153,7 +158,11 @@ class AvgPoolAndTruncToQuantAvgPool(Transformation):
 
                         # Mul node
                         mul_val = model.get_initializer(mul_node.input[1])
-                        if mul_val is None or len(mul_val.shape) != 0 or mul_val != k_s * k_s:
+                        if (
+                            (mul_val is None)
+                            or (mul_val.size != 1)
+                            or (not np.isclose(mul_val, k_s * k_s, atol=self.mul_atol))
+                        ):
                             raise ValueError(
                                 f"The Mul node after the AveragePool node must have "
                                 f"static initialization at the second input, "
@@ -203,9 +212,9 @@ class AvgPoolAndTruncToQuantAvgPool(Transformation):
                         ibits = math.floor(math.log(2**trunc_in_bits / (k_s * k_s), 2))
                         # Get sign
                         signed = _get_signed_from_upstream(model, t_node)
-                        # ToDo: Change this to NHWC,
-                        #  when the channels last layout comes around.
-                        data_layout = "NCHW"
+                        data_layout = (
+                            "NHWC" if n.domain == "qonnx.custom_op.channels_last" else "NCHW"
+                        )
 
                         # Insert scale nodes, QuantAvgPool2d node and required tensors
                         scale = model.get_initializer(t_node.input[1])
@@ -230,6 +239,9 @@ class AvgPoolAndTruncToQuantAvgPool(Transformation):
                             [act_scale_div_tensor.name],
                         )
                         graph.node.insert(running_node_index, scale_div_node)
+                        model.set_tensor_shape(
+                            act_scale_div_tensor.name, model.get_tensor_shape(n.input[0])
+                        )
                         running_node_index += 1
 
                         act_scale_mul_tensor = helper.make_tensor_value_info(
