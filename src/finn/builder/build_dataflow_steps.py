@@ -834,7 +834,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
             )
 
             post_synth_resources = model.analysis(post_synth_res)
-            with open(report_dir + "/post_synth_resources_oocimpl.json", "w") as f:
+            with open(report_dir + "/post_synth_resources.json", "w") as f:
                 json.dump(post_synth_resources, f, indent=2)
 
             vivado_pynq_proj_dir = model.get_metadata_prop("vivado_pynq_proj")
