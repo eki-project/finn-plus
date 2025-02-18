@@ -17,9 +17,7 @@ from finn.transformation.streamline.remove import *
 from finn.transformation.streamline.reorder import *
 
 # Some more specialized streamlining transformations
-from finn.transformation.streamline.round_thresholds import (  # noqa: isort
-    RoundAndClipThresholds,
-)
+from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.transformation.streamline.sign_to_thres import ConvertSignToThres
 
 
@@ -96,6 +94,7 @@ def StreamlinePlus():  # noqa: Uppercase
             MoveTransposePastJoinMul(),
             MoveTransposePastJoinAdd(),
             CollapseRepeatedTranspose(),
+            CollapseRepeatedReshape(),
             # Remove identity shape/layout transformations
             RemoveIdentityTranspose(),
             RemoveIdentityReshape(),

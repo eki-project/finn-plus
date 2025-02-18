@@ -210,3 +210,51 @@ class CollapseRepeatedTranspose(Transformation):
         # Return the transformed model and indicate whether the graph actually
         # has been transformed
         return model, graph_modified
+
+
+# Collapses repeated reshape operations into a single reshape operation having
+# the same effect
+class CollapseRepeatedReshape(Transformation):
+    # Applies the transform to a whole model graph
+    def apply(self, model: ModelWrapper):  # noqa
+        # Get the model graph out of the model wrapper object
+        graph = model.graph
+        # Keep track of whether the graph has been modified
+        graph_modified = False
+        # Iterate all nodes in the graph keeping track of the index
+        for index, node in enumerate(graph.node):
+            # Applies to Reshape operation types
+            if node.op_type == "Reshape":
+                # Currently does not handle fork- or join-nodes
+                if model.is_fork_node(node) or model.is_join_node(node):
+                    # Softly skip this node
+                    continue
+                # As this is not a fork-node, there can be at most one successor
+                successor = model.find_direct_successors(node)
+                # If Reshape is the final operation in the graph, there might
+                # be no successor
+                if successor is None:
+                    # Softly skip this node
+                    continue
+                # Now there is exactly one successor which needs to be extracted
+                # from the list
+                successor = successor[0]
+                # Successor must be a Reshape to be collapsed
+                if successor.op_type != "Reshape":
+                    # Softly skip this node
+                    continue
+                # Rewire everything into the second reshape
+                successor.input[0] = node.input[0]
+                # Remove the first original reshape
+                graph.node.remove(node)
+                # Track whether the graph has been modified, never resets to
+                # False
+                graph_modified = True
+                # Break the loop after adding and removing nodes to start over
+                # with a clean index
+                break
+        # Need to redo the shape inference after potentially removing nodes
+        model = model.transform(InferShapes())  # noqa: Shadows model
+        # Return the transformed model and indicate whether the graph actually
+        # has been transformed
+        return model, graph_modified
