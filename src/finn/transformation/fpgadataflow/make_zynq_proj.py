@@ -163,7 +163,7 @@ class MakeZYNQProject(Transformation):
                 # configure instance
                 config.append(
                     "set_property -dict [list CONFIG.NUM_MI %d] [get_bd_cells axi_interconnect_%d]"
-                    % (max(64, total_axilite_count), i)
+                    % (min(64, total_axilite_count), i)
                 )
                 # connect to master interconnect
                 config.append(
@@ -185,7 +185,7 @@ class MakeZYNQProject(Transformation):
                     % (i)
                 )
                 master_axilite_idx += 1
-                total_axilite_count = min(0, total_axilite_count - 64)
+                total_axilite_count = max(0, total_axilite_count - 64)
 
             assert total_axilite_count == 0, "Not all AXI-lite interfaces connected!"
 
