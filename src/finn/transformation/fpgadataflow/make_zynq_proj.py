@@ -191,6 +191,8 @@ class MakeZYNQProject(Transformation):
 
             # start populating the first nested interconnect
             axilite_interconnect_idx = 1
+        else:
+            axilite_idx = master_axilite_idx
 
         for node in model.graph.node:
             assert node.op_type == "StreamingDataflowPartition", "Invalid link graph"
