@@ -780,14 +780,14 @@ class ElementwiseFloat2Int_hls(  # noqa: Class name does not follow
     ElementwiseBinaryOperation_hls, elementwise_binary.ElementwiseFloat2Int
 ):
 
-    # we need to resolve the attribute types due to multiple inheritence
+    # We need to resolve the attribute types due to multiple inheritance
     def get_nodeattr_types(self):
-        # start with attributes from ElementwiseBinaryOperation
-        attrs = super(ElementwiseBinaryOperation_hls, self).get_nodeattr_types()
-        # add attributes from ElementwiseFloat2Int
-        attrs_float2int = super(elementwise_binary.ElementwiseFloat2Int, self).get_nodeattr_types()
-        attrs.update(attrs_float2int)
-        # Return updated attribute dictionary
+        # Start from parent operator class attributes
+        attrs = elementwise_binary.ElementwiseFloat2Int.get_nodeattr_types(self)
+        # Add the HLSBackend default attributes on top
+        attrs.update(HLSBackend.get_nodeattr_types(self))
+        # Add/Specialize implementation specific attributes here...
+        # Return the updated attributes dictionary
         return attrs
 
     # Generates list of C++ includes to be placed at the top of the generated
@@ -816,14 +816,14 @@ class ElementwiseFloatCast_hls(  # noqa: Class name does not follow
     ElementwiseBinaryOperation_hls, elementwise_binary.ElementwiseFloatCast
 ):
 
-    # we need to resolve the attribute types due to multiple inheritence
+    # We need to resolve the attribute types due to multiple inheritance
     def get_nodeattr_types(self):
-        # start with attributes from ElementwiseBinaryOperation
-        attrs = super(ElementwiseBinaryOperation_hls, self).get_nodeattr_types()
-        # add attributes from ElementwiseFloatCast
-        attrs_cast = super(elementwise_binary.ElementwiseFloatCast, self).get_nodeattr_types()
-        attrs.update(attrs_cast)
-        # Return updated attribute dictionary
+        # Start from parent operator class attributes
+        attrs = elementwise_binary.ElementwiseFloatCast.get_nodeattr_types(self)
+        # Add the HLSBackend default attributes on top
+        attrs.update(HLSBackend.get_nodeattr_types(self))
+        # Add/Specialize implementation specific attributes here...
+        # Return the updated attributes dictionary
         return attrs
 
 

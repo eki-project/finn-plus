@@ -905,7 +905,7 @@ class ElementwiseFloat2Int(ElementwiseBinaryOperation):
         narrow = self.get_nodeattr("narrow")
         min_val = min_int(signed, narrow, bitwidth)
         max_val = max_int(signed, narrow, bitwidth)
-        return "clip(hls::round({0}), %d, %d)" % (min_val, max_val)
+        return "clip(std::round({0}), %d, %d)" % (min_val, max_val)
 
     # RTL operation template available as property
     @property
