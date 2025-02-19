@@ -27,6 +27,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import math
 import os
 import subprocess
 from qonnx.core.modelwrapper import ModelWrapper
@@ -100,6 +101,9 @@ class MakeZYNQProject(Transformation):
         idma_idx = 0
         odma_idx = 0
         aximm_idx = 0
+        nested_interconnect_count = 0
+        master_axilite_idx = 0
+        axilite_interconnect_idx = 0
         axilite_idx = 0
         global_clk_ns = 0
         instance_names = {}
@@ -132,12 +136,61 @@ class MakeZYNQProject(Transformation):
             # connect AXI-lite control interface
             config.append(
                 "connect_bd_intf_net [get_bd_intf_pins instrumentation_wrap_0/s_axi_ctrl] "
-                "[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]" % (axilite_idx)
+                "[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]" % (master_axilite_idx)
             )
             config.append("assign_axi_addr_proc instrumentation_wrap_0/s_axi_ctrl")
-            axilite_idx += 1
+            master_axilite_idx += 1
         else:
             use_instrumentation = False
+
+        # instantiate nested AXI interconnects if required
+        # only the nested interconnects and all interfaces connected before this line
+        # will be connected to the original (master) interconnect
+        total_axilite_count = 0
+        for node in model.graph.node:
+            sdp_node = getCustomOp(node)
+            dataflow_model_filename = sdp_node.get_nodeattr("model")
+            kernel_model = ModelWrapper(dataflow_model_filename)
+            ifnames = eval(kernel_model.get_metadata_prop("vivado_stitch_ifnames"))
+            total_axilite_count += len(ifnames["axilite"])
+        if total_axilite_count > (64 - master_axilite_idx):
+            nested_interconnect_count = math.ceil(total_axilite_count / 64.0)
+            for i in range(1, nested_interconnect_count + 1):
+                # create instance
+                config.append(
+                    "create_bd_cell -type ip -vlnv $interconnect_vlnv axi_interconnect_%d" % (i)
+                )
+                # configure instance
+                config.append(
+                    "set_property -dict [list CONFIG.NUM_MI %d] [get_bd_cells axi_interconnect_%d]"
+                    % (max(64, total_axilite_count), i)
+                )
+                # connect to master interconnect
+                config.append(
+                    "connect_bd_intf_net [get_bd_intf_pins axi_interconnect_0/M%02d_AXI] -boundary_type upper [get_bd_intf_pins axi_interconnect_%d/S00_AXI]"
+                    % (master_axilite_idx, i)
+                )
+                # connect clocks TODO: suppport zynq_7000
+                config.append(
+                    "apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_interconnect_%d/ACLK]"
+                    % (i)
+                )
+                config.append(
+                    "apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_interconnect_%d/S00_ACLK]"
+                    % (i)
+                )
+                # connect reset
+                config.append(
+                    "connect_bd_net [get_bd_pins axi_interconnect_%d/ARESETN] [get_bd_pins axi_interconnect_0/ARESETN]"
+                    % (i)
+                )
+                master_axilite_idx += 1
+                total_axilite_count = min(0, total_axilite_count - 64)
+
+            assert total_axilite_count == 0, "Not all AXI-lite interfaces connected!"
+
+            # start populating the first nested interconnect
+            axilite_interconnect_idx = 1
 
         for node in model.graph.node:
             assert node.op_type == "StreamingDataflowPartition", "Invalid link graph"
@@ -211,8 +264,13 @@ class MakeZYNQProject(Transformation):
                 assert axilite_intf_name is not None
                 config.append(
                     "connect_bd_intf_net [get_bd_intf_pins %s/%s] "
-                    "[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]"
-                    % (instance_names[node.name], axilite_intf_name, axilite_idx)
+                    "[get_bd_intf_pins axi_interconnect_%d/M%02d_AXI]"
+                    % (
+                        instance_names[node.name],
+                        axilite_intf_name,
+                        axilite_interconnect_idx,
+                        axilite_idx,
+                    )
                 )
                 # assign_bd_address with appropriate range/offset
                 config.append(
@@ -221,6 +279,11 @@ class MakeZYNQProject(Transformation):
 
                 aximm_idx += 1
                 axilite_idx += 1
+                if axilite_idx == 64:
+                    axilite_interconnect_idx += 1
+                    axilite_idx = 0
+                if axilite_interconnect_idx == 0:
+                    master_axilite_idx += 1
             else:
                 instance_names[node.name] = node.name
                 config.append(
@@ -230,8 +293,13 @@ class MakeZYNQProject(Transformation):
                 for axilite_intf_name in ifnames["axilite"]:
                     config.append(
                         "connect_bd_intf_net [get_bd_intf_pins %s/%s] "
-                        "[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]"
-                        % (instance_names[node.name], axilite_intf_name, axilite_idx)
+                        "[get_bd_intf_pins axi_interconnect_%d/M%02d_AXI]"
+                        % (
+                            instance_names[node.name],
+                            axilite_intf_name,
+                            axilite_interconnect_idx,
+                            axilite_idx,
+                        )
                     )
                     # assign_bd_address with appropriate range/offset
                     config.append(
@@ -239,6 +307,11 @@ class MakeZYNQProject(Transformation):
                         % (instance_names[node.name], axilite_intf_name)
                     )
                     axilite_idx += 1
+                    if axilite_idx == 64:
+                        axilite_interconnect_idx += 1
+                        axilite_idx = 0
+                    if axilite_interconnect_idx == 0:
+                        master_axilite_idx += 1
             sdp_node.set_nodeattr("instance_name", instance_names[node.name])
 
             config.append(
@@ -286,6 +359,13 @@ class MakeZYNQProject(Transformation):
             config.append("delete_bd_objs [get_bd_cells smartconnect_0]")
             aximm_idx = 1
 
+        # finalize nested interconnect clock TODO: support zynq_7000
+        for i in range(1, nested_interconnect_count + 1):
+            config.append(
+                "apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} }  [get_bd_pins axi_interconnect_%d/M*_ACLK]"
+                % (i)
+            )
+
         # create a temporary folder for the project
         vivado_pynq_proj_dir = make_build_dir(prefix="vivado_zynq_proj_")
         model.set_metadata_prop("vivado_pynq_proj", vivado_pynq_proj_dir)
@@ -300,7 +380,7 @@ class MakeZYNQProject(Transformation):
                 templates.custom_zynq_shell_template
                 % (
                     fclk_mhz,
-                    axilite_idx,
+                    master_axilite_idx,
                     aximm_idx,
                     self.platform,
                     pynq_part_map[self.platform],
