@@ -713,3 +713,67 @@ class AbsorbTransposeIntoResize(Transformation):
         if graph_modified:
             model = model.transform(InferDataTypes())
         return (model, graph_modified)
+
+class AbsorbTransposeIntoConstantPad(Transformation):
+    def apply(self, model):
+        graph = model.graph
+        node_ind = 0
+        graph_modified = False
+
+        debug_done = False
+        for node in graph.node:
+            node_ind += 1
+            if debug_done:
+                break
+
+            if node.op_type == "Transpose" and not model.is_fork_node(node):
+                perms = list(get_by_name(node.attribute, "perm").ints)
+                if perms == [0, 3, 1, 2]:
+                    mt_cand = model.find_consumer(node.output[0])
+                    if mt_cand is not None and mt_cand.op_type == "Pad":
+                        pad_mode = get_by_name(mt_cand.attribute, "mode").s.decode("ascii")
+                        if pad_mode != "constant":
+                            continue #skip non constant pad nodes
+                        pads = model.get_initializer(mt_cand.input[1])
+                        n_pad = [pads[0], pads[4]]
+                        c_pad = [pads[1], pads[5]]
+                        h_pad = [pads[2], pads[6]]
+                        w_pad = [pads[3], pads[7]]
+
+                        #set pads to transposed variant
+                        new_pads = np.asarray([n_pad[0], h_pad[0], w_pad[0], c_pad[0], n_pad[1], h_pad[1], w_pad[1], c_pad[1]])
+                        model.set_initializer(mt_cand.input[1], new_pads) 
+
+                        # get rid of first node
+                        mt_cand.input[0] = node.input[0]
+                        graph.node.remove(node)
+
+                        
+                        new_tensor_name = model.make_new_valueinfo_name()
+
+                        trans_input = mt_cand.output[0]
+                        trans_output = new_tensor_name
+
+                        # fix tensor shapes for Resize and Transpose
+                        n, c, h, w = model.get_tensor_shape(mt_cand.output[0])
+                        model.set_tensor_shape(trans_input, (n, h, w, c))
+                        model.set_tensor_shape(trans_output, (n, c, h, w))
+                        # re-insert Transpose behind Resize
+                        new_transpose = oh.make_node(
+                            "Transpose",
+                            [trans_input],
+                            [trans_output],
+                            perm=[0, 3, 1, 2],
+                        )
+                        # rewire nodes
+                        final_t_cands = model.find_consumers(mt_cand.output[0])
+                        # rewire next nodes' inputs
+                        for final_t_cand in final_t_cands:
+                            final_t_cand.input[0] = trans_output
+                        mt_cand.output[0] = trans_input
+                        graph.node.insert(node_ind + 1, new_transpose)
+                        graph_modified = True
+                        # debug_done = True
+        if graph_modified:
+            model = model.transform(InferDataTypes())
+        return (model, graph_modified)
