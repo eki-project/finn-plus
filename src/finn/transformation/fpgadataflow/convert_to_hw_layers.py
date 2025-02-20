@@ -2090,3 +2090,120 @@ class InferUnsqueeze(Transformation):
         # Return the transformed model and indicate whether the graph actually
         # has been transformed
         return model, graph_modified
+
+class InferPadding(Transformation):
+    """Convert standalone Pad nodes to
+    FMPadding CustomOps."""
+
+    def __init__(self):
+        super().__init__()
+
+    def apply(self, model: ModelWrapper):
+        graph = model.graph
+        node_ind = 0
+        graph_modified = False
+        for n in graph.node:
+            node_ind += 1
+            if n.op_type == "Pad":
+                padding_mode = get_by_name(n.attribute, "mode").s.decode("ascii")
+                is_constant_padding = (padding_mode == "constant")
+
+                if len(n.input) > 2: #only when constant value or axes are defined #TODO could use .get_nodeattr("pad_value") is more robust
+                    padding_constant = (model.get_initializer(n.input[2]))
+                    padding_val_is_zero = (padding_constant == 0 or padding_constant is None)
+                else: 
+                    padding_val_is_zero = True
+
+                is_zero_padding = is_constant_padding and padding_val_is_zero
+
+                is_followed_by_nhwc_transpose = False
+                follower = model.find_consumer(n.output[0])
+                if follower is not None:
+                    if follower.op_type == "Transpose":
+                        perms = get_by_name(follower.attribute, "perm").ints
+                        is_followed_by_nhwc_transpose = perms == [0, 2, 3, 1]
+
+
+                if is_zero_padding:
+                    pad_input = n.input[0]
+                    pad_amount = model.get_initializer(n.input[1])
+
+                    #NOTE: Assumes NHWC layout
+                    pad_h = pad_amount[1] + pad_amount[5] #total height padding
+                    pad_w = pad_amount[2] + pad_amount[6] #total width padding
+
+                    if is_followed_by_nhwc_transpose:
+                        #NOTE: Assumes NCHW layout
+                        pad_h = pad_amount[2] + pad_amount[6]
+                        pad_w = pad_amount[3] + pad_amount[7]
+
+                    pad_output_shape = model.get_tensor_shape(n.output[0])
+
+                    if is_followed_by_nhwc_transpose:
+                        pad_output_shape = model.get_tensor_shape(follower.output[0])
+
+                    pad_input_shape = [pad_output_shape[0], pad_output_shape[1] - pad_h, pad_output_shape[2] - pad_w, pad_output_shape[3]]
+
+
+                    in_ch = pad_input_shape[3]
+                    odim_pad_h = pad_output_shape[1] #padded output height
+                    odim_pad_w = pad_output_shape[2] #padded output width 
+
+                    #TODO probably need transpose before here
+                    # padding_out = helper.make_tensor_value_info(
+                    #     model.make_new_valueinfo_name(),
+                    #     TensorProto.FLOAT,
+                    #     (1, in_ch, odim_pad_h, odim_pad_w)
+                    # )
+                    # graph.value_info.append(padding_out)
+                    # padding_out = padding_out.name
+                    # model.set_tensor_datatype(padding_out, model.get_tensor_datatype(pad_input))
+
+                    if is_followed_by_nhwc_transpose:
+                        padding_node = helper.make_node(
+                            "FMPadding",
+                            [pad_input],
+                            [follower.output[0]],
+                            domain="finn.custom_op.fpgadataflow",
+                            backend="fpgadataflow",
+                            ImgDim=[pad_input_shape[1], pad_input_shape[2]],
+                            Padding=[pad_amount[2], pad_amount[3], pad_amount[6], pad_amount[7]],
+                            NumChannels=in_ch,
+                            inputDataType=model.get_tensor_datatype(pad_input).name,
+                            SIMD=in_ch,
+                            name="FMPadding_Batch_" + n.name,
+                        )
+                        graph.node.insert(node_ind, padding_node)
+                        # remove old node
+                        graph.node.remove(n)
+                        graph.node.remove(follower)
+                        model.save("temp.onnx")
+                    else:
+                        padding_node = helper.make_node(
+                            "FMPadding",
+                            [pad_input],
+                            [n.output[0]],
+                            domain="finn.custom_op.fpgadataflow",
+                            backend="fpgadataflow",
+                            ImgDim=[pad_input_shape[1], pad_input_shape[2]],
+                            Padding=[pad_amount[1], pad_amount[2], pad_amount[5], pad_amount[6]],
+                            NumChannels=in_ch,
+                            inputDataType=model.get_tensor_datatype(pad_input).name,
+                            SIMD=in_ch,
+                            name="FMPadding_Batch_" + n.name,
+                        )
+                        graph.node.insert(node_ind, padding_node)
+                        # remove old node
+                        graph.node.remove(n)
+
+                        
+                    graph_modified = True
+
+
+
+
+
+        # if graph_modified:
+        #     model = model.transform(InferShapes())
+        #     model = model.transform(InferDataTypes())
+        return (model, graph_modified)
