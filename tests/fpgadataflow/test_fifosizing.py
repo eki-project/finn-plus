@@ -29,12 +29,12 @@
 
 import pytest
 
+import copy
 import json
 import numpy as np
 import os
 import shutil
 import torch
-import copy
 from brevitas.export import export_qonnx
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
@@ -52,10 +52,12 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.merge_onnx_models import MergeONNXModels
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
+
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.util.basic import make_build_dir
 from finn.util.test import get_trained_network_and_ishape
+
 
 def generate_random_threshold_values(
     data_type, num_input_channels, num_steps, narrow=False, per_tensor=False
@@ -74,6 +76,7 @@ def generate_random_threshold_values(
 
 def sort_thresholds_increasing(thresholds):
     return np.sort(thresholds, axis=1)
+
 
 def make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_window=0):
     # hardcoded parameters
@@ -271,6 +274,7 @@ def combine_blocks(lb, rb, ifm_dim, ch, pe):
     model = model.transform(GiveReadableTensorNames())
     return model
 
+
 def fetch_test_model(topology, wbits=2, abits=2):
     tmp_output_dir = make_build_dir("build_fifosizing_%s_" % topology)
     (model, ishape) = get_trained_network_and_ishape(topology, wbits, abits)
@@ -278,23 +282,22 @@ def fetch_test_model(topology, wbits=2, abits=2):
     export_qonnx(model, torch.randn(ishape), chkpt_name)
     return tmp_output_dir
 
+
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.fpgadataflow
 @pytest.mark.parametrize(
     "method",
     [
-        "largefifo_rtlsim_python",
-        "largefifo_rtlsim_cpp",
+        "largefifo_rtlsim",
         "characterize_analytic",
         "characterize_rtl",
     ],
 )
 @pytest.mark.parametrize("topology", ["tfc", "cnv"])
 def test_fifosizing_linear(method, topology):
-    force_python_rtlsim = "python" in method
-    method_key = "largefifo_rtlsim" if "largefifo_rtlsim" in method else "characterize"
     tmp_output_dir = fetch_test_model(topology)
+    method_key = "largefifo_rtlsim" if "largefifo_rtlsim" in method else "characterize"
     if method == "characterize_analytic":
         characterizatio_strategy_key = "analytic"
     else:
@@ -306,7 +309,6 @@ def test_fifosizing_linear(method, topology):
         auto_fifo_strategy=method_key,
         characteristic_function_strategy=characterizatio_strategy_key,
         target_fps=10000 if topology == "tfc" else 1000,
-        force_python_rtlsim=force_python_rtlsim,
         synth_clk_period_ns=10.0,
         board="Pynq-Z1",
         rtlsim_batch_size=100 if topology == "tfc" else 2,
@@ -355,17 +357,14 @@ def test_fifosizing_linear(method, topology):
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.fpgadataflow
-@pytest.mark.parametrize("conv_config", [
-    (32, # dim
-     5, # kernel_size
-     4, # ch
-     4, # simd
-     4, # pe
-     1 # parallel_window
-    ),
-    #(16, 4, 3, 4, 4, 1),
-    #(16, 4, 3, 4, 4, 1)
-    ])
+@pytest.mark.parametrize(
+    "conv_config",
+    [
+        (32, 5, 4, 4, 4, 1),  # dim  # kernel_size  # ch  # simd  # pe  # parallel_window
+        # (16, 4, 3, 4, 4, 1),
+        # (16, 4, 3, 4, 4, 1)
+    ],
+)
 @pytest.mark.parametrize("lb_num_layers", [1])
 @pytest.mark.parametrize("rb_num_layers", [3])
 @pytest.mark.parametrize("strategy", ["analytical", "rtlsim"])
@@ -376,10 +375,10 @@ def test_fifosizing_nonlinear(conv_config, lb_num_layers, rb_num_layers, strateg
     )
     log = {}
 
-    #TODO: generalize FIFO test so it can be used by other FIFO-related unit tests
-    #TODO: allow manual folding/fifo config as input
+    # TODO: generalize FIFO test so it can be used by other FIFO-related unit tests
+    # TODO: allow manual folding/fifo config as input
 
-    #TODO: is a scenario possible where reducing depth of a single FIFO at a time is not sufficient for testing tightness?
+    # TODO: is a scenario possible where reducing depth of a single FIFO at a time is not sufficient for testing tightness?
     #      e.g. reducing > 1 FIFOs simultaneously does not cause a throughput drop while reducing a single FIFO does?
 
     # conv parameters
@@ -394,13 +393,15 @@ def test_fifosizing_nonlinear(conv_config, lb_num_layers, rb_num_layers, strateg
     log["pe"] = pe
     log["parallel_window"] = parallel_window
 
-    # test parameters 
-    #TODO: make configurable
-    #TODO: how to determine rtlsim_n?
+    # test parameters
+    # TODO: make configurable
+    # TODO: how to determine rtlsim_n?
     rtlsim_n = 10
     throughput_factor_threshold = 0.9
-    fifo_reduction_skip_threshold = 32 # skip FIFO tightness test for shallow FIFOs at or below this depth
-    fifo_reduction_factor = 0.5 # controls tightness
+    fifo_reduction_skip_threshold = (
+        32  # skip FIFO tightness test for shallow FIFOs at or below this depth
+    )
+    fifo_reduction_factor = 0.5  # controls tightness
     fifo_reduction_throughput_drop_threshold = 0.01
     log["rtlsim_n"] = rtlsim_n
     log["throughput_factor_threshold"] = throughput_factor_threshold
@@ -429,7 +430,7 @@ def test_fifosizing_nonlinear(conv_config, lb_num_layers, rb_num_layers, strateg
 
     cfg = build_cfg.DataflowBuildConfig(
         output_dir=tmp_output_dir,
-        verbose=True, # TODO: remove this?
+        verbose=True,  # TODO: remove this?
         # only works with characterization-based FIFO-sizing
         auto_fifo_depths=True,
         auto_fifo_strategy="characterize",
@@ -464,7 +465,10 @@ def test_fifosizing_nonlinear(conv_config, lb_num_layers, rb_num_layers, strateg
     last_node = getCustomOp(model_final.find_producer(model_final.graph.output[0].name))
     input_txns_expected = np.prod(first_node.get_folded_input_shape()[:-1]) * rtlsim_n
     output_txns_expected = np.prod(last_node.get_folded_output_shape()[:-1]) * rtlsim_n
-    deadlock = sim_data["N_IN_TXNS"] != input_txns_expected or sim_data["N_OUT_TXNS"] != output_txns_expected
+    deadlock = (
+        sim_data["N_IN_TXNS"] != input_txns_expected
+        or sim_data["N_OUT_TXNS"] != output_txns_expected
+    )
     log["deadlock"] = deadlock.tolist()
 
     # check rtlsim throughput
@@ -504,7 +508,9 @@ def test_fifosizing_nonlinear(conv_config, lb_num_layers, rb_num_layers, strateg
             continue
 
         # reduce depth of current FIFO and reset generated code
-        node_inst.set_nodeattr("depth", int(node_inst.get_nodeattr("depth") * fifo_reduction_factor))
+        node_inst.set_nodeattr(
+            "depth", int(node_inst.get_nodeattr("depth") * fifo_reduction_factor)
+        )
         node_inst.set_nodeattr("code_gen_dir_ipgen", "")
         node_inst.set_nodeattr("ip_path", "")
         node_inst.set_nodeattr("ipgen_path", "")
@@ -516,7 +522,11 @@ def test_fifosizing_nonlinear(conv_config, lb_num_layers, rb_num_layers, strateg
 
         # build again, only re-run necessary steps to save time
         cfg.output_dir = tmp_output_dir_var
-        cfg.steps = ["step_hw_codegen", "step_create_stitched_ip", "step_measure_rtlsim_performance"]
+        cfg.steps = [
+            "step_hw_codegen",
+            "step_create_stitched_ip",
+            "step_measure_rtlsim_performance",
+        ]
         build.build_dataflow_cfg(tmp_output_dir_var + "/model.onnx", cfg)
 
         # load performance report
@@ -524,12 +534,17 @@ def test_fifosizing_nonlinear(conv_config, lb_num_layers, rb_num_layers, strateg
             sim_data = json.load(f)
 
         # check for deadlock
-        model_final = ModelWrapper(tmp_output_dir_var + "/intermediate_models/step_create_stitched_ip.onnx")
+        model_final = ModelWrapper(
+            tmp_output_dir_var + "/intermediate_models/step_create_stitched_ip.onnx"
+        )
         first_node = getCustomOp(model_final.find_consumer(model_final.graph.input[0].name))
         last_node = getCustomOp(model_final.find_producer(model_final.graph.output[0].name))
         input_txns_expected = np.prod(first_node.get_folded_input_shape()[:-1]) * rtlsim_n
         output_txns_expected = np.prod(last_node.get_folded_output_shape()[:-1]) * rtlsim_n
-        var_deadlock = sim_data["N_IN_TXNS"] != input_txns_expected or sim_data["N_OUT_TXNS"] != output_txns_expected
+        var_deadlock = (
+            sim_data["N_IN_TXNS"] != input_txns_expected
+            or sim_data["N_OUT_TXNS"] != output_txns_expected
+        )
 
         # check rtlsim throughput
         var_throughput = sim_data["throughput[images/s]"]
@@ -537,7 +552,7 @@ def test_fifosizing_nonlinear(conv_config, lb_num_layers, rb_num_layers, strateg
         # TODO: take throughput or stable_throughput?
         throughput_drop = (throughput - var_throughput) / throughput
 
-        if var_deadlock:   
+        if var_deadlock:
             fifo_reduction_pass.append(True)
             log["fifo_reduction_results"][node.name] = 1.0
         elif throughput_drop > fifo_reduction_throughput_drop_threshold:
