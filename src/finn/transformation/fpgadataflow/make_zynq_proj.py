@@ -182,10 +182,6 @@ class MakeZYNQProject(Transformation):
                     "apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_interconnect_%d/ACLK]"
                     % (i)
                 )
-                config.append(
-                    "apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_interconnect_%d/S00_ACLK]"
-                    % (i)
-                )
                 master_axilite_idx += 1
                 total_axilite_count = max(0, total_axilite_count - 64)
 
