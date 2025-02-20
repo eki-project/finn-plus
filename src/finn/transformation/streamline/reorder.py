@@ -702,6 +702,78 @@ class MoveLinearPastEltwiseAdd(Transformation):
         model = model.transform(InferDataTypes())
         return model, graph_modified
 
+class MoveMulDivPastZeroPad(Transformation):
+    """Move scalar mul and div operations past zero padding as they are invariant to them.
+    """
+
+    def apply(self, model: ModelWrapper):
+        graph = model.graph
+        node_ind = 0
+        graph_modified = False
+
+        nodes = [n for n in graph.node]
+        for n in nodes:
+            node_ind += 1
+
+            if n.op_type == "Pad":
+                padding_mode = get_by_name(n.attribute, "mode").s.decode("ascii")
+                is_constant_padding = (padding_mode == "constant")
+
+                if len(n.input) > 2: #this should only be the case if a constand value or axes are specified
+                    padding_constant = (model.get_initializer(n.input[2])) #TODO check here if this length is larger than one this would indicate an axes input instead of padding value
+                    padding_val_is_zero = (padding_constant == 0 or padding_constant is None)
+                else:
+                    padding_val_is_zero = True
+
+                is_zero_padding = is_constant_padding and padding_val_is_zero
+                if is_zero_padding:
+                    prod = model.find_producer(n.input[0])
+
+                    if prod.op_type == "Mul" or prod.op_type == "Div":
+                        # Cannot handle fork-nodes, try MoveLinearPastFork first
+                        if model.is_fork_node(prod):
+                            warnings.warn(
+                                f"{self.__class__.__name__}:"
+                                f" Skipping near match: {prod.name} is a fork-node,"
+                                f" try MoveLinearPastFork first"
+                            )
+                            # Skip transforming this node as moving this would lead
+                            # to messed up or detached graph
+                            continue
+
+                    operand = model.get_initializer(prod.input[1])
+
+                    if operand.size != 1:
+                        warnings.warn(
+                            f"{self.__class__.__name__}:"
+                            f" Skipping near match: {prod.name} is a non-scalar mul/div"
+                        )
+                        continue
+                    
+                    # move prod0 from input to output,
+                    old_prod0_in = prod.input[0]
+                    old_prod0_out = prod.output[0]
+                    scalar_op_odt = model.get_tensor_datatype(old_prod0_out)
+                    old_n_out = n.output[0]
+                    in_shape = model.get_tensor_shape(n.input[0])
+                    out_shape = model.get_tensor_shape(n.output[0])
+                    n.input[0] = old_prod0_in
+                    n.output[0] = old_prod0_out
+                    prod.input[0] = old_prod0_out
+                    prod.output[0] = old_n_out
+                    model.set_tensor_shape(n.input[0], in_shape)
+                    model.set_tensor_shape(n.output[0], out_shape)
+                    model.set_tensor_shape(prod.output[0], out_shape)
+                    model.set_tensor_datatype(prod.output[0], scalar_op_odt)
+                    model.set_tensor_datatype(n.output[0], DataType["FLOAT32"])
+                    graph.node.remove(prod)
+                    graph.node.insert(node_ind - 1, prod)
+                    graph_modified = True
+        if graph_modified:
+            model = model.transform(InferShapes())
+            model = model.transform(InferDataTypes())
+        return (model, graph_modified)
+
 
 class MoveScalarLinearPastInvariants(Transformation):
     """Move scalar linear operations (mul, add) past functions which are invariant
