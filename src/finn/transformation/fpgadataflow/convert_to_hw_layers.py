@@ -47,6 +47,8 @@ import finn.custom_op.fpgadataflow.elementwise_binary as elementwise_binary
 # Base class for all FINN custom ops, here just used for type-hinting
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
+from qonnx.util.cleanup import cleanup_model
+from qonnx.core.modelwrapper import ModelWrapper
 
 class InferConvInpGen(Transformation):
     """Convert Im2Col layers to ConvolutionInputGenerator layers."""
@@ -284,7 +286,7 @@ class InferThresholdingLayer(Transformation):
 class InferUpsample(Transformation):
     """Convert Upsample and Resize nodes to layers to UpsampleNearestNeighbour nodes."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper):
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -296,33 +298,10 @@ class InferUpsample(Transformation):
                 if n.op_type == "Upsample":
                     scales = model.get_initializer(n.input[1])
                 else:
-                    if len(n.input) == 2:
-                        # Resize version 10
-                        scales = model.get_initializer(n.input[1])
-                    elif len(n.input) == 3:
-                        # Resize version 11 and up (no size input)
-                        scales = model.get_initializer(n.input[2])
-                    elif len(n.input) == 4:
-                        # Resize version 11 and up
-                        scales_exists = (model.get_initializer(n.input[2]) is not None) and (
-                            len(model.get_initializer(n.input[2])) != 0
-                        )
-                        sizes_exists = (model.get_initializer(n.input[3]) is not None) and (
-                            len(model.get_initializer(n.input[3])) != 0
-                        )
-                        assert scales_exists ^ sizes_exists, (
-                            "%s: Either scales or the target output size must "
-                            "be specified. Specifying both is prohibited." % n.name
-                        )
-                        if scales_exists:
-                            # Scales input
-                            scales = model.get_initializer(n.input[2])
-                        else:
-                            # Convert sizes to scales
-                            sizes = model.get_initializer(n.input[3])
-                            data_input_size = model.get_tensor_shape(n.input[0])
-                            scales = sizes / data_input_size
+                    scales = model.get_initializer(n.input[2])
+
                 in_shape = model.get_tensor_shape(n.input[0])
+                out_shape = model.get_tensor_shape(n.output[0])
 
                 dt = model.get_tensor_datatype(n.input[0])
                 if not dt.is_integer():
@@ -353,23 +332,24 @@ class InferUpsample(Transformation):
                 # Assumes nhwc layout for scales and input
                 is_scale_square_2d = scales[1] == scales[2]
                 is_scale_1d = scales[1] > 1 and scales[2] == 1
-                assert is_scale_square_2d or is_scale_1d, (
-                    "%s: Upsampling only supported for 1D H, or 2D square scaling" % n.name
-                )
-                assert scales[0] == scales[3] == 1, (
-                    n.name + ": Upsampling is only supported for scales with "
-                    "the first and last dimensions being 1 in NHWC."
-                )
+                # assert is_scale_square_2d or is_scale_1d, (
+                #     "%s: Upsampling only supported for 1D H, or 2D square scaling" % n.name
+                # )
+                # assert scales[0] == scales[3] == 1, (
+                #     n.name + ": Upsampling is only supported for scales with "
+                #     "the first and last dimensions being 1 in NHWC."
+                # )
                 spatial_scale = scales[1]
                 assert spatial_scale == int(spatial_scale), (
                     "%s: Upsampling is only supported for integer scales." % n.name
                 )
                 is_shape_square_2d = in_shape[1] == in_shape[2]
                 is_shape_1d = in_shape[1] > 1 and in_shape[2] == 1
+                is_shape_non_square_2d = in_shape[1] != in_shape[2]
 
-                assert is_shape_square_2d or is_shape_1d, (
-                    "%s: Upsampling is only supported for 1D H or 2D square inputs." % n.name
-                )
+                # assert is_shape_square_2d or is_shape_1d, (
+                #     "%s: Upsampling is only supported for 1D H or 2D square inputs." % n.name
+                # )
 
                 # Extract information for HW node
                 IFMDim = in_shape[1]
@@ -377,29 +357,47 @@ class InferUpsample(Transformation):
                 NumChannels = in_shape[-1]
                 numInputVectors = in_shape[0]
                 inputDataType = dt.name
-                dim_mode = 0 if is_shape_square_2d else 1
+                dim_mode = 2 if is_shape_non_square_2d else 1 if is_shape_1d else 0 
 
-                # Insert the HWCustomOp node
-                Upsample_HW_node = helper.make_node(
-                    "UpsampleNearestNeighbour",
-                    [n.input[0]],
-                    [n.output[0]],
-                    domain="finn.custom_op.fpgadataflow",
-                    backend="fpgadataflow",
-                    OFMDim=OFMDim,
-                    IFMDim=IFMDim,
-                    NumChannels=NumChannels,
-                    inputDataType=inputDataType,
-                    numInputVectors=numInputVectors,
-                    DimMode=dim_mode,
-                    name="UpsampleNearestNeighbour_" + n.name,
-                )
+                if dim_mode != 2:
+                    # Insert the HWCustomOp node
+                    Upsample_HW_node = helper.make_node(
+                        "UpsampleNearestNeighbour",
+                        [n.input[0]],
+                        [n.output[0]],
+                        domain="finn.custom_op.fpgadataflow",
+                        backend="fpgadataflow",
+                        OFMDim=OFMDim,
+                        IFMDim=IFMDim,
+                        NumChannels=NumChannels,
+                        inputDataType=inputDataType,
+                        numInputVectors=numInputVectors,
+                        DimMode=dim_mode,
+                        name="UpsampleNearestNeighbour_" + n.name,
+                    )
+                else:
+                    #insert bresenhem upsampler
+                    Upsample_HW_node = helper.make_node(
+                        "UpsampleNearestNeighbour",
+                        [n.input[0]],
+                        [n.output[0]],
+                        domain="finn.custom_op.fpgadataflow",
+                        backend="fpgadataflow",
+                        IFMShape=[in_shape[1], in_shape[2]],
+                        OFMShape=[out_shape[1], out_shape[2]],
+                        NumChannels=NumChannels,
+                        inputDataType=inputDataType,
+                        numInputVectors=numInputVectors,
+                        DimMode=dim_mode,
+                        name="UpsampleNearestNeighbour_" + n.name,
+                    )
 
                 # Remove the old node
                 graph.node.insert(node_ind, Upsample_HW_node)
                 # remove old nodes
                 graph.node.remove(n)
                 graph_modified = True
+        model = cleanup_model(model)
         return (model, graph_modified)
 
 

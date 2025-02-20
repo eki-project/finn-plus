@@ -54,42 +54,65 @@ class UpsampleNearestNeighbour(HWCustomOp):
             "inputDataType": ("s", True, ""),
             # Batch size
             "numInputVectors": ("i", False, 1),
-            # Dimensionality mode: 0 = 2D square, 1 = 1D in H dim
+            # Dimensionality mode: 0 = 2D square, 1 = 1D in H dim, 2 = 2D non-square
             "DimMode": ("i", False, 0),
+            # Input feature map shape for non square 2D inputs
+            "IFMShape": ("ints", False, []),
+            # Output feature map shape for non square 2D outputs
+            "OFMShape": ("ints", False, []),
         }
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
     def get_exp_cycles(self):
-        OFMDim = self.get_nodeattr("OFMDim")
-        batch_size = self.get_nodeattr("numInputVectors")
         is_2d = self.get_nodeattr("DimMode") == 0
+        is_non_square = self.get_nodeattr("DimMode") == 2
         reps = 1
         if is_2d:
+            OFMDim = self.get_nodeattr("OFMDim")
+            batch_size = self.get_nodeattr("numInputVectors")
             OFMDim = OFMDim * OFMDim
             reps = batch_size
+        elif is_non_square:
+            OFMShape = self.get_nodeattr("OFMShape")
+            OFMDim = OFMShape[0]*OFMShape[1]
         exp_cycles = OFMDim * reps
         return int(exp_cycles)
 
     def get_normal_input_shape(self, ind=0):
-        IFMDim = self.get_nodeattr("IFMDim")
         num_ch = self.get_nodeattr("NumChannels")
         batch = self.get_nodeattr("numInputVectors")
+
+        is_2d_non_square = self.get_nodeattr("DimMode") == 2
         is_2d = self.get_nodeattr("DimMode") == 0
-        if is_2d:
+
+        if is_2d_non_square:
+            input_feature_map = self.get_nodeattr("IFMShape")
+            ishape = (batch, input_feature_map[0], input_feature_map[1], num_ch)
+        elif is_2d:
+            IFMDim = self.get_nodeattr("IFMDim")
             ishape = (batch, IFMDim, IFMDim, num_ch)
         else:
+            IFMDim = self.get_nodeattr("IFMDim")
             ishape = (batch, IFMDim, 1, num_ch)
+
         return ishape
 
     def get_normal_output_shape(self, ind=0):
-        OFMDim = self.get_nodeattr("OFMDim")
         num_ch = self.get_nodeattr("NumChannels")
         batch = self.get_nodeattr("numInputVectors")
+
+        is_2d_non_square = self.get_nodeattr("DimMode") == 2
         is_2d = self.get_nodeattr("DimMode") == 0
-        if is_2d:
+
+        if is_2d_non_square:
+            output_feature_map = self.get_nodeattr("OFMShape")
+            oshape = (batch, output_feature_map[0], output_feature_map[1], num_ch)
+        elif is_2d:
+            OFMDim = self.get_nodeattr("OFMDim")
             oshape = (batch, OFMDim, OFMDim, num_ch)
         else:
+            OFMDim = self.get_nodeattr("OFMDim")
             oshape = (batch, OFMDim, 1, num_ch)
         return oshape
 

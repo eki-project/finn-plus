@@ -35,7 +35,7 @@ from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 
 class UpsampleNearestNeighbour_hls(UpsampleNearestNeighbour, HLSBackend):
     """
-    Corresponds to finn-hlslib UpsampleNearestNeighbour function.
+    Corresponds to finn-hlslib UpsampleNearestNeighbour_Batch function.
     Upsampling is done with the Nearest Neighbour algorithm.
     The layer expects square feature maps for the in and output.
     """
@@ -64,31 +64,50 @@ class UpsampleNearestNeighbour_hls(UpsampleNearestNeighbour, HLSBackend):
         ibits = self.get_input_datatype().bitwidth()
         self.code_gen_dict["$DEFINES$"] += ["#define Input_precision {}".format(ibits)]
 
-        idim = self.get_nodeattr("IFMDim")
-        self.code_gen_dict["$DEFINES$"] += ["#define IFMDim {}".format(idim)]
+        is_2d_non_square = self.get_nodeattr("DimMode") == 2
 
-        odim = self.get_nodeattr("OFMDim")
-        self.code_gen_dict["$DEFINES$"] += ["#define OFMDim {}".format(odim)]
+        if not is_2d_non_square:
+            idim = self.get_nodeasttr("IFMDim")
+            self.code_gen_dict["$DEFINES$"] += ["#define IFMDim {}".format(idim)]
+
+            odim = self.get_nodeattr("OFMDim")
+            self.code_gen_dict["$DEFINES$"] += ["#define OFMDim {}".format(odim)]
 
         batch_size = self.get_nodeattr("numInputVectors")
         self.code_gen_dict["$DEFINES$"] += ["#define numReps {}".format(batch_size)]
 
     def docompute(self):
+        is_2d_non_square = self.get_nodeattr("DimMode") == 2
         is_2d = self.get_nodeattr("DimMode") == 0
         batch = self.get_nodeattr("numInputVectors")
-        if is_2d:
+
+        if is_2d_non_square:
+            input_feature_map = self.get_nodeattr("IFMShape")
+            output_feature_map = self.get_nodeattr("OFMShape")
+            
+            # self.code_gen_dict["$DOCOMPUTE$"] = [
+            #     """upsample_nn<28,56,15,30 > (in0_%s, out_%s);"""
+            #     % (self.hls_sname(), self.hls_sname())
+            # ]
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                """UpsampleNearestNeighbour<OFMDim, IFMDim, IFMChannels,
-                ap_uint<Input_precision> > (in0_%s, out_%s, numReps);"""
-                % (self.hls_sname(), self.hls_sname())
+                """upsample_nn<%d,%d,%d,%d> (in0_%s, out_%s);"""
+                % (input_feature_map[0], output_feature_map[0], input_feature_map[1], output_feature_map[1], 
+                   self.hls_sname(), self.hls_sname())
             ]
-        else:
-            assert batch == 1, "1D upsampler currently needs numReps=1"
-            self.code_gen_dict["$DOCOMPUTE$"] = [
-                """UpsampleNearestNeighbour_1D<OFMDim, IFMDim, IFMChannels,
-                ap_uint<Input_precision> > (in0_%s, out_%s);"""
-                % (self.hls_sname(), self.hls_sname())
-            ]
+        else:  
+            if is_2d:
+                self.code_gen_dict["$DOCOMPUTE$"] = [
+                    """UpsampleNearestNeighbour_Batch<OFMDim, IFMDim, IFMChannels,
+                    ap_uint<Input_precision> > (in0_%s, out_%s, numReps);"""
+                    % (self.hls_sname(), self.hls_sname())
+                ]
+            else:
+                assert batch == 1, "1D upsampler currently needs numReps=1"
+                self.code_gen_dict["$DOCOMPUTE$"] = [
+                    """UpsampleNearestNeighbour_1D<OFMDim, IFMDim, IFMChannels,
+                    ap_uint<Input_precision> > (in0_%s, out_%s);"""
+                    % (self.hls_sname(), self.hls_sname())
+                ]
 
     def blackboxfunction(self):
         packed_bits = self.get_instream_width()
