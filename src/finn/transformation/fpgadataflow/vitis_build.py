@@ -30,6 +30,8 @@
 import json
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -149,6 +151,88 @@ class CreateVitisXO(Transformation):
             "Vitis .xo file not created, check logs under %s" % vivado_proj_dir
         )
         return (model, False)
+
+
+class VitisLinkConfiguration:
+    """Manages XO files, CU instantiations, stream connections,
+    port connections, Vivado props, etc.
+    It can output a linking configuration to pass to v++ and
+    create a shell script to run it"""
+
+    def __init__(self, platform: str, optimization_level: str, f_mhz: int) -> None:
+        self.cu: list[str] = []
+        self.nk: list[tuple[str, str]] = []
+        self.sc: dict[str, list[str]] = {}
+        self.sp: dict[str, str] = {}
+        self.xo: list[str] = []
+        self.vivado_section: str = "[vivado]\n"
+        self.platform: str = platform
+        self.optimization_level: str = optimization_level
+        self.f_mhz: int = f_mhz
+
+    def add_cu(self, kernel_name: str, cu_name: str) -> None:
+        self.cu.append(cu_name)
+        self.nk.append((kernel_name, cu_name))
+
+    def add_sc(self, cu_sender: str, cu_receiver: str) -> None:
+        if cu_sender not in self.sc.keys():
+            self.sc[cu_sender] = []
+        self.sc[cu_sender].append(cu_receiver)
+
+    def add_sp(self, cu_port_name: str, mem_type: str) -> None:
+        self.sp[cu_port_name] = mem_type
+
+    def add_vivado_line(self, line: str) -> None:
+        self.vivado_section += line
+
+    def generate_config(self, path: Path) -> None:
+        with path.open("w+") as f:
+            f.write("[connectivity]\n")
+            for kernel_name, cu_name in self.nk:
+                f.write(f"nk={kernel_name}:1:{cu_name}\n")
+
+            # origin_cu and target_cu already require the ports already being in the str
+            for origin_cu in self.sc.keys():
+                for target_cu in self.sc[origin_cu]:
+                    f.write(f"sc={origin_cu}:{target_cu}\n")
+
+            for sp_cu, sp_mem in self.sp.items():
+                f.write(f"sp={sp_cu}:{sp_mem}")
+
+            f.write(self.vivado_section + "\n")
+
+    def generate_run_script(self, config_path: Path) -> None:
+        xo_string = " ".join(self.xo)
+        runner_path = config_path.parent / "run_vitis_link.sh"
+        with runner_path.open("w+") as f:
+            f.write("#!/bin/bash\n")
+            f.write(
+                f"v++ \
+                    --target hw \
+                    --platform {self.platform} \
+                    --link {xo_string} \
+                    --config {config_path} \
+                    --optimize {self.optimization_level} \
+                    --report_level estimate \
+                    --save-temps \
+                    --kernel_frequency {self.f_mhz}"
+            )
+
+
+def execute_synthesis_parallel(configs: list[VitisLinkConfiguration], workers: int) -> None:
+    """Execute the list of synthesis in parallel. Can be used for faster design space
+    exploration or for Multi-FPGA applications.
+
+    This creates the necessary temp dirs by itself also"""
+
+    def run_link_config(config: VitisLinkConfiguration, index: int) -> None:
+        link_dir = Path(make_build_dir(f"parallel_link{index}_"))
+        config.generate_config(link_dir / "config.txt")
+        config.generate_run_script(link_dir / "config.txt")
+        subprocess.run("bash run_vitis_link.sh", shell=True, cwd=link_dir)
+
+    with ThreadPoolExecutor(max_workers=workers) as tpe:
+        tpe.map(run_link_config, enumerate(configs))
 
 
 class VitisLink(Transformation):
