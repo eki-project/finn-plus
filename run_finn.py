@@ -4,7 +4,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.live import Live
 
-from interface.finn_deps import FINN_BOARDFILES, FINN_DEPS, pull_boardfile, pull_dep
+from interface.finn_deps import FINN_BOARDFILES, FINN_DEPS, deps_exist, pull_boardfile, pull_dep
 
 #### GROUPS ####
 
@@ -49,21 +49,33 @@ def install_deps(path):
     update_deps(path)
 
 
-@click.command()
-def show():
-    print("my deps...")
-
+@click.command("check")
+@click.option("--path", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie")
+def check_deps(path):
+    console = Console()
+    success, missing = deps_exist()
+    if success:
+        console.print("[bold green]All dependencies found![/bold green]")
+    else:
+        console.print("[red] Missing some dependencies:[/red]")
+        table = Table()
+        table.add_column("Dependency")
+        table.add_column("Expected location")
+        for name, exp in missing:
+            table.add_row(f"[red]{name}[/red]", str(exp))
+        console.print(table)
 
 
 #### BUILD ####
 
 @click.command()
 @click.argument("configfile")
+@click.option("--force-update", "-f", help="Force an update of dependencies before starting", default=False)
 def build(): pass
 
 
 deps.add_command(update_deps)
-deps.add_command(show)
+deps.add_command(check_deps)
 main_group.add_command(deps)
 main_group.add_command(build)
 

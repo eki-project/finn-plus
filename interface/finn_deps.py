@@ -95,12 +95,38 @@ def pull_boardfile(name: str, repo: str, commit: str, dir_to_copy: Path, deps_pa
         return "[bold green]Boardfiles installed[/bold green]", True
 
 
-def deps_exist(path: Path | None = None) -> bool:
-    """Check whether all dependencies exist."""
+def deps_exist(path: Path | None = None) -> tuple[bool, list[tuple[str, Path]]]:
+    """Check whether all dependencies exist. If not all exist, returns list of tuples with name and path where they were expected"""
     if path is None:
         check_path = Path.home() / ".finn" / "deps"
     else:
         check_path = path
     
-    return False
+    dep_not_found = []
+    for name in FINN_DEPS.keys():
+        current = check_path / name
+        if not current.exists():
+            dep_not_found.append((name, current))
+    
+    for name, val in FINN_BOARDFILES.items():
+        if name != "avnet-bdf":
+            _, _, loc = val
+            current = check_path / "board_files" / Path(loc).name
+            if not current.exists():
+                dep_not_found.append((name, current))
+        else:
+            if not (check_path / name).exists():
+                dep_not_found.append((name, check_path / name))
+                continue
+
+            avnet_dir = check_path / name
+            for filename in avnet_dir.iterdir():
+                if not (check_path / "board_files" / filename).exists():
+                    dep_not_found.append((name, check_path / "board_files" / filename))
+                    continue
+    
+    if len(dep_not_found) > 0:
+        return False, dep_not_found
+    else:
+        return True, []
     
