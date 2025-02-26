@@ -10,11 +10,11 @@ def required_envvars(buildfile_path: Path, local_temps: bool, depspath: Path) ->
     else:
         cpucount = floor((0.75 * cpus))
     return {
-        "FINN_ROOT": os.path.dirname(__file__),
-        "FINN_BUILD_DIR": "/tmp/FINN_TMP" if not local_temps else buildfile_path.parent / "FINN_TMP",
+        "FINN_ROOT": Path(__file__).parent.absolute(), # Points to dir that contains finn
+        "FINN_BUILD_DIR": "/tmp/FINN_TMP" if not local_temps else buildfile_path.parent.absolute() / "FINN_TMP",
         "PLATFORM_REPO_PATHS": "/opt/xilinx/platforms",
         "XRT_DEB_VERSION": "xrt_202220.2.14.354_22.04-amd64-xrt",
-        "FINN_HOST_BUILD_DIR": "/tmp/FINN_TMP_HOST" if not local_temps else buildfile_path.parent /  "FINN_TMP_HOST",
+        "FINN_HOST_BUILD_DIR": "/tmp/FINN_TMP_HOST" if not local_temps else buildfile_path.parent.absolute() /  "FINN_TMP_HOST",
         "OHMYXILINX": depspath / "oh-my-xilinx",
         "NUM_DEFAULT_WORKERS": str(cpucount),
         "XILINX_LOCAL_USER_DATA": "no",

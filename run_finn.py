@@ -88,7 +88,8 @@ def check_deps_command(path):
 @click.argument("buildfile")
 @click.option("--force-update", "-f", help="Force an update of dependencies before starting", default=False, is_flag=True)
 @click.option("--deps-path", "-d", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie")
-def build(buildfile, force_update, deps_path):
+@click.option("--local-temps", "-l", default=True, is_flag=True, help="Whether to store temporary build files local to the model/buildfile. Defaults to true")
+def build(buildfile, force_update, deps_path, local_temps):
     # TODO: Keep usage of str vs Path() consistent everywhere
 
     console = Console()
@@ -109,12 +110,11 @@ def build(buildfile, force_update, deps_path):
         console.print("[bold green]Verilator found![/bold green]")
     
     # Conserve environment variables
-    # TODO: Implement local temps
-    preserved = preserve_envvars(buildfile_path, False, Path(deps_path))
-    set_missing_envvars(buildfile_path, False, Path(deps_path))
+    preserved = preserve_envvars(buildfile_path, local_temps, Path(deps_path))
+    set_missing_envvars(buildfile_path, local_temps, Path(deps_path))
 
     # Run FINN
-    console.print(Panel(f"Dependency directory: {deps_path}\nBuildfile: {buildfile_path}"))
+    console.print(Panel(f"Dependency directory: {deps_path}\nBuildfile: {buildfile_path.absolute()}"))
     console.print("\n")
     console.rule("RUNNING FINN")
     subprocess.run(f"python {buildfile_path.name}", shell=True, cwd=buildfile_path.parent.absolute())
