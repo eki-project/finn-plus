@@ -23,7 +23,7 @@ def required_envvars(buildfile_path: Path, local_temps: bool, depspath: Path) ->
         "HLS_PATH": "/tools/Xilinx/Vitis_HLS/2022.1",
     }
 
-def preserve_envvars():
+def preserve_envvars(buildfile_path: Path, local_temps: bool, depspath: Path):
     # TODO
     pass
 

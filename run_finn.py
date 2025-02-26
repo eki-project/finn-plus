@@ -2,11 +2,15 @@ from pathlib import Path
 import shutil
 import sys
 import click
+import os
 from rich.console import Console
 from rich.table import Table
 from rich.live import Live
+from rich.progress import Progress
+from rich.panel import Panel
 
 from interface.finn_deps import FINN_BOARDFILES, FINN_DEPS, deps_exist, pull_boardfile, pull_dep
+from interface.finn_envvars import required_envvars, preserve_envvars, set_missing_envvars
 
 #### GROUPS ####
 
@@ -96,13 +100,48 @@ def build(configfile, force_update, deps_path):
     else:
         console.print("[bold green]Verilator found![/bold green]")
     
+    # Conserve environment variables
+    pass
 
+@click.command(help="Run a complete setup (Pulling deps, setting envvars, etc)")
+def setup():
+    console = Console()
+    console.print("Running FINN setup...")
+    console.print("\n\n")
+    console.rule("ENVIRONMENT VARIABLES")
+    suggestions = required_envvars(Path("."), False, Path.home() / ".finn" / "deps")
+    for varname, varcontent in suggestions.items():
+        if varname in ["FINN_BUILD_DIR", "FINN_HOST_BUILD_DIR", "FINN_ROOT"]:
+            continue
+        if varname in os.environ.keys():
+            ans = console.input(f"Variable [bold]{varname}[/bold] already exists with value \"{os.environ[varname]}\". Replace? (leave blank to leave old value) > ")
+            if ans != "":
+                os.environ[varname] = ans
+        else:
+            ans = ""
+            while ans not in ["d", "l", "r"]:
+                ans = console.input(f"Variable [bold]{varname}[/bold] not set. Default is \"{varcontent}\". Replace? (r Replace / l Leave unset / d Default) > ")
+            if ans == "l":
+                continue
+            elif ans == "r":
+                ans = console.input("New value > ")
+                os.environ[varname] = ans
+            elif ans == "d":
+                os.environ[varname] = varcontent
+
+    console.print("\n\n")
+    console.rule("DEPENDENCIES")
+    update_deps(Path.home() / ".finn" / "deps")
+    console.print("\n\n")
+    console.print(Panel("FINN is now set up!")) 
+    
 
 
 deps.add_command(update_deps_command)
 deps.add_command(check_deps_command)
 main_group.add_command(deps)
 main_group.add_command(build)
+main_group.add_command(setup)
 
 if __name__ == "__main__":
     main_group()
