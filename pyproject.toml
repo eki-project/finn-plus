@@ -71,6 +71,8 @@ qonnx = { git = "https://github.com/fastmachinelearning/qonnx", branch = "main",
 pyverilator = { git = "https://github.com/maltanar/pyverilator", branch = "master", rev = "ce0a08c20cb8c1d1e84181d6f392390f846adbd1" }
 brevitas = { git = "https://github.com/Xilinx/brevitas", branch = "master", rev = "d4834bd2a0fad3c1fbc0ff7e1346d5dcb3797ea4" }
 termcolor = "^2.5.0"
+rich = "^13.9.4"
+click = "^8.1.8"
 
 [build-system]
 requires = ["poetry-core"]
