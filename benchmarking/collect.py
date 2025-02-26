@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import time
+from dvclive import Live
 
 def merge_dicts(a: dict, b: dict):
     for key in b:
@@ -78,6 +79,27 @@ def wait_for_power_measurements():
 if __name__ == "__main__":
     print("Consolidating synthesis results from all sub-jobs of the array")
     consolidate_logs(sys.argv[1], sys.argv[2])
+
+    # TEST DVC
+    # TODO: proper metric collection directly from .jsons in report build dir
+    combined_log = []
+    with open(sys.argv[2], "r") as f:
+        combined_log = json.load(f)
+
+    for run in combined_log:
+        with Live(exp_message="Job result collected by GitLab CI", cache_images=True) as live:
+            metadata = {
+                "run_id": run["run_id"],
+                "task_id": run["task_id"],
+                "status": run["status"],
+                "total_time": run["total_time"]
+            }
+            live.log_params(metadata)
+            live.log_params(run["params"])
+
+            if "builder" in run["output"]:
+                for key in run["output"]["builder"]:
+                    live.log_metric("Resources/" + key, run["output"]["builder"][key], plot=False)
 
     # TODO: disabled for now, update accordingly to new runner-based measurement setup
     # wait_for_power_measurements()
