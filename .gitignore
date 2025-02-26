@@ -96,3 +96,8 @@ MANIFEST
 
 # downloaded dep repos
 /deps/
+
+
+.devcontainer/*
+metafi/*
+
