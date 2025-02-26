@@ -69,7 +69,30 @@ def pull_dep(name: str, repo: str, commit: str, deps_path: Path) -> tuple[str, b
 
 def pull_boardfile(name: str, repo: str, commit: str, dir_to_copy: Path, deps_path: Path) -> tuple[str, bool]:
     """Pull boardfiles, then copy the directories required into the destined board_files dir"""
-
+    target_path = deps_path / name
+    copy_from = deps_path / name / dir_to_copy
+    copy_to = deps_path / "board_files" / copy_from.name
+    with open("install_log", 'w+') as f:
+        exists = False
+        
+        # Step 1: Pull
+        if target_path.exists() and copy_from.exists():
+            exists = True
+            subprocess.run(f"git pull; git checkout {commit}", shell=True, cwd=target_path, stdout=f, stderr=f)
+        else:
+            subprocess.run(f"git clone {repo} {target_path};cd {target_path};git checkout {commit}", shell=True, stdout=f, stderr=f)
+        
+        # Step 2: Copy
+        if copy_from != target_path:
+            subprocess.run(f"cp -r {copy_from} {copy_to}", shell=True, stdout=f, stderr=f)
+        else:
+            subprocess.run(f"cp -r {copy_from}/* {copy_to}", shell=True, stdout=f, stderr=f)
+    
+    # TODO Checks
+    if exists:
+        return "[bold green]Boardfiles updated[/bold green]", True
+    else:
+        return "[bold green]Boardfiles installed[/bold green]", True
 
 
 def deps_exist(path: Path | None = None) -> bool:
