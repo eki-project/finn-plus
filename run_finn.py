@@ -1,17 +1,16 @@
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import click
-import os
-from rich.console import Console
 from rich.table import Table
-from rich.live import Live
-from rich.progress import Progress
 from rich.panel import Panel
+from rich.console import Console
 
 from interface.finn_deps import FINN_BOARDFILES, FINN_DEPS, deps_exist, pull_boardfile, pull_dep
-from interface.finn_envvars import required_envvars, preserve_envvars, restore_envvars, set_missing_envvars
+from interface.finn_envvars import GLOBAL_FINN_ENVVARS, generate_envvars
+
 
 #### GROUPS ####
 
@@ -83,13 +82,35 @@ def check_deps_command(path):
 
 
 #### BUILD ####
+def setup_envvars():
+    console = Console()
+    console.print("Setting up environment variables...")
+    for varname, varcontent in GLOBAL_FINN_ENVVARS.items():
+        if varname not in os.environ.keys():
+            ans = console.input(f"Variable [bold]{varname}[/bold] is not set. Default is [blue]{varcontent}[/blue] (1 - leave unset, 2 - set to default, 3 - set own) > ")
+            if ans == "1":
+                continue
+            elif ans == "2":
+                os.environ[varname] = varcontent
+            elif ans == "3":
+                os.environ[varname] = console.input("New Value > ")
+            else:
+                console.print("[red]Unknown option. Stopping...[/red]")
+                sys.exit(1)
+
+@click.command()
+def setup():
+    setup_envvars()
+
+
 
 @click.command()
 @click.argument("buildfile")
 @click.option("--force-update", "-f", help="Force an update of dependencies before starting", default=False, is_flag=True)
 @click.option("--deps-path", "-d", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie")
 @click.option("--local-temps", "-l", default=True, is_flag=True, help="Whether to store temporary build files local to the model/buildfile. Defaults to true")
-def build(buildfile, force_update, deps_path, local_temps):
+@click.option("--num-workers", "-n", default=-1, help="Number of workers to do parallel tasks")
+def build(buildfile, force_update, deps_path, local_temps, num_workers):
     # TODO: Keep usage of str vs Path() consistent everywhere
 
     console = Console()
@@ -109,60 +130,21 @@ def build(buildfile, force_update, deps_path, local_temps):
     else:
         console.print("[bold green]Verilator found![/bold green]")
     
-    # Conserve environment variables
-    preserved = preserve_envvars(buildfile_path, local_temps, Path(deps_path))
-    set_missing_envvars(buildfile_path, local_temps, Path(deps_path))
-
     # Run FINN
-    console.print(Panel(f"Dependency directory: {deps_path}\nBuildfile: {buildfile_path.absolute()}"))
+    prefix = generate_envvars(Path(__file__).parent.absolute(), buildfile_path, local_temps, Path(deps_path), num_workers)
+    splitprefix = prefix.replace(" ", "\n")
+    console.print(Panel(f"Prefix:\n{splitprefix}\nDependency directory: {deps_path}\nBuildfile: {buildfile_path.absolute()}"))
     console.print("\n")
     console.rule("RUNNING FINN")
-    subprocess.run(f"python {buildfile_path.name}", shell=True, cwd=buildfile_path.parent.absolute())
+    subprocess.run(f"{prefix} python {buildfile_path.name}", shell=True, cwd=buildfile_path.parent.absolute())
 
-    # Restore old variables
-    restore_envvars(preserved)
-
-
-
-@click.command(help="Run a complete setup (Pulling deps, setting envvars, etc)")
-def setup():
-    console = Console()
-    console.print("Running FINN setup...")
-    console.print("\n\n")
-    console.rule("ENVIRONMENT VARIABLES")
-    suggestions = required_envvars(Path("."), False, Path.home() / ".finn" / "deps")
-    for varname, varcontent in suggestions.items():
-        if varname in ["FINN_BUILD_DIR", "FINN_HOST_BUILD_DIR", "FINN_ROOT"]:
-            continue
-        if varname in os.environ.keys():
-            ans = console.input(f"Variable [bold]{varname}[/bold] already exists with value \"{os.environ[varname]}\". Replace? (leave blank to leave old value) > ")
-            if ans != "":
-                os.environ[varname] = ans
-        else:
-            ans = ""
-            while ans not in ["d", "l", "r"]:
-                ans = console.input(f"Variable [bold]{varname}[/bold] not set. Default is \"{varcontent}\". Replace? (r Replace / l Leave unset / d Default) > ")
-            if ans == "l":
-                continue
-            elif ans == "r":
-                ans = console.input("New value > ")
-                os.environ[varname] = ans
-            elif ans == "d":
-                os.environ[varname] = varcontent
-
-    console.print("\n\n")
-    console.rule("DEPENDENCIES")
-    update_deps(Path.home() / ".finn" / "deps")
-    console.print("\n\n")
-    console.print(Panel("FINN is now set up!")) 
-    
 
 
 deps.add_command(update_deps_command)
 deps.add_command(check_deps_command)
 main_group.add_command(deps)
-main_group.add_command(build)
 main_group.add_command(setup)
+main_group.add_command(build)
 
 if __name__ == "__main__":
     main_group()
