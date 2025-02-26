@@ -1,5 +1,6 @@
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import click
 import os
@@ -10,7 +11,7 @@ from rich.progress import Progress
 from rich.panel import Panel
 
 from interface.finn_deps import FINN_BOARDFILES, FINN_DEPS, deps_exist, pull_boardfile, pull_dep
-from interface.finn_envvars import required_envvars, preserve_envvars, set_missing_envvars
+from interface.finn_envvars import required_envvars, preserve_envvars, restore_envvars, set_missing_envvars
 
 #### GROUPS ####
 
@@ -84,24 +85,44 @@ def check_deps_command(path):
 #### BUILD ####
 
 @click.command()
-@click.argument("configfile")
+@click.argument("buildfile")
 @click.option("--force-update", "-f", help="Force an update of dependencies before starting", default=False, is_flag=True)
 @click.option("--deps-path", "-d", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie")
-def build(configfile, force_update, deps_path):
+def build(buildfile, force_update, deps_path):
+    # TODO: Keep usage of str vs Path() consistent everywhere
+
+    console = Console()
+    buildfile_path = Path(buildfile)
+    if not buildfile_path.exists():
+        console.print(f"[bold red]Could not find buildfile at: {buildfile_path}[/bold red]")
+        sys.exit(1)
+
     # Check dependencies
     if not force_update:
         check_deps(deps_path)
     else:
         update_deps(deps_path)
 
-    console = Console()
     if shutil.which("verilator") is None:
         console.print("[bold red]Could not find [italic]verilator[/italic] in path! Please install verilator before continuing.[/bold red]")
     else:
         console.print("[bold green]Verilator found![/bold green]")
     
     # Conserve environment variables
-    pass
+    # TODO: Implement local temps
+    preserved = preserve_envvars(buildfile_path, False, Path(deps_path))
+    set_missing_envvars(buildfile_path, False, Path(deps_path))
+
+    # Run FINN
+    console.print(Panel(f"Dependency directory: {deps_path}\nBuildfile: {buildfile_path}"))
+    console.print("\n")
+    console.rule("RUNNING FINN")
+    subprocess.run(f"python {buildfile_path.name}", shell=True, cwd=buildfile_path.parent.absolute())
+
+    # Restore old variables
+    restore_envvars(preserved)
+
+
 
 @click.command(help="Run a complete setup (Pulling deps, setting envvars, etc)")
 def setup():

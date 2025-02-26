@@ -23,9 +23,18 @@ def required_envvars(buildfile_path: Path, local_temps: bool, depspath: Path) ->
         "HLS_PATH": "/tools/Xilinx/Vitis_HLS/2022.1",
     }
 
-def preserve_envvars(buildfile_path: Path, local_temps: bool, depspath: Path):
-    # TODO
-    pass
+def preserve_envvars(buildfile_path: Path, local_temps: bool, depspath: Path) -> dict:
+    """Preserve all env vars that would be overwritten when starting a run"""
+    preserve = {}
+    for k in required_envvars(buildfile_path, local_temps, depspath).keys():
+        if k in os.environ.keys():
+            preserve[k] = os.environ[k]
+    return preserve
+
+
+def restore_envvars(kept: dict):
+    for k,v in kept.items():
+        os.environ[k] = v
 
 
 def set_missing_envvars(buildfile_path: Path, local_temps: bool, depspath: Path) -> list[tuple[str, str]]:
@@ -33,6 +42,6 @@ def set_missing_envvars(buildfile_path: Path, local_temps: bool, depspath: Path)
     changed = []
     for varname, varcontent in required_envvars(buildfile_path, local_temps, depspath).items():
         if (varname not in os.environ.keys()) or (os.environ[varname] == ""):
-            os.environ[varname] = varcontent
+            os.environ[varname] = str(varcontent)
             changed.append((varname, varcontent))
     return changed
