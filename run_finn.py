@@ -110,7 +110,8 @@ def setup():
 @click.option("--deps-path", "-d", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie")
 @click.option("--local-temps", "-l", default=True, is_flag=True, help="Whether to store temporary build files local to the model/buildfile. Defaults to true")
 @click.option("--num-workers", "-n", default=-1, help="Number of workers to do parallel tasks")
-def build(buildfile, force_update, deps_path, local_temps, num_workers):
+@click.option("--clean-temps", "-c", default=False, is_flag=True, help="Clean temporary files from previous runs automatically?")
+def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_temps):
     # TODO: Keep usage of str vs Path() consistent everywhere
 
     console = Console()
@@ -130,6 +131,19 @@ def build(buildfile, force_update, deps_path, local_temps, num_workers):
     else:
         console.print("[bold green]Verilator found![/bold green]")
     
+    finnbuilddir = buildfile_path.parent.absolute() / "FINN_TMP" if local_temps else Path("/tmp/FINN_TMP")
+    if clean_temps:
+        for obj in finnbuilddir.iterdir():
+            if obj.is_dir():
+                shutil.rmtree(str(obj))
+            else:
+                obj.unlink()
+        if len(list(finnbuilddir.iterdir())) == 0:
+            console.print("[bold yellow]Deleted all previous temporary build files![/bold yellow]")
+        else:
+            console.print(f"[bold red]It seems that deleting old run files failed in directory {finnbuilddir}. Stopping...[/bold red]")
+            sys.exit(1)
+
     # Run FINN
     prefix = generate_envvars(Path(__file__).parent.absolute(), buildfile_path, local_temps, Path(deps_path), num_workers)
     splitprefix = prefix.replace(" ", "\n")
