@@ -51,7 +51,7 @@ Result Collection:
     - image_build
   script:
     - python3.10 benchmarking/collect.py bench_artifacts/tasks_output bench_results.json
-    - dvc exp push origin
+    - dvc exp push git@github.com:eki-project/finn-plus.git
   artifacts:
     name: "bench_results"
     when: always
