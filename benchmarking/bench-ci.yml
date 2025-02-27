@@ -50,8 +50,8 @@ Result Collection:
   tags:
     - image_build
   script:
-    - python benchmarking/collect.py bench_artifacts/tasks_output bench_results.json
-    - dvc exp push -r origin
+    - python3.10 benchmarking/collect.py bench_artifacts/tasks_output bench_results.json
+    - dvc exp push origin
   artifacts:
     name: "bench_results"
     when: always
