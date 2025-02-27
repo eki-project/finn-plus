@@ -99,9 +99,13 @@ class Floorplan(Transformation):
                 # if we have SLR assignment already. use that
                 if node_slr != -1:
                     continue
+                # if available, use the SLR of the preceding node
                 srcnode = model.find_producer(node.input[0])
-                node_slr = getCustomOp(srcnode).get_nodeattr("slr")
-                node_inst.set_nodeattr("slr", node_slr)
+                if srcnode is not None:
+                    node_slr = getCustomOp(srcnode).get_nodeattr("slr")
+                    node_inst.set_nodeattr("slr", node_slr)
+                else:
+                    node_inst.set_nodeattr("slr", default_slr)
 
         if unassigned_nodes > 0:
             warnings.warn(
@@ -130,25 +134,27 @@ class Floorplan(Transformation):
         )
         non_dma_nodes = list(filter(lambda x: x not in dyn_tlastmarker_nodes, non_dma_nodes))
 
+        # assign every DMA node to its own partition
         for node in dma_nodes:
             node_inst = getCustomOp(node)
             node_inst.set_nodeattr("partition_id", partition_cnt)
             partition_cnt += 1
 
+        # assign every dynamic tLastMarker node to its own partition
         for node in dyn_tlastmarker_nodes:
             node_inst = getCustomOp(node)
             node_inst.set_nodeattr("partition_id", partition_cnt)
             partition_cnt += 1
 
+        # handle remaining nodes
         for node in non_dma_nodes:
             pre_node = model.find_producer(node.input[0])
             node_inst = getCustomOp(node)
             if pre_node not in non_dma_nodes:
-                # input node
+                # input node -> start new partition
                 node_inst.set_nodeattr("partition_id", partition_cnt)
                 partition_cnt += 1
                 continue
-
             elif not (
                 node.op_type.startswith("MVAU")
                 and node_inst.get_nodeattr("mem_mode") is not None
@@ -156,25 +162,36 @@ class Floorplan(Transformation):
             ):
                 pre_nodes = model.find_direct_predecessors(node)
             else:
+                # exception for external weight MVAU: only consider primary input
+                # TODO: (why) is this necessary? should we consider such exceptions for other cases?
                 pre_nodes = [pre_node]
 
+            axilite_intf_name = node_inst.get_verilog_top_module_intf_names()["axilite"]
+            if len(axilite_intf_name) != 0:
+                # This node has an AXI-Lite interface -> start new partition
+                node_inst.set_nodeattr("partition_id", partition_cnt)
+                partition_cnt += 1
+                continue
+
+            # examine all predecessor nodes to determine partition id for this node
             node_slr = node_inst.get_nodeattr("slr")
+            slr_mismatch_count = 0
             for pre_node in pre_nodes:
                 pre_inst = getCustomOp(pre_node)
                 pre_slr = pre_inst.get_nodeattr("slr")
                 if node_slr == pre_slr:
-                    axilite_intf_name = pre_inst.get_verilog_top_module_intf_names()["axilite"]
-                    if len(axilite_intf_name) != 0:
-                        node_inst.set_nodeattr("partition_id", partition_cnt)
-                        partition_cnt += 1
-                    else:
-                        partition_id = pre_inst.get_nodeattr("partition_id")
-                        node_inst.set_nodeattr("partition_id", partition_id)
-
+                    # Default case -> assign to same partition as predecessor
+                    partition_id = pre_inst.get_nodeattr("partition_id")
+                    node_inst.set_nodeattr("partition_id", partition_id)
+                    break
                 else:
-                    # no matching, new partition
-                    node_inst.set_nodeattr("partition_id", partition_cnt)
-                    partition_cnt += 1
+                    # SLR mismatch with predecessor, can't assign same partition
+                    slr_mismatch_count += 1
+
+            if slr_mismatch_count == len(pre_nodes):
+                # SLR mismatch with ALL predecessors -> start new partition
+                node_inst.set_nodeattr("partition_id", partition_cnt)
+                partition_cnt += 1
 
         # save the updated floorplan
         floorplan = model.analysis(floorplan_params)
