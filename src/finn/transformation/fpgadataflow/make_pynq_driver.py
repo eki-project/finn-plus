@@ -28,6 +28,7 @@
 
 import numpy as np
 import os
+import json
 import qonnx
 import shutil
 import warnings
@@ -62,7 +63,7 @@ def to_external_tensor(init, w_dtype):
     return ext_weight
 
 
-class MakePYNQDriver(Transformation):
+class MakePYNQDriverIODMA(Transformation):
     """Create PYNQ Python code to correctly interface the generated
     accelerator, including data packing/unpacking. Should be called
     after conversion to HLS layers, folding and the creation of
@@ -301,5 +302,35 @@ class MakePYNQDriver(Transformation):
                     )
                 else:
                     continue
+
+
+class MakePYNQDriverInstrumentation(Transformation):
+    def __init__(self, platform, clk_period_ns):
+        super().__init__()
+        self.platform = platform
+        self.clk_period_ns = clk_period_ns
+
+    def apply(self, model):
+        # TODO: support runtime-writable and external weights
+        # TODO: support Alveo and Versal platforms
+
+        # create a temporary folder for the generated driver
+        pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
+        model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
+
+        # create (copy) the static instrumentation driver
+        driver_template = (
+            os.environ["FINN_ROOT"] + "/src/finn/qnn-data/templates/driver/driver_instrumentation.py"
+        )
+        driver_py = pynq_driver_dir + "/driver.py"
+        shutil.copy(driver_template, driver_py)
+
+        # write default settings to driver config file
+        settings = {
+            "fclk_mhz": (1.0 / self.clk_period_ns) * 1e3,
+        }
+        settingsfile = pynq_driver_dir + "/settings.json"
+        with open(settingsfile, "w") as f:
+            json.dump(settings, f, indent=2)
 
         return (model, False)
