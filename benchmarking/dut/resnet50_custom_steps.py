@@ -27,75 +27,65 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
-
+from qonnx.transformation.batchnorm_to_affine import BatchNormToAffine
+from qonnx.transformation.composed import ComposedTransformation
+from qonnx.transformation.double_to_single_float import DoubleToSingleFloat
 from qonnx.transformation.fold_constants import FoldConstants
-
 from qonnx.transformation.general import (
-    ConvertSubToAdd,
+    ApplyConfig,
     ConvertDivToMul,
+    ConvertSubToAdd,
     GiveReadableTensorNames,
     GiveUniqueNodeNames,
-    SortGraph,
-    RemoveUnusedTensors,
     GiveUniqueParameterTensors,
     RemoveStaticGraphInputs,
-    ApplyConfig,
+    RemoveUnusedTensors,
+    SortGraph,
 )
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.transformation.insert_topk import InsertTopK
+from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
+from qonnx.transformation.remove import RemoveIdentityOps
 
+import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
+from finn.builder.build_dataflow_config import DataflowBuildConfig, ShellFlowType
+from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.streamline.absorb import (
-    AbsorbScalarMulAddIntoTopK,
-    AbsorbAddIntoMultiThreshold,
-    AbsorbMulIntoMultiThreshold,
-    FactorOutMulSignMagnitude,
-    Absorb1BitMulIntoMatMul,
     Absorb1BitMulIntoConv,
+    Absorb1BitMulIntoMatMul,
+    AbsorbAddIntoMultiThreshold,
     AbsorbConsecutiveTransposes,
+    AbsorbMulIntoMultiThreshold,
+    AbsorbScalarMulAddIntoTopK,
     AbsorbTransposeIntoMultiThreshold,
+    FactorOutMulSignMagnitude,
 )
-
 from finn.transformation.streamline.collapse_repeated import (
     CollapseRepeatedAdd,
     CollapseRepeatedMul,
 )
 
-from finn.transformation.streamline.reorder import (
-    MoveAddPastMul,
-    MoveScalarMulPastMatMul,
-    MoveScalarAddPastMatMul,
-    MoveAddPastConv,
-    MoveScalarMulPastConv,
-    MoveScalarLinearPastInvariants,
-    MoveMaxPoolPastMultiThreshold,
-)
-
-from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.transformation.streamline.sign_to_thres import ConvertSignToThres
-from qonnx.transformation.batchnorm_to_affine import BatchNormToAffine
-
 # just for not linear
 from finn.transformation.streamline.reorder import (
+    MoveAddPastConv,
+    MoveAddPastMul,
     MoveLinearPastEltwiseAdd,
     MoveLinearPastFork,
+    MoveMaxPoolPastMultiThreshold,
+    MoveScalarAddPastMatMul,
+    MoveScalarLinearPastInvariants,
+    MoveScalarMulPastConv,
+    MoveScalarMulPastMatMul,
+    MoveTransposePastEltwise,
+    MoveTransposePastFork,
+    MoveTransposePastJoinAdd,
 )
-
-from qonnx.transformation.double_to_single_float import DoubleToSingleFloat
-from qonnx.transformation.remove import RemoveIdentityOps
-from qonnx.core.datatype import DataType
-
-from qonnx.transformation.infer_shapes import InferShapes
-from qonnx.transformation.infer_datatypes import InferDataTypes
-from qonnx.transformation.infer_data_layouts import InferDataLayouts
-from qonnx.transformation.insert_topk import InsertTopK
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
-from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
-
-from finn.builder.build_dataflow_config import (
-    DataflowBuildConfig,
-    ShellFlowType,
-)
-
-from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
+from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
+from finn.transformation.streamline.sign_to_thres import ConvertSignToThres
 
 
 def step_resnet50_tidy(model: ModelWrapper, cfg: DataflowBuildConfig):
@@ -170,6 +160,19 @@ def step_resnet50_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     model = model.transform(DoubleToSingleFloat())
 
+    # Lower convolutions and streamline resulting transposes
+    model = model.transform(LowerConvsToMatMul())
+    model = model.transform(
+        ComposedTransformation(
+            [
+                MoveTransposePastJoinAdd(),
+                MoveTransposePastFork(),
+                MoveTransposePastEltwise(),
+                AbsorbConsecutiveTransposes(),
+                AbsorbTransposeIntoMultiThreshold(),
+            ]
+        )
+    )
     return model
 
 
@@ -181,17 +184,15 @@ def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(SortGraph())
 
     to_hw_transformations = [
-        to_hw.InferAddStreamsLayer,
-        LowerConvsToMatMul,
         to_hw.InferChannelwiseLinearLayer,
         to_hw.InferPool,
-        AbsorbTransposeIntoMultiThreshold,
+        AbsorbConsecutiveTransposes,
         RoundAndClipThresholds,
         to_hw.InferQuantizedMatrixVectorActivation,
         to_hw.InferThresholdingLayer,
-        AbsorbConsecutiveTransposes,
         to_hw.InferConvInpGen,
         to_hw.InferDuplicateStreamsLayer,
+        to_hw.InferAddStreamsLayer,
         to_hw.InferLabelSelectLayer,
     ]
     for trn in to_hw_transformations:
