@@ -89,7 +89,11 @@ from finn.transformation.fpgadataflow.derive_characteristic import (
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
-from finn.transformation.fpgadataflow.make_pynq_driver import MakePYNQDriver
+from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
+from finn.transformation.fpgadataflow.make_pynq_driver import (
+    MakePYNQDriverIODMA,
+    MakePYNQDriverInstrumentation,
+)
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import (
     MinimizeAccumulatorWidth,
@@ -549,6 +553,29 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     `GiveUniqueNodeNames`.
     """
 
+    # Experimental live FIFO-sizing, overwrites all other FIFO-related behavior
+    if cfg.live_fifo_sizing:
+        # Create all DWCs and FIFOs normally
+        model = model.transform(InsertDWC())
+        model = model.transform(InsertFIFO(create_shallow_fifos=True))
+
+        # Specialize FIFOs to HLS back-end instead of default RTL back-end
+        for node in model.get_nodes_by_op_type("StreamingFIFO"):
+            node_inst = getCustomOp(node)
+            node_inst.set_nodeattr("preferred_impl_style", "hls")
+        model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
+
+        # Fix impl_style attribute
+        for node in model.get_nodes_by_op_type("StreamingFIFO_hls"):
+            node_inst = getCustomOp(node)
+            node_inst.set_nodeattr("impl_style", "virtual")
+
+        # Clean up model
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
+
+        return model
+
     if cfg.auto_fifo_depths:
         if cfg.auto_fifo_strategy == "characterize":
             model = model.transform(InsertDWC())
@@ -633,6 +660,23 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(SplitLargeFIFOs())
     model = model.transform(RemoveShallowFIFOs())
 
+    # generate a dedicated report about final FIFO sizes
+    fifo_info = {}
+    fifo_info["fifo_depths"] = {}
+    fifo_info["fifo_sizes"] = {}
+    total_fifo_size = 0
+    for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
+        node_inst = getCustomOp(node)
+        fifo_info["fifo_depths"][node.name] = node_inst.get_nodeattr("depth")
+        fifo_info["fifo_sizes"][
+            node.name
+        ] = node_inst.get_instream_width() * node_inst.get_nodeattr("depth")
+        total_fifo_size += fifo_info["fifo_sizes"][node.name]
+    fifo_info["total_fifo_size_kB"] = int(total_fifo_size / 8.0 / 1000.0)
+
+    with open(cfg.output_dir + "/report/fifo_sizing.json", "w") as f:
+        json.dump(fifo_info, f, indent=2)
+
     # after FIFOs are ready to go, call PrepareIP and HLSSynthIP again
     # this will only run for the new nodes (e.g. FIFOs and DWCs)
     model = model.transform(PrepareIP(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period()))
@@ -643,6 +687,26 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
 def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Create stitched IP for a graph after all HLS IP blocks have been generated.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
+
+    # introduce tLAST marker, required for instrumentation
+    if cfg.enable_instrumentation:
+        model = model.transform(
+            InsertTLastMarker(
+                # only insert marker on output (input TLAST is ignored for these use-cases anyway)
+                both=False,
+                # use ap_axiu instead of qdma_axis
+                external=False,
+                # static number of iterations (based on what the compiler/folding sets up)
+                dynamic=False,
+            )
+        )
+        # give a proper name to the inserted node, important for codegen
+        # TODO: deal with multi-I/O accelerators?
+        model.graph.node[-1].name = "TLastMarker_0"
+        # re-run codegen and HLS IP gen, will affect only the new TLastMarker layer assuming
+        # all other IPs have been generated already
+        model = model.transform(PrepareIP(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period()))
+        model = model.transform(HLSSynthIP())
 
     if DataflowOutputType.STITCHED_IP in cfg.generate_outputs:
         stitched_ip_dir = cfg.output_dir + "/stitched_ip"
@@ -761,7 +825,10 @@ def step_make_pynq_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     if DataflowOutputType.PYNQ_DRIVER in cfg.generate_outputs:
         driver_dir = cfg.output_dir + "/driver"
-        model = model.transform(MakePYNQDriver(cfg._resolve_driver_platform()))
+        if cfg.enable_instrumentation:
+            model = model.transform(MakePYNQDriverInstrumentation(cfg._resolve_driver_platform(), cfg.synth_clk_period_ns, cfg.live_fifo_sizing))
+        else:
+            model = model.transform(MakePYNQDriverIODMA(cfg._resolve_driver_platform()))
         shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
         print("PYNQ Python driver written into " + driver_dir)
     return model
@@ -806,6 +873,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
                     cfg.board,
                     cfg.synth_clk_period_ns,
                     cfg.enable_hw_debug,
+                    cfg.enable_instrumentation,
                     partition_model_dir=partition_model_dir,
                 )
             )
