@@ -90,7 +90,10 @@ from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
-from finn.transformation.fpgadataflow.make_pynq_driver import MakePYNQDriver
+from finn.transformation.fpgadataflow.make_pynq_driver import (
+    MakePYNQDriverIODMA,
+    MakePYNQDriverInstrumentation,
+)
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import (
     MinimizeAccumulatorWidth,
@@ -782,7 +785,10 @@ def step_make_pynq_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     if DataflowOutputType.PYNQ_DRIVER in cfg.generate_outputs:
         driver_dir = cfg.output_dir + "/driver"
-        model = model.transform(MakePYNQDriver(cfg._resolve_driver_platform()))
+        if cfg.enable_instrumentation:
+            model = model.transform(MakePYNQDriverInstrumentation(cfg._resolve_driver_platform(), cfg.synth_clk_period_ns))
+        else:
+            model = model.transform(MakePYNQDriverIODMA(cfg._resolve_driver_platform()))
         shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
         print("PYNQ Python driver written into " + driver_dir)
     return model
