@@ -24,7 +24,8 @@ from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.res_estimation import res_estimation
 from finn.transformation.fpgadataflow.make_zynq_proj import collect_ip_dirs
-from finn.util.basic import make_build_dir, pynq_native_port_width, part_map
+import finn.builder.build_dataflow_config as build_cfg
+from finn.util.basic import make_build_dir, pynq_native_port_width, part_map, alveo_default_platform, alveo_part_map
 from templates import template_open, template_single_test, template_sim_power, template_switching_simulation_tb, zynq_harness_template
 from util import summarize_table, summarize_section, power_xml_to_dict, prepare_inputs, delete_dir_contents
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
@@ -1065,6 +1066,11 @@ class bench():
         # TODO: set as much as possible here, e.g. verbose, debug, force_python, vitisopt, shell_flow
         cfg = self.step_build_setup()
         cfg.board = self.board
+        if self.board in alveo_part_map:
+            cfg.shell_flow_type=build_cfg.ShellFlowType.VITIS_ALVEO
+            cfg.vitis_platform=alveo_default_platform[self.board]
+        else:
+            cfg.shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ
         cfg.verbose = False
         cfg.enable_build_pdb_debug = False
         cfg.force_python_rtlsim = False
@@ -1072,10 +1078,17 @@ class bench():
         #cfg.default_swg_exception
         #cfg.large_fifo_mem_style
 
-        # "manual or "characterize" or "largefifo_rtlsim"
+        # "manual or "characterize" or "largefifo_rtlsim" or "live"
         if "fifo_method" in self.params:
             if self.params["fifo_method"] == "manual":
                 cfg.auto_fifo_depths = False
+            elif self.params["fifo_method"] == "live":
+                cfg.auto_fifo_depths = False
+                cfg.live_fifo_sizing = True
+                cfg.enable_instrumentation = True
+                # Overwrite output products
+                # TODO: make configurable directly via JSON/YAML cfg
+                cfg.generate_outputs = [build_cfg.DataflowOutputType.BITFILE]
             else:
                 cfg.auto_fifo_depths = True
                 cfg.auto_fifo_strategy = self.params["fifo_method"]

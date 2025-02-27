@@ -897,10 +897,6 @@ class bench_transformer(bench):
         with open("folding.yaml", "w") as f:
                 f.write(template_folding_yaml)
 
-        if self.board in alveo_part_map:
-            shell_flow = "vitis_alveo"
-        else:
-            shell_flow = "vivado_zynq"
 
         # Create a configuration for building the scaled dot-product attention
         # operator to a hardware accelerator
@@ -910,7 +906,6 @@ class bench_transformer(bench):
             output_dir = self.build_inputs["build_dir"],
             stitched_ip_gen_dcp = False, # only needed for further manual integration
             synth_clk_period_ns = self.clock_period_ns,
-            shell_flow_type = shell_flow,
             folding_config_file = "folding.yaml",
             specialize_layers_config_file = "specialize_layers.json",
             standalone_thresholds = True,
