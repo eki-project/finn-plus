@@ -20,9 +20,9 @@ FINN Build:
     - job: Fetch Repos
       pipeline: $PARENT_PIPELINE_ID
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --mem 128G --array 0-$( expr $PARALLEL_JOBS - 1 )"
-    NUM_DEFAULT_WORKERS: "$CPU_CORES"
-    PYTEST_PARALLEL: "$CPU_CORES"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES_BENCH --exclusive --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
+    PYTEST_PARALLEL: "$CPU_CORES_BENCH"
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
@@ -42,6 +42,24 @@ FINN Build:
     paths:
       - bench_artifacts/
 
+Measurement:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: measure
+  tags:
+    - board
+  rules:
+    # Also run on failure of previous tasks to measure partial results
+    - when: always
+  script:
+    - python benchmarking/measure.py
+  artifacts:
+    name: "bench_artifacts"
+    when: always
+    paths:
+      - bench_artifacts/
+
 Result Collection:
   id_tokens:
     CI_JOB_JWT:
@@ -54,7 +72,7 @@ Result Collection:
     - when: always
   script:
     - python3.10 benchmarking/collect.py bench_artifacts/tasks_output bench_results.json
-    - dvc exp push git@github.com:eki-project/finn-plus.git
+    - dvc exp push -r push git@github.com:eki-project/finn-plus.git
   artifacts:
     name: "bench_results"
     when: always

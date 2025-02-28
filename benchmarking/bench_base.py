@@ -369,7 +369,7 @@ class bench():
         os.makedirs(tmp_buildflow_dir, exist_ok=True)
         delete_dir_contents(tmp_buildflow_dir)
         self.build_inputs["build_dir"] = os.path.join(tmp_buildflow_dir, "build_output")
-        os.makedirs(self.build_inputs["build_dir"], exist_ok=True)
+        os.makedirs(os.path.join(self.build_inputs["build_dir"], "report"), exist_ok=True)
 
         # Save full build dir as local artifact
         self.local_artifacts_collection.append(("build_output", self.build_inputs["build_dir"], False))
@@ -390,11 +390,10 @@ class bench():
             self.build_inputs["onnx_path"] = self.params["model_path"]
         else:
             # input ONNX model (+ optional I/O pair for verification) will be generated
-            self.build_inputs["onnx_path"] = os.path.join(tmp_buildflow_dir, "model_export.onnx")
+            self.build_inputs["onnx_path"] = os.path.join(self.build_inputs["build_dir"], "model_export.onnx")
             if self.step_export_onnx(self.build_inputs["onnx_path"]) == "skipped":
                 # microbenchmarks might skip because no valid model can be generated for given params
                 return
-            self.save_local_artifact("model_step_export", self.build_inputs["onnx_path"])
 
         if "folding_path" in self.params:
             self.build_inputs["folding_path"] = self.params["folding_path"]
