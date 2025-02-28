@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
             # Run driver
             print("Running driver..")
-            subprocess.run(["python", f"{extract_dir}/driver/driver.py",
+            subprocess.run(["sudo", "python", f"{extract_dir}/driver/driver.py",
                             "--bitfile",  f"{extract_dir}/bitfile/finn-accel.bit",
                             "--settingsfile", f"{extract_dir}/driver/settings.json",
                             "--reportfile", f"{extract_dir}/measured_performance.json",

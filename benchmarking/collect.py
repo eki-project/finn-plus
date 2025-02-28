@@ -118,7 +118,7 @@ if __name__ == "__main__":
 
     for run in combined_log:
         id = run["run_id"]
-        experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + id
+        experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + str(id)
         experiment_msg = "[CI] " + os.environ.get("CI_PIPELINE_NAME")
         #TODO: cache images once we switch to a cache provider that works with DVC Studio
         with Live(exp_name = experiment_name, exp_message=experiment_msg, cache_images=False) as live:

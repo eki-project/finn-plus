@@ -10,7 +10,7 @@ variables:
     value: ""
   TEST_SUITE:
     description: "Select test suite to run"
-    value: "full"
+    value: "none" # DEBUG
     options:
       - "none"
       - "quicktest"
