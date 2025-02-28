@@ -10,12 +10,14 @@ from rich.console import Console
 
 from interface.finn_deps import FINN_BOARDFILES, FINN_DEPS, deps_exist, pull_boardfile, pull_dep
 from interface.finn_envvars import GLOBAL_FINN_ENVVARS, generate_envvars
+from interface.finn_inspect import inspect_onnx
 
 
 ########### TODO #############
 # - Copy .Xilinx to HOME dir when starting
 # - Vivado IP Cache env var (run-docker.sh)
-
+# - Complete all tests
+# - Complete the inspect function
 
 #### GROUPS ####
 
@@ -27,6 +29,7 @@ def deps(): pass
 
 @click.group(help="Run tests on the given FINN installation. Use finn test --help to learn more.")
 def test(): pass
+
 
 
 #### DEPENDENCIES ####
@@ -164,15 +167,43 @@ def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_te
 
 
 #### TESTS ####
+
 @click.command(name="quicktest", help="Run the quicktests in FINN. Should only take a few minutes")
 @click.option("--variant", "-v", help="Which variant of the quicktests to execute. Defaults to standard tests.", default="")
 def run_quicktest():
     setup_envvars()
-
+    # TODO: Implement all test variants
     subprocess.run("pytest -m 'not (vivado or slow or vitis or board or notebooks or bnn_pynq)' --dist=loadfile -n auto", shell=True) 
 
 
 
+
+#### INSPECT ####
+
+@click.command(help="Inspect something. (Takes ONNX files, build.yaml, build.py, XCLBINs)")
+@click.argument("obj")
+def inspect(obj):
+    console = Console()
+    objpath = Path(obj)
+    if not objpath.exists():
+        console.print(f"[red]File {obj} does not exist![/red]")
+        sys.exit(1)
+    split_name = obj.split(".")
+    if len(split_name) < 2:
+        console.print(f"[bold red]Cannot determine filetype since appropiate file ending is missing![/bold red]")
+        sys.exit(1)
+    
+    ending = split_name[-1].lower()
+    match ending:
+        case "onnx":
+            inspect_onnx(objpath)
+        case "yaml" | "yml":
+            raise NotImplementedError()
+        case "py":
+            raise NotImplementedError()
+        case "xclbin":
+            raise NotImplementedError()
+    
 
 
 ############### CLICK ###############
@@ -183,6 +214,7 @@ deps.add_command(check_deps_command)
 main_group.add_command(deps)
 main_group.add_command(build)
 main_group.add_command(test)
+main_group.add_command(inspect)
 
 if __name__ == "__main__":
     main_group()
