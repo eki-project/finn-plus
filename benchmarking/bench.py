@@ -161,11 +161,14 @@ def main(config_name):
         log_dict["total_time"] = int(time.time() - start_time)
         log_dict["output"] = bench_object.output_dict
         log.append(log_dict)
+        # TODO: save this meta data into run-level reports dir insted of task*.json
         # overwrite output log file every time to allow early abort
         with open(log_path, "w") as f:
             json.dump(log, f, indent=2)
-        
-        # save local artifacts of this run (e.g., detailed debug info)
+
+        # save GitLab artifacts of this run (e.g., reports and deployment package)
+        bench_object.save_artifacts_collection()
+        # save local artifacts of this run (e.g., full build dir, detailed debug info)
         bench_object.save_local_artifacts_collection()
     print("Stopping job")
     return exit_code

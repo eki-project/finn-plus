@@ -530,6 +530,7 @@ def step_hw_ipgen(model: ModelWrapper, cfg: DataflowBuildConfig):
     report_dir = cfg.output_dir + "/report"
     os.makedirs(report_dir, exist_ok=True)
     estimate_layer_resources_hls = model.analysis(hls_synth_res_estimation)
+    estimate_layer_resources_hls["total"] = aggregate_dict_keys(estimate_layer_resources_hls)
     with open(report_dir + "/estimate_layer_resources_hls.json", "w") as f:
         json.dump(estimate_layer_resources_hls, f, indent=2)
 
@@ -651,7 +652,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
         "depth_trigger_uram",
         "depth_trigger_bram",
     ]
-    extract_model_config_to_json(model, cfg.output_dir + "/final_hw_config.json", hw_attrs)
+    extract_model_config_to_json(model, cfg.output_dir + "/report/final_hw_config.json", hw_attrs)
 
     # perform FIFO splitting and shallow FIFO removal only after the final config
     # json file has been written. otherwise, since these transforms may add/remove

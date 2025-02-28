@@ -6,6 +6,7 @@ import json
 import time
 import traceback
 import glob
+import shutil
 import numpy as np
 from shutil import copy as shcopy
 from shutil import copytree
@@ -134,6 +135,7 @@ class bench():
             self.board = params["board"]
         else:
             self.board = "RFSoC2x2"
+            self.params["board"] = self.board
 
         if "part" in params:
             self.part = params["part"]
@@ -146,60 +148,53 @@ class bench():
             self.clock_period_ns = params["clock_period_ns"]
         else:
             self.clock_period_ns = 10
+            self.params["clock_period_ns"] = self.clock_period_ns
 
         # Clear FINN tmp build dir before every run (to avoid excessive ramdisk usage and duplicate debug artifacts)
         print("Clearing FINN BUILD DIR ahead of run")
         delete_dir_contents(os.environ["FINN_BUILD_DIR"])
 
-        # Initialize output directories (might exist from other runs of the same job)
-        self.artifacts_dir_models = os.path.join(self.artifacts_dir, "models")
-        os.makedirs(self.artifacts_dir_models, exist_ok=True)
-        self.artifacts_dir_power = os.path.join(self.artifacts_dir, "power_vivado", "run_%d" % (self.run_id))
-        os.makedirs(self.artifacts_dir_power, exist_ok=True)
-
-        self.save_dir_bitstreams = os.path.join(self.save_dir, "bitstreams")
-        os.makedirs(self.save_dir_bitstreams, exist_ok=True)
-
-        # Intermediate models saved between steps
-        # TODO: create setter functions for intermediate models or other artifacts that log them to gitlab artifacts or local dir automatically
-        self.model_initial = None
-        self.model_step_hls = None
-        self.model_step_synthesis = None
-
         # Initialize dictionary to collect all benchmark results
+        # TODO: remove completely or only use for meta data, actual results go into run-specific .json files within /report
         self.output_dict = {}
 
         # Inputs (e.g., ONNX model, golden I/O pair, folding config, etc.) for custom FINN build flow
         self.build_inputs = {}
 
-        # Collect tuples of (name, source path) to save as local artifacts upon run completion or fail by exception
+        # Collect tuples of (name, source path, archive?) to save as pipeline artifacts upon run completion or fail by exception
+        self.artifacts_collection = []
+
+        # Collect tuples of (name, source path, archive?) to save as local artifacts upon run completion or fail by exception
         self.local_artifacts_collection = []
         if self.debug:
             # Save entire FINN build dir and working dir
             # TODO: add option to only save upon exception (in FINN builder or benchmarking infrastructure)
-            self.local_artifacts_collection.append(("finn_tmp", os.environ["FINN_BUILD_DIR"]))
-            self.local_artifacts_collection.append(("finn_cwd", os.environ["FINN_ROOT"]))
+            self.local_artifacts_collection.append(("debug_finn_tmp", os.environ["FINN_BUILD_DIR"], False))
+            self.local_artifacts_collection.append(("debug_finn_cwd", os.environ["FINN_ROOT"], False))
 
-    def save_artifact(self, name, source_path):
-        target_path = os.path.join(self.artifacts_dir, name, "run_%d" % (self.run_id))
-        os.makedirs(target_path, exist_ok=True)
+    def save_artifact(self, target_path, source_path, archive=False):
         if os.path.isdir(source_path):
-            copytree(source_path, target_path, dirs_exist_ok=True)
-        else:
+            if archive:
+                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                shutil.make_archive(target_path, "zip", source_path)
+            else:
+                os.makedirs(target_path, exist_ok=True)
+                copytree(source_path, target_path, dirs_exist_ok=True)
+        elif os.path.isfile(source_path):
+            os.makedirs(target_path, exist_ok=True)
             shcopy(source_path, target_path)
 
-    def save_local_artifact(self, name, source_path):
-        target_path = os.path.join(self.save_dir, name, "run_%d" % (self.run_id))
-        os.makedirs(target_path, exist_ok=True)
-        if os.path.isdir(source_path):
-            copytree(source_path, target_path, dirs_exist_ok=True)
-        else:
-            shcopy(source_path, target_path)
+    def save_artifacts_collection(self):
+        # this should be called upon successful or failed completion of a run
+        for (name, source_path, archive) in self.artifacts_collection:
+            target_path = os.path.join(self.artifacts_dir, "runs_output", "run_%d" % (self.run_id), name)
+            self.save_artifact(target_path, source_path, archive)
 
     def save_local_artifacts_collection(self):
         # this should be called upon successful or failed completion of a run
-        for (name, source_path) in self.local_artifacts_collection:
-            self.save_local_artifact(name, source_path)
+        for (name, source_path, archive) in self.local_artifacts_collection:
+            target_path = os.path.join(self.save_dir, name, "run_%d" % (self.run_id))
+            self.save_artifact(target_path, source_path, archive)
     
     # must be defined by subclass
     def step_export_onnx(self):
@@ -349,26 +344,7 @@ class bench():
     #     self.output_dict["sim_power_time"] = int(time.time() - start_time)
 
     def step_parse_builder_output(self, build_dir):
-        # Used to parse selected reports/logs into the output json dict for DUTs that use a full FINN builder flow
-
-        ### SAVE BITSTREAMS ###
-        if (os.path.exists(os.path.join(build_dir, "harness"))):
-            # TODO: integrate better (e.g. as artifact) and remove redundant copy
-            # TODO: make this more configurable or switch to job/artifact based power measurement
-            # TODO: make compatible to new instr wrapper (or however we generate these outputs)
-            shcopy(os.path.join(build_dir, "harness/top_wrapper.bit"), 
-                os.path.join(self.save_dir_bitstreams, "run_%d.bit" % self.run_id))
-            shcopy(os.path.join(build_dir, "harness/top.hwh"), 
-                os.path.join(self.save_dir_bitstreams, "run_%d.hwh" % self.run_id))
-            shcopy(os.path.join(build_dir, "harness/synth_report.xml"), 
-                os.path.join(self.save_dir_bitstreams, "run_%d.xml" % self.run_id))
-            clock_period_mhz = int(1.0 / self.clock_period_ns * 1000.0)
-            measurement_settings = {"freq_mhz": clock_period_mhz}
-            with open(os.path.join(self.save_dir_bitstreams, "run_%d_settings.json"%self.run_id), "w") as f:
-                json.dump(measurement_settings, f, indent=2)
-        else:
-            pass #TODO: warn/skip?
-
+        # TODO: output as .json or even add as new build step
         ### CHECK FOR VERIFICATION STEP SUCCESS ###
         if (os.path.exists(os.path.join(build_dir, "verification_output"))):
             # Collect all verification output filenames
@@ -381,30 +357,7 @@ class bench():
     
             # Construct a dictionary reporting the verification status as string
             self.output_dict["builder_verification"] = {"verification": {True: "success", False: "fail"}[status]}
-            # TODO: mark job as failed if verification fails
-        else:
-            pass #TODO: warn/skip?
-
-        ### PARSE SYNTH RESOURCE REPORT ###
-        if (os.path.exists(os.path.join(build_dir, "harness/post_synth_resources.json"))):
-            report_path = os.path.join(build_dir, "harness/post_synth_resources.json") 
-            # TODO: check multiple possible sources for this log (e.g. if OOC synth or Zynbuild was run)
-            report_filter = "(top)"
-            # Open the report file
-            with open(report_path) as file:
-                # Load the JSON formatted report
-                report = pd.read_json(file, orient="index")
-            # Filter the reported rows according to some regex filter rule
-            report = report.filter(regex=report_filter, axis="rows")
-            # Generate a summary of the total resources
-            summary = report.sum()
-
-            #TODO: parse finn estimates, hls estimates, step times, rtlsim performance(rtlsim n=1, n=100)
-            #TODO: optional simulation of instr wrapper instead of running on hw
-
-            self.output_dict["builder"] = summary.to_dict()
-        else:
-            pass #TODO: warn/skip?
+            # TODO: mark job as failed if verification fails?
 
     def steps_full_build_flow(self):
         # Default step sequence for benchmarking a full FINN builder flow
@@ -417,7 +370,13 @@ class bench():
         delete_dir_contents(tmp_buildflow_dir)
         self.build_inputs["build_dir"] = os.path.join(tmp_buildflow_dir, "build_output")
         os.makedirs(self.build_inputs["build_dir"], exist_ok=True)
-        self.local_artifacts_collection.append(("build_output", self.build_inputs["build_dir"]))
+
+        # Save full build dir as local artifact
+        self.local_artifacts_collection.append(("build_output", self.build_inputs["build_dir"], False))
+        # Save reports and deployment package as pipeline artifacts
+        self.artifacts_collection.append(("reports", os.path.join(self.build_inputs["build_dir"], "report"), False))
+        self.artifacts_collection.append(("reports", os.path.join(self.build_inputs["build_dir"], "build_dataflow.log"), False))
+        self.artifacts_collection.append(("deploy", os.path.join(self.build_inputs["build_dir"], "deploy"), True))
 
         ### MODEL CREATION/IMPORT ###
         # TODO: track fixed input onnx models with DVC
