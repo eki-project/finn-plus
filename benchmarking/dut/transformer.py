@@ -12,22 +12,16 @@ from brevitas.nn import (
     QuantLinear,
     QuantReLU
 )
-import os
-from qonnx.core.modelwrapper import ModelWrapper
 # Progressbar
 from tqdm import trange
 import numpy as np
 from brevitas.export import export_qonnx
 import random
 import json
-import subprocess
-from util import summarize_table, summarize_section, power_xml_to_dict, prepare_inputs, delete_dir_contents
 # FINN dataflow builder
-import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.builder.build_dataflow_config import AutoFIFOSizingMethod
-from bench_base import bench, step_synth_harness
-from finn.util.basic import alveo_part_map
+from bench_base import bench
 
 # Range information structure for seeding the range analysis for converting
 # quantized activations to MultiThreshold

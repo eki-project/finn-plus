@@ -38,7 +38,7 @@
 
         "fifo_method": ["characterize"],
         "fifo_strategy": ["analytical", "rtlsim"],
-        "output_products": [["rtlsim_performance", "bitfile", "pynq_driver", "deployment_package"]]
+        "output_products": [["stitched_ip", "rtlsim_performance", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["synthetic_nonlinear"],
@@ -59,6 +59,6 @@
 
         "fifo_method": ["largefifo_rtlsim"],
         "fifo_rtlsim_n": [2],
-        "output_products": [["rtlsim_performance", "bitfile", "pynq_driver", "deployment_package"]]
+        "output_products": [["stitched_ip", "rtlsim_performance", "bitfile", "pynq_driver", "deployment_package"]]
     }
 ]

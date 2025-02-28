@@ -126,6 +126,7 @@ class bench():
         self.debug = debug
 
         #TODO: setup a logger so output can go to console (with task id prefix) and log simultaneously
+        #TODO: coordinate with new builder loggin setup
 
         # General configuration
         # TODO: do not allow multiple targets in a single bench job due to measurement?
@@ -199,204 +200,153 @@ class bench():
         # this should be called upon successful or failed completion of a run
         for (name, source_path) in self.local_artifacts_collection:
             self.save_local_artifact(name, source_path)
-
-    # only used in simple flow (TODO: unify)
-    def step_make_model(self):
-        pass
     
-    # only used in full build flow
+    # must be defined by subclass
     def step_export_onnx(self):
         pass
 
-    # only used in full build flow
+    # must be defined by subclass
     def step_build_setup(self):
         pass
 
-    # defaults to full build flow
-    # may be overwritten by subclass (e.g., to call simple flow instead)
+    # defaults to normal build flow, may be overwritten by subclass
     def run(self):
         self.steps_full_build_flow()
 
-    def step_finn_estimate(self):
-        # Gather FINN estimates
-        print("Gathering FINN estimates")
+    # def step_finn_estimate(self):
+    #     # Gather FINN estimates
+    #     print("Gathering FINN estimates")
 
-        model = self.model_initial
-        finn_resources_model = res_estimation(model, fpgapart=self.part)
-        finn_cycles_model = model.analysis(exp_cycles_per_layer)
-        if self.target_node:
-            node = model.get_nodes_by_op_type(self.target_node)[0]
-            finn_resources = finn_resources_model[node.name]
-            finn_cycles = finn_cycles_model[node.name]
-        else:
-            finn_resources = finn_resources_model # TODO: aggregate?
-            finn_cycles = 0 # TODO: aggregate or drop
-        finn_estimates = finn_resources
-        finn_estimates["CYCLES"] = finn_cycles
-        self.output_dict["finn_estimates"] = finn_estimates
+    #     model = self.model_initial
+    #     finn_resources_model = res_estimation(model, fpgapart=self.part)
+    #     finn_cycles_model = model.analysis(exp_cycles_per_layer)
+    #     if self.target_node:
+    #         node = model.get_nodes_by_op_type(self.target_node)[0]
+    #         finn_resources = finn_resources_model[node.name]
+    #         finn_cycles = finn_cycles_model[node.name]
+    #     else:
+    #         finn_resources = finn_resources_model # TODO: aggregate?
+    #         finn_cycles = 0 # TODO: aggregate or drop
+    #     finn_estimates = finn_resources
+    #     finn_estimates["CYCLES"] = finn_cycles
+    #     self.output_dict["finn_estimates"] = finn_estimates
 
-    def step_hls(self):
-        # Perform Vitis HLS synthesis for HLS resource/performance reports
-        start_time = time.time()
-        print("Performing Vitis HLS synthesis")
-        model = self.model_initial
-        model = model.transform(PrepareIP(self.part, self.clock_period_ns))
-        model = model.transform(HLSSynthIP())
+    # def step_hls(self):
+    #     # Perform Vitis HLS synthesis for HLS resource/performance reports
+    #     start_time = time.time()
+    #     print("Performing Vitis HLS synthesis")
+    #     model = self.model_initial
+    #     model = model.transform(PrepareIP(self.part, self.clock_period_ns))
+    #     model = model.transform(HLSSynthIP())
 
-        hls_resources_model = model.analysis(hls_synth_res_estimation)
-        if self.target_node:
-            node = model.get_nodes_by_op_type(self.target_node)[0]
-            hls_resources = hls_resources_model[node.name]
-        else:
-            hls_resources = hls_resources_model # TODO: aggregate?
-        self.output_dict["hls_estimates"] = hls_resources
-        self.output_dict["hls_time"] = int(time.time() - start_time)
+    #     hls_resources_model = model.analysis(hls_synth_res_estimation)
+    #     if self.target_node:
+    #         node = model.get_nodes_by_op_type(self.target_node)[0]
+    #         hls_resources = hls_resources_model[node.name]
+    #     else:
+    #         hls_resources = hls_resources_model # TODO: aggregate?
+    #     self.output_dict["hls_estimates"] = hls_resources
+    #     self.output_dict["hls_time"] = int(time.time() - start_time)
 
-        self.model_step_hls = copy.deepcopy(model)
+    #     self.model_step_hls = copy.deepcopy(model)
 
-    def step_rtlsim(self):
-        # Perform RTL simulation for performance measurement
-        start_time = time.time()
-        print("Performing Verilator RTL simulation (n=1)")
-        # Prepare
-        model = self.model_step_hls
-        model = model.transform(SetExecMode("rtlsim"))
-        model = model.transform(PrepareRTLSim())
-        # Generate input data
-        input_tensor = model.graph.input[0]
-        input_shape = model.get_tensor_shape(input_tensor.name)
-        input_dtype = model.get_tensor_datatype(input_tensor.name)
-        x = gen_finn_dt_tensor(input_dtype, input_shape)
-        input_dict = prepare_inputs(x, input_dtype, None) # TODO: fix Bipolar conversion case
-        # Run
-        oxe.execute_onnx(model, input_dict)["outp"]  # do not check output for correctness TODO: add functional verification throughout benchmarking steps
-        # Log result
-        node = model.get_nodes_by_op_type("MVAU_hls")[0]
-        inst = getCustomOp(node)
-        rtlsim_cycles = inst.get_nodeattr("cycles_rtlsim")
-        self.output_dict["rtlsim_cycles"] = rtlsim_cycles
-        self.output_dict["rtlsim_time"] = int(time.time() - start_time)
+    # def step_rtlsim(self):
+    #     # Perform RTL simulation for performance measurement
+    #     start_time = time.time()
+    #     print("Performing Verilator RTL simulation (n=1)")
+    #     # Prepare
+    #     model = self.model_step_hls
+    #     model = model.transform(SetExecMode("rtlsim"))
+    #     model = model.transform(PrepareRTLSim())
+    #     # Generate input data
+    #     input_tensor = model.graph.input[0]
+    #     input_shape = model.get_tensor_shape(input_tensor.name)
+    #     input_dtype = model.get_tensor_datatype(input_tensor.name)
+    #     x = gen_finn_dt_tensor(input_dtype, input_shape)
+    #     input_dict = prepare_inputs(x, input_dtype, None) # TODO: fix Bipolar conversion case
+    #     # Run
+    #     oxe.execute_onnx(model, input_dict)["outp"]  # do not check output for correctness TODO: add functional verification throughout benchmarking steps
+    #     # Log result
+    #     node = model.get_nodes_by_op_type("MVAU_hls")[0]
+    #     inst = getCustomOp(node)
+    #     rtlsim_cycles = inst.get_nodeattr("cycles_rtlsim")
+    #     self.output_dict["rtlsim_cycles"] = rtlsim_cycles
+    #     self.output_dict["rtlsim_time"] = int(time.time() - start_time)
 
-    def step_synthesis(self):
-        # Perform Vivado synthesis for accurate resource/timing and inaccurate power reports
-        # TODO: avoid duplicate synthesis by using shell build also for post_synth_resources and power sim?
-        # TODO: check OMX synth strategy again!
-        start_time = time.time()
-        print("Performing Vivado (stitched-ip, out-of-context) synthesis")
-        model = self.model_step_hls
-        model = model.transform(ReplaceVerilogRelPaths())
-        model = model.transform(CreateStitchedIP(self.part, self.clock_period_ns))
-        model = model.transform(SynthOutOfContext(part=self.part, clk_period_ns=self.clock_period_ns))
-        ooc_synth_results = eval(model.get_metadata_prop("res_total_ooc_synth"))
+# TODO: re-introduce simple Vivado power estimation as new builder step
+    # def step_synthesis(self):
+    #     # Perform Vivado synthesis for accurate resource/timing and inaccurate power reports
+    #     start_time = time.time()
+    #     print("Performing Vivado (stitched-ip, out-of-context) synthesis")
+    #     model = self.model_step_hls
+    #     model = model.transform(ReplaceVerilogRelPaths())
+    #     model = model.transform(CreateStitchedIP(self.part, self.clock_period_ns))
+    #     model = model.transform(SynthOutOfContext(part=self.part, clk_period_ns=self.clock_period_ns))
+    #     ooc_synth_results = eval(model.get_metadata_prop("res_total_ooc_synth"))
 
-        start_test_batch_fast(
-            results_path=self.artifacts_dir_power,
-            project_path=os.path.join(
-                ooc_synth_results["vivado_proj_folder"], "vivadocompile", "vivadocompile.xpr"
-            ),
-            run_target="impl_1",
-            pairs=[(25, 0.5), (50, 0.5), (75, 0.5)],
-        )
+    #     start_test_batch_fast(
+    #         results_path=self.artifacts_dir_power,
+    #         project_path=os.path.join(
+    #             ooc_synth_results["vivado_proj_folder"], "vivadocompile", "vivadocompile.xpr"
+    #         ),
+    #         run_target="impl_1",
+    #         pairs=[(25, 0.5), (50, 0.5), (75, 0.5)],
+    #     )
 
-        # Log most important power results directly (refer to detailed logs for more)
-        for reportname in ["25_0.5", "50_0.5", "75_0.5"]:
-            with open(os.path.join(self.artifacts_dir_power, "%s.json" % reportname), "r") as f:
-                report = json.load(f)
-                power = float(report["Summary"]["tables"][0]["Total On-Chip Power (W)"][0])
-                power_dyn = float(report["Summary"]["tables"][0]["Dynamic (W)"][0])
-                ooc_synth_results["power_%s" % reportname] = power
-                ooc_synth_results["power_dyn_%s" % reportname] = power_dyn
+    #     # Log most important power results directly (refer to detailed logs for more)
+    #     for reportname in ["25_0.5", "50_0.5", "75_0.5"]:
+    #         with open(os.path.join(self.artifacts_dir_power, "%s.json" % reportname), "r") as f:
+    #             report = json.load(f)
+    #             power = float(report["Summary"]["tables"][0]["Total On-Chip Power (W)"][0])
+    #             power_dyn = float(report["Summary"]["tables"][0]["Dynamic (W)"][0])
+    #             ooc_synth_results["power_%s" % reportname] = power
+    #             ooc_synth_results["power_dyn_%s" % reportname] = power_dyn
 
-        self.output_dict["ooc_synth"] = ooc_synth_results
-        self.output_dict["ooc_synth_time"] = int(time.time() - start_time)
+    #     self.output_dict["ooc_synth"] = ooc_synth_results
+    #     self.output_dict["ooc_synth_time"] = int(time.time() - start_time)
 
-        # Save model for logging purposes
-        model.save(os.path.join(self.artifacts_dir_models, "model_%d_synthesis.onnx" % (self.run_id)))
-        self.model_step_synthesis = copy.deepcopy(model)
+    #     # Save model for logging purposes
+    #     model.save(os.path.join(self.artifacts_dir_models, "model_%d_synthesis.onnx" % (self.run_id)))
+    #     self.model_step_synthesis = copy.deepcopy(model)
 
-    def step_sim_power(self):
-        # Perform Vivado simulation for accurate power report
-        start_time = time.time()
-        if "ooc_synth" not in self.output_dict:
-            print("ERROR: step_sim_power requires step_synthesis")
-        print("Performing Vivado simulation for power report")
-        if "rtlsim_cycles" in self.output_dict:
-            sim_duration_ns = self.output_dict["rtlsim_cycles"] * 3 * self.clock_period_ns
-        else:
-            sim_duration_ns = self.output_dict["finn_estimates"]["CYCLES"] * 3 * self.clock_period_ns
+# TODO: re-introduce sim-based Vivado power estimation as new builder step
+    # def step_sim_power(self):
+    #     # Perform Vivado simulation for accurate power report
+    #     start_time = time.time()
+    #     if "ooc_synth" not in self.output_dict:
+    #         print("ERROR: step_sim_power requires step_synthesis")
+    #     print("Performing Vivado simulation for power report")
+    #     if "rtlsim_cycles" in self.output_dict:
+    #         sim_duration_ns = self.output_dict["rtlsim_cycles"] * 3 * self.clock_period_ns
+    #     else:
+    #         sim_duration_ns = self.output_dict["finn_estimates"]["CYCLES"] * 3 * self.clock_period_ns
 
-        model = self.model_step_synthesis
-        input_tensor = model.graph.input[0]
-        output_tensor = model.graph.output[0]
-        input_node_inst = getCustomOp(model.find_consumer(input_tensor.name))
-        output_node_inst = getCustomOp(model.find_producer(output_tensor.name))
-        sim_power_report(
-            results_path=self.artifacts_dir_power,
-            project_path=os.path.join(
-                self.output_dict["ooc_synth"]["vivado_proj_folder"], "vivadocompile", "vivadocompile.xpr"
-            ),
-            in_width=input_node_inst.get_instream_width(),
-            out_width=output_node_inst.get_outstream_width(),
-            dtype_width=model.get_tensor_datatype(input_tensor.name).bitwidth(),
-            sim_duration_ns=sim_duration_ns,
-        )
+    #     model = self.model_step_synthesis
+    #     input_tensor = model.graph.input[0]
+    #     output_tensor = model.graph.output[0]
+    #     input_node_inst = getCustomOp(model.find_consumer(input_tensor.name))
+    #     output_node_inst = getCustomOp(model.find_producer(output_tensor.name))
+    #     sim_power_report(
+    #         results_path=self.artifacts_dir_power,
+    #         project_path=os.path.join(
+    #             self.output_dict["ooc_synth"]["vivado_proj_folder"], "vivadocompile", "vivadocompile.xpr"
+    #         ),
+    #         in_width=input_node_inst.get_instream_width(),
+    #         out_width=output_node_inst.get_outstream_width(),
+    #         dtype_width=model.get_tensor_datatype(input_tensor.name).bitwidth(),
+    #         sim_duration_ns=sim_duration_ns,
+    #     )
 
-        # Log most important power results directly (refer to detailed logs for more)
-        for reportname in ["sim"]:
-            with open(os.path.join(self.artifacts_dir_power, "%s.json" % reportname), "r") as f:
-                report = json.load(f)
-                power = float(report["Summary"]["tables"][0]["Total On-Chip Power (W)"][0])
-                power_dyn = float(report["Summary"]["tables"][0]["Dynamic (W)"][0])
-                self.output_dict["power_%s" % reportname] = power
-                self.output_dict["power_dyn%s" % reportname] = power_dyn
+    #     # Log most important power results directly (refer to detailed logs for more)
+    #     for reportname in ["sim"]:
+    #         with open(os.path.join(self.artifacts_dir_power, "%s.json" % reportname), "r") as f:
+    #             report = json.load(f)
+    #             power = float(report["Summary"]["tables"][0]["Total On-Chip Power (W)"][0])
+    #             power_dyn = float(report["Summary"]["tables"][0]["Dynamic (W)"][0])
+    #             self.output_dict["power_%s" % reportname] = power
+    #             self.output_dict["power_dyn%s" % reportname] = power_dyn
 
-        self.output_dict["sim_power_time"] = int(time.time() - start_time)
-
-    def step_synth_power(self):
-        # Perform Vivado synthesis for on-hardware power measurement
-        start_time = time.time()
-        if self.model_step_hls is None:
-            print("ERROR: step_synth_power requires step_hls")
-        print("Performing Vivado synthesis with test harness integration for power measurement")
-
-        if "dut_duplication" in self.params:
-            dut_duplication = self.params["dut_duplication"]
-        else:
-            dut_duplication = 1
-    
-        model = self.model_step_hls.transform(ReplaceVerilogRelPaths())
-        model = model.transform(CreateStitchedIP(self.part, self.clock_period_ns))
-
-        build_dir = "temp_output_harness_build"
-        # TODO: replace hold harness with new instr wrapper implementation
-        #TODO: if synth fails this could contain stale bitstreams which will be power tested
-        # model = model.transform(
-        #     MakeZYNQHarnessProject(
-        #         platform=self.board,
-        #         output_dir=build_dir,
-        #         dut_duplication=dut_duplication,
-        #         clock_period_ns=self.clock_period_ns
-        #     )
-        # )
-
-        # COPY bitstreams and other outputs
-        # TODO: integrate better (e.g. as artifact) and remove redundant copy
-        # TODO: make this more configurable or switch to job/artifact based power measurement 
-        shcopy(os.path.join(build_dir, "top_wrapper.bit"), 
-               os.path.join(self.save_dir_bitstreams, "run_%d.bit" % self.run_id))
-        shcopy(os.path.join(build_dir, "top.hwh"), 
-               os.path.join(self.save_dir_bitstreams, "run_%d.hwh" % self.run_id))
-        shcopy(os.path.join(build_dir, "synth_report.xml"), 
-               os.path.join(self.save_dir_bitstreams, "run_%d.xml" % self.run_id))
-        clock_period_mhz = int(1.0 / self.clock_period_ns * 1000.0)
-        measurement_settings = {"freq_mhz": clock_period_mhz}
-        with open(os.path.join(self.save_dir_bitstreams, "run_%d_settings.json"%self.run_id), "w") as f:
-            json.dump(measurement_settings, f, indent=2)
-
-        self.output_dict["synth_power_time"] = int(time.time() - start_time)
-
-        # Save model for logging purposes
-        model.save(os.path.join(self.artifacts_dir_models, "model_%d_synth_power.onnx" % (self.run_id)))
+    #     self.output_dict["sim_power_time"] = int(time.time() - start_time)
 
     def step_parse_builder_output(self, build_dir):
         # Used to parse selected reports/logs into the output json dict for DUTs that use a full FINN builder flow
@@ -456,46 +406,6 @@ class bench():
         else:
             pass #TODO: warn/skip?
 
-    def steps_simple_model_flow(self):
-        # Default step sequence for benchmarking a simple model (mostly single operators/custom_ops)
-        do_hls = self.params["do_hls"] if "do_hls" in self.params else False
-        do_rtlsim = self.params["do_rtlsim"] if "do_rtlsim" in self.params else False
-        do_synthesis = self.params["do_synthesis"] if "do_synthesis" in self.params else False
-        do_sim_power = self.params["do_sim_power"] if "do_sim_power" in self.params else False
-        do_synth_power = self.params["do_synth_power"] if "do_synth_power" in self.params else False
-
-        # Perform steps
-        make_model_result = self.step_make_model()
-        if make_model_result is None:
-            return
-        else:
-            model, dut_info = make_model_result
-
-        # Save model for logging purposes
-        # TODO: benchmarking infrastructure could be integrated deeper into ONNX IR and FINN custom_op/transformation infrastructure
-        # E.g. parameters and paths could be stored as onnx attributes and benchmarking steps as generic or specialized custom_op transformations
-        model.save(os.path.join(self.artifacts_dir_models, "model_%d_initial.onnx" % (self.run_id)))
-
-        # Save model for use in other steps
-        self.model_initial = model
-
-        # Log dict reported by DUT-specific scripts to overall result dict
-        # E.g. this could contain SIMD/PE derived from folding factors or weight distribution information
-        self.output_dict["info"] = dut_info
-
-        self.step_finn_estimate()
-
-        if do_hls:
-            self.step_hls()
-        if do_rtlsim:
-            self.step_rtlsim()
-        if do_synthesis:
-            self.step_synthesis()
-        if do_sim_power:
-            self.step_sim_power()
-        #if do_synth_power:
-        #    self.step_synth_power()
-
     def steps_full_build_flow(self):
         # Default step sequence for benchmarking a full FINN builder flow
 
@@ -510,6 +420,7 @@ class bench():
         self.local_artifacts_collection.append(("build_output", self.build_inputs["build_dir"]))
 
         ### MODEL CREATION/IMPORT ###
+        # TODO: track fixed input onnx models with DVC
         if "model_dir" in self.params:
             # input ONNX model and verification input/output pairs are provided
             model_dir = self.params["model_dir"]
@@ -521,7 +432,9 @@ class bench():
         else:
             # input ONNX model (+ optional I/O pair for verification) will be generated
             self.build_inputs["onnx_path"] = os.path.join(tmp_buildflow_dir, "model_export.onnx")
-            self.step_export_onnx(self.build_inputs["onnx_path"])
+            if self.step_export_onnx(self.build_inputs["onnx_path"]) == "skipped":
+                # microbenchmarks might skip because no valid model can be generated for given params
+                return
             self.save_local_artifact("model_step_export", self.build_inputs["onnx_path"])
 
         if "folding_path" in self.params:
@@ -543,6 +456,7 @@ class bench():
         else:
             cfg.shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ
         # enable extra performance optimizations (physopt)
+        # TODO: check OMX synth strategy again!
         cfg.vitis_opt_strategy=build_cfg.VitisOptStrategy.PERFORMANCE_BEST
         cfg.verbose = False
         cfg.enable_build_pdb_debug = False

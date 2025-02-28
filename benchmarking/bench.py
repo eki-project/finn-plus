@@ -10,19 +10,15 @@ from dut.mvau import bench_mvau
 from dut.resnet50 import bench_resnet50
 from dut.metafi import bench_metafi
 from dut.synthetic_nonlinear import bench_synthetic_nonlinear
+from dut.transformer import bench_transformer
 
 dut = dict()
 dut["mvau"] = bench_mvau
 dut["resnet50"] = bench_resnet50
 dut["metafi"] = bench_metafi
 dut["synthetic_nonlinear"] = bench_synthetic_nonlinear
+dut["transformer"] = bench_transformer
 
-# TODO: remove guard once transformer support has been fully merged
-try:
-    from dut.transformer import bench_transformer
-    dut["transformer"] = bench_transformer
-except ImportError:
-    pass
 
 def main(config_name):
     exit_code = 0

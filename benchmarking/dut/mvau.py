@@ -1,6 +1,7 @@
 
 import math
 import numpy as np
+import json
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
@@ -19,6 +20,8 @@ from finn.transformation.fpgadataflow.minimize_accumulator_width import (
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import (
     MinimizeWeightBitWidth,
 )
+import finn.builder.build_dataflow_config as build_cfg
+
 from bench_base import bench
 
 class bench_mvau(bench):
@@ -123,7 +126,7 @@ class bench_mvau(bench):
 
         return model
 
-    def step_make_model(self):
+    def step_export_onnx(self, onnx_export_path):
         # Read params
         idt = self.params["idt"]
         wdt = self.params["wdt"]
@@ -157,10 +160,10 @@ class bench_mvau(bench):
         pe = mh // nf
         if mw % simd != 0 or mh % pe != 0:
             print("Invalid simd/pe configuration, skipping")
-            return
+            return "skipped"
         if m > 1 and (simd != mw or pe != mh):
             print("M > 1 not possible for non-max simd/pe, skipping")
-            return
+            return "skipped"
         output_dict["simd"] = simd
         output_dict["pe"] = pe
 
@@ -178,11 +181,11 @@ class bench_mvau(bench):
             if "sparsity_amount" in self.params:
                 if self.params["sparsity_amount"] > 0:
                     print("sparsity amount > 0 not applicable for none sparsity, skipping")
-                    return
+                    return "skipped"
         else:
             if self.params["sparsity_amount"] == 0:
                 print("sparsity amount = 0 not applicable for selected sparsity, skipping")
-                return
+                return "skipped"
             if sparsity_type == "unstructured":
                 idx = np.random.choice(
                     mw * mh, size=int(self.params["sparsity_amount"] * mw * mh), replace=False
@@ -207,7 +210,7 @@ class bench_mvau(bench):
                     )
                 else:
                     print("regular sparsity only applicable for amount 0.25/0.5/0.75, skipping")
-                    return
+                    return "skipped"
                 W[idx_mw, :] = 0.0
             elif sparsity_type == "cols_regular":
                 if self.params["sparsity_amount"] == 0.25:
@@ -220,7 +223,7 @@ class bench_mvau(bench):
                     )
                 else:
                     print("regular sparsity only applicable for amount 0.25/0.5/0.75, skipping")
-                    return
+                    return "skipped"
                 W[:, idx_mh] = 0.0
 
             else:
@@ -289,7 +292,31 @@ class bench_mvau(bench):
         inst = getCustomOp(node)
 
         self.target_node = "MVAU_hls" # display results of analysis passes only for the first occurence of this op type
-        return model, output_dict
 
-    def run(self):
-        self.steps_simple_model_flow()
+        # log additional info about the generated model (e.g. SIMD/PE or sparsity)
+        with open(self.build_inputs["build_dir"] + "/report/dut_info.json", "w") as f:
+            json.dump(output_dict, f, indent=2)
+
+        # TODO: also generate golden I/O pair for further verification steps
+        model.save(onnx_export_path)
+
+    def step_build_setup(self):
+        # create build config for synthetic microbenchmark models
+        cfg = build_cfg.DataflowBuildConfig(
+            # manual folding
+            target_fps=None,
+            steps=[
+                "step_create_dataflow_partition",
+                "step_minimize_bit_width",
+                "step_generate_estimate_reports",
+                "step_hw_codegen",
+                "step_hw_ipgen",
+                "step_create_stitched_ip",
+                "step_measure_rtlsim_performance",
+                "step_out_of_context_synthesis",
+                "step_synthesize_bitfile",
+                "step_make_pynq_driver",
+                "step_deployment_package",
+            ]
+        )
+        return cfg

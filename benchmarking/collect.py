@@ -88,6 +88,7 @@ if __name__ == "__main__":
 
     for run in combined_log:
         with Live(exp_message="Job result collected by GitLab CI", cache_images=True) as live:
+            #TODO: add pipeline info to metadata (or as metric or other annotation?)
             metadata = {
                 "metadata": {
                     "run_id": run["run_id"],
@@ -98,6 +99,13 @@ if __name__ == "__main__":
             }
             live.log_params(metadata)
             live.log_params(run["params"])
+
+            # TODO: for microbenchmarks, only summarize results for target node (or surrounding SDP?) (see old step_finn_estimate)
+
+            # OOC synth resource report (step_out_of_context_synthesis)
+
+            # shell synth resource report (step_synthesize_bitfile)
+
 
             if "builder" in run["output"]:
                 for key in run["output"]["builder"]:
