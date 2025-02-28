@@ -42,422 +42,6 @@ from finn.builder.build_dataflow_config import DataflowBuildConfig
 import pandas as pd
 import onnxruntime as ort
 
-class MakeZYNQHarnessProject(Transformation):
-    """Based on MakeZYNQProject transformation, but integrates IP into test harness instead of DMA shell."""
-
-    def __init__(self, platform, output_dir, dut_duplication=1, clock_period_ns=10):
-        super().__init__()
-        self.platform = platform
-        self.output_dir = output_dir
-        self.dut_duplication = dut_duplication
-        self.clock_period_ns = clock_period_ns
-
-    def apply(self, model):
-        # create a config file and empty list of xo files
-        config = []
-        idma_idx = 0
-        odma_idx = 0
-        aximm_idx = 0
-        axilite_idx = 0
-        global_clk_ns = 0
-
-        # assume single stitched-ip (previously dataflowpartition) as DUT
-        # assume single primary input/output
-        input_tensor = model.graph.input[0]
-        output_tensor = model.graph.output[0]
-        input_node_inst = getCustomOp(model.find_consumer(input_tensor.name))
-        output_node_inst = getCustomOp(model.find_producer(output_tensor.name))
-        instream_width = input_node_inst.get_instream_width_padded()
-        outstream_width = output_node_inst.get_outstream_width_padded()
-
-        # assert node.op_type == "StreamingDataflowPartition", "Invalid link graph"
-        # sdp_node = getCustomOp(node)
-        # dataflow_model_filename = sdp_node.get_nodeattr("model")
-        # kernel_model = ModelWrapper(dataflow_model_filename)
-        kernel_model = model
-
-        ipstitch_path = kernel_model.get_metadata_prop("vivado_stitch_proj")
-        if ipstitch_path is None or (not os.path.isdir(ipstitch_path)):
-            raise Exception("No stitched IPI design found, apply CreateStitchedIP first.")
-
-        vivado_stitch_vlnv = kernel_model.get_metadata_prop("vivado_stitch_vlnv")
-        if vivado_stitch_vlnv is None:
-            raise Exception("No vlnv found, apply CreateStitchedIP first.")
-
-        ip_dirs = ["list"]
-        ip_dirs += collect_ip_dirs(kernel_model, ipstitch_path)
-        ip_dirs.append("$::env(FINN_ROOT)/benchmarking/harness/sink/ip")
-        ip_dirs_str = "[%s]" % (" ".join(ip_dirs))
-        config.append(
-            "set_property ip_repo_paths "
-            "[concat [get_property ip_repo_paths [current_project]] %s] "
-            "[current_project]" % ip_dirs_str
-        )
-        config.append("update_ip_catalog -rebuild -scan_changes")
-        config.append(
-            "import_files -fileset sources_1 -norecurse $::env(FINN_ROOT)/benchmarking/harness/vector_xor.v"
-        )
-
-        # get metadata property clk_ns to calculate clock frequency
-        clk_ns = float(kernel_model.get_metadata_prop("clk_ns"))
-        if clk_ns > global_clk_ns:
-            global_clk_ns = clk_ns
-
-        ifnames = eval(kernel_model.get_metadata_prop("vivado_stitch_ifnames"))
-
-        # instantiate DUT, TODO: switch to wrapper verilog file for (multiple-) DUT instantiation
-        for id in range(self.dut_duplication):
-            dut_instance_name = "finn_design_%d" % id
-            config.append(
-                "create_bd_cell -type ip -vlnv %s %s" % (vivado_stitch_vlnv, dut_instance_name)
-            )
-            # sdp_node.set_nodeattr("instance_name", instance_names[node.name])
-            config.append(
-                "connect_bd_net [get_bd_pins %s/ap_clk] [get_bd_pins axi_interconnect_0/aclk]"
-                % dut_instance_name
-            )
-            config.append(
-                "connect_bd_net [get_bd_pins %s/ap_rst_n] [get_bd_pins axi_interconnect_0/aresetn]"
-                % dut_instance_name
-            )
-
-        # instantiate input harness
-        if instream_width > 8192:
-            print("ERROR: DUT input stream width > 8192")
-            raise Exception("ERROR: DUT input stream width > 8192")
-        elif instream_width > 4096:
-            num_sources = 8
-            source_width = roundup_to_integer_multiple(instream_width / 8, 8)
-        elif instream_width > 2048:
-            num_sources = 4
-            source_width = roundup_to_integer_multiple(instream_width / 4, 8)
-        elif instream_width > 1024:
-            num_sources = 2
-            source_width = roundup_to_integer_multiple(instream_width / 2, 8)
-        else:
-            num_sources = 1
-            source_width = instream_width
-
-        if self.dut_duplication > 1:
-            if num_sources > 1:
-                print("ERROR: DUT duplication with >1024 stream width not supported!")
-                raise Exception("ERROR: DUT duplication with >1024 stream width not supported!")
-
-            num_sources = self.dut_duplication  # one source per DUT instance
-            seed = 0xABCD
-            for id in range(num_sources):
-                config.append(
-                    "create_bd_cell -type ip -vlnv xilinx.com:ip:axi_traffic_gen:3.0 axi_traffic_gen_%d"
-                    % id
-                )
-                config.append(
-                    "set_property -dict [list \
-                    CONFIG.C_ATG_MODE {AXI4-Stream} \
-                    CONFIG.C_ATG_STREAMING_MAX_LEN_BITS {1} \
-                    CONFIG.C_AXIS_SPARSE_EN {false} \
-                    CONFIG.C_AXIS_TDATA_WIDTH {%d} \
-                    CONFIG.C_AXIS_TDEST_WIDTH {0} \
-                    CONFIG.C_AXIS_TID_WIDTH {0} \
-                    CONFIG.C_AXIS_TUSER_WIDTH {0} \
-                    CONFIG.STRM_DATA_SEED {%s} \
-                    ] [get_bd_cells axi_traffic_gen_%d]"
-                    % (source_width, "0x{:04X}".format(seed), id)
-                )
-                config.append(
-                    "connect_bd_net [get_bd_pins axi_traffic_gen_%d/s_axi_aclk] [get_bd_pins axi_interconnect_0/aclk]"
-                    % id
-                )
-                config.append(
-                    "connect_bd_net [get_bd_pins axi_traffic_gen_%d/s_axi_aresetn] [get_bd_pins axi_interconnect_0/aresetn]"
-                    % id
-                )
-                seed = seed + 99
-
-                config.append(
-                    "connect_bd_intf_net [get_bd_intf_pins axi_traffic_gen_%d/M_AXIS_MASTER] [get_bd_intf_pins finn_design_%d/s_axis_0]"
-                    % (id, id)
-                )
-
-        else:
-            seed = 0xABCD
-            for id in range(num_sources):
-                config.append(
-                    "create_bd_cell -type ip -vlnv xilinx.com:ip:axi_traffic_gen:3.0 axi_traffic_gen_%d"
-                    % id
-                )
-                config.append(
-                    "set_property -dict [list \
-                    CONFIG.C_ATG_MODE {AXI4-Stream} \
-                    CONFIG.C_ATG_STREAMING_MAX_LEN_BITS {1} \
-                    CONFIG.C_AXIS_SPARSE_EN {false} \
-                    CONFIG.C_AXIS_TDATA_WIDTH {%d} \
-                    CONFIG.C_AXIS_TDEST_WIDTH {0} \
-                    CONFIG.C_AXIS_TID_WIDTH {0} \
-                    CONFIG.C_AXIS_TUSER_WIDTH {0} \
-                    CONFIG.STRM_DATA_SEED {%s} \
-                    ] [get_bd_cells axi_traffic_gen_%d]"
-                    % (source_width, "0x{:04X}".format(seed), id)
-                )
-                config.append(
-                    "connect_bd_net [get_bd_pins axi_traffic_gen_%d/s_axi_aclk] [get_bd_pins axi_interconnect_0/aclk]"
-                    % id
-                )
-                config.append(
-                    "connect_bd_net [get_bd_pins axi_traffic_gen_%d/s_axi_aresetn] [get_bd_pins axi_interconnect_0/aresetn]"
-                    % id
-                )
-                config.append(
-                    "connect_bd_net [get_bd_pins finn_design_0/s_axis_0_tready] [get_bd_pins axi_traffic_gen_%d/m_axis_1_tready]"
-                    % id
-                )
-                seed = seed + 99
-
-            if num_sources > 1:
-                config.append(
-                    "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 xlconcat_tdata"
-                )
-                config.append(
-                    "set_property CONFIG.NUM_PORTS {%d} [get_bd_cells xlconcat_tdata]" % num_sources
-                )
-
-                for id in range(num_sources):
-                    config.append(
-                        "connect_bd_net [get_bd_pins xlconcat_tdata/In%d] [get_bd_pins axi_traffic_gen_%d/m_axis_1_tdata]"
-                        % (id, id)
-                    )
-
-                config.append(
-                    "connect_bd_net [get_bd_pins finn_design_0/s_axis_0_tdata] [get_bd_pins xlconcat_tdata/dout]"
-                )
-            else:
-                config.append(
-                    "connect_bd_net [get_bd_pins finn_design_0/s_axis_0_tdata] [get_bd_pins axi_traffic_gen_0/m_axis_1_tdata]"
-                )
-
-            # only connect valid from source 0 to DUT
-            config.append(
-                "connect_bd_net [get_bd_pins finn_design_0/s_axis_0_tvalid] [get_bd_pins axi_traffic_gen_0/m_axis_1_tvalid]"
-            )
-
-        # instantiate output harness
-        for id in range(self.dut_duplication):
-            config.append(
-                "create_bd_cell -type ip -vlnv xilinx.com:user:harness_sink:1.0 sink_%d" % id
-            )
-            config.append(
-                "set_property -dict [list CONFIG.STREAM_WIDTH {%d}] [get_bd_cells sink_%d]"
-                % (outstream_width, id)
-            )
-            config.append(
-                "connect_bd_intf_net [get_bd_intf_pins sink_%d/s_axis_0] [get_bd_intf_pins finn_design_%d/m_axis_0]"
-                % (id, id)
-            )
-
-        # GPIO control (TODO: connect interrupt)
-        config.append("create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 axi_gpio_0")
-        config.append(
-            "set_property -dict [list \
-            CONFIG.C_ALL_INPUTS {0} \
-            CONFIG.C_GPIO_WIDTH {5} \
-            CONFIG.C_INTERRUPT_PRESENT {1} \
-            ] [get_bd_cells axi_gpio_0]"
-        )
-        config.append(
-            "connect_bd_intf_net [get_bd_intf_pins axi_gpio_0/S_AXI] "
-            "[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]" % (axilite_idx)
-        )
-        config.append("assign_axi_addr_proc axi_gpio_0/S_AXI")
-        axilite_idx += 1
-        config.append("create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 xlslice_0")
-        config.append("create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 xlslice_1")
-        config.append("create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 xlslice_2")
-        config.append(
-            "set_property -dict [list \
-            CONFIG.DIN_FROM {0} \
-            CONFIG.DIN_TO {0} \
-            CONFIG.DIN_WIDTH {5} \
-            ] [get_bd_cells xlslice_0]"
-        )
-        config.append(
-            "set_property -dict [list \
-            CONFIG.DIN_FROM {1} \
-            CONFIG.DIN_TO {1} \
-            CONFIG.DIN_WIDTH {5} \
-            ] [get_bd_cells xlslice_1]"
-        )
-        config.append(
-            "set_property -dict [list \
-            CONFIG.DIN_FROM {2} \
-            CONFIG.DIN_TO {2} \
-            CONFIG.DIN_WIDTH {5} \
-            ] [get_bd_cells xlslice_2]"
-        )
-        config.append("create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 xlconcat_0")
-        config.append(
-            "set_property -dict [list CONFIG.IN1_WIDTH.VALUE_SRC USER CONFIG.IN2_WIDTH.VALUE_SRC USER CONFIG.IN0_WIDTH.VALUE_SRC USER] [get_bd_cells xlconcat_0]"
-        )
-        config.append(
-            "set_property -dict [list \
-            CONFIG.IN0_WIDTH {3} \
-            CONFIG.NUM_PORTS {3} \
-            ] [get_bd_cells xlconcat_0]"
-        )
-        config.append("create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 xlconstant_0")
-        config.append(
-            "set_property -dict [list \
-            CONFIG.CONST_VAL {0} \
-            CONFIG.CONST_WIDTH {3} \
-            ] [get_bd_cells xlconstant_0]"
-        )
-        config.append(
-            """
-            connect_bd_net [get_bd_pins xlslice_0/Din] [get_bd_pins axi_gpio_0/gpio_io_o]
-            connect_bd_net [get_bd_pins xlslice_1/Din] [get_bd_pins axi_gpio_0/gpio_io_o]
-            connect_bd_net [get_bd_pins xlslice_2/Din] [get_bd_pins axi_gpio_0/gpio_io_o]
-            connect_bd_net [get_bd_pins xlconstant_0/dout] [get_bd_pins xlconcat_0/In0]
-            connect_bd_net [get_bd_pins axi_gpio_0/gpio_io_i] [get_bd_pins xlconcat_0/dout]
-        """
-        )
-        if self.dut_duplication > 1:
-            config.append("create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 xlconcat_valid")
-            config.append(
-                "set_property CONFIG.NUM_PORTS {%d} [get_bd_cells xlconcat_valid]"
-                % self.dut_duplication
-            )
-            config.append(
-                "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 xlconcat_checksum"
-            )
-            config.append(
-                "set_property CONFIG.NUM_PORTS {%d} [get_bd_cells xlconcat_checksum]"
-                % self.dut_duplication
-            )
-
-            config.append("create_bd_cell -type module -reference vector_xor vector_xor_valid")
-            config.append(
-                "set_property CONFIG.WIDTH {%d} [get_bd_cells vector_xor_valid]"
-                % self.dut_duplication
-            )
-            config.append("create_bd_cell -type module -reference vector_xor vector_xor_checksum")
-            config.append(
-                "set_property CONFIG.WIDTH {%d} [get_bd_cells vector_xor_checksum]"
-                % self.dut_duplication
-            )
-
-            config.append(
-                "connect_bd_net [get_bd_pins vector_xor_valid/in_data] [get_bd_pins xlconcat_valid/dout]"
-            )
-            config.append(
-                "connect_bd_net [get_bd_pins vector_xor_checksum/in_data] [get_bd_pins xlconcat_checksum/dout]"
-            )
-            config.append(
-                "connect_bd_net [get_bd_pins vector_xor_valid/out_data] [get_bd_pins xlconcat_0/In1]"
-            )
-            config.append(
-                "connect_bd_net [get_bd_pins vector_xor_checksum/out_data] [get_bd_pins xlconcat_0/In2]"
-            )
-            for id in range(self.dut_duplication):
-                config.append(
-                    "connect_bd_net [get_bd_pins sink_%d/valid] [get_bd_pins xlconcat_valid/In%d]"
-                    % (id, id)
-                )
-                config.append(
-                    "connect_bd_net [get_bd_pins sink_%d/checksum] [get_bd_pins xlconcat_checksum/In%d]"
-                    % (id, id)
-                )
-        else:
-            config.append("connect_bd_net [get_bd_pins sink_0/valid] [get_bd_pins xlconcat_0/In1]")
-            config.append(
-                "connect_bd_net [get_bd_pins sink_0/checksum] [get_bd_pins xlconcat_0/In2]"
-            )
-        for id in range(self.dut_duplication):
-            config.append(
-                "connect_bd_net [get_bd_pins xlslice_2/Dout] [get_bd_pins sink_%d/enable]" % id
-            )
-        for id in range(num_sources):
-            config.append(
-                "connect_bd_net [get_bd_pins xlslice_0/Dout] [get_bd_pins axi_traffic_gen_%d/core_ext_start]"
-                % id
-            )
-            config.append(
-                "connect_bd_net [get_bd_pins xlslice_1/Dout] [get_bd_pins axi_traffic_gen_%d/core_ext_stop]"
-                % id
-            )
-
-        # create a temporary folder for the project
-        vivado_pynq_proj_dir = make_build_dir(prefix="vivado_zynq_proj_")
-        model.set_metadata_prop("vivado_pynq_proj", vivado_pynq_proj_dir)
-
-        fclk_mhz = int(1 / (global_clk_ns * 0.001))
-
-        # create a TCL recipe for the project
-        ipcfg = vivado_pynq_proj_dir + "/ip_config.tcl"
-        config = "\n".join(config) + "\n"
-        with open(ipcfg, "w") as f:
-            f.write(
-                zynq_harness_template
-                % (
-                    fclk_mhz,
-                    axilite_idx,
-                    aximm_idx,
-                    self.platform,
-                    part_map[self.platform],
-                    config,
-                )
-            )
-
-        # create a TCL recipe for the project
-        synth_project_sh = vivado_pynq_proj_dir + "/synth_project.sh"
-        working_dir = os.environ["PWD"]
-        with open(synth_project_sh, "w") as f:
-            f.write("#!/bin/bash \n")
-            f.write("cd {}\n".format(vivado_pynq_proj_dir))
-            f.write("vivado -mode batch -source %s\n" % ipcfg)
-            f.write("cd {}\n".format(working_dir))
-
-        # call the synthesis script
-        bash_command = ["bash", synth_project_sh]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
-
-        # collect results
-        os.makedirs(self.output_dir, exist_ok=True)
-
-        bitfile_name = vivado_pynq_proj_dir + "/finn_zynq_link.runs/impl_1/top_wrapper.bit"
-        if not os.path.isfile(bitfile_name):
-            raise Exception(
-                "Synthesis failed, no bitfile found. Check logs under %s" % vivado_pynq_proj_dir
-            )
-        hwh_name = vivado_pynq_proj_dir + "/finn_zynq_link.gen/sources_1/bd/top/hw_handoff/top.hwh"
-        if not os.path.isfile(hwh_name):
-            raise Exception(
-                "Synthesis failed, no hwh file found. Check logs under %s" % vivado_pynq_proj_dir
-            )
-        synth_report_name = vivado_pynq_proj_dir + "/synth_report.xml"
-        model.set_metadata_prop("vivado_synth_rpt", synth_report_name)
-        model.set_metadata_prop("bitfile", bitfile_name)
-        model.set_metadata_prop("hw_handoff", hwh_name)
-
-        shcopy(bitfile_name, self.output_dir)
-        shcopy(hwh_name, self.output_dir)
-        shcopy(synth_report_name, self.output_dir)
-
-        post_synth_resources = model.analysis(post_synth_res)
-        with open(self.output_dir + "/post_synth_resources.json", "w") as f:
-                json.dump(post_synth_resources, f, indent=2)
-
-        timing_rpt = ("%s/finn_zynq_link.runs/impl_1/top_wrapper_timing_summary_routed.rpt"% vivado_pynq_proj_dir)
-        shcopy(timing_rpt, self.output_dir + "/post_route_timing.rpt")
-        return (model, False)
-
-def step_synth_harness(model: ModelWrapper, cfg: DataflowBuildConfig):
-    # Build step version of above transformation (used for full builds)
-    model = model.transform(MakeZYNQHarnessProject(
-                platform=cfg.board,
-                output_dir=os.path.join(cfg.output_dir, "harness"),
-                #dut_duplication=dut_duplication, #TODO: enable for full builds
-                clock_period_ns=cfg.synth_clk_period_ns
-            ))
-    return model
 
 def start_test_batch_fast(results_path, project_path, run_target, pairs):
     # Prepare tcl script
@@ -786,14 +370,14 @@ class bench():
         build_dir = "temp_output_harness_build"
         # TODO: replace hold harness with new instr wrapper implementation
         #TODO: if synth fails this could contain stale bitstreams which will be power tested
-        model = model.transform(
-            MakeZYNQHarnessProject(
-                platform=self.board,
-                output_dir=build_dir,
-                dut_duplication=dut_duplication,
-                clock_period_ns=self.clock_period_ns
-            )
-        )
+        # model = model.transform(
+        #     MakeZYNQHarnessProject(
+        #         platform=self.board,
+        #         output_dir=build_dir,
+        #         dut_duplication=dut_duplication,
+        #         clock_period_ns=self.clock_period_ns
+        #     )
+        # )
 
         # COPY bitstreams and other outputs
         # TODO: integrate better (e.g. as artifact) and remove redundant copy
@@ -872,120 +456,6 @@ class bench():
         else:
             pass #TODO: warn/skip?
 
-        ### ANALYZE FIFOs ###
-        fifo_info = {}
-        # TODO: skip if not present
-        model_final = ModelWrapper(build_dir + "/intermediate_models/step_create_stitched_ip.onnx")
-
-        fifo_info["fifo_depths"] = {}
-        fifo_info["fifo_sizes"] = {}
-        total_fifo_size = 0
-        for node in model_final.get_nodes_by_op_type("StreamingFIFO_rtl"):
-            node_inst = getCustomOp(node)
-            fifo_info["fifo_depths"][node.name] = node_inst.get_nodeattr("depth")
-            fifo_info["fifo_sizes"][node.name] = node_inst.get_instream_width() * node_inst.get_nodeattr("depth")
-            total_fifo_size += fifo_info["fifo_sizes"][node.name] 
-        fifo_info["total_fifo_size_kB"] = int(total_fifo_size / 8.0 / 1000.0)
-
-        self.output_dict["fifos"] = fifo_info
-
-    def step_fifotest(self, onnx_path, cfg, build_dir):
-        # requires certain output products (e.g., ESTIMATE_REPORTS, RTLSIM_PERFORMANCE)
-        # TODO: check them and skip/warn if missing
-        log = {}
-        # load performance reports
-        with open(build_dir + "/report/estimate_network_performance.json") as f:
-            est_data = json.load(f)
-        with open(build_dir + "/report/rtlsim_performance.json") as f:
-            sim_data = json.load(f) 
-
-        # check for deadlock
-        model_final = ModelWrapper(build_dir + "/intermediate_models/step_create_stitched_ip.onnx")
-        first_node = getCustomOp(model_final.find_consumer(model_final.graph.input[0].name))
-        last_node = getCustomOp(model_final.find_producer(model_final.graph.output[0].name))
-        input_txns_expected = np.prod(first_node.get_folded_input_shape()[:-1]) * self.params["rtlsim_n"]
-        output_txns_expected = np.prod(last_node.get_folded_output_shape()[:-1]) * self.params["rtlsim_n"]
-        deadlock = sim_data["N_IN_TXNS"] != input_txns_expected or sim_data["N_OUT_TXNS"] != output_txns_expected
-        log["deadlock"] = deadlock.tolist()
-
-        # check rtlsim throughput
-        throughput = sim_data["throughput[images/s]"]
-        stable_throughput = sim_data["stable_throughput[images/s]"]
-        estimated_throughput = est_data["estimated_throughput_fps"]
-        throughput_factor = throughput / estimated_throughput
-        stable_throughput_factor = stable_throughput / estimated_throughput
-
-        # TODO: Take throughput or stable_throughput?
-        throughput_pass = throughput_factor > self.params["fifo_throughput_factor_threshold"]
-
-        log["throughput_pass"] = throughput_pass
-        log["throughput"] = throughput
-        log["stable_throughput"] = stable_throughput
-        log["estimated_throughput"] = estimated_throughput
-
-        # reduce individual FIFO sizes by some amount and observe throughput drop or deadlock appear
-        fifo_reduction_pass = []
-        log["fifo_reduction_results"] = {}
-        model_orig = ModelWrapper(build_dir + "/intermediate_models/step_hw_ipgen.onnx")
-        for node_orig in model_orig.get_nodes_by_op_type("StreamingFIFO_rtl"):
-            model = copy.deepcopy(model_orig)
-            node = model.get_node_from_name(node_orig.name)
-            node_inst = getCustomOp(node)
-
-            # skip shallow FIFOs
-            # TODO: do we need to consider rounding-up of FIFO depths for impl_style=vivado?
-            if node_inst.get_nodeattr("depth") <= self.params["fifo_reduction_skip_threshold"]:
-                log["fifo_reduction_results"][node.name] = "skip"
-                continue
-
-            # reduce depth of current FIFO and reset generated code
-            node_inst.set_nodeattr("depth", int(node_inst.get_nodeattr("depth") * self.params["fifo_reduction_factor"]))
-            node_inst.set_nodeattr("code_gen_dir_ipgen", "")
-            node_inst.set_nodeattr("ip_path", "")
-            node_inst.set_nodeattr("ipgen_path", "")
-
-            # save model variation
-            tmp_output_dir_var = build_dir + "/variations/" + node.name
-            os.makedirs(tmp_output_dir_var)
-            model.save(tmp_output_dir_var + "/model.onnx")
-
-            # build again, only re-run necessary steps to save time
-            cfg.output_dir = tmp_output_dir_var
-            cfg.steps = ["step_hw_codegen", "step_create_stitched_ip", "step_measure_rtlsim_performance"]
-            build.build_dataflow_cfg(tmp_output_dir_var + "/model.onnx", cfg)
-
-            # load performance report
-            with open(tmp_output_dir_var + "/report/rtlsim_performance.json") as f:
-                sim_data = json.load(f)
-
-            # check for deadlock
-            model_final = ModelWrapper(tmp_output_dir_var + "/intermediate_models/step_create_stitched_ip.onnx")
-            first_node = getCustomOp(model_final.find_consumer(model_final.graph.input[0].name))
-            last_node = getCustomOp(model_final.find_producer(model_final.graph.output[0].name))
-            input_txns_expected = np.prod(first_node.get_folded_input_shape()[:-1]) * self.params["rtlsim_n"]
-            output_txns_expected = np.prod(last_node.get_folded_output_shape()[:-1]) * self.params["rtlsim_n"]
-            var_deadlock = sim_data["N_IN_TXNS"] != input_txns_expected or sim_data["N_OUT_TXNS"] != output_txns_expected
-
-            # check rtlsim throughput
-            var_throughput = sim_data["throughput[images/s]"]
-            var_stable_throughput = sim_data["stable_throughput[images/s]"]
-            # TODO: take throughput or stable_throughput?
-            throughput_drop = (throughput - var_throughput) / throughput
-
-            if var_deadlock:   
-                fifo_reduction_pass.append(True)
-                log["fifo_reduction_results"][node.name] = 1.0
-            elif throughput_drop > self.params["fifo_reduction_throughput_drop_threshold"]:
-                fifo_reduction_pass.append(True)
-                log["fifo_reduction_results"][node.name] = throughput_drop
-            else:
-                fifo_reduction_pass.append(False)
-                log["fifo_reduction_results"][node.name] = "fail (no drop)"
-
-        if "fifos" not in self.output_dict:
-            self.output_dict["fifos"] = {}
-        self.output_dict["fifos"]["fifotest"] = log
-
     def steps_simple_model_flow(self):
         # Default step sequence for benchmarking a simple model (mostly single operators/custom_ops)
         do_hls = self.params["do_hls"] if "do_hls" in self.params else False
@@ -1023,8 +493,8 @@ class bench():
             self.step_synthesis()
         if do_sim_power:
             self.step_sim_power()
-        if do_synth_power:
-            self.step_synth_power()
+        #if do_synth_power:
+        #    self.step_synth_power()
 
     def steps_full_build_flow(self):
         # Default step sequence for benchmarking a full FINN builder flow
@@ -1062,18 +532,24 @@ class bench():
             self.build_inputs["floorplan_path"] = self.params["floorplan_path"]
 
         ### BUILD SETUP ###
-        # TODO: select output products here, depending on what shall be tested
-        # TODO: set as much as possible here, e.g. verbose, debug, force_python, vitisopt, shell_flow
         cfg = self.step_build_setup()
+        cfg.generate_outputs = self.params["output_products"]
+        cfg.output_dir = self.build_inputs["build_dir"]
+        cfg.synth_clk_period_ns = self.clock_period_ns
         cfg.board = self.board
         if self.board in alveo_part_map:
             cfg.shell_flow_type=build_cfg.ShellFlowType.VITIS_ALVEO
             cfg.vitis_platform=alveo_default_platform[self.board]
         else:
             cfg.shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ
+        # enable extra performance optimizations (physopt)
+        cfg.vitis_opt_strategy=build_cfg.VitisOptStrategy.PERFORMANCE_BEST
         cfg.verbose = False
         cfg.enable_build_pdb_debug = False
+        cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
         cfg.force_python_rtlsim = False
+        cfg.split_large_fifos = True
+        cfg.enable_instrumentation = True # no IODMA functional correctness/accuracy test yet
         #rtlsim_use_vivado_comps # TODO ?
         #cfg.default_swg_exception
         #cfg.large_fifo_mem_style
@@ -1086,9 +562,6 @@ class bench():
                 cfg.auto_fifo_depths = False
                 cfg.live_fifo_sizing = True
                 cfg.enable_instrumentation = True
-                # Overwrite output products
-                # TODO: make configurable directly via JSON/YAML cfg
-                cfg.generate_outputs = [build_cfg.DataflowOutputType.BITFILE]
             else:
                 cfg.auto_fifo_depths = True
                 cfg.auto_fifo_strategy = self.params["fifo_method"]
@@ -1125,7 +598,3 @@ class bench():
 
         ### ANALYSIS ###
         self.step_parse_builder_output(self.build_inputs["build_dir"])
-
-        # Only run in-depth FIFO test if selected
-        if "fifo_throughput_factor_threshold" in self.params:
-            self.step_fifotest(self.build_inputs["onnx_path"], cfg, self.build_inputs["build_dir"])

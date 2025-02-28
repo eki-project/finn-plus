@@ -901,27 +901,11 @@ class bench_transformer(bench):
         # Create a configuration for building the scaled dot-product attention
         # operator to a hardware accelerator
         cfg = build_cfg.DataflowBuildConfig(
-            # Unpack the build configuration parameters
-            #**params["build"]["finn"],
-            output_dir = self.build_inputs["build_dir"],
-            stitched_ip_gen_dcp = False, # only needed for further manual integration
-            synth_clk_period_ns = self.clock_period_ns,
             folding_config_file = "folding.yaml",
             specialize_layers_config_file = "specialize_layers.json",
             standalone_thresholds = True,
             max_multithreshold_bit_width = 16,
             mvau_wwidth_max = 2048,
-            split_large_fifos = True,
-
-            generate_outputs=[
-                build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
-                build_cfg.DataflowOutputType.STITCHED_IP, # required for HarnessBuild, OOC_SYNTH, and RTLSIM
-                #build_cfg.DataflowOutputType.PYNQ_DRIVER, #TODO: currently broken (assert i_consumer.op_type == "StreamingDataflowPartition"), might be useful for functional verification on hw later
-                #build_cfg.DataflowOutputType.OOC_SYNTH, # requires stitched-ip, not needed because ZynqBuild/HarnessBuild is performed
-                #build_cfg.DataflowOutputType.BITFILE, # does not require stitched-ip, not needed because HarnessBuild is performed
-                #build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE, # not possible due to float components TODO: try with pyXSI
-                #build_cfg.DataflowOutputType.DEPLOYMENT_PACKAGE # not needed, just a copy operation
-            ],
 
             verify_steps=[
                 # Verify the model after converting to the FINN onnx dialect
@@ -1006,30 +990,12 @@ class bench_transformer(bench):
                 # Only for debugging for now, does not work if "vivado" style
                 # StreamingFIFOs are used
                 # node_by_node_rtlsim,
-
-                #test_step_insert_tlastmarker, # required for instrumentation_wrapper
-
                 "step_create_stitched_ip",
-
                 # "step_measure_rtlsim_performance", # not possible due to float components
-
-                step_synth_harness, #TODO: replace with instr wrapper (or port it into this step)
-                
-                #"step_out_of_context_synthesis", # for synthesis results (e.g. utilization)
-
-                # normal deployment TODO: replace with instr wrapper (or port it into this step as an option) 
-                #"step_synthesize_bitfile", 
-                #"step_make_pynq_driver",
-                #"step_deployment_package",
-
-                #test_step_gen_vitis_xo, # preparation step for original instr wrapper integration
-                #test_step_gen_instrumentation_wrapper, # preparation step for original instr wrapper integration
-
-                #test_step_gen_instrwrap_sim, # preparation step for simulation of original instr wrapper integration
-                #test_step_run_instrwrap_sim, # simulation with instr wrapper, disabled for now due to extreme runtime
-                
-                #test_step_export_xo, # preparation step for original instr wrapper integration
-                #test_step_build_platform # synthesis with instr wrapper
+                "step_out_of_context_synthesis", # for synthesis results (e.g. utilization)
+                "step_synthesize_bitfile", 
+                "step_make_pynq_driver",
+                "step_deployment_package",
             ]
         )
 

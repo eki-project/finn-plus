@@ -44,14 +44,8 @@ class bench_metafi(bench):
         ]
 
         cfg = build_cfg.DataflowBuildConfig(
-            output_dir = self.build_inputs["build_dir"],
-            synth_clk_period_ns = self.clock_period_ns,
             steps=steps,
-
             target_fps=None, #23
-
-            split_large_fifos=True, # probably needed #TODO: account for this in FIFO reduction test
-
             # folding_config_file=folding_config_file,
             # folding_config_file="/home/rz/project/finn-examples/build/vgg10-radioml/folding_config/auto_folding_config.json",
             # specialize_layers_config_file = "output_%s_%s" % (model_name, release_platform_name) + "/template_specialize_layers_config.json",
@@ -59,14 +53,6 @@ class bench_metafi(bench):
 
             #large_fifo_mem_style=build_cfg.LargeFIFOMemStyle.AUTO,
             # standalone_thresholds=True,
-            # enable extra performance optimizations (physopt)
-            vitis_opt_strategy=build_cfg.VitisOptStrategy.PERFORMANCE_BEST,
-            generate_outputs=[
-                build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
-                build_cfg.DataflowOutputType.STITCHED_IP,
-                build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE,
-                build_cfg.DataflowOutputType.OOC_SYNTH, # not required for FIFO test, include for general testing
-            ],
         )
 
         # where is this used and why?

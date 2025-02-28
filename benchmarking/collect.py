@@ -89,10 +89,12 @@ if __name__ == "__main__":
     for run in combined_log:
         with Live(exp_message="Job result collected by GitLab CI", cache_images=True) as live:
             metadata = {
-                "run_id": run["run_id"],
-                "task_id": run["task_id"],
-                "status": run["status"],
-                "total_time": run["total_time"]
+                "metadata": {
+                    "run_id": run["run_id"],
+                    "task_id": run["task_id"],
+                    "status": run["status"],
+                    "total_time": run["total_time"],
+                }
             }
             live.log_params(metadata)
             live.log_params(run["params"])

@@ -289,19 +289,8 @@ class bench_synthetic_nonlinear(bench):
         # create build config for synthetic test models
 
         cfg = build_cfg.DataflowBuildConfig(
-            output_dir = self.build_inputs["build_dir"],
-            synth_clk_period_ns = self.clock_period_ns,
-
-            split_large_fifos=False,
             # manual folding
             target_fps=None,
-
-            shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ, # TODO: generalize/adapt to new back-end
-            generate_outputs=[
-                build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
-                build_cfg.DataflowOutputType.STITCHED_IP,
-                build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE,
-            ],
         )
 
         return cfg

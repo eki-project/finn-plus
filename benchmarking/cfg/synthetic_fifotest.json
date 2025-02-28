@@ -1,0 +1,64 @@
+[
+    {
+        "dut": ["synthetic_nonlinear"],
+        "dim": [32],
+        "kernel_size": [5],
+        "ch": [4],
+        "simd": [4],
+        "pe": [4],
+        "parallel_window": [1],
+
+        "lb_num_layers": [1],
+        "rb_num_layers": [3],
+
+        "board": ["RFSoC2x2"],
+        "clock_period_ns": [10],
+
+        "rtlsim_n": [5],
+
+        "fifo_method": ["live"],
+        "output_products": [["bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["synthetic_nonlinear"],
+        "dim": [32],
+        "kernel_size": [5],
+        "ch": [4],
+        "simd": [4],
+        "pe": [4],
+        "parallel_window": [1],
+
+        "lb_num_layers": [1],
+        "rb_num_layers": [3],
+
+        "board": ["RFSoC2x2"],
+        "clock_period_ns": [10],
+
+        "rtlsim_n": [5],
+
+        "fifo_method": ["characterize"],
+        "fifo_strategy": ["analytical", "rtlsim"],
+        "output_products": [["rtlsim_performance", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["synthetic_nonlinear"],
+        "dim": [32],
+        "kernel_size": [5],
+        "ch": [4],
+        "simd": [4],
+        "pe": [4],
+        "parallel_window": [1],
+
+        "lb_num_layers": [1],
+        "rb_num_layers": [3],
+
+        "board": ["RFSoC2x2"],
+        "clock_period_ns": [10],
+
+        "rtlsim_n": [5],
+
+        "fifo_method": ["largefifo_rtlsim"],
+        "fifo_rtlsim_n": [2],
+        "output_products": [["rtlsim_performance", "bitfile", "pynq_driver", "deployment_package"]]
+    }
+]

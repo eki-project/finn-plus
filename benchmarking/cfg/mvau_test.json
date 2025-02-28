@@ -25,6 +25,8 @@
         "do_sim_power": [true],
         "do_synth_power": [true],
 
-        "dut_duplication": [1]
+        "dut_duplication": [1],
+
+        "output_products": [["bitfile", "pynq_driver", "deployment_package"]] ##
     }
     ]

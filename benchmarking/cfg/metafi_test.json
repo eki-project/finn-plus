@@ -7,8 +7,8 @@
         "board": ["RFSoC2x2"],
         "clock_period_ns": [10],
 
-        "fifo_method": ["manual"],
+        "fifo_method": ["live"],
 
-        "rtlsim_n": [3]
+        "output_products": [["bitfile", "pynq_driver", "deployment_package"]]
     }
     ]

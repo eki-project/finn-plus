@@ -36,20 +36,7 @@ class bench_resnet50(bench):
         ]
 
         cfg = build_cfg.DataflowBuildConfig(
-            output_dir = self.build_inputs["build_dir"],
-            synth_clk_period_ns = self.clock_period_ns,
             steps=resnet50_build_steps,
-
-            split_large_fifos=True,
-
-            # enable extra performance optimizations (physopt)
-            vitis_opt_strategy=build_cfg.VitisOptStrategy.PERFORMANCE_BEST,
-            generate_outputs=[
-                build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
-                build_cfg.DataflowOutputType.STITCHED_IP,
-                build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE,
-                build_cfg.DataflowOutputType.OOC_SYNTH, # not required for FIFO test, include for general testing
-            ],
         )
 
         return cfg

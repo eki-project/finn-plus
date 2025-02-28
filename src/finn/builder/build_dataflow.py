@@ -160,7 +160,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             # restore stdout/stderr
             sys.stdout = stdout_orig
             sys.stderr = stderr_orig
-            time_per_step[step_name] = step_end - step_start
+            time_per_step[step_name] = round(step_end - step_start)
             chkpt_name = "%s.onnx" % (step_name)
             if cfg.save_intermediate_models:
                 intermediate_model_dir = cfg.output_dir + "/intermediate_models"
@@ -183,7 +183,8 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             print("Build failed")
             return -1
 
-    with open(cfg.output_dir + "/time_per_step.json", "w") as f:
+    time_per_step["total_build_time"] = sum(time_per_step.values())
+    with open(cfg.output_dir + "/report/time_per_step.json", "w") as f:
         json.dump(time_per_step, f, indent=2)
     print("Completed successfully")
     return 0

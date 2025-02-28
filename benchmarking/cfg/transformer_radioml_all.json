@@ -3,12 +3,20 @@
         "dut": ["transformer"],
         "seed": [12],
         "model_dir": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/radioml_0"],
-        "dut_duplication": [1]
+
+        "board": ["RFSoC2x2"],
+        "clock_period_ns": [10],
+
+        "output_products": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["transformer"],
         "seed": [12],
         "model_dir": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/radioml_convformer"],
-        "dut_duplication": [1]
+
+        "board": ["RFSoC2x2"],
+        "clock_period_ns": [10],
+
+        "output_products": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     }
 ]
