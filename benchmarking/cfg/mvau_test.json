@@ -19,12 +19,6 @@
         "ram_style": ["distributed"],
         "ram_style_thr": ["distributed"],
 
-        "do_hls": [true],
-        "do_rtlsim": [true],
-        "do_synthesis": [true],
-        "do_sim_power": [true],
-        "do_synth_power": [true],
-
         "dut_duplication": [1],
 
         "output_products": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]

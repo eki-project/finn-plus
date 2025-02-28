@@ -85,6 +85,12 @@ def open_json_report(id, report_name):
     else:
         return None
 
+def log_all_metrics_from_report(id, live, report_name, prefix=""):
+    report = open_json_report(id, report_name)
+    if report:
+        for key in report:
+            live.log_metric(prefix + key, report[key], plot=False)
+
 def log_metrics_from_report(id, live, report_name, keys, prefix=""):
     report = open_json_report(id, report_name)
     if report:
@@ -112,7 +118,10 @@ if __name__ == "__main__":
 
     for run in combined_log:
         id = run["run_id"]
-        with Live(exp_message="Job result collected by GitLab CI", cache_images=True) as live:
+        experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + id
+        experiment_msg = "[CI] " + os.environ.get("CI_PIPELINE_NAME")
+        #TODO: cache images once we switch to a cache provider that works with DVC Studio
+        with Live(exp_name = experiment_name, exp_message=experiment_msg, cache_images=False) as live:
             ### PARAMS ###
             #TODO: add pipeline info and FINN configuration (e.g. tool versions) to metadata (or as metric or other annotation?)
             metadata = {
@@ -124,10 +133,14 @@ if __name__ == "__main__":
                 }
             }
             live.log_params(metadata)
-            params = {
-                "params": run["params"]
-            }
+            params = {"params": run["params"]}
             live.log_params(params)
+
+            # dut_info.json (additional information about DUT generated during model generation)
+            dut_info_report = open_json_report(id, "dut_info.json")
+            if dut_info_report:
+                dut_info = {"dut_info": dut_info_report}
+                live.log_params(dut_info)
 
             ### METRICS ###
             # TODO: for microbenchmarks, only summarize results for target node (or surrounding SDP?) (see old step_finn_estimate etc.)
@@ -174,7 +187,7 @@ if __name__ == "__main__":
                 ], prefix="rtlsim/performance/")
 
             # fifo_sizing.json
-            log_metrics_from_report(id, live, "fifo_sizing.json", ["total_fifo_size_kB"])
+            log_metrics_from_report(id, live, "fifo_sizing.json", ["total_fifo_size_kB"], prefix="fifosizing/")
 
             # ooc_synth_and_timing.json (OOC synth / step_out_of_context_synthesis)
             log_metrics_from_report(id, live, "ooc_synth_and_timing.json", [
@@ -213,13 +226,20 @@ if __name__ == "__main__":
                     live.log_metric("verification", run["output"]["builder_verification"]["verification"], plot=False)
 
             # instrumentation measurement
-            # TODO
+            log_all_metrics_from_report(id, live, "measured_performance.json", prefix="measurement/performance/")
 
             # power measurement
             # TODO
 
-            # live fifosizing report + png
-            # TODO
+            # live fifosizing report + graph png
+            log_metrics_from_report(id, live, "fifo_sizing_report.json", [
+                "error",
+                "fifo_size_total_kB",
+                ], prefix="fifosizing/live/")
+
+            image = os.path.join("bench_artifacts", "runs_output", "run_%d" % (id), "reports", "fifo_sizing_graph.png")
+            if os.path.isfile(image):
+                live.log_image("fifosizing_pass_1", image)
 
             # time_per_step.json
             log_metrics_from_report(id, live, "time_per_step.json", ["total_build_time"])

@@ -145,8 +145,8 @@ def main(config_name):
 
         start_time = time.time()
         try:
-            bench_object.run()
-            if not bench_object.output_dict:
+            result = bench_object.run()
+            if result == "skipped":
                 log_dict["status"] = "skipped"
                 print("Run skipped")
             else:

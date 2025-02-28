@@ -31,10 +31,10 @@ if __name__ == "__main__":
 
             # Run driver
             print("Running driver..")
-            subprocess.run([f"python {extract_dir}/driver/driver.py",
-                            f"--bitfile {extract_dir}/bitfile/finn-accel.bit",
-                            f"--settingsfile {extract_dir}/driver/settings.json",
-                            f"--reportfile {extract_dir}/measured_performance.json",
+            subprocess.run(["python", f"{extract_dir}/driver/driver.py",
+                            "--bitfile",  f"{extract_dir}/bitfile/finn-accel.bit",
+                            "--settingsfile", f"{extract_dir}/driver/settings.json",
+                            "--reportfile", f"{extract_dir}/measured_performance.json",
                             ]) 
             print("Driver finished.")
 

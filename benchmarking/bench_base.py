@@ -206,7 +206,7 @@ class bench():
 
     # defaults to normal build flow, may be overwritten by subclass
     def run(self):
-        self.steps_full_build_flow()
+        return self.steps_full_build_flow()
 
     # def step_finn_estimate(self):
     #     # Gather FINN estimates
@@ -393,7 +393,7 @@ class bench():
             self.build_inputs["onnx_path"] = os.path.join(self.build_inputs["build_dir"], "model_export.onnx")
             if self.step_export_onnx(self.build_inputs["onnx_path"]) == "skipped":
                 # microbenchmarks might skip because no valid model can be generated for given params
-                return
+                return "skipped"
 
         if "folding_path" in self.params:
             self.build_inputs["folding_path"] = self.params["folding_path"]
