@@ -2,9 +2,7 @@ import time
 import json
 import os
 import argparse
-import matplotlib as mpl
 import matplotlib.pyplot as plt
-import numpy as np
 from pynq.pl_server.device import Device
 
 from driver_instrumentation import FINNInstrumentationOverlay

@@ -1,10 +1,6 @@
 import time
 import json
 import argparse
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-from IPython.display import clear_output
-import numpy as np
 from pynq import Overlay
 from pynq.ps import Clocks
 from pynq.pl_server.device import Device

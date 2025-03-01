@@ -53,7 +53,8 @@ Measurement:
     # Also run on failure of previous tasks to measure partial results
     - when: always
   script:
-    - python benchmarking/measure.py
+    # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python benchmarking/measure.py"
   artifacts:
     name: "bench_artifacts"
     when: always
