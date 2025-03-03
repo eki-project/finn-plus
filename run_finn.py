@@ -184,10 +184,39 @@ def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_te
 
 @click.command(name="quicktest", help="Run the quicktests in FINN. Should only take a few minutes")
 @click.option("--variant", "-v", help="Which variant of the quicktests to execute. Defaults to standard tests.", default="")
-def run_quicktest():
+@click.option("--num-workers", "-n", help="Number of pytest workers in parallel", default="auto")
+@click.option("--envvar-config", "-e", help="Path to a config file containing values for FINN specific environment variables", default=str(Path.home() / ".finn" / "env.yaml"))
+@click.option("--deps-path", "-d", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie", show_default=True)
+def run_quicktest(variant, num_workers, envvar_config, deps_path):
+    console = Console()
+    success = load_preset_envvars(Path(envvar_config))
+    if success:
+        console.print("[bold green]Loaded environment variable config.[/bold green]")
+    else:
+        console.print("[bold yellow]Environment variable config not found or has incompatible format. You might be asked for environment variable values later.[/bold yellow]")
     setup_envvars()
-    # TODO: Implement all test variants
-    subprocess.run("pytest -m 'not (vivado or slow or vitis or board or notebooks or bnn_pynq)' --dist=loadfile -n auto", shell=True) 
+    prefix = generate_envvars(Path(__file__).parent.absolute(), Path.home(), False, Path(deps_path), num_workers)
+    match variant:
+        case "":
+            console.print("[bold green]Starting default tests[/bold green]")
+            subprocess.run(f"{prefix} pytest -m 'not (vivado or slow or vitis or board or notebooks or bnn_pynq)' --dist=loadfile -n {num_workers}", shell=True) 
+        case "main":
+            console.print("[bold green]Starting main tests[/bold green]")
+            subprocess.run(f"{prefix} pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}", shell=True) 
+        case "rtlsim":
+            console.print("[bold green]Starting RTLSIM tests[/bold green]")
+            subprocess.run(f"{prefix} pytest -k rtlsim --workers {num_workers}", shell=True) 
+        case "end2end":
+            console.print("[bold green]Starting end2end tests[/bold green]")
+            subprocess.run(f"{prefix} pytest -k end2end", shell=True) 
+        case "full":
+            console.print("[bold green]Running all tests. This might take a while[/bold green]")
+            subprocess.run(f"{prefix} pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}", shell=True) 
+            subprocess.run(f"{prefix} pytest -k rtlsim --workers {num_workers}", shell=True) 
+            subprocess.run(f"{prefix} pytest -k end2end", shell=True) 
+        case "brevitas":
+            console.print("[bold green]Brevitas tests...[/bold green]") 
+            subprocess.run(f"{prefix} pytest -k brevitas_export", shell=True) 
 
 
 

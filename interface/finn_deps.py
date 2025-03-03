@@ -8,6 +8,10 @@ FINN_DEPS = {
         "https://github.com/Xilinx/finn-experimental.git",
         "0724be21111a21f0d81a072fccc1c446e053f851"
     ),
+    "brevitas": (
+        "https://github.com/Xilinx/brevitas.git",
+        "84f42259ec869eb151af4cb8a8b23ad925f493db"
+    ),
     "cnpy": (
         "https://github.com/rogersce/cnpy.git",
         "4e8810b1a8637695171ed346ce68f6984e585ef4"

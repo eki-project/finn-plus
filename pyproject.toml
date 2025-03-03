@@ -70,10 +70,39 @@ pytest-xdist = {version = "3.2.0", extras = ["setproctitle"]}
 qonnx = { git = "https://github.com/fastmachinelearning/qonnx", branch = "main", rev = "2281a777d84aa5cbd7469085c2e534fb4a03ccf9" }
 pyverilator = { git = "https://github.com/maltanar/pyverilator", branch = "master", rev = "ce0a08c20cb8c1d1e84181d6f392390f846adbd1" }
 brevitas = { git = "https://github.com/Xilinx/brevitas", branch = "master", rev = "d4834bd2a0fad3c1fbc0ff7e1346d5dcb3797ea4" }
+dataset_loading = { git = "https://github.com/fbcotter/dataset_loading.git", tag="0.0.4" }
 termcolor = "^2.5.0"
 rich = "^13.9.4"
 click = "^8.1.8"
+onnxoptimizer = "^0.3.13"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+addopts = [ "--verbose" ]
+markers = [
+   "slow: marks tests as slow",
+   "vivado: mark tests that require Vivado or Vivado HLS",
+   "vitis: mark tests that require Vitis",
+   "board: mark tests that require a PYNQ board",
+   "brevitas_export : mark tests that test brevitas export functionality",
+   "streamline: mark tests that test streamlining functionality",
+   "util: mark tests that test util functions",
+   "transform: mark tests that test transformations (before hls layers)",
+   "fpgadataflow: mark tests related to hls layers",
+   "end2end: mark tests that run the end2end flow",
+   "notebooks: mark tests that execute all Jupyter notebooks",
+   "sanity_bnn: mark tests that execute the sanity BNN test",
+   "bnn_u250: mark tests that execute U250 BNN tests",
+   "bnn_kv260: mark tests that execute KV260 BNN tests",
+   "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
+   "bnn_zcu104: mark tests that execute ZCU104 BNN tests"
+]
+norecursedirs = [
+    "dist",
+    "build",
+    ".tox"
+]
+testpaths = "tests"
