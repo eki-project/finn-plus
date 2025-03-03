@@ -4,9 +4,12 @@ import shutil
 import subprocess
 import sys
 import click
+from inspect import isclass
+from qonnx.transformation.base import Transformation
 from rich.table import Table
 from rich.panel import Panel
 from rich.console import Console
+from rich.markdown import Markdown
 
 from interface.finn_deps import FINN_BOARDFILES, FINN_DEPS, deps_exist, pull_boardfile, pull_dep
 from interface.finn_envvars import GLOBAL_FINN_ENVVARS, generate_envvars, load_preset_envvars
@@ -173,7 +176,7 @@ def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_te
     # Run FINN
     prefix = generate_envvars(Path(__file__).parent.absolute(), buildfile_path, local_temps, Path(deps_path), num_workers)
     splitprefix = prefix.replace(" ", "\n")
-    console.print(Panel(f"Prefix:\n{splitprefix}\nDependency directory: {deps_path}\nBuildfile: {buildfile_path.absolute()}"))
+    console.print(Panel(f"Prefix:\n{splitprefix}\n\nDependency directory: {deps_path}\nBuildfile: {buildfile_path.absolute()}"))
     console.print("\n")
     console.rule("RUNNING FINN")
     subprocess.run(f"{prefix} python {buildfile_path.name}", shell=True, cwd=buildfile_path.parent.absolute())
@@ -253,15 +256,67 @@ def inspect(obj, ignore_fifos, no_collapse_fifo_names, no_ignore_sdp_prefix, no_
     
 
 
+#### DOCS ####
+@click.group(help="Documentation related commands")
+def docs(): pass
+
+@click.command()
+@click.argument("transformation")
+@click.option("--relaxed", "-r", help="Look for substring matches and display all found.", is_flag=True)
+@click.option("--show-location", "-l", help="Also show location of the class", is_flag=True)
+def get(transformation, relaxed, show_location):
+    console = Console()
+    docs = {}
+    locs = {}
+    transformation_pkgs = [
+        "finn.transformation.fpgadataflow",
+        "finn.transformation.qonnx",
+        "finn.transformation.streamline",
+    ]
+    with console.status("Looking up docs...") as status:
+        for transformation_package in transformation_pkgs:
+            actual_path = Path(__file__).parent / "src" / Path(transformation_package.replace(".", "/"))
+            modules = [str(m.name).replace(".py", "") for m in actual_path.iterdir() if str(m).endswith(".py")]
+            modules = [m for m in modules if m != "__init__"]
+            mod = __import__(transformation_package, globals(), locals(), modules, 0)
+            for modname in modules:
+                for potential_class_name in dir(mod.__dict__[modname]):
+                    potential_class = mod.__dict__[modname].__dict__[potential_class_name]
+                    if isclass(potential_class):
+                        if issubclass(potential_class, Transformation):
+                            docs[potential_class_name] = potential_class.__doc__
+                            locs[potential_class_name] = f"{transformation_package}.{modname}.{potential_class_name}"
+
+    for class_name, class_doc in docs.items():
+        doc_text = class_doc
+        if show_location:
+            doc_text = f"[italic orange1]Class location: {locs[class_name]}[/italic orange1]\n\n{class_doc}"
+        if relaxed:
+            if transformation.lower() in class_name.lower():
+                console.print(Panel(doc_text, title=f"[bold cyan]{class_name}[/bold cyan]", border_style="cyan"))
+        else:
+            if class_name.lower() == transformation.lower():
+                console.print(Panel(doc_text, title=f"[bold cyan]{class_name}[/bold cyan]", border_style="cyan"))
+                return
+    if not relaxed:
+        console.print(f"[bold red]No documentation found for transformation [reverse]{transformation}[/reverse][/bold red]")
+
+
+
 ############### CLICK ###############
 
 test.add_command(run_quicktest)
 deps.add_command(update_deps_command)
 deps.add_command(check_deps_command)
+docs.add_command(get)
 main_group.add_command(deps)
 main_group.add_command(build)
 main_group.add_command(test)
 main_group.add_command(inspect)
+main_group.add_command(docs)
 
 def main():
     main_group()
+
+if __name__ == "__main__":
+    main()
