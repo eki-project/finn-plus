@@ -2,6 +2,8 @@ from math import floor
 import os
 from pathlib import Path
 import psutil
+import yaml
+import json
 
 GLOBAL_FINN_ENVVARS = {
     "PLATFORM_REPO_PATHS": "/opt/xilinx/platforms",
@@ -30,3 +32,22 @@ def generate_envvars(finnroot: Path, buildfile_path: Path, local_temps: bool, de
     prefix += f"OHMYXILINX={ohmyxilinx} "
     prefix += f"FINN_HOST_BUILD_DIR={finnhost}"
     return prefix
+
+
+def load_preset_envvars(location: Path) -> bool:
+    """Try to load existing environment variables. Return whether the operation failed
+    TODO: This is temporary and should eventually be replaced a proper configuration"""
+    if not location.exists():
+        return False
+    data = None
+    if location.name.endswith("json"):
+        with location.open() as f:
+            data = json.load(f)
+    elif location.name.endswith(("yaml", "yml")):
+        with location.open() as f:
+            data = yaml.load(f, Loader=yaml.Loader) 
+    else:
+        return False
+    for k,v in data.items():
+        os.environ[k] = v
+    return True

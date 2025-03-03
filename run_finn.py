@@ -9,8 +9,11 @@ from rich.panel import Panel
 from rich.console import Console
 
 from interface.finn_deps import FINN_BOARDFILES, FINN_DEPS, deps_exist, pull_boardfile, pull_dep
-from interface.finn_envvars import GLOBAL_FINN_ENVVARS, generate_envvars
+from interface.finn_envvars import GLOBAL_FINN_ENVVARS, generate_envvars, load_preset_envvars
 from interface.finn_inspect import inspect_onnx
+
+from rich.traceback import install
+install(show_locals=True)
 
 
 ########### TODO #############
@@ -18,6 +21,8 @@ from interface.finn_inspect import inspect_onnx
 # - Vivado IP Cache env var (run-docker.sh)
 # - Complete all tests
 # - Complete the inspect function
+
+# - Replace environment vars with a configuration that can be passed to BuildDataflowConfig(?)
 
 #### GROUPS ####
 
@@ -29,7 +34,6 @@ def deps(): pass
 
 @click.group(help="Run tests on the given FINN installation. Use finn test --help to learn more.")
 def test(): pass
-
 
 
 #### DEPENDENCIES ####
@@ -91,7 +95,6 @@ def check_deps_command(path):
 
 def setup_envvars():
     console = Console()
-    console.print()
     first = True
     newly_set = {}
     for varname, varcontent in GLOBAL_FINN_ENVVARS.items():
@@ -114,7 +117,7 @@ def setup_envvars():
     
 
 
-@click.command(help="Run a FINN build with the given build file")
+@click.command(help="Run a FINN build with the given build file. Tries to use environment variables in scope. If some are missing try to read from ~/.finn/env.yaml. Otherwise asks the user")
 @click.argument("buildfile")
 @click.option("--force-update", "-f", help="Force an update of dependencies before starting", default=False, is_flag=True)
 @click.option("--deps-path", "-d", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie", show_default=True)
@@ -122,11 +125,21 @@ def setup_envvars():
 @click.option("--num-workers", "-n", default=-1, help="Number of workers to do parallel tasks. -1 automatically uses 75% of your available cores.", show_default=True)
 @click.option("--clean-temps", "-c", default=False, is_flag=True, help="Clean temporary files from previous runs automatically?")
 @click.option("--ignore-missing-envvars", "-i", default=False, help="When using this flag, FINN does not interactively ask to set missing environment variables. Useful for starting FINN automatically without user input but may run into errors if variables are not set.", is_flag=True)
-def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_temps, ignore_missing_envvars):
+@click.option("--envvar-config", "-e", help="Path to a config file containing values for FINN specific environment variables", default=str(Path.home() / ".finn" / "env.yaml"))
+@click.option("--ignore-envvar-config", help="Ignore any environment variable config", default=False, is_flag=True)
+def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_temps, ignore_missing_envvars, envvar_config, ignore_envvar_config):
     # TODO: Keep usage of str vs Path() consistent everywhere
-    if not ignore_missing_envvars:
-        setup_envvars()
     console = Console()
+    console.print()
+    console.rule("CONFIGURATION")
+    if not ignore_missing_envvars:
+        if not ignore_envvar_config:
+            success = load_preset_envvars(Path(envvar_config))
+            if success:
+                console.print("[bold green]Loaded environment variable config.[/bold green]")
+            else:
+                console.print("[bold yellow]Environment variable config not found or has incompatible format. You might be asked for environment variable values later.[/bold yellow]")
+        setup_envvars()
     buildfile_path = Path(buildfile)
     if not buildfile_path.exists():
         console.print(f"[bold red]Could not find buildfile at: {buildfile_path}[/bold red]")
@@ -143,6 +156,7 @@ def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_te
     else:
         console.print("[bold green]Verilator found![/bold green]")
     
+    # Remove previous temp files if wanted
     finnbuilddir = buildfile_path.parent.absolute() / "FINN_TMP" if local_temps else Path("/tmp/FINN_TMP")
     if clean_temps:
         for obj in finnbuilddir.iterdir():
@@ -180,9 +194,13 @@ def run_quicktest():
 
 #### INSPECT ####
 
-@click.command(help="Inspect something. (Takes ONNX files, build.yaml, build.py, XCLBINs)")
+@click.command(help="Inspect something. (Takes ONNX files, build.yaml, build.py, XCLBINs). Only uses options for the given filetype")
 @click.argument("obj")
-def inspect(obj):
+@click.option("--ignore-fifos", help="Dont display FIFOs in the model tree (ONNX)", default=False, is_flag=True, show_default=True)
+@click.option("--no-collapse-fifo-names", help="Collapse consecutive FIFOs in the tree to one node (ONNX)", default=False, is_flag=True, show_default=True)
+@click.option("--no-ignore-sdp-prefix", help="Removes the SDP name prefix from submodel node names (ONNX)", default=False, is_flag=True, show_default=True)
+@click.option("--no-display-cycle-estimates", help="Display cycle estimates next to node names (ONNX)", default=False, is_flag=True, show_default=True)
+def inspect(obj, ignore_fifos, no_collapse_fifo_names, no_ignore_sdp_prefix, no_display_cycle_estimates):
     console = Console()
     objpath = Path(obj)
     if not objpath.exists():
@@ -196,7 +214,7 @@ def inspect(obj):
     ending = split_name[-1].lower()
     match ending:
         case "onnx":
-            inspect_onnx(objpath)
+            inspect_onnx(objpath, not no_ignore_sdp_prefix, not no_display_cycle_estimates, not no_collapse_fifo_names, ignore_fifos)
         case "yaml" | "yml":
             raise NotImplementedError()
         case "py":
@@ -216,5 +234,5 @@ main_group.add_command(build)
 main_group.add_command(test)
 main_group.add_command(inspect)
 
-if __name__ == "__main__":
+def main():
     main_group()
