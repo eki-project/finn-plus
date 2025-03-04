@@ -90,7 +90,10 @@ from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
-from finn.transformation.fpgadataflow.make_pynq_driver import MakePYNQDriver
+from finn.transformation.fpgadataflow.make_pynq_driver import (
+    MakePYNQDriverIODMA,
+    MakePYNQDriverInstrumentation,
+)
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import (
     MinimizeAccumulatorWidth,
@@ -657,6 +660,23 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(SplitLargeFIFOs())
     model = model.transform(RemoveShallowFIFOs())
 
+    # generate a dedicated report about final FIFO sizes
+    fifo_info = {}
+    fifo_info["fifo_depths"] = {}
+    fifo_info["fifo_sizes"] = {}
+    total_fifo_size = 0
+    for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
+        node_inst = getCustomOp(node)
+        fifo_info["fifo_depths"][node.name] = node_inst.get_nodeattr("depth")
+        fifo_info["fifo_sizes"][
+            node.name
+        ] = node_inst.get_instream_width() * node_inst.get_nodeattr("depth")
+        total_fifo_size += fifo_info["fifo_sizes"][node.name]
+    fifo_info["total_fifo_size_kB"] = int(total_fifo_size / 8.0 / 1000.0)
+
+    with open(cfg.output_dir + "/report/fifo_sizing.json", "w") as f:
+        json.dump(fifo_info, f, indent=2)
+
     # after FIFOs are ready to go, call PrepareIP and HLSSynthIP again
     # this will only run for the new nodes (e.g. FIFOs and DWCs)
     model = model.transform(PrepareIP(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period()))
@@ -805,7 +825,10 @@ def step_make_pynq_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     if DataflowOutputType.PYNQ_DRIVER in cfg.generate_outputs:
         driver_dir = cfg.output_dir + "/driver"
-        model = model.transform(MakePYNQDriver(cfg._resolve_driver_platform()))
+        if cfg.enable_instrumentation:
+            model = model.transform(MakePYNQDriverInstrumentation(cfg._resolve_driver_platform(), cfg.synth_clk_period_ns, cfg.live_fifo_sizing))
+        else:
+            model = model.transform(MakePYNQDriverIODMA(cfg._resolve_driver_platform()))
         shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
         print("PYNQ Python driver written into " + driver_dir)
     return model
