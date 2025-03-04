@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+import sys
+import yaml
+from importlib import import_module
+from pathlib import Path
+from typing import Any
+
+from finn.builder import build_dataflow_config, build_dataflow_steps
+from finn.builder.build_dataflow_config import (
+    AutoFIFOSizingMethod,
+    DataflowBuildConfig,
+    DataflowOutputType,
+    FpgaMemoryType,
+    LargeFIFOMemStyle,
+    ShellFlowType,
+    VitisOptStrategy,
+)
+
+
+def variant_from_str(enum_class, variant: str) -> Any:
+    """If a variant exists in the given enum class, return it, else None"""
+    if variant in enum_class.__members__.keys():
+        return enum_class.__members__[variant]
+    variants = ", ".join(list(enum_class.__members__.keys()))
+    print(f"Unknown variant of enum {enum_class}. Available variants are: " + variants)
+    return None
+
+
+def try_insert_setting(
+    setting: str, general_config: dict, cfg: DataflowBuildConfig
+) -> DataflowBuildConfig | None:
+    """Try to insert the given setting into the given dataflowbuildconfig and
+    return the changed one. Returns None of an error occurs"""
+    if setting in general_config.keys():
+        if setting in cfg.__dict__.keys():
+            cfg.__setattr__(setting, general_config[setting])
+        else:
+            print(f"Unknown setting key {setting}. Skipping")
+            return None
+    return cfg
+
+
+def try_insert_setting_enum(
+    enum_setting: tuple, general_config: dict, cfg: DataflowBuildConfig
+) -> DataflowBuildConfig | None:
+    """Try to insert the given setting into the given dataflowbuildconfig and
+    return the changed one. Returns None of an error occurs"""
+    setting_name, enum_type = enum_setting
+    if setting_name in general_config.keys():
+        if setting_name in cfg.__dict__.keys():
+            cfg.__setattr__(setting_name, variant_from_str(enum_type, general_config[setting_name]))
+        else:
+            print(f"Unknown enum setting key {enum_setting}. Skipping")
+            return None
+    return cfg
+
+
+def process_steps(
+    p: Path, data: dict, cfg: DataflowBuildConfig, step_type: str
+) -> DataflowBuildConfig | None:
+    if step_type in data.keys():
+        steps = data[step_type]
+        used_steps = []
+        for step in steps:
+            if step in build_dataflow_steps.build_dataflow_step_lookup.keys():
+                used_steps.append(step)
+            else:
+                # The module name is everything except the last qualifier
+                mod_name = ".".join(step.split(".")[:-1])
+                step_name = step.split(".")[-1]
+
+                # Add the custom step module path to PATH so python can import it
+                # Assumes that build.py and custom_steps.py are in the same dir
+                sys.path.append(str(p.parent.absolute()))
+
+                # Import the step and add it to the list
+                if mod_name == "":
+                    print(
+                        f'No module "{mod_name}" available to import step '
+                        f"{step_name} from. This may be caused by a typo in a default "
+                        "FINN step as well. "
+                    )
+                    return None
+                custom_step_module = import_module(mod_name)
+                if step_name in dir(custom_step_module):
+                    used_steps.append(getattr(custom_step_module, step_name))
+                else:
+                    print(f"Step {step} is neither an integrated step nor importable via module")
+                    return None
+        cfg.__setattr__(step_type, used_steps)
+    return cfg
+
+
+def buildcfg_from_yaml(p: Path) -> tuple[DataflowBuildConfig, Path] | None:
+    """Convert a YAML build file to a dataflow build config as well as possible. If the
+    given YAML file does not exist or is incorrect, this returns None"""
+    if not p.exists():
+        print(f"Config file {p} not found! Stopping.")
+        return None
+
+    # Read yaml file
+    with p.open() as f:
+        data = yaml.load(f, yaml.Loader)
+        if "general" not in data.keys():
+            print('Missing "general" section in your build file')
+            return None
+        general = data["general"]
+        for key in ["model", "output_dir", "synth_clk_period_ns", "generate_outputs"]:
+            if key not in general.keys():
+                print(f"Missing key {key} in your build file under the general section")
+                return None
+
+        generate_outputs = [
+            variant_from_str(DataflowOutputType, output) for output in general["generate_outputs"]
+        ]
+
+        # Create basic cfg with all possible default arguments
+        cfg = DataflowBuildConfig(
+            general["output_dir"], general["synth_clk_period_ns"], generate_outputs
+        )
+
+        # Check if there is an unknown setting
+        # TODO: Maybe rework?
+        yaml_only_keys = ["model", "f_mhz"]
+        for key in general.keys():
+            if key not in cfg.__dict__.keys() and key not in yaml_only_keys:
+                print(
+                    f"WARNING: Key {key} provided in the YAML file is not a"
+                    "recognized setting for the DataflowBuildConfig. Ignoring..."
+                )
+
+        # Change values with defaults now
+        general_settings = [
+            "standalone_thresholds",
+            "mvau_wwidth_max",
+            "target_fps",
+            "folding_two_pass_relaxation",
+            "board",
+            "vitis_platform",
+            "specialize_layers_config_file",
+            "folding_config_file",
+            "auto_fifo_depths",
+            "split_large_fifos",
+            "rtlsim_batch_size",
+            "save_intermediate_models",
+            "verify_input_npy",
+            "verify_expected_output_npy",
+            "verify_save_full_context",
+            "verify_save_rtlsim_waveforms",
+            "stitched_ip_gen_dcp",
+            "signature",
+            "minimize_bit_widths",
+            "fpga_part",
+            "force_python_rtlsim",
+            "large_fifo_mem_style",
+            "hls_clk_period_ns",
+            "default_swg_exception",
+            "vitis_floorplan_file",
+            "enable_hw_debug",
+            "enable_build_pdb_debug",
+            "verbose",
+            "start_step",
+            "stop_step",
+            "max_multithreshold_bit_width",
+            "rtlsim_use_vivado_comps",
+        ]
+        for setting in general_settings:
+            cfg = try_insert_setting(setting, general, cfg)
+            if cfg is None:
+                return None
+
+        # Setting the enums
+        general_enum_settings = [
+            ("shell_flow_type", ShellFlowType),
+            ("auto_fifo_strategy", AutoFIFOSizingMethod),
+            ("large_fifo_mem_style", LargeFIFOMemStyle),
+            ("vitis_opt_strategy", VitisOptStrategy),
+            ("fpga_memory", FpgaMemoryType),
+        ]
+        for enum_setting in general_enum_settings:
+            cfg = try_insert_setting_enum(enum_setting, general, cfg)
+            if cfg is None:
+                return None
+
+        # Build steps list
+        # Existing steps are simply passed
+        # If the format is module_name.step_name, module_name is automatically imported
+        cfg = process_steps(p, data, cfg, "steps")
+        if cfg is None:
+            return None, general["model"]
+        cfg = process_steps(p, data, cfg, "verify_steps")
+        if cfg is None:
+            return None, general["model"]
+
+        # If there are no steps provided, use the default ones
+        if cfg.steps is None:
+            cfg.steps = build_dataflow_config.default_build_dataflow_steps
+
+        return cfg, general["model"]
+    return None

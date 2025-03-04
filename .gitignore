@@ -87,6 +87,7 @@ MANIFEST
 /dataset/
 /data/
 *.csv
+tests/builder/temp*
 
 # Google Drive key for dashboard
 /gdrive-key/
