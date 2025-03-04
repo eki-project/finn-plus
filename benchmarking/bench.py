@@ -56,8 +56,6 @@ def main(config_name):
 
     artifacts_dir = os.path.join(experiment_dir, "bench_artifacts")
     print("Collecting results in path: %s" % artifacts_dir)
-    os.makedirs(os.path.join(artifacts_dir, "tasks_output"), exist_ok=True)
-    log_path = os.path.join(artifacts_dir, "tasks_output", "task_%d.json" % (task_id))
     
     # local save dir for large artifacts (e.g., build output, tmp dir dump for debugging)
     if job_id == 0:
@@ -71,13 +69,13 @@ def main(config_name):
 
     # Gather benchmarking configs
     if config_name == "manual":
-        configs_path, config_select = os.path.split(os.environ.get("MANUAL_CFG_PATH"))
+        config_path = os.path.join(os.environ.get("LOCAL_CFG_DIR"), os.environ.get("MANUAL_CFG_PATH"))
     else:
         configs_path = os.path.join(os.path.dirname(__file__), "cfg")
         config_select = config_name + ".json"
+        config_path = os.path.join(configs_path, config_select)
 
     # Load config
-    config_path = os.path.join(configs_path, config_select)
     print("Loading config %s" % (config_path))
     if os.path.exists(config_path):
         with open(config_path, "r") as f:
@@ -118,9 +116,7 @@ def main(config_name):
 
     # Run benchmark
     # TODO: integrate this loop (especially status logging) into the bench class
-    # TODO: log additional info as artifact or directly into info section of json (e.g. dut, versions, date)
-    # TODO: log stdout of individual tasks of the job array into seperate files as artifacts (GitLab web interface is not readable)
-    log = []
+    # TODO: log stdout of individual tasks of the job array into seperate files as artifacts (GitLab web interface is not readable), coordinate with new logging
     for run, run_id in enumerate(selected_runs):
         print(
             "Starting run %d/%d (id %d of %d total runs)"
@@ -143,7 +139,6 @@ def main(config_name):
             print("ERROR: no DUT specified")
             return 1
 
-        start_time = time.time()
         try:
             result = bench_object.run()
             if result == "skipped":
@@ -158,13 +153,12 @@ def main(config_name):
             exit_code = 1
             # TODO: exception catch all in builder prevents internal failures from being caught here
 
-        log_dict["total_time"] = int(time.time() - start_time)
         log_dict["output"] = bench_object.output_dict
-        log.append(log_dict)
-        # TODO: save this meta data into run-level reports dir insted of task*.json
-        # overwrite output log file every time to allow early abort
+
+        # log metadata of this run to its own report directory
+        log_path = os.path.join(bench_object.report_dir, "metadata_bench.json")
         with open(log_path, "w") as f:
-            json.dump(log, f, indent=2)
+            json.dump(log_dict, f, indent=2)
 
         # save GitLab artifacts of this run (e.g., reports and deployment package)
         bench_object.save_artifacts_collection()

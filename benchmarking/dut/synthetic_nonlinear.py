@@ -190,6 +190,9 @@ def combine_blocks(lb, rb, ifm_dim, ch, pe):
     dup_config["PE"] = pe
     dup_config["NumOutputStreams"] = 2
     dup_config["inputDataType"] = lb.get_tensor_datatype(lb_input.name).name
+    # We always need to set outFIFODepths explictly for DuplicateStreams
+    # because it has no default value that corresponds automatically to NumOutputStreams
+    dup_config["outFIFODepths"] = [2] * 2
 
     add_config = {}
     add_config["domain"] = "finn.custom_op.fpgadataflow.hls"

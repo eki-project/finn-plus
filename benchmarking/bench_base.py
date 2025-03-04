@@ -42,7 +42,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 import pandas as pd
 import onnxruntime as ort
-
+#TODO: merge this file into bench.py once most functionality has been moved to builder
 
 def start_test_batch_fast(results_path, project_path, run_target, pairs):
     # Prepare tcl script
@@ -170,7 +170,25 @@ class bench():
             # Save entire FINN build dir and working dir
             # TODO: add option to only save upon exception (in FINN builder or benchmarking infrastructure)
             self.local_artifacts_collection.append(("debug_finn_tmp", os.environ["FINN_BUILD_DIR"], False))
-            self.local_artifacts_collection.append(("debug_finn_cwd", os.environ["FINN_ROOT"], False))
+            #self.local_artifacts_collection.append(("debug_finn_cwd", os.environ["FINN_ROOT"], False))
+
+        ### SETUP ###
+        # Use a temporary dir for buildflow-related files (next to FINN_BUILD_DIR)
+        # Ensure it exists but is empty (clear potential artifacts from previous runs)
+        tmp_buildflow_dir = os.path.join(os.environ["PATH_WORKDIR"], "buildflow")
+        os.makedirs(tmp_buildflow_dir, exist_ok=True)
+        delete_dir_contents(tmp_buildflow_dir)
+        self.build_inputs["build_dir"] = os.path.join(tmp_buildflow_dir, "build_output") # TODO remove in favor of self.build_dir
+        self.build_dir = os.path.join(tmp_buildflow_dir, "build_output")
+        self.report_dir = os.path.join(self.build_dir, "report")
+        os.makedirs(self.report_dir, exist_ok=True)
+
+        # Save full build dir as local artifact
+        self.local_artifacts_collection.append(("build_output", self.build_dir, False))
+        # Save reports and deployment package as pipeline artifacts
+        self.artifacts_collection.append(("reports", self.report_dir, False))
+        self.artifacts_collection.append(("reports", os.path.join(self.build_dir, "build_dataflow.log"), False))
+        self.artifacts_collection.append(("deploy", os.path.join(self.build_dir, "deploy"), True))
 
     def save_artifact(self, target_path, source_path, archive=False):
         if os.path.isdir(source_path):
@@ -362,22 +380,6 @@ class bench():
     def steps_full_build_flow(self):
         # Default step sequence for benchmarking a full FINN builder flow
 
-        ### SETUP ###
-        # Use a temporary dir for buildflow-related files (next to FINN_BUILD_DIR)
-        # Ensure it exists but is empty (clear potential artifacts from previous runs)
-        tmp_buildflow_dir = os.path.join(os.environ["PATH_WORKDIR"], "buildflow")
-        os.makedirs(tmp_buildflow_dir, exist_ok=True)
-        delete_dir_contents(tmp_buildflow_dir)
-        self.build_inputs["build_dir"] = os.path.join(tmp_buildflow_dir, "build_output")
-        os.makedirs(os.path.join(self.build_inputs["build_dir"], "report"), exist_ok=True)
-
-        # Save full build dir as local artifact
-        self.local_artifacts_collection.append(("build_output", self.build_inputs["build_dir"], False))
-        # Save reports and deployment package as pipeline artifacts
-        self.artifacts_collection.append(("reports", os.path.join(self.build_inputs["build_dir"], "report"), False))
-        self.artifacts_collection.append(("reports", os.path.join(self.build_inputs["build_dir"], "build_dataflow.log"), False))
-        self.artifacts_collection.append(("deploy", os.path.join(self.build_inputs["build_dir"], "deploy"), True))
-
         ### MODEL CREATION/IMPORT ###
         # TODO: track fixed input onnx models with DVC
         if "model_dir" in self.params:
@@ -403,6 +405,8 @@ class bench():
             self.build_inputs["floorplan_path"] = self.params["floorplan_path"]
 
         ### BUILD SETUP ###
+        # TODO: convert to YAML-based builder config
+        # TODO: split up into default config, dut-specific config, and run-specific config
         cfg = self.step_build_setup()
         cfg.generate_outputs = self.params["output_products"]
         cfg.output_dir = self.build_inputs["build_dir"]

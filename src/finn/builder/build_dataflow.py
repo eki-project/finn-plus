@@ -181,11 +181,23 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             else:
                 print("enable_build_pdb_debug not set in build config, exiting...")
             print("Build failed")
+            metadata = {
+                "status": "failed",
+                "tool_version": os.path.basename(os.environ.get("VIVADO_PATH")),
+            }
+            with open(cfg.output_dir + "/report/metadata_builder.json", "w") as f:
+                json.dump(metadata, f, indent=2)
             return -1
 
     time_per_step["total_build_time"] = sum(time_per_step.values())
     with open(cfg.output_dir + "/report/time_per_step.json", "w") as f:
         json.dump(time_per_step, f, indent=2)
+    metadata = {
+        "status": "ok",
+        "tool_version": os.path.basename(os.environ.get("VIVADO_PATH")),
+    }
+    with open(cfg.output_dir + "/report/metadata_builder.json", "w") as f:
+        json.dump(metadata, f, indent=2)
     print("Completed successfully")
     return 0
 

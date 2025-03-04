@@ -3,7 +3,10 @@ import json
 import os
 import sys
 import time
+import shutil
 from dvclive import Live
+
+from util import delete_dir_contents
 
 def merge_dicts(a: dict, b: dict):
     for key in b:
@@ -76,6 +79,10 @@ def wait_for_power_measurements():
         time.sleep(60)
     print("Power measurement complete")
 
+def log_dvc_metric(live, prefix, name, value):
+    # sanitize '/' in name because DVC uses it to nest metrics (which we do via prefix)
+    live.log_metric(prefix + name.replace("/", "-"), value, plot=False)
+
 def open_json_report(id, report_name):
     path = os.path.join("bench_artifacts", "runs_output", "run_%d" % (id), "reports", report_name)
     if os.path.isfile(path):
@@ -89,14 +96,14 @@ def log_all_metrics_from_report(id, live, report_name, prefix=""):
     report = open_json_report(id, report_name)
     if report:
         for key in report:
-            live.log_metric(prefix + key, report[key], plot=False)
+            log_dvc_metric(live, prefix, key, report[key])
 
 def log_metrics_from_report(id, live, report_name, keys, prefix=""):
     report = open_json_report(id, report_name)
     if report:
         for key in keys:
             if key in report:
-                live.log_metric(prefix + key, report[key], plot=False)
+                log_dvc_metric(live, prefix, key, report[key])
 
 def log_nested_metrics_from_report(id, live, report_name, key_top, keys, prefix=""):
     report = open_json_report(id, report_name)
@@ -104,39 +111,43 @@ def log_nested_metrics_from_report(id, live, report_name, key_top, keys, prefix=
         if key_top in report:
             for key in keys:
                 if key in report[key_top]:
-                    live.log_metric(prefix + key, report[key_top][key], plot=False)
+                    log_dvc_metric(live, prefix, key, report[key_top][key])
 
 if __name__ == "__main__":
-    print("Consolidating synthesis results from all sub-jobs of the array")
-    consolidate_logs(sys.argv[1], sys.argv[2])
-    # TODO: remove task-level .json logs and GitLab artifacts of this job?
+    # Go through all runs found in the artifacts and log their results to DVC
+    run_dir_list = os.listdir(os.path.join("bench_artifacts", "runs_output"))
+    print("Looking for runs in %s" % run_dir_list)
+    run_ids = []
+    for run_dir in run_dir_list:
+        if run_dir.startswith("run_"):
+            run_id = int(run_dir[4:])
+            run_ids.append(run_id)
+    run_ids.sort()
+    print("Found %d runs" % len(run_ids))
 
-    ### PUSH RESULTS TO DVC ###
-    combined_log = []
-    with open(sys.argv[2], "r") as f:
-        combined_log = json.load(f)
-
-    for run in combined_log:
-        id = run["run_id"]
+    for id in run_ids:
+        print("Processing run %d" % id)
         experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + str(id)
         experiment_msg = "[CI] " + os.environ.get("CI_PIPELINE_NAME")
         #TODO: cache images once we switch to a cache provider that works with DVC Studio
         with Live(exp_name = experiment_name, exp_message=experiment_msg, cache_images=False) as live:
             ### PARAMS ###
-            #TODO: add pipeline info and FINN configuration (e.g. tool versions) to metadata (or as metric or other annotation?)
-            metadata = {
-                "metadata": {
-                    "run_id": run["run_id"],
-                    "task_id": run["task_id"],
-                    "status": run["status"],
-                    "total_time": run["total_time"],
-                }
-            }
-            live.log_params(metadata)
-            params = {"params": run["params"]}
+            # input parameters logged by benchmarking infrastructure
+            metadata_bench = open_json_report(id, "metadata_bench.json")   
+            params = {"params": metadata_bench["params"]}
             live.log_params(params)
 
-            # dut_info.json (additional information about DUT generated during model generation)
+            # optional metadata logged by builder
+            metadata_builder = open_json_report(id, "metadata_builder.json")
+            if metadata_builder:
+                metadata = {
+                    "metadata": {
+                        "tool_version": metadata_builder["tool_version"],
+                    }
+                }
+                live.log_params(metadata)
+
+            # optional dut_info.json (additional information about DUT generated during model generation)
             dut_info_report = open_json_report(id, "dut_info.json")
             if dut_info_report:
                 dut_info = {"dut_info": dut_info_report}
@@ -145,6 +156,21 @@ if __name__ == "__main__":
             ### METRICS ###
             # TODO: for microbenchmarks, only summarize results for target node (or surrounding SDP?) (see old step_finn_estimate etc.)
             # TODO: make all logs consistent at the point of generation (e.g. BRAM vs BRAM18 vs BRAM36)
+
+            # status
+            status = metadata_bench["status"]
+            if status == "ok":
+                # mark as failed if either bench or builder indicates failure
+                if metadata_builder:
+                    status_builder = metadata_builder["status"]
+                    if status_builder == "failed":
+                        status = "failed"
+            log_dvc_metric(live, "", "status", status)
+
+            # verification steps
+            if "output" in metadata_bench:
+                if "builder_verification" in metadata_bench["output"]:
+                    log_dvc_metric(live, "", "verification", metadata_bench["output"]["builder_verification"]["verification"])
 
             # estimate_layer_resources.json
             log_nested_metrics_from_report(id, live, "estimate_layer_resources.json", "total", [
@@ -220,11 +246,6 @@ if __name__ == "__main__":
             # post synth timing report 
             # TODO: only exported as post_route_timing.rpt, not .json
 
-            # verification steps
-            if "output" in run:
-                if "builder_verification" in run["output"]:
-                    live.log_metric("verification", run["output"]["builder_verification"]["verification"], plot=False)
-
             # instrumentation measurement
             log_all_metrics_from_report(id, live, "measured_performance.json", prefix="measurement/performance/")
 
@@ -245,15 +266,13 @@ if __name__ == "__main__":
             log_metrics_from_report(id, live, "time_per_step.json", ["total_build_time"])
 
             ### ARTIFACTS ###
-            # Build reports, as they come from GitLab artifact
-            live.log_artifact(os.path.join("bench_artifacts", "runs_output", "run_%d" % (id), "reports"))
+            # Log build reports as they come from GitLab artifacts,
+            # but copy them to a central dir first so all runs share the same path
+            run_report_dir = os.path.join("bench_artifacts", "runs_output", "run_%d" % (id), "reports")
+            dvc_report_dir = "reports"
+            os.makedirs(dvc_report_dir, exist_ok=True)
+            delete_dir_contents(dvc_report_dir)
+            shutil.copytree(run_report_dir, dvc_report_dir, dirs_exist_ok=True)
+            live.log_artifact(dvc_report_dir)
 
-    # TODO: disabled for now, update accordingly to new runner-based measurement setup
-    # wait_for_power_measurements()
-    # power_log_path = os.path.join("/mnt/pfs/hpc-prf-radioml/felix/jobs/", 
-    #                         "CI_" + os.environ.get("CI_PIPELINE_IID") + "_" + os.environ.get("CI_PIPELINE_NAME"), 
-    #                         "power_measure.json")
-    # if os.path.isfile(power_log_path):
-    #     print("Merging power measurement logs with remaining logs")
-    #     merge_logs(sys.argv[2], power_log_path, sys.argv[2])
     print("Done")
