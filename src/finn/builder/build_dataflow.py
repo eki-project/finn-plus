@@ -31,11 +31,9 @@ import json
 import logging
 import os
 import pdb  # NOQA
-import subprocess
 import sys
 import time
 import traceback
-from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.builder.build_dataflow_config import (
@@ -43,7 +41,6 @@ from finn.builder.build_dataflow_config import (
     default_build_dataflow_steps,
 )
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
-from finn.builder.yaml_to_cfg import buildcfg_from_yaml
 
 
 # adapted from https://stackoverflow.com/a/39215961
@@ -221,45 +218,10 @@ def build_dataflow_directory(path_to_cfg_dir: str):
     return ret
 
 
-def build(target: str, dir=False) -> None:
-    """Start the FINN flow
-
-    :param target: The build target. Either a directory if using build_directory or
-    a yaml or py file
-
-    :param dir: Whether or not to use a directory with a build.py file"""
-    t = Path(target)
-    if dir and not t.is_dir():
-        print(f"Trying to start FINN with a build directory but {t} is not a directory")
-        sys.exit(1)
-    if not dir and not t.is_file():
-        print(f"Trying to start FINN with a non existing build file: {t}")
-        sys.exit(1)
-    if dir:
-        build_dataflow_directory(str(t.absolute()))
-    else:
-        if target.endswith(".yml") or target.endswith(".yaml"):
-            cfg, model = buildcfg_from_yaml(Path(target))
-            if cfg is None:
-                print(
-                    "ERROR: An error occurred during conversion"
-                    "from YAML to BuildDataflowCfg. Stopping..."
-                )
-                sys.exit(1)
-            build_dataflow_cfg(str(model), cfg)
-        elif target.endswith(".py"):
-            subprocess.run(f"python -mpdb -cc -cq {target}", shell=True)
-
-        else:
-            print(f"Unknown file ending for buildfile: {target}")
-            print("Please specify either a YAML file or a python script")
-            sys.exit(1)
-
-
 def main():
     """Entry point for dataflow builds. Invokes `build_dataflow_directory` using
     command line arguments"""
-    clize.run(build)
+    clize.run(build_dataflow_directory)
 
 
 if __name__ == "__main__":
