@@ -40,6 +40,8 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 from qonnx.util.onnx import nchw_to_nhwc
 
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.util.cleanup import cleanup_model
 
 class InferConvInpGen(Transformation):
     """Convert Im2Col layers to ConvolutionInputGenerator layers."""
@@ -277,7 +279,7 @@ class InferThresholdingLayer(Transformation):
 class InferUpsample(Transformation):
     """Convert Upsample and Resize nodes to layers to UpsampleNearestNeighbour nodes."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper):
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -290,7 +292,9 @@ class InferUpsample(Transformation):
                     scales = model.get_initializer(n.input[1])
                 else:
                     scales = model.get_initializer(n.input[2])
+
                 in_shape = model.get_tensor_shape(n.input[0])
+                out_shape = model.get_tensor_shape(n.output[0])
 
                 dt = model.get_tensor_datatype(n.input[0])
                 if not dt.is_integer():
@@ -321,23 +325,24 @@ class InferUpsample(Transformation):
                 # Assumes nhwc layout for scales and input
                 is_scale_square_2d = scales[1] == scales[2]
                 is_scale_1d = scales[1] > 1 and scales[2] == 1
-                assert is_scale_square_2d or is_scale_1d, (
-                    "%s: Upsampling only supported for 1D H, or 2D square scaling" % n.name
-                )
-                assert scales[0] == scales[3] == 1, (
-                    n.name + ": Upsampling is only supported for scales with "
-                    "the first and last dimensions being 1 in NHWC."
-                )
+                # assert is_scale_square_2d or is_scale_1d, (
+                #     "%s: Upsampling only supported for 1D H, or 2D square scaling" % n.name
+                # )
+                # assert scales[0] == scales[3] == 1, (
+                #     n.name + ": Upsampling is only supported for scales with "
+                #     "the first and last dimensions being 1 in NHWC."
+                # )
                 spatial_scale = scales[1]
                 assert spatial_scale == int(spatial_scale), (
                     "%s: Upsampling is only supported for integer scales." % n.name
                 )
                 is_shape_square_2d = in_shape[1] == in_shape[2]
                 is_shape_1d = in_shape[1] > 1 and in_shape[2] == 1
+                is_shape_non_square_2d = in_shape[1] != in_shape[2]
 
-                assert is_shape_square_2d or is_shape_1d, (
-                    "%s: Upsampling is only supported for 1D H or 2D square inputs." % n.name
-                )
+                # assert is_shape_square_2d or is_shape_1d, (
+                #     "%s: Upsampling is only supported for 1D H or 2D square inputs." % n.name
+                # )
 
                 # Extract information for HW node
                 IFMDim = in_shape[1]
@@ -345,29 +350,47 @@ class InferUpsample(Transformation):
                 NumChannels = in_shape[-1]
                 numInputVectors = in_shape[0]
                 inputDataType = dt.name
-                dim_mode = 0 if is_shape_square_2d else 1
+                dim_mode = 2 if is_shape_non_square_2d else 1 if is_shape_1d else 0 
 
-                # Insert the HWCustomOp node
-                Upsample_HW_node = helper.make_node(
-                    "UpsampleNearestNeighbour",
-                    [n.input[0]],
-                    [n.output[0]],
-                    domain="finn.custom_op.fpgadataflow",
-                    backend="fpgadataflow",
-                    OFMDim=OFMDim,
-                    IFMDim=IFMDim,
-                    NumChannels=NumChannels,
-                    inputDataType=inputDataType,
-                    numInputVectors=numInputVectors,
-                    DimMode=dim_mode,
-                    name="UpsampleNearestNeighbour_" + n.name,
-                )
+                if dim_mode != 2:
+                    # Insert the HWCustomOp node
+                    Upsample_HW_node = helper.make_node(
+                        "UpsampleNearestNeighbour",
+                        [n.input[0]],
+                        [n.output[0]],
+                        domain="finn.custom_op.fpgadataflow",
+                        backend="fpgadataflow",
+                        OFMDim=OFMDim,
+                        IFMDim=IFMDim,
+                        NumChannels=NumChannels,
+                        inputDataType=inputDataType,
+                        numInputVectors=numInputVectors,
+                        DimMode=dim_mode,
+                        name="UpsampleNearestNeighbour_" + n.name,
+                    )
+                else:
+                    #insert bresenhem upsampler
+                    Upsample_HW_node = helper.make_node(
+                        "UpsampleNearestNeighbour",
+                        [n.input[0]],
+                        [n.output[0]],
+                        domain="finn.custom_op.fpgadataflow",
+                        backend="fpgadataflow",
+                        IFMShape=[in_shape[1], in_shape[2]],
+                        OFMShape=[out_shape[1], out_shape[2]],
+                        NumChannels=NumChannels,
+                        inputDataType=inputDataType,
+                        numInputVectors=numInputVectors,
+                        DimMode=dim_mode,
+                        name="UpsampleNearestNeighbour_" + n.name,
+                    )
 
                 # Remove the old node
                 graph.node.insert(node_ind, Upsample_HW_node)
                 # remove old nodes
                 graph.node.remove(n)
                 graph_modified = True
+        model = cleanup_model(model)
         return (model, graph_modified)
 
 
@@ -1754,4 +1777,121 @@ class InferVectorVectorActivation(Transformation):
         if graph_modified:
             model = model.transform(InferShapes())
             model = model.transform(InferDataTypes())
+        return (model, graph_modified)
+
+class InferPadding(Transformation):
+    """Convert standalone Pad nodes to
+    FMPadding CustomOps."""
+
+    def __init__(self):
+        super().__init__()
+
+    def apply(self, model: ModelWrapper):
+        graph = model.graph
+        node_ind = 0
+        graph_modified = False
+        for n in graph.node:
+            node_ind += 1
+            if n.op_type == "Pad":
+                padding_mode = get_by_name(n.attribute, "mode").s.decode("ascii")
+                is_constant_padding = (padding_mode == "constant")
+
+                if len(n.input) > 2: #only when constant value or axes are defined #TODO could use .get_nodeattr("pad_value") is more robust
+                    padding_constant = (model.get_initializer(n.input[2]))
+                    padding_val_is_zero = (padding_constant == 0 or padding_constant is None)
+                else: 
+                    padding_val_is_zero = True
+
+                is_zero_padding = is_constant_padding and padding_val_is_zero
+
+                is_followed_by_nhwc_transpose = False
+                follower = model.find_consumer(n.output[0])
+                if follower is not None:
+                    if follower.op_type == "Transpose":
+                        perms = get_by_name(follower.attribute, "perm").ints
+                        is_followed_by_nhwc_transpose = perms == [0, 2, 3, 1]
+
+
+                if is_zero_padding:
+                    pad_input = n.input[0]
+                    pad_amount = model.get_initializer(n.input[1])
+
+                    #NOTE: Assumes NHWC layout
+                    pad_h = pad_amount[1] + pad_amount[5] #total height padding
+                    pad_w = pad_amount[2] + pad_amount[6] #total width padding
+
+                    if is_followed_by_nhwc_transpose:
+                        #NOTE: Assumes NCHW layout
+                        pad_h = pad_amount[2] + pad_amount[6]
+                        pad_w = pad_amount[3] + pad_amount[7]
+
+                    pad_output_shape = model.get_tensor_shape(n.output[0])
+
+                    if is_followed_by_nhwc_transpose:
+                        pad_output_shape = model.get_tensor_shape(follower.output[0])
+
+                    pad_input_shape = [pad_output_shape[0], pad_output_shape[1] - pad_h, pad_output_shape[2] - pad_w, pad_output_shape[3]]
+
+
+                    in_ch = pad_input_shape[3]
+                    odim_pad_h = pad_output_shape[1] #padded output height
+                    odim_pad_w = pad_output_shape[2] #padded output width 
+
+                    #TODO probably need transpose before here
+                    # padding_out = helper.make_tensor_value_info(
+                    #     model.make_new_valueinfo_name(),
+                    #     TensorProto.FLOAT,
+                    #     (1, in_ch, odim_pad_h, odim_pad_w)
+                    # )
+                    # graph.value_info.append(padding_out)
+                    # padding_out = padding_out.name
+                    # model.set_tensor_datatype(padding_out, model.get_tensor_datatype(pad_input))
+
+                    if is_followed_by_nhwc_transpose:
+                        padding_node = helper.make_node(
+                            "FMPadding",
+                            [pad_input],
+                            [follower.output[0]],
+                            domain="finn.custom_op.fpgadataflow",
+                            backend="fpgadataflow",
+                            ImgDim=[pad_input_shape[1], pad_input_shape[2]],
+                            Padding=[pad_amount[2], pad_amount[3], pad_amount[6], pad_amount[7]],
+                            NumChannels=in_ch,
+                            inputDataType=model.get_tensor_datatype(pad_input).name,
+                            SIMD=in_ch,
+                            name="FMPadding_Batch_" + n.name,
+                        )
+                        graph.node.insert(node_ind, padding_node)
+                        # remove old node
+                        graph.node.remove(n)
+                        graph.node.remove(follower)
+                        model.save("temp.onnx")
+                    else:
+                        padding_node = helper.make_node(
+                            "FMPadding",
+                            [pad_input],
+                            [n.output[0]],
+                            domain="finn.custom_op.fpgadataflow",
+                            backend="fpgadataflow",
+                            ImgDim=[pad_input_shape[1], pad_input_shape[2]],
+                            Padding=[pad_amount[1], pad_amount[2], pad_amount[5], pad_amount[6]],
+                            NumChannels=in_ch,
+                            inputDataType=model.get_tensor_datatype(pad_input).name,
+                            SIMD=in_ch,
+                            name="FMPadding_Batch_" + n.name,
+                        )
+                        graph.node.insert(node_ind, padding_node)
+                        # remove old node
+                        graph.node.remove(n)
+
+                        
+                    graph_modified = True
+
+
+
+
+
+        # if graph_modified:
+        #     model = model.transform(InferShapes())
+        #     model = model.transform(InferDataTypes())
         return (model, graph_modified)
