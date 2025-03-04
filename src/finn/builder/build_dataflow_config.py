@@ -35,6 +35,7 @@ from enum import Enum
 from typing import Any, List, Optional
 
 from finn.util.basic import alveo_default_platform, part_map
+from finn.builder.yaml_to_cfg import buildcfg_from_yaml
 
 
 class AutoFIFOSizingMethod(str, Enum):
@@ -429,3 +430,10 @@ class DataflowBuildConfig:
                 verify_input_npy,
                 verify_expected_output_npy,
             )
+
+
+    @staticmethod
+    def from_yaml(p: Path | str) -> tuple[Self, Path] | None:
+        """Create a BuildDataflowConfig from a YAML file on the given path"""
+        path = p if type(p) == Path else Path(p) 
+        return buildcfg_from_yaml(path)
