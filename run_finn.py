@@ -11,6 +11,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.traceback import install
 
+from finn.builder.build_dataflow import build_dataflow_cfg
+from finn.builder.build_dataflow_config import BuildDataflowConfig
 from interface.finn_deps import (
     FINN_BOARDFILES,
     FINN_DEPS,
@@ -23,6 +25,7 @@ from interface.finn_envvars import (
     generate_envvars,
     load_preset_envvars,
     make_envvar_prefix_str,
+    set_envvars,
 )
 from interface.finn_inspect import inspect_onnx
 
@@ -229,6 +232,117 @@ def prepare_finn_environment(
 
     # Return the environment variables required for running FINN
     return envvars
+
+
+@click.command(
+    help="Runs a FINN flow by reading the given config file (in either YAML or JSON) "
+    "and the given ONNX file"
+)
+@click.argument("configfile")
+@click.argument("onnxfile")
+@click.option(
+    "--force-update",
+    "-f",
+    help="Force an update of dependencies before starting",
+    default=False,
+    is_flag=True,
+)
+@click.option(
+    "--deps-path",
+    "-d",
+    default=str(Path.home() / ".finn" / "deps"),
+    help="Path to directory where dependencies lie",
+    show_default=True,
+)
+@click.option(
+    "--local-temps",
+    "-l",
+    default=True,
+    is_flag=True,
+    help="Whether to store temporary build files local to the model/buildfile.",
+)
+@click.option(
+    "--num-workers",
+    "-n",
+    default=-1,
+    help="Number of workers to do parallel tasks. -1 automatically uses "
+    "75% of your available cores.",
+    show_default=True,
+)
+@click.option(
+    "--clean-temps",
+    "-c",
+    default=False,
+    is_flag=True,
+    help="Clean temporary files from previous runs automatically?",
+)
+@click.option(
+    "--ignore-missing-envvars",
+    "-i",
+    default=False,
+    help="When using this flag, FINN does not interactively ask to set missing environment "
+    "variables. Useful for starting FINN automatically without user input but may run into errors "
+    "if variables are not set.",
+    is_flag=True,
+)
+@click.option(
+    "--envvar-config",
+    "-e",
+    help="Path to a config file containing values for FINN specific environment variables",
+    default=str(Path.home() / ".finn" / "env.yaml"),
+)
+@click.option(
+    "--ignore-envvar-config",
+    help="Ignore any environment variable config",
+    default=False,
+    is_flag=True,
+)
+def build(
+    configfile: str,
+    onnxfile: str,
+    force_update: bool,
+    deps_path: str,
+    local_temps: bool,
+    num_workers: int,
+    clean_temps: bool,
+    ignore_missing_envvars: bool,
+    envvar_config: str,
+    ignore_envvar_config: bool,
+) -> None:
+    # Setup
+    console = Console()
+    envvars = prepare_finn_environment(
+        configfile,
+        force_update,
+        deps_path,
+        local_temps,
+        num_workers,
+        clean_temps,
+        ignore_missing_envvars,
+        envvar_config,
+        ignore_envvar_config,
+    )
+    set_envvars(envvars)
+    onnxpath = Path(onnxfile)
+    if not onnxpath.exists():
+        console.print(f"[bold red]Couldn't locate ONNX file: {onnxfile}[/bold red]")
+        sys.exit(1)
+
+    # Parse the config file
+    configpath = Path(configfile)
+    bdfc = None
+    match configpath.suffix:
+        case ".yaml" | ".yml":
+            raise NotImplementedError()
+        case ".json":
+            with configpath.open() as f:
+                bdfc = BuildDataflowConfig.from_json(f.read())
+        case _:
+            console.print(f"[bold red]Unknown format for a build config file: {configpath.suffix}")
+            sys.exit(1)
+
+    # Run FINN
+    build_dataflow_cfg(onnxfile, bdfc)
 
 
 @click.command(
