@@ -1,25 +1,33 @@
+import click
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
-import click
 from inspect import isclass
+from pathlib import Path
 from qonnx.transformation.base import Transformation
-from rich.table import Table
-from rich.panel import Panel
 from rich.console import Console
-from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.table import Table
+from rich.traceback import install
 
-from interface.finn_deps import FINN_BOARDFILES, FINN_DEPS, deps_exist, pull_boardfile, pull_dep
-from interface.finn_envvars import GLOBAL_FINN_ENVVARS, generate_envvars, load_preset_envvars
+from interface.finn_deps import (
+    FINN_BOARDFILES,
+    FINN_DEPS,
+    deps_exist,
+    pull_boardfile,
+    pull_dep,
+)
+from interface.finn_envvars import (
+    GLOBAL_FINN_ENVVARS,
+    generate_envvars,
+    load_preset_envvars,
+)
 from interface.finn_inspect import inspect_onnx
 
-from rich.traceback import install
 install(show_locals=True)
 
 
-########### TODO #############
 # - Copy .Xilinx to HOME dir when starting
 # - Vivado IP Cache env var (run-docker.sh)
 # - Complete all tests
@@ -27,19 +35,24 @@ install(show_locals=True)
 
 # - Replace environment vars with a configuration that can be passed to BuildDataflowConfig(?)
 
-#### GROUPS ####
 
 @click.group()
-def main_group(): pass
+def main_group():
+    pass
 
-@click.group(help="Dependency related commands. Use to check and update your non-python based FINN dependencies")
-def deps(): pass
+
+@click.group(
+    help="Dependency related commands. Use to check and "
+    "update your non-python based FINN dependencies"
+)
+def deps():
+    pass
+
 
 @click.group(help="Run tests on the given FINN installation. Use finn test --help to learn more.")
-def test(): pass
+def test():
+    pass
 
-
-#### DEPENDENCIES ####
 
 def update_deps(path):
     deppath = Path(path).absolute()
@@ -82,19 +95,26 @@ def check_deps(path):
 
 
 @click.command("update", help="Install or update FINNs non-python dependencies")
-@click.option("--path", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie", show_default=True)
+@click.option(
+    "--path",
+    default=str(Path.home() / ".finn" / "deps"),
+    help="Path to directory where dependencies lie",
+    show_default=True,
+)
 def update_deps_command(path):
     update_deps(path)
 
 
 @click.command("check", help="Check for and print missing dependencies in the given path")
-@click.option("--path", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie", show_default=True)
+@click.option(
+    "--path",
+    default=str(Path.home() / ".finn" / "deps"),
+    help="Path to directory where dependencies lie",
+    show_default=True,
+)
 def check_deps_command(path):
     check_deps(path)
 
-
-
-#### BUILD ####
 
 def setup_envvars():
     console = Console()
@@ -103,12 +123,22 @@ def setup_envvars():
     for varname, varcontent in GLOBAL_FINN_ENVVARS.items():
         if varname not in os.environ.keys():
             if first:
-                console.print(Panel("[yellow]Some environment variables required by FINN are not set. You can set these variables interactively now. To avoid this in the future, set them permanently, for example in your bashrc![/yellow]", title="[bold]Missing Environment Variables[/bold]"))
+                console.print(
+                    Panel(
+                        "[yellow]Some environment variables required by FINN are not set. You can "
+                        "set these variables interactively now. To avoid this in the future, "
+                        "set them permanently, for example in your bashrc![/yellow]",
+                        title="[bold]Missing Environment Variables[/bold]",
+                    )
+                )
                 first = False
-            ans = console.input(f"\nVariable [bold]{varname}[/bold] is not set. Default is [blue]{varcontent}[/blue] (1 - leave unset, 2 - set to default, 3 - set own) > ")
+            ans = console.input(
+                f"\nVariable [bold]{varname}[/bold] is not set. Default is "
+                "[blue]{varcontent}[/blue] (1 - leave unset, 2 - set to default, 3 - set own) > "
+            )
             if ans == "1":
                 continue
-            elif ans == "2":
+            if ans == "2":
                 os.environ[varname] = varcontent
                 newly_set[varname] = varcontent
             elif ans == "3":
@@ -117,20 +147,81 @@ def setup_envvars():
             else:
                 console.print("[red]Unknown option. Stopping...[/red]")
                 sys.exit(1)
-    
 
 
-@click.command(help="Run a FINN build with the given build file. Tries to use environment variables in scope. If some are missing try to read from ~/.finn/env.yaml. Otherwise asks the user")
+@click.command(
+    help="Run a FINN build with the given build file. Tries to use environment variables in scope. "
+    "If some are missing try to read from ~/.finn/env.yaml. Otherwise asks the user"
+)
 @click.argument("buildfile")
-@click.option("--force-update", "-f", help="Force an update of dependencies before starting", default=False, is_flag=True)
-@click.option("--deps-path", "-d", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie", show_default=True)
-@click.option("--local-temps", "-l", default=True, is_flag=True, help="Whether to store temporary build files local to the model/buildfile.")
-@click.option("--num-workers", "-n", default=-1, help="Number of workers to do parallel tasks. -1 automatically uses 75% of your available cores.", show_default=True)
-@click.option("--clean-temps", "-c", default=False, is_flag=True, help="Clean temporary files from previous runs automatically?")
-@click.option("--ignore-missing-envvars", "-i", default=False, help="When using this flag, FINN does not interactively ask to set missing environment variables. Useful for starting FINN automatically without user input but may run into errors if variables are not set.", is_flag=True)
-@click.option("--envvar-config", "-e", help="Path to a config file containing values for FINN specific environment variables", default=str(Path.home() / ".finn" / "env.yaml"))
-@click.option("--ignore-envvar-config", help="Ignore any environment variable config", default=False, is_flag=True)
-def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_temps, ignore_missing_envvars, envvar_config, ignore_envvar_config):
+@click.option(
+    "--force-update",
+    "-f",
+    help="Force an update of dependencies before starting",
+    default=False,
+    is_flag=True,
+)
+@click.option(
+    "--deps-path",
+    "-d",
+    default=str(Path.home() / ".finn" / "deps"),
+    help="Path to directory where dependencies lie",
+    show_default=True,
+)
+@click.option(
+    "--local-temps",
+    "-l",
+    default=True,
+    is_flag=True,
+    help="Whether to store temporary build files local to the model/buildfile.",
+)
+@click.option(
+    "--num-workers",
+    "-n",
+    default=-1,
+    help="Number of workers to do parallel tasks. -1 automatically uses "
+    "75% of your available cores.",
+    show_default=True,
+)
+@click.option(
+    "--clean-temps",
+    "-c",
+    default=False,
+    is_flag=True,
+    help="Clean temporary files from previous runs automatically?",
+)
+@click.option(
+    "--ignore-missing-envvars",
+    "-i",
+    default=False,
+    help="When using this flag, FINN does not interactively ask to set missing environment "
+    "variables. Useful for starting FINN automatically without user input but may run into errors "
+    "if variables are not set.",
+    is_flag=True,
+)
+@click.option(
+    "--envvar-config",
+    "-e",
+    help="Path to a config file containing values for FINN specific environment variables",
+    default=str(Path.home() / ".finn" / "env.yaml"),
+)
+@click.option(
+    "--ignore-envvar-config",
+    help="Ignore any environment variable config",
+    default=False,
+    is_flag=True,
+)
+def build(
+    buildfile,
+    force_update,
+    deps_path,
+    local_temps,
+    num_workers,
+    clean_temps,
+    ignore_missing_envvars,
+    envvar_config,
+    ignore_envvar_config,
+):
     # TODO: Keep usage of str vs Path() consistent everywhere
     console = Console()
     console.print()
@@ -141,7 +232,10 @@ def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_te
             if success:
                 console.print("[bold green]Loaded environment variable config.[/bold green]")
             else:
-                console.print("[bold yellow]Environment variable config not found or has incompatible format. You might be asked for environment variable values later.[/bold yellow]")
+                console.print(
+                    "[bold yellow]Environment variable config not found or has incompatible format."
+                    "You might be asked for environment variable values later.[/bold yellow]"
+                )
         setup_envvars()
     buildfile_path = Path(buildfile)
     if not buildfile_path.exists():
@@ -155,12 +249,17 @@ def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_te
         update_deps(deps_path)
 
     if shutil.which("verilator") is None:
-        console.print("[bold red]Could not find [italic]verilator[/italic] in path! Please install verilator before continuing.[/bold red]")
+        console.print(
+            "[bold red]Could not find [italic]verilator[/italic] in path! Please install "
+            "verilator before continuing.[/bold red]"
+        )
     else:
         console.print("[bold green]Verilator found![/bold green]")
-    
+
     # Remove previous temp files if wanted
-    finnbuilddir = buildfile_path.parent.absolute() / "FINN_TMP" if local_temps else Path("/tmp/FINN_TMP")
+    finnbuilddir = (
+        buildfile_path.parent.absolute() / "FINN_TMP" if local_temps else Path("/tmp/FINN_TMP")
+    )
     if clean_temps:
         for obj in finnbuilddir.iterdir():
             if obj.is_dir():
@@ -170,69 +269,135 @@ def build(buildfile, force_update, deps_path, local_temps, num_workers, clean_te
         if len(list(finnbuilddir.iterdir())) == 0:
             console.print("[bold yellow]Deleted all previous temporary build files![/bold yellow]")
         else:
-            console.print(f"[bold red]It seems that deleting old run files failed in directory {finnbuilddir}. Stopping...[/bold red]")
+            console.print(
+                f"[bold red]It seems that deleting old run files failed in directory "
+                f"{finnbuilddir}. Stopping...[/bold red]"
+            )
             sys.exit(1)
 
     # Run FINN
-    prefix = generate_envvars(Path(__file__).parent.absolute(), buildfile_path, local_temps, Path(deps_path), num_workers)
+    prefix = generate_envvars(
+        Path(__file__).parent.absolute(), buildfile_path, local_temps, Path(deps_path), num_workers
+    )
     splitprefix = prefix.replace(" ", "\n")
-    console.print(Panel(f"Prefix:\n{splitprefix}\n\nDependency directory: {deps_path}\nBuildfile: {buildfile_path.absolute()}"))
+    console.print(
+        Panel(
+            f"Prefix:\n{splitprefix}\n\nDependency directory: {deps_path}\n"
+            "Buildfile: {buildfile_path.absolute()}"
+        )
+    )
     console.print("\n")
     console.rule("RUNNING FINN")
-    subprocess.run(f"{prefix} python {buildfile_path.name}", shell=True, cwd=buildfile_path.parent.absolute())
+    subprocess.run(
+        f"{prefix} python {buildfile_path.name}", shell=True, cwd=buildfile_path.parent.absolute()
+    )
 
-
-
-#### TESTS ####
 
 @click.command(name="quicktest", help="Run the quicktests in FINN. Should only take a few minutes")
-@click.option("--variant", "-v", help="Which variant of the quicktests to execute. Defaults to standard tests.", default="")
+@click.option(
+    "--variant",
+    "-v",
+    help="Which variant of the quicktests to execute. Defaults to standard tests.",
+    default="",
+)
 @click.option("--num-workers", "-n", help="Number of pytest workers in parallel", default="auto")
-@click.option("--envvar-config", "-e", help="Path to a config file containing values for FINN specific environment variables", default=str(Path.home() / ".finn" / "env.yaml"))
-@click.option("--deps-path", "-d", default=str(Path.home() / ".finn" / "deps"), help="Path to directory where dependencies lie", show_default=True)
+@click.option(
+    "--envvar-config",
+    "-e",
+    help="Path to a config file containing values for FINN specific environment variables",
+    default=str(Path.home() / ".finn" / "env.yaml"),
+)
+@click.option(
+    "--deps-path",
+    "-d",
+    default=str(Path.home() / ".finn" / "deps"),
+    help="Path to directory where dependencies lie",
+    show_default=True,
+)
 def run_quicktest(variant, num_workers, envvar_config, deps_path):
     console = Console()
     success = load_preset_envvars(Path(envvar_config))
     if success:
         console.print("[bold green]Loaded environment variable config.[/bold green]")
     else:
-        console.print("[bold yellow]Environment variable config not found or has incompatible format. You might be asked for environment variable values later.[/bold yellow]")
+        console.print(
+            "[bold yellow]Environment variable config not found or has incompatible format. "
+            "You might be asked for environment variable values later.[/bold yellow]"
+        )
     setup_envvars()
-    prefix = generate_envvars(Path(__file__).parent.absolute(), Path.home(), False, Path(deps_path), num_workers)
+    prefix = generate_envvars(
+        Path(__file__).parent.absolute(), Path.home(), False, Path(deps_path), num_workers
+    )
     match variant:
         case "":
             console.print("[bold green]Starting default tests[/bold green]")
-            subprocess.run(f"{prefix} pytest -m 'not (vivado or slow or vitis or board or notebooks or bnn_pynq)' --dist=loadfile -n {num_workers}", shell=True) 
+            subprocess.run(
+                f"{prefix} pytest -m 'not "
+                "(vivado or slow or vitis or board or notebooks or bnn_pynq)' "
+                "--dist=loadfile -n {num_workers}",
+                shell=True,
+            )
         case "main":
             console.print("[bold green]Starting main tests[/bold green]")
-            subprocess.run(f"{prefix} pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}", shell=True) 
+            subprocess.run(
+                f"{prefix} pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}",
+                shell=True,
+            )
         case "rtlsim":
             console.print("[bold green]Starting RTLSIM tests[/bold green]")
-            subprocess.run(f"{prefix} pytest -k rtlsim --workers {num_workers}", shell=True) 
+            subprocess.run(f"{prefix} pytest -k rtlsim --workers {num_workers}", shell=True)
         case "end2end":
             console.print("[bold green]Starting end2end tests[/bold green]")
-            subprocess.run(f"{prefix} pytest -k end2end", shell=True) 
+            subprocess.run(f"{prefix} pytest -k end2end", shell=True)
         case "full":
             console.print("[bold green]Running all tests. This might take a while[/bold green]")
-            subprocess.run(f"{prefix} pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}", shell=True) 
-            subprocess.run(f"{prefix} pytest -k rtlsim --workers {num_workers}", shell=True) 
-            subprocess.run(f"{prefix} pytest -k end2end", shell=True) 
+            subprocess.run(
+                f"{prefix} pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}",
+                shell=True,
+            )
+            subprocess.run(f"{prefix} pytest -k rtlsim --workers {num_workers}", shell=True)
+            subprocess.run(f"{prefix} pytest -k end2end", shell=True)
         case "brevitas":
-            console.print("[bold green]Brevitas tests...[/bold green]") 
-            subprocess.run(f"{prefix} pytest -k brevitas_export", shell=True) 
+            console.print("[bold green]Brevitas tests...[/bold green]")
+            subprocess.run(f"{prefix} pytest -k brevitas_export", shell=True)
 
 
-
-
-#### INSPECT ####
-
-@click.command(help="Inspect something. (Takes ONNX files, build.yaml, build.py, XCLBINs). Only uses options for the given filetype")
+@click.command(
+    help="Inspect something. (Takes ONNX files, build.yaml, build.py, XCLBINs). "
+    "Only uses options for the given filetype"
+)
 @click.argument("obj")
-@click.option("--ignore-fifos", help="Dont display FIFOs in the model tree (ONNX)", default=False, is_flag=True, show_default=True)
-@click.option("--no-collapse-fifo-names", help="Collapse consecutive FIFOs in the tree to one node (ONNX)", default=False, is_flag=True, show_default=True)
-@click.option("--no-ignore-sdp-prefix", help="Removes the SDP name prefix from submodel node names (ONNX)", default=False, is_flag=True, show_default=True)
-@click.option("--no-display-cycle-estimates", help="Display cycle estimates next to node names (ONNX)", default=False, is_flag=True, show_default=True)
-def inspect(obj, ignore_fifos, no_collapse_fifo_names, no_ignore_sdp_prefix, no_display_cycle_estimates):
+@click.option(
+    "--ignore-fifos",
+    help="Dont display FIFOs in the model tree (ONNX)",
+    default=False,
+    is_flag=True,
+    show_default=True,
+)
+@click.option(
+    "--no-collapse-fifo-names",
+    help="Collapse consecutive FIFOs in the tree to one node (ONNX)",
+    default=False,
+    is_flag=True,
+    show_default=True,
+)
+@click.option(
+    "--no-ignore-sdp-prefix",
+    help="Removes the SDP name prefix from submodel node names (ONNX)",
+    default=False,
+    is_flag=True,
+    show_default=True,
+)
+@click.option(
+    "--no-display-cycle-estimates",
+    help="Display cycle estimates next to node names (ONNX)",
+    default=False,
+    is_flag=True,
+    show_default=True,
+)
+def inspect(
+    obj, ignore_fifos, no_collapse_fifo_names, no_ignore_sdp_prefix, no_display_cycle_estimates
+):
     console = Console()
     objpath = Path(obj)
     if not objpath.exists():
@@ -240,29 +405,39 @@ def inspect(obj, ignore_fifos, no_collapse_fifo_names, no_ignore_sdp_prefix, no_
         sys.exit(1)
     split_name = obj.split(".")
     if len(split_name) < 2:
-        console.print(f"[bold red]Cannot determine filetype since appropiate file ending is missing![/bold red]")
+        console.print(
+            "[bold red]Cannot determine filetype since file ending is missing![/bold red]"
+        )
         sys.exit(1)
-    
+
     ending = split_name[-1].lower()
     match ending:
         case "onnx":
-            inspect_onnx(objpath, not no_ignore_sdp_prefix, not no_display_cycle_estimates, not no_collapse_fifo_names, ignore_fifos)
+            inspect_onnx(
+                objpath,
+                not no_ignore_sdp_prefix,
+                not no_display_cycle_estimates,
+                not no_collapse_fifo_names,
+                ignore_fifos,
+            )
         case "yaml" | "yml":
             raise NotImplementedError()
         case "py":
             raise NotImplementedError()
         case "xclbin":
             raise NotImplementedError()
-    
 
 
-#### DOCS ####
 @click.group(help="Documentation related commands")
-def docs(): pass
+def docs():
+    pass
+
 
 @click.command()
 @click.argument("transformation")
-@click.option("--relaxed", "-r", help="Look for substring matches and display all found.", is_flag=True)
+@click.option(
+    "--relaxed", "-r", help="Look for substring matches and display all found.", is_flag=True
+)
 @click.option("--show-location", "-l", help="Also show location of the class", is_flag=True)
 def get(transformation, relaxed, show_location):
     console = Console()
@@ -275,8 +450,14 @@ def get(transformation, relaxed, show_location):
     ]
     with console.status("Looking up docs...") as status:
         for transformation_package in transformation_pkgs:
-            actual_path = Path(__file__).parent / "src" / Path(transformation_package.replace(".", "/"))
-            modules = [str(m.name).replace(".py", "") for m in actual_path.iterdir() if str(m).endswith(".py")]
+            actual_path = (
+                Path(__file__).parent / "src" / Path(transformation_package.replace(".", "/"))
+            )
+            modules = [
+                str(m.name).replace(".py", "")
+                for m in actual_path.iterdir()
+                if str(m).endswith(".py")
+            ]
             modules = [m for m in modules if m != "__init__"]
             mod = __import__(transformation_package, globals(), locals(), modules, 0)
             for modname in modules:
@@ -285,25 +466,38 @@ def get(transformation, relaxed, show_location):
                     if isclass(potential_class):
                         if issubclass(potential_class, Transformation):
                             docs[potential_class_name] = potential_class.__doc__
-                            locs[potential_class_name] = f"{transformation_package}.{modname}.{potential_class_name}"
+                            locs[
+                                potential_class_name
+                            ] = f"{transformation_package}.{modname}.{potential_class_name}"
 
     for class_name, class_doc in docs.items():
         doc_text = class_doc
         if show_location:
-            doc_text = f"[italic orange1]Class location: {locs[class_name]}[/italic orange1]\n\n{class_doc}"
+            doc_text = (
+                f"[italic orange1]Class location: {locs[class_name]}"
+                "[/italic orange1]\n\n{class_doc}"
+            )
         if relaxed:
             if transformation.lower() in class_name.lower():
-                console.print(Panel(doc_text, title=f"[bold cyan]{class_name}[/bold cyan]", border_style="cyan"))
+                console.print(
+                    Panel(
+                        doc_text, title=f"[bold cyan]{class_name}[/bold cyan]", border_style="cyan"
+                    )
+                )
         else:
             if class_name.lower() == transformation.lower():
-                console.print(Panel(doc_text, title=f"[bold cyan]{class_name}[/bold cyan]", border_style="cyan"))
+                console.print(
+                    Panel(
+                        doc_text, title=f"[bold cyan]{class_name}[/bold cyan]", border_style="cyan"
+                    )
+                )
                 return
     if not relaxed:
-        console.print(f"[bold red]No documentation found for transformation [reverse]{transformation}[/reverse][/bold red]")
+        console.print(
+            "[bold red]No documentation found for transformation "
+            "[reverse]{transformation}[/reverse][/bold red]"
+        )
 
-
-
-############### CLICK ###############
 
 test.add_command(run_quicktest)
 deps.add_command(update_deps_command)
@@ -315,8 +509,10 @@ main_group.add_command(test)
 main_group.add_command(inspect)
 main_group.add_command(docs)
 
+
 def main():
     main_group()
+
 
 if __name__ == "__main__":
     main()
