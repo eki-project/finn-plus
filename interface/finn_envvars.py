@@ -1,9 +1,8 @@
-from math import floor
+import json
 import os
-from pathlib import Path
 import psutil
 import yaml
-import json
+from pathlib import Path
 
 GLOBAL_FINN_ENVVARS = {
     "PLATFORM_REPO_PATHS": "/opt/xilinx/platforms",
@@ -15,23 +14,36 @@ GLOBAL_FINN_ENVVARS = {
 }
 
 
-def generate_envvars(finnroot: Path, buildfile_path: Path, local_temps: bool, deps_path: Path, num_workers: int):
+def generate_envvars(
+    finnroot: Path, buildfile_path: Path, local_temps: bool, deps_path: Path, num_workers: int
+):
     """Generate a string to prefix the bash command with the required env vars"""
     cpucount = psutil.cpu_count(logical=False)
     if num_workers == -1:
         cpus = int(0.75 * cpucount) if cpucount is not None else 1
     else:
         cpus = num_workers
-    finnbuilddir = buildfile_path.parent.absolute() / "FINN_TMP" if local_temps else Path("/tmp/FINN_TMP")
+    finnbuilddir = (
+        buildfile_path.parent.absolute() / "FINN_TMP" if local_temps else Path("/tmp/FINN_TMP")
+    )
     finnhost = finnbuilddir.parent / "FINN_TMP_HOST"
     ohmyxilinx = (deps_path / "oh-my-xilinx").absolute()
-    prefix = ""
-    prefix += f"FINN_ROOT={finnroot} "
-    prefix += f"NUM_DEFAULT_WORKERS={cpus} "
-    prefix += f"FINN_BUILD_DIR={finnbuilddir} "
-    prefix += f"OHMYXILINX={ohmyxilinx} "
-    prefix += f"FINN_HOST_BUILD_DIR={finnhost}"
-    return prefix
+    return {
+        "FINN_ROOT": finnroot,
+        "NUM_DEFAULT_WORKERS": cpus,
+        "FINN_BUILD_DIR": finnbuilddir,
+        "OHMYXILINX": ohmyxilinx,
+        "FINN_HOST_BUILD_DIR": finnhost,
+    }
+
+
+def set_envvars(envvars: dict) -> None:
+    for k, v in envvars.items():
+        os.environ[k] = v
+
+
+def make_envvar_prefix_str(envvars: dict) -> str:
+    return " ".join([f"{k}={v}" for k, v in envvars.items()])
 
 
 def load_preset_envvars(location: Path) -> bool:
@@ -45,9 +57,9 @@ def load_preset_envvars(location: Path) -> bool:
             data = json.load(f)
     elif location.name.endswith(("yaml", "yml")):
         with location.open() as f:
-            data = yaml.load(f, Loader=yaml.Loader) 
+            data = yaml.load(f, Loader=yaml.Loader)
     else:
         return False
-    for k,v in data.items():
+    for k, v in data.items():
         os.environ[k] = v
     return True

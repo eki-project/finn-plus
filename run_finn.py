@@ -22,6 +22,7 @@ from interface.finn_envvars import (
     GLOBAL_FINN_ENVVARS,
     generate_envvars,
     load_preset_envvars,
+    make_envvar_prefix_str,
 )
 from interface.finn_inspect import inspect_onnx
 
@@ -149,9 +150,91 @@ def setup_envvars() -> None:
                 sys.exit(1)
 
 
+def prepare_finn_environment(
+    targetfile: str,
+    force_update: bool,
+    deps_path: str,
+    local_temps: bool,
+    num_workers: int,
+    clean_temps: bool,
+    ignore_missing_envvars: bool,
+    envvar_config: str,
+    ignore_envvar_config: bool,
+) -> str:
+    """Prepare a build or run in a FINN environment. Returns a dict of required env variables.
+    In detail this function does the following:
+    1. Load preset environment variables at the given or default path. This _sets_ them
+    2. If env vars are missing, ask the user to set them manually
+    3. Check if the given target file exists
+    4. Check if all deps are available and if tasked to update them
+    5. Check if verilator exists
+    6. Generate required env vars
+    7. If asked to, delete old temporary datas
+    8. Return environment variables as a dict"""
+    # TODO: Keep usage of str vs Path() consistent everywhere
+    console = Console()
+    console.print()
+    console.rule("CONFIGURATION")
+    if not ignore_missing_envvars:
+        if not ignore_envvar_config:
+            success = load_preset_envvars(Path(envvar_config))
+            if success:
+                console.print("[bold green]Loaded environment variable config.[/bold green]")
+            else:
+                console.print(
+                    "[bold yellow]Environment variable config not found or has incompatible format."
+                    "You might be asked for environment variable values later.[/bold yellow]"
+                )
+        setup_envvars()
+    targetfile_path = Path(targetfile)
+    if not targetfile_path.exists():
+        console.print(f"[bold red]Could not find file at: {targetfile_path}[/bold red]")
+        sys.exit(1)
+
+    # Check dependencies
+    if not force_update:
+        check_deps(deps_path)
+    else:
+        update_deps(deps_path)
+
+    if shutil.which("verilator") is None:
+        console.print(
+            "[bold red]Could not find [italic]verilator[/italic] in path! Please install "
+            "verilator before continuing.[/bold red]"
+        )
+    else:
+        console.print("[bold green]Verilator found![/bold green]")
+
+    # Generate required envvars for running finn
+    envvars = generate_envvars(
+        Path(__file__).parent.absolute(), targetfile_path, local_temps, Path(deps_path), num_workers
+    )
+
+    # Remove previous temp files if wanted
+    finnbuilddir = envvars["FINN_BUILD_DIR"]
+    if clean_temps:
+        for obj in finnbuilddir.iterdir():
+            if obj.is_dir():
+                shutil.rmtree(str(obj))
+            else:
+                obj.unlink()
+        if len(list(finnbuilddir.iterdir())) == 0:
+            console.print("[bold yellow]Deleted all previous temporary build files![/bold yellow]")
+        else:
+            console.print(
+                f"[bold red]It seems that deleting old run files failed in directory "
+                f"{finnbuilddir}. Stopping...[/bold red]"
+            )
+            sys.exit(1)
+
+    # Return the environment variables required for running FINN
+    return envvars
+
+
 @click.command(
-    help="Run a FINN build with the given build file. Tries to use environment variables in scope. "
-    "If some are missing try to read from ~/.finn/env.yaml. Otherwise asks the user"
+    help="Run a python script in a FINN environment. Usually is a FINN build script but can be"
+    "anything. Checks environment variables and if some are missing tries to "
+    "read from ~/.finn/env.yaml. Otherwise asks the user"
 )
 @click.argument("buildfile")
 @click.option(
@@ -211,8 +294,8 @@ def setup_envvars() -> None:
     default=False,
     is_flag=True,
 )
-def build(
-    buildfile: str,
+def run(
+    targetfile: str,
     force_update: bool,
     deps_path: str,
     local_temps: bool,
@@ -222,74 +305,23 @@ def build(
     envvar_config: str,
     ignore_envvar_config: bool,
 ) -> None:
-    # TODO: Keep usage of str vs Path() consistent everywhere
     console = Console()
-    console.print()
-    console.rule("CONFIGURATION")
-    if not ignore_missing_envvars:
-        if not ignore_envvar_config:
-            success = load_preset_envvars(Path(envvar_config))
-            if success:
-                console.print("[bold green]Loaded environment variable config.[/bold green]")
-            else:
-                console.print(
-                    "[bold yellow]Environment variable config not found or has incompatible format."
-                    "You might be asked for environment variable values later.[/bold yellow]"
-                )
-        setup_envvars()
-    buildfile_path = Path(buildfile)
-    if not buildfile_path.exists():
-        console.print(f"[bold red]Could not find buildfile at: {buildfile_path}[/bold red]")
-        sys.exit(1)
-
-    # Check dependencies
-    if not force_update:
-        check_deps(deps_path)
-    else:
-        update_deps(deps_path)
-
-    if shutil.which("verilator") is None:
-        console.print(
-            "[bold red]Could not find [italic]verilator[/italic] in path! Please install "
-            "verilator before continuing.[/bold red]"
-        )
-    else:
-        console.print("[bold green]Verilator found![/bold green]")
-
-    # Remove previous temp files if wanted
-    finnbuilddir = (
-        buildfile_path.parent.absolute() / "FINN_TMP" if local_temps else Path("/tmp/FINN_TMP")
-    )
-    if clean_temps:
-        for obj in finnbuilddir.iterdir():
-            if obj.is_dir():
-                shutil.rmtree(str(obj))
-            else:
-                obj.unlink()
-        if len(list(finnbuilddir.iterdir())) == 0:
-            console.print("[bold yellow]Deleted all previous temporary build files![/bold yellow]")
-        else:
-            console.print(
-                f"[bold red]It seems that deleting old run files failed in directory "
-                f"{finnbuilddir}. Stopping...[/bold red]"
-            )
-            sys.exit(1)
-
-    # Run FINN
-    prefix = generate_envvars(
-        Path(__file__).parent.absolute(), buildfile_path, local_temps, Path(deps_path), num_workers
-    )
-    splitprefix = prefix.replace(" ", "\n")
-    console.print(
-        Panel(
-            f"Prefix:\n{splitprefix}\n\nDependency directory: {deps_path}\n"
-            "Buildfile: {buildfile_path.absolute()}"
-        )
-    )
     console.print("\n")
-    console.rule("RUNNING FINN")
+    console.rule("RUNNING")
+    envvars = prepare_finn_environment(
+        targetfile,
+        force_update,
+        deps_path,
+        local_temps,
+        num_workers,
+        clean_temps,
+        ignore_missing_envvars,
+        envvar_config,
+        ignore_envvar_config,
+    )
+    prefix = make_envvar_prefix_str(envvars)
     subprocess.run(
-        f"{prefix} python {buildfile_path.name}", shell=True, cwd=buildfile_path.parent.absolute()
+        f"{prefix} python {targetfile.name}", shell=True, cwd=Path(targetfile).parent.absolute()
     )
 
 
@@ -507,7 +539,7 @@ deps.add_command(update_deps_command)
 deps.add_command(check_deps_command)
 docs.add_command(get)
 main_group.add_command(deps)
-main_group.add_command(build)
+main_group.add_command(run)
 main_group.add_command(test)
 main_group.add_command(inspect)
 main_group.add_command(docs)
