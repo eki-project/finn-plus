@@ -30,10 +30,16 @@
 import numpy as np
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.channels_last import ConvertToChannelsLastAndClean
-from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
+from qonnx.transformation.extract_quant_scale_zeropt import AbsorbQuantScale
+from qonnx.transformation.general import (
+    ConvertDivToMul,
+    GiveReadableTensorNames,
+    GiveUniqueNodeNames,
+)
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
+from qonnx.transformation.quant_constant_folding import FoldTransposeIntoQuantInit
 from qonnx.transformation.remove import RemoveIdentityOps
 from qonnx.transformation.streamline import Streamline
 from qonnx.util.range_analysis import RangeInfo
@@ -42,6 +48,7 @@ from warnings import warn
 
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
+import finn.transformation.streamline.collapse_repeated as collapse
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.builder.build_dataflow_steps import verify_step
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
@@ -130,6 +137,7 @@ def step_convert_to_channels_last(model: ModelWrapper, cfg: DataflowBuildConfig)
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(GiveReadableTensorNames())
         model = model.transform(InferDataTypes())
+    model = model.transform(InferDataLayouts())
     # TODO add assertions/checks - how should these look?
     step_name = "step_convert_to_channels_last"
     if step_name in cfg._resolve_verification_steps():
@@ -138,9 +146,11 @@ def step_convert_to_channels_last(model: ModelWrapper, cfg: DataflowBuildConfig)
 
 
 def step_convert_to_thresholds_new(model: ModelWrapper, cfg: DataflowBuildConfig):
+    model = model.transform(FoldTransposeIntoQuantInit())
     model = model.transform(absorb.FactorOutMulSignMagnitude())
     model = model.transform(absorb.Absorb1BitMulIntoMatMul())
     model = model.transform(absorb.Absorb1BitMulIntoConv())
+    model = model.transform(InferDataLayouts())
 
     model = model.transform(
         QuantToMultiThreshold(
@@ -167,7 +177,12 @@ def step_convert_to_thresholds_new(model: ModelWrapper, cfg: DataflowBuildConfig
 
 
 def step_convert_to_thresholds_old(model: ModelWrapper, cfg: DataflowBuildConfig):
-    # TODO to be replaced by the new threshold conversion methodology when it's ready
+    if cfg.max_multithreshold_bit_width == 0:
+        # skip step entirely to avoid e.g. standalone eltwise mul being reabsorbed
+        # back into Quant nodes
+        return model
+    model = model.transform(AbsorbQuantScale())
+    model = model.transform(ConvertDivToMul())
     model = model.transform(InferDataLayouts())
     model = model.transform(
         ConvertQONNXtoFINN(
@@ -176,6 +191,7 @@ def step_convert_to_thresholds_old(model: ModelWrapper, cfg: DataflowBuildConfig
             )
         )
     )
+    model = model.transform(collapse.CollapseRepeatedMul())
     model = model.transform(RemoveIdentityOps())
     model = model.transform(absorb.AbsorbAddIntoMultiThreshold())
     model = model.transform(absorb.FactorOutMulSignMagnitude())
