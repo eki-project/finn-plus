@@ -37,7 +37,7 @@ install(show_locals=True)
 
 
 @click.group()
-def main_group():
+def main_group() -> None:
     pass
 
 
@@ -45,16 +45,16 @@ def main_group():
     help="Dependency related commands. Use to check and "
     "update your non-python based FINN dependencies"
 )
-def deps():
+def deps() -> None:
     pass
 
 
 @click.group(help="Run tests on the given FINN installation. Use finn test --help to learn more.")
-def test():
+def test() -> None:
     pass
 
 
-def update_deps(path):
+def update_deps(path: str) -> None:
     deppath = Path(path).absolute()
     console = Console()
     console.print(f"Installing dependencies to: [cyan]{deppath}[/cyan]")
@@ -78,9 +78,9 @@ def update_deps(path):
     console.print("Done.")
 
 
-def check_deps(path):
+def check_deps(path: str) -> None:
     console = Console()
-    success, missing = deps_exist()
+    success, missing = deps_exist(path)
     if success:
         console.print("[bold green]All dependencies found![/bold green]")
     else:
@@ -101,7 +101,7 @@ def check_deps(path):
     help="Path to directory where dependencies lie",
     show_default=True,
 )
-def update_deps_command(path):
+def update_deps_command(path: str) -> None:
     update_deps(path)
 
 
@@ -112,11 +112,11 @@ def update_deps_command(path):
     help="Path to directory where dependencies lie",
     show_default=True,
 )
-def check_deps_command(path):
+def check_deps_command(path: str) -> None:
     check_deps(path)
 
 
-def setup_envvars():
+def setup_envvars() -> None:
     console = Console()
     first = True
     newly_set = {}
@@ -212,16 +212,16 @@ def setup_envvars():
     is_flag=True,
 )
 def build(
-    buildfile,
-    force_update,
-    deps_path,
-    local_temps,
-    num_workers,
-    clean_temps,
-    ignore_missing_envvars,
-    envvar_config,
-    ignore_envvar_config,
-):
+    buildfile: str,
+    force_update: bool,
+    deps_path: str,
+    local_temps: bool,
+    num_workers: int,
+    clean_temps: bool,
+    ignore_missing_envvars: bool,
+    envvar_config: str,
+    ignore_envvar_config: bool,
+) -> None:
     # TODO: Keep usage of str vs Path() consistent everywhere
     console = Console()
     console.print()
@@ -314,7 +314,7 @@ def build(
     help="Path to directory where dependencies lie",
     show_default=True,
 )
-def run_quicktest(variant, num_workers, envvar_config, deps_path):
+def run_quicktest(variant: str, num_workers: int, envvar_config: str, deps_path: str) -> None:
     console = Console()
     success = load_preset_envvars(Path(envvar_config))
     if success:
@@ -396,8 +396,12 @@ def run_quicktest(variant, num_workers, envvar_config, deps_path):
     show_default=True,
 )
 def inspect(
-    obj, ignore_fifos, no_collapse_fifo_names, no_ignore_sdp_prefix, no_display_cycle_estimates
-):
+    obj: str,
+    ignore_fifos: bool,
+    no_collapse_fifo_names: bool,
+    no_ignore_sdp_prefix: bool,
+    no_display_cycle_estimates: bool,
+) -> None:
     console = Console()
     objpath = Path(obj)
     if not objpath.exists():
@@ -429,7 +433,7 @@ def inspect(
 
 
 @click.group(help="Documentation related commands")
-def docs():
+def docs() -> None:
     pass
 
 
@@ -439,7 +443,7 @@ def docs():
     "--relaxed", "-r", help="Look for substring matches and display all found.", is_flag=True
 )
 @click.option("--show-location", "-l", help="Also show location of the class", is_flag=True)
-def get(transformation, relaxed, show_location):
+def get(transformation: str, relaxed: bool, show_location: bool) -> None:
     console = Console()
     docs = {}
     locs = {}
@@ -463,12 +467,11 @@ def get(transformation, relaxed, show_location):
             for modname in modules:
                 for potential_class_name in dir(mod.__dict__[modname]):
                     potential_class = mod.__dict__[modname].__dict__[potential_class_name]
-                    if isclass(potential_class):
-                        if issubclass(potential_class, Transformation):
-                            docs[potential_class_name] = potential_class.__doc__
-                            locs[
-                                potential_class_name
-                            ] = f"{transformation_package}.{modname}.{potential_class_name}"
+                    if isclass(potential_class) and issubclass(potential_class, Transformation):
+                        docs[potential_class_name] = potential_class.__doc__
+                        locs[
+                            potential_class_name
+                        ] = f"{transformation_package}.{modname}.{potential_class_name}"
 
     for class_name, class_doc in docs.items():
         doc_text = class_doc
@@ -510,7 +513,7 @@ main_group.add_command(inspect)
 main_group.add_command(docs)
 
 
-def main():
+def main() -> None:
     main_group()
 
 
