@@ -302,6 +302,8 @@ class MakePYNQDriverIODMA(Transformation):
                     )
                 else:
                     continue
+                
+        return (model, False)
 
 
 class MakePYNQDriverInstrumentation(Transformation):
