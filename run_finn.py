@@ -12,7 +12,7 @@ from rich.table import Table
 from rich.traceback import install
 
 from finn.builder.build_dataflow import build_dataflow_cfg
-from finn.builder.build_dataflow_config import BuildDataflowConfig
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from interface.finn_deps import (
     FINN_BOARDFILES,
     FINN_DEPS,
@@ -29,7 +29,7 @@ from interface.finn_envvars import (
 )
 from interface.finn_inspect import inspect_onnx
 
-install(show_locals=True)
+install(show_locals=False)
 
 
 # - Copy .Xilinx to HOME dir when starting
@@ -84,7 +84,7 @@ def update_deps(path: str) -> None:
 
 def check_deps(path: str) -> None:
     console = Console()
-    success, missing = deps_exist(path)
+    success, missing = deps_exist(Path(path))
     if success:
         console.print("[bold green]All dependencies found![/bold green]")
     else:
@@ -336,7 +336,7 @@ def build(
             raise NotImplementedError()
         case ".json":
             with configpath.open() as f:
-                bdfc = BuildDataflowConfig.from_json(f.read())
+                bdfc = DataflowBuildConfig.from_json(f.read())
         case _:
             console.print(f"[bold red]Unknown format for a build config file: {configpath.suffix}")
             sys.exit(1)
@@ -350,7 +350,7 @@ def build(
     "anything. Checks environment variables and if some are missing tries to "
     "read from ~/.finn/env.yaml. Otherwise asks the user"
 )
-@click.argument("buildfile")
+@click.argument("targetfile")
 @click.option(
     "--force-update",
     "-f",
@@ -421,7 +421,6 @@ def run(
 ) -> None:
     console = Console()
     console.print("\n")
-    console.rule("RUNNING")
     envvars = prepare_finn_environment(
         targetfile,
         force_update,
@@ -434,8 +433,11 @@ def run(
         ignore_envvar_config,
     )
     prefix = make_envvar_prefix_str(envvars)
+    console.rule("RUNNING")
     subprocess.run(
-        f"{prefix} python {targetfile.name}", shell=True, cwd=Path(targetfile).parent.absolute()
+        f"{prefix} python {Path(targetfile).name}",
+        shell=True,
+        cwd=Path(targetfile).parent.absolute(),
     )
 
 
@@ -654,6 +656,7 @@ deps.add_command(check_deps_command)
 docs.add_command(get)
 main_group.add_command(deps)
 main_group.add_command(run)
+main_group.add_command(build)
 main_group.add_command(test)
 main_group.add_command(inspect)
 main_group.add_command(docs)

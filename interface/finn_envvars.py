@@ -39,7 +39,7 @@ def generate_envvars(
 
 def set_envvars(envvars: dict) -> None:
     for k, v in envvars.items():
-        os.environ[k] = v
+        os.environ[k] = str(v)
 
 
 def make_envvar_prefix_str(envvars: dict) -> str:
