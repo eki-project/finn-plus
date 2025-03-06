@@ -30,17 +30,18 @@ import clize
 import json
 import logging
 import os
-import pdb  # NOQA
 import sys
 import time
-import traceback
 from qonnx.core.modelwrapper import ModelWrapper
+from rich.console import Console
 
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     default_build_dataflow_steps,
 )
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
+
+import pdb  # NOQA
 
 
 # adapted from https://stackoverflow.com/a/39215961
@@ -174,7 +175,8 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             sys.stderr = stderr_orig
             # print exception info and traceback
             extype, value, tb = sys.exc_info()
-            traceback.print_exc()
+            console = Console()
+            console.print_exception(show_locals=False)
             # start postmortem debug if configured
             if cfg.enable_build_pdb_debug:
                 pdb.post_mortem(tb)

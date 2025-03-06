@@ -49,6 +49,7 @@ __pycache__/*
 .settings
 .idea
 tags
+poetry.lock
 
 # Package files
 *.egg
