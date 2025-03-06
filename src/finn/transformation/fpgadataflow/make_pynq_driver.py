@@ -26,9 +26,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import json
 import numpy as np
 import os
-import json
 import qonnx
 import shutil
 import warnings
@@ -303,6 +303,8 @@ class MakePYNQDriverIODMA(Transformation):
                 else:
                     continue
 
+        return (model, False)
+
 
 class MakePYNQDriverInstrumentation(Transformation):
     def __init__(self, platform, clk_period_ns):
@@ -320,7 +322,8 @@ class MakePYNQDriverInstrumentation(Transformation):
 
         # create (copy) the static instrumentation driver
         driver_template = (
-            os.environ["FINN_ROOT"] + "/src/finn/qnn-data/templates/driver/driver_instrumentation.py"
+            os.environ["FINN_ROOT"]
+            + "/src/finn/qnn-data/templates/driver/driver_instrumentation.py"
         )
         driver_py = pynq_driver_dir + "/driver.py"
         shutil.copy(driver_template, driver_py)
