@@ -174,13 +174,16 @@ class MakeZYNQProject(Transformation):
                 )
                 # connect to master interconnect
                 config.append(
-                    "connect_bd_intf_net [get_bd_intf_pins axi_interconnect_0/M%02d_AXI] -boundary_type upper [get_bd_intf_pins axi_interconnect_%d/S00_AXI]"
+                    "connect_bd_intf_net [get_bd_intf_pins axi_interconnect_0/M%02d_AXI] "
+                    "-boundary_type upper [get_bd_intf_pins axi_interconnect_%d/S00_AXI]"
                     % (master_axilite_idx, i)
                 )
-                # connect clocks/reset TODO: suppport zynq_7000
+                # connect clocks/reset
                 config.append(
-                    "apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_interconnect_%d/ACLK]"
-                    % (i)
+                    "apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config "
+                    "{ Clk {/zynq_ps/$zynq_ps_clkname} Freq {} "
+                    "Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  "
+                    "[get_bd_pins axi_interconnect_%d/ACLK]" % (i)
                 )
                 master_axilite_idx += 1
                 total_axilite_count = max(0, total_axilite_count - 64)
@@ -359,10 +362,11 @@ class MakeZYNQProject(Transformation):
             config.append("delete_bd_objs [get_bd_cells smartconnect_0]")
             aximm_idx = 1
 
-        # finalize nested interconnect clock/reset TODO: support zynq_7000
+        # finalize nested interconnect clock/reset
         for i in range(1, nested_interconnect_count + 1):
             config.append(
-                "apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} }  [get_bd_pins axi_interconnect_%d/M*_ACLK]"
+                "apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config "
+                "{ Clk {/zynq_ps/$zynq_ps_clkname} }  [get_bd_pins axi_interconnect_%d/M*_ACLK]"
                 % (i)
             )
 

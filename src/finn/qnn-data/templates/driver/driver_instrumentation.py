@@ -1,27 +1,28 @@
-import time
-import json
 import argparse
+import json
+import time
 from pynq import Overlay
-from pynq.ps import Clocks
 from pynq.pl_server.device import Device
+from pynq.ps import Clocks
 
-### Instrumentation wrapper register map ###
-#ap_uint<32>  cfg,   	// [0] - 0:hold, 1:lfsr; [31:16] - LFSR seed
-#ap_uint<32> &status,	// [0] - timestamp overflow; [1] - timestamp underflow
-#ap_uint<32> &latency,
-#ap_uint<32> &interval,
-#ap_uint<32> &checksum,
-#ap_uint<32> &min_latency
+# Instrumentation wrapper register map #
+# ap_uint<32>  cfg,   	// [0] - 0:hold, 1:lfsr; [31:16] - LFSR seed
+# ap_uint<32> &status,	// [0] - timestamp overflow; [1] - timestamp underflow
+# ap_uint<32> &latency,
+# ap_uint<32> &interval,
+# ap_uint<32> &checksum,
+# ap_uint<32> &min_latency
+
 
 class FINNInstrumentationOverlay(Overlay):
     def __init__(
         self,
         bitfile_name,
-        platform = "zynq",
-        fclk_mhz = 100.0,
-        device = None,
-        download = True,
-        seed = 1,
+        platform="zynq",
+        fclk_mhz=100.0,
+        device=None,
+        download=True,
+        seed=1,
     ):
         super().__init__(bitfile_name, download=download, device=device)
 
@@ -36,27 +37,34 @@ class FINNInstrumentationOverlay(Overlay):
                 self.fclk_mhz_actual = Clocks.fclk0_mhz
 
     def instrumentation_read(self, name):
-        return self.instrumentation_wrap_0.read(offset=self.ip_dict["instrumentation_wrap_0"]["registers"][name]["address_offset"])
+        return self.instrumentation_wrap_0.read(
+            offset=self.ip_dict["instrumentation_wrap_0"]["registers"][name]["address_offset"]
+        )
 
     def instrumentation_write(self, name, value):
-        return self.instrumentation_wrap_0.write(offset=self.ip_dict["instrumentation_wrap_0"]["registers"][name]["address_offset"], value=value)
+        return self.instrumentation_wrap_0.write(
+            offset=self.ip_dict["instrumentation_wrap_0"]["registers"][name]["address_offset"],
+            value=value,
+        )
 
     def reset_accelerator(self):
-        self.axi_gpio_0.write(offset=self.ip_dict["axi_gpio_0"]["registers"]["GPIO_DATA"]["address_offset"], value=0)
+        self.axi_gpio_0.write(
+            offset=self.ip_dict["axi_gpio_0"]["registers"]["GPIO_DATA"]["address_offset"], value=0
+        )
 
     def start_accelerator(self):
-        lfsr_seed = (self.seed << 16) & 0xffff0000 # upper 16 bits
-        self.instrumentation_write("cfg", lfsr_seed + 1) # start operation
+        lfsr_seed = (self.seed << 16) & 0xFFFF0000  # upper 16 bits
+        self.instrumentation_write("cfg", lfsr_seed + 1)  # start operation
 
     def observe_instrumentation(self, debug_print=True):
         status_reg = self.instrumentation_read("status")
         chksum_reg = self.instrumentation_read("checksum")
         min_latency = self.instrumentation_read("min_latency")
         latency = self.instrumentation_read("latency")
-        interval =  self.instrumentation_read("interval")
+        interval = self.instrumentation_read("interval")
 
-        frame = (chksum_reg >> 24) & 0x000000ff
-        checksum = chksum_reg & 0x00ffffff
+        frame = (chksum_reg >> 24) & 0x000000FF
+        checksum = chksum_reg & 0x00FFFFFF
         overflow_err = (status_reg & 0x00000001) != 0
         underflow_err = (status_reg & 0x00000002) != 0
 
@@ -79,14 +87,25 @@ class FINNInstrumentationOverlay(Overlay):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Profile performance of FINN-generated accelerator using instrumentation wrapper')
-    parser.add_argument('--runtime', help='Runtime in seconds', type=int, default=10)
-    parser.add_argument('--frequency', help='FPGA clock frequency in MHz', type=float, default=100.0)
-    parser.add_argument('--seed', help='LFSR seed for input data generation', type=int, default=1)
-    parser.add_argument('--device', help='FPGA device to be used', type=int, default=0)
-    parser.add_argument('--bitfile', help='Name of bitfile', default="finn-accel.bit")
-    parser.add_argument('--reportfile', help='Name of output .json report file', type=str, default="measured_performance.json")
-    parser.add_argument('--settingsfile', help='Name of optional input .json settings file', type=str, default="")
+    parser = argparse.ArgumentParser(
+        description="Profile FINN-generated accelerator using instrumentation wrapper"
+    )
+    parser.add_argument("--runtime", help="Runtime in seconds", type=int, default=10)
+    parser.add_argument(
+        "--frequency", help="FPGA clock frequency in MHz", type=float, default=100.0
+    )
+    parser.add_argument("--seed", help="LFSR seed for input data generation", type=int, default=1)
+    parser.add_argument("--device", help="FPGA device to be used", type=int, default=0)
+    parser.add_argument("--bitfile", help="Name of bitfile", default="finn-accel.bit")
+    parser.add_argument(
+        "--reportfile",
+        help="Name of output .json report file",
+        type=str,
+        default="measured_performance.json",
+    )
+    parser.add_argument(
+        "--settingsfile", help="Name of optional input .json settings file", type=str, default=""
+    )
     # parse arguments
     args = parser.parse_args()
     runtime = args.runtime
@@ -107,7 +126,9 @@ if __name__ == "__main__":
 
     # instantiate FINN accelerator driver and pass batchsize and bitfile
     print("Programming FPGA..")
-    accel = FINNInstrumentationOverlay(bitfile_name = bitfile, device = device, fclk_mhz = frequency, seed = seed)
+    accel = FINNInstrumentationOverlay(
+        bitfile_name=bitfile, device=device, fclk_mhz=frequency, seed=seed
+    )
 
     # start accelerator
     print("Running accelerator..")
@@ -117,7 +138,15 @@ if __name__ == "__main__":
     time.sleep(runtime)
 
     # read measurement from instrumentation
-    (overflow_err, underflow_err, frame, checksum, min_latency, latency, interval) = accel.observe_instrumentation()
+    (
+        overflow_err,
+        underflow_err,
+        frame,
+        checksum,
+        min_latency,
+        latency,
+        interval,
+    ) = accel.observe_instrumentation()
 
     # write report to file
     report = {
@@ -131,7 +160,7 @@ if __name__ == "__main__":
         "latency_ms": round(latency * (1 / (accel.fclk_mhz_actual * 1e6)) * 1e3, 6),
         "throughput_fps": round(1 / (interval * (1 / (accel.fclk_mhz_actual * 1e6)))),
         "min_pipeline_depth": round(min_latency / interval, 2),
-        "pipeline_depth" : round(latency / interval, 2),
+        "pipeline_depth": round(latency / interval, 2),
     }
     with open(reportfile, "w") as f:
         json.dump(report, f, indent=2)
