@@ -7,6 +7,7 @@ from inspect import isclass
 from pathlib import Path
 from qonnx.transformation.base import Transformation
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 from rich.traceback import install
@@ -56,6 +57,15 @@ def deps() -> None:
 @click.group(help="Run tests on the given FINN installation. Use finn test --help to learn more.")
 def test() -> None:
     pass
+
+
+@click.command(help="Print a quick guide on how to use FINN")
+def help() -> None:
+    md = """
+# FINN Usage Guide
+"""
+    console = Console()
+    console.print(Markdown(md))
 
 
 def update_deps(path: str) -> None:
@@ -163,7 +173,7 @@ def prepare_finn_environment(
     ignore_missing_envvars: bool,
     envvar_config: str,
     ignore_envvar_config: bool,
-) -> str:
+) -> dict:
     """Prepare a build or run in a FINN environment. Returns a dict of required env variables.
     In detail this function does the following:
     1. Load preset environment variables at the given or default path. This _sets_ them
@@ -660,6 +670,7 @@ main_group.add_command(build)
 main_group.add_command(test)
 main_group.add_command(inspect)
 main_group.add_command(docs)
+main_group.add_command(help)
 
 
 def main() -> None:
