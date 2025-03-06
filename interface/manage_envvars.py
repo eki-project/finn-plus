@@ -45,13 +45,13 @@ def get_run_specific_envvars(
     else:
         cpus = num_workers
     return {
-        "FINN_ROOT": Path(__file__).parent.parent,
-        "NUM_DEFAULT_WORKERS": cpus,
-        "OHMYXILINX": (deps / "oh-my-xilinx").absolute(),
-        "FINN_BUILD_DIR": (config_path.parent / "FINN_TMP").absolute()
+        "FINN_ROOT": str(Path(__file__).parent.parent),
+        "NUM_DEFAULT_WORKERS": str(cpus),
+        "OHMYXILINX": str((deps / "oh-my-xilinx").absolute()),
+        "FINN_BUILD_DIR": str((config_path.parent / "FINN_TMP").absolute())
         if local_temps
-        else DEFAULT_FINN_TMP,
-        "FINN_HOST_BUILD_DIR": (config_path.parent / "FINN_TMP_HOST").absolute()
+        else str(DEFAULT_FINN_TMP),
+        "FINN_HOST_BUILD_DIR": str((config_path.parent / "FINN_TMP_HOST").absolute())
         if local_temps
-        else DEFAULT_FINN_TMP_HOST,
+        else str(DEFAULT_FINN_TMP_HOST),
     }

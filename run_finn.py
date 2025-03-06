@@ -1,9 +1,13 @@
 import click
 import os
+import subprocess
+import sys
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
+from finn.builder.build_dataflow import build_dataflow_cfg
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from interface.manage_deps import update_dependencies
 from interface.manage_envvars import (
     DEFAULT_FINN_TMP,
@@ -14,6 +18,13 @@ from interface.manage_envvars import (
 DEFAULT_DEPS = Path.home() / ".finn" / "deps"
 DEFAULT_FINN_ROOT = Path(__file__).parent
 DEFAULT_ENVVAR_CONFIG = Path.home() / ".finn" / "envvars.yaml"
+
+
+def assert_path_valid(p: Path) -> None:
+    """Check if the path exists, if not print an error message and exit with an error code"""
+    if not p.exists():
+        Console().print(f"[bold red]File or directory {p} does not exist. Stopping...[/bold red]")
+        sys.exit(1)
 
 
 def _update(path: str) -> None:
@@ -71,11 +82,38 @@ def build(
 ) -> None:
     config_path = Path(config)
     model_path = Path(model)
+    dep_path = Path(dependency_path)
+    assert_path_valid(config_path)
+    assert_path_valid(model_path)
+    assert_path_valid(dep_path)
     console = Console()
     console.print(
-        f"[bold green]Starting FINN build with config {config_path.name} on model {model_path.name}"
+        f"[bold cyan]Starting FINN build with config {config_path.name} on model {model_path.name}"
     )
-    prepare_finn(Path(config), Path(dependency_path), not no_local_temps, num_workers)
+    console.print("[bold cyan]Setting up the FINN environment...[/bold cyan]")
+    prepare_finn(config_path, dep_path, not no_local_temps, num_workers)
+    console.print("[bold green]Done![/bold green]")
+    console.print("[bold cyan]Creating dataflow build config...[/bold cyan]")
+    dfbc = None
+    match config_path.suffix:
+        case ".yaml" | ".yml":
+            raise NotImplementedError("Depends on a pending PR for YAML support.")
+        case ".json":
+            with config_path.open() as f:
+                dfbc = DataflowBuildConfig.from_json(f.read())
+        case _:
+            console.print(
+                f"[bold red]Unknown config file type: {config_path.name}. "
+                "Valid formats are: .json, .yml, .yaml"
+            )
+            sys.exit(1)
+
+    console.rule(
+        f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
+        f"{config_path.name}[/bold orange1][bold cyan] on model [/bold cyan]"
+        "[bold orange1]{model_path.name}[/bold orange1]"
+    )
+    build_dataflow_cfg(str(model_path), dfbc)
 
 
 @click.command(help="Run a script in a FINN environment")
@@ -96,7 +134,19 @@ def build(
 )
 @click.argument("script")
 def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: str) -> None:
-    prepare_finn(Path(script), Path(dependency_path), not no_local_temps, num_workers)
+    console = Console()
+    script_path = Path(script)
+    dep_path = Path(dependency_path)
+    assert_path_valid(script_path)
+    assert_path_valid(dep_path)
+    console.print("[bold cyan]Setting up the FINN environment...[/bold cyan]")
+    prepare_finn(script_path, dep_path, not no_local_temps, num_workers)
+    console.print("[bold green]Done![/bold green]")
+    console.rule(
+        f"[bold cyan]Starting script "
+        f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
+    )
+    subprocess.run(f"python3 {script_path.name}", cwd=script_path.parent, shell=True)
 
 
 @click.group(help="Dependency management")
