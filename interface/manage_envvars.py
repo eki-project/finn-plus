@@ -17,14 +17,17 @@ DEFAULT_GLOBAL_ENVVARS = {
 }
 
 
-def get_global_envvars(config_path: Path) -> dict[str, str]:
+def get_global_envvars(config_path: Path) -> tuple[dict[str, str], bool]:
     """Get a dictionary of environment variables that are globally used.
-    Precedence is: Set variables > Config > Default"""
+    Precedence is: Set variables > Config > Default. Also returns if the env
+    var config could be read"""
     envvars = {}
     config_vars = {}
+    read_config = False
     if config_path.exists() and config_path.suffix in [".yml", ".yaml"]:
         with config_path.open() as f:
             config_vars = dict(yaml.load(f, yaml.Loader).items())
+            read_config = True
     for k, v in DEFAULT_GLOBAL_ENVVARS.items():
         if k in os.environ.keys():
             envvars[k] = os.environ[k]
@@ -32,7 +35,7 @@ def get_global_envvars(config_path: Path) -> dict[str, str]:
             envvars[k] = config_vars[k]
         else:
             envvars[k] = v
-    return envvars
+    return envvars, read_config
 
 
 def get_run_specific_envvars(

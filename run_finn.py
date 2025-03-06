@@ -45,11 +45,18 @@ def _update(path: str) -> None:
     console.print(table)
 
 
-def prepare_finn(config: Path, deps: Path, local_temps: bool, num_workers: int) -> None:
+def prepare_finn(
+    envvar_config: Path, flow_config: Path, deps: Path, local_temps: bool, num_workers: int
+) -> None:
     """Prepare a FINN environment (fetch deps, set envvars)"""
     _update(str(deps))
-    envs = get_global_envvars(config)
-    envs.update(get_run_specific_envvars(deps, config, local_temps, num_workers))
+    envs, read_config = get_global_envvars(envvar_config)
+    if not read_config:
+        Console().print(
+            f"[bold orange1]Could not read the default "
+            f"environment variable config at {envvar_config}![/bold orange1]"
+        )
+    envs.update(get_run_specific_envvars(deps, flow_config, local_temps, num_workers))
     for k, v in envs.items():
         os.environ[k] = v
 
@@ -91,7 +98,7 @@ def build(
         f"[bold cyan]Starting FINN build with config {config_path.name} on model {model_path.name}"
     )
     console.print("[bold cyan]Setting up the FINN environment...[/bold cyan]")
-    prepare_finn(config_path, dep_path, not no_local_temps, num_workers)
+    prepare_finn(DEFAULT_ENVVAR_CONFIG, config_path, dep_path, not no_local_temps, num_workers)
     console.print("[bold green]Done![/bold green]")
     console.print("[bold cyan]Creating dataflow build config...[/bold cyan]")
     dfbc = None
@@ -140,7 +147,7 @@ def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: st
     assert_path_valid(script_path)
     assert_path_valid(dep_path)
     console.print("[bold cyan]Setting up the FINN environment...[/bold cyan]")
-    prepare_finn(script_path, dep_path, not no_local_temps, num_workers)
+    prepare_finn(DEFAULT_ENVVAR_CONFIG, script_path, dep_path, not no_local_temps, num_workers)
     console.print("[bold green]Done![/bold green]")
     console.rule(
         f"[bold cyan]Starting script "
