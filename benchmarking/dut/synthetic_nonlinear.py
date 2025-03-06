@@ -24,7 +24,7 @@ from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.util.basic import make_build_dir
-from util import summarize_table, summarize_section, power_xml_to_dict, prepare_inputs, delete_dir_contents
+from util import summarize_table, summarize_section, power_xml_to_dict, delete_dir_contents
 from finn.util.test import get_trained_network_and_ishape
 from finn.util.basic import alveo_default_platform
 

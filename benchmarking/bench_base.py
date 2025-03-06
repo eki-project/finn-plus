@@ -28,7 +28,7 @@ from finn.transformation.fpgadataflow.make_zynq_proj import collect_ip_dirs
 import finn.builder.build_dataflow_config as build_cfg
 from finn.util.basic import make_build_dir, pynq_native_port_width, part_map, alveo_default_platform, alveo_part_map
 from templates import template_open, template_single_test, template_sim_power, template_switching_simulation_tb, zynq_harness_template
-from util import summarize_table, summarize_section, power_xml_to_dict, prepare_inputs, delete_dir_contents
+from util import summarize_table, summarize_section, power_xml_to_dict, delete_dir_contents
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
     ReplaceVerilogRelPaths,
 )

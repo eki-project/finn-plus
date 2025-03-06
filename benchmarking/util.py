@@ -1,7 +1,6 @@
 # Utility functions for benchmarking
 import os, shutil
 import json
-from qonnx.core.datatype import DataType
 import xml.etree.ElementTree as ET
 
 def _find_rows_and_headers(table):
@@ -13,7 +12,6 @@ def _find_rows_and_headers(table):
         if len(headers) > 0:
             break
     return (rows, headers)
-
 
 def summarize_table(table):
     table_summary = {}
@@ -40,7 +38,6 @@ def summarize_table(table):
 
     return table_summary
 
-
 def summarize_section(section):
     section_summary = {}
     section_summary["tables"] = []
@@ -57,7 +54,6 @@ def summarize_section(section):
 
     return section_summary
 
-
 def power_xml_to_dict(xml_path):
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -68,13 +64,6 @@ def power_xml_to_dict(xml_path):
         result[section.attrib["title"]] = summarize_section(section)
 
     return result
-
-def prepare_inputs(input_tensor, idt, wdt):
-    if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
-        # convert bipolar to binary
-        return {"inp": (input_tensor + 1) / 2}
-    else:
-        return {"inp": input_tensor}
 
 def delete_dir_contents(dir):
     for filename in os.listdir(dir):
