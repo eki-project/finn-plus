@@ -910,15 +910,6 @@ class bench_transformer(bench):
             verify_input_npy=self.build_inputs["input_npy_path"],
             # File with expected test outputs for verification
             verify_expected_output_npy=self.build_inputs["output_npy_path"],
-            # Output full context dump for verification steps
-            verify_save_full_context=True,
-            # Save the intermediate model graphs
-            save_intermediate_models=True,
-            # Avoid RTL simulation for setting the FIFO sizes
-            auto_fifo_strategy=AutoFIFOSizingMethod.CHARACTERIZE,
-            # Do not automatically set FIFO sizes as this requires RTL simulation
-            # not implemented for the attention operator
-            auto_fifo_depths=False,
             # Build steps to execute
             steps=[
                 # Prepares the QONNX graph to be consumed by FINN: Cleanup, lowering
@@ -963,11 +954,6 @@ class bench_transformer(bench):
                 "step_generate_estimate_reports",
                 "step_hw_codegen",
                 "step_hw_ipgen",
-                # Set the attention- and residual-related FIFO depths insert FIFOs
-                # and apply folding configuration once again
-                # Note: Implement all FIFOs with a depth at least as deep as the
-                # sequence length in URAM.
-                set_fifo_depths(seq_len, emb_dim, uram_threshold=seq_len),
                 # Run additional node-by-node verification in RTL simulation of the
                 # model before creating the stitched IP
                 # Note: end-to-end verification of the stitched IP in RTL simulation
@@ -984,5 +970,17 @@ class bench_transformer(bench):
                 "step_deployment_package",
             ]
         )
+
+        # TESTING custom vs live FIFO-sizing
+        if self.params["fifo_method"] == "live":
+            # insert default FIFO-sizing step (behind step_generate_estimate_reports)
+            for i in range(len(cfg.steps)):
+                if cfg.steps[i] == "step_generate_estimate_reports":
+                    cfg.steps.insert(i+1, "step_set_fifo_depths")
+        else:
+            # insert Christoph's custom FIFO-sizing step (behind step_hw_ipgen)
+            for i in range(len(cfg.steps)):
+                if cfg.steps[i] == "step_hw_ipgen":
+                    cfg.steps.insert(i+1, set_fifo_depths(seq_len, emb_dim, uram_threshold=seq_len))
 
         return cfg

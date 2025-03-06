@@ -49,7 +49,7 @@ def log_nested_metrics_from_report(id, live, report_name, key_top, keys, prefix=
 if __name__ == "__main__":
     # Go through all runs found in the artifacts and log their results to DVC
     run_dir_list = os.listdir(os.path.join("build_artifacts", "runs_output"))
-    print("Looking for runs in %s" % run_dir_list)
+    print("Looking for runs in build artifacts")
     run_ids = []
     for run_dir in run_dir_list:
         if run_dir.startswith("run_"):

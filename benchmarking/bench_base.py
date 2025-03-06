@@ -426,6 +426,8 @@ class bench():
         cfg.force_python_rtlsim = False
         cfg.split_large_fifos = True
         cfg.enable_instrumentation = True # no IODMA functional correctness/accuracy test yet
+        cfg.save_intermediate_models = True # Save the intermediate model graphs
+        cfg.verify_save_full_context = True, # Output full context dump for verification steps
         #rtlsim_use_vivado_comps # TODO ?
         #cfg.default_swg_exception
         #cfg.large_fifo_mem_style
