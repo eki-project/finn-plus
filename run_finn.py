@@ -1,5 +1,6 @@
 import click
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -49,16 +50,20 @@ def prepare_finn(
     envvar_config: Path, flow_config: Path, deps: Path, local_temps: bool, num_workers: int
 ) -> None:
     """Prepare a FINN environment (fetch deps, set envvars)"""
+    console = Console()
     _update(str(deps))
     envs, read_config = get_global_envvars(envvar_config)
     if not read_config:
-        Console().print(
+        console.print(
             f"[bold orange1]Could not read the default "
             f"environment variable config at {envvar_config}![/bold orange1]"
         )
     envs.update(get_run_specific_envvars(deps, flow_config, local_temps, num_workers))
     for k, v in envs.items():
         os.environ[k] = v
+    if shutil.which("verilator") is None:
+        console.print("[bold red]Verilator could not be found! Stopping...[/bold red]")
+        sys.exit(1)
 
 
 @click.group()

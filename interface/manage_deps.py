@@ -1,4 +1,6 @@
 """Manage dependencies. Called by run_finn.py"""
+import os
+import shutil
 import subprocess as sp
 from pathlib import Path
 
@@ -29,6 +31,8 @@ FINN_DEPS = {
         "afc9720f10e551e1f734e137b21bb6d0a8342177",
     ),
 }
+
+VERILATOR = ("https://github.com/verilator/verilator", "v4.224")
 
 FINN_BOARDFILES = {
     "avnet-bdf": (
@@ -136,4 +140,24 @@ def update_dependencies(location: Path) -> list[Status]:
                 else f"Failed. Got commit {read_commit}, expected {commit}",
             )
         )
+    verilator_git, verilator_checkout = VERILATOR
+    target = (location / "verilator").absolute()
+    configure_script = target / "configure"
+    if not target.exists() or not configure_script.exists():
+        result = sp.run(
+            f"git clone {verilator_git} {target};"
+            f"cd {target};git checkout {verilator_checkout};autoconf;"
+            f"export VERILATOR_ROOT={target};./configure",
+            shell=True,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            shutil.rmtree(target, ignore_errors=True)
+            err = result.stderr.split("\n")[-2]
+            status.append(("verilator", False, f"{err}"))
+            return status
+    os.environ["VERILATOR_ROOT"] = str(target)
+    os.environ["PATH"] = f"{target}/bin:" + os.environ["PATH"]
+    status.append(("verilator", True, f"Configured at {target}. Envvar set."))
     return status
