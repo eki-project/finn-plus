@@ -91,8 +91,8 @@ from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
 from finn.transformation.fpgadataflow.make_pynq_driver import (
-    MakePYNQDriverIODMA,
     MakePYNQDriverInstrumentation,
+    MakePYNQDriverIODMA,
 )
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import (
@@ -555,6 +555,29 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     # Experimental live FIFO-sizing, overwrites all other FIFO-related behavior
     if cfg.live_fifo_sizing:
+        # Disable runtime-writable weights, external weights, and dynamic mode,
+        # as we don't support additional AXI-lite interfaces next to the FIFOs
+        for node in model.graph.node:
+            if node.domain.startswith("finn.custom_op.fpgadataflow"):
+                node_inst = getCustomOp(node)
+                try:
+                    if node_inst.get_nodeattr("runtime_writeable_weights") == 1:
+                        node_inst.set_nodeattr("runtime_writeable_weights", 0)
+                        if node_inst.get_nodeattr("ram_style") == "ultra":
+                            node_inst.set_nodeattr("ram_style", "block")
+                except AttributeError:
+                    pass
+                try:
+                    if node_inst.get_nodeattr("mem_mode") == "external":
+                        node_inst.set_nodeattr("mem_mode", "internal_decoupled")
+                except AttributeError:
+                    pass
+                try:
+                    if node_inst.get_nodeattr("dynamic_mode") == 1:
+                        node_inst.set_nodeattr("dynamic_mode", 0)
+                except AttributeError:
+                    pass
+
         # Create all DWCs and FIFOs normally
         model = model.transform(InsertDWC())
         model = model.transform(InsertFIFO(create_shallow_fifos=True))
@@ -826,7 +849,11 @@ def step_make_pynq_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
     if DataflowOutputType.PYNQ_DRIVER in cfg.generate_outputs:
         driver_dir = cfg.output_dir + "/driver"
         if cfg.enable_instrumentation:
-            model = model.transform(MakePYNQDriverInstrumentation(cfg._resolve_driver_platform(), cfg.synth_clk_period_ns, cfg.live_fifo_sizing))
+            model = model.transform(
+                MakePYNQDriverInstrumentation(
+                    cfg._resolve_driver_platform(), cfg.synth_clk_period_ns, cfg.live_fifo_sizing
+                )
+            )
         else:
             model = model.transform(MakePYNQDriverIODMA(cfg._resolve_driver_platform()))
         shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
