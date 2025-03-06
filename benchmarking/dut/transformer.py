@@ -43,15 +43,7 @@ from dut.transformer_custom_steps import (
     node_by_node_rtlsim,  # noqa: Maybe unused, only for debugging
     node_by_node_cppsim,
 )
-# from performance.platform_build_steps import(
-#      test_step_gen_vitis_xo,
-#      test_step_gen_instrumentation_wrapper,
-#      test_step_gen_instrwrap_sim,
-#      test_step_insert_tlastmarker,
-#      test_step_export_xo,
-#      test_step_build_platform,
-#      test_step_run_instrwrap_sim
-# )
+
 
 ### ADAPTED FROM utils.py
 # Seeds all relevant random number generators to the same seed for
@@ -994,21 +986,3 @@ class bench_transformer(bench):
         )
 
         return cfg
-
-    #def run(self):
-    # self.steps_full_build_flow()
-    # DEBUG code for live logging of long instr wrapper simulation:
-    # live_log_dir_path = os.path.join(self.save_dir, "vivado_sim_log", "run_%d" % (self.run_id), "vivado.log")
-    # os.makedirs(os.path.join(self.save_dir, "vivado_sim_log", "run_%d" % (self.run_id)), exist_ok=True)
-    # sim_output_dir = build_dir + "/instrwrap_sim"
-    # # Prepare bash script
-    # bash_script = os.getcwd() + "/run_vivado_sim.sh"
-    # with open(bash_script, "w") as script:
-    #     script.write("#!/bin/bash\n")
-    #     script.write("cd %s\n"%(sim_output_dir))
-    #     script.write("vivado -mode batch -source make_instrwrap_sim_proj.tcl &> %s\n"%(live_log_dir_path))
-    # # Run script
-    # print("Running Vivado simulation of instrumentation wrapper")
-    # sub_proc = subprocess.Popen(["bash", bash_script])
-    # sub_proc.communicate()
-    #######

@@ -1,92 +1,25 @@
-import itertools
 import json
 import os
-import sys
-import time
 import shutil
 from dvclive import Live
 
 from util import delete_dir_contents
 
-def merge_dicts(a: dict, b: dict):
-    for key in b:
-        if key in a:
-            if isinstance(a[key], dict) and isinstance(b[key], dict):
-                merge_dicts(a[key], b[key])
-            elif a[key] != b[key]:
-                raise Exception("ERROR: Dict merge conflict")
-        else:
-            a[key] = b[key]
-    return a
-
-def consolidate_logs(path, output_filepath):
-    log = []
-    i = 0
-    while (i < 1024):
-        if (os.path.isfile(os.path.join(path,"task_%d.json"%(i)))):
-            with open(os.path.join(path,"task_%d.json"%(i)), "r") as f:
-                log_task = json.load(f)
-            log.extend(log_task)
-        i = i + 1
-    
-    with open(output_filepath, "w") as f:
-        json.dump(log, f, indent=2)
-
-def merge_logs(log_a, log_b, log_out):
-    # merges json log (list of nested dicts) b into a, not vice versa (TODO)
-
-    with open(log_a, "r") as f:
-        a = json.load(f)
-    with open(log_b, "r") as f:
-        b = json.load(f)
-
-    for idx, run_a in enumerate(a):
-        for run_b in b:
-            if run_a["run_id"] == run_b["run_id"]:
-                #a[idx] |= run_b # requires Python >= 3.9
-                #a[idx] = {**run_a, **run_b}
-                a[idx] = merge_dicts(run_a, run_b)
-                break
-
-    # also sort by run id
-    out = sorted(a, key=lambda x: x["run_id"])
-
-    with open(log_out, "w") as f:
-        json.dump(out, f, indent=2)
-
-def wait_for_power_measurements():
-    # TODO: detect when no bitstreams are to be measured (e.g. for fifosizing) and skip
-    # TODO: make configurable, relative to some env variable due to different mountint points
-    bitstreams_path = os.path.join("/mnt/pfs/hpc-prf-radioml/felix/jobs/", 
-                            "CI_" + os.environ.get("CI_PIPELINE_IID") + "_" + os.environ.get("CI_PIPELINE_NAME"), 
-                            "bitstreams")
-    
-    power_log_path = os.path.join("/mnt/pfs/hpc-prf-radioml/felix/jobs/", 
-                            "CI_" + os.environ.get("CI_PIPELINE_IID") + "_" + os.environ.get("CI_PIPELINE_NAME"), 
-                            "power_measure.json")
-
-    # count bitstreams to measure (can't rely on total number of runs since some of them could've failed)
-    files = os.listdir(bitstreams_path)
-    bitstream_count = len(list(filter(lambda x : ".bit" in x, files)))
-
-    log = []
-    print("Checking if all bitstreams of pipeline have been measured..")
-    while(len(log) < bitstream_count):
-        if os.path.isfile(power_log_path):
-            with open(power_log_path, "r") as f:
-                log = json.load(f)
-        print("Found measurements for %d/%d bitstreams"%(len(log),bitstream_count))
-        time.sleep(60)
-    print("Power measurement complete")
 
 def log_dvc_metric(live, prefix, name, value):
     # sanitize '/' in name because DVC uses it to nest metrics (which we do via prefix)
     live.log_metric(prefix + name.replace("/", "-"), value, plot=False)
 
 def open_json_report(id, report_name):
-    path = os.path.join("bench_artifacts", "runs_output", "run_%d" % (id), "reports", report_name)
-    if os.path.isfile(path):
-        with open(path, "r") as f:
+    # look in both, build & measurement, artifacts
+    path1 = os.path.join("build_artifacts", "runs_output", "run_%d" % (id), "reports", report_name)
+    path2 = os.path.join("measurement_artifacts", "runs_output", "run_%d" % (id), "reports", report_name)
+    if os.path.isfile(path1):
+        with open(path1, "r") as f:
+            report = json.load(f)
+        return report
+    elif os.path.isfile(path2):
+        with open(path2, "r") as f:
             report = json.load(f)
         return report
     else:
@@ -115,7 +48,7 @@ def log_nested_metrics_from_report(id, live, report_name, key_top, keys, prefix=
 
 if __name__ == "__main__":
     # Go through all runs found in the artifacts and log their results to DVC
-    run_dir_list = os.listdir(os.path.join("bench_artifacts", "runs_output"))
+    run_dir_list = os.listdir(os.path.join("build_artifacts", "runs_output"))
     print("Looking for runs in %s" % run_dir_list)
     run_ids = []
     for run_dir in run_dir_list:
@@ -258,7 +191,7 @@ if __name__ == "__main__":
                 "fifo_size_total_kB",
                 ], prefix="fifosizing/live/")
 
-            image = os.path.join("bench_artifacts", "runs_output", "run_%d" % (id), "reports", "fifo_sizing_graph.png")
+            image = os.path.join("measurement_artifacts", "runs_output", "run_%d" % (id), "reports", "fifo_sizing_graph.png")
             if os.path.isfile(image):
                 live.log_image("fifosizing_pass_1", image)
 
@@ -268,11 +201,15 @@ if __name__ == "__main__":
             ### ARTIFACTS ###
             # Log build reports as they come from GitLab artifacts,
             # but copy them to a central dir first so all runs share the same path
-            run_report_dir = os.path.join("bench_artifacts", "runs_output", "run_%d" % (id), "reports")
+            run_report_dir1 = os.path.join("build_artifacts", "runs_output", "run_%d" % (id), "reports")
+            run_report_dir2 = os.path.join("measurement_artifacts", "runs_output", "run_%d" % (id), "reports")
             dvc_report_dir = "reports"
             os.makedirs(dvc_report_dir, exist_ok=True)
             delete_dir_contents(dvc_report_dir)
-            shutil.copytree(run_report_dir, dvc_report_dir, dirs_exist_ok=True)
+            if os.path.isdir(run_report_dir1):
+                shutil.copytree(run_report_dir1, dvc_report_dir, dirs_exist_ok=True)
+            if os.path.isdir(run_report_dir2):
+                shutil.copytree(run_report_dir2, dvc_report_dir, dirs_exist_ok=True)
             live.log_artifact(dvc_report_dir)
 
     print("Done")

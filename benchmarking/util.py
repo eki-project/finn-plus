@@ -1,5 +1,6 @@
 # Utility functions for benchmarking
 import os, shutil
+import json
 from qonnx.core.datatype import DataType
 import xml.etree.ElementTree as ET
 
@@ -85,3 +86,36 @@ def delete_dir_contents(dir):
                 shutil.rmtree(file_path)
         except Exception as e:
             print('Failed to delete %s. Reason: %s' % (file_path, e))
+
+def merge_dicts(a: dict, b: dict):
+    for key in b:
+        if key in a:
+            if isinstance(a[key], dict) and isinstance(b[key], dict):
+                merge_dicts(a[key], b[key])
+            elif a[key] != b[key]:
+                raise Exception("ERROR: Dict merge conflict")
+        else:
+            a[key] = b[key]
+    return a
+
+def merge_logs(log_a, log_b, log_out):
+    # merges json log (list of nested dicts) b into a, not vice versa (TODO)
+
+    with open(log_a, "r") as f:
+        a = json.load(f)
+    with open(log_b, "r") as f:
+        b = json.load(f)
+
+    for idx, run_a in enumerate(a):
+        for run_b in b:
+            if run_a["run_id"] == run_b["run_id"]:
+                #a[idx] |= run_b # requires Python >= 3.9
+                #a[idx] = {**run_a, **run_b}
+                a[idx] = merge_dicts(run_a, run_b)
+                break
+
+    # also sort by run id
+    out = sorted(a, key=lambda x: x["run_id"])
+
+    with open(log_out, "w") as f:
+        json.dump(out, f, indent=2)

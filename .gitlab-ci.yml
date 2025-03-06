@@ -215,11 +215,3 @@ Bench:
   parallel:
     matrix:
       - BENCH_CFG: [mvau_test, resnet50_test, metafi_test, transformer_test, transformer_radioml_all, synthetic_fifotest]
-
-#TODO: add selector for none, reduced, full benchmark suite
-#TODO: introduce result collect job on parent level for easier visualization/excel interfacing
-#TODO: more control via (optional) variables
-#TODO: move power measurement from polling-based script to its own job/runner
-#TODO: ensure a freshly initialized workdir on job/runner level (e.g. created directories seem to stay there)
-#TODO: (optionally) save ALL build artifacts/logs/temporary files to artifacts or PFS for debugging (maybe via Jacamar feature of setting individual persistent workdirs?)
-#TODO: fix clock frequency discrepancies between setting, synth, and driver

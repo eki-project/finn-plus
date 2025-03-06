@@ -1,5 +1,5 @@
 stages:
-  - synth
+  - build
   - measure
   - collect
 
@@ -15,7 +15,7 @@ FINN Build:
   id_tokens:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
-  stage: synth
+  stage: build
   needs:
     - job: Fetch Repos
       pipeline: $PARENT_PIPELINE_ID
@@ -37,10 +37,10 @@ FINN Build:
     paths:
       - deps
   artifacts:
-    name: "bench_artifacts"
+    name: "build_artifacts"
     when: always
     paths:
-      - bench_artifacts/
+      - build_artifacts/
 
 Measurement:
   id_tokens:
@@ -56,10 +56,10 @@ Measurement:
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python benchmarking/measure.py"
   artifacts:
-    name: "bench_artifacts"
+    name: "measurement_artifacts"
     when: always
     paths:
-      - bench_artifacts/
+      - measurement_artifacts/
 
 Result Collection:
   id_tokens:

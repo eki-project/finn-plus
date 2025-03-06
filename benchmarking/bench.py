@@ -54,7 +54,8 @@ def main(config_name):
     # experiment_dir = os.environ.get("EXPERIMENT_DIR") # original experiment dir (before potential copy to ramdisk)
     experiment_dir = os.environ.get("CI_PROJECT_DIR")
 
-    artifacts_dir = os.path.join(experiment_dir, "bench_artifacts")
+    artifacts_dir = os.path.join(experiment_dir, "build_artifacts")
+    os.makedirs(artifacts_dir, exist_ok=True)
     print("Collecting results in path: %s" % artifacts_dir)
     
     # local save dir for large artifacts (e.g., build output, tmp dir dump for debugging)
@@ -151,7 +152,6 @@ def main(config_name):
             log_dict["status"] = "failed"
             print("Run failed: " + traceback.format_exc())
             exit_code = 1
-            # TODO: exception catch all in builder prevents internal failures from being caught here
 
         log_dict["output"] = bench_object.output_dict
 
@@ -164,9 +164,11 @@ def main(config_name):
         bench_object.save_artifacts_collection()
         # save local artifacts of this run (e.g., full build dir, detailed debug info)
         bench_object.save_local_artifacts_collection()
+
+        #TODO: examine verification result and builder status here to fail pipeline via exit code?
+
     print("Stopping job")
     return exit_code
-    #TODO: add additional exit codes (e.g. when some verification within the run failed)?
 
 if __name__ == "__main__":
     exit_code = main(sys.argv[1])
