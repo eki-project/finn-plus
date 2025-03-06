@@ -58,13 +58,11 @@ def fetch_test_model(topology, wbits=2, abits=2):
     [
         "characterize_analytical",
         "characterize_rtl",
-        "largefifo_rtlsim_python",
-        "largefifo_rtlsim_cpp",
+        "largefifo_rtlsim",
     ],
 )
 @pytest.mark.parametrize("topology", ["tfc", "cnv"])
 def test_fifosizing_linear(method, topology):
-    force_python_rtlsim = "python" in method
     method_key = "largefifo_rtlsim" if "largefifo_rtlsim" in method else "characterize"
     tmp_output_dir = fetch_test_model(topology)
     if method == "characterize_analytical":
@@ -78,7 +76,6 @@ def test_fifosizing_linear(method, topology):
         auto_fifo_strategy=method_key,
         characteristic_function_strategy=characterizatio_strategy_key,
         target_fps=10000 if topology == "tfc" else 1000,
-        force_python_rtlsim=force_python_rtlsim,
         synth_clk_period_ns=10.0,
         board="Pynq-Z1",
         rtlsim_batch_size=100 if topology == "tfc" else 2,

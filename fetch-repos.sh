@@ -40,6 +40,7 @@ RFSOC4x2_BDF_COMMIT="13fb6f6c02c7dfd7e4b336b18b959ad5115db696"
 KV260_BDF_COMMIT="98e0d3efc901f0b974006bc4370c2a7ad8856c79"
 EXP_BOARD_FILES_MD5="226ca927a16ea4ce579f1332675e9e9a"
 ATTENTION_HLSLIB_COMMIT="afc9720f10e551e1f734e137b21bb6d0a8342177"
+PYXSI_COMMIT="941bb62a4a3cc2c8cf2a9b89187c60bb0b776658"
 
 QONNX_URL="https://github.com/iksnagreb/qonnx.git"
 FINN_EXP_URL="https://github.com/Xilinx/finn-experimental.git"
@@ -53,6 +54,7 @@ XIL_BDF_URL="https://github.com/Xilinx/XilinxBoardStore.git"
 RFSOC4x2_BDF_URL="https://github.com/RealDigitalOrg/RFSoC4x2-BSP.git"
 KV260_BDF_URL="https://github.com/Xilinx/XilinxBoardStore.git"
 ATTENTION_HLSLIB_URL="https://github.com/iksnagreb/attention-hlslib.git"
+PYXSI_URL="https://github.com/maltanar/pyxsi.git"
 
 QONNX_DIR="qonnx"
 FINN_EXP_DIR="finn-experimental"
@@ -66,6 +68,7 @@ XIL_BDF_DIR="xil-bdf"
 RFSOC4x2_BDF_DIR="rfsoc4x2-bdf"
 KV260_SOM_BDF_DIR="kv260-som-bdf"
 ATTENTION_HLSLIB_DIR="attention-hlslib"
+PYXSI_DIR="pyxsi"
 
 # absolute path to this script, e.g. /home/user/bin/foo.sh
 SCRIPT=$(readlink -f "$0")
@@ -130,6 +133,7 @@ fetch_repo $XIL_BDF_URL $XIL_BDF_COMMIT $XIL_BDF_DIR
 fetch_repo $RFSOC4x2_BDF_URL $RFSOC4x2_BDF_COMMIT $RFSOC4x2_BDF_DIR
 fetch_repo $KV260_BDF_URL $KV260_BDF_COMMIT $KV260_SOM_BDF_DIR
 fetch_repo $ATTENTION_HLSLIB_URL $ATTENTION_HLSLIB_COMMIT $ATTENTION_HLSLIB_DIR
+fetch_repo $PYXSI_URL $PYXSI_COMMIT $PYXSI_DIR
 
 # Can skip downloading of board files entirely if desired
 if [ "$FINN_SKIP_BOARD_FILES" = "1" ]; then
