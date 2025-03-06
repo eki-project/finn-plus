@@ -24,6 +24,10 @@ FINN_DEPS = {
         "https://github.com/Xilinx/finn-hlslib.git",
         "16e5847a5e3ef76cffe84c8fad2f010d593457d3",
     ),
+    "attention-hlslib": (
+        "https://github.com/iksnagreb/attention-hlslib.git",
+        "afc9720f10e551e1f734e137b21bb6d0a8342177",
+    ),
 }
 
 FINN_BOARDFILES = {

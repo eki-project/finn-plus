@@ -54,4 +54,5 @@ def get_run_specific_envvars(
         "FINN_HOST_BUILD_DIR": str((config_path.parent / "FINN_TMP_HOST").absolute())
         if local_temps
         else str(DEFAULT_FINN_TMP_HOST),
+        "FINN_DEPS": str(deps),
     }
