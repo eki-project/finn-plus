@@ -1,0 +1,10 @@
+[flake8]
+# Some sane defaults for the code style checker flake8
+exclude =
+    .tox
+    build
+    dist
+    .eggs
+    docs/conf.py
+per-file-ignores =
+     src/finn/transformation/streamline/streamline_plus.py: F405, F403
