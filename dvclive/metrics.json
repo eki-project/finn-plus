@@ -1,0 +1,19 @@
+{
+    "status": "failed",
+    "verification": "success",
+    "estimate": {
+        "resources": {
+            "LUT": 8737.0,
+            "DSP": 1984.0,
+            "BRAM_18K": 537.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 54720,
+            "max_cycles": 1024,
+            "max_cycles_node_name": "Squeeze_hls_0",
+            "estimated_throughput_fps": 97656.25,
+            "estimated_latency_ns": 547200
+        }
+    }
+}
