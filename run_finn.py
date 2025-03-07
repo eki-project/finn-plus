@@ -161,6 +161,51 @@ def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: st
     subprocess.run(f"python3 {script_path.name}", cwd=script_path.parent, shell=True)
 
 
+@click.command
+@click.option(
+    "--variant",
+    "-v",
+    help="Which test to execute (quick, main, rtlsim, end2end, full)",
+    default="quick",
+    show_default=True,
+)
+@click.option("--dependency-path", "-d", default=str(DEFAULT_DEPS), show_default=True)
+@click.option("--num-workers", "-n", default="auto", show_default=True)
+def test(variant: str, dependency_path: str, num_workers: int) -> None:
+    console = Console()
+    prepare_finn(
+        DEFAULT_ENVVAR_CONFIG, Path(), Path(dependency_path), local_temps=False, num_workers=-1
+    )
+    console.rule("RUNNING TESTS")
+    match variant:
+        case "quick":
+            subprocess.run(
+                f"pytest -m 'not "
+                f"(vivado or slow or vitis or board or notebooks or bnn_pynq)' "
+                f"--dist=loadfile -n {num_workers}",
+                shell=True,
+            )
+        case "main":
+            subprocess.run(
+                f"pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}",
+                shell=True,
+            )
+        case "rtlsim":
+            subprocess.run(f"pytest -k rtlsim --workers {num_workers}", shell=True)
+        case "end2end":
+            subprocess.run("pytest -k end2end", shell=True)
+        case "full":
+            subprocess.run(
+                f"pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}",
+                shell=True,
+            )
+            subprocess.run(f"pytest -k rtlsim --workers {num_workers}", shell=True)
+            subprocess.run("pytest -k end2end", shell=True)
+        case "brevitas":
+            console.print("[bold green]Brevitas tests...[/bold green]")
+            subprocess.run("pytest -k brevitas_export", shell=True)
+
+
 @click.group(help="Dependency management")
 def deps() -> None:
     pass
@@ -182,5 +227,6 @@ if __name__ == "__main__":
     deps.add_command(update)
     main_group.add_command(deps)
     main_group.add_command(build)
+    main_group.add_command(test)
     main_group.add_command(run)
     main()
