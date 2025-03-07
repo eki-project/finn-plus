@@ -11,6 +11,8 @@ from dut.resnet50 import bench_resnet50
 from dut.metafi import bench_metafi
 from dut.synthetic_nonlinear import bench_synthetic_nonlinear
 from dut.transformer import bench_transformer
+from dut.vgg10 import bench_vgg10
+from dut.mobilenetv1 import bench_mobilenetv1
 
 dut = dict()
 dut["mvau"] = bench_mvau
@@ -18,6 +20,8 @@ dut["resnet50"] = bench_resnet50
 dut["metafi"] = bench_metafi
 dut["synthetic_nonlinear"] = bench_synthetic_nonlinear
 dut["transformer"] = bench_transformer
+dut["vgg10"] = bench_vgg10
+dut["mobilenetv1"] = bench_mobilenetv1
 
 
 def main(config_name):

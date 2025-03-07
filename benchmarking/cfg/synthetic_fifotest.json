@@ -1,15 +1,15 @@
 [
     {
         "dut": ["synthetic_nonlinear"],
-        "dim": [32],
+        "dim": [64],
         "kernel_size": [5],
-        "ch": [4],
-        "simd": [4],
-        "pe": [4],
+        "ch": [8],
+        "simd": [8],
+        "pe": [8],
         "parallel_window": [1],
 
         "lb_num_layers": [1],
-        "rb_num_layers": [3],
+        "rb_num_layers": [4],
 
         "board": ["RFSoC2x2"],
         "clock_period_ns": [10],
@@ -21,15 +21,15 @@
     },
     {
         "dut": ["synthetic_nonlinear"],
-        "dim": [32],
+        "dim": [64],
         "kernel_size": [5],
-        "ch": [4],
-        "simd": [4],
-        "pe": [4],
+        "ch": [8],
+        "simd": [8],
+        "pe": [8],
         "parallel_window": [1],
 
         "lb_num_layers": [1],
-        "rb_num_layers": [3],
+        "rb_num_layers": [4],
 
         "board": ["RFSoC2x2"],
         "clock_period_ns": [10],
@@ -42,15 +42,15 @@
     },
     {
         "dut": ["synthetic_nonlinear"],
-        "dim": [32],
+        "dim": [64],
         "kernel_size": [5],
-        "ch": [4],
-        "simd": [4],
-        "pe": [4],
+        "ch": [8],
+        "simd": [8],
+        "pe": [8],
         "parallel_window": [1],
 
         "lb_num_layers": [1],
-        "rb_num_layers": [3],
+        "rb_num_layers": [4],
 
         "board": ["RFSoC2x2"],
         "clock_period_ns": [10],

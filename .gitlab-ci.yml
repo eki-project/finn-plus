@@ -214,4 +214,4 @@ Bench:
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
   parallel:
     matrix:
-      - BENCH_CFG: [mvau_test, resnet50_test, metafi_test, transformer_test, transformer_radioml_all, synthetic_fifotest]
+      - BENCH_CFG: [mvau_test, resnet50_test, metafi_test, transformer_test, transformer_radioml_all, synthetic_fifotest, vgg10_test, mobilenetv1_test]

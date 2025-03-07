@@ -21,6 +21,7 @@ import json
 # FINN dataflow builder
 import finn.builder.build_dataflow_config as build_cfg
 from finn.builder.build_dataflow_config import AutoFIFOSizingMethod
+from qonnx.core.modelwrapper import ModelWrapper
 from bench_base import bench
 
 # Range information structure for seeding the range analysis for converting
@@ -855,10 +856,14 @@ class bench_transformer(bench):
             seq_len, emb_dim = self.params["model_seq_len"], self.params["model_emb_dim"]
         else:
             # for real input models
-            _, seq_len, emb_dim = np.load(self.build_inputs["input_npy_path"]).shape
-            # TODO: use the following to get dimensions for GPT models?
-            #model = ModelWrapper(self.build_inputs["onnx_path"])
-            #_, emb_dim, seq_len = model.get_tensor_shape("/emb_add/input_quant/export_handler/Quant_output_0")
+            inp_shape = np.load(self.build_inputs["input_npy_path"]).shape
+            if len(inp_shape) == 3:
+                # for RadioML Transformers
+                _, seq_len, emb_dim = inp_shape
+            else:
+                # for GPTs (why is this different?)
+                model = ModelWrapper(self.build_inputs["onnx_path"])
+                _, seq_len, emb_dim = model.get_tensor_shape("/emb_add/input_quant/export_handler/Quant_output_0")
 
         # Read the input value range information for the dataset from the parameters
         # Note: Consider calibrating this on the fly from the dataset
@@ -910,15 +915,6 @@ class bench_transformer(bench):
             verify_input_npy=self.build_inputs["input_npy_path"],
             # File with expected test outputs for verification
             verify_expected_output_npy=self.build_inputs["output_npy_path"],
-            # Output full context dump for verification steps
-            verify_save_full_context=True,
-            # Save the intermediate model graphs
-            save_intermediate_models=True,
-            # Avoid RTL simulation for setting the FIFO sizes
-            auto_fifo_strategy=AutoFIFOSizingMethod.CHARACTERIZE,
-            # Do not automatically set FIFO sizes as this requires RTL simulation
-            # not implemented for the attention operator
-            auto_fifo_depths=False,
             # Build steps to execute
             steps=[
                 # Prepares the QONNX graph to be consumed by FINN: Cleanup, lowering
@@ -963,11 +959,6 @@ class bench_transformer(bench):
                 "step_generate_estimate_reports",
                 "step_hw_codegen",
                 "step_hw_ipgen",
-                # Set the attention- and residual-related FIFO depths insert FIFOs
-                # and apply folding configuration once again
-                # Note: Implement all FIFOs with a depth at least as deep as the
-                # sequence length in URAM.
-                set_fifo_depths(seq_len, emb_dim, uram_threshold=seq_len),
                 # Run additional node-by-node verification in RTL simulation of the
                 # model before creating the stitched IP
                 # Note: end-to-end verification of the stitched IP in RTL simulation
@@ -984,5 +975,17 @@ class bench_transformer(bench):
                 "step_deployment_package",
             ]
         )
+
+        # TESTING custom vs live FIFO-sizing
+        if self.params.get("fifo_method") == "live":
+            # insert default FIFO-sizing step (behind step_generate_estimate_reports)
+            for i in range(len(cfg.steps)):
+                if cfg.steps[i] == "step_generate_estimate_reports":
+                    cfg.steps.insert(i+1, "step_set_fifo_depths")
+        else:
+            # insert Christoph's custom FIFO-sizing step (behind step_hw_ipgen)
+            for i in range(len(cfg.steps)):
+                if cfg.steps[i] == "step_hw_ipgen":
+                    cfg.steps.insert(i+1, set_fifo_depths(seq_len, emb_dim, uram_threshold=seq_len))
 
         return cfg
