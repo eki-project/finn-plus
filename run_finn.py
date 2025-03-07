@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from finn.builder.build_dataflow import build_dataflow_cfg
@@ -49,21 +50,57 @@ def _update(path: str) -> None:
 def prepare_finn(
     envvar_config: Path, flow_config: Path, deps: Path, local_temps: bool, num_workers: int
 ) -> None:
-    """Prepare a FINN environment (fetch deps, set envvars)"""
+    """Prepare a FINN environment (fetch deps, set envvars). Print a summary at the end"""
     console = Console()
     _update(str(deps))
     envs, read_config = get_global_envvars(envvar_config)
     if not read_config:
         console.print(
-            f"[bold orange1]Could not read the default "
-            f"environment variable config at {envvar_config}![/bold orange1]"
+            f"[bold orange1]WARNING: [/bold orange1][orange3]Could not read the default "
+            f"environment variable config at {envvar_config}![/orange3]"
         )
     envs.update(get_run_specific_envvars(deps, flow_config, local_temps, num_workers))
     for k, v in envs.items():
         os.environ[k] = v
-    if shutil.which("verilator") is None:
+    verilator_location = shutil.which("verilator")
+    if verilator_location is None:
         console.print("[bold red]Verilator could not be found! Stopping...[/bold red]")
         sys.exit(1)
+    elif "VERILATOR_ROOT" not in os.environ.keys() or os.environ["VERILATOR_ROOT"] == "":
+        console.print(
+            "[bold orange1]WARNING: [/bold orange1][orange3]Although the "
+            "local verilator install seems to have failed, "
+            "you can still use your systemwide installed verilator. "
+            "However bugs might occur.[/orange3]"
+        )
+    s = f"[italic]FINN_ROOT:[/italic] [bold cyan]{os.environ['FINN_ROOT']}[/bold cyan]\n"
+    s += f"[italic]FINN_BUILD_DIR:[/italic][bold cyan] {os.environ['FINN_BUILD_DIR']}[/bold cyan]\n"
+    s += (
+        f"[italic]FINN_HOST_BUILD_DIR:[/italic][bold cyan] {os.environ['FINN_HOST_BUILD_DIR']}"
+        "[/bold cyan]\n"
+    )
+    s += f"[italic]FINN_DEPS:[/italic][bold cyan] {os.environ['FINN_DEPS']}[/bold cyan]\n"
+    s += (
+        f"[italic]NUM_DEFAULT_WORKERS:[/italic][bold cyan] {os.environ['NUM_DEFAULT_WORKERS']}"
+        "[/bold cyan]\n"
+    )
+    s += f"[italic]OHMYXILINX:[/italic][bold cyan] {os.environ['OHMYXILINX']}[/bold cyan]\n"
+    s += (
+        f"[italic]PLATFORM_REPO_PATHS:[/italic][bold cyan] {os.environ['PLATFORM_REPO_PATHS']}"
+        "[/bold cyan]\n"
+    )
+    s += (
+        f"[italic]XRT_DEB_VERSION:[/italic][bold cyan] {os.environ['XRT_DEB_VERSION']}"
+        "[/bold cyan]\n"
+    )
+    s += f"[italic]VIVADO_PATH:[/italic][bold cyan] {os.environ['VIVADO_PATH']}[/bold cyan]\n"
+    s += f"[italic]VITIS_PATH:[/italic][bold cyan] {os.environ['VITIS_PATH']}[/bold cyan]\n"
+    s += f"[italic]HLS_PATH:[/italic][bold cyan] {os.environ['HLS_PATH']}[/bold cyan]\n"
+    s += (
+        f"[italic]XILINX_LOCAL_USER_DATA:[/italic][bold cyan] "
+        f"{os.environ['XILINX_LOCAL_USER_DATA']}[/bold cyan]\n"
+    )
+    console.print(Panel(s, title="Environment"))
 
 
 @click.group()
@@ -83,7 +120,7 @@ def main_group() -> None:
 @click.option(
     "--num-workers",
     "-n",
-    help="Number of parallel workers for FINN to use. " "When -1, automatically use 75% of cores",
+    help="Number of parallel workers for FINN to use. When -1, automatically use 75% of cores",
     default=-1,
     show_default=True,
 )
@@ -106,7 +143,7 @@ def build(
     prepare_finn(DEFAULT_ENVVAR_CONFIG, config_path, dep_path, not no_local_temps, num_workers)
     console.print("[bold green]Done![/bold green]")
     console.print("[bold cyan]Creating dataflow build config...[/bold cyan]")
-    dfbc = None
+    dfbc: DataflowBuildConfig | None = None
     match config_path.suffix:
         case ".yaml" | ".yml":
             raise NotImplementedError("Depends on a pending PR for YAML support.")
@@ -119,6 +156,10 @@ def build(
                 "Valid formats are: .json, .yml, .yaml"
             )
             sys.exit(1)
+
+    if dfbc is None:
+        console.print("[bold red]Failed to generate dataflow build config!")
+        sys.exit(1)
 
     console.rule(
         f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
@@ -140,7 +181,7 @@ def build(
 @click.option(
     "--num-workers",
     "-n",
-    help="Number of parallel workers for FINN to use. " "When -1, automatically use 75% of cores",
+    help="Number of parallel workers for FINN to use. When -1, automatically use 75% of cores",
     default=-1,
     show_default=True,
 )
@@ -161,7 +202,7 @@ def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: st
     subprocess.run(f"python3 {script_path.name}", cwd=script_path.parent, shell=True)
 
 
-@click.command
+@click.command(help="Run a given test. Uses /tmp/FINN_TMP as the temporary file location")
 @click.option(
     "--variant",
     "-v",
