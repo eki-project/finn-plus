@@ -8,3 +8,4 @@ exclude =
     docs/conf.py
 per-file-ignores =
      src/finn/transformation/streamline/streamline_plus.py: F405, F403
+     tests/*: F401
