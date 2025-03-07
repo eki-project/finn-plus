@@ -1,0 +1,15 @@
+params:
+  dut: metafi
+  model_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/model.onnx
+  folding_path: 
+    /pc2/groups/hpc-prf-ekiapp/felix/ci_models/metafi/auto_folding_config_metaFi_f25.json
+  board: RFSoC2x2
+  clock_period_ns: 10
+  fifo_method: characterize
+  fifo_strategy: rtlsim
+  output_products:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+metadata:
+  tool_version: '2022.2'
