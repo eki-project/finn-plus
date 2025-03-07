@@ -2,6 +2,7 @@ import argparse
 import json
 import time
 from pynq import Overlay
+from pynq import PL
 from pynq.pl_server.device import Device
 from pynq.ps import Clocks
 
@@ -126,6 +127,7 @@ if __name__ == "__main__":
 
     # instantiate FINN accelerator driver and pass batchsize and bitfile
     print("Programming FPGA..")
+    PL.reset() # reset PYNQ cache
     accel = FINNInstrumentationOverlay(
         bitfile_name=bitfile, device=device, fclk_mhz=frequency, seed=seed
     )

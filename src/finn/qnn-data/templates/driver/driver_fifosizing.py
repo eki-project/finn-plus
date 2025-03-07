@@ -3,6 +3,7 @@ import json
 import os
 import argparse
 import matplotlib.pyplot as plt
+from pynq import PL
 from pynq.pl_server.device import Device
 
 from driver_instrumentation import FINNInstrumentationOverlay
@@ -211,6 +212,7 @@ if __name__ == "__main__":
 
 
     print("Programming FPGA..")
+    PL.reset() # reset PYNQ cache
     accel = FINNLiveFIFOOverlay(bitfile_name = bitfile, device = device, fclk_mhz = frequency, seed = seed, fifo_widths = fifo_widths)
     
     (start_depth, iteration_runtime) = accel.determine_start_depth()
