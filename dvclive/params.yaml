@@ -1,0 +1,12 @@
+params:
+  dut: transformer
+  seed: 12
+  model_dir: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/radioml_b
+  board: RFSoC2x2
+  clock_period_ns: 10
+  output_products:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  fifo_method: manual
