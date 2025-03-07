@@ -1,0 +1,14 @@
+{
+    "status": "failed",
+    "verification": "success",
+    "hls_estimate": {
+        "resources": {
+            "LUT": 515891.0,
+            "FF": 316766.0,
+            "DSP": 480.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 3072.0,
+            "URAM": 0.0
+        }
+    }
+}
