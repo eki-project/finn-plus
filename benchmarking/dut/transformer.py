@@ -867,8 +867,8 @@ class bench_transformer(bench):
 
         # Read the input value range information for the dataset from the parameters
         # Note: Consider calibrating this on the fly from the dataset
-        range = [ -100, +100 ] # params["build"]["range"] # TODO: make configurable?
-        input_range = tuple(np.array([range]).T)
+        value_range = [ -100, +100 ] # params["build"]["range"] # TODO: make configurable?
+        input_range = tuple(np.array([value_range]).T)
         # Construct the seed range information of the input tensor
         range_info = RangeInfo(shape=(1, seq_len, emb_dim), range=input_range)
     
