@@ -11,6 +11,8 @@ import numpy as np
 # YAML for loading experiment configurations
 import yaml
 
+import json
+
 # QONNX quantization data types
 from qonnx.core.datatype import DataType
 
@@ -616,7 +618,8 @@ def set_fifo_depths(seq_len: int, emb_dim: int, uram_threshold: int = 32):  # no
                 del config[node.name]
 
         # Create/Open a YAML file to store the configuration for later reuse
-        with open(cfg.output_dir + "/final_hw_config.yaml", "w") as file:
+        # TODO: make consistent with .json report in default step
+        with open(cfg.output_dir + "/report/final_hw_config.yaml", "w") as file:
             # Store the configuration dictionary as YAML code
             yaml.safe_dump(config, file)
 
@@ -627,6 +630,23 @@ def set_fifo_depths(seq_len: int, emb_dim: int, uram_threshold: int = 32):  # no
         if cfg.split_large_fifos:
             model = model.transform(SplitLargeFIFOs())
         model = model.transform(RemoveShallowFIFOs())
+
+        # generate a dedicated report about final FIFO sizes
+        fifo_info = {}
+        fifo_info["fifo_depths"] = {}
+        fifo_info["fifo_sizes"] = {}
+        total_fifo_size = 0
+        for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
+            node_inst = getCustomOp(node)
+            fifo_info["fifo_depths"][node.name] = node_inst.get_nodeattr("depth")
+            fifo_info["fifo_sizes"][
+                node.name
+            ] = node_inst.get_instream_width() * node_inst.get_nodeattr("depth")
+            total_fifo_size += fifo_info["fifo_sizes"][node.name]
+        fifo_info["total_fifo_size_kB"] = int(total_fifo_size / 8.0 / 1000.0)
+
+        with open(cfg.output_dir + "/report/fifo_sizing.json", "w") as f:
+            json.dump(fifo_info, f, indent=2)
 
         # After FIFOs are ready to go, call PrepareIP and HLSSynthIP again
         # this will only run for the new nodes (e.g. FIFOs and DWCs)

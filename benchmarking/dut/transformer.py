@@ -908,7 +908,7 @@ class bench_transformer(bench):
                 # converting to HLS
                 build_cfg.VerificationStepType.TIDY_UP_PYTHON,
                 # Verify the model after generating C++ HLS and applying folding
-                build_cfg.VerificationStepType.FOLDED_HLS_CPPSIM,
+                #build_cfg.VerificationStepType.FOLDED_HLS_CPPSIM, #only inserted if live FIFO-sizing is off
                 # No RTL Simulation support for now
             ],
             # File with test inputs for verification
@@ -963,7 +963,7 @@ class bench_transformer(bench):
                 # model before creating the stitched IP
                 # Note: end-to-end verification of the stitched IP in RTL simulation
                 # is still not possible due to missing float IPs
-                node_by_node_cppsim,
+                #node_by_node_cppsim, #only inserted if live FIFO-sizing is off
                 # Only for debugging for now, does not work if "vivado" style
                 # StreamingFIFOs are used
                 # node_by_node_rtlsim,
@@ -987,5 +987,8 @@ class bench_transformer(bench):
             for i in range(len(cfg.steps)):
                 if cfg.steps[i] == "step_hw_ipgen":
                     cfg.steps.insert(i+1, set_fifo_depths(seq_len, emb_dim, uram_threshold=seq_len))
+                    # also enable cppsim, which doesn't work with virtual FIFOs
+                    cfg.steps.insert(i+2, node_by_node_cppsim)
+                    cfg.verify_steps.append(build_cfg.VerificationStepType.FOLDED_HLS_CPPSIM)
 
         return cfg
