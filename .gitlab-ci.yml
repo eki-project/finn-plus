@@ -20,7 +20,7 @@ variables:
     value: "64"
   CPU_CORES_BENCH:
     description: "Select number of CPU cores for benchmark runs"
-    value: "32"
+    value: "8"
   PARALLEL_JOBS:
     description: "Number of parallel Slurm array jobs per Benchmark job"
     value: "2"
