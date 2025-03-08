@@ -346,10 +346,17 @@ class MakePYNQDriverInstrumentation(Transformation):
         }
         if self.live_fifo_sizing:
             # export FIFO widths to the settings file as well
+            # at this stage, the FIFOs are already wrapped in StreamingDataflowPartitions
             fifo_widths = {}
-            for node in model.get_nodes_by_op_type("StreamingFIFO_hls"):
-                node_inst = getCustomOp(node)
-                fifo_widths[node.name] = node_inst.get_instream_width()
+            for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
+                sdp_node_inst = getCustomOp(sdp_node)
+                sdp_id = sdp_node_inst.get_nodeattr("partition_id")
+                dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
+                kernel_model = ModelWrapper(dataflow_model_filename)
+                for node in kernel_model.graph.node:
+                    if node.op_type.startswith("StreamingFIFO"):
+                        node_inst = getCustomOp(node)
+                        fifo_widths[sdp_id] = node_inst.get_instream_width()
             settings["fifo_widths"] = fifo_widths
 
         settingsfile = pynq_driver_dir + "/settings.json"
