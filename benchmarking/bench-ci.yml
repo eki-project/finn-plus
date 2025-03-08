@@ -73,4 +73,4 @@ Result Collection:
     - when: always
   script:
     - python3.10 benchmarking/collect.py
-    - dvc exp push -r push git@github.com:eki-project/finn-plus.git
+    - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
