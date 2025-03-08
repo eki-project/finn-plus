@@ -1,0 +1,84 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 7632.0,
+            "DSP": 1080.0,
+            "BRAM_18K": 379.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 123860,
+            "max_cycles": 49152,
+            "max_cycles_node_name": "StreamingMaxPool_hls_0",
+            "estimated_throughput_fps": 2034.5052083333333,
+            "estimated_latency_ns": 1238600
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 3703.0,
+            "FF": 691.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        }
+    },
+    "rtlsim": {
+        "performance": {
+            "N": 5,
+            "latency_cycles": 55570,
+            "cycles": 268706,
+            "fclk[mhz]": 100.0,
+            "throughput[images-s]": 1860.769763235655,
+            "stable_throughput[images-s]": 2345.9199759777794
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 79
+    },
+    "synth(ooc)": {
+        "resources": {
+            "LUT": 74478.0,
+            "LUTRAM": 13171.0,
+            "FF": 65356.0,
+            "DSP": 0.0,
+            "BRAM": 32.0,
+            "BRAM_18K": 20.0,
+            "BRAM_36K": 22.0,
+            "URAM": 0.0
+        },
+        "timing": {
+            "WNS": 2.953,
+            "fmax_mhz": 141.90435646374343
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 71515,
+            "FF": 64019,
+            "SRL": 5145,
+            "DSP": 1128,
+            "BRAM_18K": 20,
+            "BRAM_36K": 22,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "performance": {
+            "error": false,
+            "checksum": 17,
+            "min_latency_cycles": 55567,
+            "latency_cycles": 265348,
+            "interval_cycles": 53284,
+            "frequency_mhz": 100,
+            "min_latency_ms": 0.555676,
+            "latency_ms": 2.653507,
+            "throughput_fps": 1877,
+            "min_pipeline_depth": 1.04,
+            "pipeline_depth": 4.98
+        }
+    },
+    "total_build_time": 7520
+}
