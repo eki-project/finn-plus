@@ -1,0 +1,59 @@
+{
+    "status": "ok",
+    "verification": "success",
+    "estimate": {
+        "resources": {
+            "LUT": 8737.0,
+            "DSP": 1984.0,
+            "BRAM_18K": 537.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 54720,
+            "max_cycles": 1024,
+            "max_cycles_node_name": "Squeeze_hls_0",
+            "estimated_throughput_fps": 97656.25,
+            "estimated_latency_ns": 547200
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 267817.0,
+            "FF": 154358.0,
+            "DSP": 360.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 3792.0,
+            "URAM": 0.0
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 24
+    },
+    "synth": {
+        "resources": {
+            "LUT": 259834,
+            "FF": 206454,
+            "SRL": 3295,
+            "DSP": 2344,
+            "BRAM_18K": 257,
+            "BRAM_36K": 259,
+            "URAM": 80
+        }
+    },
+    "measurement": {
+        "performance": {
+            "error": false,
+            "checksum": 256611,
+            "min_latency_cycles": 5544,
+            "latency_cycles": 5855,
+            "interval_cycles": 1333,
+            "frequency_mhz": 100,
+            "min_latency_ms": 0.055441,
+            "latency_ms": 0.058551,
+            "throughput_fps": 75018,
+            "min_pipeline_depth": 4.16,
+            "pipeline_depth": 4.39
+        }
+    },
+    "total_build_time": 8729
+}
