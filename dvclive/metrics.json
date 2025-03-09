@@ -1,0 +1,25 @@
+{
+    "status": "ok",
+    "hls_estimate": {
+        "resources": {
+            "LUT": 428824.0,
+            "FF": 3174.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 16468,
+            "FF": 14337,
+            "SRL": 1219,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0
+        }
+    },
+    "total_build_time": 5709
+}
