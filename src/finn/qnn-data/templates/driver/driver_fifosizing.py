@@ -62,7 +62,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # Assuming FIFO SDP/AXI-Lite interfaces are ordered consistently with FIFO IDs
         total_size_bits = 0
         for i, depth in enumerate(depths):
-            total_size_bits += (depth + self.fifo_depth_offset) * self.fifo_widths[i]
+            total_size_bits += (depth + self.fifo_depth_offset) * self.fifo_widths[str(i)]
         total_size_kB = total_size_bits / 8.0 / 1000.0
         return total_size_kB
 
@@ -353,7 +353,7 @@ if __name__ == "__main__":
         },
     }
     for fifo, depth in enumerate(fifo_depths):
-        size = (depth + accel.fifo_depth_offset) * accel.fifo_widths[fifo]
+        size = (depth + accel.fifo_depth_offset) * accel.fifo_widths[str(fifo)]
         fifo_report["fifo_depths"][fifo] = depth + accel.fifo_depth_offset
         fifo_report["fifo_sizes"][fifo] = size
     with open(os.path.join(report_dir, "fifo_sizing_report.json"), "w") as f:

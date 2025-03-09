@@ -151,13 +151,23 @@ def main(config_name):
                 print("Run skipped")
             else:
                 log_dict["status"] = "ok"
-                print("Run completed")
+                print("Run successfully completed")
         except Exception:
             log_dict["status"] = "failed"
             print("Run failed: " + traceback.format_exc())
             exit_code = 1
 
         log_dict["output"] = bench_object.output_dict
+
+        # examine status reported by builder (which catches all exceptions before they reach us here)
+        # we could also fail the pipeline if functional verification fails (TODO)
+        builder_log_path = os.path.join(bench_object.report_dir, "metadata_builder.json")
+        if os.path.isfile(builder_log_path):
+            with open(builder_log_path, "r") as f:
+                builder_log = json.load(f)
+            if builder_log["status"] == "failed":
+                print("Run failed (builder reported failure)")
+                exit_code = 1
 
         # log metadata of this run to its own report directory
         log_path = os.path.join(bench_object.report_dir, "metadata_bench.json")
@@ -168,8 +178,6 @@ def main(config_name):
         bench_object.save_artifacts_collection()
         # save local artifacts of this run (e.g., full build dir, detailed debug info)
         bench_object.save_local_artifacts_collection()
-
-        #TODO: examine verification result and builder status here to fail pipeline via exit code?
 
     print("Stopping job")
     return exit_code

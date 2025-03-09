@@ -1,4 +1,5 @@
 import os
+import sys
 import subprocess
 import shutil
 
@@ -6,6 +7,7 @@ from util import delete_dir_contents
 
 
 if __name__ == "__main__":
+    exit_code = 0
     print("Looking for deployment packages in artifacts..")
     # Find deployment packages from artifacts
     artifacts_in_dir = os.path.join("build_artifacts", "runs_output")
@@ -24,12 +26,16 @@ if __name__ == "__main__":
 
             # Run driver
             print("Running driver..")
-            subprocess.run(["python", f"{extract_dir}/driver/driver.py",
+            result = subprocess.run(["python", f"{extract_dir}/driver/driver.py",
                             "--bitfile",  f"{extract_dir}/bitfile/finn-accel.bit",
                             "--settingsfile", f"{extract_dir}/driver/settings.json",
                             "--reportfile", f"{extract_dir}/measured_performance.json",
-                            ]) 
-            print("Driver finished.")
+                            ])
+            if result.returncode != 0:
+                print("Driver reported error!")
+                exit_code = 1
+            else:
+                print("Driver finished successfully.")
 
             # Copy results back to artifact directory
             for report in ["measured_performance.json", 
@@ -47,3 +53,5 @@ if __name__ == "__main__":
             # Clear temporary dir
             delete_dir_contents(extract_dir)
             print("Done.")
+    print("Processed all deployment packages.")
+    sys.exit(exit_code)
