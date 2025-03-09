@@ -1,0 +1,13 @@
+params:
+  dut: transformer
+  seed: 12
+  model_dir: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/gpt_d
+  board: U280
+  clock_period_ns: 10
+  output_products:
+  - estimate_reports
+  - stitched_ip
+  - out_of_context_synth
+  fifo_method: manual
+metadata:
+  tool_version: '2022.2'
