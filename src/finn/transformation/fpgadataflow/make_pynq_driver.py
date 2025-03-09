@@ -350,7 +350,8 @@ class MakePYNQDriverInstrumentation(Transformation):
             fifo_widths = {}
             for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
                 sdp_node_inst = getCustomOp(sdp_node)
-                sdp_id = sdp_node_inst.get_nodeattr("partition_id")
+                # JSON doesn't support int keys
+                sdp_id = str(sdp_node_inst.get_nodeattr("partition_id"))
                 dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
                 kernel_model = ModelWrapper(dataflow_model_filename)
                 for node in kernel_model.graph.node:
