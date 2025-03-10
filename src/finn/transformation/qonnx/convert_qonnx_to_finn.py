@@ -33,7 +33,9 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.quant_constant_folding import FoldTransposeIntoQuantInit
 from qonnx.transformation.remove import RemoveIdentityOps
 
+from finn.transformation.qonnx.extract_conv_quant_bias import ExtractConvQuantBias
 from finn.transformation.qonnx.fold_quant_weights import FoldQuantWeights
+
 from finn.transformation.qonnx.infer_quant_avg_pool_2d import (
     AvgPoolAndTruncToQuantAvgPool,
 )
@@ -74,7 +76,9 @@ class ConvertQONNXtoFINN(Transformation):
     def apply(self, model):
         # Extract the bias from Conv node
         model = model.transform(ExtractBiasFromConv())
-        # Gemm operations are not supported by FINN, so we convert them to MatMul
+        # Extract bias from Conv nodes which are initialized by a Quant node
+        model = model.transform(ExtractConvQuantBias())
+        # # Gemm operations are not supported by FINN, so we convert them to MatMul
         model = model.transform(GemmToMatMul())
         model = model.transform(FoldTransposeIntoQuantInit())
         # Make sure the datatypes exist, these are required for folding the weights
