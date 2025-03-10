@@ -121,6 +121,29 @@ def update_dependencies(location: Path) -> list[Status]:
                 else f"Failed. Got commit {read_commit}, expected {commit}",
             )
         )
+    return status
+
+
+def check_verilator_version() -> str | None:
+    """Return the verilator version that is found. If no verilator version is installed or the
+    version output cannot be parsed returns None"""
+    if shutil.which("verilator") is None:
+        return None
+    result = sp.run("verilator --version", shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    try:
+        return result.stdout.split(" ")[1]
+    except (IndexError, AttributeError):
+        return None
+
+
+def try_install_verilator(location: Path) -> Status:
+    """Try installing verilator at the given location. If a working version is already in scope,
+    return."""
+    existing_verilator = check_verilator_version()
+    if existing_verilator is not None and existing_verilator >= "4.224":
+        return ("verilator", True, "Existing verilator version found!")
     verilator_git, verilator_checkout = VERILATOR
     target = (location / "verilator").absolute()
     configure_script = target / "configure"
@@ -134,17 +157,18 @@ def update_dependencies(location: Path) -> list[Status]:
     res2 = sp.run(
         shlex.split("./configure", posix=IS_POSIX), cwd=target, capture_output=True, text=True
     )
+    res3 = sp.run(["make"], cwd=target, capture_output=True, text=True)
     err = None
-    if res1.returncode != 0 or res2.returncode != 0:
+    if res1.returncode != 0 or res2.returncode != 0 or res3.returncode != 0:
         del os.environ["VERILATOR_ROOT"]
     if res1.returncode != 0:
         err = res1.stderr.split("\n")[-1]
     elif res2.returncode != 0:
         err = res2.stderr.split("\n")[-2]
+    elif res3.returncode != 0:
+        err = res3.stderr.split("\n")[-1]
     if err is not None:
-        status.append(("verilator", False, f"{err}"))
-        return status
+        return ("verilator", False, f"{err}")
     os.environ["VERILATOR_ROOT"] = str(target)
     os.environ["PATH"] = f"{target}/bin:" + os.environ["PATH"]
-    status.append(("verilator", True, f"Configured at {target}. Envvar set."))
-    return status
+    return ("verilator", True, f"Configured at {target}. Envvar set.")

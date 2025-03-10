@@ -1,22 +1,26 @@
 import click
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 from finn.builder.build_dataflow import build_dataflow_cfg
 from finn.builder.build_dataflow_config import DataflowBuildConfig
-from interface.manage_deps import update_dependencies
+from interface.manage_deps import (
+    check_verilator_version,
+    try_install_verilator,
+    update_dependencies,
+)
 from interface.manage_envvars import (
     DEFAULT_FINN_TMP,
     get_global_envvars,
     get_run_specific_envvars,
+    print_environment,
 )
+from interface.manage_tests import run_test
 
 DEFAULT_DEPS = Path.home() / ".finn" / "deps"
 DEFAULT_FINN_ROOT = Path(__file__).parent
@@ -37,6 +41,8 @@ def _update(path: str) -> None:
     console = Console()
     with console.status("[bold cyan]Gathering dependencies...[/bold cyan]") as _:
         update_status = update_dependencies(Path(path))
+    with console.status("[bold cyan]Installing verilator...[/bold cyan]") as _:
+        vname, vsuc, vmsg = try_install_verilator(Path(path))
     table = Table()
     table.add_column("Name")
     table.add_column("Status")
@@ -47,6 +53,9 @@ def _update(path: str) -> None:
             "[bold green]Success[/bold green]" if success else "[bold red]Failed[/bold red]",
             msg,
         )
+    table.add_row(
+        vname, "[bold green]Sucess[/bold green]" if vsuc else "[bold red]Failed[/bold red]", vmsg
+    )
     console.print(table)
 
 
@@ -65,63 +74,24 @@ def prepare_finn(
     envs.update(get_run_specific_envvars(deps, flow_config, local_temps, num_workers))
     for k, v in envs.items():
         os.environ[k] = v
-    verilator_location = shutil.which("verilator")
-    if verilator_location is None:
-        console.print("[bold red]Verilator could not be found! Stopping...[/bold red]")
-        sys.exit(1)
-    elif "VERILATOR_ROOT" not in os.environ.keys() or os.environ["VERILATOR_ROOT"] == "":
-        console.print(
-            "[bold orange1]WARNING: [/bold orange1][orange3]Although the "
-            "local verilator install seems to have failed, "
-            "you can still use your systemwide installed verilator. "
-            "However bugs might occur.[/orange3]"
-        )
-    verilator_result = subprocess.run(
-        "verilator --version", shell=True, capture_output=True, text=True
-    )
-    try:
-        version = verilator_result.stdout.split(" ")[1]
-        if version < "4.224":
-            console.print(
-                f"[bold orange1]WARNING: [/bold orange1][orange3]It seems you are using verilator "
-                f"version [bold]{version}[/bold]. The recommended version is [bold]4.224[/bold]. "
-                "FIFO-Sizing or simulations might fail due to verilator errors.[/orange3]"
-            )
-    except (IndexError, AttributeError):
-        console.print(
-            "[bold orange1]WARNING: [/bold orange1][orange3]Could not parse your "
-            "verilator version. Please check that you version is >= 4.224, "
-            "or you may face errors during simulation or FIFO sizing!"
-        )
 
-    s = f"[italic]FINN_ROOT:[/italic] [bold cyan]{os.environ['FINN_ROOT']}[/bold cyan]\n"
-    s += f"[italic]FINN_BUILD_DIR:[/italic][bold cyan] {os.environ['FINN_BUILD_DIR']}[/bold cyan]\n"
-    s += (
-        f"[italic]FINN_HOST_BUILD_DIR:[/italic][bold cyan] {os.environ['FINN_HOST_BUILD_DIR']}"
-        "[/bold cyan]\n"
-    )
-    s += f"[italic]FINN_DEPS:[/italic][bold cyan] {os.environ['FINN_DEPS']}[/bold cyan]\n"
-    s += (
-        f"[italic]NUM_DEFAULT_WORKERS:[/italic][bold cyan] {os.environ['NUM_DEFAULT_WORKERS']}"
-        "[/bold cyan]\n"
-    )
-    s += f"[italic]OHMYXILINX:[/italic][bold cyan] {os.environ['OHMYXILINX']}[/bold cyan]\n"
-    s += (
-        f"[italic]PLATFORM_REPO_PATHS:[/italic][bold cyan] {os.environ['PLATFORM_REPO_PATHS']}"
-        "[/bold cyan]\n"
-    )
-    s += (
-        f"[italic]XRT_DEB_VERSION:[/italic][bold cyan] {os.environ['XRT_DEB_VERSION']}"
-        "[/bold cyan]\n"
-    )
-    s += f"[italic]VIVADO_PATH:[/italic][bold cyan] {os.environ['VIVADO_PATH']}[/bold cyan]\n"
-    s += f"[italic]VITIS_PATH:[/italic][bold cyan] {os.environ['VITIS_PATH']}[/bold cyan]\n"
-    s += f"[italic]HLS_PATH:[/italic][bold cyan] {os.environ['HLS_PATH']}[/bold cyan]\n"
-    s += (
-        f"[italic]XILINX_LOCAL_USER_DATA:[/italic][bold cyan] "
-        f"{os.environ['XILINX_LOCAL_USER_DATA']}[/bold cyan]\n"
-    )
-    console.print(Panel(s, title="Environment"))
+    verilator_version = check_verilator_version()
+    if verilator_version is None:
+        console.print(
+            "[bold red]ERROR: Verilator could not be found or executed properly after "
+            "the local installation. Stopping... [/bold red]"
+        )
+        sys.exit(1)
+    elif verilator_version is not None and verilator_version < "4.224":
+        console.print(
+            f"[bold orange1]WARNING: [/bold orange1][orange3]It seems you are using verilator "
+            f"version [bold]{verilator_version}[/bold]. "
+            "The recommended version is [bold]4.224[/bold]. "
+            "FIFO-Sizing or simulations might fail due to verilator errors.[/orange3]"
+        )
+    else:
+        console.print(f"[bold green]Verilator version {verilator_version} found![/bold green]")
+    print_environment()
 
 
 @click.group()
@@ -162,7 +132,6 @@ def build(
     )
     console.print("[bold cyan]Setting up the FINN environment...[/bold cyan]")
     prepare_finn(DEFAULT_ENVVAR_CONFIG, config_path, dep_path, not no_local_temps, num_workers)
-    console.print("[bold green]Done![/bold green]")
     console.print("[bold cyan]Creating dataflow build config...[/bold cyan]")
     dfbc: DataflowBuildConfig | None = None
     match config_path.suffix:
@@ -215,7 +184,6 @@ def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: st
     assert_path_valid(dep_path)
     console.print("[bold cyan]Setting up the FINN environment...[/bold cyan]")
     prepare_finn(DEFAULT_ENVVAR_CONFIG, script_path, dep_path, not no_local_temps, num_workers)
-    console.print("[bold green]Done![/bold green]")
     console.rule(
         f"[bold cyan]Starting script "
         f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
@@ -235,45 +203,13 @@ def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: st
 )
 @click.option("--dependency-path", "-d", default=str(DEFAULT_DEPS), show_default=True)
 @click.option("--num-workers", "-n", default="auto", show_default=True)
-def test(variant: str, dependency_path: str, num_workers: int) -> None:
+def test(variant: str, dependency_path: str, num_workers: str) -> None:
     console = Console()
     prepare_finn(
         DEFAULT_ENVVAR_CONFIG, Path(), Path(dependency_path), local_temps=False, num_workers=-1
     )
     console.rule("RUNNING TESTS")
-    match variant:
-        case "quick":
-            subprocess.run(
-                shlex.split(
-                    f"pytest -m 'not "
-                    f"(vivado or slow or vitis or board or notebooks or bnn_pynq)' "
-                    f"--dist=loadfile -n {num_workers}",
-                    posix=IS_POSIX,
-                )
-            )
-        case "main":
-            subprocess.run(
-                shlex.split(
-                    f"pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}",
-                    posix=IS_POSIX,
-                )
-            )
-        case "rtlsim":
-            subprocess.run(shlex.split(f"pytest -k rtlsim --workers {num_workers}", posix=IS_POSIX))
-        case "end2end":
-            subprocess.run("pytest -k end2end", shell=True)
-        case "full":
-            subprocess.run(
-                shlex.split(
-                    f"pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}",
-                    posix=IS_POSIX,
-                )
-            )
-            subprocess.run(shlex.split(f"pytest -k rtlsim --workers {num_workers}", posix=IS_POSIX))
-            subprocess.run("pytest -k end2end", shell=True)
-        case "brevitas":
-            console.print("[bold green]Brevitas tests...[/bold green]")
-            subprocess.run("pytest -k brevitas_export", shell=True)
+    run_test(variant, num_workers)
 
 
 @click.group(help="Dependency management")
