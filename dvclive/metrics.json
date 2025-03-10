@@ -1,0 +1,27 @@
+{
+    "status": "failed",
+    "hls_estimate": {
+        "resources": {
+            "LUT": 157659.0,
+            "FF": 136018.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 474.0,
+            "URAM": 0.0
+        }
+    },
+    "rtlsim": {
+        "performance": {
+            "N": 5,
+            "TIMEOUT": 0,
+            "latency_cycles": 2548468,
+            "cycles": 6184452,
+            "fclk[mhz]": 250.0,
+            "throughput[images-s]": 202.11976744261253,
+            "stable_throughput[images-s]": 343.7858912470462
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 535
+    }
+}
