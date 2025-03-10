@@ -73,6 +73,24 @@ def prepare_finn(
             "you can still use your systemwide installed verilator. "
             "However bugs might occur.[/orange3]"
         )
+    verilator_result = subprocess.run(
+        "verilator --version", shell=True, capture_output=True, text=True
+    )
+    try:
+        version = verilator_result.stdout.split(" ")[1]
+        if version < "4.224":
+            console.print(
+                f"[bold orange1]WARNING: [/bold orange1][orange3]It seems you are using verilator "
+                f"version [bold]{version}[/bold]. The recommended version is [bold]4.224[/bold]. "
+                "FIFO-Sizing or simulations might fail due to verilator errors.[/orange3]"
+            )
+    except (IndexError, AttributeError):
+        console.print(
+            "[bold orange1]WARNING: [/bold orange1][orange3]Could not parse your "
+            "verilator version. Please check that you version is >= 4.224, "
+            "or you may face errors during simulation or FIFO sizing!"
+        )
+
     s = f"[italic]FINN_ROOT:[/italic] [bold cyan]{os.environ['FINN_ROOT']}[/bold cyan]\n"
     s += f"[italic]FINN_BUILD_DIR:[/italic][bold cyan] {os.environ['FINN_BUILD_DIR']}[/bold cyan]\n"
     s += (
