@@ -1,5 +1,6 @@
 import click
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,8 @@ from interface.manage_envvars import (
 DEFAULT_DEPS = Path.home() / ".finn" / "deps"
 DEFAULT_FINN_ROOT = Path(__file__).parent
 DEFAULT_ENVVAR_CONFIG = Path.home() / ".finn" / "envvars.yaml"
+
+IS_POSIX = os.name == "posix"
 
 
 def assert_path_valid(p: Path) -> None:
@@ -217,7 +220,9 @@ def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: st
         f"[bold cyan]Starting script "
         f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
     )
-    subprocess.run(f"python3 {script_path.name}", cwd=script_path.parent, shell=True)
+    subprocess.run(
+        shlex.split(f"python3 {script_path.name}", posix=IS_POSIX), cwd=script_path.parent
+    )
 
 
 @click.command(help="Run a given test. Uses /tmp/FINN_TMP as the temporary file location")
@@ -239,26 +244,32 @@ def test(variant: str, dependency_path: str, num_workers: int) -> None:
     match variant:
         case "quick":
             subprocess.run(
-                f"pytest -m 'not "
-                f"(vivado or slow or vitis or board or notebooks or bnn_pynq)' "
-                f"--dist=loadfile -n {num_workers}",
-                shell=True,
+                shlex.split(
+                    f"pytest -m 'not "
+                    f"(vivado or slow or vitis or board or notebooks or bnn_pynq)' "
+                    f"--dist=loadfile -n {num_workers}",
+                    posix=IS_POSIX,
+                )
             )
         case "main":
             subprocess.run(
-                f"pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}",
-                shell=True,
+                shlex.split(
+                    f"pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}",
+                    posix=IS_POSIX,
+                )
             )
         case "rtlsim":
-            subprocess.run(f"pytest -k rtlsim --workers {num_workers}", shell=True)
+            subprocess.run(shlex.split(f"pytest -k rtlsim --workers {num_workers}", posix=IS_POSIX))
         case "end2end":
             subprocess.run("pytest -k end2end", shell=True)
         case "full":
             subprocess.run(
-                f"pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}",
-                shell=True,
+                shlex.split(
+                    f"pytest -k 'not (rtlsim or end2end)' --dist=loadfile -n {num_workers}",
+                    posix=IS_POSIX,
+                )
             )
-            subprocess.run(f"pytest -k rtlsim --workers {num_workers}", shell=True)
+            subprocess.run(shlex.split(f"pytest -k rtlsim --workers {num_workers}", posix=IS_POSIX))
             subprocess.run("pytest -k end2end", shell=True)
         case "brevitas":
             console.print("[bold green]Brevitas tests...[/bold green]")

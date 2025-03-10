@@ -1,8 +1,13 @@
 """Manage dependencies. Called by run_finn.py"""
+from __future__ import annotations
+
 import os
+import shlex
 import shutil
 import subprocess as sp
 from pathlib import Path
+
+IS_POSIX = os.name == "posix"
 
 # Tuple that defines a dep status
 # Example: ("oh-my-xilinx", False, "Wrong commit")
@@ -64,29 +69,25 @@ def check_commit(repo: Path, commit: str) -> tuple[bool, str]:
     return result.stdout.strip() == commit, result.stdout.strip()
 
 
+def run_silent(s: str, loc: str | None | Path) -> None:
+    """Run a command silently directly without shell"""
+    sp.run(shlex.split(s, posix=IS_POSIX), cwd=loc, stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+
+
 def update_dependencies(location: Path) -> list[Status]:
     """Update dependencies at the given path. Returns a list of status
     reports for the main script to display."""
+
     if not location.exists():
         location.mkdir(parents=True)
     status = []
     for pkg_name, (giturl, commit) in FINN_DEPS.items():
         target = (location / pkg_name).absolute()
         if target.exists():
-            sp.run(
-                f"git pull;git checkout {commit}",
-                shell=True,
-                cwd=target,
-                stdout=sp.DEVNULL,
-                stderr=sp.DEVNULL,
-            )
+            run_silent("git pull", target)
         else:
-            sp.run(
-                f"git clone {giturl} {target};cd {target};git checkout {commit}",
-                shell=True,
-                stdout=sp.DEVNULL,
-                stderr=sp.DEVNULL,
-            )
+            run_silent(f"git clone {giturl} {target}", None)
+        run_silent(f"git checkout {commit}", target)
         success, read_commit = check_commit(target, commit)
         status.append(
             (
@@ -102,34 +103,14 @@ def update_dependencies(location: Path) -> list[Status]:
         copy_source = clone_location / copy_from_here
         copy_target = location / "board_files" / copy_source.name
         if clone_location.exists():
-            sp.run(
-                f"git pull; git checkout {commit}",
-                shell=True,
-                stdout=sp.DEVNULL,
-                stderr=sp.DEVNULL,
-                cwd=clone_location,
-            )
+            run_silent("git pull", clone_location)
         else:
-            sp.run(
-                f"git clone {giturl} {clone_location};cd {clone_location};git checkout {commit}",
-                shell=True,
-                stdout=sp.DEVNULL,
-                stderr=sp.DEVNULL,
-            )
+            run_silent(f"git clone {giturl} {clone_location}", None)
+        run_silent(f"git checkout {commit}", clone_location)
         if copy_source != clone_location:
-            sp.run(
-                f"cp -r {copy_source} {copy_target}",
-                shell=True,
-                stdout=sp.DEVNULL,
-                stderr=sp.DEVNULL,
-            )
+            shutil.copytree(copy_source, copy_target, dirs_exist_ok=True)
         else:
-            sp.run(
-                f"cp -r {copy_source}/* {copy_target}",
-                shell=True,
-                stdout=sp.DEVNULL,
-                stderr=sp.DEVNULL,
-            )
+            run_silent(f"cp -r {copy_source}/* {copy_target}", None)
         success, read_commit = check_commit(clone_location, commit)
         status.append(
             (
@@ -143,20 +124,26 @@ def update_dependencies(location: Path) -> list[Status]:
     verilator_git, verilator_checkout = VERILATOR
     target = (location / "verilator").absolute()
     configure_script = target / "configure"
+    if "VERILATOR_ROOT" in os.environ.keys():
+        del os.environ["VERILATOR_ROOT"]
     if not target.exists() or not configure_script.exists():
-        result = sp.run(
-            f"git clone {verilator_git} {target};"
-            f"cd {target};git checkout {verilator_checkout};autoconf;"
-            f"export VERILATOR_ROOT={target};./configure",
-            shell=True,
-            text=True,
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            shutil.rmtree(target, ignore_errors=True)
-            err = result.stderr.split("\n")[-2]
-            status.append(("verilator", False, f"{err}"))
-            return status
+        run_silent(f"git clone {verilator_git} {target}", None)
+        run_silent(f"git checkout {verilator_checkout}", target)
+    res1 = sp.run(["autoconf"], cwd=target, capture_output=True, text=True)
+    os.environ["VERILATOR_ROOT"] = str(target)
+    res2 = sp.run(
+        shlex.split("./configure", posix=IS_POSIX), cwd=target, capture_output=True, text=True
+    )
+    err = None
+    if res1.returncode != 0 or res2.returncode != 0:
+        del os.environ["VERILATOR_ROOT"]
+    if res1.returncode != 0:
+        err = res1.stderr.split("\n")[-1]
+    elif res2.returncode != 0:
+        err = res2.stderr.split("\n")[-2]
+    if err is not None:
+        status.append(("verilator", False, f"{err}"))
+        return status
     os.environ["VERILATOR_ROOT"] = str(target)
     os.environ["PATH"] = f"{target}/bin:" + os.environ["PATH"]
     status.append(("verilator", True, f"Configured at {target}. Envvar set."))
