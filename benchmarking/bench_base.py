@@ -169,7 +169,7 @@ class bench():
         if self.debug:
             # Save entire FINN build dir and working dir
             # TODO: add option to only save upon exception (in FINN builder or benchmarking infrastructure)
-            self.local_artifacts_collection.append(("debug_finn_tmp", os.environ["FINN_BUILD_DIR"], False))
+            self.local_artifacts_collection.append(("debug_finn_tmp", os.environ["FINN_BUILD_DIR"], True))
             #self.local_artifacts_collection.append(("debug_finn_cwd", os.environ["FINN_ROOT"], False))
 
         ### SETUP ###
