@@ -53,6 +53,7 @@ from qonnx.util.cleanup import cleanup_model
 from qonnx.util.config import extract_model_config_to_json
 from shutil import copy
 
+from finn.custom_op.fpgadataflow.hls.matrixvectoractivation_hls import MVAU_hls
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
@@ -125,6 +126,7 @@ from finn.util.basic import (
     get_rtlsim_trace_depth,
     pyverilate_get_liveness_threshold_cycles,
 )
+from finn.util.fpgadataflow import fits_vitis_hls_stream
 from finn.util.pyverilator import verilator_fifosim
 from finn.util.test import execute_parent
 
@@ -439,6 +441,11 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
         ]
         extract_model_config_to_json(model, cfg.output_dir + "/auto_folding_config.json", hw_attrs)
 
+        # Check that the weights are not too wide for vitis hls
+        for node in model.graph.node:
+            node_op = getCustomOp(node)
+            assert fits_vitis_hls_stream(node), f"{node.name} exceeded maximum by Vitis HLS allowed weight stream width of 2^15 (32768) - it is {node_op.get_weightstream_width()} (SIMD * PE * Bitwidth)"
+
     return model
 
 
@@ -456,6 +463,11 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(CompileCppSim())
         model = model.transform(SetExecMode("cppsim"))
         verify_step(model, cfg, "folded_hls_cppsim", need_parent=True)
+
+    # Check that the weights are not too wide for vitis hls
+    for node in model.graph.node:
+        node_op = getCustomOp(node)
+        assert fits_vitis_hls_stream(node), f"{node.name} exceeded maximum by Vitis HLS allowed weight stream width of 2^15 (32768) - it is {node_op.get_weightstream_width()} (SIMD * PE * Bitwidth)"
     return model
 
 
