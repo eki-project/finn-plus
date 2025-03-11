@@ -6,17 +6,12 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
-DEFAULT_FINN_TMP = Path("/tmp/FINN_TMP")
-DEFAULT_FINN_TMP_HOST = Path("/tmp/FINN_TMP_HOST")
-
-DEFAULT_GLOBAL_ENVVARS = {
-    "PLATFORM_REPO_PATHS": "/opt/xilinx/platforms",
-    "XRT_DEB_VERSION": "xrt_202220.2.14.354_22.04-amd64-xrt",
-    "XILINX_LOCAL_USER_DATA": "no",
-    "VIVADO_PATH": "/tools/Xilinx/Vivado/2022.1",
-    "VITIS_PATH": "/tools/Xilinx/Vitis/2022.1",
-    "HLS_PATH": "/tools/Xilinx/Vitis_HLS/2022.1",
-}
+from interface.interface_globals import (
+    DEFAULT_FINN_ROOT,
+    DEFAULT_FINN_TMP,
+    DEFAULT_FINN_TMP_HOST,
+    DEFAULT_GLOBAL_ENVVARS,
+)
 
 
 def get_global_envvars(config_path: Path) -> tuple[dict[str, str], bool]:
@@ -50,7 +45,7 @@ def get_run_specific_envvars(
     else:
         cpus = num_workers
     return {
-        "FINN_ROOT": str(Path(__file__).parent.parent),
+        "FINN_ROOT": str(DEFAULT_FINN_ROOT),
         "NUM_DEFAULT_WORKERS": str(cpus),
         "OHMYXILINX": str((deps / "oh-my-xilinx").absolute()),
         "FINN_BUILD_DIR": str((config_path.parent / "FINN_TMP").absolute())

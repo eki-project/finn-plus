@@ -9,6 +9,7 @@ from rich.table import Table
 
 from finn.builder.build_dataflow import build_dataflow_cfg
 from finn.builder.build_dataflow_config import DataflowBuildConfig
+from interface.interface_globals import DEFAULT_DEPS, DEFAULT_ENVVAR_CONFIG, IS_POSIX
 from interface.manage_deps import (
     check_verilator_version,
     try_install_verilator,
@@ -21,12 +22,6 @@ from interface.manage_envvars import (
     print_environment,
 )
 from interface.manage_tests import run_test
-
-DEFAULT_DEPS = Path.home() / ".finn" / "deps"
-DEFAULT_FINN_ROOT = Path(__file__).parent
-DEFAULT_ENVVAR_CONFIG = Path.home() / ".finn" / "envvars.yaml"
-
-IS_POSIX = os.name == "posix"
 
 
 def assert_path_valid(p: Path) -> None:

@@ -5,9 +5,8 @@ import os
 import shlex
 import shutil
 import subprocess as sp
+from interface_globals import IS_POSIX
 from pathlib import Path
-
-IS_POSIX = os.name == "posix"
 
 # Tuple that defines a dep status
 # Example: ("oh-my-xilinx", False, "Wrong commit")
