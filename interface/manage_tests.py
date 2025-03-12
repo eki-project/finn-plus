@@ -1,8 +1,9 @@
 import os
 import shlex
 import subprocess
-from interface_globals import IS_POSIX
 from pathlib import Path
+
+from interface.interface_globals import IS_POSIX
 
 
 def run_test(variant: str, num_workers: str) -> None:

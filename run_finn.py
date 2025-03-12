@@ -221,13 +221,13 @@ def update(path: str) -> None:
 
 
 def main() -> None:
-    main_group()
-
-
-if __name__ == "__main__":
     deps.add_command(update)
     main_group.add_command(deps)
     main_group.add_command(build)
     main_group.add_command(test)
     main_group.add_command(run)
+    main_group()
+
+
+if __name__ == "__main__":
     main()
