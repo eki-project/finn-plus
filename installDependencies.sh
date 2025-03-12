@@ -30,6 +30,3 @@ if [ $xrt_found -eq 0 ]; then
     sudo apt install -y /tmp/$XRT_DEB_VERSION.deb
     rm /tmp/$XRT_DEB_VERSION.deb
 fi
-
-
-

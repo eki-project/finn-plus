@@ -39,11 +39,11 @@ Poetry will then manage everything Python related.
 **If you have limited space, remember to set Poetry's [cache path](https://python-poetry.org/docs/configuration/#virtualenvspath) to somehwhere else!**
 
 ### First Time Setup
-If you want to set everything up, simply run 
+If you want to set everything up, simply run
 ```
 finn deps update
 ```
-once. This will fetch all non-Python dependencies, boardfiles and a local install of `verilator`. The first time you run this command it can take a minute, since it downloads quite a lot of data. 
+once. This will fetch all non-Python dependencies, boardfiles and a local install of `verilator`. The first time you run this command it can take a minute, since it downloads quite a lot of data.
 Afterwards, all dependencies will lay in the default FINN folder in `~/.finn/deps`. If you need them installed at another place or simply want multiple versions, you can specify the paths to the dependency folder for
 almost all FINN+ commands. Simply use `--help` to display all arguments for any subcommand.
 
