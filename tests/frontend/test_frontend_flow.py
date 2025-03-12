@@ -96,6 +96,7 @@ def test_frontend_flow(model_name):
         verify_steps=frontend_step_names_verify,
         synth_clk_period_ns=5,
         generate_outputs=[],
+        verify_save_full_context=True,
     )
     build.build_dataflow_cfg(filename, cfg)
     # check that intermediate model files are created
@@ -103,7 +104,7 @@ def test_frontend_flow(model_name):
     for step_name in frontend_step_names_verify:
         step_checkpoint = output_dir + "/intermediate_models/" + step_name + ".onnx"
         assert os.path.isfile(step_checkpoint), step_checkpoint + " not found"
-        step_ok_fname = output_dir + "/verification_output/verify_" + step_name + "_0_SUCCESS.npy"
+        step_ok_fname = output_dir + "/verification_output/verify_" + step_name + "_0_SUCCESS.npz"
         assert os.path.isfile(step_ok_fname), step_ok_fname + " not found"
     if not debug:
         os.unlink(output_dir)

@@ -53,6 +53,7 @@ from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.builder.build_dataflow_steps import verify_step
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
+from finn.transformation.qonnx.fold_quant_weights import FoldQuantWeights
 from finn.transformation.qonnx.infer_quant_avg_pool_2d import (
     AvgPoolAndTruncToQuantAvgPool,
 )
@@ -147,6 +148,7 @@ def step_convert_to_channels_last(model: ModelWrapper, cfg: DataflowBuildConfig)
 
 def step_convert_to_thresholds_new(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(FoldTransposeIntoQuantInit())
+    model = model.transform(FoldQuantWeights())
     model = model.transform(absorb.FactorOutMulSignMagnitude())
     model = model.transform(absorb.Absorb1BitMulIntoMatMul())
     model = model.transform(absorb.Absorb1BitMulIntoConv())
@@ -155,7 +157,7 @@ def step_convert_to_thresholds_new(model: ModelWrapper, cfg: DataflowBuildConfig
     model = model.transform(
         QuantToMultiThreshold(
             range_info=cfg.input_range_info[0],
-            enum_rescale=1.0,
+            enum_rescale=0.002,
             quant_filter=default_filter_function_generator(
                 max_multithreshold_bit_width=cfg.max_multithreshold_bit_width
             ),
