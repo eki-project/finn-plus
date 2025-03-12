@@ -46,7 +46,7 @@ ipykernel = "6.21.2"
 jupyter = "1.0.0"
 markupsafe = "2.0.1"
 matplotlib = "3.7.0"
-pytest-dependency = "0.5.1"
+pytest-dependency = "0.6.0"
 pytest-parallel = "0.1.1"
 netron = ">5.0.0"
 pandas = "1.5.3"
@@ -57,6 +57,8 @@ pytest-metadata = "3.1.1"
 pytest-html = "4.1.1"
 pytest-html-merger = "0.1.0"
 pytest-cov = "6.0.0"
+pytest-forked = "1.6.0"
+pytest-rerunfailures = "15.0"
 dvc = { version = "3.59.1", extras = ["webdav"] }
 dvclive = {version = "3.48.2", extras = ["image"] }
 deap = "1.3.1"
@@ -68,11 +70,11 @@ dependencies = "2.0.1"
 tokenize-rt = "4.2.1"
 tclwrapper = "0.0.1"
 setuptools = ">40.8.0"
-pytest-xdist = {version = "3.2.0", extras = ["setproctitle"]}
+pytest-xdist = {version = "3.6.1", extras = ["setproctitle"]}
 
-qonnx = { git = "https://github.com/fastmachinelearning/qonnx", branch = "main", rev = "2281a777d84aa5cbd7469085c2e534fb4a03ccf9" }
+qonnx = { git = "https://github.com/iksnagreb/qonnx.git", rev = "3d3d8964dbc5355d5c9be855d87b7b442508e3a4" }
 pyverilator = { git = "https://github.com/maltanar/pyverilator", branch = "master", rev = "ce0a08c20cb8c1d1e84181d6f392390f846adbd1" }
-brevitas = { git = "https://github.com/Xilinx/brevitas", branch = "master", rev = "d4834bd2a0fad3c1fbc0ff7e1346d5dcb3797ea4" }
+brevitas = { git = "https://github.com/iksnagreb/brevitas.git", rev = "003f9f4070c20639790c7b406a28612a089fc502" }
 dataset_loading = { git = "https://github.com/fbcotter/dataset_loading.git", tag="0.0.4" }
 termcolor = "^2.5.0"
 rich = "^13.9.4"

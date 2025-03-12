@@ -19,8 +19,8 @@ FINN_DEPS = {
         "0724be21111a21f0d81a072fccc1c446e053f851",
     ),
     "brevitas": (
-        "https://github.com/Xilinx/brevitas.git",
-        "84f42259ec869eb151af4cb8a8b23ad925f493db",
+        "https://github.com/iksnagreb/brevitas.git",
+        "003f9f4070c20639790c7b406a28612a089fc502",
     ),
     "cnpy": ("https://github.com/rogersce/cnpy.git", "4e8810b1a8637695171ed346ce68f6984e585ef4"),
     "oh-my-xilinx": (
@@ -29,7 +29,7 @@ FINN_DEPS = {
     ),
     "finn-hlslib": (
         "https://github.com/Xilinx/finn-hlslib.git",
-        "16e5847a5e3ef76cffe84c8fad2f010d593457d3",
+        "5c5ad631e3602a8dd5bd3399a016477a407d6ee7",
     ),
     "attention-hlslib": (
         "https://github.com/iksnagreb/attention-hlslib.git",
