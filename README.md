@@ -148,6 +148,13 @@ To get the value of a specific key, simply run
 finn config get <key>
 ```
 
+### Running Tests
+To run tests simply execute 
+```
+finn test
+```
+You can specify which variant of tests to execute, how many test-workers should be used and how many FINN workers are used, by passing the matching options to the command. To get an overview over these run `finn test --help`
+
 ## About Us
 This repository is maintained by researchers from the [Computer Engineering Group](https://en.cs.uni-paderborn.de/ceg) (CEG) and [Paderborn Center for Parallel Computing](https://pc2.uni-paderborn.de/) (PC²) at Paderborn University, Germany as part of the [eki research project](https://www.eki-project.tech/).
 
