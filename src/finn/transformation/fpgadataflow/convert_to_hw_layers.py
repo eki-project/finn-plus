@@ -131,6 +131,29 @@ class InferConvInpGen(Transformation):
                     downsample_2D = (not downsample_1D) and is_square_image and is_equal_stride
                     if not (downsample_1D or downsample_2D):
                         warnings.warn(f"Couldn't infer Downsample from {n.name},check config.")
+                        ConvInpGen_node = helper.make_node(
+                              "ConvolutionInputGenerator",
+                              [ConvInpGen_input],
+                              [i2c_output],
+                              domain="finn.custom_op.fpgadataflow",
+                              backend="fpgadataflow",
+                              ConvKernelDim=[k_h, k_w],
+                              IFMChannels=ifm_ch,
+                              IFMDim=[ConvInpGen_idim_h, ConvInpGen_idim_w],
+                              OFMDim=[ofm_dim_h, ofm_dim_w],
+                              SIMD=ifm_ch,
+                              Stride=[stride_h, stride_w],
+                              Dilation=[dilation_h, dilation_w],
+                              inputDataType=dt.name,
+                              outputDataType=dt.name,
+                              depthwise=depthwise,
+                              is1D=is_1D,
+                              name="ConvolutionInputGenerator_" + n.name,
+                          )
+                        graph.node.insert(ConvInpGen_node_idx, ConvInpGen_node)
+                        # remove old nodes
+                        graph.node.remove(n)
+                        graph_modified = True
                         continue
                     ConvInpGen_idim = max(ConvInpGen_idim_h, ConvInpGen_idim_w)
                     stride = max(stride_h, stride_w)
