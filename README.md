@@ -97,12 +97,16 @@ poetry build
 This will produce sdist and wheel files in `dist/`, which you can install into any Python environment.
 
 ### First Time Setup
+> [!CAUTION]
+> If you have limited space, before anything else run `finn config set DEFAULT_DEPS <your-path>` to set the default dependency path that FINN+ uses to a location with more space!
+ 
 If you want to set everything up, simply run
 ```
 finn deps update
 ```
 once. This will fetch all non-Python dependencies, boardfiles and a local install of `verilator`. The first time you run this command it can take a minute, since it downloads quite a lot of data.
 Afterwards, all dependencies will lay in the default FINN folder in `~/.finn/deps`. All your defaults can be modified. This is explained in more detail below.
+
 
 FINN requires some environment variables to be set. These can either be already in scope, defined in your environment config (default in `~/.finn/envvars.yaml`) or the defaults will be used. Priority is in this order. It is recommended though, that you do the one-time setup, and define everything
 in your default environment config file. If you then need special settings, you can pass them on a per-run basis in the shell directly.
