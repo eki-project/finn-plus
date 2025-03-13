@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import click
 import os
 import shlex
@@ -9,18 +11,20 @@ from rich.table import Table
 
 from finn.builder.build_dataflow import build_dataflow_cfg
 from finn.builder.build_dataflow_config import DataflowBuildConfig
-from interface.interface_globals import DEFAULT_DEPS, DEFAULT_ENVVAR_CONFIG, IS_POSIX
+from interface.interface_globals import (
+    IS_POSIX,
+    SETTINGS,
+    SETTINGS_PATH,
+    SETTINGS_PATH_VARS,
+    update_settings,
+    write_yaml,
+)
 from interface.manage_deps import (
     check_verilator_version,
     try_install_verilator,
     update_dependencies,
 )
-from interface.manage_envvars import (
-    DEFAULT_FINN_TMP,
-    get_global_envvars,
-    get_run_specific_envvars,
-    print_environment,
-)
+from interface.manage_envvars import get_finn_envvars, print_envvars
 from interface.manage_tests import run_test
 
 
@@ -31,13 +35,15 @@ def assert_path_valid(p: Path) -> None:
         sys.exit(1)
 
 
-def _update(path: str) -> None:
+def _update(path: Path | None) -> None:
     """Update dependencies and notify the user of the results"""
     console = Console()
+    if path is None:
+        path = SETTINGS["DEFAULT_DEPS"]
     with console.status("[bold cyan]Gathering dependencies...[/bold cyan]") as _:
-        update_status = update_dependencies(Path(path))
+        update_status = update_dependencies(path)
     with console.status("[bold cyan]Installing verilator...[/bold cyan]") as _:
-        vname, vsuc, vmsg = try_install_verilator(Path(path))
+        vname, vsuc, vmsg = try_install_verilator(path)
     table = Table()
     table.add_column("Name")
     table.add_column("Status")
@@ -54,22 +60,24 @@ def _update(path: str) -> None:
     console.print(table)
 
 
-def prepare_finn(
-    envvar_config: Path, flow_config: Path, deps: Path, local_temps: bool, num_workers: int
-) -> None:
-    """Prepare a FINN environment (fetch deps, set envvars). Print a summary at the end"""
+def prepare_finn(deps: Path | None, flow_config: Path, local_temps: bool, num_workers: int) -> None:
+    """Prepare a FINN environment (fetch deps, set envvars). Print a summary at the end.
+    If deps is None then use the default deps location. This is configured in the settings file or,
+    if not present pointing to ~/.finn/deps by default"""
     console = Console()
-    _update(str(deps))
-    envs, read_config = get_global_envvars(envvar_config)
-    if not read_config:
-        console.print(
-            f"[bold orange1]WARNING: [/bold orange1][orange3]Could not read the default "
-            f"environment variable config at {envvar_config}![/orange3]"
-        )
-    envs.update(get_run_specific_envvars(deps, flow_config, local_temps, num_workers))
+    envs = get_finn_envvars(
+        deps=deps, config_path=flow_config, local_temps=local_temps, num_workers=num_workers
+    )
+    for key in ["VIVADO_PATH", "VITIS_PATH", "HLS_PATH"]:
+        p = Path(envs[key])
+        if not p.exists():
+            console.print(
+                f"[bold orange1]WARNING: [/bold orange1][orange3]Could not "
+                f"find executable defined in {key} (at {p})!"
+            )
+    _update(deps)
     for k, v in envs.items():
-        os.environ[k] = v
-
+        os.environ[k] = str(v)
     verilator_version = check_verilator_version()
     if verilator_version is None:
         console.print(
@@ -86,7 +94,7 @@ def prepare_finn(
         )
     else:
         console.print(f"[bold green]Verilator version {verilator_version} found![/bold green]")
-    print_environment()
+    print_envvars(envs)
 
 
 @click.group()
@@ -95,12 +103,12 @@ def main_group() -> None:
 
 
 @click.command(help="Build a hardware design")
-@click.option("--dependency-path", "-d", default=str(DEFAULT_DEPS), show_default=True)
+@click.option("--dependency-path", "-d", default="")
 @click.option(
     "--no-local-temps",
     "-l",
     help="If given, stores temporary files in the "
-    f"default global location at {DEFAULT_FINN_TMP} and not next to the config.",
+    "default global location and not next to the config.",
     is_flag=True,
 )
 @click.option(
@@ -117,16 +125,18 @@ def build(
 ) -> None:
     config_path = Path(config)
     model_path = Path(model)
-    dep_path = Path(dependency_path)
+    if dependency_path != "":
+        dep_path = Path(dependency_path)
+        assert_path_valid(dep_path)
+    else:
+        dep_path = None
     assert_path_valid(config_path)
     assert_path_valid(model_path)
-    assert_path_valid(dep_path)
     console = Console()
     console.print(
         f"[bold cyan]Starting FINN build with config {config_path.name} on model {model_path.name}"
     )
-    console.print("[bold cyan]Setting up the FINN environment...[/bold cyan]")
-    prepare_finn(DEFAULT_ENVVAR_CONFIG, config_path, dep_path, not no_local_temps, num_workers)
+    prepare_finn(dep_path, config_path, not no_local_temps, num_workers)
     console.print("[bold cyan]Creating dataflow build config...[/bold cyan]")
     dfbc: DataflowBuildConfig | None = None
     match config_path.suffix:
@@ -155,12 +165,12 @@ def build(
 
 
 @click.command(help="Run a script in a FINN environment")
-@click.option("--dependency-path", "-d", default=str(DEFAULT_DEPS), show_default=True)
+@click.option("--dependency-path", "-d", default="")
 @click.option(
     "--no-local-temps",
     "-l",
     help="If given, stores temporary files in the "
-    f"default global location at {DEFAULT_FINN_TMP} and not next to the config.",
+    "default global location and not next to the config.",
     is_flag=True,
 )
 @click.option(
@@ -174,11 +184,18 @@ def build(
 def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: str) -> None:
     console = Console()
     script_path = Path(script)
-    dep_path = Path(dependency_path)
     assert_path_valid(script_path)
-    assert_path_valid(dep_path)
-    console.print("[bold cyan]Setting up the FINN environment...[/bold cyan]")
-    prepare_finn(DEFAULT_ENVVAR_CONFIG, script_path, dep_path, not no_local_temps, num_workers)
+    if dependency_path != "":
+        dep_path = Path(dependency_path)
+        assert_path_valid(dep_path)
+    else:
+        dep_path = None
+    prepare_finn(
+        deps=dep_path,
+        flow_config=script_path,
+        local_temps=not no_local_temps,
+        num_workers=num_workers,
+    )
     console.rule(
         f"[bold cyan]Starting script "
         f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
@@ -196,15 +213,19 @@ def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: st
     default="quick",
     show_default=True,
 )
-@click.option("--dependency-path", "-d", default=str(DEFAULT_DEPS), show_default=True)
-@click.option("--num-workers", "-n", default="auto", show_default=True)
-def test(variant: str, dependency_path: str, num_workers: str) -> None:
+@click.option("--dependency-path", "-d", default="")
+@click.option("--num-workers", "-n", default=-1, show_default=True)
+@click.option("--num-test-workers", "-n", default="auto", show_default=True)
+def test(variant: str, dependency_path: str, num_workers: int, num_test_workers: str) -> None:
     console = Console()
-    prepare_finn(
-        DEFAULT_ENVVAR_CONFIG, Path(), Path(dependency_path), local_temps=False, num_workers=-1
-    )
+    if dependency_path != "":
+        dep_path = Path(dependency_path)
+        assert_path_valid(dep_path)
+    else:
+        dep_path = None
+    prepare_finn(dep_path, Path(), False, num_workers)
     console.rule("RUNNING TESTS")
-    run_test(variant, num_workers)
+    run_test(variant, num_test_workers)
 
 
 @click.group(help="Dependency management")
@@ -214,14 +235,95 @@ def deps() -> None:
 
 @click.command(help="Update or install dependencies to the given path")
 @click.option(
-    "--path", "-p", help="Path to install to", default=str(DEFAULT_DEPS), show_default=True
+    "--path",
+    "-p",
+    help="Path to install to",
+    default=str(SETTINGS["DEFAULT_DEPS"]),
+    show_default=True,
 )
 def update(path: str) -> None:
-    _update(path)
+    _update(Path(path))
+
+
+@click.group(help="Manage FINN settings")
+def config() -> None:
+    # TODO: Config remove?
+    pass
+
+
+@click.command("list", help="List all configuration parameters and their values")
+def config_list() -> None:
+    console = Console()
+    if SETTINGS_PATH.exists():
+        update_settings()
+        for k, v in SETTINGS.items():
+            console.print(f"[italic cyan]{k}: [/italic cyan]{v}")
+    else:
+        console.print(
+            f"[bold red]ERROR: [/bold red]"
+            f"[red]Settings file not found at {SETTINGS_PATH}![/red]"
+        )
+
+
+@click.command("get", help="Get the value of a given config parameter")
+@click.argument("key")
+def config_get(key: str) -> None:
+    console = Console()
+    if SETTINGS_PATH.exists():
+        update_settings()
+        if key not in SETTINGS.keys():
+            console.print(f"[bold red]ERROR: [/bold red]Key {key} not found in settings file!")
+        else:
+            console.print(f"[italic cyan]{key}: [/italic cyan]{SETTINGS[key]}")
+    else:
+        console.print(
+            f"[bold red]ERROR: [/bold red]"
+            f"[red]Settings file not found at {SETTINGS_PATH}![/red]"
+        )
+
+
+@click.command("set", help="Set the value of a given config parameter")
+@click.argument("key")
+@click.argument("value")
+def config_set(key: str, value: str) -> None:
+    global SETTINGS
+    console = Console()
+    if not SETTINGS_PATH.exists():
+        console.print(
+            f"[bold orange1]WARNING: [/bold orange1][orange3]"
+            f"Settings file at {SETTINGS_PATH} does not yet exist.[/orange3]"
+        )
+        ans = console.input("Create file? (y/n) > ")
+        if ans.lower() == "y":
+            result = write_yaml(SETTINGS, SETTINGS_PATH)
+            if not result:
+                console.print(
+                    "[bold red]ERROR: [/bold red][red]Could not create settings file. "
+                    "Make sure you ran FINN once before or that ~/.finn exists![/red]"
+                )
+                sys.exit(1)
+            else:
+                console.print("[green]Created settings file![/green]")
+    if key in SETTINGS_PATH_VARS:
+        SETTINGS[key] = Path(value)
+    else:
+        SETTINGS[key] = value
+    console.print(SETTINGS)
+    if write_yaml(SETTINGS, SETTINGS_PATH):
+        console.print("[green]Key updated![/green]")
+    else:
+        console.print(
+            "[bold red]ERROR: [/bold red][red]Could not write settings file. "
+            "Make sure you ran FINN once before or that ~/.finn exists![/red]"
+        )
 
 
 def main() -> None:
+    config.add_command(config_list)
+    config.add_command(config_get)
+    config.add_command(config_set)
     deps.add_command(update)
+    main_group.add_command(config)
     main_group.add_command(deps)
     main_group.add_command(build)
     main_group.add_command(test)
