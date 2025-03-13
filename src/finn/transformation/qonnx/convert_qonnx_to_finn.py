@@ -43,6 +43,9 @@ from finn.transformation.qonnx.quant_act_to_multithreshold import (
 )
 
 
+from .extract_bias_quant import ExtractConvQuantBias
+
+
 class ConvertQONNXtoFINN(Transformation):
     """Converts QONNX dialect to FINN ONNX dialect.
     First the weights are converted using the FoldQuantWeights transformation,
@@ -73,14 +76,17 @@ class ConvertQONNXtoFINN(Transformation):
 
     def apply(self, model):
         # Extract the bias from Conv node
+        model = model.transform(ExtractConvQuantBias())
         model = model.transform(ExtractBiasFromConv())
         # Gemm operations are not supported by FINN, so we convert them to MatMul
         model = model.transform(GemmToMatMul())
         model = model.transform(FoldTransposeIntoQuantInit())
         # Make sure the datatypes exist, these are required for folding the weights
         model = model.transform(InferDataTypes())
+        
         # Fold weights
         model = model.transform(FoldQuantWeights())
+        
         # Convert activations
         model = model.transform(
             ConvertQuantActToMultiThreshold(
@@ -93,5 +99,5 @@ class ConvertQONNXtoFINN(Transformation):
         model = model.transform(AvgPoolAndTruncToQuantAvgPool())
         # Remove empty padding if it exists
         model = model.transform(RemoveIdentityOps())
-
+        model.save("models/metaFi_test3.onnx")
         return model, False
