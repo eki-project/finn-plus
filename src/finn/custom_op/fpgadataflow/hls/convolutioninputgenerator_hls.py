@@ -32,9 +32,7 @@ import numpy as np
 import os
 from qonnx.core.datatype import DataType
 
-from finn.custom_op.fpgadataflow.convolutioninputgenerator import (
-    ConvolutionInputGenerator,
-)
+from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.logging import log

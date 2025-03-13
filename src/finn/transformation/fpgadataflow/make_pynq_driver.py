@@ -38,11 +38,8 @@ from qonnx.util.basic import gen_finn_dt_tensor, roundup_to_integer_multiple
 import finn.util
 import finn.util.data_packing as dpk
 from finn.util.basic import make_build_dir
-from finn.util.data_packing import (
-    hexstring2npbytearray,
-    pack_innermost_dim_as_hex_string,
-)
 from finn.util.logging import log
+from finn.util.data_packing import hexstring2npbytearray, pack_innermost_dim_as_hex_string
 
 from . import template_driver
 

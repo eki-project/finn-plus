@@ -27,22 +27,23 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-QONNX_COMMIT="2281a777d84aa5cbd7469085c2e534fb4a03ccf9"
+QONNX_COMMIT="3d3d8964dbc5355d5c9be855d87b7b442508e3a4"
 FINN_EXP_COMMIT="0724be21111a21f0d81a072fccc1c446e053f851"
-BREVITAS_COMMIT="d4834bd2a0fad3c1fbc0ff7e1346d5dcb3797ea4"
+BREVITAS_COMMIT="003f9f4070c20639790c7b406a28612a089fc502"
 PYVERILATOR_COMMIT="ce0a08c20cb8c1d1e84181d6f392390f846adbd1"
 CNPY_COMMIT="4e8810b1a8637695171ed346ce68f6984e585ef4"
-HLSLIB_COMMIT="16e5847a5e3ef76cffe84c8fad2f010d593457d3"
+HLSLIB_COMMIT="5c5ad631e3602a8dd5bd3399a016477a407d6ee7"
 OMX_COMMIT="0b59762f9e4c4f7e5aa535ee9bc29f292434ca7a"
 AVNET_BDF_COMMIT="2d49cfc25766f07792c0b314489f21fe916b639b"
 XIL_BDF_COMMIT="8cf4bb674a919ac34e3d99d8d71a9e60af93d14e"
 RFSOC4x2_BDF_COMMIT="13fb6f6c02c7dfd7e4b336b18b959ad5115db696"
 KV260_BDF_COMMIT="98e0d3efc901f0b974006bc4370c2a7ad8856c79"
 EXP_BOARD_FILES_MD5="226ca927a16ea4ce579f1332675e9e9a"
+ATTENTION_HLSLIB_COMMIT="afc9720f10e551e1f734e137b21bb6d0a8342177"
 
-QONNX_URL="https://github.com/fastmachinelearning/qonnx.git"
+QONNX_URL="https://github.com/iksnagreb/qonnx.git"
 FINN_EXP_URL="https://github.com/Xilinx/finn-experimental.git"
-BREVITAS_URL="https://github.com/Xilinx/brevitas.git"
+BREVITAS_URL="https://github.com/iksnagreb/brevitas.git"
 PYVERILATOR_URL="https://github.com/maltanar/pyverilator.git"
 CNPY_URL="https://github.com/rogersce/cnpy.git"
 HLSLIB_URL="https://github.com/Xilinx/finn-hlslib.git"
@@ -51,6 +52,7 @@ AVNET_BDF_URL="https://github.com/Avnet/bdf.git"
 XIL_BDF_URL="https://github.com/Xilinx/XilinxBoardStore.git"
 RFSOC4x2_BDF_URL="https://github.com/RealDigitalOrg/RFSoC4x2-BSP.git"
 KV260_BDF_URL="https://github.com/Xilinx/XilinxBoardStore.git"
+ATTENTION_HLSLIB_URL="https://github.com/iksnagreb/attention-hlslib.git"
 
 QONNX_DIR="qonnx"
 FINN_EXP_DIR="finn-experimental"
@@ -63,6 +65,7 @@ AVNET_BDF_DIR="avnet-bdf"
 XIL_BDF_DIR="xil-bdf"
 RFSOC4x2_BDF_DIR="rfsoc4x2-bdf"
 KV260_SOM_BDF_DIR="kv260-som-bdf"
+ATTENTION_HLSLIB_DIR="attention-hlslib"
 
 # absolute path to this script, e.g. /home/user/bin/foo.sh
 SCRIPT=$(readlink -f "$0")
@@ -126,6 +129,7 @@ fetch_repo $AVNET_BDF_URL $AVNET_BDF_COMMIT $AVNET_BDF_DIR
 fetch_repo $XIL_BDF_URL $XIL_BDF_COMMIT $XIL_BDF_DIR
 fetch_repo $RFSOC4x2_BDF_URL $RFSOC4x2_BDF_COMMIT $RFSOC4x2_BDF_DIR
 fetch_repo $KV260_BDF_URL $KV260_BDF_COMMIT $KV260_SOM_BDF_DIR
+fetch_repo $ATTENTION_HLSLIB_URL $ATTENTION_HLSLIB_COMMIT $ATTENTION_HLSLIB_DIR
 
 # Can skip downloading of board files entirely if desired
 if [ "$FINN_SKIP_BOARD_FILES" = "1" ]; then

@@ -32,9 +32,7 @@ import shutil
 
 import finn.util.verilator_helper as verilator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
-from finn.custom_op.fpgadataflow.streamingdatawidthconverter import (
-    StreamingDataWidthConverter,
-)
+from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
 from finn.util.basic import get_rtlsim_trace_depth, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 

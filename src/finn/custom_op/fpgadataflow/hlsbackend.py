@@ -238,8 +238,12 @@ class HLSBackend(ABC):
         builder.append_includes("-I$FINN_ROOT/src/finn/qnn-data/cpp")
         builder.append_includes("-I$FINN_ROOT/deps/cnpy/")
         builder.append_includes("-I$FINN_ROOT/deps/finn-hlslib")
+        # TODO: Is it ok to add this here? Add some specialization to the
+        #  attention operator? Eventually integrate this into the finn-hlslib?
+        builder.append_includes("-I$FINN_ROOT/deps/attention-hlslib")
         builder.append_includes("-I$FINN_ROOT/custom_hls")
         builder.append_includes("-I{}/include".format(os.environ["HLS_PATH"]))
+        builder.append_includes("-I{}/include".format(os.environ["VITIS_PATH"]))
         builder.append_includes("--std=c++14")
         builder.append_includes("-O3")
         builder.append_sources(code_gen_dir + "/*.cpp")

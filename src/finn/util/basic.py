@@ -34,7 +34,7 @@ from qonnx.util.basic import roundup_to_integer_multiple
 from finn.util.logging import log
 
 # test boards
-test_board_map = ["Pynq-Z1", "KV260_SOM", "ZCU104", "U250"]
+test_board_map = ["Pynq-Z1", "KV260_SOM", "ZCU104", "U55C"]
 
 # mapping from PYNQ board names to FPGA part names
 pynq_part_map = dict()
