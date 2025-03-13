@@ -89,6 +89,11 @@ def update_dependencies(location: Path) -> list[Status]:
             run_silent(f"git clone {giturl} {target}", None)
         run_silent(f"git checkout {commit}", target)
         success, read_commit = check_commit(target, commit)
+        if not success:
+            shutil.rmtree(target, ignore_errors=True)
+            run_silent(f"git clone {giturl} {target}", None)
+            run_silent(f"git checkout {commit}", target)
+            success, read_commit = check_commit(target, commit)
         status.append(
             (
                 pkg_name,
@@ -107,11 +112,16 @@ def update_dependencies(location: Path) -> list[Status]:
         else:
             run_silent(f"git clone {giturl} {clone_location}", None)
         run_silent(f"git checkout {commit}", clone_location)
+        success, read_commit = check_commit(clone_location, commit)
+        if not success:
+            shutil.rmtree(clone_location, ignore_errors=True)
+            run_silent(f"git clone {giturl} {clone_location}", None)
+            run_silent(f"git checkout {commit}", clone_location)
+            success, read_commit = check_commit(clone_location, commit)
         if copy_source != clone_location:
             shutil.copytree(copy_source, copy_target, dirs_exist_ok=True)
         else:
             run_silent(f"cp -r {copy_source}/* {copy_target}", None)
-        success, read_commit = check_commit(clone_location, commit)
         status.append(
             (
                 pkg_name,

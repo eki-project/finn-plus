@@ -36,7 +36,8 @@ def assert_path_valid(p: Path) -> None:
 
 
 def _update(path: Path | None) -> None:
-    """Update dependencies and notify the user of the results"""
+    """Update dependencies and notify the user of the results. If updating fails,
+    this ends the execution"""
     console = Console()
     if path is None:
         path = SETTINGS["DEFAULT_DEPS"]
@@ -48,16 +49,22 @@ def _update(path: Path | None) -> None:
     table.add_column("Name")
     table.add_column("Status")
     table.add_column("Message")
+    any_failed = False
     for pkg_name, success, msg in update_status:
+        if not success:
+            any_failed = True
         table.add_row(
             pkg_name,
             "[bold green]Success[/bold green]" if success else "[bold red]Failed[/bold red]",
             msg,
         )
     table.add_row(
-        vname, "[bold green]Sucess[/bold green]" if vsuc else "[bold red]Failed[/bold red]", vmsg
+        vname, "[bold green]Success[/bold green]" if vsuc else "[bold red]Failed[/bold red]", vmsg
     )
     console.print(table)
+    if any_failed:
+        console.print("[bold red]ERROR: [/bold red][red]Dependency update failed. Stopping.[/red]")
+        sys.exit(1)
 
 
 def prepare_finn(deps: Path | None, flow_config: Path, local_temps: bool, num_workers: int) -> None:
@@ -215,7 +222,7 @@ def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: st
 )
 @click.option("--dependency-path", "-d", default="")
 @click.option("--num-workers", "-n", default=-1, show_default=True)
-@click.option("--num-test-workers", "-n", default="auto", show_default=True)
+@click.option("--num-test-workers", "-t", default="auto", show_default=True)
 def test(variant: str, dependency_path: str, num_workers: int, num_test_workers: str) -> None:
     console = Console()
     if dependency_path != "":
