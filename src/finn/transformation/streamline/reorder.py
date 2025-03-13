@@ -42,9 +42,9 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 
-from finn.util.logging import log
 # Groups node inputs by dynamic vs. initializer category
 from finn.transformation.util import group_inputs_by_category
+from finn.util.logging import log
 
 
 class MoveAddPastMul(Transformation):

@@ -5,20 +5,24 @@
 # Python builtin math functions: math.ceil returns int, while np.ceil returns
 # float
 import math
+
 # Numpy math and arrays
 import numpy as np
-# FINN logging
-from finn.util.logging import log
 
 # QONNX/FINN datatypes
 from qonnx.core.datatype import DataType
+
 # Multithreshold activations
 from qonnx.custom_op.general.multithreshold import multithreshold
+
 # Some utils for working with tensors in qonnx
 from qonnx.util.basic import calculate_matvec_accumulator_range
 
 # Derive custom operators form the FINN base custom op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+# FINN logging
+from finn.util.logging import log
 
 
 # Softmax function on numpy arrays with overflow handling matching the HLS

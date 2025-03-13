@@ -39,8 +39,8 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 
-from finn.util.logging import log
 from finn.transformation.util import group_inputs_by_category
+from finn.util.logging import log
 
 # Protobuf onnx graph node type
 from onnx import NodeProto  # noqa

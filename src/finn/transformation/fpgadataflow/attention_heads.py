@@ -8,9 +8,6 @@ import copy
 # Need numpy for modifying the onnx graph tensors, which are numpy style arrays
 import numpy as np
 
-# Output warning messages
-from finn.util.logging import log
-
 # Utility for handling ONNX nodes and tensors
 from onnx import NodeProto
 from onnx import helper as oh
@@ -35,6 +32,9 @@ from qonnx.util.basic import get_by_name, remove_by_name
 
 # Utility function for transforming ONNX graphs
 from finn.transformation.util import is_reshape_transpose, is_transpose_reshape, op_types
+
+# Output warning messages
+from finn.util.logging import log
 
 
 # Infers reshaping of attention heads, i.e., converts the Reshape and transpose

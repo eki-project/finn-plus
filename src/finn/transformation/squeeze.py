@@ -2,9 +2,6 @@
 # For array handling
 import numpy as np
 
-# Import FINN logging
-from finn.util.logging import log
-
 # Helper for creating ONNX nodes
 from onnx import helper as oh
 
@@ -25,6 +22,9 @@ from qonnx.transformation.remove import remove_node_and_rewire
 
 # Gets items from protobuf by name
 from qonnx.util.basic import get_by_name, remove_by_name
+
+# Import FINN logging
+from finn.util.logging import log
 
 # Small utility functions for graph transformations
 from .util import is_threshold

@@ -8,9 +8,6 @@ import math
 # Need numpy for modifying the onnx graph tensors, which are numpy style arrays
 import numpy as np
 
-# Output warning messages
-from finn.util.logging import log
-
 # Utility for handling ONNX nodes and tensors
 from onnx import NodeProto
 from onnx import helper as oh
@@ -46,6 +43,9 @@ from finn.transformation.util import (
     is_softmax,
     op_types,
 )
+
+# Output warning messages
+from finn.util.logging import log
 
 
 # Convert the operator pattern corresponding to scaled dot-product attention to

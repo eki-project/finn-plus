@@ -11,9 +11,6 @@ import numpy as np
 # Operating system stuff, e.g. paths
 import os
 
-# FINN logging
-from finn.util.logging import log
-
 # QONNX/FINN datatypes
 from qonnx.core.datatype import DataType
 
@@ -28,6 +25,9 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # Converts inputs/outputs to/from RTL simulation format
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+
+# FINN logging
+from finn.util.logging import log
 
 
 # Unsqueeze operation: Inserts single-dimension entries into the shape of a
