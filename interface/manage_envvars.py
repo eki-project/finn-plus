@@ -55,7 +55,7 @@ def get_finn_envvars(
     # Envvar > ENVVAR config default > Default
     for k, v in FINN_ENVVARS.items():
         if k in os.environ.keys():
-            initial[k] = v
+            initial[k] = os.environ[k]
         else:
             initial[k] = v
 
