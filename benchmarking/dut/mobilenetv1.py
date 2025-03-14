@@ -1,4 +1,21 @@
+from bench_base import bench
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.change_datalayout import ChangeDataLayoutQuantAvgPool2d
+from qonnx.transformation.double_to_single_float import DoubleToSingleFloat
+from qonnx.transformation.general import (
+    ApplyConfig,
+    GiveReadableTensorNames,
+    GiveUniqueNodeNames,
+)
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
+from qonnx.transformation.remove import RemoveIdentityOps
+
+import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
+import finn.transformation.streamline.absorb as absorb
+import finn.transformation.streamline.reorder as reorder
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     ShellFlowType,
@@ -6,25 +23,8 @@ from finn.builder.build_dataflow_config import (
 )
 from finn.builder.build_dataflow_steps import verify_step
 from finn.transformation.streamline import Streamline
-from qonnx.transformation.double_to_single_float import DoubleToSingleFloat
-import finn.transformation.streamline.absorb as absorb
-import finn.transformation.streamline.reorder as reorder
-from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from finn.transformation.streamline.collapse_repeated import CollapseRepeatedMul
-from qonnx.transformation.remove import RemoveIdentityOps
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
-from qonnx.transformation.general import (
-    GiveReadableTensorNames,
-    GiveUniqueNodeNames,
-    ApplyConfig,
-)
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
-from qonnx.transformation.infer_shapes import InferShapes
-from qonnx.transformation.change_datalayout import ChangeDataLayoutQuantAvgPool2d
-from qonnx.transformation.infer_datatypes import InferDataTypes
-
-from bench_base import bench
 
 
 def step_mobilenet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
@@ -55,6 +55,7 @@ def step_mobilenet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     return model
 
+
 def step_mobilenet_lower_convs(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(LowerConvsToMatMul())
     model = model.transform(absorb.AbsorbTransposeIntoMultiThreshold())
@@ -65,6 +66,7 @@ def step_mobilenet_lower_convs(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(RoundAndClipThresholds())
     model = model.transform(InferDataLayouts())
     return model
+
 
 def step_mobilenet_convert_to_hw_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(to_hw.InferPool())
@@ -77,6 +79,7 @@ def step_mobilenet_convert_to_hw_layers(model: ModelWrapper, cfg: DataflowBuildC
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
     return model
+
 
 def step_mobilenet_slr_floorplan(model: ModelWrapper, cfg: DataflowBuildConfig):
     if cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
@@ -101,6 +104,7 @@ def step_mobilenet_slr_floorplan(model: ModelWrapper, cfg: DataflowBuildConfig):
             print("No SLR floorplanning applied")
     return model
 
+
 def step_mobilenet_convert_to_hw_layers_separate_th(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(to_hw.InferPool())
     model = model.transform(to_hw.InferConvInpGen())
@@ -114,6 +118,7 @@ def step_mobilenet_convert_to_hw_layers_separate_th(model: ModelWrapper, cfg: Da
     model = model.transform(GiveReadableTensorNames())
     return model
 
+
 class bench_mobilenetv1(bench):
     def step_build_setup(self):
         # create build config for MobileNetV1 (based on finn-examples)
@@ -126,9 +131,9 @@ class bench_mobilenetv1(bench):
             "step_apply_folding_config",
             "step_minimize_bit_width",
             "step_generate_estimate_reports",
+            "step_set_fifo_depths",
             "step_hw_codegen",
             "step_hw_ipgen",
-            "step_set_fifo_depths",
             "step_create_stitched_ip",
             "step_synthesize_bitfile",
             "step_make_pynq_driver",
