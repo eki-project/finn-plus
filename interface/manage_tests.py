@@ -59,8 +59,6 @@ def run_test(variant: str, num_workers: str) -> None:
             test_1_returncode = test_1_process.returncode
             test_2_process.communicate()
             test_2_returncode = test_2_process.returncode
-            if test_1_returncode or test_2_returncode:
-                sys.exit(1)
 
             subprocess.run(
                 shlex.split(
@@ -71,4 +69,7 @@ def run_test(variant: str, num_workers: str) -> None:
                     posix=IS_POSIX,
                 )
             )
+
+            if test_1_returncode or test_2_returncode:
+                sys.exit(1)
     os.chdir(original_dir)

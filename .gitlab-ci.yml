@@ -127,6 +127,7 @@ FINN Test Suite 2022.2:
     VIVADO_PATH: "$FINN_XILINX_PATH/Vivado/2022.2"
     VITIS_PATH: "$FINN_XILINX_PATH/Vitis/2022.2"
     HLS_PATH: "$FINN_XILINX_PATH/Vitis_HLS/2022.2"
+    XILINX_XRT: "$FINN_XILINX_PATH/xrt/xrt_2.14"
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
@@ -134,6 +135,10 @@ FINN Test Suite 2022.2:
     - module load devel/Autoconf/2.71-GCCcore-11.3.0
     - module load lang/Bison/3.8.2-GCCcore-11.3.0
     - module load lang/flex/2.6.4-GCCcore-11.3.0
+    - source $VITIS_PATH/settings64.sh
+    - source $XILINX_XRT/setup.sh
+    - source $VIVADO_PATH/settings64.sh
+    - source $HLS_PATH/settings64.sh
     - ulimit -s unlimited # Increase stack size limit
   script:
     # create virtual environment (.venv/) and install Python dependencies,
@@ -156,3 +161,4 @@ FINN Test Suite 2024.2:
     VIVADO_PATH: "$FINN_XILINX_PATH/Vivado/2024.2"
     VITIS_PATH: "$FINN_XILINX_PATH/Vitis/2024.2"
     HLS_PATH: "$FINN_XILINX_PATH/Vitis_HLS/2024.2"
+    XILINX_XRT: "$FINN_XILINX_PATH/xrt/xrt_2.14"
