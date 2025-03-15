@@ -1,0 +1,16 @@
+params:
+  dut: vgg10
+  model_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/VGG-10/radioml_w4a4_small_tidy.onnx
+  folding_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/VGG-10/ZCU104_folding_config.json
+  specialize_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/VGG-10/ZCU104_specialize_layers.json
+  board: RFSoC2x2
+  clock_period_ns: 10
+  fifo_method: characterize
+  fifo_strategy: rtlsim
+  rtlsim_n: 5
+  output_products:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+metadata:
+  tool_version: '2022.2'
