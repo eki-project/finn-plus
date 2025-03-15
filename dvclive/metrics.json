@@ -1,0 +1,81 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 778.0,
+            "DSP": 0.0,
+            "BRAM_18K": 1.0,
+            "URAM": 1.0
+        },
+        "performance": {
+            "critical_path_cycles": 4194304,
+            "max_cycles": 4194304,
+            "max_cycles_node_name": "MVAU_hls_0",
+            "estimated_throughput_fps": 23.84185791015625,
+            "estimated_latency_ns": 41943040
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 1357.0,
+            "FF": 637.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 1.0,
+            "URAM": 0.0
+        }
+    },
+    "rtlsim": {
+        "performance": {
+            "N": 1,
+            "latency_cycles": 0,
+            "cycles": 104190216,
+            "fclk[mhz]": 100.0,
+            "throughput[images-s]": 0.9597830183978119,
+            "stable_throughput[images-s]": 0.9597830183978119
+        }
+    },
+    "synth(ooc)": {
+        "resources": {
+            "LUT": 738.0,
+            "LUTRAM": 0.0,
+            "FF": 680.0,
+            "DSP": 0.0,
+            "BRAM": 0.0,
+            "BRAM_18K": 1.0,
+            "BRAM_36K": 0.0,
+            "URAM": 0.0
+        },
+        "timing": {
+            "WNS": 6.46,
+            "fmax_mhz": 282.4858757062147
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 2509,
+            "FF": 2901,
+            "SRL": 55,
+            "DSP": 0,
+            "BRAM_18K": 1,
+            "BRAM_36K": 0,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "performance": {
+            "error": false,
+            "checksum": 970814,
+            "min_latency_cycles": 4194313,
+            "latency_cycles": 4198351,
+            "interval_cycles": 4194310,
+            "frequency_mhz": 100,
+            "min_latency_ms": 41.943549,
+            "latency_ms": 41.98393,
+            "throughput_fps": 24,
+            "min_pipeline_depth": 1.0,
+            "pipeline_depth": 1.0
+        }
+    },
+    "total_build_time": 2999
+}
