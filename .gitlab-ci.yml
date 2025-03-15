@@ -95,8 +95,8 @@ Pre-Install:
   cache:
     key: $CI_COMMIT_SHA #TODO: cache based on relevant files
     paths:
-      - poetry.lock
-      - .venv
+      #- poetry.lock
+      #- .venv
       - deps
 
 FINN Test Suite 2022.2:
@@ -117,8 +117,8 @@ FINN Test Suite 2022.2:
     key: $CI_COMMIT_SHA
     policy: pull
     paths:
-      - poetry.lock
-      - .venv
+      #- poetry.lock
+      #- .venv
       - deps
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
