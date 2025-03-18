@@ -57,6 +57,7 @@ import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
+from finn.analysis.fpgadataflow.find_good_foldings import all_possible_maclayer_targets
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.op_and_param_counts import (
     aggregate_dict_keys,
@@ -422,13 +423,21 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
 
     target_cycles_per_frame = cfg._resolve_cycles_per_frame()
     if target_cycles_per_frame is not None:
-        model = model.transform(
-            SetFolding(
-                target_cycles_per_frame,
-                mvau_wwidth_max=cfg.mvau_wwidth_max,
-                two_pass_relaxation=cfg.folding_two_pass_relaxation,
-            )
+        model = model.transform(GiveUniqueNodeNames())
+        folding_trf = SetFolding(
+            target_cycles_per_frame,
+            mvau_wwidth_max=cfg.mvau_wwidth_max,
+            two_pass_relaxation=cfg.folding_two_pass_relaxation,
         )
+        model = model.transform(folding_trf)
+        report_dir = cfg.output_dir + "/report"
+        os.makedirs(report_dir, exist_ok=True)
+        with open(report_dir + "/possible_foldings.json", "w") as f:
+            json.dump(folding_trf.possible_foldings, f, indent=2)
+        with open(report_dir + "/joint_foldings.json", "w") as f:
+            joint_foldings = all_possible_maclayer_targets(folding_trf.possible_foldings)
+            json.dump(joint_foldings, f, indent=2)
+
         # extract the suggested configuration and save it as json
         hw_attrs = [
             "PE",
