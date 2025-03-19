@@ -33,13 +33,7 @@ from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
-from finn.util.basic import get_rtlsim_trace_depth, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-
-try:
-    from pyverilator import PyVerilator
-except ModuleNotFoundError:
-    PyVerilator = None
 
 
 class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
@@ -82,6 +76,14 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             ret["ap_none"] = ["maxcount"]
         return ret
 
+    def is_sim_fifo_gauge(self):
+        # special case: a StreamingFIFO layer with impl_style=rtl
+        # depth_monitor=1 is implemented using a Verilog infite
+        # queue sim instead of Q_srl
+        is_rtl = self.get_nodeattr("impl_style") == "rtl"
+        is_depth_monitor = self.get_nodeattr("depth_monitor") == 1
+        return is_depth_monitor and is_rtl
+
     def generate_hdl(self, model, fpgapart, clk):
         rtlsrc = os.environ["FINN_ROOT"] + "/finn-rtllib/fifo/hdl"
         template_path = rtlsrc + "/fifo_template.v"
@@ -95,12 +97,22 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         code_gen_dict["$TOP_MODULE_NAME$"] = topname
         # make instream width a multiple of 8 for axi interface
         in_width = self.get_instream_width_padded()
-        count_width = int(self.get_nodeattr("depth")).bit_length()
+
+        gauge = self.is_sim_fifo_gauge()
+        if gauge:
+            count_width = 32
+            code_gen_dict["$FIFO_CORE$"] = "sim_fifo_gauge"
+            depth = 0
+        else:
+            count_width = int(self.get_nodeattr("depth")).bit_length()
+            code_gen_dict["$FIFO_CORE$"] = "q_srl"
+            depth = int(self.get_nodeattr("depth"))
+        code_gen_dict["$COUNT_WIDTH$"] = f"{count_width}"
         code_gen_dict["$COUNT_RANGE$"] = "[{}:0]".format(count_width - 1)
         code_gen_dict["$IN_RANGE$"] = "[{}:0]".format(in_width - 1)
         code_gen_dict["$OUT_RANGE$"] = "[{}:0]".format(in_width - 1)
         code_gen_dict["$WIDTH$"] = str(in_width)
-        code_gen_dict["$DEPTH$"] = str(self.get_nodeattr("depth"))
+        code_gen_dict["$DEPTH$"] = str(depth)
         # apply code generation to templates
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         with open(template_path, "r") as f:
@@ -114,7 +126,10 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         ) as f:
             f.write(template)
 
-        shutil.copy(rtlsrc + "/Q_srl.v", code_gen_dir)
+        if self.is_sim_fifo_gauge():
+            shutil.copy(rtlsrc + "/fifo_gauge.sv", code_gen_dir)
+        else:
+            shutil.copy(rtlsrc + "/Q_srl.v", code_gen_dir)
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
         self.set_nodeattr("ipgen_path", code_gen_dir)
@@ -160,8 +175,15 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             nbits = self.get_instream_width()
             inp = npy_to_rtlsim_input("{}/input_0.npy".format(code_gen_dir), export_idt, nbits)
             super().reset_rtlsim(sim)
-            super().toggle_clk(sim)
-            output = self.rtlsim(sim, inp)
+            if self.get_nodeattr("rtlsim_backend") == "pyverilator":
+                super().toggle_clk(sim)
+            io_dict = {
+                "inputs": {"in0": inp},
+                "outputs": {"out": []},
+            }
+            self.rtlsim_multi_io(sim, io_dict)
+            super().close_rtlsim(sim)
+            output = io_dict["outputs"]["out"]
             odt = DataType[self.get_nodeattr("dataType")]
             target_bits = odt.bitwidth()
             packed_bits = self.get_outstream_width()
@@ -188,7 +210,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
             sourcefiles = [
-                "Q_srl.v",
+                "fifo_gauge.sv" if self.is_sim_fifo_gauge() else "Q_srl.v",
                 self.get_nodeattr("gen_top_module") + ".v",
             ]
 
@@ -262,30 +284,23 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
                 "FIFO implementation style %s not supported, please use rtl or vivado" % impl_style
             )
 
+    def get_rtl_file_list(self, abspath=False):
+        if abspath:
+            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
+            rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/fifo/hdl/")
+        else:
+            code_gen_dir = ""
+            rtllib_dir = ""
+
+        verilog_files = [
+            rtllib_dir + "Q_srl.v",
+            code_gen_dir + self.get_nodeattr("gen_top_module") + ".v",
+        ]
+        return verilog_files
+
     def prepare_rtlsim(self):
         assert self.get_nodeattr("impl_style") != "vivado", (
             "StreamingFIFO impl_style "
             "cannot be vivado for rtlsim. Only impl_style=rtl supported."
         )
-        # Modified to use generated (System-)Verilog instead of HLS output products
-
-        if PyVerilator is None:
-            raise ImportError("Installation of PyVerilator is required.")
-
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        verilog_paths = [code_gen_dir]
-        verilog_files = [
-            "Q_srl.v",
-            self.get_nodeattr("gen_top_module") + ".v",
-        ]
-        # build the Verilator emu library
-        sim = PyVerilator.build(
-            verilog_files,
-            build_dir=make_build_dir("pyverilator_" + self.onnx_node.name + "_"),
-            verilog_path=verilog_paths,
-            trace_depth=get_rtlsim_trace_depth(),
-            top_module_name=self.get_verilog_top_module_name(),
-        )
-        # save generated lib filename in attribute
-        self.set_nodeattr("rtlsim_so", sim.lib._name)
-        return sim
+        return super().prepare_rtlsim()

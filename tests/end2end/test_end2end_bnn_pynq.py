@@ -32,9 +32,6 @@ import pytest
 import itertools
 import numpy as np
 
-# as of Feb'20 there is a bug that segfaults ONNX shape inference if we
-# import pytorch before onnx, so we make sure to import onnx first
-import onnx  # isort: split
 import os
 import torch
 import warnings
@@ -744,6 +741,7 @@ class TestEnd2End:
         model = model.transform(HLSSynthIP())
         model = model.transform(CreateStitchedIP(test_fpga_part, target_clk_ns))
         model.set_metadata_prop("exec_mode", "rtlsim")
+        model.set_metadata_prop("rtlsim_backend", "pyxsi")
         os.environ["LIVENESS_THRESHOLD"] = str(int(latency * 1.1))
         if rtlsim_trace:
             model.set_metadata_prop("rtlsim_trace", "%s_w%da%d.vcd" % (topology, wbits, abits))

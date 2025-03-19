@@ -27,11 +27,11 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-QONNX_COMMIT="3d3d8964dbc5355d5c9be855d87b7b442508e3a4"
+QONNX_COMMIT="6524373455ba1dfa0ed134242f102eb556908124"
 FINN_EXP_COMMIT="0724be21111a21f0d81a072fccc1c446e053f851"
 BREVITAS_COMMIT="003f9f4070c20639790c7b406a28612a089fc502"
 PYVERILATOR_COMMIT="ce0a08c20cb8c1d1e84181d6f392390f846adbd1"
-CNPY_COMMIT="4e8810b1a8637695171ed346ce68f6984e585ef4"
+CNPY_COMMIT="8c82362372ce600bbd1cf11d64661ab69d38d7de"
 HLSLIB_COMMIT="5c5ad631e3602a8dd5bd3399a016477a407d6ee7"
 OMX_COMMIT="0b59762f9e4c4f7e5aa535ee9bc29f292434ca7a"
 AVNET_BDF_COMMIT="2d49cfc25766f07792c0b314489f21fe916b639b"
@@ -40,12 +40,14 @@ RFSOC4x2_BDF_COMMIT="13fb6f6c02c7dfd7e4b336b18b959ad5115db696"
 KV260_BDF_COMMIT="98e0d3efc901f0b974006bc4370c2a7ad8856c79"
 EXP_BOARD_FILES_MD5="226ca927a16ea4ce579f1332675e9e9a"
 ATTENTION_HLSLIB_COMMIT="afc9720f10e551e1f734e137b21bb6d0a8342177"
+PYXSI_COMMIT="941bb62a4a3cc2c8cf2a9b89187c60bb0b776658"
+ACTS_COMMIT="28ba103ee586f9163483ab991f9abfae4b2e7b46"
 
 QONNX_URL="https://github.com/iksnagreb/qonnx.git"
 FINN_EXP_URL="https://github.com/Xilinx/finn-experimental.git"
 BREVITAS_URL="https://github.com/iksnagreb/brevitas.git"
 PYVERILATOR_URL="https://github.com/maltanar/pyverilator.git"
-CNPY_URL="https://github.com/rogersce/cnpy.git"
+CNPY_URL="https://github.com/maltanar/cnpy.git"
 HLSLIB_URL="https://github.com/Xilinx/finn-hlslib.git"
 OMX_URL="https://github.com/maltanar/oh-my-xilinx.git"
 AVNET_BDF_URL="https://github.com/Avnet/bdf.git"
@@ -53,6 +55,8 @@ XIL_BDF_URL="https://github.com/Xilinx/XilinxBoardStore.git"
 RFSOC4x2_BDF_URL="https://github.com/RealDigitalOrg/RFSoC4x2-BSP.git"
 KV260_BDF_URL="https://github.com/Xilinx/XilinxBoardStore.git"
 ATTENTION_HLSLIB_URL="https://github.com/iksnagreb/attention-hlslib.git"
+PYXSI_URL="https://github.com/maltanar/pyxsi.git"
+ACTS_URL="https://github.com/iksnagreb/activations.git"
 
 QONNX_DIR="qonnx"
 FINN_EXP_DIR="finn-experimental"
@@ -66,6 +70,8 @@ XIL_BDF_DIR="xil-bdf"
 RFSOC4x2_BDF_DIR="rfsoc4x2-bdf"
 KV260_SOM_BDF_DIR="kv260-som-bdf"
 ATTENTION_HLSLIB_DIR="attention-hlslib"
+PYXSI_DIR="pyxsi"
+ACTS_DIR="qonnx-activations"
 
 # absolute path to this script, e.g. /home/user/bin/foo.sh
 SCRIPT=$(readlink -f "$0")
@@ -130,6 +136,8 @@ fetch_repo $XIL_BDF_URL $XIL_BDF_COMMIT $XIL_BDF_DIR
 fetch_repo $RFSOC4x2_BDF_URL $RFSOC4x2_BDF_COMMIT $RFSOC4x2_BDF_DIR
 fetch_repo $KV260_BDF_URL $KV260_BDF_COMMIT $KV260_SOM_BDF_DIR
 fetch_repo $ATTENTION_HLSLIB_URL $ATTENTION_HLSLIB_COMMIT $ATTENTION_HLSLIB_DIR
+fetch_repo $PYXSI_URL $PYXSI_COMMIT $PYXSI_DIR
+fetch_repo $ACTS_URL $ACTS_COMMIT $ACTS_DIR
 
 # Can skip downloading of board files entirely if desired
 if [ "$FINN_SKIP_BOARD_FILES" = "1" ]; then

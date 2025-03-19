@@ -25,7 +25,7 @@
  * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
  * OR BUSINESS INTERRUPTION). HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
  * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
- * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF/scratch/finn/test/code_gen_ipgen_Thresholding_rtl_0_n9w6opfh/Thresholding_rtl_0.v
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * @author	Thomas B. Preußer <thomas.preusser@amd.com>
@@ -40,7 +40,7 @@ module $MODULE_NAME_AXI_WRAPPER$ #(
 	parameter  PE = $PE$,	// Processing Parallelism, requires C = k*PE
 
 	parameter  SIGNED = $SIGNED$,	// signed inputs
-	parameter  FPARG  = 0,			// floating-point inputs: [sign] | exponent | mantissa
+	parameter  FPARG  = $FPARG$,	// floating-point inputs: [sign] | exponent | mantissa
 	parameter  BIAS   = $BIAS$,		// offsetting the output [0, 2^N-1] -> [BIAS, 2^N-1 + BIAS]
 
 	parameter  THRESHOLDS_PATH = $THRESHOLDS_PATH$,	// Directory with initial threshold data
@@ -49,6 +49,7 @@ module $MODULE_NAME_AXI_WRAPPER$ #(
 	// Force Use of On-Chip Memory Blocks
 	parameter  DEPTH_TRIGGER_URAM = $DEPTH_TRIGGER_URAM$,	// if non-zero, local mems of this depth or more go into URAM (prio)
 	parameter  DEPTH_TRIGGER_BRAM = $DEPTH_TRIGGER_BRAM$,	// if non-zero, local mems of this depth or more go into BRAM
+	parameter  RAM_STYLE_FALLBACK = $RAM_STYLE_FALLBACK$,	// if no triggers match, use this RAM_STYLE
 	parameter  DEEP_PIPELINE = $DEEP_PIPELINE$,	// [bit] extra pipeline stages for easier timing closure
 
 	parameter  O_BITS = $O_BITS$
@@ -105,6 +106,7 @@ module $MODULE_NAME_AXI_WRAPPER$ #(
 		.USE_AXILITE(USE_AXILITE),
 		.DEPTH_TRIGGER_URAM(DEPTH_TRIGGER_URAM),
 		.DEPTH_TRIGGER_BRAM(DEPTH_TRIGGER_BRAM),
+		.RAM_STYLE_FALLBACK(RAM_STYLE_FALLBACK),
 		.DEEP_PIPELINE(DEEP_PIPELINE)
 	) core (
 		.ap_clk(ap_clk), .ap_rst_n(ap_rst_n),

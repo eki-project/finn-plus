@@ -207,15 +207,6 @@ class InferThresholdingLayer(Transformation):
                 thl_thres_shape = model.get_tensor_shape(thl_threshold)
                 idt = model.get_tensor_datatype(thl_input)
                 tdt = model.get_tensor_datatype(thl_threshold)
-                # skip conversion for layers with float input
-                if not idt.is_integer():
-                    continue
-                assert tdt.is_integer(), (
-                    node.name
-                    + """: MultiThreshold cannot be converted
-                    because thresholds are float type. Input data type is integer,
-                    please run RoundAndClipThresholds to convert thresholds to integer."""
-                )
 
                 # check layout of inputs/outputs, and convert if needed
                 # check layout and convert if necessary
@@ -412,7 +403,9 @@ class InferStreamingMaxPool(Transformation):
         graph_modified = False
         for node in graph.node:
             node_ind += 1
-            if node.op_type == "MaxPoolNHWC":
+            if node.op_type == "MaxPoolNHWC" or (
+                node.op_type == "MaxPool" and node.domain == "qonnx.custom_op.channels_last"
+            ):
                 mp_input = node.input[0]
                 mp_output = node.output[0]
                 mp_in_shape = model.get_tensor_shape(mp_input)
@@ -429,7 +422,9 @@ class InferStreamingMaxPool(Transformation):
                 ifm_dim_h = mp_in_shape[1]
                 ifm_dim_w = mp_in_shape[2]
                 pe = 1
-                ceil_mode = mp_inst.get_nodeattr("ceil_mode")
+                ceil_mode = (
+                    mp_inst.get_nodeattr("ceil_mode") if node.op_type == "MaxPoolNHWC" else 0
+                )
                 is_1d = (ifm_dim_h == 1 and k_h == 1) or (ifm_dim_w == 1 and k_w == 1)
                 is_divisable = (ifm_dim_h % k_h == 0) or (ifm_dim_w % k_w == 0)
                 is_bipolar = dt == DataType["BIPOLAR"]
@@ -1738,28 +1733,42 @@ class InferVectorVectorActivation(Transformation):
         graph = model.graph
         node_ind = 0
         graph_modified = False
-        for n in graph.node:
+        for node in graph.node:
             node_ind += 1
-            if n.op_type == "MatMul" and model.get_tensor_sparsity(n.input[1]) is not None:
-                sparsity = model.get_tensor_sparsity(n.input[1])
-                try:
-                    k_h, k_w = sparsity["dw"]["kernel_shape"]
-                except KeyError:
-                    raise Exception(
-                        n.name
-                        + """: sparsity annotation doesn't indicate that MatMul
-                        belongs to a depthwise convolution."""
-                    )
-
-                mm_input = n.input[0]
-                mm_weight = n.input[1]
-                mm_output = n.output[0]
+            if node.op_type == "MatMul":
+                # two ways in which we can infer MatMuls from depthwise convs:
+                # - sparsity annotation from LowerConvsToMatMul
+                # - producer is Im2Col with depthwise=1
+                sparsity = model.get_tensor_sparsity(node.input[1])
+                if not (sparsity is None):
+                    try:
+                        k_h, k_w = sparsity["dw"]["kernel_shape"]
+                    except KeyError:
+                        raise Exception(
+                            node.name
+                            + """: sparsity annotation doesn't indicate that MatMul
+                            belongs to a depthwise convolution."""
+                        )
+                else:
+                    # check if producer is Im2Col with depthwise=1
+                    producer = model.find_producer(node.input[0])
+                    if producer is None:
+                        continue
+                    if producer.op_type != "Im2Col":
+                        continue
+                    inst = getCustomOp(producer)
+                    if inst.get_nodeattr("depthwise") != 1:
+                        continue
+                    k_h, k_w = inst.get_nodeattr("kernel_size")
+                mm_input = node.input[0]
+                mm_weight = node.input[1]
+                mm_output = node.output[0]
                 mm_in_shape = model.get_tensor_shape(mm_input)
                 mm_out_shape = model.get_tensor_shape(mm_output)
                 idt = model.get_tensor_datatype(mm_input)
                 wdt = model.get_tensor_datatype(mm_weight)
                 if idt.is_integer() and wdt.is_integer():
-                    mm_output = n.output[0]
+                    mm_output = node.output[0]
                     W = model.get_initializer(mm_weight)
                     # infer dense weight tensor from sparse weight matrix
                     # kernel size (k_h, k_w) which was extracted above and the value of
@@ -1831,11 +1840,11 @@ class InferVectorVectorActivation(Transformation):
                             outputDataType=odt.name,
                             ActVal=actval,
                             noActivation=0,
-                            name="VVAU_" + n.name,
+                            name="VVAU_" + node.name,
                         )
                         graph.node.insert(node_ind, new_node)
                         # remove old nodes
-                        graph.node.remove(n)
+                        graph.node.remove(node)
                         graph.node.remove(consumer)
                         graph_modified = True
                     else:
@@ -1859,11 +1868,11 @@ class InferVectorVectorActivation(Transformation):
                             outputDataType=odt.name,
                             ActVal=0,
                             noActivation=1,
-                            name="VVAU_" + n.name,
+                            name="VVAU_" + node.name,
                         )
                         graph.node.insert(node_ind, new_node)
                         # remove old node
-                        graph.node.remove(n)
+                        graph.node.remove(node)
                         graph_modified = True
         if graph_modified:
             model = model.transform(InferShapes())
@@ -1894,7 +1903,7 @@ class InferElementwiseBinaryOperation(Transformation):
         # The operator must be a Mul and have no successor nodes
         if node.op_type == "Mul" and not model.find_direct_successors(node):
             # If the output is a floating-point tensors, reject this
-            if model.get_tensor_datatype(node.output[0]) == "FLOAT32":
+            if model.get_tensor_datatype(node.output[0]) in ["FLOAT32", "FLOAT16"]:
                 # Filter False rejects this node
                 return False
         # Filter True accepts this node
@@ -1905,11 +1914,11 @@ class InferElementwiseBinaryOperation(Transformation):
     @staticmethod
     def reject_floats(model: ModelWrapper, node: NodeProto):
         # Check for any input being floating-point
-        if any(model.get_tensor_datatype(x) == "FLOAT32" for x in node.input):
+        if any(model.get_tensor_datatype(x).is_integer() is False for x in node.input):
             # Filter False rejects this node
             return False
         # Check for any output being floating-point
-        if any(model.get_tensor_datatype(x) == "FLOAT32" for x in node.output):
+        if any(model.get_tensor_datatype(x).is_integer() is False for x in node.output):
             # Filter False rejects this node
             return False
         # Filter True accepts this node
@@ -1965,9 +1974,13 @@ class InferElementwiseBinaryOperation(Transformation):
                 inst.set_nodeattr(
                     "rhs_dtype", str(model.get_tensor_datatype(node.input[1]))
                 )
+                odt_name = str(model.get_tensor_datatype(node.output[0]))
                 inst.set_nodeattr(
-                    "out_dtype", str(model.get_tensor_datatype(node.output[0]))
+                    "out_dtype", odt_name
                 )
+                # need to use pyxsi as rtlsim backend for float ops
+                if "FLOAT" in odt_name:
+                    inst.set_nodeattr("rtlsim_backend", "pyxsi")
                 # Insert shape attributes from "context" into the CustomOp node
                 # TODO: Find a way to handle this via shape inference?
                 inst.set_nodeattr(
@@ -1978,6 +1991,324 @@ class InferElementwiseBinaryOperation(Transformation):
                 )
                 inst.set_nodeattr(
                     "out_shape", model.get_tensor_shape(node.output[0])
+                )
+
+                # fmt: on
+
+                # Consider the graph to be modified, triggering exhaustive
+                # re-application of this transformation
+                graph_modified = True
+                # Exiting here triggers type and shape inference and cleanup
+                # after each transformed node. This helps QONNX to behave
+                # better / more consistent in certain cases...
+                break
+        # Re-do shape and data type annotations after potential changes to the
+        # model graph
+        model = model.transform(InferShapes())
+        model = model.transform(InferDataTypes())
+        # Return the transformed model and indicate whether the graph actually
+        # has been transformed
+        return model, graph_modified
+
+
+# Converts ReLU into ElementwiseMaximum(in, 0)
+class InferReLUAsElementwiseMax(Transformation):
+    # Filter function to filter out any operation involving any floating-point
+    # tensor
+    @staticmethod
+    def reject_unsupported_dtypes(model: ModelWrapper, node: NodeProto):
+        def dtype_ok(tname):
+            dt = model.get_tensor_datatype(tname)
+            if dt is None:
+                return False
+            if dt.is_integer() or dt in [DataType["FLOAT32"], DataType["FLOAT16"]]:
+                return True
+            else:
+                return False
+
+        return all([dtype_ok(tname) for tname in list(node.input) + list(node.output)])
+
+    # Initializes the transformation method with an optional filter function
+    def __init__(self, _filter=reject_unsupported_dtypes):
+        # Initialize the base class Transformation object
+        super().__init__()
+        # Register the filter function as attribute
+        self._filter = _filter if _filter is not None else lambda *_: True
+
+    # Applies the transform to a whole model graph
+    def apply(self, model: ModelWrapper):  # noqa
+        # Get the model graph out of the model wrapper object
+        graph = model.graph
+        # Keep track of whether the graph has been modified
+        graph_modified = False
+        # Iterate all nodes in the graph keeping track of the index
+        for index, node in enumerate(graph.node):
+            # Skip transforming nodes rejected by the filter
+            if not self._filter(model, node):
+                continue
+            if node.op_type == "Relu":
+                # Transplant this operator into our FINN domain
+                node.domain = "finn.custom_op.fpgadataflow"
+                node.op_type = "ElementwiseMaximum"
+                # add a second 0-valued input for ReLU
+                new_tname = model.make_new_valueinfo_name()
+                model.set_initializer(new_tname, np.asarray(0.0, dtype=np.float32))
+                idt = model.get_tensor_datatype(node.input[0])
+                model.set_tensor_datatype(new_tname, idt)
+                node.input.append(new_tname)
+                # Now we can get the CustomOp wrapper instance providing easier
+                # attribute access
+                inst: HWCustomOp = getCustomOp(node)
+                # Set the backend attribute to mark this an operation supported
+                # to be implemented on an FPGA by FINN
+                inst.set_nodeattr("backend", "fpgadataflow")
+                # Need to "lift" potential scalar inputs to rank-1 tensors
+                lift_to_rank1(node.input[0], model)
+                lift_to_rank1(node.input[1], model)
+
+                # fmt: off
+                # Disable formatter. This is deliberately formatted to stay
+                # within 80 characters per line. Black, however, formats some
+                # lines going beyond this.
+
+                # Insert data type attributes from "context" into the CustomOp
+                # node
+                # TODO: Find a way to handle this via data type inference?
+                inst.set_nodeattr(
+                    "lhs_dtype", str(idt)
+                )
+                inst.set_nodeattr(
+                    "rhs_dtype", str(idt)
+                )
+                odt_name = str(model.get_tensor_datatype(node.output[0]))
+                inst.set_nodeattr(
+                    "out_dtype", odt_name
+                )
+                # need to use pyxsi as rtlsim backend for float ops
+                if "FLOAT" in odt_name:
+                    inst.set_nodeattr("rtlsim_backend", "pyxsi")
+                # Insert shape attributes from "context" into the CustomOp node
+                # TODO: Find a way to handle this via shape inference?
+                inst.set_nodeattr(
+                    "lhs_shape", model.get_tensor_shape(node.input[0])
+                )
+                inst.set_nodeattr(
+                    "rhs_shape", model.get_tensor_shape(node.input[1])
+                )
+                inst.set_nodeattr(
+                    "out_shape", model.get_tensor_shape(node.output[0])
+                )
+
+                # fmt: on
+
+                # Consider the graph to be modified, triggering exhaustive
+                # re-application of this transformation
+                graph_modified = True
+                # Exiting here triggers type and shape inference and cleanup
+                # after each transformed node. This helps QONNX to behave
+                # better / more consistent in certain cases...
+                break
+        # Re-do shape and data type annotations after potential changes to the
+        # model graph
+        model = model.transform(InferShapes())
+        model = model.transform(InferDataTypes())
+        # Return the transformed model and indicate whether the graph actually
+        # has been transformed
+        return model, graph_modified
+
+
+# Converts a scale=1 zeropt=0 Quant into ElementwiseFloat2Int
+class InferQuantAsFloat2Int(Transformation):
+    # Applies the transform to a whole model graph
+    def apply(self, model: ModelWrapper):  # noqa
+        # Get the model graph out of the model wrapper object
+        graph = model.graph
+        # Keep track of whether the graph has been modified
+        graph_modified = False
+        # Iterate all nodes in the graph keeping track of the index
+        for index, node in enumerate(graph.node):
+            if node.op_type == "Quant":
+                node_inst = getCustomOp(node)
+                rmode = node_inst.get_nodeattr("rounding_mode")
+                if rmode.upper() != "ROUND":
+                    # unsupported rounding mode
+                    continue
+                scale = model.get_initializer(node.input[1])
+                if scale is None:
+                    # dynamic scale not supported
+                    continue
+                zeropt = model.get_initializer(node.input[2])
+                if zeropt is None:
+                    # dynamic zeropt not supported
+                    continue
+                bitwidth = model.get_initializer(node.input[3])
+                if bitwidth is None:
+                    # dynamic bitwidth not supported
+                    continue
+                if bitwidth.size != 1:
+                    # non-scalar bitwidth not supported
+                    continue
+                bitwidth = bitwidth.item()
+                if int(bitwidth) != bitwidth:
+                    # fractional bitwidth not supported
+                    continue
+                bitwidth = int(bitwidth)
+                # determine the FINN DataType
+                unit_scale = np.all(scale == 1.0)
+                zero_zeropt = np.all(zeropt == 0.0)
+                if (not unit_scale) or (not zero_zeropt):
+                    # need unit scale and zero zeropt
+                    # (note: these can be extracted with a transformation)
+                    pass
+                # Transplant this operator into our FINN domain
+                node.domain = "finn.custom_op.fpgadataflow"
+                node.op_type = "ElementwiseFloat2Int"
+
+                # produce a second 0-valued input (unused but
+                # needed to keep appearance as binary eltwise op)
+                new_tname = model.make_new_valueinfo_name()
+                model.set_initializer(new_tname, np.asarray(0.0, dtype=np.float32))
+                idt = model.get_tensor_datatype(node.input[0])
+                model.set_tensor_datatype(new_tname, idt)
+                # remove all inputs excepts first, and a dummy 2nd input
+                node.input[:] = [node.input[0], new_tname]
+
+                # Now we can get the CustomOp wrapper instance providing easier
+                # attribute access
+                inst: HWCustomOp = getCustomOp(node)
+                # Set the backend attribute to mark this an operation supported
+                # to be implemented on an FPGA by FINN
+                inst.set_nodeattr("backend", "fpgadataflow")
+                # Need to "lift" potential scalar inputs to rank-1 tensors
+                lift_to_rank1(node.input[0], model)
+                lift_to_rank1(node.input[1], model)
+
+                # fmt: off
+                # Disable formatter. This is deliberately formatted to stay
+                # within 80 characters per line. Black, however, formats some
+                # lines going beyond this.
+
+                # Insert data type attributes from "context" into the CustomOp
+                # node
+                # TODO: Find a way to handle this via data type inference?
+                inst.set_nodeattr(
+                    "lhs_dtype", str(idt)
+                )
+                inst.set_nodeattr(
+                    "rhs_dtype", str(idt)
+                )
+                odt_name = str(model.get_tensor_datatype(node.output[0]))
+                inst.set_nodeattr(
+                    "out_dtype", odt_name
+                )
+                # need to use pyxsi as rtlsim backend for float ops
+                inst.set_nodeattr("rtlsim_backend", "pyxsi")
+                # set bitwidth as attribute
+                inst.set_nodeattr("bitwidth", bitwidth)
+                # Insert shape attributes from "context" into the CustomOp node
+                # TODO: Find a way to handle this via shape inference?
+                inst.set_nodeattr(
+                    "lhs_shape", model.get_tensor_shape(node.input[0])
+                )
+                inst.set_nodeattr(
+                    "rhs_shape", model.get_tensor_shape(node.input[1])
+                )
+                inst.set_nodeattr(
+                    "out_shape", model.get_tensor_shape(node.output[0])
+                )
+
+                # fmt: on
+
+                # Consider the graph to be modified, triggering exhaustive
+                # re-application of this transformation
+                graph_modified = True
+                # Exiting here triggers type and shape inference and cleanup
+                # after each transformed node. This helps QONNX to behave
+                # better / more consistent in certain cases...
+                break
+        # Re-do shape and data type annotations after potential changes to the
+        # model graph
+        model = model.transform(InferShapes())
+        model = model.transform(InferDataTypes())
+        # Return the transformed model and indicate whether the graph actually
+        # has been transformed
+        return model, graph_modified
+
+
+# Converts float32 -> float16 casts to ElementwiseFloatCast
+class InferFP32ToFP16Cast(Transformation):
+    # Applies the transform to a whole model graph
+    def apply(self, model: ModelWrapper):  # noqa
+        # Get the model graph out of the model wrapper object
+        graph = model.graph
+        # Keep track of whether the graph has been modified
+        graph_modified = False
+        # Iterate all nodes in the graph keeping track of the index
+        for index, node in enumerate(graph.node):
+            if node.op_type == "Cast":
+                to_attr = get_by_name(node.attribute, "to")
+                if to_attr is None:
+                    continue
+                if to_attr.i != 10:
+                    continue
+                # Transplant this operator into our FINN domain
+                node.domain = "finn.custom_op.fpgadataflow"
+                node.op_type = "ElementwiseFloatCast"
+                # remove the old cast-to-dtype attribute
+                node.attribute.remove(to_attr)
+
+                # produce a second 0-valued input (unused but
+                # needed to keep appearance as binary eltwise op)
+                new_tname = model.make_new_valueinfo_name()
+                model.set_initializer(new_tname, np.asarray(0.0, dtype=np.float32))
+                idt = model.get_tensor_datatype(node.input[0])
+                model.set_tensor_datatype(new_tname, idt)
+                # remove all inputs excepts first, and a dummy 2nd input
+                node.input[:] = [node.input[0], new_tname]
+
+                # Now we can get the CustomOp wrapper instance providing easier
+                # attribute access
+                inst: HWCustomOp = getCustomOp(node)
+                # Set the backend attribute to mark this an operation supported
+                # to be implemented on an FPGA by FINN
+                inst.set_nodeattr("backend", "fpgadataflow")
+                # Need to "lift" potential scalar inputs to rank-1 tensors
+                lift_to_rank1(node.input[0], model)
+                lift_to_rank1(node.input[1], model)
+
+                # fmt: off
+                # Disable formatter. This is deliberately formatted to stay
+                # within 80 characters per line. Black, however, formats some
+                # lines going beyond this.
+
+                # Insert data type attributes from "context" into the CustomOp
+                # node
+                # TODO: Find a way to handle this via data type inference?
+                inst.set_nodeattr(
+                    "lhs_dtype", str(idt)
+                )
+                inst.set_nodeattr(
+                    "rhs_dtype", str(idt)
+                )
+                odt_name = str(model.get_tensor_datatype(node.output[0]))
+                inst.set_nodeattr(
+                    "out_dtype", odt_name
+                )
+                # need to use pyxsi as rtlsim backend for float ops
+                inst.set_nodeattr("rtlsim_backend", "pyxsi")
+                # Insert shape attributes from "context" into the CustomOp node
+                # TODO: Find a way to handle this via shape inference?
+                inst.set_nodeattr(
+                    "lhs_shape", model.get_tensor_shape(node.input[0])
+                )
+                inst.set_nodeattr(
+                    "rhs_shape", model.get_tensor_shape(node.input[1])
+                )
+                inst.set_nodeattr(
+                    "out_shape", model.get_tensor_shape(node.output[0])
+                )
+                inst.set_nodeattr(
+                    "target_dtype", "FLOAT16"
                 )
 
                 # fmt: on

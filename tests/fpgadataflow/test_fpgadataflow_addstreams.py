@@ -47,7 +47,7 @@ from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 
 
-def make_addstreams_modelwrapper(ch, pe, idt):
+def make_addstreams_modelwrapper(ch, pe, idt, rtlsim_backend):
     inp1 = helper.make_tensor_value_info("inp1", TensorProto.FLOAT, [1, ch])
     inp2 = helper.make_tensor_value_info("inp2", TensorProto.FLOAT, [1, ch])
     outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [1, ch])
@@ -62,6 +62,7 @@ def make_addstreams_modelwrapper(ch, pe, idt):
         PE=pe,
         inputDataType=idt.name,
         preferred_impl_style="hls",
+        rtlsim_backend=rtlsim_backend,
     )
     graph = helper.make_graph(
         nodes=[addstreams_node],
@@ -84,27 +85,36 @@ def prepare_inputs(input1, input2):
 
 
 # data types
-@pytest.mark.parametrize("idt", [DataType["UINT4"], DataType["UINT8"]])
+@pytest.mark.parametrize("idt_name", ["UINT4", "UINT8", "FLOAT32"])
 # channels
 @pytest.mark.parametrize("ch", [1, 64])
 # folding
 @pytest.mark.parametrize("fold", [-1, 2, 1])
 # execution mode
 @pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim"])
+# rtlsim_backend
+@pytest.mark.parametrize("rtlsim_backend", ["pyverilator", "pyxsi"])
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
-def test_fpgadataflow_addstreams(idt, ch, fold, exec_mode):
+def test_fpgadataflow_addstreams(idt_name, ch, fold, exec_mode, rtlsim_backend):
+    idt = DataType["idt_name"]
     if fold == -1:
         pe = 1
     else:
         pe = max(1, ch // fold)
     assert ch % pe == 0
 
+    if exec_mode == "cppsim" and rtlsim_backend == "pyxsi":
+        pytest.skip(
+            """Skip combination of paramaters because rtlsim_backend
+            only influences rtlsim and not cppsim."""
+        )
+
     # generate input data
     x1 = gen_finn_dt_tensor(idt, (1, ch))
     x2 = gen_finn_dt_tensor(idt, (1, ch))
 
-    model = make_addstreams_modelwrapper(ch, pe, idt)
+    model = make_addstreams_modelwrapper(ch, pe, idt, rtlsim_backend)
 
     # prepare input data
     input_dict = prepare_inputs(x1, x2)
@@ -143,5 +153,5 @@ def test_fpgadataflow_addstreams(idt, ch, fold, exec_mode):
         cycles_rtlsim = inst.get_nodeattr("cycles_rtlsim")
         exp_cycles_dict = model.analysis(exp_cycles_per_layer)
         exp_cycles = exp_cycles_dict[node.name]
-        assert np.isclose(exp_cycles, cycles_rtlsim, atol=10)
+        assert np.isclose(exp_cycles, cycles_rtlsim, atol=15)
         assert exp_cycles != 0

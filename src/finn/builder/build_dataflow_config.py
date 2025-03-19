@@ -32,6 +32,7 @@ import os
 from dataclasses import dataclass
 from dataclasses_json import dataclass_json
 from enum import Enum
+from qonnx.util.range_analysis import RangeInfo
 from typing import Any, List, Optional
 
 from finn.util.basic import alveo_default_platform, part_map
@@ -205,7 +206,7 @@ class DataflowBuildConfig:
     #: (Optional) At which steps the generated intermediate output model
     #: will be verified. See documentation of VerificationStepType for
     #: available options.
-    verify_steps: Optional[List[VerificationStepType]] = None
+    verify_steps: Optional[List[str]] = None
 
     #: (Optional) Name of .npy file that will be used as the input for
     #: verification. Only required if verify_steps is not empty.
@@ -237,7 +238,7 @@ class DataflowBuildConfig:
     #: Only relevant if target_fps is specified.
     #: Set this to a large value (e.g. 10000) if targeting full unfolding or
     #: very high performance.
-    mvau_wwidth_max: Optional[int] = 36
+    mvau_wwidth_max: Optional[int] = 1024
 
     #: (Optional) Whether thresholding layers (which implement quantized
     #: activations in FINN) will be implemented as stand-alone HW layers,
@@ -289,6 +290,14 @@ class DataflowBuildConfig:
     #: Memory resource type for large FIFOs
     #: Only relevant when `auto_fifo_depths = True`
     large_fifo_mem_style: Optional[LargeFIFOMemStyle] = LargeFIFOMemStyle.AUTO
+
+    #: Enable input throttling for simulation-based FIFO sizing
+    #: Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM
+    fifosim_input_throttle: Optional[bool] = True
+
+    #: Enable saving waveforms from simulation-based FIFO sizing
+    #: Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM
+    fifosim_save_waveform: Optional[bool] = False
 
     #: Target clock frequency (in nanoseconds) for Vitis HLS synthesis.
     #: e.g. `hls_clk_period_ns=5.0` will target a 200 MHz clock.
@@ -368,6 +377,9 @@ class DataflowBuildConfig:
     #: If set to True, FIFOs with impl_style=vivado will be kept during
     #: rtlsim, otherwise they will be replaced by RTL implementations.
     rtlsim_use_vivado_comps: Optional[bool] = True
+
+    #: If specified, input range information for scaled-int range analysis
+    input_range_info: Optional[List[RangeInfo]] = None
 
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:

@@ -94,6 +94,7 @@ def StreamlinePlus():  # noqa: Uppercase
             MoveTransposePastJoinMul(),
             MoveTransposePastJoinAdd(),
             CollapseRepeatedTranspose(),
+            CollapseRepeatedReshape(),
             # Remove identity shape/layout transformations
             RemoveIdentityTranspose(),
             RemoveIdentityReshape(),

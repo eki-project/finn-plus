@@ -751,9 +751,94 @@ class ElementwiseBitwiseXor_hls(  # noqa: Class name does not follow
 ):
     pass
 
-# TODO: ElementwiseBitShift_hls - Requires extra attribute selecting the
-#  direction
 
+# Derive a specialization to implement elementwise maximum of two inputs
+@register_custom_op
+class ElementwiseMaximum_hls(  # noqa: Class name does not follow
+    # CapWords convention
+    ElementwiseBinaryOperation_hls, elementwise_binary.ElementwiseMaximum
+):
+    pass
+
+
+# Derive a specialization to implement elementwise minimum of two inputs
+@register_custom_op
+class ElementwiseMinimum_hls(  # noqa: Class name does not follow
+    # CapWords convention
+    ElementwiseBinaryOperation_hls, elementwise_binary.ElementwiseMinimum
+):
+    pass
+
+
+# Derive a specialization to implement elementwise minimum of two inputs
+@register_custom_op
+class ElementwiseFloat2Int_hls(  # noqa: Class name does not follow
+    # CapWords convention
+    ElementwiseBinaryOperation_hls, elementwise_binary.ElementwiseFloat2Int
+):
+
+    # We need to resolve the attribute types due to multiple inheritance
+    def get_nodeattr_types(self):
+        # Start from parent operator class attributes
+        attrs = elementwise_binary.ElementwiseFloat2Int.get_nodeattr_types(self)
+        # Add the HLSBackend default attributes on top
+        attrs.update(HLSBackend.get_nodeattr_types(self))
+        # Add/Specialize implementation specific attributes here...
+        # Return the updated attributes dictionary
+        return attrs
+
+    # Generates list of C++ includes to be placed at the top of the generated
+    # code
+    def global_includes(self):
+        super().global_includes()
+        # additional hls_math include to get hls::round()
+        self.code_gen_dict["$GLOBALS$"] += ['#include <hls_math.h>']
+
+    # Generates C++ code of type alias, global constant and macro definitions
+    def defines(self, var):
+        super().defines(var)
+
+        # Define macro for clipping/saturating values
+        self.code_gen_dict["$DEFINES$"] += [
+            "#define clip_min(x, minval) (x >= minval ? x : minval)",
+            "#define clip_max(x, maxval) (x <= maxval ? x : maxval)",
+            "#define clip(x, y, z) clip_max(clip_min(x, y), z)",
+        ]
+
+
+# Derive a specialization to implement elementwise casting
+@register_custom_op
+class ElementwiseFloatCast_hls(  # noqa: Class name does not follow
+    # CapWords convention
+    ElementwiseBinaryOperation_hls, elementwise_binary.ElementwiseFloatCast
+):
+
+    # We need to resolve the attribute types due to multiple inheritance
+    def get_nodeattr_types(self):
+        # Start from parent operator class attributes
+        attrs = elementwise_binary.ElementwiseFloatCast.get_nodeattr_types(self)
+        # Add the HLSBackend default attributes on top
+        attrs.update(HLSBackend.get_nodeattr_types(self))
+        # Add/Specialize implementation specific attributes here...
+        # Return the updated attributes dictionary
+        return attrs
+
+
+# ElementwiseBitShift_hls - Requires extra attribute selecting the direction
+@register_custom_op
+class ElementwiseBitShift_hls(  # noqa: Class name does not follow
+    # CapWords convention
+    ElementwiseBinaryOperation_hls, elementwise_binary.ElementwiseBitShift
+):
+    # We need to resolve the attribute types due to multiple inheritance
+    def get_nodeattr_types(self):
+        # Start from parent operator class attributes
+        attrs = elementwise_binary.ElementwiseBitShift.get_nodeattr_types(self)
+        # Add the HLSBackend default attributes on top
+        attrs.update(HLSBackend.get_nodeattr_types(self))
+        # Add/Specialize implementation specific attributes here...
+        # Return the updated attributes dictionary
+        return attrs
 
 # # Derive a specialization to implement elementwise power of two inputs
 # TODO: std::pow does not work for HLS types and hls::pow fails to link for some

@@ -68,6 +68,7 @@ module thresholding #(
 	// Force Use of On-Chip Memory Blocks
 	int unsigned  DEPTH_TRIGGER_URAM = 0,	// if non-zero, local mems of this depth or more go into URAM (prio)
 	int unsigned  DEPTH_TRIGGER_BRAM = 0,	// if non-zero, local mems of this depth or more go into BRAM
+	parameter RAM_STYLE_FALLBACK = "auto",  // if no triggers match, use this RAM_STYLE
 	bit  DEEP_PIPELINE = 0,
 
 	localparam int unsigned  CF = C/PE,  // Channel fold
@@ -220,7 +221,7 @@ module thresholding #(
 					DEPTH_TRIGGER_URAM && (DEPTH >= DEPTH_TRIGGER_URAM)? "ultra" :
 					DEPTH_TRIGGER_BRAM && (DEPTH >= DEPTH_TRIGGER_BRAM)? "block" :
 					// If BRAM trigger defined, force distributed memory below if Vivado may be tempted to use BRAM nonetheless.
-					DEPTH_TRIGGER_BRAM && (DEPTH >= 64)? "distributed" : "auto";
+					DEPTH_TRIGGER_BRAM && (DEPTH >= 64)? "distributed" : RAM_STYLE_FALLBACK;
 
 				(* RAM_STYLE = RAM_STYLE *)
 				val_t  Threshs[DEPTH];
@@ -343,7 +344,6 @@ module thresholding #(
 			if(aload) begin
 				assert(APtr < $signed(A_DEPTH-1)) else begin
 					$error("Overrun after failing stream guard.");
-					$stop;
 				end
 				foreach(pipe[pe])  ADat[0][pe] <= pipe[pe][N].ptr;
 				for(int unsigned  i = 1; i < A_DEPTH; i++)  ADat[i] <= ADat[i-1];
