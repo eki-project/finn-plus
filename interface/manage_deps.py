@@ -7,60 +7,11 @@ import shutil
 import subprocess as sp
 from pathlib import Path
 
-from interface.interface_globals import IS_POSIX
+from interface.interface_globals import FINN_BOARDFILES, FINN_DEPS, IS_POSIX, VERILATOR
 
 # Tuple that defines a dep status
 # Example: ("oh-my-xilinx", False, "Wrong commit")
 Status = tuple[str, bool, str]
-
-FINN_DEPS = {
-    "finn-experimental": (
-        "https://github.com/Xilinx/finn-experimental.git",
-        "0724be21111a21f0d81a072fccc1c446e053f851",
-    ),
-    "brevitas": (
-        "https://github.com/iksnagreb/brevitas.git",
-        "003f9f4070c20639790c7b406a28612a089fc502",
-    ),
-    "cnpy": ("https://github.com/rogersce/cnpy.git", "4e8810b1a8637695171ed346ce68f6984e585ef4"),
-    "oh-my-xilinx": (
-        "https://github.com/maltanar/oh-my-xilinx.git",
-        "0b59762f9e4c4f7e5aa535ee9bc29f292434ca7a",
-    ),
-    "finn-hlslib": (
-        "https://github.com/Xilinx/finn-hlslib.git",
-        "5c5ad631e3602a8dd5bd3399a016477a407d6ee7",
-    ),
-    "attention-hlslib": (
-        "https://github.com/iksnagreb/attention-hlslib.git",
-        "afc9720f10e551e1f734e137b21bb6d0a8342177",
-    ),
-}
-
-VERILATOR = ("https://github.com/verilator/verilator", "v4.224")
-
-FINN_BOARDFILES = {
-    "avnet-bdf": (
-        "https://github.com/Avnet/bdf.git",
-        "2d49cfc25766f07792c0b314489f21fe916b639b",
-        Path(),
-    ),
-    "xil-bdf": (
-        "https://github.com/Xilinx/XilinxBoardStore.git",
-        "8cf4bb674a919ac34e3d99d8d71a9e60af93d14e",
-        Path("boards/Xilinx/rfsoc2x2"),
-    ),
-    "rfsoc4x2-bdf": (
-        "https://github.com/RealDigitalOrg/RFSoC4x2-BSP.git",
-        "13fb6f6c02c7dfd7e4b336b18b959ad5115db696",
-        Path("board_files/rfsoc4x2"),
-    ),
-    "kv260-som-bdf": (
-        "https://github.com/Xilinx/XilinxBoardStore.git",
-        "98e0d3efc901f0b974006bc4370c2a7ad8856c79",
-        Path("boards/Xilinx/kv260_som"),
-    ),
-}
 
 
 def check_commit(repo: Path, commit: str) -> tuple[bool, str]:
