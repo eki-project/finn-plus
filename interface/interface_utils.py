@@ -7,8 +7,7 @@ import yaml
 from pathlib import Path
 from rich.console import Console
 
-from interface.interface_globals import REQUIRED_VERILATOR_VERSION
-from interface.manage_deps import check_verilator_version
+from interface.manage_deps import REQUIRED_VERILATOR_VERSION, check_verilator_version
 
 
 def error(msg: str) -> None:

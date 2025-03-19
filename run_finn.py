@@ -11,12 +11,8 @@ from rich.table import Table
 
 from finn.builder.build_dataflow import build_dataflow_cfg
 from finn.builder.build_dataflow_config import DataflowBuildConfig
-from interface.interface_globals import (
-    IS_POSIX,
-    _resolve_settings_path,
-    get_settings,
-    settings_found,
-)
+from interface import IS_POSIX
+from interface.interface_globals import _resolve_settings_path, get_settings, settings_found
 from interface.interface_utils import (
     assert_path_valid,
     check_verilator,
@@ -107,6 +103,10 @@ def prepare_finn(
     workers = resolve_num_workers(num_workers, settings)
     status(f"Using {workers} workers.")
     os.environ["NUM_DEFAULT_WORKERS"] = str(workers)
+
+    # Set FINN_ROOT
+    os.environ["FINN_ROOT"] = str(Path(__file__).parent)
+    status(f"FINN_ROOT set to {Path(__file__).parent}")
 
 
 @click.group()
