@@ -11,17 +11,24 @@ from rich.table import Table
 
 from finn.builder.build_dataflow import build_dataflow_cfg
 from finn.builder.build_dataflow_config import DataflowBuildConfig
-from interface.interface_globals import IS_POSIX, get_settings, settings_found
+from interface.interface_globals import (
+    IS_POSIX,
+    _resolve_settings_path,
+    get_settings,
+    settings_found,
+)
 from interface.interface_utils import (
     assert_path_valid,
     check_verilator,
     error,
     resolve_build_dir,
+    resolve_deps_path,
+    resolve_num_workers,
     set_synthesis_tools_paths,
     status,
     warning,
 )
-from interface.manage_deps import resolve_deps_path, try_install_verilator, update_dependencies
+from interface.manage_deps import try_install_verilator, update_dependencies
 from interface.manage_tests import run_test
 
 
@@ -66,11 +73,16 @@ def prepare_finn(
     # Resolve settings and dependencies, error if this doesnt work
     if not settings_found():
         warning("Settings file could not be found. Using defaults.")
+    else:
+        sp = _resolve_settings_path()
+        status(f"Using settings file at {sp}")
     settings = get_settings(force_update=True)
     deps_path = resolve_deps_path(deps, settings)
     if deps_path is None:
         error("Dependency location could not be resolved!")
         sys.exit(1)
+    else:
+        status(f"Using dependency path: {deps_path}")
     os.environ["FINN_DEPS"] = str(deps_path)
 
     # Update / Install all dependencies
@@ -80,17 +92,21 @@ def prepare_finn(
     # Check synthesis tools
     set_synthesis_tools_paths()
 
-    # TODO: Add OHMYXILINX to PATH
+    # Add OHMYXILINX?
+    os.environ["OHMYXILINX"] = str(deps_path / "oh-my-xilinx")
+    os.environ["PATH"] = os.environ["PATH"] + ":" + os.environ["OHMYXILINX"]
 
     # Resolve the build directory
-    resolved_build_dir = resolve_build_dir(build_dir, settings)
+    resolved_build_dir = resolve_build_dir(flow_config, build_dir, settings)
     if resolved_build_dir is None:
         error("Could not resolve the build directory!")
         sys.exit(1)
     os.environ["FINN_BUILD_DIR"] = str(resolved_build_dir)
 
     # Resolve number of workers
-    # TODO
+    workers = resolve_num_workers(num_workers, settings)
+    status(f"Using {workers} workers.")
+    os.environ["NUM_DEFAULT_WORKERS"] = str(workers)
 
 
 @click.group()
@@ -100,13 +116,7 @@ def main_group() -> None:
 
 @click.command(help="Build a hardware design")
 @click.option("--dependency-path", "-d", default="")
-@click.option(
-    "--no-local-temps",
-    "-l",
-    help="If given, stores temporary files in the "
-    "default global location and not next to the config.",
-    is_flag=True,
-)
+@click.option("--build-path", "-b", help="Specify a build temp path of your choice", default="")
 @click.option(
     "--num-workers",
     "-n",
@@ -116,16 +126,15 @@ def main_group() -> None:
 )
 @click.argument("config")
 @click.argument("model")
-def build(
-    dependency_path: str, no_local_temps: bool, num_workers: int, config: str, model: str
-) -> None:
+def build(dependency_path: str, build_path: str, num_workers: int, config: str, model: str) -> None:
     config_path = Path(config)
     model_path = Path(model)
+    build_dir = Path(build_path) if build_path != "" else None
     assert_path_valid(config_path)
     assert_path_valid(model_path)
     dep_path = Path(dependency_path) if dependency_path != "" else None
     status(f"Starting FINN build with config {config_path.name} and model {model_path.name}!")
-    prepare_finn(dep_path, config_path, not no_local_temps, num_workers)
+    prepare_finn(dep_path, config_path, build_dir, num_workers)
     status("Creating dataflow build config...")
     dfbc: DataflowBuildConfig | None = None
     match config_path.suffix:
@@ -153,13 +162,7 @@ def build(
 
 @click.command(help="Run a script in a FINN environment")
 @click.option("--dependency-path", "-d", default="")
-@click.option(
-    "--no-local-temps",
-    "-l",
-    help="If given, stores temporary files in the "
-    "default global location and not next to the config.",
-    is_flag=True,
-)
+@click.option("--build-path", "-b", help="Specify a build temp path of your choice", default="")
 @click.option(
     "--num-workers",
     "-n",
@@ -168,16 +171,12 @@ def build(
     show_default=True,
 )
 @click.argument("script")
-def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: str) -> None:
+def run(dependency_path: str, build_path: str, num_workers: int, script: str) -> None:
     script_path = Path(script)
+    build_dir = Path(build_path) if build_path != "" else None
     assert_path_valid(script_path)
     dep_path = Path(dependency_path) if dependency_path != "" else None
-    prepare_finn(
-        deps=dep_path,
-        flow_config=script_path,
-        local_temps=not no_local_temps,
-        num_workers=num_workers,
-    )
+    prepare_finn(dep_path, script_path, build_dir, num_workers)
     Console().rule(
         f"[bold cyan]Starting script "
         f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
@@ -198,10 +197,14 @@ def run(dependency_path: str, no_local_temps: bool, num_workers: int, script: st
 @click.option("--dependency-path", "-d", default="")
 @click.option("--num-workers", "-n", default=-1, show_default=True)
 @click.option("--num-test-workers", "-t", default="auto", show_default=True)
-def test(variant: str, dependency_path: str, num_workers: int, num_test_workers: str) -> None:
+@click.option("--build-path", "-b", help="Specify a build temp path of your choice", default="")
+def test(
+    variant: str, dependency_path: str, num_workers: int, num_test_workers: str, build_path: str
+) -> None:
     console = Console()
+    build_dir = Path(build_path) if build_path != "" else None
     dep_path = Path(dependency_path) if dependency_path != "" else None
-    prepare_finn(dep_path, Path(), False, num_workers)
+    prepare_finn(dep_path, Path(), build_dir, num_workers)
     console.rule("RUNNING TESTS")
     run_test(variant, num_test_workers)
 
@@ -221,7 +224,7 @@ def deps() -> None:
 )
 def update(path: str) -> None:
     dep_path = Path(path) if path != "" else None
-    prepare_finn(dep_path, Path(), False, 1)
+    prepare_finn(dep_path, Path(), None, 1)
 
 
 @click.group(help="Manage FINN settings")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import psutil
 import sys
 import yaml
 from pathlib import Path
@@ -78,7 +79,7 @@ def set_synthesis_tools_paths() -> None:
             os.environ[envname.replace("XILINX_", "") + "_PATH"] = str(p)
 
 
-def resolve_build_dir(build_dir: Path | None, settings: dict) -> Path | None:
+def resolve_build_dir(flow_config: Path, build_dir: Path | None, settings: dict) -> Path | None:
     """Resolve the build dir.
     Priority is command line argument > Environment variable > Settings Default > Fixed default"""
     if build_dir is not None:
@@ -87,7 +88,7 @@ def resolve_build_dir(build_dir: Path | None, settings: dict) -> Path | None:
         return Path(os.environ["FINN_BUILD_DIR"])
     if "FINN_BUILD_DIR" in settings.keys():
         return Path(settings["FINN_BUILD_DIR"])
-    return None
+    return flow_config.parent / "FINN_TMP"
 
 
 def resolve_deps_path(deps: Path | None, settings: dict) -> Path | None:
@@ -100,6 +101,20 @@ def resolve_deps_path(deps: Path | None, settings: dict) -> Path | None:
     if "FINN_DEPS" in settings.keys():
         return Path(settings["FINN_DEPS"])
     return None
+
+
+def resolve_num_workers(num: int, settings: dict) -> int:
+    """Resolve the number of workers to use. Uses 75% of cores available as default fallback"""
+    if num > -1:
+        return num
+    if "NUM_DEFAULT_WORKERS" in os.environ.keys() and os.environ["NUM_DEFAULT_WORKERS"] != "":
+        return int(os.environ["NUM_DEFAULT_WORKERS"])
+    if "NUM_DEFAULT_WORKERS" in settings.keys():
+        return int(settings["NUM_DEFAULT_WORKERS"])
+    cpus = psutil.cpu_count()
+    if cpus is None or cpus == 1:
+        return 1
+    return int(cpus * 0.75)
 
 
 def read_yaml(p: Path) -> dict | None:

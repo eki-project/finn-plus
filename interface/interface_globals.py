@@ -1,8 +1,9 @@
 from __future__ import annotations
+
 import os
 from pathlib import Path
 
-from interface.interface_utils import read_yaml
+from interface.interface_utils import error, read_yaml
 
 # Variables that need to be Path() objects
 _SETTINGS_PATH_VARS = ["DEFAULT_DEPS", "FINN_ROOT", "ENVVAR_CONFIG", "FINN_DEFAULT_BUILD_DIR"]
@@ -10,7 +11,7 @@ _SETTINGS_PATH_VARS = ["DEFAULT_DEPS", "FINN_ROOT", "ENVVAR_CONFIG", "FINN_DEFAU
 # Default fallback settings
 _SETTINGS: dict[str, Path | str] = {
     "DEFAULT_DEPS": Path.home() / ".finn" / "deps",
-    "FINN_ROOT": Path(__file__).parent.parent,
+    "FINN_ROOT": Path(__file__).parent,
     "ENVVAR_CONFIG": Path.home() / ".finn" / "envvars.yaml",
     "FINN_DEFAULT_BUILD_DIR": Path("/tmp/FINN_TMP"),
 }
@@ -71,9 +72,22 @@ IS_POSIX = os.name == "posix"
 
 def _resolve_settings_path() -> Path | None:
     """Best effort to find the settings file. If it is found nowhere and isnt provided
-    via an environment variable, return None"""
-    # TODO
-    raise NotImplementedError()
+    via an environment variable (FINN_SETTINGS), return None"""
+    if "FINN_SETTINGS" in os.environ.keys():
+        p = Path(os.environ["FINN_SETTINGS"])
+        if p.exists():
+            return p
+        error(f"Settings path specified via FINN_SETTINGS, but settings could not be found at {p}!")
+        return None
+    paths = [
+        Path(__file__).parent / "settings.yaml",
+        Path.home() / ".finn" / "settings.yaml",
+        Path.home() / ".config" / "settings.yaml",
+    ]
+    for path in paths:
+        if path.exists():
+            return path
+    return None
 
 
 def _update_settings() -> None:
