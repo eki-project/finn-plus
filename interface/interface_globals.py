@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from interface.interface_utils import error, read_yaml
+from interface.interface_utils import error, read_yaml, write_yaml
 
 # Variables that need to be Path() objects
 _SETTINGS_PATH_VARS = ["FINN_DEPS", "FINN_ROOT", "FINN_BUILD_DIR"]
@@ -50,7 +50,23 @@ def _update_settings() -> None:
     for setting_key in temp_settings.keys():
         _SETTINGS[setting_key] = temp_settings[setting_key]
         if setting_key in _SETTINGS_PATH_VARS:
-            _SETTINGS[setting_key] = Path(_SETTINGS[setting_key])
+            _SETTINGS[setting_key] = Path(_SETTINGS[setting_key]).expanduser()
+
+
+def set_settings(s: dict) -> None:
+    """Update the global setting dict"""
+    global _SETTINGS
+    _SETTINGS.update(s)
+
+
+def write_settings() -> None:
+    """Write settings back to the resolved path. If the path cant be resolved, simply return"""
+    global _SETTINGS
+    settings_path = _resolve_settings_path()
+    mod_settings = {key: str(_SETTINGS[key]) for key in _SETTINGS.keys()}
+    if settings_path is None:
+        return
+    write_yaml(mod_settings, settings_path)
 
 
 def get_settings(force_update: bool = False) -> dict:

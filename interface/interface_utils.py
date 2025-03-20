@@ -7,6 +7,7 @@ import yaml
 from pathlib import Path
 from rich.console import Console
 
+from interface import DEBUG
 from interface.manage_deps import REQUIRED_VERILATOR_VERSION, check_verilator_version
 
 
@@ -28,6 +29,12 @@ def status(msg: str) -> None:
 def success(msg: str) -> None:
     """Print a success message"""
     Console().print(f"[bold green]SUCCESS: [/bold green][green]{msg}[/green]")
+
+
+def debug(msg: str) -> None:
+    """Print a debug message. Only done when the flag is set"""
+    if DEBUG:
+        Console().print(f"[bold blue]DEBUG: [/bold blue][blue]{msg}[/blue]")
 
 
 def assert_path_valid(p: Path) -> None:

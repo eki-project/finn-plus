@@ -12,7 +12,13 @@ from rich.table import Table
 from finn.builder.build_dataflow import build_dataflow_cfg
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from interface import IS_POSIX
-from interface.interface_globals import _resolve_settings_path, get_settings, settings_found
+from interface.interface_globals import (
+    _resolve_settings_path,
+    get_settings,
+    set_settings,
+    settings_found,
+    write_settings,
+)
 from interface.interface_utils import (
     assert_path_valid,
     check_verilator,
@@ -23,6 +29,7 @@ from interface.interface_utils import (
     set_synthesis_tools_paths,
     status,
     warning,
+    write_yaml,
 )
 from interface.manage_deps import try_install_verilator, update_dependencies
 from interface.manage_tests import run_test
@@ -127,12 +134,12 @@ def main_group() -> None:
 @click.argument("config")
 @click.argument("model")
 def build(dependency_path: str, build_path: str, num_workers: int, config: str, model: str) -> None:
-    config_path = Path(config)
-    model_path = Path(model)
-    build_dir = Path(build_path) if build_path != "" else None
+    config_path = Path(config).expanduser()
+    model_path = Path(model).expanduser()
+    build_dir = Path(build_path).expanduser() if build_path != "" else None
     assert_path_valid(config_path)
     assert_path_valid(model_path)
-    dep_path = Path(dependency_path) if dependency_path != "" else None
+    dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
     status(f"Starting FINN build with config {config_path.name} and model {model_path.name}!")
     prepare_finn(dep_path, config_path, build_dir, num_workers)
     status("Creating dataflow build config...")
@@ -172,10 +179,10 @@ def build(dependency_path: str, build_path: str, num_workers: int, config: str, 
 )
 @click.argument("script")
 def run(dependency_path: str, build_path: str, num_workers: int, script: str) -> None:
-    script_path = Path(script)
-    build_dir = Path(build_path) if build_path != "" else None
+    script_path = Path(script).expanduser()
+    build_dir = Path(build_path).expanduser() if build_path != "" else None
     assert_path_valid(script_path)
-    dep_path = Path(dependency_path) if dependency_path != "" else None
+    dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
     prepare_finn(dep_path, script_path, build_dir, num_workers)
     Console().rule(
         f"[bold cyan]Starting script "
@@ -202,8 +209,8 @@ def test(
     variant: str, dependency_path: str, num_workers: int, num_test_workers: str, build_path: str
 ) -> None:
     console = Console()
-    build_dir = Path(build_path) if build_path != "" else None
-    dep_path = Path(dependency_path) if dependency_path != "" else None
+    build_dir = Path(build_path).expanduser() if build_path != "" else None
+    dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
     prepare_finn(dep_path, Path(), build_dir, num_workers)
     console.rule("RUNNING TESTS")
     run_test(variant, num_test_workers)
@@ -223,7 +230,7 @@ def deps() -> None:
     show_default=True,
 )
 def update(path: str) -> None:
-    dep_path = Path(path) if path != "" else None
+    dep_path = Path(path).expanduser() if path != "" else None
     prepare_finn(dep_path, Path(), None, 1)
 
 
@@ -233,10 +240,74 @@ def config() -> None:
     pass
 
 
+def _command_get_settings():
+    sp = _resolve_settings_path()
+    if sp is None:
+        error("Could not find a settings file. Stopping")
+        sys.exit(1)
+    status(f"Found settings at {sp}")
+    return get_settings(force_update=True)
+
+
+@click.command("list", help="List the settings files contents")
+def config_list() -> None:
+    console = Console()
+    for k, v in _command_get_settings().items():
+        console.print(f"[blue]{k}[/blue]: {v}")
+
+
+@click.command("get", help="Get a specific key from the settings")
+@click.argument("key")
+def config_get(key: str) -> None:
+    settings = _command_get_settings()
+    if key not in settings.keys():
+        error(f"Key {key} could not be found in the settings file!")
+        sys.exit(1)
+    Console().print(f"[blue]{key}[/blue]: {settings[key]}")
+
+
+@click.command("set", help="Set a key to a given value")
+@click.argument("key")
+@click.argument("value")
+def config_set(key: str, value: str) -> None:
+    if not settings_found():
+        error(
+            "Settings file not found. To create a template one at the "
+            'default location run "finn config create"'
+        )
+        sys.exit(1)
+    else:
+        settings = get_settings(force_update=True)
+        settings[key] = value
+    set_settings(settings)
+    write_settings()
+
+
+@click.command(
+    "create",
+    help="Create a template settings file. If one exists at the given path, "
+    "its overwritten. Please enter a directory, no filename",
+)
+@click.argument("path", default="~/.finn/")
+def config_create(path: str) -> None:
+    p = Path(path).expanduser()
+    if p.suffix != "":
+        error("Please specify a path to a directory, not a file!")
+        sys.exit(1)
+    complete_path = p / "settings.yaml"
+    settings = get_settings(force_update=False)
+    msettings = {key: str(settings[key]) for key in settings.keys()}
+    if not write_yaml(msettings, complete_path):
+        error(f"Writing to {complete_path} failed!")
+        sys.exit(1)
+    status(f"File written to {complete_path}")
+
+
 def main() -> None:
-    # config.add_command(config_list)
-    # config.add_command(config_get)
-    # config.add_command(config_set)
+    config.add_command(config_list)
+    config.add_command(config_create)
+    config.add_command(config_get)
+    config.add_command(config_set)
     deps.add_command(update)
     main_group.add_command(config)
     main_group.add_command(deps)
