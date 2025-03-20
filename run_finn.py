@@ -7,7 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 from rich.console import Console
-from rich.table import Table
 
 from finn.builder.build_dataflow import build_dataflow_cfg
 from finn.builder.build_dataflow_config import DataflowBuildConfig
@@ -31,38 +30,8 @@ from interface.interface_utils import (
     warning,
     write_yaml,
 )
-from interface.manage_deps import try_install_verilator, update_dependencies
+from interface.manage_deps import update_dependencies
 from interface.manage_tests import run_test
-
-
-def update_all_deps(path: Path) -> None:
-    """Update dependencies and notify the user of the results. If updating fails,
-    this ends the execution"""
-    console = Console()
-    with console.status("[bold cyan]Gathering dependencies...[/bold cyan]") as _:
-        update_status = update_dependencies(path)
-    with console.status("[bold cyan]Installing verilator...[/bold cyan]") as _:
-        vname, vsuc, vmsg = try_install_verilator(path)
-    table = Table()
-    table.add_column("Name")
-    table.add_column("Status")
-    table.add_column("Message")
-    any_failed = False
-    for pkg_name, suc, msg in update_status:
-        if not suc:
-            any_failed = True
-        table.add_row(
-            pkg_name,
-            "[bold green]Success[/bold green]" if suc else "[bold red]Failed[/bold red]",
-            msg,
-        )
-    table.add_row(
-        vname, "[bold green]Success[/bold green]" if vsuc else "[bold red]Failed[/bold red]", vmsg
-    )
-    console.print(table)
-    if any_failed:
-        error("Dependency update failed. Stopping.")
-        sys.exit(1)
 
 
 def prepare_finn(
@@ -89,7 +58,7 @@ def prepare_finn(
     os.environ["FINN_DEPS"] = str(deps_path)
 
     # Update / Install all dependencies
-    update_all_deps(deps_path)
+    update_dependencies(deps_path)
     check_verilator()
 
     # Check synthesis tools

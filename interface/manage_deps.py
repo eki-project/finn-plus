@@ -5,7 +5,10 @@ import os
 import shlex
 import shutil
 import subprocess as sp
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from rich.live import Live
+from rich.table import Table
 
 from interface import IS_POSIX
 
@@ -75,64 +78,135 @@ def run_silent(s: str, loc: str | None | Path) -> None:
     sp.run(shlex.split(s, posix=IS_POSIX), cwd=loc, stdout=sp.DEVNULL, stderr=sp.DEVNULL)
 
 
-def update_dependencies(location: Path) -> list[Status]:
-    """Update dependencies at the given path. Returns a list of status
-    reports for the main script to display."""
+def make_status_table(data: dict[str, tuple[str, str]]) -> Table:
+    """Get a dict of the form data[name] = (status, color) and convert it into a table"""
+    t = Table()
+    t.add_column("Name")
+    t.add_column("Status")
+    for name, (status, color) in data.items():
+        t.add_row(name, f"[bold {color}]{status}[/bold {color}]")
+    return t
 
+
+def update_dependencies(location: Path) -> None:
+    """Update dependencies at the given path. Display live status"""
     if not location.exists():
         location.mkdir(parents=True)
-    status = []
-    for pkg_name, (giturl, commit) in FINN_DEPS.items():
-        target = (location / pkg_name).absolute()
-        if target.exists():
-            run_silent("git pull", target)
-        else:
-            run_silent(f"git clone {giturl} {target}", None)
-        run_silent(f"git checkout {commit}", target)
-        success, read_commit = check_commit(target, commit)
-        if not success:
-            shutil.rmtree(target, ignore_errors=True)
-            run_silent(f"git clone {giturl} {target}", None)
+    current_state = {}
+    with Live(make_status_table(current_state)) as live:
+
+        def update_status(key: str, msg: str, color: str) -> None:
+            current_state[key] = (msg, color)
+            live.update(make_status_table(current_state))
+
+        def pull_dep(args: tuple) -> None:
+            pkg_name, giturl, commit = args
+            target = (location / pkg_name).absolute()
+            update_status(pkg_name, "Pulling data...", "orange1")
+            if target.exists():
+                run_silent("git pull", target)
+            else:
+                run_silent(f"git clone {giturl} {target}", None)
+            update_status(pkg_name, "Checking out commit...", "orange1")
             run_silent(f"git checkout {commit}", target)
             success, read_commit = check_commit(target, commit)
-        status.append(
-            (
-                pkg_name,
-                success,
-                "Update successfull!"
-                if success
-                else f"Failed. Got commit {read_commit}, expected {commit}",
-            )
-        )
-    for pkg_name, (giturl, commit, copy_from_here) in FINN_BOARDFILES.items():
-        clone_location = location / pkg_name
-        copy_source = clone_location / copy_from_here
-        copy_target = location / "board_files" / copy_source.name
-        if clone_location.exists():
-            run_silent("git pull", clone_location)
-        else:
-            run_silent(f"git clone {giturl} {clone_location}", None)
-        run_silent(f"git checkout {commit}", clone_location)
-        success, read_commit = check_commit(clone_location, commit)
-        if not success:
-            shutil.rmtree(clone_location, ignore_errors=True)
-            run_silent(f"git clone {giturl} {clone_location}", None)
+            if not success:
+                update_status(pkg_name, "Failed pulling. Retrying...", "orange1")
+                shutil.rmtree(target, ignore_errors=True)
+                run_silent(f"git clone {giturl} {target}", None)
+                run_silent(f"git checkout {commit}", target)
+                success, read_commit = check_commit(target, commit)
+            if success:
+                update_status(pkg_name, "Dependency ready!", "green")
+            else:
+                update_status(
+                    pkg_name,
+                    f"Installation failed! " f"Expected commit {commit} but got {read_commit}",
+                    "red",
+                )
+
+        def pull_board(args: tuple) -> None:
+            pkg_name, giturl, commit, copy_from_here = args
+            clone_location = location / pkg_name
+            copy_source = clone_location / copy_from_here
+            copy_target = location / "board_files" / copy_source.name
+            update_status(pkg_name, "Pulling data...", "orange1")
+            if clone_location.exists():
+                run_silent("git pull", clone_location)
+            else:
+                run_silent(f"git clone {giturl} {clone_location}", None)
+            update_status(pkg_name, "Checking out commit...", "orange1")
             run_silent(f"git checkout {commit}", clone_location)
             success, read_commit = check_commit(clone_location, commit)
-        if copy_source != clone_location:
-            shutil.copytree(copy_source, copy_target, dirs_exist_ok=True)
-        else:
-            run_silent(f"cp -r {copy_source}/* {copy_target}", None)
-        status.append(
-            (
-                pkg_name,
-                success,
-                "Update successfull!"
-                if success
-                else f"Failed. Got commit {read_commit}, expected {commit}",
+            if not success:
+                update_status(pkg_name, "Failed pulling. Retrying...", "orange1")
+                shutil.rmtree(clone_location, ignore_errors=True)
+                run_silent(f"git clone {giturl} {clone_location}", None)
+                run_silent(f"git checkout {commit}", clone_location)
+                success, read_commit = check_commit(clone_location, commit)
+            if success:
+                update_status(pkg_name, "Copying boardfiles over...", "orange1")
+            else:
+                update_status(
+                    pkg_name,
+                    f"Installation failed! " f"Expected commit {commit} but got {read_commit}",
+                    "red",
+                )
+            if copy_source != clone_location:
+                shutil.copytree(copy_source, copy_target, dirs_exist_ok=True)
+            else:
+                run_silent(f"cp -r {copy_source}/* {copy_target}", None)
+            update_status(pkg_name, "Dependency ready!", "green")
+
+        def try_install_verilator() -> None:
+            existing_verilator = check_verilator_version()
+            if existing_verilator is not None and existing_verilator >= REQUIRED_VERILATOR_VERSION:
+                update_status("verilator", "Found existing verilator version!", "green")
+                return
+            verilator_git, verilator_checkout = VERILATOR
+            target = (location / "verilator").absolute()
+            configure_script = target / "configure"
+            if "VERILATOR_ROOT" in os.environ.keys():
+                del os.environ["VERILATOR_ROOT"]
+            if not target.exists() or not configure_script.exists():
+                update_status("verilator", "Pulling repository", "orange1")
+                run_silent(f"git clone {verilator_git} {target}", None)
+                run_silent(f"git checkout {verilator_checkout}", target)
+            update_status("verilator", "Running autoconf...", "orange1")
+            res1 = sp.run(["autoconf"], cwd=target, capture_output=True, text=True)
+            os.environ["VERILATOR_ROOT"] = str(target)
+            update_status("verilator", "Running configure...", "orange1")
+            res2 = sp.run(
+                shlex.split("./configure", posix=IS_POSIX),
+                cwd=target,
+                capture_output=True,
+                text=True,
             )
-        )
-    return status
+            update_status("verilator", "Running make...", "orange1")
+            res3 = sp.run(["make"], cwd=target, capture_output=True, text=True)
+            err = None
+            if res1.returncode != 0 or res2.returncode != 0 or res3.returncode != 0:
+                del os.environ["VERILATOR_ROOT"]
+            if res1.returncode != 0:
+                err = res1.stderr.split("\n")[-1]
+            elif res2.returncode != 0:
+                err = res2.stderr.split("\n")[-2]
+            elif res3.returncode != 0:
+                err = res3.stderr.split("\n")[-1]
+            if err is not None:
+                update_status("verilator", f"Error found: {err}", "red")
+                return
+            os.environ["VERILATOR_ROOT"] = str(target)
+            os.environ["PATH"] = f"{target}/bin:" + os.environ["PATH"]
+            update_status("verilator", "Verilator configured!", "green")
+
+        with ThreadPoolExecutor(100) as tpe:
+            for name, (giturl, commit) in FINN_DEPS.items():
+                tpe.submit(pull_dep, (name, giturl, commit))
+            for name, (giturl, commit, copy_from_here) in FINN_BOARDFILES.items():
+                tpe.submit(pull_board, (name, giturl, commit, copy_from_here))
+            tpe.submit(try_install_verilator)
+            tpe.shutdown()
 
 
 def check_verilator_version() -> str | None:
@@ -147,39 +221,3 @@ def check_verilator_version() -> str | None:
         return result.stdout.split(" ")[1]
     except (IndexError, AttributeError):
         return None
-
-
-def try_install_verilator(location: Path) -> Status:
-    """Try installing verilator at the given location. If a working version is already in scope,
-    return."""
-    existing_verilator = check_verilator_version()
-    if existing_verilator is not None and existing_verilator >= "4.224":
-        return ("verilator", True, "Existing verilator version found!")
-    verilator_git, verilator_checkout = VERILATOR
-    target = (location / "verilator").absolute()
-    configure_script = target / "configure"
-    if "VERILATOR_ROOT" in os.environ.keys():
-        del os.environ["VERILATOR_ROOT"]
-    if not target.exists() or not configure_script.exists():
-        run_silent(f"git clone {verilator_git} {target}", None)
-        run_silent(f"git checkout {verilator_checkout}", target)
-    res1 = sp.run(["autoconf"], cwd=target, capture_output=True, text=True)
-    os.environ["VERILATOR_ROOT"] = str(target)
-    res2 = sp.run(
-        shlex.split("./configure", posix=IS_POSIX), cwd=target, capture_output=True, text=True
-    )
-    res3 = sp.run(["make"], cwd=target, capture_output=True, text=True)
-    err = None
-    if res1.returncode != 0 or res2.returncode != 0 or res3.returncode != 0:
-        del os.environ["VERILATOR_ROOT"]
-    if res1.returncode != 0:
-        err = res1.stderr.split("\n")[-1]
-    elif res2.returncode != 0:
-        err = res2.stderr.split("\n")[-2]
-    elif res3.returncode != 0:
-        err = res3.stderr.split("\n")[-1]
-    if err is not None:
-        return ("verilator", False, f"{err}")
-    os.environ["VERILATOR_ROOT"] = str(target)
-    os.environ["PATH"] = f"{target}/bin:" + os.environ["PATH"]
-    return ("verilator", True, f"Configured at {target}. Envvar set.")
