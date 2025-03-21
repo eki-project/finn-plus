@@ -1,3 +1,3 @@
-[submodule "rastreamlining-fpl25"]
+[submodule "benchmarking/dut/rastreamlining-fpl25"]
 	path = benchmarking/dut/rastreamlining-fpl25
 	url = git@github.com:maltanar/rastreamlining-fpl25.git
