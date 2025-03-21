@@ -86,6 +86,10 @@ Pre-Install:
     - module load devel/Autoconf/2.71-GCCcore-11.3.0
     - module load lang/Bison/3.8.2-GCCcore-11.3.0
     - module load lang/flex/2.6.4-GCCcore-11.3.0
+    # Install current version of Poetry
+    - python3 -m venv poetry-install
+    - poetry-install/bin/pip install poetry
+    - alias poetry=poetry-install/bin/poetry
   script:
     # create virtual environment and install Python dependencies,
     # cache resulting poetry.lock & .venv/ directory for following jobs
@@ -138,6 +142,10 @@ FINN Test Suite 2022.2:
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
     - ulimit -s unlimited # Increase stack size limit
+    # Install current version of Poetry
+    - python3 -m venv poetry-install
+    - poetry-install/bin/pip install poetry
+    - alias poetry=poetry-install/bin/poetry
   script:
     # create virtual environment (.venv/) and install Python dependencies,
     # should be cached from previous job
@@ -171,3 +179,7 @@ FINN Test Suite 2024.2:
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
     - ulimit -s unlimited # Increase stack size limit
+    # Install current version of Poetry
+    - python3 -m venv poetry-install
+    - poetry-install/bin/pip install poetry
+    - alias poetry=poetry-install/bin/poetry
