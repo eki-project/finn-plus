@@ -200,6 +200,7 @@ Bench (Manual):
   variables:
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
     BENCH_CFG: "manual"
+    GIT_SUBMODULE_STRATEGY: "normal"
 
 Bench:
   stage: test
