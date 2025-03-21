@@ -86,26 +86,41 @@ def set_synthesis_tools_paths() -> None:
 
 
 def resolve_build_dir(flow_config: Path, build_dir: Path | None, settings: dict) -> Path | None:
-    """Resolve the build dir.
-    Priority is command line argument > Environment variable > Settings Default > Fixed default"""
+    """Resolve the build dir. By default this should return FINN_TMP next to the flow config.
+    Priority is command line argument > Environment variable > Settings Default > Fixed default.
+    If the given path is relative and found in the envvar or settings file,
+    add it to the flow_config_path"""
     if build_dir is not None:
         return build_dir
     if "FINN_BUILD_DIR" in os.environ.keys():
-        return Path(os.environ["FINN_BUILD_DIR"])
+        p = Path(os.environ["FINN_BUILD_DIR"])
+        if not p.is_absolute():
+            return flow_config.parent / p
+        return p
     if "FINN_BUILD_DIR" in settings.keys():
-        return Path(settings["FINN_BUILD_DIR"])
+        p = Path(settings["FINN_BUILD_DIR"])
+        if not p.is_absolute():
+            return flow_config.parent / p
+        return p
     return flow_config.parent / "FINN_TMP"
 
 
 def resolve_deps_path(deps: Path | None, settings: dict) -> Path | None:
-    """Try to resolve the dependency path. If none is valid, return None
+    """Try to resolve the dependency path. If none is valid, return None. If the path is relative,
+    and not given by command line, append it to the FINN directory.
     Priority is command line argument > Environment variable > Settings Default > Fixed default"""
     if deps is not None:
         return deps
     if "FINN_DEPS" in os.environ.keys():
-        return Path(os.environ["FINN_DEPS"])
+        p = Path(os.environ["FINN_DEPS"])
+        if not p.is_absolute():
+            return Path(__file__).parent.parent / p
+        return p
     if "FINN_DEPS" in settings.keys():
-        return Path(settings["FINN_DEPS"])
+        p = Path(settings["FINN_DEPS"])
+        if not p.is_absolute():
+            return Path(__file__).parent.parent / p
+        return p
     return None
 
 

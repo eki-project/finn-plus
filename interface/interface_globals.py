@@ -9,10 +9,10 @@ from interface.interface_utils import error, read_yaml, write_yaml
 _SETTINGS_PATH_VARS = ["FINN_DEPS", "FINN_ROOT", "FINN_BUILD_DIR"]
 
 # Default fallback settings
+# FINN_BUILD_DIR is not existent. It should only be loaded from a settings file!
 _SETTINGS: dict[str, Path | str] = {
     "FINN_DEPS": Path.home() / ".finn" / "deps",
     "FINN_ROOT": Path(__file__).parent,
-    "FINN_BUILD_DIR": Path("/tmp/FINN_TMP"),
 }
 
 
