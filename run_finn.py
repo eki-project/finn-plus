@@ -55,7 +55,7 @@ def prepare_finn(
         sys.exit(1)
     else:
         status(f"Using dependency path: {deps_path}")
-    os.environ["FINN_DEPS"] = str(deps_path)
+    os.environ["FINN_DEPS"] = str(deps_path.absolute())
 
     # Update / Install all dependencies
     update_dependencies(deps_path)
@@ -65,7 +65,7 @@ def prepare_finn(
     set_synthesis_tools_paths()
 
     # Add OHMYXILINX?
-    os.environ["OHMYXILINX"] = str(deps_path / "oh-my-xilinx")
+    os.environ["OHMYXILINX"] = str((deps_path / "oh-my-xilinx").absolute())
     os.environ["PATH"] = os.environ["PATH"] + ":" + os.environ["OHMYXILINX"]
 
     # Resolve the build directory
@@ -73,7 +73,7 @@ def prepare_finn(
     if resolved_build_dir is None:
         error("Could not resolve the build directory!")
         sys.exit(1)
-    os.environ["FINN_BUILD_DIR"] = str(resolved_build_dir)
+    os.environ["FINN_BUILD_DIR"] = str(resolved_build_dir.absolute())
     status(f"Build directory set to: {resolved_build_dir}")
 
     # Resolve number of workers
@@ -82,7 +82,7 @@ def prepare_finn(
     os.environ["NUM_DEFAULT_WORKERS"] = str(workers)
 
     # Set FINN_ROOT
-    os.environ["FINN_ROOT"] = str(Path(__file__).parent)
+    os.environ["FINN_ROOT"] = str(Path(__file__).parent.absolute())
     status(f"FINN_ROOT set to {Path(__file__).parent}")
 
 

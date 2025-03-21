@@ -51,6 +51,7 @@ __pycache__/*
 tags
 poetry.lock
 *.code-workspace
+.env
 
 # Package files
 *.egg
