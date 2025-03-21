@@ -117,11 +117,12 @@ def sim_power_report(results_path, project_path, in_width, out_width, dtype_widt
         json_file.write(json.dumps(power_report_dict, indent=2))
 
 class bench():
-    def __init__(self, params, task_id, run_id, artifacts_dir, save_dir, debug=True):
+    def __init__(self, params, task_id, run_id, work_dir, artifacts_dir, save_dir, debug=True):
         super().__init__()
         self.params = params
         self.task_id = task_id
         self.run_id = run_id
+        self.work_dir = work_dir
         self.artifacts_dir = artifacts_dir
         self.save_dir = save_dir
         self.debug = debug
@@ -175,7 +176,7 @@ class bench():
         ### SETUP ###
         # Use a temporary dir for buildflow-related files (next to FINN_BUILD_DIR)
         # Ensure it exists but is empty (clear potential artifacts from previous runs)
-        tmp_buildflow_dir = os.path.join(os.environ["PATH_WORKDIR"], "buildflow")
+        tmp_buildflow_dir = os.path.join(self.work_dir, "buildflow")
         os.makedirs(tmp_buildflow_dir, exist_ok=True)
         delete_dir_contents(tmp_buildflow_dir)
         self.build_inputs["build_dir"] = os.path.join(tmp_buildflow_dir, "build_output") # TODO remove in favor of self.build_dir
@@ -422,7 +423,7 @@ class bench():
         cfg.vitis_opt_strategy=build_cfg.VitisOptStrategy.PERFORMANCE_BEST
         cfg.verbose = False
         cfg.enable_build_pdb_debug = False
-        cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
+        #cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
         cfg.force_python_rtlsim = False
         cfg.split_large_fifos = True
         cfg.enable_instrumentation = True # no IODMA functional correctness/accuracy test yet

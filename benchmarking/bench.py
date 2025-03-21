@@ -5,6 +5,9 @@ import json
 import time
 import traceback
 import onnxruntime as ort
+import importlib
+
+from util import delete_dir_contents
 
 from dut.mvau import bench_mvau
 from dut.resnet50 import bench_resnet50
@@ -36,11 +39,36 @@ def main(config_name):
         return _default_session_options
     ort.capi._pybind_state.get_default_session_options = get_default_session_options_new
 
-    # Gather job array info
-    job_id = int(os.environ["SLURM_JOB_ID"])
-    #TODO: allow portable execution on any platform by making as many env vars as possible optional
-    print("Job launched with ID: %d" % (job_id))
     try:
+        # Launched via SLURM, expect additional CI env vars
+        job_id = int(os.environ["SLURM_JOB_ID"])
+        # experiment_dir = os.environ.get("EXPERIMENT_DIR") # original experiment dir (before potential copy to ramdisk)
+        experiment_dir = os.environ.get("CI_PROJECT_DIR")
+        save_dir = os.path.join(os.environ.get("LOCAL_ARTIFACT_DIR"),
+                            "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + os.environ.get("CI_PIPELINE_NAME"))
+        work_dir = os.environ["PATH_WORKDIR"]
+
+        # Gather benchmarking configs
+        if config_name == "manual":
+            config_path = os.path.join(os.environ.get("LOCAL_CFG_DIR"), os.environ.get("MANUAL_CFG_PATH"))
+        else:
+            configs_path = os.path.join(os.path.dirname(__file__), "cfg")
+            config_select = config_name + ".json"
+            config_path = os.path.join(configs_path, config_select)
+        print("Job launched with SLURM ID: %d" % (job_id))
+    except KeyError:
+        # Launched without SLURM, assume test run on local machine
+        job_id = 0
+        experiment_dir = "bench_output/" + time.strftime("%d_%H_%M")
+        save_dir = "bench_save/" + time.strftime("%d_%H_%M")
+        work_dir = "bench_work"
+        os.makedirs(work_dir, exist_ok=True)
+        delete_dir_contents(work_dir)
+        config_path = config_name # expect caller to provide direct path to a single config file
+        print("Local test job launched without SLURM")
+
+    try:
+        # Launched as SLURM job array
         array_id = int(os.environ["SLURM_ARRAY_JOB_ID"])
         task_id = int(os.environ["SLURM_ARRAY_TASK_ID"])
         task_count = int(os.environ["SLURM_ARRAY_TASK_COUNT"])
@@ -49,36 +77,20 @@ def main(config_name):
             % (array_id, task_id, task_count)
         )
     except KeyError:
+        # Launched as single (SLURM or non-SLURM) job
         array_id = job_id
         task_id = 0
         task_count = 1
         print("Launched as single job")
 
     # Prepare result directory
-    # experiment_dir = os.environ.get("EXPERIMENT_DIR") # original experiment dir (before potential copy to ramdisk)
-    experiment_dir = os.environ.get("CI_PROJECT_DIR")
-
     artifacts_dir = os.path.join(experiment_dir, "build_artifacts")
     os.makedirs(artifacts_dir, exist_ok=True)
     print("Collecting results in path: %s" % artifacts_dir)
-    
-    # local save dir for large artifacts (e.g., build output, tmp dir dump for debugging)
-    if job_id == 0:
-        #DEBUG mode
-        save_dir = experiment_dir + "_save"
-    else:
-        save_dir = os.path.join(os.environ.get("LOCAL_ARTIFACT_DIR"),
-                            "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + os.environ.get("CI_PIPELINE_NAME"))
-    print("Saving additional artifacts in path: %s" % save_dir)
-    os.makedirs(save_dir, exist_ok=True)
 
-    # Gather benchmarking configs
-    if config_name == "manual":
-        config_path = os.path.join(os.environ.get("LOCAL_CFG_DIR"), os.environ.get("MANUAL_CFG_PATH"))
-    else:
-        configs_path = os.path.join(os.path.dirname(__file__), "cfg")
-        config_select = config_name + ".json"
-        config_path = os.path.join(configs_path, config_select)
+    # Prepare local save dir for large artifacts (e.g., build output, tmp dir dump for debugging)
+    os.makedirs(save_dir, exist_ok=True)
+    print("Saving additional artifacts in path: %s" % save_dir)
 
     # Load config
     print("Loading config %s" % (config_path))
@@ -136,7 +148,7 @@ def main(config_name):
         # Create bench object for respective DUT
         if "dut" in params:
             if params["dut"] in dut:
-                bench_object = dut[params["dut"]](params, task_id, run_id, artifacts_dir, save_dir)
+                bench_object = dut[params["dut"]](params, task_id, run_id, work_dir, artifacts_dir, save_dir)
             else:
                 print("ERROR: unknown DUT specified")
                 return 1
