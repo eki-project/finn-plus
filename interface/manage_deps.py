@@ -1,14 +1,19 @@
 """Manage dependencies. Called by run_finn.py"""
 from __future__ import annotations
 
+import concurrent
+import concurrent.futures
 import os
 import shlex
 import shutil
 import subprocess as sp
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from rich.console import Console
 from rich.live import Live
 from rich.table import Table
+from threading import Lock
 
 from interface import IS_POSIX
 
@@ -62,6 +67,10 @@ FINN_BOARDFILES = {
 }
 REQUIRED_VERILATOR_VERSION = VERILATOR[1][1:]  # Remove the "v" from v4.224
 
+# TODO: Change or make it configurable
+GIT_CLONE_TIMEOUT = 120
+
+
 # Tuple that defines a dep status
 # Example: ("oh-my-xilinx", False, "Wrong commit")
 Status = tuple[str, bool, str]
@@ -73,9 +82,16 @@ def check_commit(repo: Path, commit: str) -> tuple[bool, str]:
     return result.stdout.strip() == commit, result.stdout.strip()
 
 
-def run_silent(s: str, loc: str | None | Path) -> None:
+def run_silent(s: str, loc: str | None | Path, timeout: int | None = None) -> None:
     """Run a command silently directly without shell"""
-    sp.run(shlex.split(s, posix=IS_POSIX), cwd=loc, stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+    sp.run(
+        shlex.split(s, posix=IS_POSIX),
+        cwd=loc,
+        stdout=sp.DEVNULL,
+        stderr=sp.DEVNULL,
+        stdin=sp.DEVNULL,
+        timeout=timeout,
+    )
 
 
 def make_status_table(data: dict[str, tuple[str, str]]) -> Table:
@@ -93,20 +109,27 @@ def update_dependencies(location: Path) -> None:
     if not location.exists():
         location.mkdir(parents=True)
     current_state = {}
+    state_lock = Lock()
+    any_failed = False
     with Live(make_status_table(current_state)) as live:
 
         def update_status(key: str, msg: str, color: str) -> None:
+            state_lock.acquire()
             current_state[key] = (msg, color)
             live.update(make_status_table(current_state))
+            state_lock.release()
 
-        def pull_dep(args: tuple) -> None:
+        def pull_dep(args: tuple) -> bool:
             pkg_name, giturl, commit = args
             target = (location / pkg_name).absolute()
             update_status(pkg_name, "Pulling data...", "orange1")
             if target.exists():
                 run_silent("git pull", target)
             else:
-                run_silent(f"git clone {giturl} {target}", None)
+                run_silent(f"git clone {giturl} {target}", None, timeout=GIT_CLONE_TIMEOUT)
+            if not target.exists():
+                update_status(pkg_name, "Bad Git URL or missing network connection", "red")
+                return False
             update_status(pkg_name, "Checking out commit...", "orange1")
             run_silent(f"git checkout {commit}", target)
             success, read_commit = check_commit(target, commit)
@@ -121,11 +144,13 @@ def update_dependencies(location: Path) -> None:
             else:
                 update_status(
                     pkg_name,
-                    f"Installation failed! " f"Expected commit {commit} but got {read_commit}",
+                    f"Installation failed! Expected commit {commit} but got {read_commit}",
                     "red",
                 )
+                return False
+            return True
 
-        def pull_board(args: tuple) -> None:
+        def pull_board(args: tuple) -> bool:
             pkg_name, giturl, commit, copy_from_here = args
             clone_location = location / pkg_name
             copy_source = clone_location / copy_from_here
@@ -134,7 +159,10 @@ def update_dependencies(location: Path) -> None:
             if clone_location.exists():
                 run_silent("git pull", clone_location)
             else:
-                run_silent(f"git clone {giturl} {clone_location}", None)
+                run_silent(f"git clone {giturl} {clone_location}", None, timeout=GIT_CLONE_TIMEOUT)
+            if not clone_location.exists():
+                update_status(pkg_name, "Bad Git URL or missing network connection", "red")
+                return False
             update_status(pkg_name, "Checking out commit...", "orange1")
             run_silent(f"git checkout {commit}", clone_location)
             success, read_commit = check_commit(clone_location, commit)
@@ -152,17 +180,19 @@ def update_dependencies(location: Path) -> None:
                     f"Installation failed! " f"Expected commit {commit} but got {read_commit}",
                     "red",
                 )
+                return False
             if copy_source != clone_location:
                 shutil.copytree(copy_source, copy_target, dirs_exist_ok=True)
             else:
                 run_silent(f"cp -r {copy_source}/* {copy_target}", None)
             update_status(pkg_name, "Dependency ready!", "green")
+            return True
 
-        def try_install_verilator() -> None:
+        def try_install_verilator() -> bool:
             existing_verilator = check_verilator_version()
             if existing_verilator is not None and existing_verilator >= REQUIRED_VERILATOR_VERSION:
                 update_status("verilator", "Found existing verilator version!", "green")
-                return
+                return True
             verilator_git, verilator_checkout = VERILATOR
             target = (location / "verilator").absolute()
             configure_script = target / "configure"
@@ -170,8 +200,11 @@ def update_dependencies(location: Path) -> None:
                 del os.environ["VERILATOR_ROOT"]
             if not target.exists() or not configure_script.exists():
                 update_status("verilator", "Pulling repository", "orange1")
-                run_silent(f"git clone {verilator_git} {target}", None)
+                run_silent(f"git clone {verilator_git} {target}", None, timeout=GIT_CLONE_TIMEOUT)
                 run_silent(f"git checkout {verilator_checkout}", target)
+            if not target.exists():
+                update_status("verilator", "Bad Git URL or missing network connection", "red")
+                return False
             update_status("verilator", "Running autoconf...", "orange1")
             res1 = sp.run(["autoconf"], cwd=target, capture_output=True, text=True)
             os.environ["VERILATOR_ROOT"] = str(target)
@@ -195,18 +228,28 @@ def update_dependencies(location: Path) -> None:
                 err = res3.stderr.split("\n")[-1]
             if err is not None:
                 update_status("verilator", f"Error found: {err}", "red")
-                return
+                return False
             os.environ["VERILATOR_ROOT"] = str(target)
             os.environ["PATH"] = f"{target}/bin:" + os.environ["PATH"]
             update_status("verilator", "Verilator configured!", "green")
+            return True
 
         with ThreadPoolExecutor(100) as tpe:
+            futures = []
             for name, (giturl, commit) in FINN_DEPS.items():
-                tpe.submit(pull_dep, (name, giturl, commit))
+                futures.append(tpe.submit(pull_dep, (name, giturl, commit)))
             for name, (giturl, commit, copy_from_here) in FINN_BOARDFILES.items():
-                tpe.submit(pull_board, (name, giturl, commit, copy_from_here))
-            tpe.submit(try_install_verilator)
-            tpe.shutdown()
+                futures.append(tpe.submit(pull_board, (name, giturl, commit, copy_from_here)))
+            futures.append(tpe.submit(try_install_verilator))
+            for future in concurrent.futures.as_completed(futures):
+                any_failed |= not future.result()
+
+    if any_failed:
+        Console().print(
+            "[bold red]ERROR: [/bold red][red]"
+            "Failed to retrieve all dependencies. Stopping...[/red]"
+        )
+        sys.exit(1)
 
 
 def check_verilator_version() -> str | None:
