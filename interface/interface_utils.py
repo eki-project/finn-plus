@@ -78,11 +78,12 @@ def set_synthesis_tools_paths() -> None:
                 f"Path to the {toolname} tool could not be resolved from {envname}. "
                 "Did you source your settings file?"
             )
+            continue
         p = Path(os.environ[envname]) / "bin" / toolname
         if not p.exists():
             warning(f"Path for {toolname} found, but executable not found in {p}!")
         else:
-            os.environ[envname.replace("XILINX_", "") + "_PATH"] = str(p)
+            os.environ[envname.replace("XILINX_", "") + "_PATH"] = os.environ[envname]
 
 
 def resolve_build_dir(flow_config: Path, build_dir: Path | None, settings: dict) -> Path | None:

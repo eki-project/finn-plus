@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from interface import IS_POSIX
+from interface.interface_utils import error
 
 
 def run_test(variant: str, num_workers: str) -> None:
@@ -72,4 +73,7 @@ def run_test(variant: str, num_workers: str) -> None:
 
             if test_1_returncode or test_2_returncode:
                 sys.exit(1)
+
+        case _:
+            error(f"No such test found: {variant}")
     os.chdir(original_dir)

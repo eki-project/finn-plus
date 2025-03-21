@@ -74,6 +74,7 @@ def prepare_finn(
         error("Could not resolve the build directory!")
         sys.exit(1)
     os.environ["FINN_BUILD_DIR"] = str(resolved_build_dir)
+    status(f"Build directory set to: {resolved_build_dir}")
 
     # Resolve number of workers
     workers = resolve_num_workers(num_workers, settings)
@@ -173,7 +174,12 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
 @click.option("--dependency-path", "-d", default="")
 @click.option("--num-workers", "-n", default=-1, show_default=True)
 @click.option("--num-test-workers", "-t", default="auto", show_default=True)
-@click.option("--build-path", "-b", help="Specify a build temp path of your choice", default="")
+@click.option(
+    "--build-path",
+    "-b",
+    help="Specify a build temp path of your choice",
+    default="/tmp/FINN_TEST_BUILD_DIR",
+)
 def test(
     variant: str, dependency_path: str, num_workers: int, num_test_workers: str, build_path: str
 ) -> None:
@@ -181,6 +187,7 @@ def test(
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
     prepare_finn(dep_path, Path(), build_dir, num_workers)
+    status(f"Using {num_test_workers} test workers")
     console.rule("RUNNING TESTS")
     run_test(variant, num_test_workers)
 
