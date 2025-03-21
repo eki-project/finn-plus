@@ -49,7 +49,7 @@ Poetry will then manage everything Python related.
 > If you have limited space, remember to set Poetry's [cache path](https://python-poetry.org/docs/configuration/#virtualenvspath) to somehwhere else!
 
 You can use Poetry for development, by using it's environment - simply install the environment, activate it and choose it's interpreter for your IDE's interpreter. The other option is to run the `poetry build` command to produce a wheel in the `dist/` directory. This you can then
-install anywhere you like - this is more suited for usage of FINN rather than development. 
+install anywhere you like - this is more suited for usage of FINN rather than development.
 
 #### Synthesis Tools
 FINN only runs until a certain step by itself. At latest when you want to do the IP Generation step, you will need some FPGA tooling. Specifically, you need `Vivado`, `Vitis` and `Vitis_HLS` (commonly only called HLS). We do _not_ install these for you - you need to take care of having a license, account etc. for yourself.
@@ -66,7 +66,7 @@ Clone FINN+ to a location of your choice, for example in `~`. Then:
 ```
 cd finn-plus
 poetry install
-source <your-poetry-env>          # See Poetry docs for details 
+source <your-poetry-env>          # See Poetry docs for details
 finn deps update                  # Pull dependencies
 finn config set <key> <value>     # Change config if necessary
 finn run build.py                 # Run a standard FINN flow
@@ -83,7 +83,7 @@ to get all Python-dependencies installed. Afterwards you can either run
 ```
 poetry run python3 run_finn.py ...
 ```
-or you simply source the Poetry environment (can be checked via `poetry env info`) and then just run 
+or you simply source the Poetry environment (can be checked via `poetry env info`) and then just run
 ```
 finn ...
 ```
@@ -99,7 +99,7 @@ This will produce sdist and wheel files in `dist/`, which you can install into a
 ### First Time Setup
 > [!CAUTION]
 > If you have limited space, before anything else run `finn config set DEFAULT_DEPS <your-path>` to set the default dependency path that FINN+ uses to a location with more space!
- 
+
 If you want to set everything up, simply run
 ```
 finn deps update
@@ -133,7 +133,7 @@ For most commands you can pass dependency or environment configuration paths man
 ```
 finn config list
 ```
-If you run this for the first time, it will error, since such a file does not yet exist. 
+If you run this for the first time, it will error, since such a file does not yet exist.
 > [!NOTE]
 > This will likely change quite a bit in the future.
 
@@ -149,7 +149,7 @@ finn config get <key>
 ```
 
 ### Running Tests
-To run tests simply execute 
+To run tests simply execute
 ```
 finn test
 ```
