@@ -12,7 +12,7 @@ _SETTINGS_PATH_VARS = ["FINN_DEPS", "FINN_ROOT", "FINN_BUILD_DIR"]
 # FINN_BUILD_DIR is not existent. It should only be loaded from a settings file!
 _SETTINGS: dict[str, Path | str] = {
     "FINN_DEPS": Path.home() / ".finn" / "deps",
-    "FINN_ROOT": Path(__file__).parent,
+    "FINN_ROOT": Path(__file__).parent.parent,
 }
 
 
@@ -26,7 +26,7 @@ def _resolve_settings_path() -> Path | None:
         error(f"Settings path specified via FINN_SETTINGS, but settings could not be found at {p}!")
         return None
     paths = [
-        Path(__file__).parent / "settings.yaml",
+        Path(__file__).parent.parent / "settings.yaml",
         Path.home() / ".finn" / "settings.yaml",
         Path.home() / ".config" / "settings.yaml",
     ]
