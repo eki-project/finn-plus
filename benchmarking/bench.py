@@ -26,6 +26,8 @@ dut["transformer"] = bench_transformer
 dut["vgg10"] = bench_vgg10
 dut["mobilenetv1"] = bench_mobilenetv1
 
+ras_module = importlib.import_module("dut.rastreamlining-fpl25.end2end.end2end")
+dut["ras"] = ras_module.ras_end2end
 
 def main(config_name):
     exit_code = 0
