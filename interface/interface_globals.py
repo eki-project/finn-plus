@@ -12,7 +12,6 @@ _SETTINGS_PATH_VARS = ["FINN_DEPS", "FINN_ROOT", "FINN_BUILD_DIR"]
 # FINN_BUILD_DIR is not existent. It should only be loaded from a settings file!
 _SETTINGS: dict[str, Path | str] = {
     "FINN_DEPS": Path.home() / ".finn" / "deps",
-    "FINN_ROOT": Path(__file__).parent.parent,
 }
 
 
