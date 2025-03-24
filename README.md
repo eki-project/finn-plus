@@ -49,7 +49,7 @@ cd finn-plus
 poetry install                # Install Python packages
 source <your-poetry-venv>     # Use "poetry env info" to find the path to your poetry venv. For further information visit the poetry documentation
 finn config create            # Create a default configuration in ~/.finn/settings.yaml. Optional but recommended
-finn run some/path/build.py   # Run FINN 
+finn run some/path/build.py   # Run FINN
 ```
 
 ## About Us
