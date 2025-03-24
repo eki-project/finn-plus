@@ -58,6 +58,12 @@ if __name__ == "__main__":
     run_ids.sort()
     print("Found %d runs" % len(run_ids))
 
+    follow_up_bench_cfg = list()
+    # Prepare (local) output directory where follow-up bench configs will be stored
+    output_cfg_dir = os.path.join(os.environ.get("LOCAL_CFG_DIR_STORE"), "lfs", "CI_" + os.environ.get("CI_PIPELINE_ID"))
+    output_folding_dir = os.path.join(output_cfg_dir, "folding")
+    output_cfg_path = os.path.join(output_cfg_dir, "follow-up.json")
+
     for id in run_ids:
         print("Processing run %d" % id)
         experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + str(id)
@@ -211,5 +217,33 @@ if __name__ == "__main__":
             if os.path.isdir(run_report_dir2):
                 shutil.copytree(run_report_dir2, dvc_report_dir, dirs_exist_ok=True)
             live.log_artifact(dvc_report_dir)
+
+        # Prepare benchmarking config for follow-up runs after live FIFO-sizing
+        folding_config_lfs_path = os.path.join("measurement_artifacts", "runs_output", "run_%d" % (id), "reports", "folding_config_lfs.json")
+        if os.path.isfile(folding_config_lfs_path):
+            # Copy folding config produced by live FIFO-sizing
+            output_folding_path = os.path.join(output_folding_dir, experiment_name + ".json")
+            os.makedirs(output_folding_dir, exist_ok=True)
+            shutil.copy(folding_config_lfs_path, output_folding_path)
+
+            # Create benchmarking config
+            metadata_bench = open_json_report(id, "metadata_bench.json")   
+            configuration = dict()
+            for key in metadata_bench["params"]:
+                # wrap in list
+                configuration[key] = [metadata_bench["params"][key]]
+            # overwrite FIFO-related params
+            import_folding_path = os.path.join(os.environ.get("LOCAL_CFG_DIR"), "lfs", "CI_" + os.environ.get("CI_PIPELINE_ID"), "folding", experiment_name + ".json")
+            configuration["fifo_method"] = ["manual"]
+            configuration["target_fps"] = ["None"]
+            configuration["folding_path"] = [import_folding_path]
+
+            follow_up_bench_cfg.append(configuration)
+
+    # Save aggregated benchmarking config for follow-up job
+    if follow_up_bench_cfg:
+        print("Saving follow-up bench config for lfs: %s" % output_cfg_path)
+        with open(output_cfg_path, "w") as f:
+            json.dump(follow_up_bench_cfg, f, indent=2)
 
     print("Done")

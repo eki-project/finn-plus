@@ -441,6 +441,7 @@ class bench():
                 cfg.auto_fifo_depths = False
                 cfg.live_fifo_sizing = True
                 cfg.enable_instrumentation = True
+                cfg.synth_clk_period_ns = 10 # force conservative 100 MHz clock
             else:
                 cfg.auto_fifo_depths = True
                 cfg.auto_fifo_strategy = self.params["fifo_method"]
@@ -467,6 +468,12 @@ class bench():
             cfg.specialize_layers_config_file = self.build_inputs["specialize_path"]
         if "floorplan_path" in self.build_inputs:
             cfg.floorplan_path = self.build_inputs["floorplan_path"]
+
+        if "target_fps" in self.params:
+            if self.params["target_fps"] == "None":
+                cfg.target_fps = None
+            else:
+                cfg.target_fps = self.params["target_fps"]
 
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?
