@@ -26,6 +26,9 @@ FINN Build:
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
+    # Clone additional DUT repo
+    - rm -rf benchmarking/dut/rastreamlining-fpl25
+    - git clone -b end2end_ci git@github.com:maltanar/rastreamlining-fpl25.git benchmarking/dut/rastreamlining-fpl25
     - module load system singularity
     - ulimit -s unlimited # Increase stack size limit
     - export FINN_SINGULARITY=$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT

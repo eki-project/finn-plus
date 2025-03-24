@@ -94,8 +94,6 @@ Singularity Image Build:
           - docker/finn_entrypoint.sh
           - docker/quicktest.sh
         compare_to: "dev"
-  variables:
-    GIT_SUBMODULE_STRATEGY: "none"
   script:
     - docker build --no-cache -f docker/Dockerfile.finn --tag=finn_docker_export .
     - apptainer build --force finn_singularity_image.sif docker-daemon://finn_docker_export:latest
@@ -129,7 +127,6 @@ Fetch Repos:
       - deps
   variables:
     SINGULARITY_IMG_SELECT: "finn_dev.sif" # default, may be overwritten by dotenv artifact
-    GIT_SUBMODULE_STRATEGY: "none"
   script:
     - ./fetch-repos.sh
     # Workaround for https://gitlab.com/gitlab-org/gitlab/-/issues/349538
@@ -200,7 +197,6 @@ Bench (Manual):
   variables:
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
     BENCH_CFG: "manual"
-    GIT_SUBMODULE_STRATEGY: "normal"
 
 Bench:
   stage: test
