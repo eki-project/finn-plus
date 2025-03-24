@@ -44,6 +44,7 @@ from qonnx.transformation.general import (
     GiveUniqueNodeNames,
     RemoveStaticGraphInputs,
     RemoveUnusedTensors,
+    SortGraph,
 )
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.infer_datatypes import InferDataTypes
@@ -535,8 +536,40 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     `GiveUniqueNodeNames`.
     """
 
+    hw_attrs = [
+        "PE",
+        "SIMD",
+        "parallel_window",
+        "ram_style",
+        "depth",
+        "impl_style",
+        "resType",
+        "mem_mode",
+        "runtime_writeable_weights",
+        "inFIFODepths",
+        "outFIFODepths",
+        "depth_trigger_uram",
+        "depth_trigger_bram",
+    ]
+
     # Experimental live FIFO-sizing, overwrites all other FIFO-related behavior
     if cfg.live_fifo_sizing:
+        # Create all DWCs and FIFOs normally
+        model = model.transform(InsertDWC())
+        model = model.transform(
+            InsertFIFO(vivado_ram_style=cfg.large_fifo_mem_style, create_shallow_fifos=True)
+        )
+
+        # Clean up model
+        model = model.transform(SortGraph())
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
+
+        # save original folding config before potentially modifying it
+        cfg_path = cfg.output_dir + "/report/folding_config_before_lfs.json"
+        extract_model_config_to_json(model, cfg_path, hw_attrs)
+        model.set_metadata_prop("folding_config_before_lfs", cfg_path)
+
         # Disable runtime-writable weights, external weights, and dynamic mode,
         # as we don't support additional AXI-lite interfaces next to the FIFOs
         for node in model.graph.node:
@@ -560,10 +593,6 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                 except AttributeError:
                     pass
 
-        # Create all DWCs and FIFOs normally
-        model = model.transform(InsertDWC())
-        model = model.transform(InsertFIFO(create_shallow_fifos=True))
-
         # Specialize FIFOs to HLS back-end instead of default RTL back-end
         for node in model.get_nodes_by_op_type("StreamingFIFO"):
             node_inst = getCustomOp(node)
@@ -576,6 +605,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
             node_inst.set_nodeattr("impl_style", "virtual")
 
         # Clean up model
+        model = model.transform(SortGraph())
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(GiveReadableTensorNames())
 
@@ -641,21 +671,6 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
             model = model.transform(ApplyConfig(cfg.folding_config_file))
 
     # extract the final configuration and save it as json
-    hw_attrs = [
-        "PE",
-        "SIMD",
-        "parallel_window",
-        "ram_style",
-        "depth",
-        "impl_style",
-        "resType",
-        "mem_mode",
-        "runtime_writeable_weights",
-        "inFIFODepths",
-        "outFIFODepths",
-        "depth_trigger_uram",
-        "depth_trigger_bram",
-    ]
     extract_model_config_to_json(model, cfg.output_dir + "/report/final_hw_config.json", hw_attrs)
 
     # perform FIFO splitting and shallow FIFO removal only after the final config
