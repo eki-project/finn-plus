@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 from interface import IS_POSIX
-from interface.interface_utils import error
 
 
 def run_test(variant: str, num_workers: str) -> None:
@@ -81,5 +80,5 @@ def run_test(variant: str, num_workers: str) -> None:
                 sys.exit(1)
 
         case _:
-            error(f"No such test found: {variant}")
+            subprocess.run(shlex.split(f"{python_prefix} -m pytest -k '{variant}'", posix=IS_POSIX))
     os.chdir(original_dir)

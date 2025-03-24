@@ -74,6 +74,8 @@ def prepare_finn(
         error("Could not resolve the build directory!")
         sys.exit(1)
     os.environ["FINN_BUILD_DIR"] = str(resolved_build_dir.absolute())
+    if not resolved_build_dir.exists():
+        resolved_build_dir.mkdir(parents=True)
     status(f"Build directory set to: {resolved_build_dir}")
 
     # Resolve number of workers
