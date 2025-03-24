@@ -173,7 +173,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
     ):
         ### Attempt to determine start depth for all FIFOs automatically ###
         # If it doesn't find a working setting, start depth must be set manually, potentially on per-FIFO basis
-        start_depth = 64
+        start_depth = 1
         last_interval = 0
         start_depth_found = False
 
@@ -259,6 +259,7 @@ if __name__ == "__main__":
     settingsfile = args.settingsfile
     devID = args.device
     device = Device.devices[devID]
+    folding_config_lfs = None
 
     # overwrite frequency if specified in settings file
     if settingsfile != "":
@@ -267,9 +268,14 @@ if __name__ == "__main__":
             if "fclk_mhz" in settings:
                 frequency = settings["fclk_mhz"]
 
-            # For live FIFO-sizing, we also expect a fifo_widths.json file exported by FINN listing the width of each FIFO, e.g.,
-            # {'fifo_widths': {0: 8, 1: 32, 2: 24}}
+            # For live FIFO-sizing, we also expect the FIFO widths (in bits) exported by FINN, e.g.,
+            # {'fifo_widths': {"0": 8, "1": 32, "2": 24}}
             fifo_widths = settings["fifo_widths"]
+
+            # The settings can also contain the original folding config,
+            # into which we can insert the live FIFO sizes once we are done
+            if "folding_config_before_lfs" in settings:
+                folding_config_lfs = settings["folding_config_before_lfs"]
 
     print("Programming FPGA..")
     PL.reset()  # reset PYNQ cache
@@ -362,10 +368,23 @@ if __name__ == "__main__":
     ### Generate fifo_depth_export.json to export FIFO depths for use in FINN
     fifo_depth_export = {}
     for fifo, depth in enumerate(fifo_depths):
-        fifo_depth_export["StreamingFIFO_rtl_%d" % fifo] = {}
-        fifo_depth_export["StreamingFIFO_rtl_%d" % fifo]["depth"] = depth + accel.fifo_depth_offset
+        fifo_name = "StreamingFIFO_rtl_%d" % fifo
+        fifo_depth_export[fifo_name] = {}
+        fifo_depth_export[fifo_name]["depth"] = depth + accel.fifo_depth_offset
     with open(os.path.join(report_dir, "fifo_depth_export.json"), "w") as f:
         json.dump(fifo_depth_export, f, indent=2)
+
+    # Also export directly into original folding config for convenience
+    if folding_config_lfs:
+        for key in list(folding_config_lfs.keys()):
+            if key.startswith("StreamingFIFO"):
+                fifo_name = "StreamingFIFO_rtl_%d" % int(key.removeprefix("StreamingFIFO_"))
+                # Rename FIFO from StreamingFIFO_* to StreamingFIFO_rtl_*
+                folding_config_lfs[fifo_name] = folding_config_lfs.pop(key)
+                folding_config_lfs[fifo_name]["depth"] = fifo_depth_export[fifo_name]["depth"]
+                folding_config_lfs[fifo_name]["impl_style"] = "rtl"
+        with open(os.path.join(report_dir, "folding_config_lfs.json"), "w") as f:
+            json.dump(folding_config_lfs, f, indent=2)
 
     ### Generate the usual instrumentation performance report based on final state
     min_latency = log_min_latency[-1]

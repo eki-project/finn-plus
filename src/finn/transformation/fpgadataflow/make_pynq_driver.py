@@ -310,7 +310,7 @@ class MakePYNQDriverInstrumentation(Transformation):
         self.clk_period_ns = clk_period_ns
         self.live_fifo_sizing = live_fifo_sizing
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper):
         # TODO: support runtime-writable and external weights
         # TODO: support Alveo and Versal platforms
 
@@ -356,6 +356,13 @@ class MakePYNQDriverInstrumentation(Transformation):
                         node_inst = getCustomOp(node)
                         fifo_widths[sdp_id] = node_inst.get_instream_width()
             settings["fifo_widths"] = fifo_widths
+            # export original folding config to settings file,
+            # so that the driver can generate a final cfg with live fifo sizes applied
+            folding_path = model.get_metadata_prop("folding_config_before_lfs")
+            if folding_path:
+                with open(folding_path, "r") as f:
+                    folding_cfg = json.load(f)
+                settings["folding_config_before_lfs"] = folding_cfg
 
         settingsfile = pynq_driver_dir + "/settings.json"
         with open(settingsfile, "w") as f:
