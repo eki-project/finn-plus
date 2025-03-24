@@ -173,7 +173,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
     ):
         ### Attempt to determine start depth for all FIFOs automatically ###
         # If it doesn't find a working setting, start depth must be set manually, potentially on per-FIFO basis
-        start_depth = 64
+        start_depth = 1
         last_interval = 0
         start_depth_found = False
 
