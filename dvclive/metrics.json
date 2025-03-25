@@ -1,0 +1,29 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 58345.0,
+            "DSP": 0.0,
+            "BRAM_18K": 233.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 146,
+            "max_cycles": 16,
+            "max_cycles_node_name": "Thresholding_rtl_0",
+            "estimated_throughput_fps": 6250000.0,
+            "estimated_latency_ns": 1460
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 52219.0,
+            "FF": 26684.0,
+            "DSP": 2302.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        }
+    },
+    "total_build_time": 2143
+}
