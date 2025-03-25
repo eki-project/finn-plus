@@ -27,6 +27,8 @@ FINN Build:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
     # Clone additional DUT repo
+    - module load tools/git-lfs/3.5.1
+    - git lfs install
     - rm -rf benchmarking/dut/rastreamlining-fpl25
     - git clone -b end2end_ci git@github.com:maltanar/rastreamlining-fpl25.git benchmarking/dut/rastreamlining-fpl25
     - module load system singularity
