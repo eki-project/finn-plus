@@ -141,18 +141,19 @@ def update_dependencies(location: Path) -> None:
             if shutil.which("wget") is None:
                 update_status(name, "wget not found - could not download data!", "red")
                 return False
-            result = sp.run(
-                shlex.split(f"wget {url} -o {purl.name}", posix=IS_POSIX),
-                capture_output=True,
-                text=True,
-                cwd=target,
-            )
-            if result.returncode != 0:
-                update_status(name, f"Download failed: {result.stderr}", "red")
-                return False
-            if do_unzip:
+            if not (target / purl.name).exists():
+                result = sp.run(
+                    shlex.split(f"wget {url}", posix=IS_POSIX),
+                    capture_output=True,
+                    text=True,
+                    cwd=target,
+                )
+                if result.returncode != 0:
+                    update_status(name, f"Download failed: {result.stderr}", "red")
+                    return False
+            if do_unzip and not (target / purl.name.replace(purl.suffix, "")).exists():
                 update_status(name, "Unzipping data...", "orange1")
-                run_silent(f"unzip -o {purl.name}", target)
+                run_silent(f"unzip {purl.name}", target)
             update_status(name, "Dependency ready!", "green")
             return True
 
