@@ -1,0 +1,32 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 1270.0,
+            "DSP": 0.0,
+            "BRAM_18K": 10.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 61956,
+            "max_cycles": 50176,
+            "max_cycles_node_name": "MVAU_hls_0",
+            "estimated_throughput_fps": 3985.969387755102,
+            "estimated_latency_ns": 309780
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 12599.0,
+            "FF": 6952.0,
+            "DSP": 29.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 6.0,
+            "URAM": 0.0
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 0
+    },
+    "total_build_time": 688
+}
