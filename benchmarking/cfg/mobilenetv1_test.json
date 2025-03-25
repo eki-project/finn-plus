@@ -1,0 +1,32 @@
+[
+    {
+        "dut": ["mobilenetv1"],
+
+        "model_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/MobileNetV1/mobilenetv1-w4a4_pre_post_tidy_opset-11.onnx"],
+        "folding_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/MobileNetV1/ZCU102_folding_config.json"],
+        "specialize_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/MobileNetV1/ZCU102_specialize_layers.json"],
+
+        "board": ["RFSoC2x2"],
+        "clock_period_ns": [10],
+
+        "fifo_method": ["manual"],
+
+        "rtlsim_n": [5],
+        "output_products": [["estimate_reports", "rtlsim_performance", "stitched_ip", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["mobilenetv1"],
+
+        "model_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/MobileNetV1/mobilenetv1-w4a4_pre_post_tidy_opset-11.onnx"],
+        "folding_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/MobileNetV1/ZCU102_folding_config.json"],
+        "specialize_path": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/MobileNetV1/ZCU102_specialize_layers.json"],
+
+        "board": ["RFSoC2x2"],
+        "clock_period_ns": [10],
+
+        "fifo_method": ["live"],
+
+        "rtlsim_n": [5],
+        "output_products": [["bitfile", "pynq_driver", "deployment_package"]]
+    }
+]

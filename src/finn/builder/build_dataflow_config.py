@@ -161,16 +161,16 @@ class DataflowBuildConfig:
     """
 
     #: Directory where the final build outputs will be written into
-    output_dir: str
+    output_dir: Optional[str] = None
 
     #: Target clock frequency (in nanoseconds) for Vivado synthesis.
     #: e.g. synth_clk_period_ns=5.0 will target a 200 MHz clock.
     #: If hls_clk_period_ns is not specified it will default to this value.
-    synth_clk_period_ns: float
+    synth_clk_period_ns: Optional[float] = None
 
     #: Which output(s) to generate from the build flow.  See documentation of
     #: DataflowOutputType for available options.
-    generate_outputs: List[DataflowOutputType]
+    generate_outputs: Optional[List[DataflowOutputType]] = None
 
     #: (Optional) Path to configuration JSON file in which user can specify
     #: a preferred implementation style (HLS or RTL) for each node.
@@ -271,6 +271,9 @@ class DataflowBuildConfig:
     #: for each FIFO.
     auto_fifo_depths: Optional[bool] = True
 
+    # Enables experimental live FIFO sizing
+    live_fifo_sizing: Optional[bool] = False
+
     #: Whether FIFO nodes with depth larger than 32768 will be split.
     #: Allow to configure very large FIFOs in the folding_config_file.
     split_large_fifos: Optional[bool] = False
@@ -323,6 +326,10 @@ class DataflowBuildConfig:
     #: Whether hardware debugging will be enabled (e.g. ILA cores inserted to
     #: debug signals in the generated hardware)
     enable_hw_debug: Optional[bool] = False
+
+    #: Whether the accelerator will be simulated and synthesized with an
+    #: instrumentation wrapper attached to accurately measure performance.
+    enable_instrumentation: Optional[bool] = False
 
     #: Whether pdb postmortem debuggig will be launched when the build fails
     enable_build_pdb_debug: Optional[bool] = True
