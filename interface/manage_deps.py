@@ -122,6 +122,9 @@ def update_dependencies(location: Path) -> None:
     """Update dependencies at the given path. Display live status"""
     if not location.exists():
         location.mkdir(parents=True)
+    board_file_dir = location / "board_files"
+    if not board_file_dir.exists():
+        board_file_dir.mkdir(parents=True)
     current_state = {}
     state_lock = Lock()
     any_failed = False
