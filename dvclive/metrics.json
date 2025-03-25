@@ -1,0 +1,18 @@
+{
+    "status": "failed",
+    "estimate": {
+        "resources": {
+            "LUT": 10791.0,
+            "DSP": 0.0,
+            "BRAM_18K": 231.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 2069322,
+            "max_cycles": 196608,
+            "max_cycles_node_name": "MVAU_hls_5",
+            "estimated_throughput_fps": 508.6263020833333,
+            "estimated_latency_ns": 20693220
+        }
+    }
+}
