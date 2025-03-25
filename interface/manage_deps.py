@@ -42,6 +42,7 @@ FINN_DEPS = {
 }
 
 VERILATOR = ("https://github.com/verilator/verilator", "v4.224")
+REQUIRED_VERILATOR_VERSION = VERILATOR[1][1:]  # Remove the "v" from v4.224
 
 FINN_BOARDFILES = {
     "avnet-bdf": (
@@ -65,7 +66,20 @@ FINN_BOARDFILES = {
         Path("boards/Xilinx/kv260_som"),
     ),
 }
-REQUIRED_VERILATOR_VERSION = VERILATOR[1][1:]  # Remove the "v" from v4.224
+
+# URL, do_unzip, where to download to
+DIRECT_DOWNLOAD_DEPS = {
+    "pynq-z1": (
+        "https://github.com/cathalmccabe/pynq-z1_board_files/raw/master/pynq-z1.zip",
+        True,
+        Path("board_files"),
+    ),
+    "pynq-z2": (
+        "https://dpoauwgwqsy2x.cloudfront.net/Download/pynq-z2.zip",
+        True,
+        Path("board_files"),
+    ),
+}
 
 # TODO: Change or make it configurable
 GIT_CLONE_TIMEOUT = 120
@@ -118,6 +132,29 @@ def update_dependencies(location: Path) -> None:
             current_state[key] = (msg, color)
             live.update(make_status_table(current_state))
             state_lock.release()
+
+        def pull_data(args: tuple) -> bool:
+            name, url, do_unzip, target = args
+            purl = Path(url)
+            target = location / target
+            update_status(name, "Downloading data...", "orange1")
+            if shutil.which("wget") is None:
+                update_status(name, "wget not found - could not download data!", "red")
+                return False
+            result = sp.run(
+                shlex.split(f"wget {url} -o {purl.name}", posix=IS_POSIX),
+                capture_output=True,
+                text=True,
+                cwd=target,
+            )
+            if result.returncode != 0:
+                update_status(name, f"Download failed: {result.stderr}", "red")
+                return False
+            if do_unzip:
+                update_status(name, "Unzipping data...", "orange1")
+                run_silent(f"unzip -o {purl.name}", target)
+            update_status(name, "Dependency ready!", "green")
+            return True
 
         def pull_dep(args: tuple) -> bool:
             pkg_name, giturl, commit = args
@@ -240,6 +277,8 @@ def update_dependencies(location: Path) -> None:
                 futures.append(tpe.submit(pull_dep, (name, giturl, commit)))
             for name, (giturl, commit, copy_from_here) in FINN_BOARDFILES.items():
                 futures.append(tpe.submit(pull_board, (name, giturl, commit, copy_from_here)))
+            for name, (url, do_unzip, target) in DIRECT_DOWNLOAD_DEPS.items():
+                futures.append(tpe.submit(pull_data, (name, url, do_unzip, target)))
             futures.append(tpe.submit(try_install_verilator))
             for future in concurrent.futures.as_completed(futures):
                 any_failed |= not future.result()

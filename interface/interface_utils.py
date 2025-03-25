@@ -85,6 +85,19 @@ def set_synthesis_tools_paths() -> None:
         else:
             os.environ[envname.replace("XILINX_", "") + "_PATH"] = os.environ[envname]
 
+    if (
+        "PLATFORM_REPO_PATHS" not in os.environ.keys()
+        or not Path(os.environ["PLATFORM_REPO_PATHS"]).exists()
+    ):
+        p = Path("/opt/xilinx/platforms")
+        if p.exists():
+            os.environ["PLATFORM_REPO_PATHS"] = str(p.absolute())
+        else:
+            warning(
+                "PLATFORM_REPO_PATHS is not set "
+                "and the default path does not exist. Synthesis might fail."
+            )
+
 
 def resolve_build_dir(flow_config: Path, build_dir: Path | None, settings: dict) -> Path | None:
     """Resolve the build dir. By default this should return FINN_TMP next to the flow config.
