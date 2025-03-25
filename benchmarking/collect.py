@@ -224,6 +224,7 @@ if __name__ == "__main__":
             # Copy folding config produced by live FIFO-sizing
             output_folding_path = os.path.join(output_folding_dir, experiment_name + ".json")
             os.makedirs(output_folding_dir, exist_ok=True)
+            print("Saving lfs-generated folding config of this run to use in a future follow-up run: %s" % output_folding_path)
             shutil.copy(folding_config_lfs_path, output_folding_path)
 
             # Create benchmarking config
