@@ -1,0 +1,6 @@
+outs:
+- md5: 65322630eae5e43066c5690b05519caf.dir
+  size: 487
+  nfiles: 1
+  hash: md5
+  path: reports
