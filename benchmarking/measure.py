@@ -42,6 +42,7 @@ if __name__ == "__main__":
                            "fifo_sizing_report.json",
                            "fifo_depth_export.json",
                            "fifo_sizing_graph.png",
+                           "folding_config_lfs.json",
                            ]:
                 report_path = os.path.join(extract_dir, report)
                 if os.path.isfile(report_path):
