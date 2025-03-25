@@ -136,7 +136,7 @@ def update_dependencies(location: Path) -> None:
         def pull_data(args: tuple) -> bool:
             name, url, do_unzip, target = args
             purl = Path(url)
-            target = location / target
+            target = location.absolute() / target
             update_status(name, "Downloading data...", "orange1")
             if shutil.which("wget") is None:
                 update_status(name, "wget not found - could not download data!", "red")

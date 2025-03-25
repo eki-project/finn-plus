@@ -10,6 +10,10 @@ from interface import IS_POSIX
 def run_test(variant: str, num_workers: str) -> None:
     """Run a given test variant with the given number of workers"""
     original_dir = Path.cwd()
+
+    # TODO: Make this optional
+    ci_project_dir = os.environ["CI_PROJECT_DIR"]
+
     os.chdir(Path(__file__).parent.parent)
     python_prefix = str(Path(os.environ["VIRTUAL_ENV"]) / "bin" / "python3")
     match variant:
@@ -43,8 +47,8 @@ def run_test(variant: str, num_workers: str) -> None:
                 shlex.split(
                     (
                         f"{python_prefix} -m pytest -m 'not (end2end or sanity_bnn or notebooks)' "
-                        "--junitxml=$CI_PROJECT_DIR/reports/main.xml "
-                        "--html=$CI_PROJECT_DIR/reports/main.html "
+                        f"--junitxml={ci_project_dir}/reports/main.xml "
+                        f"--html={ci_project_dir}/reports/main.html "
                         f"--reruns 1 --dist worksteal -n {num_workers}"
                     ),
                     posix=IS_POSIX,
@@ -54,8 +58,8 @@ def run_test(variant: str, num_workers: str) -> None:
                 shlex.split(
                     (
                         f"{python_prefix} -m pytest -m 'end2end or sanity_bnn or notebooks' "
-                        "--junitxml=$CI_PROJECT_DIR/reports/end2end.xml "
-                        "--html=$CI_PROJECT_DIR/reports/end2end.html "
+                        f"--junitxml={ci_project_dir}/reports/end2end.xml "
+                        f"--html={ci_project_dir}/reports/end2end.html "
                         f"--reruns 1 --dist loadgroup -n {num_workers}"
                     ),
                     posix=IS_POSIX,
@@ -69,8 +73,8 @@ def run_test(variant: str, num_workers: str) -> None:
             subprocess.run(
                 shlex.split(
                     (
-                        f"{python_prefix} -m pytest_html_merger -i $CI_PROJECT_DIR/reports/ "
-                        "-o $CI_PROJECT_DIR/reports/full_test_suite.html"
+                        f"{python_prefix} -m pytest_html_merger -i {ci_project_dir}/reports/ "
+                        f"-o {ci_project_dir}/reports/full_test_suite.html"
                     ),
                     posix=IS_POSIX,
                 )
