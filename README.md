@@ -32,24 +32,22 @@ Please refer to our [**Feature Tracker**](https://github.com/orgs/eki-project/pr
 While some items are already on-track to be merged into the upstream repository, we try to merge them into the **FINN+** dev branch as early as possible to increase development pace and drive our research forward.
 
 ## Getting Started
-This is a very quick overview of how to get started, for additional information please refer to our wiki!
+This is a very quick overview of how to get started, for additional information please refer to our [**wiki**](https://github.com/eki-project/finn-plus/wiki)!
 
 ### Requirements
 The main dependencies currently are:
-- git
 - Python >= 3.10 (<= 3.12)
 - Poetry
-- Vivado, Vitis, Vitis-HLS
-- verilator (will be installed automatically)
+- Vivado, Vitis, Vitis HLS (preferably 2022.2 or 2024.2)
 
 ### Running a FINN build Flow
-To get started, clone this repository anywhere you like. To start your first flow continue like this:
+To get started, clone this repository anywhere you like. To start your first FINN build continue like this:
 ```
 cd finn-plus
-poetry install                # Install Python packages
+poetry install                # Install Python packages into a Poetry-managed virtual environment
 source <your-poetry-venv>     # Use "poetry env info" to find the path to your poetry venv. For further information visit the poetry documentation
 finn config create            # Create a default configuration in ~/.finn/settings.yaml. Optional but recommended
-finn run some/path/build.py   # Run FINN
+finn run some/path/build.py   # Run a FINN build defined in a Python script
 ```
 
 ## About Us
