@@ -35,10 +35,11 @@ While some items are already on-track to be merged into the upstream repository,
 This is a very quick overview of how to get started, for additional information please refer to our [**wiki**](https://github.com/eki-project/finn-plus/wiki)!
 
 ### Requirements
-The main dependencies currently are:
+The primary dependencies currently are:
 - Python >= 3.10 (<= 3.12)
 - Poetry
 - Vivado, Vitis, Vitis HLS (preferably 2022.2 or 2024.2)
+- Some basic system-level packages, refer to the "installDependencies.sh" script
 
 ### Running a FINN build Flow
 To get started, clone this repository anywhere you like. To start your first FINN build continue like this:
