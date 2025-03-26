@@ -169,7 +169,7 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
 @click.option(
     "--variant",
     "-v",
-    help="Which test to execute (quick, main, rtlsim, end2end, full)",
+    help="Which test to execute (quick, quicktest_ci, full_ci)",
     default="quick",
     show_default=True,
 )

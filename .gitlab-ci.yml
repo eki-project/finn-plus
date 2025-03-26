@@ -9,11 +9,11 @@ variables:
     value: ""
   TEST_SUITE:
     description: "Select test suite to run"
-    value: "full"
+    value: "full_ci"
     options:
       - "none"
-      - "quicktest"
-      - "full"
+      - "quicktest_ci"
+      - "full_ci"
   CPU_CORES:
     description: "Select number of CPU cores and test workers"
     value: "64"
