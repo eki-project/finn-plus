@@ -1,0 +1,61 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 124398.0,
+            "DSP": 174.0,
+            "BRAM_18K": 1013.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 32311405,
+            "max_cycles": 817218,
+            "max_cycles_node_name": "ConvolutionInputGenerator_rtl_2",
+            "estimated_throughput_fps": 122.36636980585352,
+            "estimated_latency_ns": 323114050
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 153402.0,
+            "FF": 99574.0,
+            "DSP": 32.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 2.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 68152,
+            "FF": 56466,
+            "SRL": 4806,
+            "DSP": 0,
+            "BRAM_18K": 1,
+            "BRAM_36K": 0,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "performance": {
+            "error": false,
+            "checksum": 0,
+            "min_latency_cycles": 2007776,
+            "latency_cycles": 2020147,
+            "interval_cycles": 817217,
+            "frequency_mhz": 100,
+            "min_latency_ms": 20.077961,
+            "latency_ms": 20.201672,
+            "throughput_fps": 122,
+            "min_pipeline_depth": 2.46,
+            "pipeline_depth": 2.47
+        }
+    },
+    "fifosizing": {
+        "live": {
+            "error": false,
+            "fifo_size_total_kB": 162
+        }
+    },
+    "total_build_time": 21018
+}
