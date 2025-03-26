@@ -1,0 +1,61 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 46436.0,
+            "DSP": 4227.0,
+            "BRAM_18K": 1124.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 20147970,
+            "max_cycles": 197136,
+            "max_cycles_node_name": "MVAU_rtl_0",
+            "estimated_throughput_fps": 507.2640207775343,
+            "estimated_latency_ns": 201479700
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 355093.0,
+            "FF": 231050.0,
+            "DSP": 519.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 100.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 108135,
+            "FF": 85350,
+            "SRL": 8081,
+            "DSP": 0,
+            "BRAM_18K": 1,
+            "BRAM_36K": 0,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "performance": {
+            "error": false,
+            "checksum": 0,
+            "min_latency_cycles": 489859,
+            "latency_cycles": 490830,
+            "interval_cycles": 197136,
+            "frequency_mhz": 100,
+            "min_latency_ms": 4.898639,
+            "latency_ms": 4.908349,
+            "throughput_fps": 507,
+            "min_pipeline_depth": 2.48,
+            "pipeline_depth": 2.49
+        }
+    },
+    "fifosizing": {
+        "live": {
+            "error": false,
+            "fifo_size_total_kB": 31
+        }
+    },
+    "total_build_time": 32479
+}
