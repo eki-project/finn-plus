@@ -1,0 +1,61 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 58345.0,
+            "DSP": 0.0,
+            "BRAM_18K": 233.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 146,
+            "max_cycles": 16,
+            "max_cycles_node_name": "Thresholding_rtl_0",
+            "estimated_throughput_fps": 6250000.0,
+            "estimated_latency_ns": 1460
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 73810.0,
+            "FF": 45891.0,
+            "DSP": 2302.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 11794,
+            "FF": 8948,
+            "SRL": 691,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "performance": {
+            "error": false,
+            "checksum": 0,
+            "min_latency_cycles": 267,
+            "latency_cycles": 585,
+            "interval_cycles": 25,
+            "frequency_mhz": 100,
+            "min_latency_ms": 0.00267,
+            "latency_ms": 0.00585,
+            "throughput_fps": 3999960,
+            "min_pipeline_depth": 10.68,
+            "pipeline_depth": 23.4
+        }
+    },
+    "fifosizing": {
+        "live": {
+            "error": false,
+            "fifo_size_total_kB": 2
+        }
+    },
+    "total_build_time": 4303
+}
