@@ -187,8 +187,9 @@ def step_convert_to_thresholds_new(model: ModelWrapper, cfg: DataflowBuildConfig
     report_dir = cfg.output_dir + "/report"
     os.makedirs(report_dir, exist_ok=True)
 
-    with open(report_dir + "/range_analysis.json", "w") as f:
-        json.dump(trn.range_analysis_result, f, indent=2, cls=EnhancedJSONEncoder)
+    # DISABLED DUE TO LARGE FILE SIZE
+    # with open(report_dir + "/range_analysis.json", "w") as f:
+    #     json.dump(trn.range_analysis_result, f, indent=2, cls=EnhancedJSONEncoder)
     # Convert AvgPool -> Mul -> Trunc structure to QuantAvgPool2d
     model = model.transform(AvgPoolAndTruncToQuantAvgPool())
     model = model.transform(RemoveIdentityOps())
