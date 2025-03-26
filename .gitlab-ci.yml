@@ -37,7 +37,7 @@ variables:
     description: "Use this config file instead of configs stored in the repo. Path must be accessible to runner"
     value: ""
   FINN_XILINX_VERSION:
-    value: "2022.2"
+    value: "2024.2"
 
 workflow:
   name: '$PIPELINE_NAME'
