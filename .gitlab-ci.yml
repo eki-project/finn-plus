@@ -32,8 +32,6 @@ variables:
   MANUAL_CFG_PATH:
     description: "Use this config file instead of configs stored in the repo. Path must be accessible to runner"
     value: ""
-  FINN_XILINX_VERSION: # TODO: remove or make compatible with module load setup
-    value: "2022.2"
 
 workflow:
   name: '$PIPELINE_NAME'
@@ -93,15 +91,13 @@ Pre-Install:
     - alias poetry=poetry-install/bin/poetry
   script:
     # create virtual environment and install Python dependencies,
-    # cache resulting poetry.lock & .venv/ directory for following jobs
+    # TODO: cache resulting poetry.lock & .venv/ directory for following jobs
     - poetry install
     # let FINN download additional dependencies, cache resulting deps/ directory
     - poetry run python3 run_finn.py deps update --path ./deps
   cache:
     key: $CI_COMMIT_SHA #TODO: cache based on relevant files
     paths:
-      #- poetry.lock
-      #- .venv
       - deps
 
 FINN Test Suite 2022.2:
@@ -122,15 +118,10 @@ FINN Test Suite 2022.2:
     key: $CI_COMMIT_SHA
     policy: pull
     paths:
-      #- poetry.lock
-      #- .venv
       - deps
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
     PYTEST_PARALLEL: "$CPU_CORES"
-    VIVADO_PATH: "$FINN_XILINX_PATH/Vivado/2022.2" # TODO: remove after refactoring to XILINX_VIVADO, etc.
-    VITIS_PATH: "$FINN_XILINX_PATH/Vitis/2022.2"
-    HLS_PATH: "$FINN_XILINX_PATH/Vitis_HLS/2022.2"
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
@@ -149,8 +140,7 @@ FINN Test Suite 2022.2:
     - shopt -s expand_aliases
     - alias poetry=poetry-install/bin/poetry
   script:
-    # create virtual environment (.venv/) and install Python dependencies,
-    # should be cached from previous job
+    # create virtual environment (.venv/) and install Python dependencies
     - poetry install
     # launch FINN, which will try to fetch (cached) additional dependencies
     - poetry run python3 run_finn.py test --variant $TEST_SUITE --dependency-path ./deps --num-workers 4 --num-test-workers $PYTEST_PARALLEL
@@ -164,10 +154,6 @@ FINN Test Suite 2022.2:
 
 FINN Test Suite 2024.2:
   extends: FINN Test Suite 2022.2
-  variables:
-    VIVADO_PATH: "$FINN_XILINX_PATH/Vivado/2024.2" # TODO: remove after refactoring to XILINX_VIVADO, etc.
-    VITIS_PATH: "$FINN_XILINX_PATH/Vitis/2024.2"
-    HLS_PATH: "$FINN_XILINX_PATH/Vitis_HLS/2024.2"
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
