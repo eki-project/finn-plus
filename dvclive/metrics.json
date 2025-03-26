@@ -1,0 +1,18 @@
+{
+    "status": "failed",
+    "estimate": {
+        "resources": {
+            "LUT": 335609.0,
+            "DSP": 40.0,
+            "BRAM_18K": 1408.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 385557,
+            "max_cycles": 16372,
+            "max_cycles_node_name": "ConvolutionInputGenerator_rtl_7",
+            "estimated_throughput_fps": 6107.98924993892,
+            "estimated_latency_ns": 3855570
+        }
+    }
+}
