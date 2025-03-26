@@ -79,11 +79,19 @@ def set_synthesis_tools_paths() -> None:
                 "Did you source your settings file?"
             )
             continue
-        p = Path(os.environ[envname]) / "bin" / toolname
+        envname_path = os.environ[envname]
+
+        # Exception for Vitis HLS because of changed behavior starting with 2024.2
+        # XILINX_HLS no longer points to */Vitis_HLS/VERSION but */Vitis/VERSION
+        p = Path(envname_path) / "bin" / toolname
+        if not p.exists() and toolname == "vitis_hls":
+            envname_path.replace("Vitis", "Vitis_HLS")
+            p = Path(envname_path) / "bin" / toolname
+
         if not p.exists():
             warning(f"Path for {toolname} found, but executable not found in {p}!")
         else:
-            os.environ[envname.replace("XILINX_", "") + "_PATH"] = os.environ[envname]
+            os.environ[envname.replace("XILINX_", "") + "_PATH"] = envname_path
 
     if (
         "PLATFORM_REPO_PATHS" not in os.environ.keys()
