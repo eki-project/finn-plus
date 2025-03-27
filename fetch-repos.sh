@@ -56,7 +56,7 @@ RFSOC4x2_BDF_URL="https://github.com/RealDigitalOrg/RFSoC4x2-BSP.git"
 KV260_BDF_URL="https://github.com/Xilinx/XilinxBoardStore.git"
 ATTENTION_HLSLIB_URL="https://github.com/iksnagreb/attention-hlslib.git"
 PYXSI_URL="https://github.com/maltanar/pyxsi.git"
-ACTS_URL="https://github.com/iksnagreb/activations.git"
+ACTS_URL="https://github.com/maltanar/activations.git"
 
 QONNX_DIR="qonnx"
 FINN_EXP_DIR="finn-experimental"
