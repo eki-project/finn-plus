@@ -85,7 +85,7 @@ def set_synthesis_tools_paths() -> None:
         # XILINX_HLS no longer points to */Vitis_HLS/VERSION but */Vitis/VERSION
         p = Path(envname_path) / "bin" / toolname
         if not p.exists() and toolname == "vitis_hls":
-            envname_path.replace("Vitis", "Vitis_HLS")
+            envname_path = envname_path.replace("Vitis", "Vitis_HLS")
             p = Path(envname_path) / "bin" / toolname
 
         if not p.exists():
