@@ -114,7 +114,7 @@ class SetFolding(Transformation):
             self.possible_foldings[node_inst.onnx_node.name] = {attr_name: node_possible_foldings}
 
         for val, cyc in node_possible_foldings:
-            if cyc <= self.target_cycles_per_frame:
+            if cyc < self.target_cycles_per_frame:
                 node_inst.set_nodeattr(attr_name, val)
                 # finish if target met
                 break
@@ -215,7 +215,7 @@ class SetFolding(Transformation):
                     prev_simd_val = node_inst.get_nodeattr("SIMD")
                     node_inst.set_nodeattr("SIMD", simd_val)
                     cyc = node_inst.get_exp_cycles()
-                    if cyc <= self.target_cycles_per_frame:
+                    if cyc < self.target_cycles_per_frame:
                         # finish if target met
                         break
                     if (
