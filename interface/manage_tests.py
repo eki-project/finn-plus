@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from interface import IS_POSIX
+from interface.interface_utils import status
 
 
 def run_test(variant: str, num_workers: str) -> None:
@@ -12,7 +13,11 @@ def run_test(variant: str, num_workers: str) -> None:
     original_dir = Path.cwd()
 
     # TODO: Make this optional
-    ci_project_dir = os.environ["CI_PROJECT_DIR"]
+    if "CI_PROJECT_DIR" in os.environ.keys():
+        ci_project_dir = os.environ["CI_PROJECT_DIR"]
+    else:
+        ci_project_dir = os.environ["FINN_BUILD_DIR"]
+    status(f"Putting test reports into {ci_project_dir}")
 
     os.chdir(Path(__file__).parent.parent)
     match variant:

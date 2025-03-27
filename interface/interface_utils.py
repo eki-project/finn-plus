@@ -107,7 +107,9 @@ def set_synthesis_tools_paths() -> None:
             )
 
 
-def resolve_build_dir(flow_config: Path, build_dir: Path | None, settings: dict) -> Path | None:
+def resolve_build_dir(
+    flow_config: Path, build_dir: Path | None, settings: dict, is_test_run: bool = False
+) -> Path | None:
     """Resolve the build dir. By default this should return FINN_TMP next to the flow config.
     Priority is command line argument > Environment variable > Settings Default > Fixed default.
     If the given path is relative and found in the envvar or settings file,
@@ -124,6 +126,9 @@ def resolve_build_dir(flow_config: Path, build_dir: Path | None, settings: dict)
         if not p.is_absolute():
             return flow_config.parent / p
         return p
+    if is_test_run:
+        # Need a different fallback because tests have no build config
+        return Path("/tmp/FINN_TEST_BUILD_DIR")
     return flow_config.parent / "FINN_TMP"
 
 

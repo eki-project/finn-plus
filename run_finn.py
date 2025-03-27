@@ -35,7 +35,11 @@ from interface.manage_tests import run_test
 
 
 def prepare_finn(
-    deps: Path | None, flow_config: Path, build_dir: Path | None, num_workers: int
+    deps: Path | None,
+    flow_config: Path,
+    build_dir: Path | None,
+    num_workers: int,
+    is_test_run: bool = False,
 ) -> None:
     """Prepare a FINN environment by:
     0. Reading all settings and environment vars
@@ -69,7 +73,9 @@ def prepare_finn(
     os.environ["PATH"] = os.environ["PATH"] + ":" + os.environ["OHMYXILINX"]
 
     # Resolve the build directory
-    resolved_build_dir = resolve_build_dir(flow_config, build_dir, settings)
+    resolved_build_dir = resolve_build_dir(
+        flow_config, build_dir, settings, is_test_run=is_test_run
+    )
     if resolved_build_dir is None:
         error("Could not resolve the build directory!")
         sys.exit(1)
@@ -180,7 +186,7 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
     "--build-path",
     "-b",
     help="Specify a build temp path of your choice",
-    default="/tmp/FINN_TEST_BUILD_DIR",
+    default="",
 )
 def test(
     variant: str, dependency_path: str, num_workers: int, num_test_workers: str, build_path: str
@@ -188,7 +194,7 @@ def test(
     console = Console()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    prepare_finn(dep_path, Path(), build_dir, num_workers)
+    prepare_finn(dep_path, Path(), build_dir, num_workers, is_test_run=True)
     status(f"Using {num_test_workers} test workers")
     console.rule("RUNNING TESTS")
     run_test(variant, num_test_workers)
