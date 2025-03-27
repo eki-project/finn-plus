@@ -1,0 +1,16 @@
+params:
+  dut: ras
+  model_name: RN8-CIFAR100_W3A3_pcfpscale
+  act_mode: thresholding
+  acc_opt: noaccmin
+  folding: prefold
+  board: RFSoC2x2
+  clock_period_ns: 5
+  fifo_method: live
+  rtlsim_n: 5
+  output_products:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+metadata:
+  tool_version: '2024.2'
