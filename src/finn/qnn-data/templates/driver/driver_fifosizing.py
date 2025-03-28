@@ -32,8 +32,9 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.error = False
         self.fifo_widths = fifo_widths
         self.num_fifos = len(self.fifo_widths)
-        # Try to account for additional registers introduced by virtual FIFO HLS implementation
-        self.fifo_depth_offset = 4
+        # Account for additional FIFO depth and implicit registers introduced by the virtual FIFO HLS implementation that are not present in real FIFOs
+        # This results in a minimum possible FIFO depth of 1 + 8 = 9, which should be improved in a future virtual FIFO implementation (TODO)
+        self.fifo_depth_offset = 8
 
         # Sanity check
         # We expect 3 AXI-Lite peripherals next to the virtual FIFOs: instrumentation_wrap_0, axi_gpio_0 (for reset), zynq_ps
