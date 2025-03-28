@@ -275,6 +275,9 @@ class DataflowBuildConfig:
     # Enables experimental live FIFO sizing
     live_fifo_sizing: Optional[bool] = False
 
+    #: EXPERIMENTAL FIFO OFFSET APPLIED TO MANUAL FIFO SIZES
+    fifo_offset: Optional[int] = 0
+
     #: Whether FIFO nodes with depth larger than 32768 will be split.
     #: Allow to configure very large FIFOs in the folding_config_file.
     split_large_fifos: Optional[bool] = False

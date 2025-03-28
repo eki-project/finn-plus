@@ -475,6 +475,9 @@ class bench():
             else:
                 cfg.target_fps = self.params["target_fps"]
 
+        if "fifo_offset" in self.params:
+            cfg.fifo_offset = self.params["fifo_offset"]
+
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?
         os.environ["LIVENESS_THRESHOLD"] = "10000000"

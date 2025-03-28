@@ -436,7 +436,9 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
             "depth_trigger_uram",
             "depth_trigger_bram",
         ]
-        extract_model_config_to_json(model, cfg.output_dir + "/report/auto_folding_config.json", hw_attrs)
+        extract_model_config_to_json(
+            model, cfg.output_dir + "/report/auto_folding_config.json", hw_attrs
+        )
 
     return model
 
@@ -682,6 +684,14 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(GiveReadableTensorNames())
         if cfg.folding_config_file is not None:
             model = model.transform(ApplyConfig(cfg.folding_config_file))
+
+        # EXPERIMENT: APPLY FIFO OFFSET
+        if cfg.fifo_offset > 0:
+            for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
+                node_inst = getCustomOp(node)
+                depth = node_inst.get_nodeattr("depth")
+                new_depth = depth + cfg.fifo_offset
+                node_inst.set_nodeattr("depth", new_depth)
 
     # extract the final configuration and save it as json
     extract_model_config_to_json(model, cfg.output_dir + "/report/final_hw_config.json", hw_attrs)
