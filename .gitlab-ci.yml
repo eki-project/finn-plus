@@ -1,7 +1,6 @@
 stages:
   - sync
-  - singularity_build
-  - load_deps
+  - pre-install
   - test
 
 variables:
@@ -10,11 +9,11 @@ variables:
     value: ""
   TEST_SUITE:
     description: "Select test suite to run"
-    value: "full"
+    value: "full_ci"
     options:
       - "none"
-      - "quicktest"
-      - "full"
+      - "quicktest_ci"
+      - "full_ci"
   CPU_CORES:
     description: "Select number of CPU cores and test workers"
     value: "64"
@@ -33,8 +32,6 @@ variables:
   MANUAL_CFG_PATH:
     description: "Use this config file instead of configs stored in the repo. Path must be accessible to runner"
     value: ""
-  FINN_XILINX_VERSION:
-    value: "2022.2"
 
 workflow:
   name: '$PIPELINE_NAME'
@@ -69,47 +66,11 @@ Sync finn-dev:
     - git pull upstream dev
     - git push origin finn-dev
 
-Singularity Image Build:
+Pre-Install:
   id_tokens:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
-  stage: singularity_build
-  tags:
-    # Run where full Docker + Singularity is available
-    - image_build
-  rules:
-    # Do not run on a schedule
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    # Always run for dev branch to ensure default image is up to date
-    - if: $CI_COMMIT_REF_SLUG == "dev"
-    # For other branches only run if relevant files changed relative to dev branch
-    - changes:
-        paths:
-          - requirements.txt
-          - docker/Dockerfile.finn
-          - docker/finn_entrypoint.sh
-          - docker/quicktest.sh
-        compare_to: "dev"
-  script:
-    - docker build --no-cache -f docker/Dockerfile.finn --tag=finn_docker_export .
-    - apptainer build --force finn_singularity_image.sif docker-daemon://finn_docker_export:latest
-    - rsync -vh finn_singularity_image.sif $PATH_SINGULARITY_IMG_BUILD/finn-plus/finn_$CI_COMMIT_REF_SLUG.sif
-    - echo SINGULARITY_IMG_SELECT=finn_$CI_COMMIT_REF_SLUG.sif > FINN_environment.env
-  after_script: # Clean caches
-    - echo 'y' | docker image prune
-    - echo 'y' | docker builder prune
-    - echo 'y' | apptainer cache clean
-  # Save env var selecting Singularity image to be used in subsequent jobs
-  artifacts:
-    reports:
-      dotenv: FINN_environment.env
-
-Fetch Repos:
-  id_tokens:
-    CI_JOB_JWT:
-      aud: https://git.uni-paderborn.de
-  stage: load_deps
+  stage: pre-install
   tags:
     - login
   rules:
@@ -118,21 +79,26 @@ Fetch Repos:
       when: never
     # Otherwise run
     - when: always
+  before_script:
+    - module load lang/Python/3.10.4-GCCcore-11.3.0
+    - module load devel/Autoconf/2.71-GCCcore-11.3.0
+    - module load lang/Bison/3.8.2-GCCcore-11.3.0
+    - module load lang/flex/2.6.4-GCCcore-11.3.0
+    # Install current version of Poetry
+    - python3 -m venv poetry-install
+    - poetry-install/bin/pip install poetry
+    - shopt -s expand_aliases
+    - alias poetry=poetry-install/bin/poetry
+  script:
+    # create virtual environment and install Python dependencies,
+    # TODO: cache resulting poetry.lock & .venv/ directory for following jobs
+    - poetry install
+    # let FINN download additional dependencies, cache resulting deps/ directory
+    - poetry run python3 run_finn.py deps update --path ./deps
   cache:
-    key: $CI_COMMIT_SHA
+    key: $CI_COMMIT_SHA #TODO: cache based on relevant files
     paths:
       - deps
-  variables:
-    SINGULARITY_IMG_SELECT: "finn_dev.sif" # default, may be overwritten by dotenv artifact
-  script:
-    - ./fetch-repos.sh
-    # Workaround for https://gitlab.com/gitlab-org/gitlab/-/issues/349538
-    # Passing artifacts from optional parent jobs to child pipelines is not supported
-    # Therefore, we pass the dotenv artifact from "Singularity Image Build" through this job
-    - echo SINGULARITY_IMG_SELECT=$SINGULARITY_IMG_SELECT > FINN_environment_passthrough.env
-  artifacts:
-    reports:
-      dotenv: FINN_environment_passthrough.env
 
 FINN Test Suite 2022.2:
   id_tokens:
@@ -156,16 +122,28 @@ FINN Test Suite 2022.2:
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
     PYTEST_PARALLEL: "$CPU_CORES"
-    FINN_XILINX_VERSION: "2022.2"
   before_script:
     - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
     - cd $PATH_WORKDIR/finn-plus
-    - chmod 755 ./test.sh
-    - module load system singularity
+    - module load lang/Python/3.10.4-GCCcore-11.3.0
+    - module load devel/Autoconf/2.71-GCCcore-11.3.0
+    - module load lang/Bison/3.8.2-GCCcore-11.3.0
+    - module load lang/flex/2.6.4-GCCcore-11.3.0
+    - module load fpga
+    - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
+    - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
     - ulimit -s unlimited # Increase stack size limit
-    - export FINN_SINGULARITY=$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT
+    # Install current version of Poetry
+    - python3 -m venv poetry-install
+    - poetry-install/bin/pip install poetry
+    - shopt -s expand_aliases
+    - alias poetry=poetry-install/bin/poetry
   script:
-    - ./run-docker.sh ./test.sh $TEST_SUITE
+    # create virtual environment (.venv/) and install Python dependencies
+    - poetry install
+    # launch FINN, which will try to fetch (cached) additional dependencies
+    - poetry run python3 run_finn.py test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers 4 --num-test-workers $PYTEST_PARALLEL
   artifacts:
     name: "test_reports"
     when: always
@@ -176,5 +154,21 @@ FINN Test Suite 2022.2:
 
 FINN Test Suite 2024.2:
   extends: FINN Test Suite 2022.2
-  variables:
-    FINN_XILINX_VERSION: "2024.2"
+  before_script:
+    - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
+    - cd $PATH_WORKDIR/finn-plus
+    - module load lang/Python/3.10.4-GCCcore-11.3.0
+    - module load devel/Autoconf/2.71-GCCcore-11.3.0
+    - module load lang/Bison/3.8.2-GCCcore-11.3.0
+    - module load lang/flex/2.6.4-GCCcore-11.3.0
+    - module load fpga
+    - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    - module swap xilinx/vitis/24.2 # switch to Vitis/Vivado 2024.2
+    # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
+    - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
+    - ulimit -s unlimited # Increase stack size limit
+    # Install current version of Poetry
+    - python3 -m venv poetry-install
+    - poetry-install/bin/pip install poetry
+    - shopt -s expand_aliases
+    - alias poetry=poetry-install/bin/poetry
