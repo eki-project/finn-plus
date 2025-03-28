@@ -34,6 +34,7 @@ import shutil
 import warnings
 from copy import deepcopy
 from functools import partial
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopcount
@@ -85,6 +86,7 @@ from finn.transformation.fpgadataflow.make_pynq_driver import MakePYNQDriver
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
+from finn.transformation.fpgadataflow.multifpga import PartitionForMultiFPGA
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
@@ -621,6 +623,21 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
+def step_partition_for_multifpga(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Assign the device_id parameter to all nodes in the graph. If we are not in a Multi-FPGA case
+    (model attribute is_multifpga) this step does nothing"""
+    if cfg.partitioning_configuration is None or cfg.partitioning_configuration.num_fpgas == 1:
+        model.set_metadata_prop("is_multifpga", "False")
+        return model
+    model.set_metadata_prop("is_multifpga", "True")
+    model = model.transform(
+        PartitionForMultiFPGA(
+            cfg.partitioning_configuration, report_dir=Path(cfg.output_dir) / "reports"
+        )
+    )
+    return model  # noqa
+
+
 def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Create stitched IP for a graph after all HLS IP blocks have been generated.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
@@ -865,6 +882,7 @@ build_dataflow_step_lookup = {
     "step_hw_codegen": step_hw_codegen,
     "step_hw_ipgen": step_hw_ipgen,
     "step_set_fifo_depths": step_set_fifo_depths,
+    "step_partition_for_multifpga": step_partition_for_multifpga,
     "step_create_stitched_ip": step_create_stitched_ip,
     "step_measure_rtlsim_performance": step_measure_rtlsim_performance,
     "step_make_pynq_driver": step_make_pynq_driver,

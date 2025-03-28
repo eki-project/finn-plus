@@ -383,6 +383,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: rtlsim, otherwise they will be replaced by RTL implementations.
     rtlsim_use_vivado_comps: Optional[bool] = True
 
+    #: Configuration that provides parameters for Multi-FPGA partitioning.
+    #: If set to something other than None, we assume the Multi-FPGA case
+    partitioning_configuration: Optional[PartitioningConfiguration] = None
+
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:
             # use same clk for synth and hls if not explicitly specified

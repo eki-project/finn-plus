@@ -59,7 +59,7 @@ def test_random_device_assign_util(devices: int, nodes: int) -> None:
 
 
 @pytest.mark.multifpga
-@pytest.mark.parametrize("device_node_combinations", [(2, 2), (10, 20), (100, 200)])
+@pytest.mark.parametrize("device_node_combinations", [(2, 2), (10, 20), (100, 200), (1, 2)])
 @pytest.mark.parametrize("assignment_type", ["random", "equal"])
 @pytest.mark.parametrize("device_assignment", ["linear"])
 def test_sdp_creation(
@@ -87,7 +87,6 @@ def test_sdp_creation(
         model.graph.node
     ), f"Assignment length doesnt match model node count. Assignment: {assignment}"
 
-    # assignment_copy = deepcopy(assignment)
     if device_assignment == "linear":
         overall_node_index = 0
         for current_device in range(len(assignment)):
