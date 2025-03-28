@@ -1,0 +1,20 @@
+params:
+  dut: ras
+  model_name: FINN-TFC_W2A2
+  act_mode: thresholding
+  acc_opt: yesaccmin
+  folding: prefold
+  board: RFSoC2x2
+  clock_period_ns: 5
+  fifo_method: manual
+  fifo_offset: 4
+  rtlsim_n: 5
+  output_products:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  target_fps: None
+  folding_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_cfg/lfs/CI_88986/folding/CI_88986_1.json
+metadata:
+  tool_version: '2024.2'
