@@ -36,9 +36,7 @@ from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNode
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from shutil import copy
 
-from finn.transformation.fpgadataflow.create_dataflow_partition import (
-    CreateDataflowPartition,
-)
+from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -48,6 +46,7 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir, pynq_native_port_width, pynq_part_map
+from finn.util.deps import get_deps_path
 
 from . import templates
 
@@ -239,16 +238,18 @@ class MakeZYNQProject(Transformation):
         config = "\n".join(config) + "\n"
         with open(ipcfg, "w") as f:
             f.write(
-                templates.custom_zynq_shell_template
-                % (
-                    fclk_mhz,
-                    axilite_idx,
-                    aximm_idx,
-                    self.platform,
-                    pynq_part_map[self.platform],
-                    config,
-                    self.enable_debug,
-                )
+                (
+                    templates.custom_zynq_shell_template
+                    % (
+                        fclk_mhz,
+                        axilite_idx,
+                        aximm_idx,
+                        self.platform,
+                        pynq_part_map[self.platform],
+                        config,
+                        self.enable_debug,
+                    )
+                ).replace("$BOARDFILES$", str(get_deps_path() / "board_files"))
             )
 
         # create a TCL recipe for the project
