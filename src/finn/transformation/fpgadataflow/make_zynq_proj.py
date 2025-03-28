@@ -46,8 +46,8 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir, pynq_native_port_width, pynq_part_map
-from finn.util.logging import log
 from finn.util.deps import get_deps_path
+from finn.util.logging import log
 
 from . import templates
 
