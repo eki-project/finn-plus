@@ -30,8 +30,9 @@
 import numpy as np
 import os
 from dataclasses import dataclass
-from dataclasses_json import dataclass_json
 from enum import Enum
+from mashumaro.mixins.json import DataClassJSONMixin
+from mashumaro.mixins.yaml import DataClassYAMLMixin
 from typing import Any, List, Optional
 
 from finn.util.basic import alveo_default_platform, part_map
@@ -173,9 +174,8 @@ estimate_only_dataflow_steps = [
 hw_codegen_dataflow_steps = estimate_only_dataflow_steps + ["step_hw_codegen"]
 
 
-@dataclass_json
 @dataclass
-class DataflowBuildConfig:
+class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     """Build configuration to be passed to the build_dataflow function. Can be
     serialized into or de-serialized from JSON files for persistence.
     See list of attributes below for more information on the build configuration.
