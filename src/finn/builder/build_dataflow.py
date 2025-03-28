@@ -35,8 +35,8 @@ import os
 import pdb  # isort: split
 import sys
 import time
-import traceback
 from qonnx.core.modelwrapper import ModelWrapper
+from rich.console import Console
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
@@ -176,8 +176,9 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             step_num += 1
         except:  # noqa
             # print exception info and traceback
-            _, _, tb = sys.exc_info()
-            traceback.print_exc()
+            extype, value, tb = sys.exc_info()
+            console = Console()
+            console.print_exception(show_locals=False)
             # start postmortem debug if configured
             if cfg.enable_build_pdb_debug:
                 pdb.post_mortem(tb)
