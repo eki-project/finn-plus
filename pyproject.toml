@@ -104,7 +104,8 @@ markers = [
    "bnn_u250: mark tests that execute U250 BNN tests",
    "bnn_kv260: mark tests that execute KV260 BNN tests",
    "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
-   "bnn_zcu104: mark tests that execute ZCU104 BNN tests"
+   "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
+   "multifpga: mark tests that refer to multifpga builds"
 ]
 norecursedirs = [
     "dist",

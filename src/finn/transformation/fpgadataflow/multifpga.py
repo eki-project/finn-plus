@@ -1,16 +1,25 @@
+from __future__ import annotations
+
 import json
+from onnx import NodeProto
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
-from finn.builder.build_dataflow_config import (
-    PartitioningConfiguration,
-    PartitioningStrategy,
-)
-from finn.transformation.fpgadataflow.create_dataflow_partition import (
-    CreateDataflowPartition,
-)
+from finn.builder.build_dataflow_config import PartitioningConfiguration, PartitioningStrategy
+from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
+
+
+def get_device_id(node: NodeProto) -> int | None:
+    try:
+        return getCustomOp(node).get_nodeattr("device_id")
+    except ValueError:
+        return None
+
+
+def get_all_branches(model: ModelWrapper) -> list[list[int]]:
+    raise NotImplementedError()
 
 
 class PartitionForMultiFPGA(Transformation):
