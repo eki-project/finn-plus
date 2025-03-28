@@ -1,5 +1,6 @@
 import pytest
 
+import os
 import random
 from copy import deepcopy
 from qonnx.core.datatype import DataType
@@ -11,6 +12,7 @@ from finn.transformation.fpgadataflow.multifpga import (
     CreateMultiFPGAStreamingDataflowPartition,
     get_device_id,
 )
+from finn.util.basic import make_build_dir
 from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
 
 
@@ -46,10 +48,14 @@ def random_device_assignment(devices: int, nodes: int) -> list[int]:
 @pytest.mark.parametrize("devices", [5, 10, 1, 10, 2])
 @pytest.mark.parametrize("nodes", [20, 50, 10, 10, 2])
 def test_random_device_assign_util(devices: int, nodes: int) -> None:
-    assignment = random_device_assignment(devices, nodes)
-    assert sum(assignment) == nodes
-    assert all(x > 0 for x in assignment)
-    assert len(assignment) == devices
+    if devices > nodes:
+        with pytest.raises(AssertionError):
+            random_device_assignment(devices, nodes)
+    else:
+        assignment = random_device_assignment(devices, nodes)
+        assert sum(assignment) == nodes
+        assert all(x > 0 for x in assignment)
+        assert len(assignment) == devices
 
 
 @pytest.mark.multifpga
@@ -65,6 +71,8 @@ def test_sdp_creation(
     model = make_multi_fclayer_model(
         3, DataType["BINARY"], DataType["BINARY"], DataType["BINARY"], node_count
     )
+    for i, node in enumerate(model.graph.node):
+        node.name = f"node_{i}"
 
     # Create assignment numbers
     if assignment_type == "random":
@@ -75,7 +83,11 @@ def test_sdp_creation(
         raise AssertionError()
 
     # Distribute the numbers
-    assert len(assignment) == len(model.graph.node)
+    assert sum(assignment) == len(
+        model.graph.node
+    ), f"Assignment length doesnt match model node count. Assignment: {assignment}"
+
+    # assignment_copy = deepcopy(assignment)
     if device_assignment == "linear":
         overall_node_index = 0
         for current_device in range(len(assignment)):
@@ -88,8 +100,11 @@ def test_sdp_creation(
     else:
         raise NotImplementedError()
 
+    # Creation of the SDPs
     original_model = deepcopy(model)
     model = model.transform(CreateMultiFPGAStreamingDataflowPartition())
+    sdp_test_dir = make_build_dir("test_sdp_creation")
+    model.save(os.path.join(sdp_test_dir, "sdp_model.onnx"))  # noqa
 
     # Check that all nodes in the parent graph are now SDPs
     for node in model.graph.node:
@@ -108,6 +123,12 @@ def test_sdp_creation(
     for node in model.graph.node:
         sucs = model.find_direct_successors(node)
         assert (sucs is None) or len(sucs) == 1
+
+    # Check that all submodels' nodes have the same device ID
+    for node in model.graph.node:
+        submodel = ModelWrapper(getCustomOp(node).get_nodeattr("model"))
+        devices_found = [get_device_id(n) for n in submodel.graph.node]
+        assert len(set(devices_found)) == 1
 
     # Check that no two SDPs are on the same device after another
     for i in range(len(model.graph.node) - 1):

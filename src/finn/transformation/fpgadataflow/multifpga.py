@@ -18,6 +18,14 @@ def get_device_id(node: NodeProto) -> int | None:
         return None
 
 
+def set_device_id(node: NodeProto, value: int) -> None:
+    getCustomOp(node).set_nodeattr("device_id", value)
+
+
+def get_submodel(node: NodeProto) -> ModelWrapper:
+    return ModelWrapper(getCustomOp(node).get_nodeattr("model"))
+
+
 def get_all_branches(model: ModelWrapper) -> list[list[int]]:
     raise NotImplementedError()
 
@@ -104,19 +112,25 @@ class CreateMultiFPGAStreamingDataflowPartition(Transformation):
         super().__init__()
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        current_device = -1
+        current_device = get_device_id(model.graph.node[0])
         current_max = 0
         for node in model.graph.node:
             assert node.op_type not in ["StreamingDataflowPartition", "GenericPartition"]
-            device = getCustomOp(node).get_nodeattr("device_id")
+            device = get_device_id(node)
             assert device is not None, f"Node {node.name} of type {node.op_type} does not have"
             "a device_id attribute"
             # TODO: Setting partition_id and calling CreateDataflowPartitions might not be
             # the best way to do it. Maybe change at some point
-            getCustomOp(node).set_nodeattr("partition_id", current_max)
             if device != current_device:
                 current_device = device
                 current_max += 1
+            getCustomOp(node).set_nodeattr("partition_id", current_max)
 
         model = model.transform(CreateDataflowPartition())
+
+        # Set the SDP's device_id
+        for node in model.graph.node:
+            device_id = get_device_id(get_submodel(node).graph.node[0])
+            assert device_id is not None
+            set_device_id(node, device_id)
         return model, False
