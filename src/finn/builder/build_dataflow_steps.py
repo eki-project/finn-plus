@@ -44,6 +44,7 @@ from qonnx.transformation.general import (
     GiveUniqueNodeNames,
     RemoveStaticGraphInputs,
     RemoveUnusedTensors,
+    SortGraph,
 )
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.infer_datatypes import InferDataTypes
@@ -91,8 +92,8 @@ from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
 from finn.transformation.fpgadataflow.make_pynq_driver import (
-    MakePYNQDriverIODMA,
     MakePYNQDriverInstrumentation,
+    MakePYNQDriverIODMA,
 )
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import (
@@ -553,11 +554,62 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     `GiveUniqueNodeNames`.
     """
 
+    hw_attrs = [
+        "PE",
+        "SIMD",
+        "parallel_window",
+        "ram_style",
+        "depth",
+        "impl_style",
+        "resType",
+        "mem_mode",
+        "runtime_writeable_weights",
+        "inFIFODepths",
+        "outFIFODepths",
+        "depth_trigger_uram",
+        "depth_trigger_bram",
+    ]
+
     # Experimental live FIFO-sizing, overwrites all other FIFO-related behavior
     if cfg.live_fifo_sizing:
         # Create all DWCs and FIFOs normally
         model = model.transform(InsertDWC())
-        model = model.transform(InsertFIFO(create_shallow_fifos=True))
+        model = model.transform(
+            InsertFIFO(vivado_ram_style=cfg.large_fifo_mem_style, create_shallow_fifos=True)
+        )
+
+        # Clean up model
+        model = model.transform(SortGraph())
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
+
+        # save original folding config before potentially modifying it
+        cfg_path = cfg.output_dir + "/report/folding_config_before_lfs.json"
+        extract_model_config_to_json(model, cfg_path, hw_attrs)
+        model.set_metadata_prop("folding_config_before_lfs", cfg_path)
+
+        # Disable runtime-writable weights, external weights, and dynamic mode,
+        # as we don't support additional AXI-lite interfaces next to the FIFOs
+        for node in model.graph.node:
+            if node.domain.startswith("finn.custom_op.fpgadataflow"):
+                node_inst = getCustomOp(node)
+                try:
+                    if node_inst.get_nodeattr("runtime_writeable_weights") == 1:
+                        node_inst.set_nodeattr("runtime_writeable_weights", 0)
+                        if node_inst.get_nodeattr("ram_style") == "ultra":
+                            node_inst.set_nodeattr("ram_style", "block")
+                except AttributeError:
+                    pass
+                try:
+                    if node_inst.get_nodeattr("mem_mode") == "external":
+                        node_inst.set_nodeattr("mem_mode", "internal_decoupled")
+                except AttributeError:
+                    pass
+                try:
+                    if node_inst.get_nodeattr("dynamic_mode") == 1:
+                        node_inst.set_nodeattr("dynamic_mode", 0)
+                except AttributeError:
+                    pass
 
         # Specialize FIFOs to HLS back-end instead of default RTL back-end
         for node in model.get_nodes_by_op_type("StreamingFIFO"):
@@ -571,6 +623,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
             node_inst.set_nodeattr("impl_style", "virtual")
 
         # Clean up model
+        model = model.transform(SortGraph())
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(GiveReadableTensorNames())
 
@@ -636,21 +689,6 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
             model = model.transform(ApplyConfig(cfg.folding_config_file))
 
     # extract the final configuration and save it as json
-    hw_attrs = [
-        "PE",
-        "SIMD",
-        "parallel_window",
-        "ram_style",
-        "depth",
-        "impl_style",
-        "resType",
-        "mem_mode",
-        "runtime_writeable_weights",
-        "inFIFODepths",
-        "outFIFODepths",
-        "depth_trigger_uram",
-        "depth_trigger_bram",
-    ]
     extract_model_config_to_json(model, cfg.output_dir + "/final_hw_config.json", hw_attrs)
 
     # perform FIFO splitting and shallow FIFO removal only after the final config
@@ -826,7 +864,11 @@ def step_make_pynq_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
     if DataflowOutputType.PYNQ_DRIVER in cfg.generate_outputs:
         driver_dir = cfg.output_dir + "/driver"
         if cfg.enable_instrumentation:
-            model = model.transform(MakePYNQDriverInstrumentation(cfg._resolve_driver_platform(), cfg.synth_clk_period_ns, cfg.live_fifo_sizing))
+            model = model.transform(
+                MakePYNQDriverInstrumentation(
+                    cfg._resolve_driver_platform(), cfg.synth_clk_period_ns, cfg.live_fifo_sizing
+                )
+            )
         else:
             model = model.transform(MakePYNQDriverIODMA(cfg._resolve_driver_platform()))
         shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
