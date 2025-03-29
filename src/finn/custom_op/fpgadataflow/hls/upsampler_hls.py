@@ -78,7 +78,7 @@ class UpsampleNearestNeighbour_hls(UpsampleNearestNeighbour, HLSBackend):
         batch = self.get_nodeattr("numInputVectors")
         if is_2d:
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                """UpsampleNearestNeighbour<OFMDim, IFMDim, IFMChannels,
+                """UpsampleNearestNeighbour_Batch<OFMDim, IFMDim, IFMChannels,
                 ap_uint<Input_precision> > (in0_%s, out_%s, numReps);"""
                 % (self.hls_sname(), self.hls_sname())
             ]
