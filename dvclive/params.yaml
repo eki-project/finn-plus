@@ -1,0 +1,20 @@
+params:
+  dut: ras
+  model_name: FINN-CNV_W2A2
+  act_mode: standalone
+  acc_opt: yesaccmin
+  folding: prefold
+  board: RFSoC2x2
+  clock_period_ns: 5
+  fifo_method: manual
+  rtlsim_n: 5
+  output_products:
+  - estimate_reports
+  - stitched_ip
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  target_fps: None
+  folding_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_cfg/lfs/CI_89160/folding/CI_89160_2.json
+metadata:
+  tool_version: '2022.2'
