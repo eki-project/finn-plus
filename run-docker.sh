@@ -56,6 +56,12 @@ if [ -z "$PLATFORM_REPO_PATHS" ];then
   recho "This is required to be able to use Alveo PCIe cards."
 fi
 
+if [ -z "$FINN_END2END_SKIP_SYNTH" ];then
+  recho "Please set FINN_END2END_SKIP_SYNTH"
+else 
+  recho "FINN_END2END_SKIP_SYNTH IS SET"
+fi
+
 DOCKER_GID=$(id -g)
 DOCKER_GNAME=$(id -gn)
 DOCKER_UNAME=$(id -un)
@@ -103,6 +109,7 @@ SCRIPTPATH=$(dirname "$SCRIPT")
 : ${FINN_SKIP_XRT_DOWNLOAD=""}
 : ${FINN_XRT_PATH=""}
 : ${FINN_DOCKER_NO_CACHE="0"}
+: ${FINN_END2END_SKIP_SYNTH="0"}
 
 DOCKER_INTERACTIVE=""
 
@@ -228,6 +235,7 @@ DOCKER_EXEC+="-e PYNQ_PASSWORD=$PYNQ_PASSWORD "
 DOCKER_EXEC+="-e PYNQ_TARGET_DIR=$PYNQ_TARGET_DIR "
 DOCKER_EXEC+="-e OHMYXILINX=$OHMYXILINX "
 DOCKER_EXEC+="-e NUM_DEFAULT_WORKERS=$NUM_DEFAULT_WORKERS "
+DOCKER_EXEC+="-e FINN_END2END_SKIP_SYNTH=$FINN_END2END_SKIP_SYNTH "
 # Workaround for FlexLM issue, see:
 # https://community.flexera.com/t5/InstallAnywhere-Forum/Issues-when-running-Xilinx-tools-or-Other-vendor-tools-in-docker/m-p/245820#M10647
 DOCKER_EXEC+="-e LD_PRELOAD=/lib/x86_64-linux-gnu/libudev.so.1 "
