@@ -6,7 +6,6 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.builder.build_dataflow_config import PartitioningConfiguration, PartitioningStrategy
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
@@ -21,6 +20,14 @@ def get_device_id(node: NodeProto) -> int | None:
 
 def set_device_id(node: NodeProto, value: int) -> None:
     getCustomOp(node).set_nodeattr("device_id", value)
+
+
+def get_last_submodel_node(sdp_node: NodeProto) -> NodeProto:
+    return get_submodel(sdp_node).graph.node[-1]
+
+
+def get_first_submodel_node(sdp_node: NodeProto) -> NodeProto:
+    return get_submodel(sdp_node).graph.node[0]
 
 
 def get_submodel(node: NodeProto) -> ModelWrapper:
@@ -136,56 +143,3 @@ class CreateMultiFPGAStreamingDataflowPartition(Transformation):
             assert device_id is not None
             set_device_id(node, device_id)
         return model, False
-
-
-class CreateNetworkMetadata(Transformation):
-    """Create metadata that describes how kernels have to be configured to achieve a given network
-    topology"""
-
-    def __init__(
-        self, rx_channel_per_kernel: int, tx_channel_per_kernel: int, kernel_available: int
-    ) -> None:
-        self.kernel_rx = rx_channel_per_kernel
-        self.kernel_tx = tx_channel_per_kernel
-        self.kernels = kernel_available
-
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        return model, False
-
-
-class CreateChainNetworkMetadata(CreateNetworkMetadata):
-    def __init__(
-        self, rx_channel_per_kernel: int, tx_channel_per_kernel: int, kernel_available: int
-    ) -> None:
-        super().__init__(rx_channel_per_kernel, tx_channel_per_kernel, kernel_available)
-        assert self.kernel_rx * self.kernels >= 1
-        assert self.kernel_tx * self.kernels >= 1
-
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        model = model.transform(GiveUniqueNodeNames())
-        seen_devices = []
-        for node in model.graph.node:
-            dev = get_device_id(node)
-            assert dev not in seen_devices, (
-                "Cannot create networked chain, " "since the same device is visited more than once"
-            )
-            seen_devices.append(dev)
-
-        # _table = {}
-        # for i, n1 in enumerate(model.graph.node):
-        #    if i == len(model.graph.node) - 1:
-        #        break
-        #    n2 = model.graph.node[i + 1]
-        #    _d1 = get_device_id(n1)
-        #    _d2 = get_device_id(n2)
-
-        return model, False
-
-
-class CreateReturnChainNetworkMetadata(CreateNetworkMetadata):
-    def __init__(
-        self, rx_channel_per_kernel: int, tx_channel_per_kernel: int, kernel_available: int
-    ) -> None:
-        super().__init__(rx_channel_per_kernel, tx_channel_per_kernel, kernel_available)
-        assert self.kernel_rx * self.kernels >= 2
-        assert self.kernel_tx * self.kernels >= 2

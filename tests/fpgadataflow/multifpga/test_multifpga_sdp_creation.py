@@ -44,29 +44,9 @@ def random_device_assignment(devices: int, nodes: int) -> list[int]:
     return temp
 
 
-@pytest.mark.multifpga
-@pytest.mark.parametrize("devices", [5, 10, 1, 10, 2])
-@pytest.mark.parametrize("nodes", [20, 50, 10, 10, 2])
-def test_random_device_assign_util(devices: int, nodes: int) -> None:
-    if devices > nodes:
-        with pytest.raises(AssertionError):
-            random_device_assignment(devices, nodes)
-    else:
-        assignment = random_device_assignment(devices, nodes)
-        assert sum(assignment) == nodes
-        assert all(x > 0 for x in assignment)
-        assert len(assignment) == devices
-
-
-@pytest.mark.multifpga
-@pytest.mark.parametrize("device_node_combinations", [(2, 2), (10, 20), (100, 200), (1, 2)])
-@pytest.mark.parametrize("assignment_type", ["random", "equal"])
-@pytest.mark.parametrize("device_assignment", ["linear"])
-def test_sdp_creation(
-    device_node_combinations: tuple[int, int], assignment_type: str, device_assignment: str
-) -> None:
-    device_count, node_count = device_node_combinations
-
+def create_sdp_ready_model(
+    node_count: int, device_count: int, assignment_type: str, device_assignment: str
+) -> ModelWrapper:
     # Create a simple chained model without branches
     model = make_multi_fclayer_model(
         3, DataType["BINARY"], DataType["BINARY"], DataType["BINARY"], node_count
@@ -98,6 +78,32 @@ def test_sdp_creation(
                 assignment[current_device] -= 1
     else:
         raise NotImplementedError()
+    return model
+
+
+@pytest.mark.multifpga
+@pytest.mark.parametrize("devices", [5, 10, 1, 10, 2])
+@pytest.mark.parametrize("nodes", [20, 50, 10, 10, 2])
+def test_random_device_assign_util(devices: int, nodes: int) -> None:
+    if devices > nodes:
+        with pytest.raises(AssertionError):
+            random_device_assignment(devices, nodes)
+    else:
+        assignment = random_device_assignment(devices, nodes)
+        assert sum(assignment) == nodes
+        assert all(x > 0 for x in assignment)
+        assert len(assignment) == devices
+
+
+@pytest.mark.multifpga
+@pytest.mark.parametrize("device_node_combinations", [(2, 2), (10, 20), (100, 200), (1, 2)])
+@pytest.mark.parametrize("assignment_type", ["random", "equal"])
+@pytest.mark.parametrize("device_assignment", ["linear"])
+def test_sdp_creation(
+    device_node_combinations: tuple[int, int], assignment_type: str, device_assignment: str
+) -> None:
+    device_count, node_count = device_node_combinations
+    model = create_sdp_ready_model(node_count, device_count, assignment_type, device_assignment)
 
     # Creation of the SDPs
     original_model = deepcopy(model)

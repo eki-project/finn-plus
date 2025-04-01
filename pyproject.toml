@@ -113,6 +113,10 @@ norecursedirs = [
     ".tox"
 ]
 testpaths = "tests"
+filterwarnings = [
+    'ignore:Deprecated call to `pkg_resources:DeprecationWarning',
+    'ignore:pkg_resources is deprecated:DeprecationWarning'
+]
 
 [tool.isort]
 line_length=100
