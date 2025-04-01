@@ -65,6 +65,7 @@ from finn.analysis.fpgadataflow.res_estimation import res_estimation, res_estima
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     DataflowOutputType,
+    MultiFPGACommunicationScheme,
     ShellFlowType,
     VerificationStepType,
 )
@@ -86,7 +87,16 @@ from finn.transformation.fpgadataflow.make_pynq_driver import MakePYNQDriver
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
-from finn.transformation.fpgadataflow.multifpga import PartitionForMultiFPGA
+from finn.transformation.fpgadataflow.multifpga import (
+    CreateMultiFPGAStreamingDataflowPartition,
+    PartitionForMultiFPGA,
+)
+from finn.transformation.fpgadataflow.multifpga_kernel_preparation import PrepareAuroraFlow
+from finn.transformation.fpgadataflow.multifpga_network import (
+    AssignNetworkMetadata,
+    AuroraNetworkMetadata,
+    CreateChainNetworkMetadata,
+)
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
@@ -638,6 +648,40 @@ def step_partition_for_multifpga(model: ModelWrapper, cfg: DataflowBuildConfig) 
     return model  # noqa
 
 
+def step_create_multifpga_sdp(model: ModelWrapper, _: DataflowBuildConfig) -> ModelWrapper:
+    """Create StreamingDataflowPartitions from the graph based on the device ids that were
+    assigned by step_partition_for_multifpga"""
+    if model.get_metadata_prop("is_multifpga") in [None, "False"]:
+        return model
+    model = model.transform(CreateMultiFPGAStreamingDataflowPartition())
+    return model  # noqa
+
+
+def step_prepare_network_infrastructure(
+    model: ModelWrapper, cfg: DataflowBuildConfig
+) -> ModelWrapper:
+    """Create network metadata for this flow and package the correct kernels with it."""
+    if model.get_metadata_prop("is_multifpga") in [None, "False"]:
+        return model
+
+    assert cfg.partitioning_configuration is not None, (
+        "is_multifpga=True, " "but no configuration partition given!"
+    )
+    match cfg.partitioning_configuration.communication_scheme:
+        case MultiFPGACommunicationScheme.AURORA_CHAIN:
+            model = model.transform(
+                AssignNetworkMetadata(AuroraNetworkMetadata, CreateChainNetworkMetadata)
+            )
+            model = model.transform(PrepareAuroraFlow())
+
+        case MultiFPGACommunicationScheme.AURORA_RETURNCHAIN:
+            raise NotImplementedError()
+
+        case anyvalue:
+            raise NotImplementedError(f"Communication scheme {anyvalue} not implemented")
+    return model  # noqa
+
+
 def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Create stitched IP for a graph after all HLS IP blocks have been generated.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
@@ -883,6 +927,8 @@ build_dataflow_step_lookup = {
     "step_hw_ipgen": step_hw_ipgen,
     "step_set_fifo_depths": step_set_fifo_depths,
     "step_partition_for_multifpga": step_partition_for_multifpga,
+    "step_create_multifpga_sdp": step_create_multifpga_sdp,
+    "step_prepare_network_infrastructure": step_prepare_network_infrastructure,
     "step_create_stitched_ip": step_create_stitched_ip,
     "step_measure_rtlsim_performance": step_measure_rtlsim_performance,
     "step_make_pynq_driver": step_make_pynq_driver,

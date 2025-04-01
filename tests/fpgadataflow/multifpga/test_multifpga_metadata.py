@@ -6,8 +6,10 @@ from test_multifpga_sdp_creation import create_sdp_ready_model
 
 from finn.transformation.fpgadataflow.multifpga import CreateMultiFPGAStreamingDataflowPartition
 from finn.transformation.fpgadataflow.multifpga_network import (
+    AssignNetworkMetadata,
     AuroraNetworkMetadata,
     CreateChainNetworkMetadata,
+    CreateNetworkMetadata,
     DataDirection,
     NetworkMetadata,
     get_device_id,
@@ -22,18 +24,26 @@ from finn.transformation.fpgadataflow.multifpga_network import (
 )
 @pytest.mark.parametrize("assignment_type", ["random", "equal"])
 @pytest.mark.parametrize("communication_metadata_type", [AuroraNetworkMetadata])
+@pytest.mark.parametrize("communication_type", [CreateChainNetworkMetadata])
+@pytest.mark.parametrize("shuffle_devices", [True, False])
+@pytest.mark.parametrize("assignment_order", ["linear"])
 def test_chain_metadata(
     device_node_combinations: tuple[int, int],
     assignment_type: str,
+    assignment_order: str,
     communication_metadata_type: type[NetworkMetadata],
+    communication_type: type[CreateNetworkMetadata],
+    shuffle_devices: bool,
 ) -> None:
     device_count, node_count = device_node_combinations
     # TODO: Not ideal, better pass an own, self constructed model
-    model = create_sdp_ready_model(node_count, device_count, assignment_type, "linear")
+    model = create_sdp_ready_model(
+        node_count, device_count, assignment_type, assignment_order, shuffle_devices
+    )
     model = model.transform(CreateMultiFPGAStreamingDataflowPartition())
 
     # Create the metadata
-    model = model.transform(CreateChainNetworkMetadata(save_as_format=communication_metadata_type))
+    model = model.transform(AssignNetworkMetadata(communication_metadata_type, communication_type))
 
     # Check the data exists
     raw_path = model.get_metadata_prop("network_metadata")
@@ -62,20 +72,32 @@ def test_chain_metadata(
             # Specific for line connections
             assert m.connections_with(d1, d2) == 1  # d1 sends
             assert m.connections_with(d2, d1) == 1  # d2 receives
+        n1_lnode = get_last_submodel_node(n1).name
+        n2_fnode = get_first_submodel_node(n2).name
         assert m.has_connection(
             d1,
-            get_last_submodel_node(n1).name,
+            n1_lnode,
             d2,
-            get_first_submodel_node(n2).name,
+            n2_fnode,
             DataDirection.TX,
         )
         assert m.has_connection(
             d2,
-            get_last_submodel_node(n1).name,
+            n1_lnode,
             d1,
-            get_first_submodel_node(n2).name,
+            n2_fnode,
             DataDirection.RX,
         )
+        if i > 0:
+            assert m.get_kernel_names_for(n1, n2) == (
+                f"aurora_flow_1_dev{d1}",
+                f"aurora_flow_0_dev{d2}",
+            )
+        else:
+            assert m.get_kernel_names_for(n1, n2) == (
+                f"aurora_flow_0_dev{d1}",
+                f"aurora_flow_0_dev{d2}",
+            )
 
 
 @pytest.mark.multifpga

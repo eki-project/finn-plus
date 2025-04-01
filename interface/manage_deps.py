@@ -39,6 +39,10 @@ FINN_DEPS = {
         "https://github.com/iksnagreb/attention-hlslib.git",
         "afc9720f10e551e1f734e137b21bb6d0a8342177",
     ),
+    "AuroraFlow": (
+        "https://github.com/pc2/AuroraFlow.git",
+        "ebc82a00bff399fdb5c8455d40a5cadd5b10a686",
+    ),
 }
 
 VERILATOR = ("https://github.com/verilator/verilator", "v4.224")

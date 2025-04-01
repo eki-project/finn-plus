@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import yaml
+from abc import ABC, abstractmethod
 from enum import Enum
+from onnx import NodeProto
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
@@ -25,12 +27,17 @@ class DataDirection(str, Enum):
     BIDIRECTIONAL = "BIDIRECTIONAL"
 
 
-class NetworkMetadata:
+class NetworkMetadata(ABC):
     def __init__(self) -> None:
         self.table = {}
 
+    @abstractmethod
     def add_connection(
-        self, sender_device: int, sender_node: str, receiver_device: int, receiver_node: str
+        self,
+        sender_device: Device,
+        sender_node: NodeName,
+        receiver_device: Device,
+        receiver_node: NodeName,
     ) -> None:
         pass
 
@@ -60,10 +67,10 @@ class AuroraNetworkMetadata(NetworkMetadata):
 
     def _add_single_connection(
         self,
-        on_device: int,
-        on_node: str,
-        other_device: int,
-        other_node: str,
+        on_device: Device,
+        on_node: NodeName,
+        other_device: Device,
+        other_node: NodeName,
         direction: DataDirection,
     ) -> None:
         found_free_spot = False
@@ -80,7 +87,7 @@ class AuroraNetworkMetadata(NetworkMetadata):
             assert (
                 len(self.table[on_device]) < self.ports_per_device
             ), f"Too many kernels / ports required for this device ({on_device})!"
-            new_aurora = f"aurora_flow_{len(self.table[on_device])}"
+            new_aurora = f"aurora_flow_{len(self.table[on_device])}_dev{on_device}"
             self.table[on_device][new_aurora] = {
                 "partner": other_device,
                 DataDirection.TX: None,
@@ -92,10 +99,18 @@ class AuroraNetworkMetadata(NetworkMetadata):
                 self.table[on_device][new_aurora][direction] = (other_node, on_node)
 
     def add_connection(
-        self, sender_device: int, sender_node: str, receiver_device: int, receiver_node: str
+        self,
+        sender_device: Device,
+        sender_node: NodeName,
+        receiver_device: Device,
+        receiver_node: NodeName,
     ) -> None:
         """Add a connection between sender_device and receiver_device. This creates both the
-        TX and RX endpoints."""
+        TX and RX endpoints.
+
+        If we look at the node name tuple (n0, n1):
+            If this is in the TX field: n0 is on our current device and sends to n1
+            If this is in the RX field: n1 is on our current device and receives from n0"""
         if sender_device not in self.table:
             self.table[sender_device] = {}
         if receiver_device not in self.table:
@@ -132,8 +147,40 @@ class AuroraNetworkMetadata(NetworkMetadata):
                 return True
         return False
 
+    def get_kernel_names_for(
+        self, sdp1: NodeProto, sdp2: NodeProto
+    ) -> tuple[CommunicationKernelName, CommunicationKernelName] | None:
+        """Check if a connection between the SDP nodes exists, and if so returns the names
+        of the matching aurora kernels"""
+        lnode = get_last_submodel_node(sdp1).name
+        fnode = get_first_submodel_node(sdp2).name
+        d1 = get_device_id(sdp1)
+        d2 = get_device_id(sdp2)
+        assert d1 is not None
+        assert d2 is not None
+        if not self.has_connection(
+            d1, lnode, d2, fnode, DataDirection.TX
+        ) or not self.has_connection(d2, lnode, d1, fnode, DataDirection.RX):
+            return None
 
-class CreateNetworkMetadata(Transformation):
+        t1 = None
+        t2 = None
+        for device in self.table.keys():
+            if device == d1:
+                for aurora_name, aurora in self.table[device].items():
+                    if aurora["partner"] == d2 and aurora[DataDirection.TX] == (lnode, fnode):
+                        t1 = aurora_name
+
+            if device == d2:
+                for aurora_name, aurora in self.table[device].items():
+                    if aurora["partner"] == d1 and aurora[DataDirection.RX] == (lnode, fnode):
+                        t2 = aurora_name
+        assert t1 is not None
+        assert t2 is not None
+        return (t1, t2)
+
+
+class CreateNetworkMetadata(ABC):
     """Run this transformation to create metadata necessary for Multi-FPGA settings. Pass the type
     of metadata as a type to the constructor, or a factory producing one."""
 
@@ -144,6 +191,19 @@ class CreateNetworkMetadata(Transformation):
         self.metadata_type = save_as_format
         self.metadata = self.metadata_type()
 
+    def save_metadata(self, model: ModelWrapper) -> Path:
+        metadata_dir = Path(make_build_dir("network_metadata")).absolute()
+        metadata_path = metadata_dir / "metadata.yaml"
+        self.metadata.save(metadata_path)
+        model.set_metadata_prop("network_metadata", str(metadata_path))
+        return metadata_path
+
+    @abstractmethod
+    def create_metadata(self, model: ModelWrapper) -> None:
+        """Create the metadata and assign it to the object variable.
+        When creating a new type of network metadata this has to be implemented"""
+        raise NotImplementedError()
+
 
 class CreateChainNetworkMetadata(CreateNetworkMetadata):
     """Create a simple network with FPGAs connected in a simple line"""
@@ -151,7 +211,7 @@ class CreateChainNetworkMetadata(CreateNetworkMetadata):
     def __init__(self, save_as_format: type[NetworkMetadata]) -> None:
         super().__init__(save_as_format)
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+    def create_metadata(self, model: ModelWrapper) -> None:
         # Build graph
         for i, n1 in enumerate(model.graph.node):
             if i == len(model.graph.node) - 1:
@@ -169,14 +229,21 @@ class CreateChainNetworkMetadata(CreateNetworkMetadata):
                     get_first_submodel_node(n2).name,
                 )
 
-        # Save results for usage in later steps
-        metadata_dir = Path(make_build_dir("network_metadata")).absolute()
-        metadata_path = metadata_dir / "metadata.yaml"
-        self.metadata.save(metadata_path)
-        model.set_metadata_prop("network_metadata", str(metadata_path))
-
-        return model, False
-
 
 class CreateReturnChainNetworkMetadata(CreateNetworkMetadata):
     pass
+
+
+class AssignNetworkMetadata(Transformation):
+    def __init__(
+        self,
+        metadata_type: type[NetworkMetadata] | Callable[[], NetworkMetadata],
+        creator_type: type[CreateNetworkMetadata],
+    ) -> None:
+        super().__init__()
+        self.creator = creator_type(save_as_format=metadata_type)
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        self.creator.create_metadata(model)
+        self.creator.save_metadata(model)
+        return model, False

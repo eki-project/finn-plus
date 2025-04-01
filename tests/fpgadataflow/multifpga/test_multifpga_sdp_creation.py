@@ -28,24 +28,30 @@ def equal_device_assignment(devices: int, nodes: int) -> list[int]:
 
 
 def random_device_assignment(devices: int, nodes: int) -> list[int]:
-    """Randomly assign number of devices to nodes"""
+    """Randomly assign number of nodes to devices"""
     assert nodes >= devices
     nodes_left = nodes
     temp = [0] * devices
-    not_set = list(range(devices))
+    not_set = list(range(devices))  # Contains the indices of the devices
     for _ in range(devices):
         chosen_index = random.choice(not_set)
-        not_set.remove(chosen_index)
+        not_set.remove(chosen_index)  # Assign to each device only once
         if len(not_set) == 0:
             temp[chosen_index] = nodes_left
         else:
             temp[chosen_index] = randint(1, nodes_left - len(not_set))
         nodes_left -= temp[chosen_index]
+    # Temp is <devices> long and every bucket contains the nr of nodes
+    # that the device has
     return temp
 
 
 def create_sdp_ready_model(
-    node_count: int, device_count: int, assignment_type: str, device_assignment: str
+    node_count: int,
+    device_count: int,
+    assignment_type: str,
+    device_assignment: str,
+    shuffle_devices: bool = False,
 ) -> ModelWrapper:
     # Create a simple chained model without branches
     model = make_multi_fclayer_model(
@@ -69,7 +75,11 @@ def create_sdp_ready_model(
 
     if device_assignment == "linear":
         overall_node_index = 0
-        for current_device in range(len(assignment)):
+        device_list = list(range(len(assignment)))
+        if shuffle_devices:
+            random.shuffle(device_list)
+
+        for current_device in device_list:
             while assignment[current_device] > 0:
                 getCustomOp(model.graph.node[overall_node_index]).set_nodeattr(
                     "device_id", current_device
@@ -99,11 +109,17 @@ def test_random_device_assign_util(devices: int, nodes: int) -> None:
 @pytest.mark.parametrize("device_node_combinations", [(2, 2), (10, 20), (100, 200), (1, 2)])
 @pytest.mark.parametrize("assignment_type", ["random", "equal"])
 @pytest.mark.parametrize("device_assignment", ["linear"])
+@pytest.mark.parametrize("shuffle_devices", [True, False])
 def test_sdp_creation(
-    device_node_combinations: tuple[int, int], assignment_type: str, device_assignment: str
+    device_node_combinations: tuple[int, int],
+    assignment_type: str,
+    device_assignment: str,
+    shuffle_devices: bool,
 ) -> None:
     device_count, node_count = device_node_combinations
-    model = create_sdp_ready_model(node_count, device_count, assignment_type, device_assignment)
+    model = create_sdp_ready_model(
+        node_count, device_count, assignment_type, device_assignment, shuffle_devices
+    )
 
     # Creation of the SDPs
     original_model = deepcopy(model)

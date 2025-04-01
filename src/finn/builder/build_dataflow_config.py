@@ -120,6 +120,11 @@ class PartitioningStrategy(Enum):
     LAYER_COUNT = 1
 
 
+class MultiFPGACommunicationScheme(Enum):
+    AURORA_CHAIN = 0
+    AURORA_RETURNCHAIN = 1
+
+
 @dataclass
 class PartitioningConfiguration:
     # The number of FPGAs to use for Multi-FPGA. If left on -1,
@@ -128,6 +133,10 @@ class PartitioningConfiguration:
 
     # What strategy to use to partition the dataflow graph
     partition_strategy: PartitioningStrategy = PartitioningStrategy.RESOURCE_UTILIZATION
+
+    # What kind of communication to use. This tells the flow
+    # what topology and what kernels to use
+    communication_scheme: MultiFPGACommunicationScheme = MultiFPGACommunicationScheme.AURORA_CHAIN
 
 
 #: List of steps that will be run as part of the standard dataflow build, in the
