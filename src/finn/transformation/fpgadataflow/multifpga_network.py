@@ -28,8 +28,10 @@ class DataDirection(str, Enum):
 
 
 class NetworkMetadata(ABC):
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None) -> None:
         self.table = {}
+        if path is not None:
+            self.load(path)
 
     @abstractmethod
     def add_connection(
@@ -60,8 +62,8 @@ class AuroraNetworkMetadata(NetworkMetadata):
     ]
 
     # TODO: Remove default value
-    def __init__(self, ports_per_device: int = 2) -> None:
-        super().__init__()
+    def __init__(self, path: Path | None = None, ports_per_device: int = 2) -> None:
+        super().__init__(path)
         self.ports_per_device = ports_per_device
         self.table: AuroraNetworkMetadata.AuroraTableType = {}
 
