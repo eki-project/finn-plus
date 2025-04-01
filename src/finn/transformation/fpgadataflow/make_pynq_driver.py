@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import json
 import numpy as np
 import os
 import qonnx
@@ -62,7 +63,7 @@ def to_external_tensor(init, w_dtype):
     return ext_weight
 
 
-class MakePYNQDriver(Transformation):
+class MakePYNQDriverIODMA(Transformation):
     """Create PYNQ Python code to correctly interface the generated
     accelerator, including data packing/unpacking. Should be called
     after conversion to HLS layers, folding and the creation of
@@ -301,5 +302,66 @@ class MakePYNQDriver(Transformation):
                     )
                 else:
                     continue
+
+        return (model, False)
+
+
+class MakePYNQDriverInstrumentation(Transformation):
+    def __init__(self, platform, clk_period_ns, live_fifo_sizing):
+        super().__init__()
+        self.platform = platform
+        self.clk_period_ns = clk_period_ns
+        self.live_fifo_sizing = live_fifo_sizing
+
+    def apply(self, model):
+        # TODO: support runtime-writable and external weights
+        # TODO: support Alveo and Versal platforms
+
+        # create a temporary folder for the generated driver
+        pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
+        model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
+
+        # create (copy) the static instrumentation driver
+        driver_template = (
+            os.environ["FINN_ROOT"]
+            + "/src/finn/qnn-data/templates/driver/driver_instrumentation.py"
+        )
+        if self.live_fifo_sizing:
+            driver_py = pynq_driver_dir + "/driver_instrumentation.py"
+        else:
+            driver_py = pynq_driver_dir + "/driver.py"
+        shutil.copy(driver_template, driver_py)
+
+        # add-on driver for live fifosizing
+        if self.live_fifo_sizing:
+            driver_template = (
+                os.environ["FINN_ROOT"] + "/src/finn/qnn-data/templates/driver/driver_fifosizing.py"
+            )
+            driver_py = pynq_driver_dir + "/driver.py"
+            shutil.copy(driver_template, driver_py)
+
+        # write default settings to driver config file
+        settings = {
+            "fclk_mhz": (1.0 / self.clk_period_ns) * 1e3,
+        }
+        if self.live_fifo_sizing:
+            # export FIFO widths to the settings file as well
+            # at this stage, the FIFOs are already wrapped in StreamingDataflowPartitions
+            fifo_widths = {}
+            for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
+                sdp_node_inst = getCustomOp(sdp_node)
+                # JSON doesn't support int keys
+                sdp_id = str(sdp_node_inst.get_nodeattr("partition_id"))
+                dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
+                kernel_model = ModelWrapper(dataflow_model_filename)
+                for node in kernel_model.graph.node:
+                    if node.op_type.startswith("StreamingFIFO"):
+                        node_inst = getCustomOp(node)
+                        fifo_widths[sdp_id] = node_inst.get_instream_width()
+            settings["fifo_widths"] = fifo_widths
+
+        settingsfile = pynq_driver_dir + "/settings.json"
+        with open(settingsfile, "w") as f:
+            json.dump(settings, f, indent=2)
 
         return (model, False)

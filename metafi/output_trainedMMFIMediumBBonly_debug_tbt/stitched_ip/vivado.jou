@@ -1,0 +1,13 @@
+#-----------------------------------------------------------
+# Vivado v2022.2 (64-bit)
+# SW Build 3671981 on Fri Oct 14 04:59:54 MDT 2022
+# IP Build 3669848 on Fri Oct 14 08:30:02 MDT 2022
+# Start of session at: Mon Mar 31 12:56:46 2025
+# Process ID: 3559220
+# Current directory: /home/rz/project/finn/build_dir/vivado_stitch_proj_i3j2gd2v
+# Command line: vivado -mode batch -source make_project.tcl
+# Log file: /home/rz/project/finn/build_dir/vivado_stitch_proj_i3j2gd2v/vivado.log
+# Journal file: /home/rz/project/finn/build_dir/vivado_stitch_proj_i3j2gd2v/vivado.jou
+# Running On: finn-container, OS: Linux, CPU Frequency: 4291.250 MHz, CPU Physical cores: 6, Host memory: 33583 MB
+#-----------------------------------------------------------
+source make_project.tcl

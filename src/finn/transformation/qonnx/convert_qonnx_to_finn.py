@@ -42,6 +42,7 @@ from finn.transformation.qonnx.quant_act_to_multithreshold import (
     default_filter_function_generator,
 )
 
+from .extract_bias_quant import ExtractConvQuantBias
 
 class ConvertQONNXtoFINN(Transformation):
     """Converts QONNX dialect to FINN ONNX dialect.
@@ -74,6 +75,7 @@ class ConvertQONNXtoFINN(Transformation):
     def apply(self, model):
         # Extract the bias from Conv node
         model = model.transform(ExtractBiasFromConv())
+        model = model.transform(ExtractConvQuantBias())
         # Gemm operations are not supported by FINN, so we convert them to MatMul
         model = model.transform(GemmToMatMul())
         model = model.transform(FoldTransposeIntoQuantInit())

@@ -1,0 +1,432 @@
+{
+  "Defaults": {},
+  "FMPadding_0": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_0": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_0": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_0": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_0": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_1": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_1": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_1": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_2": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_2": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_2": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_1": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_0": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_1": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_2": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_3": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_3": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_3": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_4": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_4": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_4": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_3": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_1": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_2": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_4": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_5": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_5": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_5": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_6": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_6": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_6": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_5": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_2": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_3": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_7": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_7": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_7": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_8": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_8": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_8": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_9": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_6": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_3": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_4": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_7": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_9": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_9": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_10": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_10": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_10": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_11": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_8": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_4": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_5": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_9": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_11": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_11": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_12": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_12": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_12": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_13": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_10": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_5": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_6": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_13": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_14": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_14": {
+    "preferred_impl_style": ""
+  },
+  "Pool_0": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_13": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_15": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_15": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_14": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_16": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_16": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_11": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_6": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_7": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_12": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_15": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_17": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_17": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_16": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_18": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_18": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_13": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_7": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_8": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_14": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_17": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_19": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_19": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_18": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_20": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_20": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_15": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_8": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_21": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_21": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_9": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_22": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_23": {
+    "preferred_impl_style": ""
+  },
+  "Pool_1": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_22": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_19": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_24": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_23": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_20": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_25": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_24": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_16": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_9": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_10": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_17": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_21": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_26": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_25": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_22": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_27": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_26": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_18": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_10": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_19": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_23": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_28": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_27": {
+    "preferred_impl_style": ""
+  },
+  "DuplicateStreams_11": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_29": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_30": {
+    "preferred_impl_style": ""
+  },
+  "Pool_2": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_28": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_24": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_31": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_29": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_32": {
+    "preferred_impl_style": ""
+  },
+  "Pool_3": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_25": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_33": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_30": {
+    "preferred_impl_style": ""
+  },
+  "Thresholding_20": {
+    "preferred_impl_style": ""
+  },
+  "AddStreams_11": {
+    "preferred_impl_style": ""
+  },
+  "FMPadding_26": {
+    "preferred_impl_style": ""
+  },
+  "ConvolutionInputGenerator_34": {
+    "preferred_impl_style": ""
+  },
+  "MVAU_31": {
+    "preferred_impl_style": ""
+  }
+}

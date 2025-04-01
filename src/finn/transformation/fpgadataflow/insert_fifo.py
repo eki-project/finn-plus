@@ -180,6 +180,7 @@ class InsertFIFO(Transformation):
                             # FIFO sizes here, better to preserve original attrs
                             # as they are.
                             graph_modified = True
+                            model.save("models/metaFi_test0.onnx")
 
         if graph_modified is False:
             graph_in_names = [x.name for x in model.graph.input]

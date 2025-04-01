@@ -1,0 +1,22 @@
+{
+  "step_tidy_up": 1.3694806098937988,
+  "step_qonnx_to_finn": 21.872840881347656,
+  "step_extract_absorb_bias": 0.525127649307251,
+  "step_pre_streamline": 0.10039854049682617,
+  "step_residual_streamline": 16.37532925605774,
+  "step_residual_convert_to_hw": 9.265491247177124,
+  "step_create_dataflow_partition": 0.17411375045776367,
+  "step_specialize_layers": 0.2150404453277588,
+  "step_target_fps_parallelization": 0.16690444946289062,
+  "step_apply_folding_config": 0.0583646297454834,
+  "step_minimize_bit_width": 5.531581878662109,
+  "step_generate_estimate_reports": 0.27547788619995117,
+  "step_hw_codegen": 20.69157361984253,
+  "step_hw_ipgen": 709.4891946315765,
+  "step_set_fifo_depths": 14.48268985748291,
+  "step_create_stitched_ip": 26262.367186784744,
+  "step_out_of_context_synthesis": 5.0067901611328125e-06,
+  "step_synthesize_bitfile": 33601.99743962288,
+  "step_make_pynq_driver": 1.4258711338043213,
+  "step_deployment_package": 0.010500192642211914
+}
