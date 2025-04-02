@@ -27,9 +27,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-QONNX_COMMIT="2281a777d84aa5cbd7469085c2e534fb4a03ccf9"
+QONNX_COMMIT="3d3d8964dbc5355d5c9be855d87b7b442508e3a4"
 FINN_EXP_COMMIT="0724be21111a21f0d81a072fccc1c446e053f851"
-BREVITAS_COMMIT="d4834bd2a0fad3c1fbc0ff7e1346d5dcb3797ea4"
+BREVITAS_URL="https://github.com/iksnagreb/brevitas.git"
 PYVERILATOR_COMMIT="ce0a08c20cb8c1d1e84181d6f392390f846adbd1"
 CNPY_COMMIT="4e8810b1a8637695171ed346ce68f6984e585ef4"
 HLSLIB_COMMIT="16e5847a5e3ef76cffe84c8fad2f010d593457d3"
@@ -40,9 +40,9 @@ RFSOC4x2_BDF_COMMIT="13fb6f6c02c7dfd7e4b336b18b959ad5115db696"
 KV260_BDF_COMMIT="98e0d3efc901f0b974006bc4370c2a7ad8856c79"
 EXP_BOARD_FILES_MD5="226ca927a16ea4ce579f1332675e9e9a"
 
-QONNX_URL="https://github.com/fastmachinelearning/qonnx.git"
+QONNX_URL="https://github.com/iksnagreb/qonnx.git"
 FINN_EXP_URL="https://github.com/Xilinx/finn-experimental.git"
-BREVITAS_URL="https://github.com/Xilinx/brevitas.git"
+BREVITAS_URL="https://github.com/iksnagreb/brevitas.git"
 PYVERILATOR_URL="https://github.com/maltanar/pyverilator.git"
 CNPY_URL="https://github.com/rogersce/cnpy.git"
 HLSLIB_URL="https://github.com/Xilinx/finn-hlslib.git"
