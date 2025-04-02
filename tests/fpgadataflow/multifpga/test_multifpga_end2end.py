@@ -54,5 +54,6 @@ def test_multifpga_end2end_artifical_network(
     model = create_sdp_ready_model(
         nodes, devices, assignment_type, assignment_order, shuffle_devices
     )
+    model.set_metadata_prop("is_multifpga", "True")
     model = step_create_multifpga_sdp(model, cfg)
     model = step_prepare_network_infrastructure(model, cfg)

@@ -1,11 +1,13 @@
+import os
 import shlex
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 
-# from finn.transformation.fpgadataflow.multifpga_network import AuroraNetworkMetadata
+from finn.transformation.fpgadataflow.multifpga_network import AuroraNetworkMetadata
 from finn.util.basic import make_build_dir
 from finn.util.deps import get_deps_path
 
@@ -43,8 +45,29 @@ class PrepareAuroraFlow(Transformation):
         )
         data_path = Path(data_path)
         assert data_path.exists()
-        # _metadata = AuroraNetworkMetadata(data_path)
+        metadata = AuroraNetworkMetadata(data_path)
 
-        # TODO
+        # Save where we store the aurora kernels
+        model.set_metadata_prop("aurora_storage", str(self.aurora_storage.absolute()))
+
+        # List all auroras that need to be packaged
+        auroras = []
+        for device in metadata.table.keys():
+            auroras += list(enumerate(metadata.table[device].keys()))
+
+        # Package a single aurora
+        def _package_aurora(d: tuple[int, str]) -> None:
+            i, aurora_name = d
+            origin = f"aurora_flow_{i}.xo"
+            target = f"{aurora_name}.xo"
+            # TODO: args?
+            self.package("", origin, target)
+
+        # Package all Aurora kernels concurrently
+        with ThreadPoolExecutor(max_workers=int(os.environ["NUM_DEFAULT_WORKERS"])) as tpe:
+            tpe.map(_package_aurora, auroras)
+            tpe.shutdown()
+
+        # TODO: Set node attributes to the xo kernels
 
         raise NotImplementedError()

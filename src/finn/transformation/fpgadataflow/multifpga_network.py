@@ -65,7 +65,6 @@ class AuroraNetworkMetadata(NetworkMetadata):
     def __init__(self, path: Path | None = None, ports_per_device: int = 2) -> None:
         super().__init__(path)
         self.ports_per_device = ports_per_device
-        self.table: AuroraNetworkMetadata.AuroraTableType = {}
 
     def _add_single_connection(
         self,
