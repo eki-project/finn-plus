@@ -537,13 +537,13 @@ class AbsorbTransposeIntoResize(Transformation):
                         if sizes is not None:
                             ishape = model.get_tensor_shape(mt_cand.input[0])
                             ns, cs, hs, ws = sizes / np.asarray(ishape)
-                            model.set_initializer(mt_cand.input[2], np.asarray([ns, cs, hs, ws]))
+                            model.set_initializer(mt_cand.input[2], np.asarray([ns, cs, hs, ws], dtype=np.float32))
                             mt_cand.input.remove(mt_cand.input[3])
                         # scales already specified, transpose indices to NHWC
                         scales = model.get_initializer(mt_cand.input[2])
                         assert scales is not None
                         ns, cs, hs, ws = scales
-                        model.set_initializer(mt_cand.input[2], np.asarray([ns, hs, ws, cs]))
+                        model.set_initializer(mt_cand.input[2], np.asarray([ns, hs, ws, cs], dtype=np.float32))
                         # get rid of first tranpose node
                         mt_cand.input[0] = node.input[0]
                         graph.node.remove(node)
