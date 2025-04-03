@@ -3,11 +3,10 @@ from __future__ import annotations
 import yaml
 from abc import ABC, abstractmethod
 from enum import Enum
-from onnx import NodeProto
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
-from typing import Callable
+from typing import Any, Callable
 
 from finn.transformation.fpgadataflow.multifpga import get_device_id
 from finn.util.basic import make_build_dir
@@ -24,10 +23,25 @@ class DataDirection(str, Enum):
 
 
 class NetworkMetadata(ABC):
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(self, load_from: Path | ModelWrapper | None = None) -> None:
         self.table = {}
-        if path is not None:
-            self.load(path)
+        if load_from is not None:
+            if type(load_from) is Path:
+                self.load(load_from)
+            elif type(load_from) is ModelWrapper:
+                p = load_from.get_metadata_prop("network_metadata")
+                assert p is not None
+                p = Path(p)
+                assert p.exists()
+                self.load(p)
+
+    @abstractmethod
+    def __getitem__(self, key: Any) -> Any:
+        pass
+
+    @abstractmethod
+    def __setitem__(self, key: Any, value: Any) -> Any:
+        pass
 
     @abstractmethod
     def add_connection(
@@ -49,49 +63,55 @@ class NetworkMetadata(ABC):
 
 
 class AuroraNetworkMetadata(NetworkMetadata):
-    AuroraTableType = dict[
-        Device,
-        dict[
-            CommunicationKernelName,
-            dict[str | DataDirection, None | Device | tuple[NodeName, NodeName]],
-        ],
-    ]
+    """Defines an Aurora Network. Structure is:
+    >>> table = {1: {"aurora0": {"partner": 2, DataDirection.TX: ("sdp1", "sdp2"), DataDirection.RX: ("sdp1", "sdp3")}}}
+
+    In this table, device 1 sends to device 2 from sdp1 to sdp2. It also receives from device 2:
+    sdp1 receives data from sdp3. The first tuple element is ON the device, while the second is on the PARTNER device.
+
+    add_connection does both endpoints on both devices:
+    >>> am = AuroraNetworkMetadata()
+    >>> am.add_connection(0, "sdp0", 1, "sdp1")
+    >>> am[0]
+    {'aurora_flow_0_dev0': {'partner': 1, <DataDirection.TX: 'TX'>: ('sdp0', 'sdp1'), <DataDirection.RX: 'RX'>: None}}
+    >>> am[1]
+    {'aurora_flow_0_dev1': {'partner': 0, <DataDirection.TX: 'TX'>: None, <DataDirection.RX: 'RX'>: ('sdp1', 'sdp0')}}
+
+    You can access the data easily. For example to get the receiving kernel on device 1:
+    >>> am[1, "aurora_flow_0_dev1", DataDirection.RX, 0]
+    'sdp1'
+
+    You can also set data this way if necessary:
+    >>> am[1, "aurora_flow_0_dev1", DataDirection.RX] = ("sdp4", "sdp0")
+    >>> am[1, "aurora_flow_0_dev1", DataDirection.RX]
+    ('sdp4', 'sdp0')
+    """  # noqa
 
     # TODO: Remove default value
-    def __init__(self, path: Path | None = None, ports_per_device: int = 2) -> None:
-        super().__init__(path)
+    def __init__(
+        self, load_from: Path | ModelWrapper | None = None, ports_per_device: int = 2
+    ) -> None:
+        super().__init__(load_from)
         self.ports_per_device = ports_per_device
 
-    def get_connections_of_node(
-        self, sdp: NodeProto | NodeName
-    ) -> list[tuple[CommunicationKernelName, Device, Device, DataDirection]]:
-        """Get all connections of a given SDP node. Returns for each connection the
-        name of the Aurora Kernel, the device the kernel is on, and the target device.
+    def __getitem__(self, key: tuple) -> Any | None:
+        if type(key) is int:
+            return self.table[key]
+        elif type(key) is tuple:  # noqa
+            data = self.table
+            for k in key:
+                data = data[k]
+            return data
+        return None
 
-        ("aurora_0", 0, 1, TX):
-            aurora_0 is on device 0. It has a TX relation (it sends) with device 1
-
-        Example:
-        >>> am = AuroraNetworkMetadata()
-        >>> am.add_connection(0, "sdp0", 1, "sdp1")
-        >>> am.get_connections_of_node("sdp0")
-        [('aurora_flow_0_dev0', 0, 1, <DataDirection.TX: 'TX'>), ('aurora_flow_0_dev1', 1, 0, <DataDirection.RX: 'RX'>)]
-
-        """  # noqa
-        if type(sdp) is NodeName:
-            nodename = sdp
-        elif type(sdp) is NodeProto:
-            nodename = sdp.name
-        else:
-            raise RuntimeError("Invalid type passed for SDP node")
-        data: list[tuple[CommunicationKernelName, Device, Device, DataDirection]] = []
-        for device in self.table.keys():
-            for aurora_name, aurora in self.table[device].items():
-                if aurora[DataDirection.TX] is not None and aurora[DataDirection.TX][0] == nodename:
-                    data.append((aurora_name, device, aurora["partner"], DataDirection.TX))
-                if aurora[DataDirection.RX] is not None and aurora[DataDirection.RX][0] == nodename:
-                    data.append((aurora_name, device, aurora["partner"], DataDirection.RX))
-        return data
+    def __setitem__(self, key: Any, value: Any) -> None:
+        if type(key) is int:
+            self.table[key] = value
+        elif type(key) is tuple:
+            data = self.table
+            for k in key[:-1]:
+                data = data[k]
+            data[key[-1]] = value
 
     def _add_single_connection(
         self,
@@ -104,10 +124,7 @@ class AuroraNetworkMetadata(NetworkMetadata):
         found_free_spot = False
         for aurora_table in self.table[on_device].values():
             if aurora_table["partner"] == other_device and aurora_table[direction] is None:
-                if direction == DataDirection.TX:
-                    aurora_table[direction] = (on_node, other_node)
-                elif direction == DataDirection.RX:
-                    aurora_table[direction] = (other_node, on_node)
+                aurora_table[direction] = (on_node, other_device)
                 found_free_spot = True
 
         if not found_free_spot:
@@ -121,10 +138,7 @@ class AuroraNetworkMetadata(NetworkMetadata):
                 DataDirection.TX: None,
                 DataDirection.RX: None,
             }
-            if direction == DataDirection.TX:
-                self.table[on_device][new_aurora][direction] = (on_node, other_node)
-            elif direction == DataDirection.RX:
-                self.table[on_device][new_aurora][direction] = (other_node, on_node)
+            self.table[on_device][new_aurora][direction] = (on_node, other_node)
 
     def add_connection(
         self,
@@ -134,11 +148,7 @@ class AuroraNetworkMetadata(NetworkMetadata):
         receiver_node: NodeName,
     ) -> None:
         """Add a connection between sender_device and receiver_device. This creates both the
-        TX and RX endpoints.
-
-        If we look at the node name tuple (n0, n1):
-            If this is in the TX field: n0 is on our current device and sends to n1
-            If this is in the RX field: n1 is on our current device and receives from n0"""
+        TX and RX endpoints."""
         if sender_device not in self.table:
             self.table[sender_device] = {}
         if receiver_device not in self.table:
@@ -150,62 +160,35 @@ class AuroraNetworkMetadata(NetworkMetadata):
             receiver_device, receiver_node, sender_device, sender_node, DataDirection.RX
         )
 
-    def connections_with(self, d1: Device, d2: Device) -> int:
-        """Return how many connections there are between the two devices"""
-        if d1 not in self.table.keys():
+    def get_aurora_kernels(self, device: Device) -> list[CommunicationKernelName]:
+        """Return all aurora kernel names for this device. Good for packaging.
+        >>> am = AuroraNetworkMetadata()
+        >>> am.add_connection(0, "sdp0", 1, "sdp1")
+        >>> am.add_connection(0, "sdp2", 2, "sdp3")
+        >>> am.get_aurora_kernels(0)
+        ['aurora_flow_0_dev0', 'aurora_flow_1_dev0']"""
+        if device not in self.table:
+            return []
+        return list(self.table[device].keys())
+
+    def get_connections(self, d1: Device, d2: Device) -> int:
+        """Return the number of connections between d1 and d2.
+        >>> am = AuroraNetworkMetadata()
+        >>> am.add_connection(0, "sdp0", 1, "sdp1")
+        >>> am.add_connection(1, "sdp1", 2, "sdp2")
+        >>> am.get_connections(0, 1)
+        1
+        >>> am.get_connections(1, 0)
+        1
+        >>> am.get_connections(1, 2)
+        1"""
+        if d1 not in self.table or d2 not in self.table:
             return 0
-        s = 0
-        for aurora in self.table[d1].values():
-            if aurora["partner"] == d2:
-                s += 1
-        return s
+        return len(list(filter(lambda aurora: aurora[1]["partner"] == d2, self.table[d1].items())))
 
-    def has_connection(
-        self, d1: Device, n1: NodeName, d2: Device, n2: NodeName, direction: DataDirection
-    ) -> bool:
-        """Return whether this metadata contains a connection between given devices and nodes"""
-        if d1 not in self.table.keys():
-            return False
-        for aurora in self.table[d1].values():
-            if (
-                aurora["partner"] == d2
-                and aurora[direction] is not None
-                and aurora[direction] == (n1, n2)
-            ):
-                return True
-        return False
-
-    def get_kernel_names_for(
-        self, sdp1: NodeProto, sdp2: NodeProto
-    ) -> tuple[CommunicationKernelName, CommunicationKernelName] | None:
-        """Check if a connection between the SDP nodes exists, and if so returns the names
-        of the matching aurora kernels"""
-        lnode = sdp1.name
-        fnode = sdp2.name
-        d1 = get_device_id(sdp1)
-        d2 = get_device_id(sdp2)
-        assert d1 is not None
-        assert d2 is not None
-        if not self.has_connection(
-            d1, lnode, d2, fnode, DataDirection.TX
-        ) or not self.has_connection(d2, lnode, d1, fnode, DataDirection.RX):
-            return None
-
-        t1 = None
-        t2 = None
-        for device in self.table.keys():
-            if device == d1:
-                for aurora_name, aurora in self.table[device].items():
-                    if aurora["partner"] == d2 and aurora[DataDirection.TX] == (lnode, fnode):
-                        t1 = aurora_name
-
-            if device == d2:
-                for aurora_name, aurora in self.table[device].items():
-                    if aurora["partner"] == d1 and aurora[DataDirection.RX] == (lnode, fnode):
-                        t2 = aurora_name
-        assert t1 is not None
-        assert t2 is not None
-        return (t1, t2)
+    def get_devices(self) -> list[Device]:
+        """Return all devices used in this network metadata"""
+        return list(self.table.keys())
 
 
 class CreateNetworkMetadata(ABC):

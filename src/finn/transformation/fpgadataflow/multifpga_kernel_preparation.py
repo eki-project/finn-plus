@@ -5,7 +5,6 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
 from finn.transformation.fpgadataflow.multifpga_network import AuroraNetworkMetadata
@@ -14,8 +13,9 @@ from finn.util.deps import get_deps_path
 
 
 class PrepareAuroraFlow(Transformation):
-    """Use the AuroraNetworkMetadata to package all necessary kernels and store their paths in the
-    matching nodes attributes"""
+    """Use the AuroraNetworkMetadata to package all necessary kernels. Sets the aurora_storage
+    metadata prop of the model to point to the directory containing the object files. This does
+    nothing else."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -42,7 +42,7 @@ class PrepareAuroraFlow(Transformation):
         # List all auroras that need to be packaged
         auroras = []
         for device in metadata.table.keys():
-            auroras += list(enumerate(metadata.table[device].keys()))
+            auroras += metadata.get_aurora_kernels(device)
 
         # Package a single aurora
         def _package_aurora(d: tuple[int, str]) -> None:
@@ -58,27 +58,7 @@ class PrepareAuroraFlow(Transformation):
             tpe.shutdown()
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        data_path = model.get_metadata_prop("network_metadata")
-        assert data_path is not None, (
-            'No "network_metadata" prop found in the model. '
-            "Make sure to run AssignNetworkMetadata first!"
-        )
-        data_path = Path(data_path)
-        assert data_path.exists()
-        metadata = AuroraNetworkMetadata(data_path)
-
-        # Save where we store the aurora kernels
+        metadata = AuroraNetworkMetadata(model)
         model.set_metadata_prop("aurora_storage", str(self.aurora_storage.absolute()))
-
-        # Packaging
         self.package_all_from_metadata(metadata)
-
-        # Save data in node attributes
-        for sdp in model.graph.node:
-            temp = []
-            for aurora_kernel, _, _, direction in metadata.get_connections_of_node(sdp):
-                xo_path = self.aurora_storage / (aurora_kernel + ".xo")
-                temp.append(f"{aurora_kernel}:{direction.value}:{xo_path}")
-            if len(temp) > 0:
-                getCustomOp(sdp).set_nodeattr("network_connections", temp)
         return model, False
