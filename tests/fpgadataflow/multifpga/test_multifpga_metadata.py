@@ -72,20 +72,18 @@ def test_chain_metadata(
             # Specific for line connections
             assert m.connections_with(d1, d2) == 1  # d1 sends
             assert m.connections_with(d2, d1) == 1  # d2 receives
-        n1_lnode = get_last_submodel_node(n1).name
-        n2_fnode = get_first_submodel_node(n2).name
         assert m.has_connection(
             d1,
-            n1_lnode,
+            n1.name,
             d2,
-            n2_fnode,
+            n2.name,
             DataDirection.TX,
         )
         assert m.has_connection(
             d2,
-            n1_lnode,
+            n1.name,
             d1,
-            n2_fnode,
+            n2.name,
             DataDirection.RX,
         )
         if i > 0:

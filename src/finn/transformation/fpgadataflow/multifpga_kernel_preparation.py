@@ -5,6 +5,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
 from finn.transformation.fpgadataflow.multifpga_network import AuroraNetworkMetadata
@@ -22,7 +23,7 @@ class PrepareAuroraFlow(Transformation):
         self.aurora_path = get_deps_path() / "AuroraFlow"
         assert self.aurora_path.exists(), f"Could not find AuroraFlow at {self.aurora_path}"
 
-    def package(self, args: str, kernel_xo: str, save_as_xo: str) -> Path:
+    def package_single(self, args: str, kernel_xo: str, save_as_xo: str) -> Path:
         """Package a single aurora core and put it into the given location with the given name.
         Copies aurora so that multiple packaging processes can happen at once"""
         temp_dir = Path(make_build_dir("aurora_temp_builddir_"))
@@ -37,6 +38,25 @@ class PrepareAuroraFlow(Transformation):
         shutil.rmtree(temp_dir)
         return p_target.absolute()
 
+    def package_all_from_metadata(self, metadata: AuroraNetworkMetadata) -> None:
+        # List all auroras that need to be packaged
+        auroras = []
+        for device in metadata.table.keys():
+            auroras += list(enumerate(metadata.table[device].keys()))
+
+        # Package a single aurora
+        def _package_aurora(d: tuple[int, str]) -> None:
+            i, aurora_name = d
+            origin = f"aurora_flow_{i}.xo"
+            target = f"{aurora_name}.xo"
+            # TODO: args?
+            self.package_single("", origin, target)
+
+        # Package all Aurora kernels concurrently
+        with ThreadPoolExecutor(max_workers=int(os.environ["NUM_DEFAULT_WORKERS"])) as tpe:
+            tpe.map(_package_aurora, auroras)
+            tpe.shutdown()
+
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         data_path = model.get_metadata_prop("network_metadata")
         assert data_path is not None, (
@@ -50,24 +70,15 @@ class PrepareAuroraFlow(Transformation):
         # Save where we store the aurora kernels
         model.set_metadata_prop("aurora_storage", str(self.aurora_storage.absolute()))
 
-        # List all auroras that need to be packaged
-        auroras = []
-        for device in metadata.table.keys():
-            auroras += list(enumerate(metadata.table[device].keys()))
+        # Packaging
+        self.package_all_from_metadata(metadata)
 
-        # Package a single aurora
-        def _package_aurora(d: tuple[int, str]) -> None:
-            i, aurora_name = d
-            origin = f"aurora_flow_{i}.xo"
-            target = f"{aurora_name}.xo"
-            # TODO: args?
-            self.package("", origin, target)
-
-        # Package all Aurora kernels concurrently
-        with ThreadPoolExecutor(max_workers=int(os.environ["NUM_DEFAULT_WORKERS"])) as tpe:
-            tpe.map(_package_aurora, auroras)
-            tpe.shutdown()
-
-        # TODO: Set node attributes to the xo kernels
-
-        raise NotImplementedError()
+        # Save data in node attributes
+        for sdp in model.graph.node:
+            temp = []
+            for aurora_kernel, _, _, direction in metadata.get_connections_of_node(sdp):
+                xo_path = self.aurora_storage / (aurora_kernel + ".xo")
+                temp.append(f"{aurora_kernel}:{direction.value}:{xo_path}")
+            if len(temp) > 0:
+                getCustomOp(sdp).set_nodeattr("network_connections", temp)
+        return model, False

@@ -9,11 +9,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from typing import Callable
 
-from finn.transformation.fpgadataflow.multifpga import (
-    get_device_id,
-    get_first_submodel_node,
-    get_last_submodel_node,
-)
+from finn.transformation.fpgadataflow.multifpga import get_device_id
 from finn.util.basic import make_build_dir
 
 CommunicationKernelName = str
@@ -65,6 +61,37 @@ class AuroraNetworkMetadata(NetworkMetadata):
     def __init__(self, path: Path | None = None, ports_per_device: int = 2) -> None:
         super().__init__(path)
         self.ports_per_device = ports_per_device
+
+    def get_connections_of_node(
+        self, sdp: NodeProto | NodeName
+    ) -> list[tuple[CommunicationKernelName, Device, Device, DataDirection]]:
+        """Get all connections of a given SDP node. Returns for each connection the
+        name of the Aurora Kernel, the device the kernel is on, and the target device.
+
+        ("aurora_0", 0, 1, TX):
+            aurora_0 is on device 0. It has a TX relation (it sends) with device 1
+
+        Example:
+        >>> am = AuroraNetworkMetadata()
+        >>> am.add_connection(0, "sdp0", 1, "sdp1")
+        >>> am.get_connections_of_node("sdp0")
+        [('aurora_flow_0_dev0', 0, 1, <DataDirection.TX: 'TX'>), ('aurora_flow_0_dev1', 1, 0, <DataDirection.RX: 'RX'>)]
+
+        """  # noqa
+        if type(sdp) is NodeName:
+            nodename = sdp
+        elif type(sdp) is NodeProto:
+            nodename = sdp.name
+        else:
+            raise RuntimeError("Invalid type passed for SDP node")
+        data: list[tuple[CommunicationKernelName, Device, Device, DataDirection]] = []
+        for device in self.table.keys():
+            for aurora_name, aurora in self.table[device].items():
+                if aurora[DataDirection.TX] is not None and aurora[DataDirection.TX][0] == nodename:
+                    data.append((aurora_name, device, aurora["partner"], DataDirection.TX))
+                if aurora[DataDirection.RX] is not None and aurora[DataDirection.RX][0] == nodename:
+                    data.append((aurora_name, device, aurora["partner"], DataDirection.RX))
+        return data
 
     def _add_single_connection(
         self,
@@ -153,8 +180,8 @@ class AuroraNetworkMetadata(NetworkMetadata):
     ) -> tuple[CommunicationKernelName, CommunicationKernelName] | None:
         """Check if a connection between the SDP nodes exists, and if so returns the names
         of the matching aurora kernels"""
-        lnode = get_last_submodel_node(sdp1).name
-        fnode = get_first_submodel_node(sdp2).name
+        lnode = sdp1.name
+        fnode = sdp2.name
         d1 = get_device_id(sdp1)
         d2 = get_device_id(sdp2)
         assert d1 is not None
@@ -225,9 +252,9 @@ class CreateChainNetworkMetadata(CreateNetworkMetadata):
             if d1 != d2:
                 self.metadata.add_connection(
                     int(d1),
-                    get_last_submodel_node(n1).name,
+                    n1.name,
                     int(d2),
-                    get_first_submodel_node(n2).name,
+                    n2.name,
                 )
 
 
