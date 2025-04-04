@@ -34,6 +34,7 @@ import os
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.channels_last import ConvertToChannelsLastAndClean
 from qonnx.transformation.extract_quant_scale_zeropt import AbsorbQuantScale
+from qonnx.transformation.fold_constants import FoldConstants
 from qonnx.transformation.general import (
     ConvertDivToMul,
     GiveReadableTensorNames,
@@ -169,6 +170,7 @@ def step_convert_to_channels_last(model: ModelWrapper, cfg: DataflowBuildConfig)
 def step_convert_to_thresholds_new(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(FoldTransposeIntoQuantInit())
     model = model.transform(FoldQuantWeights())
+    model = model.transform(FoldConstants())
     model = model.transform(absorb.FactorOutMulSignMagnitude())
     model = model.transform(absorb.Absorb1BitMulIntoMatMul())
     model = model.transform(absorb.Absorb1BitMulIntoConv())
@@ -176,7 +178,7 @@ def step_convert_to_thresholds_new(model: ModelWrapper, cfg: DataflowBuildConfig
 
     trn = QuantToMultiThreshold(
         range_info=cfg.input_range_info[0],
-        enum_rescale=0.002,
+        rescale=0.01,
         assume_monotonic=True,
         quant_filter=default_filter_function_generator(
             max_multithreshold_bit_width=cfg.max_multithreshold_bit_width
