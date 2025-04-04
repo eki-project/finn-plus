@@ -4,7 +4,9 @@ from pathlib import Path
 from test_multifpga_sdp_creation import create_sdp_ready_model
 
 from finn.builder.build_dataflow_config import MultiFPGACommunicationScheme
-from finn.transformation.fpgadataflow.multifpga import CreateMultiFPGAStreamingDataflowPartition
+from finn.transformation.fpgadataflow.multifpga_create_sdp import (
+    CreateMultiFPGAStreamingDataflowPartition,
+)
 from finn.transformation.fpgadataflow.multifpga_kernel_preparation import PrepareAuroraFlow
 from finn.transformation.fpgadataflow.multifpga_network import (
     AssignNetworkMetadata,

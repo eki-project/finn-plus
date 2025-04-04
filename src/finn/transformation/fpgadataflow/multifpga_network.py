@@ -8,7 +8,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from typing import Any, Callable
 
-from finn.transformation.fpgadataflow.multifpga import get_device_id
+from finn.transformation.fpgadataflow.multifpga_utils import get_device_id
 from finn.util.basic import make_build_dir
 
 CommunicationKernelName = str
