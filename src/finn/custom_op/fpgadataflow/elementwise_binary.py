@@ -96,6 +96,11 @@ class ElementwiseBinaryOperation(HWCustomOp):
                 "PE": ("i", False, 1),
                 # FPGA resource type for memories/internal buffers of the operator
                 "ram_style": ("s", False, "auto", {"auto", "block", "distributed", "ultra"}),
+                # FPGA resource type for implementation of the operator
+                # only supported by a few subclasses - see subclass for details
+                "res_type": (
+                    "s", False, "auto", {"auto", "lut", "dsp"}
+                ),
                 # memory mode for the const value
                 # internal_embedded -- embedded parameters
                 # internal_decoupled -- streaming parameters with streamer packaged inside IP
