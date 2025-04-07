@@ -28,14 +28,18 @@
 
 import numpy as np
 import os
+import warnings
 from abc import abstractmethod
 from pyverilator.util.axi_utils import _read_signal, reset_rtlsim, rtlsim_multi_io
 from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 
-import finn.util.verilator_helper as verilator
 from finn.util.basic import pyverilate_get_liveness_threshold_cycles
-from finn.util.logging import log
+
+try:
+    from pyverilator import PyVerilator
+except ModuleNotFoundError:
+    PyVerilator = None
 
 
 class HWCustomOp(CustomOp):
@@ -129,7 +133,7 @@ class HWCustomOp(CustomOp):
         rtlsim_so = self.get_nodeattr("rtlsim_so")
         assert os.path.isfile(rtlsim_so), "Cannot find rtlsim library."
         # create PyVerilator wrapper
-        sim = verilator.buildPyVerilator(rtlsim_so)
+        sim = PyVerilator(rtlsim_so)
         return sim
 
     def node_res_estimation(self, fpgapart):
@@ -362,7 +366,7 @@ class HWCustomOp(CustomOp):
         # ensure rtlsim is ready
         assert self.get_nodeattr("rtlsim_so") != "", "rtlsim not ready for " + self.onnx_node.name
         if self.get_nodeattr("io_chrc_period") > 0:
-            log.warning(f"Skipping node {self.onnx_node.name}: already has FIFO characteristic")
+            warnings.warn("Skipping node %s: already has FIFO characteristic" % self.onnx_node.name)
             return
         exp_cycles = self.get_exp_cycles()
         n_inps = np.prod(self.get_folded_input_shape()[:-1])
