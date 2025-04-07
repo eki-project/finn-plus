@@ -25,7 +25,13 @@ class PrepareAuroraFlow(Transformation):
 
     def package_single(self, args: str, kernel_xo: str, save_as_xo: str) -> Path:
         """Package a single aurora core and put it into the given location with the given name.
-        Copies aurora so that multiple packaging processes can happen at once"""
+        Copies aurora so that multiple packaging processes can happen at once.
+
+        >>> prep = PrepareAuroraFlow()
+        >>> output = prep.package_single("", "aurora_flow_0.xo", "mykernel.xo")
+        >>> output.exists()
+        True
+        """
         temp_dir = Path(make_build_dir("aurora_temp_builddir_"))
         shutil.copytree(self.aurora_path, temp_dir, dirs_exist_ok=True)
         subprocess.run(shlex.split(f"make aurora {args}"), cwd=temp_dir, stdout=subprocess.DEVNULL)

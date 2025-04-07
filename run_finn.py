@@ -124,7 +124,8 @@ def build(dependency_path: str, build_path: str, num_workers: int, config: str, 
     dfbc: DataflowBuildConfig | None = None
     match config_path.suffix:
         case ".yaml" | ".yml":
-            raise NotImplementedError("Depends on a pending PR for YAML support.")
+            with config_path.open() as f:
+                dfbc = DataflowBuildConfig.from_yaml(f.read())
         case ".json":
             with config_path.open() as f:
                 dfbc = DataflowBuildConfig.from_json(f.read())
@@ -140,7 +141,7 @@ def build(dependency_path: str, build_path: str, num_workers: int, config: str, 
     Console().rule(
         f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
         f"{config_path.name}[/bold orange1][bold cyan] on model [/bold cyan]"
-        "[bold orange1]{model_path.name}[/bold orange1]"
+        f"[bold orange1]{model_path.name}[/bold orange1]"
     )
     build_dataflow_cfg(str(model_path), dfbc)
 

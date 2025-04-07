@@ -34,7 +34,6 @@ import shutil
 import warnings
 from copy import deepcopy
 from functools import partial
-from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopcount
@@ -87,9 +86,8 @@ from finn.transformation.fpgadataflow.make_pynq_driver import MakePYNQDriver
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
-from finn.transformation.fpgadataflow.multifpga import (
+from finn.transformation.fpgadataflow.multifpga_create_sdp import (
     CreateMultiFPGAStreamingDataflowPartition,
-    PartitionForMultiFPGA,
 )
 from finn.transformation.fpgadataflow.multifpga_kernel_preparation import PrepareAuroraFlow
 from finn.transformation.fpgadataflow.multifpga_network import (
@@ -97,6 +95,7 @@ from finn.transformation.fpgadataflow.multifpga_network import (
     AuroraNetworkMetadata,
     CreateChainNetworkMetadata,
 )
+from finn.transformation.fpgadataflow.multifpga_partitioner import PartitionForMultiFPGA
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
@@ -640,11 +639,7 @@ def step_partition_for_multifpga(model: ModelWrapper, cfg: DataflowBuildConfig) 
         model.set_metadata_prop("is_multifpga", "False")
         return model
     model.set_metadata_prop("is_multifpga", "True")
-    model = model.transform(
-        PartitionForMultiFPGA(
-            cfg.partitioning_configuration, report_dir=Path(cfg.output_dir) / "reports"
-        )
-    )
+    model = model.transform(PartitionForMultiFPGA(cfg))
     return model  # noqa
 
 

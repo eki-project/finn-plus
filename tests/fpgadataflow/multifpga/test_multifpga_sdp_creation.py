@@ -8,7 +8,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from random import randint
 
-from finn.transformation.fpgadataflow.multifpga import (
+from finn.transformation.fpgadataflow.multifpga_create_sdp import (
     CreateMultiFPGAStreamingDataflowPartition,
     get_device_id,
 )

@@ -28,5 +28,7 @@ def get_submodel(node: NodeProto) -> ModelWrapper:
     return ModelWrapper(getCustomOp(node).get_nodeattr("model"))
 
 
-def get_all_branches(model: ModelWrapper) -> list[list[int]]:
+def get_inseperable_nodes(model: ModelWrapper) -> list[list[int]]:
+    """Return a list of all nodes that need to stay together during
+    partitioning"""
     raise NotImplementedError()
