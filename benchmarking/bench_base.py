@@ -426,12 +426,17 @@ class bench():
         #cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
         cfg.force_python_rtlsim = False
         cfg.split_large_fifos = True
-        cfg.enable_instrumentation = True # no IODMA functional correctness/accuracy test yet
         cfg.save_intermediate_models = True # Save the intermediate model graphs
         cfg.verify_save_full_context = True, # Output full context dump for verification steps
         #rtlsim_use_vivado_comps # TODO ?
         #cfg.default_swg_exception
         #cfg.large_fifo_mem_style
+
+        # Switch between instrumentation or IODMA wrapper (TODO: combine both in one bitstream)
+        if "enable_instrumentation" in self.params:
+            cfg.enable_instrumentation = self.params["enable_instrumentation"]
+        else:
+            cfg.enable_instrumentation = True
 
         # "manual or "characterize" or "largefifo_rtlsim" or "live"
         if "fifo_method" in self.params:
