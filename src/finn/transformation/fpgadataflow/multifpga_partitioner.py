@@ -16,6 +16,7 @@ from finn.builder.build_dataflow_config import (
 )
 from finn.transformation.fpgadataflow.multifpga_network import Device
 from finn.transformation.fpgadataflow.multifpga_utils import get_inseperable_nodes, set_device_id
+from finn.util.platforms import Platform
 
 
 class Partitioner(ABC):
@@ -41,12 +42,14 @@ class Partitioner(ABC):
         devices: int,
         nodes: int,
         inseperable_nodes: list[list[int]],
+        resources_per_device: dict,
         resource_estimates: dict | None = None,
         considered_resources: list[str] | None = None,
     ) -> None:
         self.strategy = strategy
         self.inseperable_nodes = inseperable_nodes
         self.resource_estimates = resource_estimates
+        self.resources_per_device = resources_per_device
         self.considered_resources = (
             ["LUT", "FF", "BRAM_18K", "DSP"]
             if considered_resources is None
@@ -60,6 +63,18 @@ class Partitioner(ABC):
         """Try to optimize the objective function. If no feasible solution is found
         return None, otherwise return a mapping of nodes to their device"""
 
+    def total_resources_per_device(self) -> dict[str, int]:
+        """Return the total resources per device. Normally, resources_per_device
+        is split into the different SLRs if there are some."""
+        if self.resources_per_device is None:
+            return {}
+        acc = {}
+        for restype in self.considered_resources:
+            acc[restype] = 0
+            for slr in self.resources_per_device:
+                acc[restype] += self.resources_per_device[slr][restype]
+        return acc
+
 
 class AuroraPartitioner(Partitioner):
     def __init__(
@@ -70,16 +85,25 @@ class AuroraPartitioner(Partitioner):
         devices: int,
         nodes: int,
         inseperable_nodes: list[list[int]],
+        resources_per_device: dict,
         resource_estimates: dict | None = None,
         considered_resources: list[str] | None = None,
         limit_nodes_per_device: int | None = None,
+        max_utilization: float = 0.75,
     ) -> None:
         super().__init__(
-            strategy, devices, nodes, inseperable_nodes, resource_estimates, considered_resources
+            strategy,
+            devices,
+            nodes,
+            inseperable_nodes,
+            resources_per_device,
+            resource_estimates,
+            considered_resources,
         )
         self.limit_nodes_per_device = limit_nodes_per_device
         self.network_ports_per_device = network_ports_per_device
         self.communication_scheme = communication_scheme
+        self.max_utilization = max_utilization
         self.model = Model()
 
         # self.devices[node][device] = 1: Node <node> is on device <device>
@@ -221,12 +245,109 @@ class AuroraPartitioner(Partitioner):
             self.model.sense = mip.MINIMIZE
 
         elif self.strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
-            pass
+            assert self.resource_estimates is not None
+
+            # Collect the resource usage of all nodes on a device
+            self.resource_use_int = {}
+            for device in range(self.device_count):
+                self.resource_use_int[device] = {}
+                for resource_name in self.considered_resources:
+                    self.resource_use_int[device][resource_name] = self.model.add_var(
+                        f"resource_use_int_device{device}_resource{resource_name}",
+                        var_type=mip.INTEGER,
+                    )
+                    self.model += self.resource_use_int[device][resource_name] == xsum(
+                        [
+                            self.devices[layer][device]
+                            * self.resource_estimates[layer][resource_name]
+                            for layer in range(self.device_count)
+                            if resource_name in self.resource_estimates[layer].keys()
+                        ]
+                    )
+
+            # Limit resource usage to (available resources * max usage in percent)
+            total_per_device = self.total_resources_per_device()
+            for device in range(self.device_count):
+                for resource_name in self.considered_resources:
+                    max_resources = int(total_per_device[resource_name] * self.max_utilization)
+                    self.model += self.resource_use_int[device][resource_name] <= max_resources
+
+            # Balance so that the maximum difference to the ideal load over all devices and
+            # resources is as low as possible
+            # Use relative values because resources are available at vastly different scales
+            self.resource_diff = {}
+            self.resource_use_relative = {}
+            for device in range(self.device_count):
+                self.resource_diff[device] = {}
+                self.resource_use_relative[device] = {}
+                for resource_name in self.considered_resources:
+                    self.resource_diff[device][resource_name] = self.model.add_var(
+                        name=f"resource_diff_to_ideal_device{device}_resource{resource_name}",
+                        var_type=mip.CONTINUOUS,
+                    )
+                    self.resource_use_relative[device][resource_name] = self.model.add_var(
+                        name=f"resource_use_cont_device{device}_resource{resource_name}",
+                        var_type=mip.CONTINUOUS,
+                    )
+
+                    # TODO: Ignore linewidth linter rule in the future to make this more readable
+                    # Resource util in relative terms (0-1)
+                    self.model += self.resource_use_relative[device][resource_name] == (
+                        self.resource_use_int[device][resource_name]
+                        / total_per_device[resource_name]
+                    )
+
+                    # Convert to float and get diff
+                    self.model += self.resource_diff[device][resource_name] >= (
+                        self.resource_use_relative[device][resource_name]
+                        - total_per_device["ideal_utilization"]
+                    )
+                    self.model += self.resource_diff[device][resource_name] >= (
+                        total_per_device["ideal_utilization"]
+                        - self.resource_use_relative[device][resource_name]
+                    )
+
+            # A device cannot be completely empty
+            for device in range(self.device_count):
+                self.model += (
+                    xsum(
+                        [
+                            self.resource_use_relative[device][res]
+                            for res in self.considered_resources
+                        ]
+                    )
+                    >= 0.0001
+                )  # type: ignore
+
+            # The min resource diff to ideal on a device, regardless of resource type
+            # (If ideal is 70%, and we have LUT: 61% and DSP: 32%,
+            # then we use 61%, so diff is 70%-61%=9%)
+            self.min_resource_diff = []
+            for device in range(self.device_count):
+                self.min_resource_diff.append(
+                    self.model.add_var(f"min_resource_diff_device{device}", var_type=mip.CONTINUOUS)
+                )
+                for res in self.considered_resources:
+                    self.model += self.min_resource_diff[device] <= self.resource_diff[device][res]
+
+                    # If we dont specify this, it will stay at the initial value of 0,
+                    # since 0 is smaller than all the resource_diffs
+                    self.model += self.min_resource_diff[device] >= 0.0001
+
+            # Maximum of the min resource diff of all devices
+            max_diff = self.model.add_var("max_diff", var_type=mip.CONTINUOUS)
+            for device in range(self.device_count):
+                self.model += max_diff >= xsum(
+                    [self.resource_diff[device][res] for res in self.considered_resources]
+                )
+
+            # Set objective function
+            self.model.objective = max_diff
+            self.model.sense = mip.MINIMIZE
 
         else:
             raise AssertionError(f"Unknown partitioning strategy: {self.strategy}")
 
-        # TODO: Objective function
         # TODO: Tests
 
     def solve(self) -> dict[int, Device] | None:
@@ -278,6 +399,18 @@ class PartitionForMultiFPGA(Transformation):
                     else:
                         estimates[layer][restype] = current_layer_estimates[restype]
         return estimates
+
+    def resources_per_device(self, p: Platform) -> dict[int, dict[str, int]]:
+        """Return the available resources as given by FINN platforms as a
+        dictionary instead of nested lists. First by SLR, then by resource name"""
+        assert p is not None
+        res = p.compute_resources
+        new = {}
+        for slr in range(len(res)):
+            new[slr] = {}
+            for i, name in enumerate(["LUT", "FF", "BRAM_18K", "URAM", "DSP"]):
+                new[slr][name] = res[slr][i]
+        return new
 
     def estimate_required_fpgas(self) -> int:
         """Use resource utilization to estimate how many FPGAs will be needed to

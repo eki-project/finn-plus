@@ -95,3 +95,18 @@ def test_resource_est_for_all_layers(
         assert any(
             est > 0 for est in estimates[node.name].values()
         ), f"Layer {node.name} does not use any resources at all: {estimates[node.name]}"
+
+
+def test_partition_solution_found() -> None:
+    """Test some known model - fpga combinations that should
+    be solveable"""
+
+
+def test_aurora_partition_valid() -> None:
+    """Test known model - fpga combination solutions and check
+    that they are valid for constraints that the Aurora
+    Partitioner requires"""
+
+
+def test_platform_resources() -> None:
+    raise NotImplementedError()
