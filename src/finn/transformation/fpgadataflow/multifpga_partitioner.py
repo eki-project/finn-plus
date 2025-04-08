@@ -9,7 +9,11 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.res_estimation import res_estimation
-from finn.builder.build_dataflow_config import DataflowBuildConfig, PartitioningStrategy
+from finn.builder.build_dataflow_config import (
+    DataflowBuildConfig,
+    MultiFPGACommunicationScheme,
+    PartitioningStrategy,
+)
 from finn.transformation.fpgadataflow.multifpga_network import Device
 from finn.transformation.fpgadataflow.multifpga_utils import get_inseperable_nodes, set_device_id
 
@@ -60,6 +64,7 @@ class Partitioner(ABC):
 class AuroraPartitioner(Partitioner):
     def __init__(
         self,
+        communication_scheme: MultiFPGACommunicationScheme,
         network_ports_per_device: int,
         strategy: PartitioningStrategy,
         devices: int,
@@ -74,6 +79,7 @@ class AuroraPartitioner(Partitioner):
         )
         self.limit_nodes_per_device = limit_nodes_per_device
         self.network_ports_per_device = network_ports_per_device
+        self.communication_scheme = communication_scheme
         self.model = Model()
 
         # self.devices[node][device] = 1: Node <node> is on device <device>
@@ -160,7 +166,66 @@ class AuroraPartitioner(Partitioner):
                 self.connections_per_device[device] <= self.network_ports_per_device
             )  # type: ignore
 
-        # TODO: Missing variables
+        # Helper for device difference
+        device_diff = []
+        for i in range(self.node_count):
+            device_diff.append(
+                self.model.add_var(name=f"helper_consec_device_{i}", var_type=mip.INTEGER)
+            )
+
+        # Consecutive nodes must be on consecutive devices
+        for node in range(self.node_count - 1):
+            self.model += (
+                device_diff[node] >= self.chosen_device[node] - self.chosen_device[node + 1]
+            )
+            self.model += (
+                device_diff[node] >= self.chosen_device[node + 1] - self.chosen_device[node]
+            )
+            self.model += device_diff[node] <= 1
+            self.model += device_diff[node] >= 0
+
+        # Setting topology requirements
+        match self.communication_scheme:
+            case MultiFPGACommunicationScheme.AURORA_CHAIN:
+                self.model += self.chosen_device[0] == 0
+                self.model += self.chosen_device[-1] == self.device_count - 1
+
+            case MultiFPGACommunicationScheme.AURORA_RETURNCHAIN:
+                raise NotImplementedError()
+
+            case _:
+                raise AssertionError(
+                    f"Invalid communication scheme "
+                    f"for Aurora partitioner: {self.communication_scheme}"
+                )
+
+        # Objective Function
+        if self.strategy == PartitioningStrategy.LAYER_COUNT:
+            # Calculcate the difference to the "ideal" load
+            # (All devices have the same number of layers)
+            avg_diff = [
+                self.model.add_var(var_type=mip.CONTINUOUS) for i in range(self.device_count)
+            ]
+            avg_ideal_load = self.node_count / self.device_count
+            for i in range(self.device_count):
+                self.model += avg_diff[i] >= self.nodesperdevice[i] - avg_ideal_load  # type: ignore
+                self.model += avg_diff[i] >= avg_ideal_load - self.nodesperdevice[i]  # type: ignore
+
+            # Get the largest of those differences
+            max_diff = self.model.add_var(name="max_diff", var_type=mip.CONTINUOUS)
+            for device in range(self.device_count):
+                self.model += max_diff >= avg_diff[device]
+
+            # Try to minimize the max difference to ideal
+            self.model.objective = max_diff
+            self.model.sense = mip.MINIMIZE
+
+        elif self.strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
+            pass
+
+        else:
+            raise AssertionError(f"Unknown partitioning strategy: {self.strategy}")
+
         # TODO: Objective function
         # TODO: Tests
 
