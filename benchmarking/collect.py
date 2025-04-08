@@ -67,7 +67,7 @@ if __name__ == "__main__":
     for id in run_ids:
         print("Processing run %d" % id)
         experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + str(id)
-        experiment_msg = "[CI] " + os.environ.get("CI_PIPELINE_NAME")
+        experiment_msg = "[CI] " + os.environ.get("CI_PIPELINE_NAME") + " (" + os.environ.get("CI_PIPELINE_ID") + "_" + str(id) + ")"
         #TODO: cache images once we switch to a cache provider that works with DVC Studio
         with Live(exp_name = experiment_name, exp_message=experiment_msg, cache_images=False) as live:
             ### PARAMS ###
