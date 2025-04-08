@@ -34,6 +34,7 @@ import finn.util.verilator_helper as verilator
 from finn.util.basic import pyverilate_get_liveness_threshold_cycles
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.pyverilator import pyverilate_stitched_ip
+from finn.util.verilator_helper import PyVerilator
 
 
 def rtlsim_exec(model, execution_context, pre_hook=None, post_hook=None):
@@ -125,7 +126,7 @@ def rtlsim_exec(model, execution_context, pre_hook=None, post_hook=None):
         sim = pyverilate_stitched_ip(model, extra_verilator_args=extra_verilator_args)
         model.set_metadata_prop("rtlsim_so", sim.lib._name)
     else:
-        sim = verilator.buildPyVerilator(rtlsim_so, auto_eval=False)
+        sim = PyVerilator(rtlsim_so, auto_eval=False)
 
     # reset and call rtlsim, including any pre/post hooks
     reset_rtlsim(sim)
