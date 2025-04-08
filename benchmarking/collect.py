@@ -154,6 +154,31 @@ if __name__ == "__main__":
             # fifo_sizing.json
             log_metrics_from_report(id, live, "fifo_sizing.json", ["total_fifo_size_kB"], prefix="fifosizing/")
 
+            # stitched IP DCP synth resource report
+            log_nested_metrics_from_report(id, live, "post_synth_resources_dcp.json", "(top)", [
+                "LUT",
+                "FF",
+                "SRL",
+                "DSP",
+                "BRAM_18K",
+                "BRAM_36K",
+                "URAM",
+                ], prefix="synth(dcp)/resources/")
+
+            # stitched IP DCP synth resource breakdown
+            # TODO: generalize to all build flows and bitfile synth
+            layer_categories = ["MAC", "Eltwise", "Thresholding", "FIFO", "DWC", "SWG", "Other"]
+            for category in layer_categories:
+                log_nested_metrics_from_report(id, live, "res_breakdown_build_output.json", category, [
+                    "LUT",
+                    "FF",
+                    "SRL",
+                    "DSP",
+                    "BRAM_18K",
+                    "BRAM_36K",
+                    "URAM",
+                    ], prefix="synth(dcp)/resources(breakdown)/" + category + "/")
+
             # ooc_synth_and_timing.json (OOC synth / step_out_of_context_synthesis)
             log_metrics_from_report(id, live, "ooc_synth_and_timing.json", [
                 "LUT",
