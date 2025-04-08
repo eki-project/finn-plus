@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import mip
 from abc import ABC, abstractmethod
+from mip import Model, xsum
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
@@ -20,17 +22,34 @@ class Partitioner(ABC):
 
     We use a slightly different approach to modelling the problem and the objective function,
     however the partitioner from finn-experimental should be relativly easy to swap in
-    if needed."""
+    if needed.
+
+    Parameters:
+
+    inseperable_nodes: Nodes that need to stay together because they are in a split
+
+    considered_resources: What types of resources are used in the objective
+        function to determine load."""
 
     def __init__(
         self,
         strategy: PartitioningStrategy,
-        inseperable_nodes: list[list[Device]],
+        devices: int,
+        nodes: int,
+        inseperable_nodes: list[list[int]],
         resource_estimates: dict | None = None,
+        considered_resources: list[str] | None = None,
     ) -> None:
         self.strategy = strategy
         self.inseperable_nodes = inseperable_nodes
         self.resource_estimates = resource_estimates
+        self.considered_resources = (
+            ["LUT", "FF", "BRAM_18K", "DSP"]
+            if considered_resources is None
+            else considered_resources
+        )
+        self.device_count = devices
+        self.node_count = nodes
 
     @abstractmethod
     def solve(self) -> dict[int, Device] | None:
@@ -41,11 +60,109 @@ class Partitioner(ABC):
 class AuroraPartitioner(Partitioner):
     def __init__(
         self,
+        network_ports_per_device: int,
         strategy: PartitioningStrategy,
+        devices: int,
+        nodes: int,
         inseperable_nodes: list[list[int]],
         resource_estimates: dict | None = None,
+        considered_resources: list[str] | None = None,
+        limit_nodes_per_device: int | None = None,
     ) -> None:
-        super().__init__(strategy, inseperable_nodes, resource_estimates)
+        super().__init__(
+            strategy, devices, nodes, inseperable_nodes, resource_estimates, considered_resources
+        )
+        self.limit_nodes_per_device = limit_nodes_per_device
+        self.network_ports_per_device = network_ports_per_device
+        self.model = Model()
+
+        # self.devices[node][device] = 1: Node <node> is on device <device>
+        self.devices = [
+            [
+                self.model.add_var(name=f"node{node}_on_device{device}", var_type=mip.BINARY)
+                for device in range(self.device_count)
+            ]
+            for node in range(self.node_count)
+        ]
+
+        # Every layer can only be on one device
+        for node in range(self.node_count):
+            self.model += (
+                xsum(self.devices[node][device] for device in range(len(self.devices[node]))) == 1
+            )
+
+        # Helper to see what device a node is on
+        self.chosen_device = [
+            self.model.add_var(name=f"lod_{node}", var_type=mip.INTEGER)
+            for node in range(self.node_count)
+        ]
+        for node in range(self.node_count):
+            self.model += self.chosen_device[node] == xsum(
+                self.devices[node][device] * device  # type: ignore
+                for device in range(self.device_count)
+            )
+
+        # Grouped nodes need to stay together
+        for group in self.inseperable_nodes:
+            for node in range(len(group) - 1):
+                self.model += self.chosen_device[group[node]] == self.chosen_device[group[node + 1]]
+
+        # Number of nodes having this device as their ID
+        self.nodesperdevice = [
+            self.model.add_var(name=f"lpd_{device}", var_type=mip.INTEGER)
+            for device in range(self.device_count)
+        ]
+        for device in range(self.device_count):
+            self.model += self.nodesperdevice[device] == xsum(
+                self.devices[node][device] for node in range(self.device_count)
+            )
+
+        # Optionally limit number of nodes per device
+        # (This may be necessary in some cases to avoid the maximum number of compute units allowed
+        # on the FPGAs)
+        if self.limit_nodes_per_device is not None:
+            for device in range(self.device_count):
+                self.model += (
+                    self.nodesperdevice[device] <= self.limit_nodes_per_device  # type: ignore
+                )
+
+        # Connections that a device has with other devices
+        self.connections_per_device_helper = [
+            [
+                self.model.add_var(
+                    name=f"helper_connections_on_device_{device}_{node}", var_type=mip.INTEGER
+                )
+                for node in range(self.node_count)
+            ]
+            for device in range(self.device_count)
+        ]
+        self.connections_per_device = [
+            self.model.add_var(name=f"connections_on_device_{device}", var_type=mip.INTEGER)
+            for device in range(self.device_count)
+        ]
+        for device in range(self.device_count):
+            for node in range(self.node_count - 1):
+                self.model += (
+                    self.connections_per_device_helper[device][node]
+                    >= self.devices[node][device] - self.devices[node + 1][device]
+                )
+                self.model += (
+                    self.connections_per_device_helper[device][node]
+                    >= self.devices[node + 1][device] - self.devices[node][device]
+                )
+            self.model += self.connections_per_device[device] == xsum(
+                self.connections_per_device_helper[device][node] for node in range(self.node_count)
+            )
+
+        # Limit the number of connections per device (depends on the FPGAs QSFP ports)
+        for device in range(self.device_count):
+            self.model += (
+                self.connections_per_device[device] <= self.network_ports_per_device
+            )  # type: ignore
+
+        # TODO: Missing variables
+        # TODO: Objective function
+        # TODO: Tests
 
     def solve(self) -> dict[int, Device] | None:
         return None
