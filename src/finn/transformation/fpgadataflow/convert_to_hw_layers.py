@@ -1925,11 +1925,14 @@ class InferElementwiseBinaryOperation(Transformation):
         return True
 
     # Initializes the transformation method with an optional filter function
-    def __init__(self, _filter=None):
+    # and an optional datatype map or function for overriding datatypes, e.g.
+    # for fixed-point instead of float
+    def __init__(self, _filter=None, dtype_override_fxn=None):
         # Initialize the base class Transformation object
         super().__init__()
         # Register the filter function as attribute
         self._filter = _filter if _filter is not None else lambda *_: True
+        self._dtype_override = dtype_override_fxn if dtype_override_fxn is not None else lambda x: x
 
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
@@ -1968,19 +1971,22 @@ class InferElementwiseBinaryOperation(Transformation):
                 # Insert data type attributes from "context" into the CustomOp
                 # node
                 # TODO: Find a way to handle this via data type inference?
+                idt0 = self._dtype_override(model.get_tensor_datatype(node.input[0]))
+                idt1 = self._dtype_override(model.get_tensor_datatype(node.input[1]))
+                odt = self._dtype_override(model.get_tensor_datatype(node.output[0]))
+                model.set_tensor_datatype(node.input[0], idt0)
+                model.set_tensor_datatype(node.input[1], idt1)
+                model.set_tensor_datatype(node.output[0], odt)
                 inst.set_nodeattr(
-                    "lhs_dtype", str(model.get_tensor_datatype(node.input[0]))
+                    "lhs_dtype", idt0.get_canonical_name()
                 )
                 inst.set_nodeattr(
-                    "rhs_dtype", str(model.get_tensor_datatype(node.input[1]))
+                    "rhs_dtype", idt1.get_canonical_name()
                 )
-                odt_name = str(model.get_tensor_datatype(node.output[0]))
+                odt_name = odt.get_canonical_name()
                 inst.set_nodeattr(
                     "out_dtype", odt_name
                 )
-                # need to use pyxsi as rtlsim backend for float ops
-                if "FLOAT" in odt_name:
-                    inst.set_nodeattr("rtlsim_backend", "pyxsi")
                 # Insert shape attributes from "context" into the CustomOp node
                 # TODO: Find a way to handle this via shape inference?
                 inst.set_nodeattr(
@@ -2021,7 +2027,11 @@ class InferReLUAsElementwiseMax(Transformation):
             dt = model.get_tensor_datatype(tname)
             if dt is None:
                 return False
-            if dt.is_integer() or dt in [DataType["FLOAT32"], DataType["FLOAT16"]]:
+            if (
+                dt.is_integer()
+                or dt.is_fixed_point()
+                or dt in [DataType["FLOAT32"], DataType["FLOAT16"]]
+            ):
                 return True
             else:
                 return False
@@ -2029,11 +2039,12 @@ class InferReLUAsElementwiseMax(Transformation):
         return all([dtype_ok(tname) for tname in list(node.input) + list(node.output)])
 
     # Initializes the transformation method with an optional filter function
-    def __init__(self, _filter=reject_unsupported_dtypes):
+    def __init__(self, _filter=reject_unsupported_dtypes, dtype_override_fxn=None):
         # Initialize the base class Transformation object
         super().__init__()
         # Register the filter function as attribute
         self._filter = _filter if _filter is not None else lambda *_: True
+        self._dtype_override = dtype_override_fxn if dtype_override_fxn is not None else lambda x: x
 
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
@@ -2053,8 +2064,9 @@ class InferReLUAsElementwiseMax(Transformation):
                 # add a second 0-valued input for ReLU
                 new_tname = model.make_new_valueinfo_name()
                 model.set_initializer(new_tname, np.asarray(0.0, dtype=np.float32))
-                idt = model.get_tensor_datatype(node.input[0])
+                idt = self._dtype_override(model.get_tensor_datatype(node.input[0]))
                 model.set_tensor_datatype(new_tname, idt)
+                model.set_tensor_datatype(node.input[0], idt)
                 node.input.append(new_tname)
                 # Now we can get the CustomOp wrapper instance providing easier
                 # attribute access
@@ -2075,18 +2087,17 @@ class InferReLUAsElementwiseMax(Transformation):
                 # node
                 # TODO: Find a way to handle this via data type inference?
                 inst.set_nodeattr(
-                    "lhs_dtype", str(idt)
+                    "lhs_dtype", idt.get_canonical_name()
                 )
                 inst.set_nodeattr(
-                    "rhs_dtype", str(idt)
+                    "rhs_dtype", idt.get_canonical_name()
                 )
-                odt_name = str(model.get_tensor_datatype(node.output[0]))
+                odt = (self._dtype_override(model.get_tensor_datatype(node.output[0])))
+                model.set_tensor_datatype(node.output[0], odt)
+                odt_name = odt.get_canonical_name()
                 inst.set_nodeattr(
                     "out_dtype", odt_name
                 )
-                # need to use pyxsi as rtlsim backend for float ops
-                if "FLOAT" in odt_name:
-                    inst.set_nodeattr("rtlsim_backend", "pyxsi")
                 # Insert shape attributes from "context" into the CustomOp node
                 # TODO: Find a way to handle this via shape inference?
                 inst.set_nodeattr(
@@ -2119,6 +2130,11 @@ class InferReLUAsElementwiseMax(Transformation):
 
 # Converts a scale=1 zeropt=0 Quant into ElementwiseFloat2Int
 class InferQuantAsFloat2Int(Transformation):
+    def __init__(self, dtype_override_fxn=None):
+        # Initialize the base class Transformation object
+        super().__init__()
+        self._dtype_override = dtype_override_fxn if dtype_override_fxn is not None else lambda x: x
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
         # Get the model graph out of the model wrapper object
@@ -2168,7 +2184,8 @@ class InferQuantAsFloat2Int(Transformation):
                 # needed to keep appearance as binary eltwise op)
                 new_tname = model.make_new_valueinfo_name()
                 model.set_initializer(new_tname, np.asarray(0.0, dtype=np.float32))
-                idt = model.get_tensor_datatype(node.input[0])
+                idt = self._dtype_override(model.get_tensor_datatype(node.input[0]))
+                model.set_tensor_datatype(node.input[0], idt)
                 model.set_tensor_datatype(new_tname, idt)
                 # remove all inputs excepts first, and a dummy 2nd input
                 node.input[:] = [node.input[0], new_tname]
@@ -2192,17 +2209,15 @@ class InferQuantAsFloat2Int(Transformation):
                 # node
                 # TODO: Find a way to handle this via data type inference?
                 inst.set_nodeattr(
-                    "lhs_dtype", str(idt)
+                    "lhs_dtype", idt.get_canonical_name()
                 )
                 inst.set_nodeattr(
-                    "rhs_dtype", str(idt)
+                    "rhs_dtype", idt.get_canonical_name()
                 )
-                odt_name = str(model.get_tensor_datatype(node.output[0]))
+                odt_name = (model.get_tensor_datatype(node.output[0])).get_canonical_name()
                 inst.set_nodeattr(
                     "out_dtype", odt_name
                 )
-                # need to use pyxsi as rtlsim backend for float ops
-                inst.set_nodeattr("rtlsim_backend", "pyxsi")
                 # set bitwidth as attribute
                 inst.set_nodeattr("bitwidth", bitwidth)
                 # Insert shape attributes from "context" into the CustomOp node
@@ -2294,8 +2309,6 @@ class InferFP32ToFP16Cast(Transformation):
                 inst.set_nodeattr(
                     "out_dtype", odt_name
                 )
-                # need to use pyxsi as rtlsim backend for float ops
-                inst.set_nodeattr("rtlsim_backend", "pyxsi")
                 # Insert shape attributes from "context" into the CustomOp node
                 # TODO: Find a way to handle this via shape inference?
                 inst.set_nodeattr(
