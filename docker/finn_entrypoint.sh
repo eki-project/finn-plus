@@ -78,6 +78,10 @@ if [ -f "$VITIS_PATH/settings64.sh" ];then
   export XILINX_VITIS=$VITIS_PATH
   export XILINX_XRT=/opt/xilinx/xrt
   source $VITIS_PATH/settings64.sh
+  # Link libraries needed for simulating "HLS Math Library" functions
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$VITIS_PATH/lib/lnx64.o
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$VITIS_PATH/lnx64/lib/csim
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$VITIS_PATH/lnx64/tools/fpo_v7_1
   gecho "Found Vitis at $VITIS_PATH"
   if [ -f "$XILINX_XRT/setup.sh" ];then
     # source XRT
@@ -137,6 +141,10 @@ fi
 if [ -f "$HLS_PATH/settings64.sh" ];then
   # source Vitis HLS env.vars
   source $HLS_PATH/settings64.sh
+  # Link libraries needed for simulating "HLS Math Library" functions
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HLS_PATH/lib/lnx64.o
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HLS_PATH/lnx64/lib/csim
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HLS_PATH/lnx64/tools/fpo_v7_1
   gecho "Found Vitis HLS at $HLS_PATH"
 else
   yecho "Unable to find $HLS_PATH/settings64.sh"
