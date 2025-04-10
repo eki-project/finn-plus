@@ -241,6 +241,21 @@ class HLSBackend(ABC):
         builder.append_sources(code_gen_dir + "/*.cpp")
         builder.append_sources("$FINN_ROOT/deps/cnpy/cnpy.cpp")
         builder.append_includes("-lz")
+        # Link libraries needed for simulating "HLS Math Library" functions
+        # TODO: These are dynamic libraries, linking them here is only the first
+        #  step, for execution these must be resolvable from LD_LIBRARY_PATH...
+        # TODO: These paths moved in 2024.2 from HLS_PATH to VITIS_PATH, adding
+        #  both paths to be compatible...
+        builder.append_includes(f"-L{os.environ['HLS_PATH']}/lib/lnx64.o")
+        builder.append_includes(f"-L{os.environ['VITIS_PATH']}/lib/lnx64.o")
+        builder.append_includes(f"-L{os.environ['HLS_PATH']}/lnx64/lib/csim")
+        builder.append_includes(f"-L{os.environ['VITIS_PATH']}/lnx64/lib/csim")
+        builder.append_includes(f"-L{os.environ['HLS_PATH']}/lnx64/tools/fpo_v7_1")
+        builder.append_includes(f"-L{os.environ['VITIS_PATH']}/lnx64/tools/fpo_v7_1")
+        builder.append_includes("-lIp_floating_point_v7_1_bitacc_cmodel")
+        builder.append_includes("-lmpfr")
+        builder.append_includes("-lgmp")
+        builder.append_includes("-lhlsmc++-GCC46")
         builder.set_executable_path(code_gen_dir + "/node_model")
         builder.build(code_gen_dir)
         self.set_nodeattr("executable_path", builder.executable_path)
