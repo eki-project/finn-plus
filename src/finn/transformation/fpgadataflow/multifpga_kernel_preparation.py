@@ -48,7 +48,10 @@ class PrepareAuroraFlow(Transformation):
         # List all auroras that need to be packaged
         auroras = []
         for device in metadata.table.keys():
-            auroras += metadata.get_aurora_kernels(device)
+            # TODO: Write tests to make this safe
+            # TODO: Important because here we simply assume the function
+            # returns the kernel names in the right order
+            auroras += enumerate(metadata.get_aurora_kernels(device))
 
         # Package a single aurora
         def _package_aurora(d: tuple[int, str]) -> None:

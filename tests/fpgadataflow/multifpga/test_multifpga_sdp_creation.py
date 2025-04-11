@@ -106,7 +106,9 @@ def test_random_device_assign_util(devices: int, nodes: int) -> None:
 
 
 @pytest.mark.multifpga
-@pytest.mark.parametrize("device_node_combinations", [(2, 2), (10, 20), (100, 200), (1, 2)])
+@pytest.mark.parametrize(
+    "device_node_combinations", [(2, 2), (10, 20), (100, 200), (1, 2), (2, 13)]
+)
 @pytest.mark.parametrize("assignment_type", ["random", "equal"])
 @pytest.mark.parametrize("device_assignment", ["linear"])
 @pytest.mark.parametrize("shuffle_devices", [True, False])
@@ -120,12 +122,20 @@ def test_sdp_creation(
     model = create_sdp_ready_model(
         node_count, device_count, assignment_type, device_assignment, shuffle_devices
     )
+    devices_counted = len({get_device_id(node) for node in model.graph.node})
 
     # Creation of the SDPs
     original_model = deepcopy(model)
     model = model.transform(CreateMultiFPGAStreamingDataflowPartition())
     sdp_test_dir = make_build_dir("test_sdp_creation")
     model.save(os.path.join(sdp_test_dir, "sdp_model.onnx"))  # noqa
+
+    # Check that the number of SDPs is atleast as large as
+    # the number of devices
+    sdp_counted = len(
+        [node for node in model.graph.node if node.op_type == "StreamingDataflowPartition"]
+    )
+    assert sdp_counted >= devices_counted
 
     # Check that all nodes in the parent graph are now SDPs
     for node in model.graph.node:

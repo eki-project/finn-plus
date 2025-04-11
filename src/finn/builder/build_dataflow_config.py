@@ -109,20 +109,20 @@ class VerificationStepType(str, Enum):
     STITCHED_IP_RTLSIM = "stitched_ip_rtlsim"
 
 
-class PartitioningStrategy(Enum):
+class PartitioningStrategy(str, Enum):
     # Strategy to partition based on the estimated resource
     # utilization of the layers
-    RESOURCE_UTILIZATION = 0
+    RESOURCE_UTILIZATION = "resource_utilization"
 
     # Partition based on the number of layers per device
     # Much simpler but usable in case no estimates
     # are available
-    LAYER_COUNT = 1
+    LAYER_COUNT = "layer_count"
 
 
-class MultiFPGACommunicationScheme(Enum):
-    AURORA_CHAIN = 0
-    AURORA_RETURNCHAIN = 1
+class MultiFPGACommunicationScheme(str, Enum):
+    AURORA_CHAIN = "aurora_chain"
+    AURORA_RETURNCHAIN = "aurora_returnchain"
 
 
 @dataclass
@@ -137,6 +137,14 @@ class PartitioningConfiguration:
     # What kind of communication to use. This tells the flow
     # what topology and what kernels to use
     communication_scheme: MultiFPGACommunicationScheme = MultiFPGACommunicationScheme.AURORA_CHAIN
+
+    # How much a FPGA can be utilized at max. The solver will fail if it
+    # cannot comply with this limitation
+    max_utilization: float = 0.85
+
+    # How much resources of a single FPGA should be used ideally. Used in some objective
+    # functions.
+    ideal_utilization: float = 0.75
 
 
 #: List of steps that will be run as part of the standard dataflow build, in the

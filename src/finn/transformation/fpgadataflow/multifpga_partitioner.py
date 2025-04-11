@@ -3,6 +3,7 @@ from __future__ import annotations
 import mip
 from abc import ABC, abstractmethod
 from mip import Model, xsum
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
@@ -16,7 +17,8 @@ from finn.builder.build_dataflow_config import (
 )
 from finn.transformation.fpgadataflow.multifpga_network import Device
 from finn.transformation.fpgadataflow.multifpga_utils import get_inseperable_nodes, set_device_id
-from finn.util.platforms import Platform
+from finn.util.basic import make_build_dir
+from finn.util.platforms import Platform, platforms
 
 
 class Partitioner(ABC):
@@ -45,8 +47,12 @@ class Partitioner(ABC):
         resources_per_device: dict,
         resource_estimates: dict | None = None,
         considered_resources: list[str] | None = None,
+        max_utilization: float | None = None,
+        ideal_utilization: float | None = None,
     ) -> None:
         self.strategy = strategy
+        self.max_utilization = max_utilization
+        self.ideal_util = ideal_utilization
         self.inseperable_nodes = inseperable_nodes
         self.resource_estimates = resource_estimates
         self.resources_per_device = resources_per_device
@@ -57,13 +63,35 @@ class Partitioner(ABC):
         )
         self.device_count = devices
         self.node_count = nodes
+        self.model = Model()
+        self.latest_snapshot_path: Path | None = None
 
     @abstractmethod
-    def solve(self) -> dict[int, Device] | None:
-        """Try to optimize the objective function. If no feasible solution is found
-        return None, otherwise return a mapping of nodes to their device"""
+    def _solve(self, solver_timeout: int) -> dict[int, Device] | None:
+        """The real solving function. Should be called indirectly via solve()"""
 
-    def total_resources_per_device(self) -> dict[str, int]:
+    @abstractmethod
+    def _write_solution_data(self, p: Path, node_index_name_map: dict[int, str]) -> None:
+        pass
+
+    def solve(
+        self,
+        solver_timeout: int,
+        snapshot_path: Path,
+        solution_path: Path,
+        node_index_name_map: dict[int, str],
+    ) -> dict[int, Device] | None:
+        """Try to optimize the objective function. If no feasible solution is found
+        return None, otherwise return a mapping of nodes to their device. After trying
+        to solve, creates a snapshot description of the model in a temp build dir, as well
+        as a solution in the same dir, if one was found"""
+        result = self._solve(solver_timeout)
+        self._create_model_snapshot(snapshot_path)
+        if result is not None:
+            self._write_solution_data(solution_path, node_index_name_map)
+        return result
+
+    def _total_resources_per_device(self) -> dict[str, int]:
         """Return the total resources per device. Normally, resources_per_device
         is split into the different SLRs if there are some."""
         if self.resources_per_device is None:
@@ -74,6 +102,24 @@ class Partitioner(ABC):
             for slr in self.resources_per_device:
                 acc[restype] += self.resources_per_device[slr][restype]
         return acc
+
+    def _create_model_snapshot(self, p: Path) -> None:
+        """Create a snapshot of all model variables and conditions in a temporary
+        build dir. This is useful for debugging and checking on why a model is
+        infeasible for example."""
+        constraints = ""
+        for constr in self.model.constrs:
+            constraints += f"{constr}\n"
+        content = "Model Snapshot\n"
+        content += f"Strategy: {self.strategy}\n"
+        content += f"Max utilization: {self.max_utilization}\n"
+        content += f"Ideal utilization: {self.ideal_util}\n"
+        content += f"Considered resource types: {self.considered_resources}\n"
+        content += f"Inseperable nodes: {self.inseperable_nodes}\n"
+        content += f"Device count: {self.device_count}\n"
+        content += f"Node count: {self.node_count}\n"
+        with p.open("w+") as f:
+            f.write(content)
 
 
 class AuroraPartitioner(Partitioner):
@@ -90,6 +136,7 @@ class AuroraPartitioner(Partitioner):
         considered_resources: list[str] | None = None,
         limit_nodes_per_device: int | None = None,
         max_utilization: float = 0.75,
+        ideal_utilization: float | None = None,
     ) -> None:
         super().__init__(
             strategy,
@@ -99,12 +146,15 @@ class AuroraPartitioner(Partitioner):
             resources_per_device,
             resource_estimates,
             considered_resources,
+            max_utilization,
+            ideal_utilization,
         )
         self.limit_nodes_per_device = limit_nodes_per_device
         self.network_ports_per_device = network_ports_per_device
         self.communication_scheme = communication_scheme
         self.max_utilization = max_utilization
         self.model = Model()
+        self.model.verbose = 1
 
         # self.devices[node][device] = 1: Node <node> is on device <device>
         self.devices = [
@@ -123,7 +173,7 @@ class AuroraPartitioner(Partitioner):
 
         # Helper to see what device a node is on
         self.chosen_device = [
-            self.model.add_var(name=f"lod_{node}", var_type=mip.INTEGER)
+            self.model.add_var(name=f"chosen_device_of_node_{node}", var_type=mip.INTEGER)
             for node in range(self.node_count)
         ]
         for node in range(self.node_count):
@@ -144,7 +194,7 @@ class AuroraPartitioner(Partitioner):
         ]
         for device in range(self.device_count):
             self.model += self.nodesperdevice[device] == xsum(
-                self.devices[node][device] for node in range(self.device_count)
+                self.devices[node][device] for node in range(self.node_count)
             )
 
         # Optionally limit number of nodes per device
@@ -160,7 +210,7 @@ class AuroraPartitioner(Partitioner):
         self.connections_per_device_helper = [
             [
                 self.model.add_var(
-                    name=f"helper_connections_on_device_{device}_{node}", var_type=mip.INTEGER
+                    name=f"next_node_from{node}_on_different_device_question", var_type=mip.INTEGER
                 )
                 for node in range(self.node_count)
             ]
@@ -172,6 +222,7 @@ class AuroraPartitioner(Partitioner):
         ]
         for device in range(self.device_count):
             for node in range(self.node_count - 1):
+                # Variable is 1, if the next node is on a different device
                 self.model += (
                     self.connections_per_device_helper[device][node]
                     >= self.devices[node][device] - self.devices[node + 1][device]
@@ -180,6 +231,8 @@ class AuroraPartitioner(Partitioner):
                     self.connections_per_device_helper[device][node]
                     >= self.devices[node + 1][device] - self.devices[node][device]
                 )
+
+            # Number of nodes that leave a device
             self.model += self.connections_per_device[device] == xsum(
                 self.connections_per_device_helper[device][node] for node in range(self.node_count)
             )
@@ -194,7 +247,9 @@ class AuroraPartitioner(Partitioner):
         device_diff = []
         for i in range(self.node_count):
             device_diff.append(
-                self.model.add_var(name=f"helper_consec_device_{i}", var_type=mip.INTEGER)
+                self.model.add_var(
+                    name=f"device_difference_node{i}_to_node{i+1}", var_type=mip.INTEGER
+                )
             )
 
         # Consecutive nodes must be on consecutive devices
@@ -258,15 +313,15 @@ class AuroraPartitioner(Partitioner):
                     )
                     self.model += self.resource_use_int[device][resource_name] == xsum(
                         [
-                            self.devices[layer][device]
-                            * self.resource_estimates[layer][resource_name]
-                            for layer in range(self.device_count)
-                            if resource_name in self.resource_estimates[layer].keys()
+                            self.devices[node][device]
+                            * self.resource_estimates[node][resource_name]
+                            for node in range(self.node_count)
+                            if resource_name in self.resource_estimates[node].keys()
                         ]
                     )
 
             # Limit resource usage to (available resources * max usage in percent)
-            total_per_device = self.total_resources_per_device()
+            total_per_device = self._total_resources_per_device()
             for device in range(self.device_count):
                 for resource_name in self.considered_resources:
                     max_resources = int(total_per_device[resource_name] * self.max_utilization)
@@ -299,12 +354,10 @@ class AuroraPartitioner(Partitioner):
 
                     # Convert to float and get diff
                     self.model += self.resource_diff[device][resource_name] >= (
-                        self.resource_use_relative[device][resource_name]
-                        - total_per_device["ideal_utilization"]
+                        self.resource_use_relative[device][resource_name] - self.ideal_util
                     )
                     self.model += self.resource_diff[device][resource_name] >= (
-                        total_per_device["ideal_utilization"]
-                        - self.resource_use_relative[device][resource_name]
+                        self.ideal_util - self.resource_use_relative[device][resource_name]
                     )
 
             # A device cannot be completely empty
@@ -348,10 +401,34 @@ class AuroraPartitioner(Partitioner):
         else:
             raise AssertionError(f"Unknown partitioning strategy: {self.strategy}")
 
-        # TODO: Tests
+    def _write_solution_data(self, p: Path, node_index_name_map: dict[int, str]) -> None:
+        assert self.resource_estimates is not None
+        sol = ""
+        for node in range(self.node_count):
+            sol += f"\n\nNode {node}: {node_index_name_map[node]}\n"
+            sol += f"\t\tDevice: {self.chosen_device[node].x}\n"
+            for res in self.considered_resources:
+                if res not in self.resource_estimates[node].keys():
+                    continue
+                sol += f"\t\t{res}:" + "{:.2f}%".format(
+                    100
+                    * self.resource_estimates[node][res]
+                    / self._total_resources_per_device()[res]
+                )  # noqa
+        with p.open("w+") as f:
+            f.write(sol)
 
-    def solve(self) -> dict[int, Device] | None:
-        return None
+    def _solve(self, solver_timeout: int) -> dict[int, Device] | None:
+        status = self.model.optimize(solver_timeout)  # type: ignore
+        assert status != mip.OptimizationStatus.ERROR, "There was an error when solving the model!"
+        if status in [mip.OptimizationStatus.INFEASIBLE, mip.OptimizationStatus.NO_SOLUTION_FOUND]:
+            return None
+
+        # TODO: Logging as soon as QoL PR is merged
+        mapping = {}
+        for i in range(self.node_count):
+            mapping[i] = self.chosen_device[i].x
+        return mapping
 
 
 class PartitionForMultiFPGA(Transformation):
@@ -367,12 +444,14 @@ class PartitionForMultiFPGA(Transformation):
         self.cfg = cfg
         self.partitioner_type = partitioner_type
 
-    def gather_resource_utilization(self, model: ModelWrapper) -> dict[str, dict[str, int]]:
+    def gather_resource_utilization(self, model: ModelWrapper) -> dict[int, dict[str, int]]:
         """Gather the resources of all layers based on the estimation values from
         the previous build steps.
+
+        IMPORTANT: If the ordering or number of nodes in the graph changes, this becomes invalid!
         Returns a table like:
         {
-            "layer_0": {
+            0: {
                 "LUT": ...,
                 "DSP": ...,
                 ...
@@ -398,12 +477,16 @@ class PartitionForMultiFPGA(Transformation):
                     # Case 3: Res exists only in hls: Add it
                     else:
                         estimates[layer][restype] = current_layer_estimates[restype]
-        return estimates
+        est_by_index = {}
+        for i, node in enumerate(model.graph.node):
+            est_by_index[i] = estimates[node.name]
+        return est_by_index
 
     def resources_per_device(self, p: Platform) -> dict[int, dict[str, int]]:
         """Return the available resources as given by FINN platforms as a
         dictionary instead of nested lists. First by SLR, then by resource name"""
         assert p is not None
+        assert p.compute_resources is not None
         res = p.compute_resources
         new = {}
         for slr in range(len(res)):
@@ -425,31 +508,70 @@ class PartitionForMultiFPGA(Transformation):
         # TODO: Implementation
         inseperable_nodes = get_inseperable_nodes(model)
 
+        # Number of devices to partition to
+        if self.cfg.partitioning_configuration.num_fpgas < 0:
+            devices = self.estimate_required_fpgas()
+        else:
+            devices = self.cfg.partitioning_configuration.num_fpgas
+
+        # Needed to resolve platform
+        assert self.cfg.board is not None, (
+            'Parameter "board" required in config ' "for MultiFPGA partitioning."
+        )
+
+        # Additional partitioner args
+        kwargs = {}
+        if self.partitioner_type is AuroraPartitioner:
+            kwargs[
+                "communication_scheme"
+            ] = self.cfg.partitioning_configuration.communication_scheme
+            kwargs["network_ports_per_device"] = 2
+
+        # Calculate estimates
+        estimates = self.gather_resource_utilization(model)
+        for layer in estimates.keys():
+            assert any(estimates[layer][res] > 0 for res in estimates[layer].keys()), (
+                f"Layer {layer} has an all-0 resource estimation. "
+                "Cannot partition faulty resource estimated layers."
+            )
+
         # Create the partitioner itself
         partitioner = self.partitioner_type(
+            devices=devices,
             strategy=self.cfg.partitioning_configuration.partition_strategy,
             inseperable_nodes=inseperable_nodes,
-            resource_estimates=None,
+            nodes=len(model.graph.node),
+            resources_per_device=self.resources_per_device(platforms[self.cfg.board]()),
+            resource_estimates=estimates,
+            max_utilization=self.cfg.partitioning_configuration.max_utilization,
+            ideal_utilization=self.cfg.partitioning_configuration.ideal_utilization,
+            **kwargs,
         )
-        if (
-            self.cfg.partitioning_configuration.partition_strategy
-            == PartitioningStrategy.RESOURCE_UTILIZATION
-        ):
-            estimates = self.gather_resource_utilization(model)
-            for layer in estimates.keys():
-                assert any(estimates[layer][res] > 0 for res in estimates[layer].keys()), (
-                    f"Layer {layer} has an all-0 resource estimation. "
-                    "Cannot partition faulty resource estimated layers."
-                )
-            partitioner.resource_estimates = estimates
 
         # Try and solve the model
-        mapping = partitioner.solve()
+        logdir = Path(make_build_dir("partition_solver_"))
+        index_name_map = dict(enumerate([node.name for node in model.graph.node]))
+        mapping = partitioner.solve(
+            solver_timeout=100,
+            snapshot_path=logdir / "snapshot.txt",
+            solution_path=logdir / "solution.txt",
+            node_index_name_map=index_name_map,
+        )
+        if mapping is None and partitioner.latest_snapshot_path is not None:
+            print(
+                f"Model solver failed. Snapshot can be "
+                f"found in {partitioner.latest_snapshot_path.absolute()}"
+            )
 
         # TODO: Update with QoL
         assert mapping is not None, "Could not find a feasible solution for partitioning. Stopping."
 
+        # TODO: Warning for very low resource usage
+
         # TODO: Use index or name?
         for i, node in enumerate(model.graph.node):
-            set_device_id(node, mapping[i])
+            # We have to cast to int here, because the solver returns a float
+            # And if qonnx set_nodeattr sees a float in an int field, it sets it
+            # to 0, regardless of the floats value
+            set_device_id(node, int(mapping[i]))
         return model, False
