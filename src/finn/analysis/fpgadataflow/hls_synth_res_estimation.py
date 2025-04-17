@@ -70,7 +70,8 @@ def hls_synth_res_estimation(model):
                     root = tree.getroot()
                     for item in root.findall("AreaEstimates/Resources"):
                         for child in item:
-                            res_dict[node.name][child.tag] = child.text
+                            if child.text is not None:
+                                res_dict[node.name][child.tag] = int(child.text)
                 else:
                     warnings.warn(
                         """Could not find report files, values will be set to zero
