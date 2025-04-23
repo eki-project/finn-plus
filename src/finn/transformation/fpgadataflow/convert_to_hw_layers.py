@@ -2119,6 +2119,13 @@ class InferReLUAsElementwiseMax(Transformation):
 
 # Converts a scale=1 zeropt=0 Quant into ElementwiseFloat2Int
 class InferQuantAsFloat2Int(Transformation):
+    # Initializes the transformation method with an optional filter function
+    def __init__(self, _filter=None):
+        # Initialize the base class Transformation object
+        super().__init__()
+        # Register the filter function as attribute
+        self._filter = _filter if _filter is not None else lambda *_: True
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
         # Get the model graph out of the model wrapper object
@@ -2127,6 +2134,9 @@ class InferQuantAsFloat2Int(Transformation):
         graph_modified = False
         # Iterate all nodes in the graph keeping track of the index
         for index, node in enumerate(graph.node):
+            # Skip transforming nodes rejected by the filter
+            if not self._filter(model, node):
+                continue
             if node.op_type == "Quant":
                 node_inst = getCustomOp(node)
                 rmode = node_inst.get_nodeattr("rounding_mode")
@@ -2235,6 +2245,13 @@ class InferQuantAsFloat2Int(Transformation):
 
 # Converts float32 -> float16 casts to ElementwiseFloatCast
 class InferFP32ToFP16Cast(Transformation):
+    # Initializes the transformation method with an optional filter function
+    def __init__(self, _filter=None):
+        # Initialize the base class Transformation object
+        super().__init__()
+        # Register the filter function as attribute
+        self._filter = _filter if _filter is not None else lambda *_: True
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
         # Get the model graph out of the model wrapper object
@@ -2243,6 +2260,9 @@ class InferFP32ToFP16Cast(Transformation):
         graph_modified = False
         # Iterate all nodes in the graph keeping track of the index
         for index, node in enumerate(graph.node):
+            # Skip transforming nodes rejected by the filter
+            if not self._filter(model, node):
+                continue
             if node.op_type == "Cast":
                 to_attr = get_by_name(node.attribute, "to")
                 if to_attr is None:
