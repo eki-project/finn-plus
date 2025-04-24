@@ -1,0 +1,92 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 29131.0,
+            "DSP": 0.0,
+            "BRAM_18K": 18.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 376,
+            "max_cycles": 32,
+            "max_cycles_node_name": "MVAU_hls_0",
+            "estimated_throughput_fps": 6250000.0,
+            "estimated_latency_ns": 1880
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 42339.0,
+            "FF": 9286.0,
+            "DSP": 4.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 3
+    },
+    "synth(dcp)": {
+        "resources": {
+            "LUT": 36475,
+            "FF": 38523,
+            "SRL": 2968,
+            "DSP": 13,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0
+        },
+        "resources(breakdown)": {
+            "MAC": {
+                "LUT": 25366,
+                "FF": 25748,
+                "SRL": 0,
+                "DSP": 0,
+                "BRAM_18K": 0,
+                "BRAM_36K": 0,
+                "URAM": 0
+            },
+            "Eltwise": {
+                "LUT": 3264,
+                "FF": 6543,
+                "SRL": 0,
+                "DSP": 13,
+                "BRAM_18K": 0,
+                "BRAM_36K": 0,
+                "URAM": 0
+            },
+            "FIFO": {
+                "LUT": 6656,
+                "FF": 3338,
+                "SRL": 2968,
+                "DSP": 0,
+                "BRAM_18K": 0,
+                "BRAM_36K": 0,
+                "URAM": 0
+            },
+            "DWC": {
+                "LUT": 1189,
+                "FF": 2894,
+                "SRL": 0,
+                "DSP": 0,
+                "BRAM_18K": 0,
+                "BRAM_36K": 0,
+                "URAM": 0
+            }
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 15721,
+            "FF": 19637,
+            "SRL": 1109,
+            "DSP": 4,
+            "BRAM_18K": 1,
+            "BRAM_36K": 1,
+            "URAM": 0
+        }
+    },
+    "total_build_time": 2311
+}
