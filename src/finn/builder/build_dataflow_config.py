@@ -30,11 +30,11 @@
 import numpy as np
 import os
 from dataclasses import dataclass
-from dataclasses_json import dataclass_json
 from enum import Enum
+from mashumaro.mixins.json import DataClassJSONMixin
+from mashumaro.mixins.yaml import DataClassYAMLMixin
 from typing import Any, List, Optional
 
-from finn.transformation.fpgadataflow.vitis_build import VitisOptStrategy
 from finn.util.basic import alveo_default_platform, part_map
 
 
@@ -65,15 +65,22 @@ class DataflowOutputType(str, Enum):
     DEPLOYMENT_PACKAGE = "deployment_package"
 
 
-class VitisOptStrategyCfg(str, Enum):
-    """Vitis optimization strategy with serializable string enum values."""
+class VitisOptStrategy(Enum):
+    "Values applicable to VitisBuild optimization strategy."
+
+    DEFAULT = "0"
+    POWER = "1"
+    PERFORMANCE = "2"
+    PERFORMANCE_BEST = "3"
+    SIZE = "s"
+    BUILD_SPEED = "quick"
+
+
+class FpgaMemoryType(str, Enum):
+    "Memory Type used by the FPGA to store input/output data"
 
     DEFAULT = "default"
-    POWER = "power"
-    PERFORMANCE = "performance"
-    PERFORMANCE_BEST = "performance_best"
-    SIZE = "size"
-    BUILD_SPEED = "quick"
+    HOST_MEM = "host_memory"
 
 
 class LargeFIFOMemStyle(str, Enum):
@@ -146,9 +153,8 @@ estimate_only_dataflow_steps = [
 hw_codegen_dataflow_steps = estimate_only_dataflow_steps + ["step_hw_codegen"]
 
 
-@dataclass_json
 @dataclass
-class DataflowBuildConfig:
+class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     """Build configuration to be passed to the build_dataflow function. Can be
     serialized into or de-serialized from JSON files for persistence.
     See list of attributes below for more information on the build configuration.
@@ -308,7 +314,11 @@ class DataflowBuildConfig:
 
     #: Vitis optimization strategy
     #: Only relevant when `shell_flow_type = ShellFlowType.VITIS_ALVEO`
-    vitis_opt_strategy: Optional[VitisOptStrategyCfg] = VitisOptStrategyCfg.DEFAULT
+    vitis_opt_strategy: Optional[VitisOptStrategy] = VitisOptStrategy.DEFAULT
+
+    #: FPGA memory type
+    #: Can be used to use host memory for input/output data instead of DDR or HBM memory
+    fpga_memory: Optional[FpgaMemoryType] = FpgaMemoryType.DEFAULT
 
     #: Whether intermediate ONNX files will be saved during the build process.
     #: These can be useful for debugging if the build fails.
@@ -321,8 +331,8 @@ class DataflowBuildConfig:
     #: Whether pdb postmortem debuggig will be launched when the build fails
     enable_build_pdb_debug: Optional[bool] = True
 
-    #: When True, all warnings and compiler output will be printed in stdout.
-    #: Otherwise, these will be suppressed and only appear in the build log.
+    #: When True, additional verbose information will be written to the log file.
+    #: Otherwise, these additional information will be suppressed.
     verbose: Optional[bool] = False
 
     #: If given, only run the steps in the list. If not, run default steps.
@@ -390,18 +400,6 @@ class DataflowBuildConfig:
             n_clock_cycles_per_sec = 10**9 / self.synth_clk_period_ns
             n_cycles_per_frame = n_clock_cycles_per_sec / self.target_fps
             return int(n_cycles_per_frame)
-
-    def _resolve_vitis_opt_strategy(self):
-        # convert human-readable enum to value expected by v++
-        name_to_strategy = {
-            VitisOptStrategyCfg.DEFAULT: VitisOptStrategy.DEFAULT,
-            VitisOptStrategyCfg.POWER: VitisOptStrategy.POWER,
-            VitisOptStrategyCfg.PERFORMANCE: VitisOptStrategy.PERFORMANCE,
-            VitisOptStrategyCfg.PERFORMANCE_BEST: VitisOptStrategy.PERFORMANCE_BEST,
-            VitisOptStrategyCfg.SIZE: VitisOptStrategy.SIZE,
-            VitisOptStrategyCfg.BUILD_SPEED: VitisOptStrategy.BUILD_SPEED,
-        }
-        return name_to_strategy[self.vitis_opt_strategy]
 
     def _resolve_vitis_platform(self):
         if self.vitis_platform is not None:

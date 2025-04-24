@@ -35,9 +35,7 @@ from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 
-from finn.custom_op.fpgadataflow.convolutioninputgenerator import (
-    ConvolutionInputGenerator,
-)
+from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 
 # RTL Convolution Input Generator / Sliding Window Generator (SWG)

@@ -29,14 +29,15 @@
 import numpy as np
 import os
 import subprocess
-import warnings
 from abc import ABC, abstractmethod
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow import templates
 from finn.util.basic import CppBuilder, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.util.deps import get_deps_path
 from finn.util.hls import CallHLS
+from finn.util.logging import log
 
 try:
     import pyxsi_utils
@@ -140,6 +141,8 @@ class HLSBackend(ABC):
         self.code_gen_dict["$CLKPERIOD$"] = [str(clk)]
         self.code_gen_dict["$DEFAULT_DIRECTIVES$"] = self.ipgen_default_directives()
         self.code_gen_dict["$EXTRA_DIRECTIVES$"] = self.ipgen_extra_directives()
+        self.code_gen_dict["$FINNHLSLIB$"] = [str(get_deps_path() / "finn-hlslib")]
+        self.code_gen_dict["$ATTENTIONHLSLIB$"] = [str(get_deps_path() / "attention-hlslib")]
 
         template = templates.ipgentcl_template
 
@@ -236,15 +239,18 @@ class HLSBackend(ABC):
         # to enable additional debug features please uncommand the next line
         # builder.append_includes("-DDEBUG")
         builder.append_includes("-I$FINN_ROOT/src/finn/qnn-data/cpp")
-        builder.append_includes("-I$FINN_ROOT/deps/cnpy/")
-        builder.append_includes("-I$FINN_ROOT/deps/finn-hlslib")
+        builder.append_includes("-I" + str(get_deps_path() / "cnpy"))
+        builder.append_includes("-I" + str(get_deps_path() / "finn-hlslib"))
+        # TODO: Is it ok to add this here? Add some specialization to the
+        #  attention operator? Eventually integrate this into the finn-hlslib?
+        builder.append_includes("-I" + str(get_deps_path() / "attention-hlslib"))
         builder.append_includes("-I$FINN_ROOT/custom_hls")
         builder.append_includes("-I{}/include".format(os.environ["HLS_PATH"]))
         builder.append_includes("-I{}/include".format(os.environ["VITIS_PATH"]))
         builder.append_includes("--std=c++14")
         builder.append_includes("-O3")
         builder.append_sources(code_gen_dir + "/*.cpp")
-        builder.append_sources("$FINN_ROOT/deps/cnpy/cnpy.cpp")
+        builder.append_sources(str(get_deps_path() / "cnpy" / "cnpy.cpp"))
         builder.append_includes("-lz")
         builder.set_executable_path(code_gen_dir + "/node_model")
         builder.build(code_gen_dir)
@@ -296,7 +302,7 @@ compilation transformations?
             # Make sure the input has the right container datatype
             if inp_val.dtype is not np.float32:
                 # Issue a warning to make the user aware of this type-cast
-                warnings.warn(
+                log.warning(
                     f"{node.name}: Changing input container datatype from "
                     f"{inp_val.dtype} to {np.float32}"
                 )

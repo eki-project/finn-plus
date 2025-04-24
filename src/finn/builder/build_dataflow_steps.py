@@ -57,15 +57,9 @@ import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
-from finn.analysis.fpgadataflow.op_and_param_counts import (
-    aggregate_dict_keys,
-    op_and_param_counts,
-)
+from finn.analysis.fpgadataflow.op_and_param_counts import aggregate_dict_keys, op_and_param_counts
 from finn.analysis.fpgadataflow.post_synth_res import post_synth_res
-from finn.analysis.fpgadataflow.res_estimation import (
-    res_estimation,
-    res_estimation_complete,
-)
+from finn.analysis.fpgadataflow.res_estimation import res_estimation, res_estimation_complete
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     DataflowOutputType,
@@ -76,9 +70,7 @@ from finn.core.onnx_exec import execute_onnx
 from finn.core.rtlsim_exec import rtlsim_exec
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.create_dataflow_partition import (
-    CreateDataflowPartition,
-)
+from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.derive_characteristic import (
     DeriveCharacteristic,
@@ -89,18 +81,12 @@ from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.make_pynq_driver import MakePYNQDriver
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
-from finn.transformation.fpgadataflow.minimize_accumulator_width import (
-    MinimizeAccumulatorWidth,
-)
-from finn.transformation.fpgadataflow.minimize_weight_bit_width import (
-    MinimizeWeightBitWidth,
-)
+from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
+from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
-from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
-    ReplaceVerilogRelPaths,
-)
+from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.set_fifo_depths import (
     InsertAndSetFIFODepths,
@@ -114,13 +100,12 @@ from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
-from finn.transformation.qonnx.quant_act_to_multithreshold import (
-    default_filter_function_generator,
-)
+from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth
+from finn.util.logging import log
 from finn.util.test import execute_parent
 
 
@@ -131,7 +116,7 @@ def verify_step(
     need_parent: bool,
     rtlsim_pre_hook=None,
 ):
-    print("Running verification for " + step_name)
+    log.info(f"Running verification for {step_name}")
     verify_out_dir = cfg.output_dir + "/verification_output"
     intermediate_models_dir = cfg.output_dir + "/intermediate_models"
     os.makedirs(verify_out_dir, exist_ok=True)
@@ -152,11 +137,10 @@ def verify_step(
             out_tensor_name = parent_model.graph.output[0].name
             exp_ishape = parent_model.get_tensor_shape(parent_model.graph.input[0].name)
             if in_npy.shape != exp_ishape:
-                print(
-                    "Verification input has shape %s while model expects %s"
-                    % (str(in_npy.shape), str(exp_ishape))
+                log.warning(
+                    f"Verification input has shape {in_npy.shape} while model expects {exp_ishape}"
                 )
-                print("Attempting to force model shape on verification input")
+                log.info("Attempting to force model shape on verification input")
                 in_npy = in_npy.reshape(exp_ishape)
             out_dict = execute_parent(parent_model_fn, child_model_fn, in_npy, return_full_ctx=True)
             out_npy = out_dict[out_tensor_name]
@@ -165,11 +149,10 @@ def verify_step(
             out_tensor_name = model.graph.output[0].name
             exp_ishape = model.get_tensor_shape(inp_tensor_name)
             if in_npy.shape != exp_ishape:
-                print(
-                    "Verification input has shape %s while model expects %s"
-                    % (str(in_npy.shape), str(exp_ishape))
+                log.warning(
+                    f"Verification input has shape {in_npy.shape} while model expects {exp_ishape}"
                 )
-                print("Attempting to force model shape on verification input")
+                log.info("Attempting to force model shape on verification input")
                 in_npy = in_npy.reshape(exp_ishape)
             inp_dict = {inp_tensor_name: in_npy}
             if rtlsim_pre_hook is not None:
@@ -179,11 +162,10 @@ def verify_step(
             out_npy = out_dict[out_tensor_name]
         exp_oshape = exp_out_npy.shape
         if out_npy.shape != exp_oshape:
-            print(
-                "Verification output has shape %s while model produces %s"
-                % (str(exp_oshape), str(out_npy.shape))
+            log.warning(
+                f"Verification input has shape {exp_oshape} while model expects {out_npy.shape}"
             )
-            print("Attempting to force model shape on verification output")
+            log.info("Attempting to force model shape on verification input")
             out_npy = out_npy.reshape(exp_oshape)
 
         res = np.isclose(exp_out_npy, out_npy, atol=1e-3).all()
@@ -191,17 +173,13 @@ def verify_step(
         res_to_str = {True: "SUCCESS", False: "FAIL"}
         res_str = res_to_str[res]
         if cfg.verify_save_full_context:
-            verification_output_fn = verify_out_dir + "/verify_%s_%d_%s.npz" % (
-                step_name,
-                b,
-                res_str,
+            verification_output_fn = os.path.join(
+                verify_out_dir, f"verify_{step_name}_{b}_{res_str}.npz"
             )
             np.savez(verification_output_fn, **out_dict)
         else:
-            verification_output_fn = verify_out_dir + "/verify_%s_%d_%s.npy" % (
-                step_name,
-                b,
-                res_str,
+            verification_output_fn = os.path.join(
+                verify_out_dir, f"verify_{step_name}_{b}_{res_str}.npy"
             )
             np.save(verification_output_fn, out_npy)
 
@@ -211,7 +189,7 @@ def verify_step(
                 new_wdb_path = wdb_path.replace(".wdb", "_%d.wdb" % b)
                 shutil.move(wdb_path, new_wdb_path)
 
-    print("Verification for %s : %s" % (step_name, res_to_str[all_res]))
+    log.info(f"Verification for {step_name} : {res_to_str[all_res]}")
 
 
 def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
@@ -228,7 +206,7 @@ def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
                 need_restitch = True
         # if we've made alterations to the model, need to do some re-prep
         if need_restitch:
-            print("Need to regen/re-stitch some IP for STITCHED_IP_RTLSIM")
+            log.info("Need to regen/re-stitch some IP for STITCHED_IP_RTLSIM")
             verify_model = verify_model.transform(
                 PrepareIP(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period())
             )
@@ -241,7 +219,7 @@ def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
                 )
             )
     else:
-        print("rtlsim_use_vivado_comps is enabled, may yield incorrect results")
+        log.info("rtlsim_use_vivado_comps is enabled, may yield incorrect results")
 
     # set top-level prop for stitched-ip rtlsim and launch
     verify_model.set_metadata_prop("exec_mode", "rtlsim")
@@ -653,7 +631,7 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
         shutil.copytree(
             model.get_metadata_prop("vivado_stitch_proj"), stitched_ip_dir, dirs_exist_ok=True
         )
-        print("Vivado stitched IP written into " + stitched_ip_dir)
+        log.info(f"Vivado stitched IP written into {stitched_ip_dir}")
     if VerificationStepType.STITCHED_IP_RTLSIM in cfg._resolve_verification_steps():
         # prepare ip-stitched rtlsim
         verify_model = deepcopy(model)
@@ -740,7 +718,7 @@ def step_make_pynq_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
         driver_dir = cfg.output_dir + "/driver"
         model = model.transform(MakePYNQDriver(cfg._resolve_driver_platform()))
         shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
-        print("PYNQ Python driver written into " + driver_dir)
+        log.info(f"PYNQ Python driver written into {driver_dir}")
     return model
 
 
@@ -810,10 +788,11 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
                     cfg._resolve_fpga_part(),
                     cfg.synth_clk_period_ns,
                     cfg._resolve_vitis_platform(),
-                    strategy=cfg._resolve_vitis_opt_strategy(),
+                    strategy=cfg.vitis_opt_strategy,
                     enable_debug=cfg.enable_hw_debug,
                     floorplan_file=cfg.vitis_floorplan_file,
                     partition_model_dir=partition_model_dir,
+                    fpga_memory_type=cfg.fpga_memory,
                 )
             )
             copy(model.get_metadata_prop("bitfile"), bitfile_dir + "/finn-accel.xclbin")
@@ -827,7 +806,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
                 json.dump(post_synth_resources, f, indent=2)
         else:
             raise Exception("Unrecognized shell_flow_type: " + str(cfg.shell_flow_type))
-        print("Bitfile written into " + bitfile_dir)
+        log.info(f"Bitfile written into {bitfile_dir}")
 
     return model
 

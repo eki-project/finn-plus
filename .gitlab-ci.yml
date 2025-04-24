@@ -1,0 +1,174 @@
+stages:
+  - sync
+  - pre-install
+  - test
+
+variables:
+  PIPELINE_NAME:
+    description: "Optional name to better identify this pipeline"
+    value: ""
+  TEST_SUITE:
+    description: "Select test suite to run"
+    value: "full_ci"
+    options:
+      - "none"
+      - "quicktest_ci"
+      - "full_ci"
+  CPU_CORES:
+    description: "Select number of CPU cores and test workers"
+    value: "64"
+  PARALLEL_JOBS:
+    description: "Number of parallel Slurm array jobs per Benchmark job"
+    value: "2"
+  SLURM_TIMEOUT:
+    description: "Select SLURM timeout"
+    value: "2-0" # [days-hours]
+  SLURM_PARTITION:
+    description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
+    value: "largemem"
+  SLURM_QOS:
+    description: "Optional QoS option (include --qos, e.g., --qos express)"
+    value: ""
+  MANUAL_CFG_PATH:
+    description: "Use this config file instead of configs stored in the repo. Path must be accessible to runner"
+    value: ""
+
+workflow:
+  name: '$PIPELINE_NAME'
+  rules:
+    # Run pipeline for GitHub PRs to dev (does not support PRs from forks)
+    - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "dev"
+    # Run pipeline for pushes to dev
+    - if: $CI_COMMIT_BRANCH == "dev"
+    # Run pipeline if manually triggered via API or web GUI
+    - if: $CI_PIPELINE_SOURCE == "api"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    # Run pipeline if scheduled (only for nightly sync of finn-dev)
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+Sync finn-dev:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: sync
+  tags:
+    # Run where full Docker + Singularity is available
+    - image_build
+  rules:
+    # Only run on a schedule
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - mkdir -p ../github_clone && cd ../github_clone
+    - rm -rf finn-plus # Ensure we do a fresh clone (TODO: better way to handle this on job level?)
+    - git clone git@github.com:eki-project/finn-plus.git && cd finn-plus
+    - git remote add upstream https://github.com/Xilinx/finn.git
+    - git checkout finn-dev
+    - git pull upstream dev
+    - git push origin finn-dev
+
+Pre-Install:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: pre-install
+  tags:
+    - login
+  rules:
+    # Do not run on a schedule
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # Otherwise run
+    - when: always
+  before_script:
+    - module load lang/Python/3.10.4-GCCcore-11.3.0
+    - module load devel/Autoconf/2.71-GCCcore-11.3.0
+    - module load lang/Bison/3.8.2-GCCcore-11.3.0
+    - module load lang/flex/2.6.4-GCCcore-11.3.0
+    # Install current version of Poetry
+    - python3 -m venv poetry-install
+    - poetry-install/bin/pip install poetry
+    - shopt -s expand_aliases
+    - alias poetry=poetry-install/bin/poetry
+  script:
+    # create virtual environment and install Python dependencies,
+    # TODO: cache resulting poetry.lock & .venv/ directory for following jobs
+    - poetry install
+    # let FINN download additional dependencies, cache resulting deps/ directory
+    - poetry run python3 run_finn.py deps update --path ./deps
+  cache:
+    key: $CI_COMMIT_SHA #TODO: cache based on relevant files
+    paths:
+      - deps
+
+FINN Test Suite 2022.2:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: test
+  rules:
+    # Do not run on a schedule
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # Do not run if test suite has been deselected
+    - if: $TEST_SUITE == "none"
+      when: never
+    # Always run, as long as there was no prior failure
+    - when: on_success
+  cache:
+    key: $CI_COMMIT_SHA
+    policy: pull
+    paths:
+      - deps
+  variables:
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
+    PYTEST_PARALLEL: "$CPU_CORES"
+  before_script:
+    - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
+    - cd $PATH_WORKDIR/finn-plus
+    - module load lang/Python/3.10.4-GCCcore-11.3.0
+    - module load devel/Autoconf/2.71-GCCcore-11.3.0
+    - module load lang/Bison/3.8.2-GCCcore-11.3.0
+    - module load lang/flex/2.6.4-GCCcore-11.3.0
+    - module load fpga
+    - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
+    - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
+    - ulimit -s unlimited # Increase stack size limit
+    # Install current version of Poetry
+    - python3 -m venv poetry-install
+    - poetry-install/bin/pip install poetry
+    - shopt -s expand_aliases
+    - alias poetry=poetry-install/bin/poetry
+  script:
+    # create virtual environment (.venv/) and install Python dependencies
+    - poetry install
+    # launch FINN, which will try to fetch (cached) additional dependencies
+    - poetry run python3 run_finn.py test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers 4 --num-test-workers $PYTEST_PARALLEL
+  artifacts:
+    name: "test_reports"
+    when: always
+    paths:
+      - reports/
+    reports:
+      junit: reports/*.xml
+
+FINN Test Suite 2024.2:
+  extends: FINN Test Suite 2022.2
+  before_script:
+    - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
+    - cd $PATH_WORKDIR/finn-plus
+    - module load lang/Python/3.10.4-GCCcore-11.3.0
+    - module load devel/Autoconf/2.71-GCCcore-11.3.0
+    - module load lang/Bison/3.8.2-GCCcore-11.3.0
+    - module load lang/flex/2.6.4-GCCcore-11.3.0
+    - module load fpga
+    - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    - module swap xilinx/vitis/24.2 # switch to Vitis/Vivado 2024.2
+    # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
+    - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
+    - ulimit -s unlimited # Increase stack size limit
+    # Install current version of Poetry
+    - python3 -m venv poetry-install
+    - poetry-install/bin/pip install poetry
+    - shopt -s expand_aliases
+    - alias poetry=poetry-install/bin/poetry

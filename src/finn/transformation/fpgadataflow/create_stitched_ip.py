@@ -31,17 +31,15 @@ import json
 import multiprocessing as mp
 import os
 import subprocess
-import warnings
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_num_default_workers
 from shutil import copytree
 
-from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
-    ReplaceVerilogRelPaths,
-)
+from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+from finn.util.logging import log
 
 
 def is_external_input(model, node, i):
@@ -314,7 +312,7 @@ class CreateStitchedIP(Transformation):
         if self.signature:
             ip_dirs.append("$::env(FINN_ROOT)/finn-rtllib/axi_info")
         if model.graph.node[0].op_type not in ["StreamingFIFO_rtl", "IODMA_hls"]:
-            warnings.warn(
+            log.warning(
                 """First node is not StreamingFIFO or IODMA.
                 You may experience incorrect stitched-IP rtlsim or hardware
                 behavior. It is strongly recommended to insert FIFOs prior to
@@ -323,7 +321,7 @@ class CreateStitchedIP(Transformation):
         if model.graph.node[0].op_type == "StreamingFIFO_rtl":
             firstfifo = getCustomOp(model.graph.node[0])
             if firstfifo.get_nodeattr("impl_style") == "vivado":
-                warnings.warn(
+                log.warning(
                     """First FIFO has impl_style=vivado, which may cause
                     simulation glitches (e.g. dropping the first input sample
                     after reset)."""
@@ -635,8 +633,15 @@ close $ofile
             f.write("vivado -mode batch -source make_project.tcl\n")
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", make_project_sh]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
+        process_compile = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        (_, stderr_data) = process_compile.communicate()
+
+        stderr_stripped = stderr_data.decode().strip()
+        if stderr_stripped != "" and stderr_stripped is not None:
+            log.critical(stderr_stripped)  # Decode bytes and log as critical
+
         # wrapper may be created in different location depending on Vivado version
         if not os.path.isfile(wrapper_filename):
             # check in alternative location (.gen instead of .srcs)

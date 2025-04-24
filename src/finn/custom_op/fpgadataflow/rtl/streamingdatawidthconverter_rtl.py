@@ -30,9 +30,7 @@ import os
 import shutil
 
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
-from finn.custom_op.fpgadataflow.streamingdatawidthconverter import (
-    StreamingDataWidthConverter,
-)
+from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
 
 
 class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):

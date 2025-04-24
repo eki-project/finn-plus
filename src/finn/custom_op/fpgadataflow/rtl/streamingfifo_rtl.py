@@ -25,13 +25,14 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 import numpy as np
 import os
 import shutil
-import warnings
 
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
+from finn.util.logging import log
 
 
 class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
@@ -59,9 +60,9 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             # Vivado FIFO impl may fail otherwise
             depth = (1 << (depth - 1).bit_length()) if impl == "vivado" else depth
             if old_depth != depth:
-                warnings.warn(
-                    "%s: rounding-up FIFO depth from %d to %d for impl_style=vivado"
-                    % (self.onnx_node.name, old_depth, depth)
+                log.warning(
+                    f"{self.onnx_node.name}: rounding-up FIFO depth "
+                    f"from {old_depth} to {depth} for impl_style=vivado"
                 )
 
         return depth

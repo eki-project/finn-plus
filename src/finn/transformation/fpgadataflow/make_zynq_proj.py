@@ -36,9 +36,7 @@ from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNode
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from shutil import copy
 
-from finn.transformation.fpgadataflow.create_dataflow_partition import (
-    CreateDataflowPartition,
-)
+from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -48,6 +46,8 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir, pynq_native_port_width, pynq_part_map
+from finn.util.deps import get_deps_path
+from finn.util.logging import log
 
 from . import templates
 
@@ -234,16 +234,18 @@ class MakeZYNQProject(Transformation):
         config = "\n".join(config) + "\n"
         with open(ipcfg, "w") as f:
             f.write(
-                templates.custom_zynq_shell_template
-                % (
-                    fclk_mhz,
-                    axilite_idx,
-                    aximm_idx,
-                    self.platform,
-                    pynq_part_map[self.platform],
-                    config,
-                    self.enable_debug,
-                )
+                (
+                    templates.custom_zynq_shell_template
+                    % (
+                        fclk_mhz,
+                        axilite_idx,
+                        aximm_idx,
+                        self.platform,
+                        pynq_part_map[self.platform],
+                        config,
+                        self.enable_debug,
+                    )
+                ).replace("$BOARDFILES$", str(get_deps_path() / "board_files"))
             )
 
         # create a TCL recipe for the project
@@ -257,8 +259,13 @@ class MakeZYNQProject(Transformation):
 
         # call the synthesis script
         bash_command = ["bash", synth_project_sh]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
+        process_compile = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        _, stderr_data = process_compile.communicate()
+        stderr_stripped = stderr_data.decode().strip()
+        if stderr_stripped != "" and stderr_stripped is not None:
+            log.critical(stderr_stripped)  # Decode bytes and log as critical
         bitfile_name = vivado_pynq_proj_dir + "/finn_zynq_link.runs/impl_1/top_wrapper.bit"
         if not os.path.isfile(bitfile_name):
             raise Exception(

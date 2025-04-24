@@ -28,12 +28,12 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import warnings
 from onnx import helper as oh
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
+from finn.util.logging import log
 
 
 def _is_fifo_node(node):
@@ -103,9 +103,9 @@ class InsertFIFO(Transformation):
                     if consumers == []:
                         continue
                     if len(consumers) > 1:
-                        warnings.warn(
-                            first_node.name
-                            + ": HLS node with fan-out higher than 1 cannot be stitched"
+                        log.warning(
+                            f"{first_node.name} : HLS node with fan-out higher\
+                                than 1 cannot be stitched"
                         )
                     consumer = consumers[0]
                     if _suitable_node(consumer) is True:
@@ -236,11 +236,9 @@ class InsertFIFO(Transformation):
                         # set fifo output tensor as new input tensor of second node
                         first_node.input[inp_ind] = fifo_output_tensor.name
                     else:
-                        warnings.warn(
-                            """Input FIFO for %s has depth %d and won't
-                        be created. This may cause RTL simulation issues.
-                        """
-                            % (graph_in_name, fifo_depth)
+                        log.warning(
+                            f"Input FIFO for {graph_in_name} has depth {fifo_depth} and won't\
+                                be created. This may cause RTL simulation issues."
                         )
 
             # insert FIFO as last node, except when last node is DMA
@@ -300,11 +298,10 @@ class InsertFIFO(Transformation):
                         # set fifo output tensor as new input tensor of second node
                         final_node.output[out_ind] = fifo_input_tensor.name
                     else:
-                        warnings.warn(
-                            """Output FIFO for %s has depth %d and won't
+                        log.warning(
+                            f"""Output FIFO for {graph_out_name} has depth {fifo_depth} and won't
                         be created. This may cause RTL simulation issues.
                         """
-                            % (graph_out_name, fifo_depth)
                         )
 
         return (model, graph_modified)

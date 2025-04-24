@@ -30,7 +30,6 @@ import numpy as np
 import os
 import qonnx
 import shutil
-import warnings
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -39,10 +38,8 @@ from qonnx.util.basic import gen_finn_dt_tensor, roundup_to_integer_multiple
 import finn.util
 import finn.util.data_packing as dpk
 from finn.util.basic import make_build_dir
-from finn.util.data_packing import (
-    hexstring2npbytearray,
-    pack_innermost_dim_as_hex_string,
-)
+from finn.util.data_packing import hexstring2npbytearray, pack_innermost_dim_as_hex_string
+from finn.util.logging import log
 
 from . import template_driver
 
@@ -295,7 +292,7 @@ class MakePYNQDriver(Transformation):
                         node_inst.make_weight_file(fcl_w, "decoupled_runtime", w_filename)
                         rt_layer_ind += 1
                 elif node.op_type == "StreamingDataflowPartition":
-                    warnings.warn(
+                    log.warning(
                         """Nested StreamingDataflowPartition are not supported
                     """
                     )

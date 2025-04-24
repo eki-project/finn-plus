@@ -27,7 +27,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import warnings
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
@@ -36,6 +35,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 # ONNX i/o tensor shape assumptions for ConvolutionInputGenerator:
 # input 0 is the input tensor, shape NHWC = (1, IFMDim, IFMDim, IFMChannels)
@@ -138,7 +138,7 @@ class ConvolutionInputGenerator(HWCustomOp):
         # Test for changing input datatype
         if dtype != self.get_nodeattr("inputDataType"):
             # Issue a warning message
-            warnings.warn(
+            log.warning(
                 f"{node.name}: inputDataType changing from"
                 f" {self.get_nodeattr('inputDataType')} to {dtype}"
             )
@@ -148,7 +148,7 @@ class ConvolutionInputGenerator(HWCustomOp):
         # Test for changing output datatype
         if dtype != self.get_nodeattr("outputDataType"):
             # Issue a warning message
-            warnings.warn(
+            log.warning(
                 f"{node.name}: outputDataType changing from"
                 f" {self.get_nodeattr('outputDataType')} to {dtype}"
             )

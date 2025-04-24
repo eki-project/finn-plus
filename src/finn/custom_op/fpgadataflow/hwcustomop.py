@@ -28,12 +28,12 @@
 
 import numpy as np
 import os
-import warnings
 from abc import abstractmethod
 from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 
 from finn.util.basic import get_liveness_threshold_cycles, is_versal
+from finn.util.logging import log
 
 try:
     import pyxsi_utils
@@ -351,7 +351,7 @@ class HWCustomOp(CustomOp):
         # ensure rtlsim is ready
         assert self.get_nodeattr("rtlsim_so") != "", "rtlsim not ready for " + self.onnx_node.name
         if self.get_nodeattr("io_chrc_period") > 0:
-            warnings.warn("Skipping node %s: already has FIFO characteristic" % self.onnx_node.name)
+            log.warning(f"Skipping node {self.onnx_node.name}: already has FIFO characteristic")
             return
         exp_cycles = self.get_exp_cycles()
         n_inps = np.prod(self.get_folded_input_shape()[:-1])

@@ -32,7 +32,7 @@ from finn.custom_op.fpgadataflow.upsampler import UpsampleNearestNeighbour
 
 class UpsampleNearestNeighbour_hls(UpsampleNearestNeighbour, HLSBackend):
     """
-    Corresponds to finn-hlslib UpsampleNearestNeighbour_Batch function.
+    Corresponds to finn-hlslib UpsampleNearestNeighbour function.
     Upsampling is done with the Nearest Neighbour algorithm.
     The layer expects square feature maps for the in and output.
     """

@@ -28,16 +28,11 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import warnings
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from qonnx.transformation.general import (
-    GiveReadableTensorNames,
-    GiveUniqueNodeNames,
-    SortGraph,
-)
+from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames, SortGraph
 
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.core.rtlsim_exec import rtlsim_exec_cppxsi
@@ -49,6 +44,7 @@ from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+from finn.util.logging import log
 
 
 def reset_implementation(node):
@@ -337,9 +333,9 @@ class InsertAndSetFIFODepths(Transformation):
                     modified_fc_nodes.append(node.onnx_node.name)
                     node.set_nodeattr("mem_mode", "internal_decoupled")
                     reset_implementation(node)
-                    warnings.warn(
-                        "Changed mem_mode from external to internal_decoupled for "
-                        + node.onnx_node.name
+                    log.warning(
+                        f"Changed mem_mode from external"
+                        f" to internal_decoupled for {node.onnx_node.name}"
                     )
 
         # insert stream infrastructure (DWC/FIFO)

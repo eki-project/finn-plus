@@ -29,9 +29,7 @@
 import numpy as np
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.streamingdatawidthconverter import (
-    StreamingDataWidthConverter,
-)
+from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
 
 # does not do anything at the ONNX node-by-node level, and input-output
 # tensor shapes are the same. performs data width conversion at the rtlsim level
