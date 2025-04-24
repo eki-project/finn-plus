@@ -381,6 +381,9 @@ class DataflowBuildConfig:
     #: rtlsim, otherwise they will be replaced by RTL implementations.
     rtlsim_use_vivado_comps: Optional[bool] = True
 
+    #: Specify validation dataset to be used for deployment of the generated driver
+    validation_dataset: Optional[str] = None
+
     #: If specified, input range information for scaled-int range analysis
     input_range_info: Optional[List[RangeInfo]] = None
 

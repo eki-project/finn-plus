@@ -1,48 +1,58 @@
-import itertools
-import os
-import subprocess
 import copy
+import glob
+import itertools
 import json
+import numpy as np
+import onnxruntime as ort
+import os
+import pandas as pd
+import shutil
+import subprocess
 import time
 import traceback
-import glob
-import shutil
-import numpy as np
-from shutil import copy as shcopy
-from shutil import copytree
-import finn.core.onnx_exec as oxe
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.util.basic import gen_finn_dt_tensor, roundup_to_integer_multiple
+from shutil import copy as shcopy
+from shutil import copytree
+from templates import (
+    template_open,
+    template_sim_power,
+    template_single_test,
+    template_switching_simulation_tb,
+    zynq_harness_template,
+)
+from util import delete_dir_contents, power_xml_to_dict, summarize_section, summarize_table
+
+import finn.builder.build_dataflow as build
+import finn.builder.build_dataflow_config as build_cfg
+import finn.core.onnx_exec as oxe
+from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
+from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
+from finn.analysis.fpgadataflow.post_synth_res import post_synth_res
+from finn.analysis.fpgadataflow.res_estimation import res_estimation
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
+from finn.transformation.fpgadataflow.make_zynq_proj import collect_ip_dirs
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
+from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
-from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
-from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
-from finn.analysis.fpgadataflow.res_estimation import res_estimation
-from finn.transformation.fpgadataflow.make_zynq_proj import collect_ip_dirs
-import finn.builder.build_dataflow_config as build_cfg
-from finn.util.basic import make_build_dir, pynq_native_port_width, part_map, alveo_default_platform, alveo_part_map
-from templates import template_open, template_single_test, template_sim_power, template_switching_simulation_tb, zynq_harness_template
-from util import summarize_table, summarize_section, power_xml_to_dict, delete_dir_contents
-from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
-    ReplaceVerilogRelPaths,
+from finn.util.basic import (
+    alveo_default_platform,
+    alveo_part_map,
+    make_build_dir,
+    part_map,
+    pynq_native_port_width,
 )
-from qonnx.util.basic import (
-    gen_finn_dt_tensor,
-    roundup_to_integer_multiple,
-)
-import finn.builder.build_dataflow as build
-from finn.analysis.fpgadataflow.post_synth_res import post_synth_res
-from qonnx.core.modelwrapper import ModelWrapper
-from finn.builder.build_dataflow_config import DataflowBuildConfig
-import pandas as pd
-import onnxruntime as ort
-#TODO: merge this file into bench.py once most functionality has been moved to builder
+
+# TODO: merge this file into bench.py once most functionality has been moved to builder
+
 
 def start_test_batch_fast(results_path, project_path, run_target, pairs):
     # Prepare tcl script
@@ -116,7 +126,8 @@ def sim_power_report(results_path, project_path, in_width, out_width, dtype_widt
     with open(power_report_json, "w") as json_file:
         json_file.write(json.dumps(power_report_dict, indent=2))
 
-class bench():
+
+class bench:
     def __init__(self, params, task_id, run_id, work_dir, artifacts_dir, save_dir, debug=True):
         super().__init__()
         self.params = params
@@ -127,8 +138,8 @@ class bench():
         self.save_dir = save_dir
         self.debug = debug
 
-        #TODO: setup a logger so output can go to console (with task id prefix) and log simultaneously
-        #TODO: coordinate with new builder loggin setup
+        # TODO: setup a logger so output can go to console (with task id prefix) and log simultaneously
+        # TODO: coordinate with new builder loggin setup
 
         # General configuration
         # TODO: do not allow multiple targets in a single bench job due to measurement?
@@ -170,8 +181,10 @@ class bench():
         if self.debug:
             # Save entire FINN build dir and working dir
             # TODO: add option to only save upon exception (in FINN builder or benchmarking infrastructure)
-            self.local_artifacts_collection.append(("debug_finn_tmp", os.environ["FINN_BUILD_DIR"], True))
-            #self.local_artifacts_collection.append(("debug_finn_cwd", os.environ["FINN_ROOT"], False))
+            self.local_artifacts_collection.append(
+                ("debug_finn_tmp", os.environ["FINN_BUILD_DIR"], True)
+            )
+            # self.local_artifacts_collection.append(("debug_finn_cwd", os.environ["FINN_ROOT"], False))
 
         ### SETUP ###
         # Use a temporary dir for buildflow-related files (next to FINN_BUILD_DIR)
@@ -179,7 +192,9 @@ class bench():
         tmp_buildflow_dir = os.path.join(self.work_dir, "buildflow")
         os.makedirs(tmp_buildflow_dir, exist_ok=True)
         delete_dir_contents(tmp_buildflow_dir)
-        self.build_inputs["build_dir"] = os.path.join(tmp_buildflow_dir, "build_output") # TODO remove in favor of self.build_dir
+        self.build_inputs["build_dir"] = os.path.join(
+            tmp_buildflow_dir, "build_output"
+        )  # TODO remove in favor of self.build_dir
         self.build_dir = os.path.join(tmp_buildflow_dir, "build_output")
         self.report_dir = os.path.join(self.build_dir, "report")
         os.makedirs(self.report_dir, exist_ok=True)
@@ -188,7 +203,9 @@ class bench():
         self.local_artifacts_collection.append(("build_output", self.build_dir, False))
         # Save reports and deployment package as pipeline artifacts
         self.artifacts_collection.append(("reports", self.report_dir, False))
-        self.artifacts_collection.append(("reports", os.path.join(self.build_dir, "build_dataflow.log"), False))
+        self.artifacts_collection.append(
+            ("reports", os.path.join(self.build_dir, "build_dataflow.log"), False)
+        )
         self.artifacts_collection.append(("deploy", os.path.join(self.build_dir, "deploy"), True))
 
     def save_artifact(self, target_path, source_path, archive=False):
@@ -205,16 +222,18 @@ class bench():
 
     def save_artifacts_collection(self):
         # this should be called upon successful or failed completion of a run
-        for (name, source_path, archive) in self.artifacts_collection:
-            target_path = os.path.join(self.artifacts_dir, "runs_output", "run_%d" % (self.run_id), name)
+        for name, source_path, archive in self.artifacts_collection:
+            target_path = os.path.join(
+                self.artifacts_dir, "runs_output", "run_%d" % (self.run_id), name
+            )
             self.save_artifact(target_path, source_path, archive)
 
     def save_local_artifacts_collection(self):
         # this should be called upon successful or failed completion of a run
-        for (name, source_path, archive) in self.local_artifacts_collection:
+        for name, source_path, archive in self.local_artifacts_collection:
             target_path = os.path.join(self.save_dir, name, "run_%d" % (self.run_id))
             self.save_artifact(target_path, source_path, archive)
-    
+
     # must be defined by subclass
     def step_export_onnx(self):
         pass
@@ -287,7 +306,7 @@ class bench():
     #     self.output_dict["rtlsim_cycles"] = rtlsim_cycles
     #     self.output_dict["rtlsim_time"] = int(time.time() - start_time)
 
-# TODO: re-introduce simple Vivado power estimation as new builder step
+    # TODO: re-introduce simple Vivado power estimation as new builder step
     # def step_synthesis(self):
     #     # Perform Vivado synthesis for accurate resource/timing and inaccurate power reports
     #     start_time = time.time()
@@ -323,7 +342,7 @@ class bench():
     #     model.save(os.path.join(self.artifacts_dir_models, "model_%d_synthesis.onnx" % (self.run_id)))
     #     self.model_step_synthesis = copy.deepcopy(model)
 
-# TODO: re-introduce sim-based Vivado power estimation as new builder step
+    # TODO: re-introduce sim-based Vivado power estimation as new builder step
     # def step_sim_power(self):
     #     # Perform Vivado simulation for accurate power report
     #     start_time = time.time()
@@ -365,17 +384,17 @@ class bench():
     def step_parse_builder_output(self, build_dir):
         # TODO: output as .json or even add as new build step
         ### CHECK FOR VERIFICATION STEP SUCCESS ###
-        if (os.path.exists(os.path.join(build_dir, "verification_output"))):
+        if os.path.exists(os.path.join(build_dir, "verification_output")):
             # Collect all verification output filenames
             outputs = glob.glob(os.path.join(build_dir, "verification_output/*.npy"))
             # Extract the verification status for each verification output by matching
             # to the SUCCESS string contained in the filename
-            status = all([
-                out.split("_")[-1].split(".")[0] == "SUCCESS" for out in outputs
-            ])
-    
+            status = all([out.split("_")[-1].split(".")[0] == "SUCCESS" for out in outputs])
+
             # Construct a dictionary reporting the verification status as string
-            self.output_dict["builder_verification"] = {"verification": {True: "success", False: "fail"}[status]}
+            self.output_dict["builder_verification"] = {
+                "verification": {True: "success", False: "fail"}[status]
+            }
             # TODO: mark job as failed if verification fails?
 
     def steps_full_build_flow(self):
@@ -393,7 +412,9 @@ class bench():
             self.build_inputs["onnx_path"] = self.params["model_path"]
         else:
             # input ONNX model (+ optional I/O pair for verification) will be generated
-            self.build_inputs["onnx_path"] = os.path.join(self.build_inputs["build_dir"], "model_export.onnx")
+            self.build_inputs["onnx_path"] = os.path.join(
+                self.build_inputs["build_dir"], "model_export.onnx"
+            )
             if self.step_export_onnx(self.build_inputs["onnx_path"]) == "skipped":
                 # microbenchmarks might skip because no valid model can be generated for given params
                 return "skipped"
@@ -414,23 +435,23 @@ class bench():
         cfg.synth_clk_period_ns = self.clock_period_ns
         cfg.board = self.board
         if self.board in alveo_part_map:
-            cfg.shell_flow_type=build_cfg.ShellFlowType.VITIS_ALVEO
-            cfg.vitis_platform=alveo_default_platform[self.board]
+            cfg.shell_flow_type = build_cfg.ShellFlowType.VITIS_ALVEO
+            cfg.vitis_platform = alveo_default_platform[self.board]
         else:
-            cfg.shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ
+            cfg.shell_flow_type = build_cfg.ShellFlowType.VIVADO_ZYNQ
         # enable extra performance optimizations (physopt)
         # TODO: check OMX synth strategy again!
-        cfg.vitis_opt_strategy=build_cfg.VitisOptStrategy.PERFORMANCE_BEST
+        cfg.vitis_opt_strategy = build_cfg.VitisOptStrategy.PERFORMANCE_BEST
         cfg.verbose = False
         cfg.enable_build_pdb_debug = False
-        #cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
+        # cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
         cfg.force_python_rtlsim = False
         cfg.split_large_fifos = True
-        cfg.save_intermediate_models = True # Save the intermediate model graphs
-        cfg.verify_save_full_context = True, # Output full context dump for verification steps
-        #rtlsim_use_vivado_comps # TODO ?
-        #cfg.default_swg_exception
-        #cfg.large_fifo_mem_style
+        cfg.save_intermediate_models = True  # Save the intermediate model graphs
+        cfg.verify_save_full_context = (True,)  # Output full context dump for verification steps
+        # rtlsim_use_vivado_comps # TODO ?
+        # cfg.default_swg_exception
+        # cfg.large_fifo_mem_style
 
         # Switch between instrumentation or IODMA wrapper (TODO: combine both in one bitstream)
         if "enable_instrumentation" in self.params:
@@ -446,7 +467,7 @@ class bench():
                 cfg.auto_fifo_depths = False
                 cfg.live_fifo_sizing = True
                 cfg.enable_instrumentation = True
-                cfg.synth_clk_period_ns = 10 # force conservative 100 MHz clock
+                cfg.synth_clk_period_ns = 10  # force conservative 100 MHz clock
             else:
                 cfg.auto_fifo_depths = True
                 cfg.auto_fifo_strategy = self.params["fifo_method"]
@@ -457,11 +478,11 @@ class bench():
         # Batch size used for RTLSim performance measurement (and in-depth FIFO test here)
         # TODO: determine automatically or replace by exact instr wrapper sim
         if "rtlsim_n" in self.params:
-            cfg.rtlsim_batch_size=self.params["rtlsim_n"]
+            cfg.rtlsim_batch_size = self.params["rtlsim_n"]
 
         # Batch size used for FIFO sizing (largefifo_rtlsim only)
         if "fifo_rtlsim_n" in self.params:
-            cfg.fifosim_n_inferences=self.params["fifo_rtlsim_n"]
+            cfg.fifosim_n_inferences = self.params["fifo_rtlsim_n"]
 
         # Manual correction factor for FIFO-Sim input throttling
         if "fifo_throttle_factor" in self.params:
@@ -479,6 +500,9 @@ class bench():
                 cfg.target_fps = None
             else:
                 cfg.target_fps = self.params["target_fps"]
+
+        if "validation_dataset" in self.params:
+            cfg.validation_dataset = self.params["validation_dataset"]
 
         if "fifo_offset" in self.params:
             cfg.fifo_offset = self.params["fifo_offset"]
