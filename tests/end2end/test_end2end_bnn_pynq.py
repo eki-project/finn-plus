@@ -36,6 +36,7 @@ import numpy as np
 # import pytorch before onnx, so we make sure to import onnx first
 import onnx  # isort: split
 import os
+import shutil
 import torch
 import warnings
 from brevitas.export import export_qonnx
@@ -58,7 +59,7 @@ from qonnx.transformation.insert_topk import InsertTopK
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.transformation.merge_onnx_models import MergeONNXModels
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
-from shutil import copy, copytree
+from shutil import copy
 
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
@@ -349,7 +350,7 @@ def deploy_based_on_board(model, model_title, topology, wbits, abits, board):
 
     # driver.py and python libraries
     pynq_driver_dir = model.get_metadata_prop("pynq_driver_dir")
-    copytree(pynq_driver_dir, deployment_dir, dirs_exist_ok=True)
+    shutil.copytree(pynq_driver_dir, deployment_dir, dirs_exist_ok=True)
     model.set_metadata_prop("pynq_deploy_dir", deployment_dir)
 
 

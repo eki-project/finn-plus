@@ -31,7 +31,6 @@ import json
 import numpy as np
 import os
 import shutil
-import warnings
 from copy import deepcopy
 from functools import partial
 from qonnx.core.modelwrapper import ModelWrapper
@@ -106,6 +105,7 @@ from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_rtlsim_trace_depth, pyverilate_get_liveness_threshold_cycles
+from finn.util.logging import log
 from finn.util.pyverilator import verilator_fifosim
 from finn.util.test import execute_parent
 
@@ -117,7 +117,7 @@ def verify_step(
     need_parent: bool,
     rtlsim_pre_hook=None,
 ):
-    print("Running verification for " + step_name)
+    log.info(f"Running verification for {step_name}")
     verify_out_dir = cfg.output_dir + "/verification_output"
     intermediate_models_dir = cfg.output_dir + "/intermediate_models"
     os.makedirs(verify_out_dir, exist_ok=True)
@@ -138,11 +138,10 @@ def verify_step(
             out_tensor_name = parent_model.graph.output[0].name
             exp_ishape = parent_model.get_tensor_shape(parent_model.graph.input[0].name)
             if in_npy.shape != exp_ishape:
-                print(
-                    "Verification input has shape %s while model expects %s"
-                    % (str(in_npy.shape), str(exp_ishape))
+                log.warning(
+                    f"Verification input has shape {in_npy.shape} while model expects {exp_ishape}"
                 )
-                print("Attempting to force model shape on verification input")
+                log.info("Attempting to force model shape on verification input")
                 in_npy = in_npy.reshape(exp_ishape)
             out_dict = execute_parent(parent_model_fn, child_model_fn, in_npy, return_full_ctx=True)
             out_npy = out_dict[out_tensor_name]
@@ -151,11 +150,10 @@ def verify_step(
             out_tensor_name = model.graph.output[0].name
             exp_ishape = model.get_tensor_shape(inp_tensor_name)
             if in_npy.shape != exp_ishape:
-                print(
-                    "Verification input has shape %s while model expects %s"
-                    % (str(in_npy.shape), str(exp_ishape))
+                log.warning(
+                    f"Verification input has shape {in_npy.shape} while model expects {exp_ishape}"
                 )
-                print("Attempting to force model shape on verification input")
+                log.info("Attempting to force model shape on verification input")
                 in_npy = in_npy.reshape(exp_ishape)
             inp_dict = {inp_tensor_name: in_npy}
             if rtlsim_pre_hook is not None:
@@ -165,11 +163,10 @@ def verify_step(
             out_npy = out_dict[out_tensor_name]
         exp_oshape = exp_out_npy.shape
         if out_npy.shape != exp_oshape:
-            print(
-                "Verification output has shape %s while model produces %s"
-                % (str(exp_oshape), str(out_npy.shape))
+            log.warning(
+                f"Verification input has shape {exp_oshape} while model expects {out_npy.shape}"
             )
-            print("Attempting to force model shape on verification output")
+            log.info("Attempting to force model shape on verification input")
             out_npy = out_npy.reshape(exp_oshape)
 
         res = np.isclose(exp_out_npy, out_npy, atol=1e-3).all()
@@ -177,17 +174,13 @@ def verify_step(
         res_to_str = {True: "SUCCESS", False: "FAIL"}
         res_str = res_to_str[res]
         if cfg.verify_save_full_context:
-            verification_output_fn = verify_out_dir + "/verify_%s_%d_%s.npz" % (
-                step_name,
-                b,
-                res_str,
+            verification_output_fn = os.path.join(
+                verify_out_dir, f"verify_{step_name}_{b}_{res_str}.npz"
             )
             np.savez(verification_output_fn, **out_dict)
         else:
-            verification_output_fn = verify_out_dir + "/verify_%s_%d_%s.npy" % (
-                step_name,
-                b,
-                res_str,
+            verification_output_fn = os.path.join(
+                verify_out_dir, f"verify_{step_name}_{b}_{res_str}.npy"
             )
             np.save(verification_output_fn, out_npy)
         if cfg.verify_save_rtlsim_waveforms:
@@ -195,7 +188,7 @@ def verify_step(
             if vcd_path is not None and os.path.isfile(vcd_path):
                 new_vcd_path = vcd_path.replace(".vcd", "_%d.vcd" % b)
                 shutil.move(vcd_path, new_vcd_path)
-    print("Verification for %s : %s" % (step_name, res_to_str[all_res]))
+    log.info(f"Verification for {step_name} : {res_to_str[all_res]}")
 
 
 def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
@@ -212,7 +205,7 @@ def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
                 need_restitch = True
         # if we've made alterations to the model, need to do some re-prep
         if need_restitch:
-            print("Need to regen/re-stitch some IP for STITCHED_IP_RTLSIM")
+            log.info("Need to regen/re-stitch some IP for STITCHED_IP_RTLSIM")
             verify_model = verify_model.transform(
                 PrepareIP(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period())
             )
@@ -225,7 +218,7 @@ def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
                 )
             )
     else:
-        print("rtlsim_use_vivado_comps is enabled, may yield incorrect results")
+        log.info("rtlsim_use_vivado_comps is enabled, may yield incorrect results")
 
     # set top-level prop for stitched-ip rtlsim and launch
     verify_model.set_metadata_prop("exec_mode", "rtlsim")
@@ -559,7 +552,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
             model_multi_io = len(model.graph.input) > 1 or len(model.graph.output) > 1
             force_python_sim = model_multi_io or cfg.force_python_rtlsim
             if model_multi_io:
-                warnings.warn(
+                log.warning(
                     "Multi-in/out streams currently not supported "
                     + "in FINN C++ verilator driver, falling back to Python"
                 )
@@ -639,7 +632,7 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
         shutil.copytree(
             model.get_metadata_prop("vivado_stitch_proj"), stitched_ip_dir, dirs_exist_ok=True
         )
-        print("Vivado stitched IP written into " + stitched_ip_dir)
+        log.info(f"Vivado stitched IP written into {stitched_ip_dir}")
     if VerificationStepType.STITCHED_IP_RTLSIM in cfg._resolve_verification_steps():
         # prepare ip-stitched rtlsim
         verify_model = deepcopy(model)
@@ -671,6 +664,7 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
             DataflowOutputType.STITCHED_IP in cfg.generate_outputs
         ), "rtlsim_perf needs stitched IP"
         report_dir = cfg.output_dir + "/report"
+        verbose = cfg.verbose
         os.makedirs(report_dir, exist_ok=True)
         # prepare ip-stitched rtlsim
         rtlsim_model = deepcopy(model)
@@ -679,7 +673,7 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
         model_multi_io = len(rtlsim_model.graph.input) > 1 or len(rtlsim_model.graph.output) > 1
         force_python_rtlsim = cfg.force_python_rtlsim or model_multi_io
         if model_multi_io:
-            warnings.warn(
+            log.warning(
                 "Multi-in/out streams currently not supported "
                 + "in FINN C++ verilator driver, falling back to Python"
             )
@@ -701,7 +695,7 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
             rtlsim_perf_dict = throughput_test_rtlsim(rtlsim_model, rtlsim_bs)
             rtlsim_perf_dict["latency_cycles"] = rtlsim_latency_dict["cycles"]
         else:
-            rtlsim_perf_dict = verilator_fifosim(model, rtlsim_bs)
+            rtlsim_perf_dict = verilator_fifosim(model, rtlsim_bs, verbose=verbose)
             # keep keys consistent between the Python and C++-styles
             cycles = rtlsim_perf_dict["cycles"]
             clk_ns = float(model.get_metadata_prop("clk_ns"))
@@ -744,7 +738,7 @@ def step_make_pynq_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
         driver_dir = cfg.output_dir + "/driver"
         model = model.transform(MakePYNQDriver(cfg._resolve_driver_platform()))
         shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
-        print("PYNQ Python driver written into " + driver_dir)
+        log.info(f"PYNQ Python driver written into {driver_dir}")
     return model
 
 
@@ -832,7 +826,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
                 json.dump(post_synth_resources, f, indent=2)
         else:
             raise Exception("Unrecognized shell_flow_type: " + str(cfg.shell_flow_type))
-        print("Bitfile written into " + bitfile_dir)
+        log.info(f"Bitfile written into {bitfile_dir}")
 
     return model
 

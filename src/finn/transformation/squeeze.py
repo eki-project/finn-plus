@@ -2,9 +2,6 @@
 # For array handling
 import numpy as np
 
-# Python warning subsystem
-import warnings
-
 # Helper for creating ONNX nodes
 from onnx import helper as oh
 
@@ -25,6 +22,9 @@ from qonnx.transformation.remove import remove_node_and_rewire
 
 # Gets items from protobuf by name
 from qonnx.util.basic import get_by_name, remove_by_name
+
+# Import FINN logging
+from finn.util.logging import log
 
 # Small utility functions for graph transformations
 from .util import is_threshold
@@ -51,7 +51,7 @@ class Squeeze(Transformation):
             if node.op_type in {"Squeeze", "Unsqueeze"}:
                 # Issue a warning to make the user aware of this potential issue
                 # fmt: off
-                warnings.warn(
+                log.warning(
                     f"Squeezing graph containing {node.op_type}: {node.name}"
                 )
                 # fmt: on

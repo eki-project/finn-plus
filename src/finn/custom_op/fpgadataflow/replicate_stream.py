@@ -4,22 +4,27 @@
 
 # Numpy math and arrays
 import numpy as np
+
 # Operating system stuff, e.g. paths
 import os
-# Python warning subsystem
-import warnings
 
 # Helper for creating ONNX nodes
 from onnx import helper as oh
 
 # QONNX/FINN datatypes
 from qonnx.core.datatype import DataType
+
 # QONNX wrapper to ONNX model graphs
 from qonnx.core.modelwrapper import ModelWrapper
+
 # Derive custom operators form the FINN base custom op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
 # Converts inputs/outputs to/from RTL simulation format
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+
+# FINN logging
+from finn.util.logging import log
 
 
 # Replicates an input stream to arbitrary many output streams
@@ -118,7 +123,7 @@ class ReplicateStream(HWCustomOp):
             # Get the new datatype
             new_dtype = model.get_tensor_datatype(node.input[0])
             # Issue a warning message
-            warnings.warn(
+            log.warning(
                 f"{node.name}: dtype changing from {self.dtype} to {new_dtype}"
             )
             # Set the new datatype attribute

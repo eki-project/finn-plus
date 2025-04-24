@@ -30,14 +30,11 @@ import os
 from pyverilator.util.axi_utils import reset_rtlsim, rtlsim_multi_io
 from qonnx.custom_op.registry import getCustomOp
 
+import finn.util.verilator_helper as verilator
 from finn.util.basic import pyverilate_get_liveness_threshold_cycles
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.pyverilator import pyverilate_stitched_ip
-
-try:
-    from pyverilator import PyVerilator
-except ModuleNotFoundError:
-    PyVerilator = None
+from finn.util.verilator_helper import PyVerilator
 
 
 def rtlsim_exec(model, execution_context, pre_hook=None, post_hook=None):
@@ -48,8 +45,7 @@ def rtlsim_exec(model, execution_context, pre_hook=None, post_hook=None):
     - pre_hook : hook function to be called before sim start (after reset)
     - post_hook : hook function to be called after sim end
     """
-    if PyVerilator is None:
-        raise ImportError("Installation of PyVerilator is required.")
+    verilator.checkForVerilator()
     # ensure stitched ip project already exists
     assert os.path.isfile(
         model.get_metadata_prop("wrapper_filename")

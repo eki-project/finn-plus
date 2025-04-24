@@ -29,7 +29,6 @@
 
 import numpy as np
 import qonnx.core.data_layout as DataLayout
-import warnings
 from onnx import NodeProto, TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
@@ -46,6 +45,7 @@ import finn.custom_op.fpgadataflow.elementwise_binary as elementwise_binary
 
 # Base class for all FINN custom ops, here just used for type-hinting
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class InferConvInpGen(Transformation):
@@ -67,7 +67,7 @@ class InferConvInpGen(Transformation):
                 i2c_out_shape = model.get_tensor_shape(i2c_output)
                 dt = model.get_tensor_datatype(i2c_input)
                 if not dt.is_integer():
-                    warnings.warn("%s : Input is not int. Can't infer ConvInpGen." % n.name)
+                    log.warning(f"{n.name} : Input is not int. Can't infer ConvInpGen.")
                     continue
                 i2c_inst = getCustomOp(n)
                 stride_h, stride_w = i2c_inst.get_nodeattr("stride")
@@ -137,7 +137,7 @@ class InferConvInpGen(Transformation):
                     is1D_unitx = ifm_dim_w == 1
                     downsample_2D = (not downsample_1D) and is_square_image and is_equal_stride
                     if not (downsample_1D or downsample_2D):
-                        warnings.warn(f"Couldn't infer Downsample from {n.name},check config.")
+                        log.warning(f"Couldn't infer Downsample from {n.name}, check config.")
                         continue
                     ConvInpGen_idim = max(ConvInpGen_idim_h, ConvInpGen_idim_w)
                     stride = max(stride_h, stride_w)
@@ -326,15 +326,11 @@ class InferUpsample(Transformation):
 
                 dt = model.get_tensor_datatype(n.input[0])
                 if not dt.is_integer():
-                    warnings.warn(
-                        "%s: Input not int. Can't infer UpsampleNearestNeighbour." % n.name
-                    )
+                    log.warning(f"{n.name}: Input not int. Can't infer UpsampleNearestNeighbour.")
                     continue
 
                 if model.get_tensor_layout(n.input[0]) != DataLayout.NHWC:
-                    warnings.warn(
-                        "%s: Input not NHWC. Can't infer UpsampleNearestNeighbour." % n.name
-                    )
+                    log.warning(f"{n.name}: Input not NHWC. Can't infer UpsampleNearestNeighbour.")
                     continue
 
                 # Check that the parameters are okay
@@ -423,7 +419,7 @@ class InferStreamingMaxPool(Transformation):
                 if k_h != s_h or k_w != s_w:
                     warn_str = """Stride is not equal to kernel. Node cannot be converted to
                         StreamingMaxPool layer."""
-                    warnings.warn(warn_str)
+                    log.warning(warn_str)
                     continue
                 ifm_ch = mp_in_shape[-1]
                 ifm_dim_h = mp_in_shape[1]
@@ -456,7 +452,7 @@ class InferStreamingMaxPool(Transformation):
                     graph.node.remove(node)
                     graph_modified = True
                 else:
-                    warnings.warn(node.name + ": could not convert to HW")
+                    log.warning(f"{node.name}: could not convert to HW")
         if graph_modified:
             model = model.transform(InferShapes())
             model = model.transform(InferDataTypes())
@@ -702,7 +698,7 @@ class InferChannelwiseLinearLayer(Transformation):
             if (dt.min() <= vals).all() and (vals <= dt.max()).all():
                 return dt
 
-        warnings.warn(
+        log.warning(
             """InferChannelwiseLinearLayer: Output values may not be
         representable with supported data types.
         Setting maximum width data type available.
@@ -751,7 +747,7 @@ class InferChannelwiseLinearLayer(Transformation):
                 # check if the shape of initializer is compatible
                 ll_cinit_shape = list(ll_cinit.shape)
                 if np.prod(ll_cinit_shape) == 1:
-                    warnings.warn("Broadcasting " + str(node.op_type) + "(" + node.name + ")")
+                    log.warning(f"Broadcasting {node.op_type} ({node.name})")
                     ll_cinit = np.full((ch), ll_cinit.flatten()[0])
                 elif np.prod(ll_cinit_shape) != ch or ll_cinit_shape[ch_index] != ch:
                     # parameter shape not compatible with Channelwise
@@ -1244,7 +1240,7 @@ class InferConcatLayer(Transformation):
                     continue
                 # check datatype coherence
                 if any([model.get_tensor_datatype(x) is None for x in node.input]):
-                    warnings.warn(
+                    log.warning(
                         "Inputs with undefined datatype detected, skipping InferConcatLayer()"
                     )
                     continue
@@ -1255,7 +1251,7 @@ class InferConcatLayer(Transformation):
                 # skip conversion if inputs are not integers
                 all_integer = all([model.get_tensor_datatype(x).is_integer() for x in node.input])
                 if not all_integer:
-                    warnings.warn(
+                    log.warning(
                         "Inputs with non-integer datatype detected, skipping InferConcatLayer()"
                     )
                     continue
@@ -1299,7 +1295,7 @@ class InferSplitLayer(Transformation):
             if node.op_type == "Split":
                 split_param = node.input[1]
                 if model.get_initializer(split_param) is None:
-                    warnings.warn("Split param not constant, skipping InferSplitLayer()")
+                    log.warning("Split param not constant, skipping InferSplitLayer()")
                     continue
                 ishape = model.get_tensor_shape(node.input[0])
                 axis = get_by_name(node.attribute, "axis")
@@ -1309,21 +1305,21 @@ class InferSplitLayer(Transformation):
                 last_axis = len(ishape) - 1
                 # skip conversion if not using last axis
                 if (axis != -1) and (axis != last_axis):
-                    warnings.warn(
+                    log.warning(
                         "StreamingSplit supports only last axis, skipping InferSplitLayer()"
                     )
                     continue
                 # only one input allowed (two including split_param)
                 if len(node.input) != 2:
-                    warnings.warn("Only one input allowed, skipping InferSplitLayer()")
+                    log.warning("Only one input allowed, skipping InferSplitLayer()")
                     continue
                 # skip conversion if the input is static
                 if model.get_initializer(node.input[0]) is not None:
-                    warnings.warn("Static input detected, skipping InferSplitLayer()")
+                    log.warning("Static input detected, skipping InferSplitLayer()")
                     continue
                 # skip conversion if inputs are not integers
                 if not model.get_tensor_datatype(node.input[0]).is_integer():
-                    warnings.warn("Non-integer input detected, skipping InferSplitLayer()")
+                    log.warning("Non-integer input detected, skipping InferSplitLayer()")
                     continue
                 # ready for conversion
                 channels_per_stream = [model.get_tensor_shape(x)[-1] for x in node.output]

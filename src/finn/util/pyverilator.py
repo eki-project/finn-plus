@@ -29,9 +29,9 @@
 import numpy as np
 import os
 import shutil
-from pyverilator import PyVerilator
 from qonnx.custom_op.registry import getCustomOp
 
+import finn.util.verilator_helper as verilator
 from finn.util.basic import get_rtlsim_trace_depth, launch_process_helper, make_build_dir
 
 
@@ -117,7 +117,9 @@ def prepare_stitched_ip_for_verilator(model):
     return vivado_stitch_proj_dir
 
 
-def verilator_fifosim(model, n_inputs, max_iters=100000000):
+def verilator_fifosim(
+    model, n_inputs, max_iters=100000000, verbose=False, disable_common_warnings=True
+):
     """Create a Verilator model of stitched IP and use a simple C++
     driver to drive the input stream. Useful for FIFO sizing, latency
     and throughput measurement."""
@@ -185,6 +187,8 @@ def verilator_fifosim(model, n_inputs, max_iters=100000000):
     swg_pkg = os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_pkg.sv"
     verilog_file_arg = [swg_pkg, "finn_design_wrapper.v", xpm_memory, xpm_cdc, xpm_fifo]
 
+    xpm_args.extend(verilator.commonVerilatorArgs)
+
     verilator_args = [
         "perl",
         which_verilator,
@@ -234,7 +238,7 @@ def verilator_fifosim(model, n_inputs, max_iters=100000000):
         f.write(" ".join(make_args) + "\n")
 
     launch_process_helper(verilator_args, cwd=build_dir)
-    launch_process_helper(make_args, proc_env=proc_env, cwd=build_dir)
+    launch_process_helper(make_args, proc_env=proc_env, cwd=build_dir, print_stdout=verbose)
 
     sim_launch_args = ["./Vfinn_design_wrapper"]
     launch_process_helper(sim_launch_args, cwd=build_dir)
@@ -266,8 +270,7 @@ def pyverilate_stitched_ip(
         (which can be very verbose otherwise)
 
     """
-    if PyVerilator is None:
-        raise ImportError("Installation of PyVerilator is required.")
+    verilator.checkForVerilator()
 
     vivado_stitch_proj_dir = prepare_stitched_ip_for_verilator(model)
     verilog_header_dir = vivado_stitch_proj_dir + "/pyverilator_vh"
@@ -280,14 +283,6 @@ def pyverilate_stitched_ip(
     build_dir = make_build_dir("pyverilator_ipstitched_")
 
     verilator_args = []
-    # disable common verilator warnings that should be harmless but commonly occur
-    # in large quantities for Vivado HLS-generated verilog code
-    if disable_common_warnings:
-        verilator_args += ["-Wno-STMTDLY"]
-        verilator_args += ["-Wno-PINMISSING"]
-        verilator_args += ["-Wno-IMPLICIT"]
-        verilator_args += ["-Wno-WIDTH"]
-        verilator_args += ["-Wno-COMBDLY"]
     # force inlining of all submodules to ensure we can read internal signals properly
     if read_internal_signals:
         verilator_args += ["--inline-mult", "0"]
@@ -304,7 +299,7 @@ def pyverilate_stitched_ip(
 
     swg_pkg = os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_pkg.sv"
 
-    sim = PyVerilator.build(
+    sim = verilator.buildPyVerilator(
         [swg_pkg, top_module_file_name, xpm_fifo, xpm_memory, xpm_cdc],
         verilog_path=[vivado_stitch_proj_dir, verilog_header_dir],
         build_dir=build_dir,
@@ -314,4 +309,5 @@ def pyverilate_stitched_ip(
         read_internal_signals=read_internal_signals,
         extra_args=verilator_args + extra_verilator_args,
     )
+
     return sim

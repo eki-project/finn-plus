@@ -327,8 +327,8 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Whether pdb postmortem debuggig will be launched when the build fails
     enable_build_pdb_debug: Optional[bool] = True
 
-    #: When True, all warnings and compiler output will be printed in stdout.
-    #: Otherwise, these will be suppressed and only appear in the build log.
+    #: When True, additional verbose information will be written to the log file.
+    #: Otherwise, these additional information will be suppressed.
     verbose: Optional[bool] = False
 
     #: If given, only run the steps in the list. If not, run default steps.

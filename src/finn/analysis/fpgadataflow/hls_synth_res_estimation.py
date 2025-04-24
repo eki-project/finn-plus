@@ -27,10 +27,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import os
 import qonnx.custom_op.registry as registry
-import warnings
 import xml.etree.ElementTree as ET
 
 from finn.util.fpgadataflow import is_hls_node
+from finn.util.logging import log
 
 
 def hls_synth_res_estimation(model):
@@ -55,7 +55,7 @@ def hls_synth_res_estimation(model):
             inst = registry.getCustomOp(node)
             code_gen_dir = inst.get_nodeattr("code_gen_dir_ipgen")
             if code_gen_dir == "":
-                warnings.warn(
+                log.warning(
                     """Could not find report files, values will be set to zero
                     for this node. Please run "PrepareIP" transformation and
                     "HLSSynthIP" first to generate the report files"""
@@ -73,7 +73,7 @@ def hls_synth_res_estimation(model):
                             if child.text is not None:
                                 res_dict[node.name][child.tag] = int(child.text)
                 else:
-                    warnings.warn(
+                    log.warning(
                         """Could not find report files, values will be set to zero
                         for this node. Please run "PrepareIP" transformation and
                         "HLSSynthIP" first to generate the report files"""

@@ -28,7 +28,6 @@
 
 import numpy as np
 import qonnx.core.data_layout as DataLayout
-import warnings
 from copy import deepcopy
 from onnx import TensorProto
 from onnx import helper as oh
@@ -45,6 +44,7 @@ from qonnx.util.basic import get_by_name
 
 # Groups node inputs by dynamic vs. initializer category
 from finn.transformation.util import group_inputs_by_category
+from finn.util.logging import log
 
 
 class MoveAddPastMul(Transformation):
@@ -74,7 +74,7 @@ class MoveAddPastMul(Transformation):
                     A = model.get_initializer(mul_weight_name)
                     B = model.get_initializer(add_weight_name)
                     if (A is None) or (B is None):
-                        warnings.warn("Mul or add does not have constant params, skipping")
+                        log.warning("Mul or add does not have constant params, skipping")
                         continue
                     start_name = n.input[0]
                     middle_name = n.output[0]
@@ -270,7 +270,7 @@ class MoveScalarAddPastMatMul(Transformation):
                     A = model.get_initializer(add_weight_name)
                     W = model.get_initializer(matmul_weight_name)
                     if (A is None) or (W is None):
-                        warnings.warn("MatMul or Add params are not constant, skipping")
+                        log.warning("MatMul or Add params are not constant, skipping")
                         continue
                     start_name = n.input[0]
                     middle_name = n.output[0]
@@ -331,7 +331,7 @@ class MoveAddPastConv(Transformation):
                     channels = conv_in_shape[1]
                     A = model.get_initializer(add_weight_name)
                     if A is None:
-                        warnings.warn("Add param is not constant, skipping")
+                        log.warning("Add param is not constant, skipping")
                         continue
                     start_name = n.input[0]
                     end_name = consumer.output[0]
@@ -403,7 +403,7 @@ class MoveScalarMulPastConv(Transformation):
                     mul_weight_name = n.input[1]
                     A = model.get_initializer(mul_weight_name)
                     if A is None:
-                        warnings.warn("Mul param is not constant, skipping")
+                        log.warning("Mul param is not constant, skipping")
                         continue
                     conv_node = consumer
                     mul_node = n
@@ -452,7 +452,7 @@ class MoveScalarMulPastConvTranspose(Transformation):
                     mul_weight_name = n.input[1]
                     A = model.get_initializer(mul_weight_name)
                     if A is None:
-                        warnings.warn("Mul param is not constant, skipping")
+                        log.warning("Mul param is not constant, skipping")
                         continue
                     conv_node = consumer
                     mul_node = n
@@ -501,7 +501,7 @@ class MoveMulPastDWConv(Transformation):
                     mul_weight_name = n.input[1]
                     A = model.get_initializer(mul_weight_name)
                     if A is None:
-                        warnings.warn(
+                        log.warning(
                             """Mul weight tensor is not set. If it is a constant,
                                 please use set_initializer to set the tensor."""
                         )
@@ -563,7 +563,7 @@ class MoveMulPastMaxPool(Transformation):
                     mul_weight_name = n.input[1]
                     A = model.get_initializer(mul_weight_name)
                     if A is None:
-                        warnings.warn(
+                        log.warning(
                             """Mul weight tensor is not set. If it is a constant,
                                 please use set_initializer to set the tensor."""
                         )
@@ -751,7 +751,7 @@ class MoveScalarLinearPastInvariants(Transformation):
                 if prod0.op_type in ["Mul", "Div", "Add", "Sub"]:
                     # Cannot handle fork-nodes, try MoveLinearPastFork first
                     if model.is_fork_node(prod0):
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}:"
                             f" Skipping near match: {prod0.name} is a fork-node,"
                             f" try MoveLinearPastFork first"
@@ -887,9 +887,7 @@ class MakeScaleResizeNHWC(Transformation):
             node_ind += 1
             if n.op_type == "Upsample" or n.op_type == "Resize":
                 if model.get_tensor_layout(n.input[0]) != DataLayout.NCHW:
-                    warnings.warn(
-                        "%s: Input not NCHW. Can't operate transformation on node." % n.name
-                    )
+                    log.warning(f"{n.name}: Input not NCHW. Can't operate transformation on node.")
                     continue
                 consumer = model.find_consumer(n.output[0])
                 producer = model.find_producer(n.input[0])
@@ -1207,7 +1205,7 @@ class MoveMaxPoolPastMultiThreshold(Transformation):
                     mt_out = consumer.output[0]
                     mt_odt = model.get_tensor_datatype(mt_out)
                     if mt_odt.signed() and has_padding:
-                        warnings.warn("Skipping padded MaxPool + signed-output MultiThreshold")
+                        log.warning("Skipping padded MaxPool + signed-output MultiThreshold")
                         continue
                     # check for non-decreasing thresholds and nonnegative
                     # scale factor in MultiThreshold
@@ -1219,7 +1217,7 @@ class MoveMaxPoolPastMultiThreshold(Transformation):
                     ).all(), "MultiThreshold must have non-decreasing thresholds"
                     mt_inst = getCustomOp(consumer)
                     if mt_inst.get_nodeattr("out_scale") < 0:
-                        warnings.warn("Skipping MultiThreshold with negative out_scale")
+                        log.warning("Skipping MultiThreshold with negative out_scale")
                         continue
 
                     # remove old nodes
@@ -1267,7 +1265,7 @@ class MoveFlattenPastTopK(Transformation):
                     start_name = n.input[0]
                     data_layout = model.get_tensor_layout(start_name)
                     if data_layout != DataLayout.NHWC:
-                        warnings.warn(
+                        log.warning(
                             """Transformation can't be applied. The input
                             to flatten has to have DataLayout.NHWC"""
                         )
@@ -1336,13 +1334,13 @@ class MoveFlattenPastAffine(Transformation):
                     if datalayout == DataLayout.NHWC:
                         (b, h, w, c) = model.get_tensor_shape(start_name)
                         if h != 1 or w != 1:
-                            warnings.warn(
+                            log.warning(
                                 """The Transformation can only be performed if
                             H=W=1."""
                             )
                             continue
                     else:
-                        warnings.warn(
+                        log.warning(
                             """The Transformation can only be performed on
                             operations that operate on data layout NHWC."""
                         )
@@ -1352,7 +1350,7 @@ class MoveFlattenPastAffine(Transformation):
                     op_param_name = consumer.input[1]
                     A = model.get_initializer(op_param_name)
                     if A is None:
-                        warnings.warn("Param is not constant, skipping")
+                        log.warning("Param is not constant, skipping")
                         continue
                     op_in_dt = model.get_tensor_datatype(consumer.input[0])
                     op_out_dt = model.get_tensor_datatype(consumer.output[0])
@@ -1414,7 +1412,7 @@ class MoveTransposePastScalarMul(Transformation):
                     mul_weight_name = consumer.input[1]
                     A = model.get_initializer(mul_weight_name)
                     if A is None:
-                        warnings.warn("Mul param is not constant, skipping")
+                        log.warning("Mul param is not constant, skipping")
                         continue
                     transp_node = n
                     mul_node = consumer
@@ -1426,7 +1424,7 @@ class MoveTransposePastScalarMul(Transformation):
                     transp_in_layout = model.get_tensor_layout(start_name)
                     transp_out_layout = model.get_tensor_layout(middle_name)
                     if transp_in_layout is None or transp_out_layout is None:
-                        warnings.warn(
+                        log.warning(
                             """Datalayout is not set for tensors.
                             Transformation can't be applied."""
                         )
@@ -1526,7 +1524,7 @@ class MoveIdenticalOpPastJoinOp(Transformation):
                     continue
                 identical_ops = self.are_producers_identical(model, producers)
                 if not identical_ops:
-                    warnings.warn("Producers not identical, skipping")
+                    log.warning("Producers not identical, skipping")
                     continue
 
                 # check for producers that are fork nodes (need to fork them before our transform)
@@ -1693,7 +1691,7 @@ class MoveAffinePastJoinConcat(MoveIdenticalOpPastJoinOp):
         for producer in producers:
             producer_init = model.get_initializer(producer.input[1])
             if len(producer.input) != 2 or producer_init is None:
-                warnings.warn("Producer found that is not single-input, skipping")
+                log.warning("Producer found that is not single-input, skipping")
                 return False
 
         # decide if producers are identical scalar ops or channelwise ops
@@ -1703,7 +1701,7 @@ class MoveAffinePastJoinConcat(MoveIdenticalOpPastJoinOp):
             channel_dim = get_by_name(n.attribute, "axis").i
             channelwise_op = self.are_producers_channelwise_ops(channel_dim, model, producers)
             if not channelwise_op:
-                warnings.warn(
+                log.warning(
                     "Producers are neither identical scalar ops nor channelwise ops, skipping"
                 )
                 return False
@@ -2002,7 +2000,7 @@ class MoveAddPastMatMul(Transformation):
                 if model.is_fork_node(node):
                     # Issue a warning to make the use aware of this potential
                     # transformation if the fork is moved first
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}:"
                         f" Skipping near match: {node.name} is a fork-node,"
                         f" try MoveLinearPastFork first"
@@ -2341,7 +2339,7 @@ class MoveChannelwiseLinearPastFork(Transformation):
                     # Assume the channels to be in axis 1
                     cdim = 1
                     # Issue a warning to the user, so they are aware of this
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: No layout for {inp}:"
                         f" Assuming channel dimension at index {cdim}"
                     )
@@ -2369,7 +2367,7 @@ class MoveChannelwiseLinearPastFork(Transformation):
                     model.get_tensor_shape(const), (model.get_tensor_shape(node.output[0])[cdim],)
                 ):
                     # Issue a warning to the user, so they are aware of this
-                    warnings.warn(f"{self.__class__.__name__}: Not channel-wise {const}:")
+                    log.warning(f"{self.__class__.__name__}: Not channel-wise {const}:")
                     # Softly skip this node
                     continue
 

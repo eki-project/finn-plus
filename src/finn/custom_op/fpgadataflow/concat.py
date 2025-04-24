@@ -29,10 +29,10 @@
 
 import math
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class StreamingConcat(HWCustomOp):
@@ -109,7 +109,7 @@ class StreamingConcat(HWCustomOp):
                     str(self.get_input_datatype(i)),
                     str(idt),
                 )
-                warnings.warn(warn_str)
+                log.warning(warn_str)
                 old_datatypes_attr = self.get_nodeattr("inputDataTypes")
                 old_datatypes_attr[i] = idt.name
                 self.set_nodeattr("inputDataTypes", old_datatypes_attr)

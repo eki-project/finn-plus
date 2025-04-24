@@ -28,13 +28,13 @@
 
 import numpy as np
 import onnxruntime as rt
-import warnings
 from math import ceil
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import qonnx_make_model
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class Lookup(HWCustomOp):
@@ -124,7 +124,7 @@ class Lookup(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("InputType", idt.name)
         odt = DataType[self.get_nodeattr("EmbeddingType")]
         model.set_tensor_datatype(node.output[0], odt)

@@ -25,21 +25,18 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 import numpy as np
 import os
 import shutil
-import warnings
 from qonnx.core.datatype import DataType
 
+import finn.util.verilator_helper as verilator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
 from finn.util.basic import get_rtlsim_trace_depth, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-
-try:
-    from pyverilator import PyVerilator
-except ModuleNotFoundError:
-    PyVerilator = None
+from finn.util.logging import log
 
 
 class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
@@ -67,9 +64,9 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             # Vivado FIFO impl may fail otherwise
             depth = (1 << (depth - 1).bit_length()) if impl == "vivado" else depth
             if old_depth != depth:
-                warnings.warn(
-                    "%s: rounding-up FIFO depth from %d to %d for impl_style=vivado"
-                    % (self.onnx_node.name, old_depth, depth)
+                log.warning(
+                    f"{self.onnx_node.name}: rounding-up FIFO depth "
+                    f"from {old_depth} to {depth} for impl_style=vivado"
                 )
 
         return depth
@@ -137,7 +134,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             # Make sure the input has the right container datatype
             if inp.dtype is not np.float32:
                 # Issue a warning to make the user aware of this type-cast
-                warnings.warn(
+                log.warning(
                     f"{node.name}: Changing input container datatype from "
                     f"{inp.dtype} to {np.float32}"
                 )
@@ -269,8 +266,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         )
         # Modified to use generated (System-)Verilog instead of HLS output products
 
-        if PyVerilator is None:
-            raise ImportError("Installation of PyVerilator is required.")
+        verilator.checkForVerilator()
 
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         verilog_paths = [code_gen_dir]
@@ -279,7 +275,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             self.get_nodeattr("gen_top_module") + ".v",
         ]
         # build the Verilator emu library
-        sim = PyVerilator.build(
+        sim = verilator.buildPyVerilator(
             verilog_files,
             build_dir=make_build_dir("pyverilator_" + self.onnx_node.name + "_"),
             verilog_path=verilog_paths,

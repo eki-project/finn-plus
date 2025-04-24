@@ -30,15 +30,11 @@ import numpy as np
 import os
 import shutil
 
+import finn.util.verilator_helper as verilator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
 from finn.util.basic import get_rtlsim_trace_depth, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-
-try:
-    from pyverilator import PyVerilator
-except ModuleNotFoundError:
-    PyVerilator = None
 
 
 class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
@@ -171,8 +167,7 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         a PyVerilator wrapper around it."""
         # Modified to use generated (System-)Verilog instead of HLS output products
 
-        if PyVerilator is None:
-            raise ImportError("Installation of PyVerilator is required.")
+        verilator.checkForVerilator()
 
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         verilog_paths = [code_gen_dir]
@@ -183,7 +178,7 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         ]
 
         # build the Verilator emu library
-        sim = PyVerilator.build(
+        sim = verilator.buildPyVerilator(
             verilog_files,
             build_dir=make_build_dir("pyverilator_" + self.onnx_node.name + "_"),
             verilog_path=verilog_paths,

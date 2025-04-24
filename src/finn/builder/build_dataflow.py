@@ -27,6 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import clize
+import datetime
 import json
 import logging
 import os
@@ -42,22 +43,25 @@ from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
 
 
 # adapted from https://stackoverflow.com/a/39215961
-class StreamToLogger(object):
+class PrintLogger(object):
     """
-    Fake file-like stream object that redirects writes to a logger instance.
+    Create a custom stream handler that writes to both the console and the log file.
     """
 
-    def __init__(self, logger, level):
+    def __init__(self, logger, level, originalstream):
         self.logger = logger
         self.level = level
+        self.console = originalstream
         self.linebuf = ""
 
     def write(self, buf):
         for line in buf.rstrip().splitlines():
             self.logger.log(self.level, line.rstrip())
+            timestamp = datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S")
+            self.console.write(f"[{timestamp}] " + line + "\n")
 
     def flush(self):
-        pass
+        self.console.flush()
 
 
 def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True):
@@ -108,68 +112,69 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     """
     # if start_step is specified, override the input model
     if cfg.start_step is None:
-        print("Building dataflow accelerator from " + model_filename)
+        print(f"Building dataflow accelerator from {model_filename}")
         model = ModelWrapper(model_filename)
     else:
         intermediate_model_filename = resolve_step_filename(cfg.start_step, cfg, -1)
-        print(
-            "Building dataflow accelerator from intermediate checkpoint"
-            + intermediate_model_filename
+        out = (
+            f"Building dataflow accelerator from intermediate"
+            f" checkpoint {intermediate_model_filename}"
         )
+        print(out)
         model = ModelWrapper(intermediate_model_filename)
     assert type(model) is ModelWrapper
     finn_build_dir = os.environ["FINN_BUILD_DIR"]
 
-    print("Intermediate outputs will be generated in " + finn_build_dir)
-    print("Final outputs will be generated in " + cfg.output_dir)
-    print("Build log is at " + cfg.output_dir + "/build_dataflow.log")
+    print(f"Intermediate outputs will be generated in {finn_build_dir}")
+    print(f"Final outputs will be generated in {cfg.output_dir}")
+    print(f"Build log is at {cfg.output_dir}/build_dataflow.log")
     # create the output dir if it doesn't exist
-    if not os.path.exists(cfg.output_dir):
-        os.makedirs(cfg.output_dir)
+    os.makedirs(cfg.output_dir, exist_ok=True)
+
+    # set up logger
+    logpath = os.path.join(cfg.output_dir, "build_dataflow.log")
+    if cfg.verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="[%(asctime)s]%(levelname)s: %(pathname)s:%(lineno)d: %(message)s",
+            filename=logpath,
+            filemode="w",
+        )
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="[%(asctime)s]%(levelname)s: %(message)s",
+            filename=logpath,
+            filemode="w",
+        )
+    log = logging.getLogger("build_dataflow")
+    # mirror stdout and stderr to log
+    sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
+    sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
+
+    # start processing
     step_num = 1
     time_per_step = dict()
     build_dataflow_steps = resolve_build_steps(cfg)
-    # set up logger
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="[%(asctime)s] %(message)s",
-        filename=cfg.output_dir + "/build_dataflow.log",
-        filemode="a",
-    )
-    log = logging.getLogger("build_dataflow")
-    stdout_logger = StreamToLogger(log, logging.INFO)
-    stderr_logger = StreamToLogger(log, logging.ERROR)
-    stdout_orig = sys.stdout
-    stderr_orig = sys.stderr
+
     for transform_step in build_dataflow_steps:
         try:
             step_name = transform_step.__name__
-            print("Running step: %s [%d/%d]" % (step_name, step_num, len(build_dataflow_steps)))
-            # redirect output to logfile
-            if not cfg.verbose:
-                sys.stdout = stdout_logger
-                sys.stderr = stderr_logger
-                # also log current step name to logfile
-                print("Running step: %s [%d/%d]" % (step_name, step_num, len(build_dataflow_steps)))
+            print(f"Running step: {step_name} [{step_num}/{len(build_dataflow_steps)}]")
+
             # run the step
             step_start = time.time()
             model = transform_step(model, cfg)
             step_end = time.time()
-            # restore stdout/stderr
-            sys.stdout = stdout_orig
-            sys.stderr = stderr_orig
             time_per_step[step_name] = step_end - step_start
-            chkpt_name = "%s.onnx" % (step_name)
+            chkpt_name = f"{step_name}.onnx"
             if cfg.save_intermediate_models:
-                intermediate_model_dir = cfg.output_dir + "/intermediate_models"
+                intermediate_model_dir = os.path.join(cfg.output_dir, "intermediate_models")
                 if not os.path.exists(intermediate_model_dir):
                     os.makedirs(intermediate_model_dir)
-                model.save("%s/%s" % (intermediate_model_dir, chkpt_name))
+                model.save(os.path.join(intermediate_model_dir, chkpt_name))
             step_num += 1
         except:  # noqa
-            # restore stdout/stderr
-            sys.stdout = stdout_orig
-            sys.stderr = stderr_orig
             # print exception info and traceback
             extype, value, tb = sys.exc_info()
             console = Console()
@@ -182,7 +187,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             print("Build failed")
             return -1
 
-    with open(cfg.output_dir + "/time_per_step.json", "w") as f:
+    with open(os.path.join(cfg.output_dir, "time_per_step.json"), "w") as f:
         json.dump(time_per_step, f, indent=2)
     print("Completed successfully")
     return 0
