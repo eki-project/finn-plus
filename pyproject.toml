@@ -73,7 +73,6 @@ setuptools = ">40.8.0"
 pytest-xdist = {version = "3.6.1", extras = ["setproctitle"]}
 
 qonnx = { git = "https://github.com/iksnagreb/qonnx.git", rev = "3d3d8964dbc5355d5c9be855d87b7b442508e3a4" }
-pyverilator = { git = "https://github.com/maltanar/pyverilator", branch = "master", rev = "ce0a08c20cb8c1d1e84181d6f392390f846adbd1" }
 brevitas = { git = "https://github.com/iksnagreb/brevitas.git", rev = "003f9f4070c20639790c7b406a28612a089fc502" }
 dataset_loading = { git = "https://github.com/fbcotter/dataset_loading.git", tag="0.0.4" }
 termcolor = "^2.5.0"

@@ -15,6 +15,7 @@ from rich.live import Live
 from rich.table import Table
 from threading import Lock
 
+from finn.util.deps import get_deps_path
 from interface import IS_POSIX
 
 FINN_DEPS = {
@@ -44,9 +45,6 @@ FINN_DEPS = {
         "18fa7a7e613f826a66b43298d7e8fa0ec9035a03",
     ),
 }
-
-VERILATOR = ("https://github.com/verilator/verilator", "v4.224")
-REQUIRED_VERILATOR_VERSION = VERILATOR[1][1:]  # Remove the "v" from v4.224
 
 FINN_BOARDFILES = {
     "avnet-bdf": (
@@ -233,52 +231,6 @@ def update_dependencies(location: Path) -> None:
             update_status(pkg_name, "Dependency ready!", "green")
             return True
 
-        def try_install_verilator() -> bool:
-            existing_verilator = check_verilator_version()
-            if existing_verilator is not None and existing_verilator >= REQUIRED_VERILATOR_VERSION:
-                update_status("verilator", "Found existing verilator version!", "green")
-                return True
-            verilator_git, verilator_checkout = VERILATOR
-            target = (location / "verilator").absolute()
-            configure_script = target / "configure"
-            if "VERILATOR_ROOT" in os.environ.keys():
-                del os.environ["VERILATOR_ROOT"]
-            if not target.exists() or not configure_script.exists():
-                update_status("verilator", "Pulling repository", "orange1")
-                run_silent(f"git clone {verilator_git} {target}", None, timeout=GIT_CLONE_TIMEOUT)
-                run_silent(f"git checkout {verilator_checkout}", target)
-            if not target.exists():
-                update_status("verilator", "Bad Git URL or missing network connection", "red")
-                return False
-            update_status("verilator", "Running autoconf...", "orange1")
-            res1 = sp.run(["autoconf"], cwd=target, capture_output=True, text=True)
-            os.environ["VERILATOR_ROOT"] = str(target)
-            update_status("verilator", "Running configure...", "orange1")
-            res2 = sp.run(
-                shlex.split("./configure", posix=IS_POSIX),
-                cwd=target,
-                capture_output=True,
-                text=True,
-            )
-            update_status("verilator", "Running make...", "orange1")
-            res3 = sp.run(["make"], cwd=target, capture_output=True, text=True)
-            err = None
-            if res1.returncode != 0 or res2.returncode != 0 or res3.returncode != 0:
-                del os.environ["VERILATOR_ROOT"]
-            if res1.returncode != 0:
-                err = res1.stderr.split("\n")[-1]
-            elif res2.returncode != 0:
-                err = res2.stderr.split("\n")[-2]
-            elif res3.returncode != 0:
-                err = res3.stderr.split("\n")[-1]
-            if err is not None:
-                update_status("verilator", f"Error found: {err}", "red")
-                return False
-            os.environ["VERILATOR_ROOT"] = str(target)
-            os.environ["PATH"] = f"{target}/bin:" + os.environ["PATH"]
-            update_status("verilator", "Verilator configured!", "green")
-            return True
-
         with ThreadPoolExecutor(100) as tpe:
             futures = []
             for name, (giturl, commit) in FINN_DEPS.items():
@@ -287,7 +239,6 @@ def update_dependencies(location: Path) -> None:
                 futures.append(tpe.submit(pull_board, (name, giturl, commit, copy_from_here)))
             for name, (url, do_unzip, target) in DIRECT_DOWNLOAD_DEPS.items():
                 futures.append(tpe.submit(pull_data, (name, url, do_unzip, target)))
-            futures.append(tpe.submit(try_install_verilator))
             for future in concurrent.futures.as_completed(futures):
                 any_failed |= not future.result()
 
@@ -299,15 +250,32 @@ def update_dependencies(location: Path) -> None:
         sys.exit(1)
 
 
-def check_verilator_version() -> str | None:
-    """Return the verilator version that is found. If no verilator version is installed or the
-    version output cannot be parsed returns None"""
-    if shutil.which("verilator") is None:
-        return None
-    result = sp.run("verilator --version", shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        return None
-    try:
-        return result.stdout.split(" ")[1]
-    except (IndexError, AttributeError):
-        return None
+def install_pyxsi():
+    # TODO: integrate properly into the rich.Live above?
+    # Will soon be replaced by finnXSI
+    pyxsi_path = os.path.join(get_deps_path(), "pyxsi")
+    pyxsi_so_path = os.path.join(pyxsi_path, "pyxsi.so")
+
+    # Disable PyXSI makefile Docker wrapper
+    os.environ["PYXSI_MAKE_USE_DOCKER"] = "0"
+
+    # Run make
+    res = sp.run(["make"], cwd=pyxsi_path, capture_output=True, text=True)
+    if res.returncode != 0:
+        Console().print(res.stderr)
+        return False
+
+    # Check if .so was created
+    if not os.path.isfile(pyxsi_so_path):
+        return False
+
+    # Set environment variables
+    os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{pyxsi_path}:{pyxsi_path}/py"
+    vivado_path = os.environ["XILINX_VIVADO"]
+    if "LD_LIBRARY_PATH" not in os.environ.keys():
+        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
+    else:
+        os.environ[
+            "LD_LIBRARY_PATH"
+        ] = f"{os.environ['LD_LIBRARY_PATH']}:/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
+    return True
