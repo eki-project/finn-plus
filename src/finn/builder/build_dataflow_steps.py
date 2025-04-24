@@ -852,7 +852,7 @@ def step_make_pynq_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
                 )
             )
         else:
-            model = model.transform(MakePYNQDriverIODMA(cfg._resolve_driver_platform()))
+            model = model.transform(MakePYNQDriverIODMA(cfg._resolve_driver_platform(), cfg.validation_dataset))
         shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
         print("PYNQ Python driver written into " + driver_dir)
     return model

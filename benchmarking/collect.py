@@ -213,6 +213,11 @@ if __name__ == "__main__":
             # instrumentation measurement
             log_all_metrics_from_report(id, live, "measured_performance.json", prefix="measurement/performance/")
 
+            # IODMA validation accuracy
+            log_metrics_from_report(id, live, "validation.json", [
+                "top-1_accuracy",
+                ], prefix="measurement/validation/")
+
             # power measurement
             # TODO
 

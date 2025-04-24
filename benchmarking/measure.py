@@ -26,11 +26,21 @@ if __name__ == "__main__":
 
             # Run driver
             print("Running driver..")
-            result = subprocess.run(["python", f"{extract_dir}/driver/driver.py",
-                            "--bitfile",  f"{extract_dir}/bitfile/finn-accel.bit",
-                            "--settingsfile", f"{extract_dir}/driver/settings.json",
-                            "--reportfile", f"{extract_dir}/measured_performance.json",
-                            ])
+            # run validate.py (from IODMA driver) if present, otherwise driver.py from instrumentation
+            # TODO: unify IODMA/instrumentation shell & driver
+            if os.path.isfile(f"{extract_dir}/driver/validate.py"):
+                result = subprocess.run(["python", f"{extract_dir}/driver/validate.py",
+                                "--bitfile",  f"{extract_dir}/bitfile/finn-accel.bit",
+                                "--settingsfile", f"{extract_dir}/driver/settings.json",
+                                "--reportfile", f"{extract_dir}/validation.json",
+                                "--dataset_root", "/home/xilinx/datasets", #TODO: env var
+                                ])
+            else:
+                result = subprocess.run(["python", f"{extract_dir}/driver/driver.py",
+                                "--bitfile",  f"{extract_dir}/bitfile/finn-accel.bit",
+                                "--settingsfile", f"{extract_dir}/driver/settings.json",
+                                "--reportfile", f"{extract_dir}/measured_performance.json",
+                                ])
             if result.returncode != 0:
                 print("Driver reported error!")
                 exit_code = 1
@@ -43,6 +53,7 @@ if __name__ == "__main__":
                            "fifo_depth_export.json",
                            "fifo_sizing_graph.png",
                            "folding_config_lfs.json",
+                           "validation.json",
                            ]:
                 report_path = os.path.join(extract_dir, report)
                 if os.path.isfile(report_path):

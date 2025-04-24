@@ -480,6 +480,9 @@ class bench():
             else:
                 cfg.target_fps = self.params["target_fps"]
 
+        if "validation_dataset" in self.params:
+            cfg.validation_dataset = self.params["validation_dataset"]
+
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?
         os.environ["LIVENESS_THRESHOLD"] = "10000000"
