@@ -28,9 +28,10 @@
 
 import os
 import subprocess
-import sys
 import tempfile
 from qonnx.util.basic import roundup_to_integer_multiple
+
+from finn.util.logging import log
 
 # test boards
 test_board_map = ["Pynq-Z1", "KV260_SOM", "ZCU104", "U55C"]
@@ -193,26 +194,28 @@ class CppBuilder:
             f.write("#!/bin/bash \n")
             f.write(bash_compile + "\n")
         bash_command = ["bash", self.compile_script]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
+        process_compile = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        _, stderr_data = process_compile.communicate()
+        if stderr_data.strip():
+            log.critical(stderr_data.strip())  # Decode bytes and log as critical
 
 
-def launch_process_helper(args, proc_env=None, cwd=None):
+def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
     """Helper function to launch a process in a way that facilitates logging
     stdout/stderr with Python loggers.
     Returns (cmd_out, cmd_err)."""
     if proc_env is None:
         proc_env = os.environ.copy()
     with subprocess.Popen(
-        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=proc_env, cwd=cwd
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=proc_env, cwd=cwd, text=True
     ) as proc:
         (cmd_out, cmd_err) = proc.communicate()
-    if cmd_out is not None:
-        cmd_out = cmd_out.decode("utf-8")
-        sys.stdout.write(cmd_out)
-    if cmd_err is not None:
-        cmd_err = cmd_err.decode("utf-8")
-        sys.stderr.write(cmd_err)
+    if cmd_out.strip() and print_stdout is True:
+        log.info(cmd_out.strip())
+    if cmd_err.strip():
+        log.critical(cmd_err.strip())
     return (cmd_out, cmd_err)
 
 

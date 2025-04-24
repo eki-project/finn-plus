@@ -28,7 +28,6 @@
 
 import numpy as np
 import os
-import warnings
 from math import ceil, log2
 from qonnx.core.datatype import DataType
 
@@ -40,6 +39,7 @@ from finn.util.data_packing import (
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
+from finn.util.logging import log
 
 
 class Lookup_hls(Lookup, HLSBackend):
@@ -253,7 +253,7 @@ class Lookup_hls(Lookup, HLSBackend):
         # Make sure the input has the right container datatype
         if inp.dtype is not np.float32:
             # Issue a warning to make the user aware of this type-cast
-            warnings.warn(
+            log.warning(
                 f"{node.name}: Changing input container datatype from "
                 f"{inp.dtype} to {np.float32}"
             )

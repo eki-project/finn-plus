@@ -36,15 +36,11 @@ from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 
+import finn.util.verilator_helper as verilator
 from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import get_rtlsim_trace_depth, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-
-try:
-    from pyverilator import PyVerilator
-except ModuleNotFoundError:
-    PyVerilator = None
 
 # RTL Convolution Input Generator / Sliding Window Generator (SWG)
 # Matches and extends the functionality of all ConvolutionInputGenerator_* functions
@@ -936,8 +932,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         a PyVerilator wrapper around it."""
         # Modified to use generated (System-)Verilog instead of HLS output products
 
-        if PyVerilator is None:
-            raise ImportError("Installation of PyVerilator is required.")
+        verilator.checkForVerilator()
 
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         verilog_paths = [code_gen_dir]
@@ -951,7 +946,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             verilog_files.append(self.get_nodeattr("gen_top_module") + "_axilite.v")
 
         # build the Verilator emu library
-        sim = PyVerilator.build(
+        sim = verilator.buildPyVerilator(
             verilog_files,
             build_dir=make_build_dir("pyverilator_" + self.onnx_node.name + "_"),
             verilog_path=verilog_paths,

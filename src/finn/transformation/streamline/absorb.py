@@ -28,7 +28,6 @@
 
 import numpy as np
 import qonnx.core.data_layout as DataLayout
-import warnings
 from onnx import helper as oh
 from qonnx.core.datatype import DataType
 
@@ -41,6 +40,7 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 
 from finn.transformation.util import group_inputs_by_category
+from finn.util.logging import log
 
 # Protobuf onnx graph node type
 from onnx import NodeProto  # noqa
@@ -78,7 +78,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
 
                     # Warn and skip if there is no constant bias present
                     if bias is None:
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}: Bias not constant for"
                             f" {consumer.name}, skipping."
                         )
@@ -93,7 +93,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
 
                     # Warn and skip if there is no constant bias present
                     if thresholds is None:
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}: Thresholds not"
                             f" constant for {node.name}, skipping."
                         )
@@ -104,7 +104,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # Check whether the bias is as scalar as we cannot absorb
                     # full tensors into node attributes
                     if not (bias.ndim == 0 or all(x == 1 for x in bias.shape)):
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}: Bias not scalar"
                             f" for {consumer.name}, skipping."
                         )
@@ -145,7 +145,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # derived integer datatype
                     if not (odt.allowed(new_max) and odt.allowed(new_min)):
                         # Cannot be represented, warn and skip transforming
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}: Cannot absorb bias"
                             f" from {consumer.name} into {node.name}: {bias}"
                         )
@@ -155,7 +155,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # Check whether the datatype changes as this is something
                     # the "user" should be aware of
                     if odt.name != old_odt:
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}: Output datatype for"
                             f" {node.name} changing from {old_odt} to {odt}"
                         )
@@ -515,7 +515,7 @@ class AbsorbTransposeIntoFlatten(Transformation):
                     data_layout = model.get_tensor_layout(prod.input[0])
                     # check for the data layout to interpret input shape correctly
                     if data_layout is None:
-                        warnings.warn(
+                        log.warning(
                             """Data layout for input tensor of Transpose node is not set.
                                 To use AbsorbTransposeIntoFlatten transformation
                                 please set tensor data layout."""
@@ -569,7 +569,7 @@ class AbsorbScalarMulAddIntoTopK(Transformation):
                     param_name = prod.input[1]
                     A = model.get_initializer(param_name)
                     if A is None:
-                        warnings.warn("Param is not constant, skipping")
+                        log.warning("Param is not constant, skipping")
                         continue
                     is_scalar = all(x == 1 for x in A.shape)
                     is_scalar_pos_mul = is_scalar and (prod.op_type == "Mul") and A > 0

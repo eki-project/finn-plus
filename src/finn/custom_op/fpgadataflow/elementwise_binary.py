@@ -8,9 +8,6 @@ import numpy as np
 # Operating system stuff, e.g. paths
 import os
 
-# Python warning subsystem
-import warnings
-
 # Helper for creating ONNX nodes
 from onnx import helper as oh
 
@@ -28,6 +25,9 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # Converts inputs/outputs to/from RTL simulation format
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+
+# FINN logging
+from finn.util.logging import log
 
 
 # Generic implementation for elementwise binary operations
@@ -182,7 +182,7 @@ class ElementwiseBinaryOperation(HWCustomOp):
             # Get the new datatype
             new_dtype = model.get_tensor_datatype(node.input[0])
             # Issue a warning message
-            warnings.warn(
+            log.warning(
                 f"{node.name}: lhs_dtype changing from"
                 f" {self.lhs_dtype} to {new_dtype}"
             )
@@ -193,7 +193,7 @@ class ElementwiseBinaryOperation(HWCustomOp):
             # Get the new datatype
             new_dtype = model.get_tensor_datatype(node.input[1])
             # Issue a warning message
-            warnings.warn(
+            log.warning(
                 f"{node.name}: rhs_dtype changing from"
                 f" {self.rhs_dtype} to {new_dtype}"
             )

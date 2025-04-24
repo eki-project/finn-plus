@@ -30,12 +30,12 @@
 import math
 import numpy as np
 import os
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.util.logging import log
 
 # ONNX i/o tensor shape assumptions for ConvolutionInputGenerator1D:
 # input 0 is the input tensor, shape NHWC = (1, IFMDim_H, IFMDim_W, IFMChannels)
@@ -119,12 +119,10 @@ class ConvolutionInputGenerator_hls(ConvolutionInputGenerator, HLSBackend):
             if fully_unfolded and non_dws and no_stride and no_dilation and supported_ram_style:
                 return True
             else:
-                warnings.warn(
-                    "{}: Parallel window output variant is not supported for this node,\
-                     please inspect requirements in use_parallel_window_output method\
-                     of the custom_op".format(
-                        self.onnx_node.name
-                    )
+                log.warning(
+                    f"{self.onnx_node.name}: Parallel window output variant is not\
+                        supported for this node, please inspect requirements in\
+                            use_parallel_window_output method of the custom_op"
                 )
                 return False
         else:

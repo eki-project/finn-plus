@@ -8,9 +8,6 @@ import copy
 # Need numpy for modifying the onnx graph tensors, which are numpy style arrays
 import numpy as np
 
-# Output warning messages
-import warnings
-
 # Utility for handling ONNX nodes and tensors
 from onnx import NodeProto
 from onnx import helper as oh
@@ -35,6 +32,9 @@ from qonnx.util.basic import get_by_name, remove_by_name
 
 # Utility function for transforming ONNX graphs
 from finn.transformation.util import is_reshape_transpose, is_transpose_reshape, op_types
+
+# Output warning messages
+from finn.util.logging import log
 
 
 # Infers reshaping of attention heads, i.e., converts the Reshape and transpose
@@ -71,7 +71,7 @@ class InferMultiHeads(Transformation):
                     # Issue a warning of near match of the supported head
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Unsupported shape near {transpose.name}: {inp}"
                     )
@@ -87,7 +87,7 @@ class InferMultiHeads(Transformation):
                     # Issue a warning of near match of the supported head
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Unsupported shape near {transpose.name}: {mid}"
                     )
@@ -115,7 +115,7 @@ class InferMultiHeads(Transformation):
                     # Issue a warning of near match of the supported head
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Unsupported permutation near {transpose.name}: {perm}"
                     )
@@ -227,7 +227,7 @@ class InferMultiHeads(Transformation):
                     # Issue a warning of near match of the supported head
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Unsupported shape near {reshape.name}: {inp}"
                     )
@@ -250,7 +250,7 @@ class InferMultiHeads(Transformation):
                     # Issue a warning of near match of the supported head
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Unsupported permutation near {node.name}: {perm}"
                     )
@@ -272,7 +272,7 @@ class InferMultiHeads(Transformation):
                     # Issue a warning to make the user aware of this mismatch
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Output shape mismatch near: {reshape.name}"
                     )
@@ -353,7 +353,7 @@ class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
                     # Issue a warning to make the user aware of this mismatch
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Slicing may not join or fork: {node.name}"
                     )
@@ -375,7 +375,7 @@ class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
                     # Issue a warning to make the user aware of this mismatch
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"MultiThreshold may not join or fork:"
                         f" {thresholds_node.name}"
@@ -466,7 +466,7 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                     # Issue a warning to make the user aware of this mismatch
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Slicing may not fork: {node.name}"
                     )
@@ -488,7 +488,7 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                     # Issue a warning to make the user aware of this mismatch
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"MultiThreshold may not join or fork:"
                         f" {thresholds_node.name}"
