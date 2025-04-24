@@ -1978,9 +1978,6 @@ class InferElementwiseBinaryOperation(Transformation):
                 inst.set_nodeattr(
                     "out_dtype", odt_name
                 )
-                # need to use pyxsi as rtlsim backend for float ops
-                if "FLOAT" in odt_name:
-                    inst.set_nodeattr("rtlsim_backend", "pyxsi")
                 # Insert shape attributes from "context" into the CustomOp node
                 # TODO: Find a way to handle this via shape inference?
                 inst.set_nodeattr(
@@ -2021,7 +2018,11 @@ class InferReLUAsElementwiseMax(Transformation):
             dt = model.get_tensor_datatype(tname)
             if dt is None:
                 return False
-            if dt.is_integer() or dt in [DataType["FLOAT32"], DataType["FLOAT16"]]:
+            if (
+                dt.is_integer()
+                or dt.is_fixed_point()
+                or dt in [DataType["FLOAT32"], DataType["FLOAT16"]]
+            ):
                 return True
             else:
                 return False
@@ -2054,7 +2055,9 @@ class InferReLUAsElementwiseMax(Transformation):
                 new_tname = model.make_new_valueinfo_name()
                 model.set_initializer(new_tname, np.asarray(0.0, dtype=np.float32))
                 idt = model.get_tensor_datatype(node.input[0])
-                model.set_tensor_datatype(new_tname, idt)
+                # for the constant 0 input, use a small-width datatype
+                # (to avoid unnecessarily promoting output type to something larger)
+                model.set_tensor_datatype(new_tname, DataType["UINT2"])
                 node.input.append(new_tname)
                 # Now we can get the CustomOp wrapper instance providing easier
                 # attribute access
@@ -2084,9 +2087,6 @@ class InferReLUAsElementwiseMax(Transformation):
                 inst.set_nodeattr(
                     "out_dtype", odt_name
                 )
-                # need to use pyxsi as rtlsim backend for float ops
-                if "FLOAT" in odt_name:
-                    inst.set_nodeattr("rtlsim_backend", "pyxsi")
                 # Insert shape attributes from "context" into the CustomOp node
                 # TODO: Find a way to handle this via shape inference?
                 inst.set_nodeattr(
@@ -2119,6 +2119,13 @@ class InferReLUAsElementwiseMax(Transformation):
 
 # Converts a scale=1 zeropt=0 Quant into ElementwiseFloat2Int
 class InferQuantAsFloat2Int(Transformation):
+    # Initializes the transformation method with an optional filter function
+    def __init__(self, _filter=None):
+        # Initialize the base class Transformation object
+        super().__init__()
+        # Register the filter function as attribute
+        self._filter = _filter if _filter is not None else lambda *_: True
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
         # Get the model graph out of the model wrapper object
@@ -2127,6 +2134,9 @@ class InferQuantAsFloat2Int(Transformation):
         graph_modified = False
         # Iterate all nodes in the graph keeping track of the index
         for index, node in enumerate(graph.node):
+            # Skip transforming nodes rejected by the filter
+            if not self._filter(model, node):
+                continue
             if node.op_type == "Quant":
                 node_inst = getCustomOp(node)
                 rmode = node_inst.get_nodeattr("rounding_mode")
@@ -2201,8 +2211,6 @@ class InferQuantAsFloat2Int(Transformation):
                 inst.set_nodeattr(
                     "out_dtype", odt_name
                 )
-                # need to use pyxsi as rtlsim backend for float ops
-                inst.set_nodeattr("rtlsim_backend", "pyxsi")
                 # set bitwidth as attribute
                 inst.set_nodeattr("bitwidth", bitwidth)
                 # Insert shape attributes from "context" into the CustomOp node
@@ -2237,6 +2245,13 @@ class InferQuantAsFloat2Int(Transformation):
 
 # Converts float32 -> float16 casts to ElementwiseFloatCast
 class InferFP32ToFP16Cast(Transformation):
+    # Initializes the transformation method with an optional filter function
+    def __init__(self, _filter=None):
+        # Initialize the base class Transformation object
+        super().__init__()
+        # Register the filter function as attribute
+        self._filter = _filter if _filter is not None else lambda *_: True
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
         # Get the model graph out of the model wrapper object
@@ -2245,6 +2260,9 @@ class InferFP32ToFP16Cast(Transformation):
         graph_modified = False
         # Iterate all nodes in the graph keeping track of the index
         for index, node in enumerate(graph.node):
+            # Skip transforming nodes rejected by the filter
+            if not self._filter(model, node):
+                continue
             if node.op_type == "Cast":
                 to_attr = get_by_name(node.attribute, "to")
                 if to_attr is None:
@@ -2294,8 +2312,6 @@ class InferFP32ToFP16Cast(Transformation):
                 inst.set_nodeattr(
                     "out_dtype", odt_name
                 )
-                # need to use pyxsi as rtlsim backend for float ops
-                inst.set_nodeattr("rtlsim_backend", "pyxsi")
                 # Insert shape attributes from "context" into the CustomOp node
                 # TODO: Find a way to handle this via shape inference?
                 inst.set_nodeattr(

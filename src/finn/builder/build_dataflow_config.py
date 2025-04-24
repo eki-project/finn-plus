@@ -246,6 +246,10 @@ class DataflowBuildConfig:
     #: flexibility, and makes it possible to have runtime-writable thresholds.
     standalone_thresholds: Optional[bool] = False
 
+    #: (Optional) JSON with fixed-point datatypes for particular tensors.
+    #: When None, tensor datatypes & values are kept as-is.
+    fixedpt_config: Optional[str] = None
+
     #: (Optional) Whether optimizations that minimize the bit width of the
     #: weights and accumulator will be applied. Because this optimization relies
     #: on the the values of the weights, it will only be applied if runtime-
@@ -285,10 +289,6 @@ class DataflowBuildConfig:
     #: When `auto_fifo_depths = True`, select which method will be used for
     #: setting the FIFO sizes.
     auto_fifo_strategy: Optional[AutoFIFOSizingMethod] = AutoFIFOSizingMethod.LARGEFIFO_RTLSIM
-
-    #: Avoid using C++ rtlsim for auto FIFO sizing and rtlsim throughput test
-    #: if set to True, always using Python instead
-    force_python_rtlsim: Optional[bool] = False
 
     #: Memory resource type for large FIFOs
     #: Only relevant when `auto_fifo_depths = True`

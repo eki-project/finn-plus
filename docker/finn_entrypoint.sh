@@ -63,8 +63,6 @@ mv ${FINN_ROOT}/deps/qonnx/pyproject.tmp ${FINN_ROOT}/deps/qonnx/pyproject.toml
 pip install --user -e ${FINN_ROOT}/deps/finn-experimental
 # brevitas
 pip install --user -e ${FINN_ROOT}/deps/brevitas
-# pyverilator
-pip install --user -e ${FINN_ROOT}/deps/pyverilator
 
 if [ -f "${FINN_ROOT}/setup.py" ];then
   # run pip install for finn
@@ -80,6 +78,10 @@ if [ -f "$VITIS_PATH/settings64.sh" ];then
   export XILINX_VITIS=$VITIS_PATH
   export XILINX_XRT=/opt/xilinx/xrt
   source $VITIS_PATH/settings64.sh
+  # Link libraries needed for simulating "HLS Math Library" functions
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$VITIS_PATH/lib/lnx64.o
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$VITIS_PATH/lnx64/lib/csim
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$VITIS_PATH/lnx64/tools/fpo_v7_1
   gecho "Found Vitis at $VITIS_PATH"
   if [ -f "$XILINX_XRT/setup.sh" ];then
     # source XRT
@@ -121,10 +123,28 @@ else
 fi
 
 export PYTHONPATH=$PYTHONPATH:${FINN_ROOT}/deps/qonnx-activations
+if [ -z "${XILINX_VIVADO}" ]; then
+  yecho "finnxsi will be unavailable since Vivado was not found"
+else
+  if [ -f "${FINN_ROOT}/finn_xsi/xsi.so" ]; then
+    gecho "Found finnxsi at ${FINN_ROOT}/finn_xsi/xsi.so"
+  else
+    OLDPWD=$(pwd)
+    cd ${FINN_ROOT}/finn_xsi
+    make
+    cd $OLDPWD
+  fi
+  export PYTHONPATH=$PYTHONPATH:${FINN_ROOT}/finn_xsi
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/lib/x86_64-linux-gnu/:${XILINX_VIVADO}/lib/lnx64.o
+fi
 
 if [ -f "$HLS_PATH/settings64.sh" ];then
   # source Vitis HLS env.vars
   source $HLS_PATH/settings64.sh
+  # Link libraries needed for simulating "HLS Math Library" functions
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HLS_PATH/lib/lnx64.o
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HLS_PATH/lnx64/lib/csim
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HLS_PATH/lnx64/tools/fpo_v7_1
   gecho "Found Vitis HLS at $HLS_PATH"
 else
   yecho "Unable to find $HLS_PATH/settings64.sh"

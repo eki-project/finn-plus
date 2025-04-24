@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import finn_xsi.adapter as finnxsi
 import numpy as np
 import os
 import subprocess
@@ -33,19 +34,8 @@ from abc import ABC, abstractmethod
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow import templates
-from finn.util.basic import CppBuilder, get_rtlsim_trace_depth, make_build_dir
+from finn.util.basic import CppBuilder, make_build_dir
 from finn.util.hls import CallHLS
-from finn.util.pyverilator import make_single_source_file
-
-try:
-    from pyverilator import PyVerilator
-except ModuleNotFoundError:
-    PyVerilator = None
-
-try:
-    import pyxsi_utils
-except ModuleNotFoundError:
-    pyxsi_utils = None
 
 
 class HLSBackend(ABC):
@@ -97,44 +87,16 @@ class HLSBackend(ABC):
         return verilog_files
 
     def prepare_rtlsim(self):
-        """Creates a Verilator emulation library for the RTL code generated
-        for this node, sets the rtlsim_so attribute to its path and returns
-        a PyVerilator wrapper around it."""
+        """Creates a xsi emulation library for the RTL code generated
+        for this node, sets the rtlsim_so attribute to its path."""
 
-        rtlsim_backend = self.get_nodeattr("rtlsim_backend")
         verilog_files = self.get_all_verilog_filenames(abspath=True)
         single_src_dir = make_build_dir("rtlsim_" + self.onnx_node.name + "_")
-        if rtlsim_backend == "pyverilator":
-            if PyVerilator is None:
-                raise ImportError("Installation of PyVerilator is required.")
-            tmp_build_dir = make_build_dir("pyverilator_" + self.onnx_node.name + "_")
-            target_file = single_src_dir + "/" + self.get_verilog_top_module_name() + ".v"
-            make_single_source_file(verilog_files, target_file)
-
-            # build the Verilator emu library
-            sim = PyVerilator.build(
-                self.get_verilog_top_module_name() + ".v",
-                build_dir=tmp_build_dir,
-                verilog_path=[single_src_dir],
-                trace_depth=get_rtlsim_trace_depth(),
-                top_module_name=self.get_verilog_top_module_name(),
-            )
-            # save generated lib filename in attribute
-            self.set_nodeattr("rtlsim_so", sim.lib._name)
-        elif rtlsim_backend == "pyxsi":
-            ret = pyxsi_utils.compile_sim_obj(
-                self.get_verilog_top_module_name(), verilog_files, single_src_dir
-            )
-            # save generated lib filename in attribute
-            self.set_nodeattr("rtlsim_so", ret[0] + "/" + ret[1])
-            # TODO return val of this function is never used
-            # refactor s.t. it does not return anything at all,
-            # consistently between pyverilator and pyxsi
-            sim = None
-        else:
-            assert False, "Unknown rtlsim_backend"
-
-        return sim
+        ret = finnxsi.compile_sim_obj(
+            self.get_verilog_top_module_name(), verilog_files, single_src_dir
+        )
+        # save generated lib filename in attribute
+        self.set_nodeattr("rtlsim_so", ret[0] + "/" + ret[1])
 
     def code_generation_ipgen(self, model, fpgapart, clk):
         """Generates c++ code and tcl script for ip generation."""
@@ -279,6 +241,21 @@ class HLSBackend(ABC):
         builder.append_sources(code_gen_dir + "/*.cpp")
         builder.append_sources("$FINN_ROOT/deps/cnpy/cnpy.cpp")
         builder.append_includes("-lz")
+        # Link libraries needed for simulating "HLS Math Library" functions
+        # TODO: These are dynamic libraries, linking them here is only the first
+        #  step, for execution these must be resolvable from LD_LIBRARY_PATH...
+        # TODO: These paths moved in 2024.2 from HLS_PATH to VITIS_PATH, adding
+        #  both paths to be compatible...
+        builder.append_includes(f"-L{os.environ['HLS_PATH']}/lib/lnx64.o")
+        builder.append_includes(f"-L{os.environ['VITIS_PATH']}/lib/lnx64.o")
+        builder.append_includes(f"-L{os.environ['HLS_PATH']}/lnx64/lib/csim")
+        builder.append_includes(f"-L{os.environ['VITIS_PATH']}/lnx64/lib/csim")
+        builder.append_includes(f"-L{os.environ['HLS_PATH']}/lnx64/tools/fpo_v7_1")
+        builder.append_includes(f"-L{os.environ['VITIS_PATH']}/lnx64/tools/fpo_v7_1")
+        builder.append_includes("-lIp_floating_point_v7_1_bitacc_cmodel")
+        builder.append_includes("-lmpfr")
+        builder.append_includes("-lgmp")
+        builder.append_includes("-lhlsmc++-GCC46")
         builder.set_executable_path(code_gen_dir + "/node_model")
         builder.build(code_gen_dir)
         self.set_nodeattr("executable_path", builder.executable_path)

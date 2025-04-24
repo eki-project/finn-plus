@@ -426,10 +426,12 @@ class Absorb1BitMulIntoConv(Transformation):
                     if A is None:
                         continue
                     is_1bit = model.get_tensor_datatype(mul_weight_name).bitwidth() == 1
-                    is_scalar = np.prod(A.shape) == 1
-                    actual_ndims = len(tuple(filter(lambda x: x > 1, A.shape)))
-                    is_1d = actual_ndims == 1
-                    if is_1bit and (is_1d or is_scalar):
+                    # is_scalar = np.prod(A.shape) == 1
+                    # actual_ndims = len(tuple(filter(lambda x: x > 1, A.shape)))
+                    # is_1d = actual_ndims == 1
+                    # TODO: Disabled (is_1d or is_scalar) test for consistency
+                    #  with the Absorb1BitMulIntoMatMul above...?
+                    if is_1bit:  # and (is_1d or is_scalar):
                         # move the mul to the OFM position, since the mul is
                         # applied on the outputs channelwise or as scalar
                         Wnew = A.reshape(-1, 1, 1, 1) * W
