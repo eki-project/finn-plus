@@ -25,10 +25,12 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+from __future__ import annotations
 
 import os
 import subprocess
 import tempfile
+from pathlib import Path
 from qonnx.util.basic import roundup_to_integer_multiple
 
 from finn.util.logging import log
@@ -134,21 +136,29 @@ def pyverilate_get_liveness_threshold_cycles():
     return int(os.getenv("LIVENESS_THRESHOLD", 10000))
 
 
-def make_build_dir(prefix=""):
+def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path:
     """Creates a folder with given prefix to be used as a build dir.
     Use this function instead of tempfile.mkdtemp to ensure any generated files
     will survive on the host after the FINN Docker container exits."""
+    build_dir = Path(os.environ["FINN_BUILD_DIR"])
+    if not build_dir.exists():
+        raise Exception(
+            f"FINN_BUILD_DIR at {build_dir} does not exist! "
+            "Make sure the FINN setup ran properly!"
+        )
     try:
-        tmpdir = tempfile.mkdtemp(prefix=prefix)
-        newdir = tmpdir.replace("/tmp", os.environ["FINN_BUILD_DIR"])
-        os.makedirs(newdir)
-        return newdir
-    except KeyError:
+        tmpdir = Path(tempfile.mkdtemp(prefix=prefix))
+        newdir = build_dir / tmpdir.name
+        tmpdir.rename(newdir)
+        if return_as_path:
+            return newdir
+        return str(newdir)
+    except KeyError as keyerror:
         raise Exception(
             """Environment variable FINN_BUILD_DIR must be set
         correctly. Please ensure you have launched the Docker contaier correctly.
         """
-        )
+        ) from keyerror
 
 
 class CppBuilder:
