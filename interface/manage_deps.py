@@ -41,8 +41,8 @@ FINN_DEPS = {
         "afc9720f10e551e1f734e137b21bb6d0a8342177",
     ),
     "pyxsi": (
-        "https://github.com/maltanar/pyxsi.git",
-        "18fa7a7e613f826a66b43298d7e8fa0ec9035a03",
+        "https://github.com/fpjentzsch/pyxsi.git",
+        "8620623b23d518479521dac78b16f4e4344b827d",
     ),
 }
 
