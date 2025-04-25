@@ -12,12 +12,14 @@ from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_es
 from finn.analysis.fpgadataflow.res_estimation import res_estimation
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
-    MultiFPGACommunicationScheme,
+    MFCommunicationKernel,
+    MFTopology,
     PartitioningStrategy,
 )
 from finn.transformation.fpgadataflow.multifpga_network import Device
 from finn.transformation.fpgadataflow.multifpga_utils import get_inseperable_nodes, set_device_id
 from finn.util.basic import make_build_dir
+from finn.util.logging import log
 from finn.util.platforms import Platform, platforms
 
 
@@ -125,13 +127,13 @@ class Partitioner(ABC):
 class AuroraPartitioner(Partitioner):
     def __init__(
         self,
-        communication_scheme: MultiFPGACommunicationScheme,
         network_ports_per_device: int,
         strategy: PartitioningStrategy,
         devices: int,
         nodes: int,
         inseperable_nodes: list[list[int]],
         resources_per_device: dict,
+        topology: MFTopology = MFTopology.CIRCLE,  # TODO: Fix
         resource_estimates: dict | None = None,
         considered_resources: list[str] | None = None,
         limit_nodes_per_device: int | None = None,
@@ -150,9 +152,8 @@ class AuroraPartitioner(Partitioner):
             ideal_utilization,
         )
         self.limit_nodes_per_device = limit_nodes_per_device
-        self.network_ports_per_device = network_ports_per_device
-        self.communication_scheme = communication_scheme
-        self.max_utilization = max_utilization
+        self.network_ports_per_device = network_ports_per_device  # TODO: Move into the parent class
+        self.topology = topology
         self.model = Model()
         self.model.verbose = 1
 
@@ -264,19 +265,18 @@ class AuroraPartitioner(Partitioner):
             self.model += device_diff[node] >= 0
 
         # Setting topology requirements
-        match self.communication_scheme:
-            case MultiFPGACommunicationScheme.AURORA_CHAIN:
+        match self.topology:
+            case MFTopology.CHAIN:
                 self.model += self.chosen_device[0] == 0
                 self.model += self.chosen_device[-1] == self.device_count - 1
 
-            case MultiFPGACommunicationScheme.AURORA_RETURNCHAIN:
+            case MFTopology.RETURNCHAIN:
                 raise NotImplementedError()
 
             case _:
                 raise AssertionError(
-                    f"Invalid communication scheme "
-                    f"for Aurora partitioner: {self.communication_scheme}"
-                )
+                    f"Invalid communication scheme " f"for Aurora partitioner: {self.topology}"
+                )  # TODO
 
         # Objective Function
         if self.strategy == PartitioningStrategy.LAYER_COUNT:
@@ -414,7 +414,7 @@ class AuroraPartitioner(Partitioner):
                     100
                     * self.resource_estimates[node][res]
                     / self._total_resources_per_device()[res]
-                )  # noqa
+                )
         with p.open("w+") as f:
             f.write(sol)
 
@@ -438,11 +438,20 @@ class PartitionForMultiFPGA(Transformation):
     To determine how partitioning is done, pass the partitioner type yourself.
     """
 
-    def __init__(
-        self, cfg: DataflowBuildConfig, partitioner_type: type[Partitioner] = AuroraPartitioner
-    ) -> None:
+    def __init__(self, cfg: DataflowBuildConfig) -> None:
         self.cfg = cfg
-        self.partitioner_type = partitioner_type
+        # TODO: Replace assert
+        assert self.cfg.partitioning_configuration is not None
+        communication_kernel = self.cfg.partitioning_configuration.communication_kernel
+        partitioners = {MFCommunicationKernel.AURORA: AuroraPartitioner}
+        try:
+            self.partitioner_type = partitioners[communication_kernel]
+        except KeyError as ke:
+            raise Exception(f"No partitioner type found for " f"{communication_kernel}") from ke
+        log.info(
+            f"Based on the communication kernel, "
+            f'partitioner "{self.partitioner_type.__name__}" was chosen!'
+        )
 
     def gather_resource_utilization(self, model: ModelWrapper) -> dict[int, dict[str, int]]:
         """Gather the resources of all layers based on the estimation values from
@@ -506,34 +515,40 @@ class PartitionForMultiFPGA(Transformation):
 
         # Dont split during branches. Find all layers that should be on the same device.
         # TODO: Implementation
+        log.debug("Gathering inseperable nodes...")
         inseperable_nodes = get_inseperable_nodes(model)
 
         # Number of devices to partition to
         if self.cfg.partitioning_configuration.num_fpgas < 0:
             devices = self.estimate_required_fpgas()
-        else:
+            raise NotImplementedError()
+        else:  # noqa
             devices = self.cfg.partitioning_configuration.num_fpgas
 
         # Needed to resolve platform
-        assert self.cfg.board is not None, (
-            'Parameter "board" required in config ' "for MultiFPGA partitioning."
-        )
-
-        # Additional partitioner args
-        kwargs = {}
-        if self.partitioner_type is AuroraPartitioner:
-            kwargs[
-                "communication_scheme"
-            ] = self.cfg.partitioning_configuration.communication_scheme
-            kwargs["network_ports_per_device"] = 2
+        if self.cfg.board is None:
+            log.critical('Parameter "board" is required in config for MultiFPGA partitioning')
+            raise Exception('Parameter "board" is required in config for MultiFPGA partitioning')
 
         # Calculate estimates
         estimates = self.gather_resource_utilization(model)
-        for layer in estimates.keys():
-            assert any(estimates[layer][res] > 0 for res in estimates[layer].keys()), (
-                f"Layer {layer} has an all-0 resource estimation. "
-                "Cannot partition faulty resource estimated layers."
-            )
+        if (
+            self.cfg.partitioning_configuration.partition_strategy
+            == PartitioningStrategy.RESOURCE_UTILIZATION
+        ):
+            missing_estimates = False
+            for layer in estimates.keys():
+                if all(estimates[layer][res] <= 0 for res in estimates[layer].keys()):
+                    missing_estimates = True
+                    log.critical(
+                        f"Layer {layer} has an all-0 resource estimation for all "
+                        "resource types. Cannot partition using resource estimates!"
+                    )
+            if missing_estimates:
+                raise Exception(
+                    "Cannot partition with faulty resource estimations and "
+                    "RESOURCE_UTILIZATION as PartitioningStrategy!"
+                )
 
         # Create the partitioner itself
         partitioner = self.partitioner_type(
@@ -545,7 +560,7 @@ class PartitionForMultiFPGA(Transformation):
             resource_estimates=estimates,
             max_utilization=self.cfg.partitioning_configuration.max_utilization,
             ideal_utilization=self.cfg.partitioning_configuration.ideal_utilization,
-            **kwargs,
+            network_ports_per_device=self.cfg.partitioning_configuration.ports_per_device,
         )
 
         # Try and solve the model
@@ -563,8 +578,10 @@ class PartitionForMultiFPGA(Transformation):
                 f"found in {partitioner.latest_snapshot_path.absolute()}"
             )
 
-        # TODO: Update with QoL
-        assert mapping is not None, "Could not find a feasible solution for partitioning. Stopping."
+        if mapping is None:
+            log.critical("Could not find a feasible solution to the partition model.")
+            # TODO: Custom errors
+            raise Exception("Could not find a feasible solution to the partition model.")
 
         # TODO: Warning for very low resource usage
 
@@ -573,5 +590,6 @@ class PartitionForMultiFPGA(Transformation):
             # We have to cast to int here, because the solver returns a float
             # And if qonnx set_nodeattr sees a float in an int field, it sets it
             # to 0, regardless of the floats value
+            log.info(f"Mapping node {node.name} to device {int(mapping[i])}")
             set_device_id(node, int(mapping[i]))
         return model, False

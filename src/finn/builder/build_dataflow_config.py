@@ -120,9 +120,14 @@ class PartitioningStrategy(str, Enum):
     LAYER_COUNT = "layer_count"
 
 
-class MultiFPGACommunicationScheme(str, Enum):
-    AURORA_CHAIN = "aurora_chain"
-    AURORA_RETURNCHAIN = "aurora_returnchain"
+class MFCommunicationKernel(str, Enum):
+    AURORA = "aurora"
+
+
+class MFTopology(str, Enum):
+    CHAIN = "chain"
+    RETURNCHAIN = "returnchain"
+    CIRCLE = "circle"
 
 
 @dataclass
@@ -131,12 +136,19 @@ class PartitioningConfiguration:
     # this will be determined automatically
     num_fpgas: int = -1
 
+    # The number of ports per device - this might change in meaning,
+    # depending on the communication kernel used
+    ports_per_device: int = 2
+
     # What strategy to use to partition the dataflow graph
     partition_strategy: PartitioningStrategy = PartitioningStrategy.RESOURCE_UTILIZATION
 
-    # What kind of communication to use. This tells the flow
-    # what topology and what kernels to use
-    communication_scheme: MultiFPGACommunicationScheme = MultiFPGACommunicationScheme.AURORA_CHAIN
+    # Tells the flow what topology to use. This determines the transformation
+    # that creates the network metadata necessary for kernel packing
+    topology: MFTopology = MFTopology.CHAIN
+
+    # What kind of kernel is used to communicate in the network
+    communication_kernel: MFCommunicationKernel = MFCommunicationKernel.AURORA
 
     # How much a FPGA can be utilized at max. The solver will fail if it
     # cannot comply with this limitation
