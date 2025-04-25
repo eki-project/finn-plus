@@ -274,7 +274,7 @@ class MakePYNQDriverIODMA(Transformation):
         # generate settings.json for generated driver
         if self.validation_datset is not None:
             settings = {
-                "validation_datset": self.validation_datset,
+                "validation_dataset": self.validation_datset,
             }
             settingsfile = pynq_driver_dir + "/settings.json"
             with open(settingsfile, "w") as f:
