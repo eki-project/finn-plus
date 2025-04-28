@@ -29,7 +29,8 @@ sudo apt-get update && sudo apt-get install -y \
     libjansson-dev \
     libgetdata-dev \
     g++-10 \
-    libpython3.10-dev
+    libpython3.10-dev \
+    python3.10-dev
 
 xrt_found=$(dpkg -l | grep xrt | wc -l)
 if [ $xrt_found -eq 0 ]; then
