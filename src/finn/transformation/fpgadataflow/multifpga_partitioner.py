@@ -142,7 +142,7 @@ class Partitioner(ABC):
         infeasible for example."""
         constraints = ""
         for constr in self.model.constrs:
-            constraints += f"{constr}\n"
+            constraints += f"\t{constr}\n"
         content = "Model Snapshot\n"
         content += f"Strategy: {self.strategy}\n"
         content += f"Max utilization: {self.max_utilization}\n"
@@ -211,6 +211,8 @@ class AuroraPartitioner(Partitioner):
         self.limit_nodes_per_device = limit_nodes_per_device
         self.model = Model()
         self.model.verbose = 1
+
+        log.debug("Creating partitioning model")
 
         # self.devices[node][device] = 1: Node <node> is on device <device>
         self.devices = [
@@ -521,14 +523,20 @@ class AuroraPartitioner(Partitioner):
         # Some log outputs
         for device in range(self.device_count):
             log.debug(f"Device {device} has connections: {self.connections_per_device[device].x}")
-        for device in range(self.device_count):
-            resources = sorted(
-                self.resource_use_relative[device].items(), key=lambda tpl: tpl[1].x, reverse=True
-            )
-            log.info(
-                f"Device {device} - largest resource type is "
-                f"{resources[0][0]} at {resources[0][1].x:2.2%}"
-            )
+        if self.strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
+            for device in range(self.device_count):
+                resources = sorted(
+                    self.resource_use_relative[device].items(),
+                    key=lambda tpl: tpl[1].x,
+                    reverse=True,
+                )
+                log.info(
+                    f"Device {device} - largest resource type is "
+                    f"{resources[0][0]} at {resources[0][1].x:2.2%}"
+                )
+        else:
+            # TODO: Log number of layers per device
+            pass
 
         mapping = {}
         for i in range(self.node_count):
