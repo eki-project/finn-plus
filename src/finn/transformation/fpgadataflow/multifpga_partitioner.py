@@ -401,9 +401,9 @@ class AuroraPartitioner(Partitioner):
                         if self.resource_estimates[node][restype] < max_util:
                             log.warning(
                                 f"Node {node}'s usage of {restype} is within "
-                                f"{thresh_percentage} of the maximum allowed utilization "
+                                f"{thresh_percentage:2.2%} of the maximum allowed utilization "
                                 f"({self.resource_estimates[node][restype]} / "
-                                f"{total_per_device[restype] * self.max_utilization}) "
+                                f"{max_util}) "
                                 "on a single device. Partitioning might fail!"
                             )
                         else:
@@ -518,8 +518,17 @@ class AuroraPartitioner(Partitioner):
         if status in [mip.OptimizationStatus.INFEASIBLE, mip.OptimizationStatus.NO_SOLUTION_FOUND]:
             return None
 
+        # Some log outputs
         for device in range(self.device_count):
             log.debug(f"Device {device} has connections: {self.connections_per_device[device].x}")
+        for device in range(self.device_count):
+            resources = sorted(
+                self.resource_use_relative[device].items(), key=lambda tpl: tpl[1].x, reverse=True
+            )
+            log.info(
+                f"Device {device} - largest resource type is "
+                f"{resources[0][0]} at {resources[0][1].x:2.2%}"
+            )
 
         mapping = {}
         for i in range(self.node_count):
