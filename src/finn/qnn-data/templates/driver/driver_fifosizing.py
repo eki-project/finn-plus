@@ -279,7 +279,12 @@ if __name__ == "__main__":
                 folding_config_lfs = settings["folding_config_before_lfs"]
 
     print("Programming FPGA..")
-    PL.reset()  # reset PYNQ cache
+    # Increase recursion limit because the default value (1000) caused pickle RecursionErrors
+    # during PYNQ cache handling for accelerators with many FIFOs (exact reason unknown)
+    sys.setrecursionlimit(10000)
+    # Reset PYNQ cache, without this we encountered issues where PYNQ would try to load
+    # an incorrect combination of .bit and .hwh file, see https://github.com/Xilinx/PYNQ/issues/1409
+    PL.reset()
     accel = FINNLiveFIFOOverlay(
         bitfile_name=bitfile, device=device, fclk_mhz=frequency, seed=seed, fifo_widths=fifo_widths
     )
