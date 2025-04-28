@@ -7,6 +7,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
+from typing import Any
 
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.res_estimation import res_estimation
@@ -38,22 +39,31 @@ class Partitioner(ABC):
     inseperable_nodes: Nodes that need to stay together because they are in a split
 
     considered_resources: What types of resources are used in the objective
-        function to determine load."""
+        function to determine load.
+
+    To implement a custom partitioner, currently one needs to implement the following methods:
+    __init__
+    _solve
+    _write_solution_data
+    _get_resource_use_by_device"""
 
     def __init__(
         self,
         strategy: PartitioningStrategy,
+        topology: MFTopology | None,
         devices: int,
         nodes: int,
         inseperable_nodes: list[list[int]],
         resources_per_device: dict,
         resource_estimates: dict | None = None,
         considered_resources: list[str] | None = None,
+        network_ports_per_device: int = 2,
         max_utilization: float | None = None,
         ideal_utilization: float | None = None,
     ) -> None:
         self.strategy = strategy
         self.max_utilization = max_utilization
+        self.topology = topology
         self.ideal_util = ideal_utilization
         self.inseperable_nodes = inseperable_nodes
         self.resource_estimates = resource_estimates
@@ -65,8 +75,29 @@ class Partitioner(ABC):
         )
         self.device_count = devices
         self.node_count = nodes
+        self.network_ports_per_device = network_ports_per_device
         self.model = Model()
         self.latest_snapshot_path: Path | None = None
+        log.info("Partitioner initialized.")
+        log.info(f"Strategy: {self.strategy.name}")
+        if self.topology is not None:
+            log.info(f"Topology: {self.topology.name}")
+        log.info(f"Devices: {self.device_count}")
+        log.info(f"Nodes/Layers: {self.node_count}")
+        log.info(f"Considered resources: {self.considered_resources}")
+        log.info(f"Ideal / Max utilization: {self.ideal_util} / {self.max_utilization}")
+        log.info(f"Groups of inseperable nodes: {len(self.inseperable_nodes)}")
+        log.info(f"Network ports per device: {self.network_ports_per_device}")
+
+        if (self.strategy == PartitioningStrategy.RESOURCE_UTILIZATION) and (
+            None in [self.max_utilization, self.ideal_util, self.resource_estimates]
+        ):
+            log.error(
+                f"One of the required partitioner parameters for the strategy "
+                f"{self.strategy.name} was not found. Please provide max_utilization, "
+                "ideal_utilization and resource_estimates!"
+            )
+            raise Exception("Missing partitioner paremeter!")  # TODO: Replace
 
     @abstractmethod
     def _solve(self, solver_timeout: int) -> dict[int, Device] | None:
@@ -120,8 +151,32 @@ class Partitioner(ABC):
         content += f"Inseperable nodes: {self.inseperable_nodes}\n"
         content += f"Device count: {self.device_count}\n"
         content += f"Node count: {self.node_count}\n"
+        content += f"Resources per device: {self.get_resource_use_by_device()}\n"
+        if self.resource_estimates is not None:
+            content += "Resource estimates per node:\n"
+            for node in self.resource_estimates.keys():
+                content += f"{node}\n"
+                for restype in self.resource_estimates[node].keys():
+                    if restype in self.considered_resources:
+                        content += f"\t{restype}: {self.resource_estimates[node][restype]}\n"
+        content += "Constraints:\n"
+        for cons in self.model.constrs:
+            content += f"{cons}\n"
+        log.debug(f"Writing model snapshot data to {p.absolute()}")
         with p.open("w+") as f:
             f.write(content)
+
+    @abstractmethod
+    def _get_resource_use_by_device(self) -> dict[int, dict[str, Any]] | None:
+        pass
+
+    def get_resource_use_by_device(self) -> dict[int, dict[str, Any]] | None:
+        """Return the resources used by a device. This only works if the optimization goal was
+        resource usage.
+        Actual implementation is left to the subclasses."""
+        if self.strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
+            return self._get_resource_use_by_device()
+        return None
 
 
 class AuroraPartitioner(Partitioner):
@@ -133,7 +188,7 @@ class AuroraPartitioner(Partitioner):
         nodes: int,
         inseperable_nodes: list[list[int]],
         resources_per_device: dict,
-        topology: MFTopology = MFTopology.CIRCLE,  # TODO: Fix
+        topology: MFTopology,
         resource_estimates: dict | None = None,
         considered_resources: list[str] | None = None,
         limit_nodes_per_device: int | None = None,
@@ -142,18 +197,18 @@ class AuroraPartitioner(Partitioner):
     ) -> None:
         super().__init__(
             strategy,
+            topology,
             devices,
             nodes,
             inseperable_nodes,
             resources_per_device,
             resource_estimates,
             considered_resources,
+            network_ports_per_device,
             max_utilization,
             ideal_utilization,
         )
         self.limit_nodes_per_device = limit_nodes_per_device
-        self.network_ports_per_device = network_ports_per_device  # TODO: Move into the parent class
-        self.topology = topology
         self.model = Model()
         self.model.verbose = 1
 
@@ -202,6 +257,7 @@ class AuroraPartitioner(Partitioner):
         # (This may be necessary in some cases to avoid the maximum number of compute units allowed
         # on the FPGAs)
         if self.limit_nodes_per_device is not None:
+            log.info(f"Number of nodes per device limited to: {self.limit_nodes_per_device}")
             for device in range(self.device_count):
                 self.model += (
                     self.nodesperdevice[device] <= self.limit_nodes_per_device  # type: ignore
@@ -245,9 +301,9 @@ class AuroraPartitioner(Partitioner):
             )  # type: ignore
 
         # Helper for device difference
-        device_diff = []
+        self.device_diff = []
         for i in range(self.node_count):
-            device_diff.append(
+            self.device_diff.append(
                 self.model.add_var(
                     name=f"device_difference_node{i}_to_node{i+1}", var_type=mip.INTEGER
                 )
@@ -256,13 +312,13 @@ class AuroraPartitioner(Partitioner):
         # Consecutive nodes must be on consecutive devices
         for node in range(self.node_count - 1):
             self.model += (
-                device_diff[node] >= self.chosen_device[node] - self.chosen_device[node + 1]
+                self.device_diff[node] >= self.chosen_device[node] - self.chosen_device[node + 1]
             )
             self.model += (
-                device_diff[node] >= self.chosen_device[node + 1] - self.chosen_device[node]
+                self.device_diff[node] >= self.chosen_device[node + 1] - self.chosen_device[node]
             )
-            self.model += device_diff[node] <= 1
-            self.model += device_diff[node] >= 0
+            self.model += self.device_diff[node] <= 1
+            self.model += self.device_diff[node] >= 0
 
         # Setting topology requirements
         match self.topology:
@@ -275,7 +331,7 @@ class AuroraPartitioner(Partitioner):
 
             case _:
                 raise AssertionError(
-                    f"Invalid communication scheme " f"for Aurora partitioner: {self.topology}"
+                    f"Invalid communication scheme for Aurora partitioner: {self.topology}"
                 )  # TODO
 
         # Objective Function
@@ -324,8 +380,46 @@ class AuroraPartitioner(Partitioner):
             total_per_device = self._total_resources_per_device()
             for device in range(self.device_count):
                 for resource_name in self.considered_resources:
+                    assert (
+                        self.max_utilization is not None
+                    )  # Should be caught in constructor before
                     max_resources = int(total_per_device[resource_name] * self.max_utilization)
                     self.model += self.resource_use_int[device][resource_name] <= max_resources
+
+            # Give a warning if resource usage gets close to its maximum
+            for node in range(self.node_count):
+                for restype in self.resource_estimates[node].keys():
+                    assert self.max_utilization is not None
+                    thresh_percentage = 0.1 if self.max_utilization >= 0.1 else self.max_utilization
+                    if restype not in total_per_device.keys():
+                        continue
+                    warn_threshold = (self.max_utilization - thresh_percentage) * total_per_device[
+                        restype
+                    ]
+                    max_util = total_per_device[restype] * self.max_utilization
+                    if self.resource_estimates[node][restype] >= warn_threshold:
+                        if self.resource_estimates[node][restype] < max_util:
+                            log.warning(
+                                f"Node {node}'s usage of {restype} is within "
+                                f"{thresh_percentage} of the maximum allowed utilization "
+                                f"({self.resource_estimates[node][restype]} / "
+                                f"{total_per_device[restype] * self.max_utilization}) "
+                                "on a single device. Partitioning might fail!"
+                            )
+                        else:
+                            log.error(
+                                f"Node {node}'s usage of {restype} is above "
+                                f"the allowed utilization "
+                                f"({self.resource_estimates[node][restype]} > "
+                                f"{max_util})."
+                            )
+                            log.error(
+                                "Theoretical max per device would "
+                                f"be {total_per_device[restype]} "
+                                "on a single device. Partitioning will fail!"
+                            )
+                            # TODO: When we have a nice exiting mechanism, FINN should stop
+                            # TODO: here already
 
             # Balance so that the maximum difference to the ideal load over all devices and
             # resources is as low as possible
@@ -424,11 +518,21 @@ class AuroraPartitioner(Partitioner):
         if status in [mip.OptimizationStatus.INFEASIBLE, mip.OptimizationStatus.NO_SOLUTION_FOUND]:
             return None
 
-        # TODO: Logging as soon as QoL PR is merged
+        for device in range(self.device_count):
+            log.debug(f"Device {device} has connections: {self.connections_per_device[device].x}")
+
         mapping = {}
         for i in range(self.node_count):
             mapping[i] = self.chosen_device[i].x
         return mapping
+
+    def _get_resource_use_by_device(self) -> dict[int, dict[str, Any]] | None:
+        data = {}
+        for device in range(self.device_count):
+            data[device] = {}
+            for restype in self.resource_use_relative[device].keys():
+                data[device][restype] = self.resource_use_relative[device][restype].x
+        return data
 
 
 class PartitionForMultiFPGA(Transformation):
@@ -498,10 +602,13 @@ class PartitionForMultiFPGA(Transformation):
         assert p.compute_resources is not None
         res = p.compute_resources
         new = {}
+        log.info(f"Retrieving resource per device for {p.__class__.__name__}")
+        log.info(f"SLRs: {len(res)}")
         for slr in range(len(res)):
             new[slr] = {}
             for i, name in enumerate(["LUT", "FF", "BRAM_18K", "URAM", "DSP"]):
                 new[slr][name] = res[slr][i]
+        log.info(f"Resources: {new}")
         return new
 
     def estimate_required_fpgas(self) -> int:
@@ -553,6 +660,7 @@ class PartitionForMultiFPGA(Transformation):
         # Create the partitioner itself
         partitioner = self.partitioner_type(
             devices=devices,
+            topology=self.cfg.partitioning_configuration.topology,
             strategy=self.cfg.partitioning_configuration.partition_strategy,
             inseperable_nodes=inseperable_nodes,
             nodes=len(model.graph.node),

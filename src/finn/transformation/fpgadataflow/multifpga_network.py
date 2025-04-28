@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from finn.transformation.fpgadataflow.multifpga_utils import get_device_id
 from finn.util.basic import make_build_dir
+from finn.util.logging import log
 
 CommunicationKernelName = str
 Device = int
@@ -238,6 +239,10 @@ class CreateChainNetworkMetadata(CreateNetworkMetadata):
                     n1.name,
                     int(d2),
                     n2.name,
+                )
+                log.debug(
+                    f"Created connection in metadata between {n1.name} "
+                    f"(device {d1}) and {n2.name} (device {d2})"
                 )
 
 
