@@ -245,8 +245,7 @@ class HLSBackend(ABC):
         #  attention operator? Eventually integrate this into the finn-hlslib?
         builder.append_includes("-I" + str(get_deps_path() / "attention-hlslib"))
         builder.append_includes("-I$FINN_ROOT/custom_hls")
-        builder.append_includes("-I{}/include".format(os.environ["HLS_PATH"]))
-        builder.append_includes("-I{}/include".format(os.environ["VITIS_PATH"]))
+        builder.append_includes("-I{}/include".format(os.environ["XILINX_HLS"]))
         builder.append_includes("--std=c++14")
         builder.append_includes("-O3")
         builder.append_sources(code_gen_dir + "/*.cpp")

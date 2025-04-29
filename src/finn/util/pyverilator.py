@@ -179,7 +179,7 @@ def verilator_fifosim(
     xpm_args.append("-DOBSOLETE")
     xpm_args.append("-DONESPIN")
     xpm_args.append("--bbox-unsup")
-    vivado_path = os.environ["VIVADO_PATH"]
+    vivado_path = os.environ["XILINX_VIVADO"]
     # additional SystemVerilog modules to make XPMs work with Verilator
     xpm_memory = f"{vivado_path}/data/ip/xpm/xpm_memory/hdl/xpm_memory.sv"
     xpm_cdc = f"{vivado_path}/data/ip/xpm/xpm_cdc/hdl/xpm_cdc.sv"
@@ -291,7 +291,7 @@ def pyverilate_stitched_ip(
     verilator_args.append("-DOBSOLETE")
     verilator_args.append("-DONESPIN")
     verilator_args.append("--bbox-unsup")
-    vivado_path = os.environ["VIVADO_PATH"]
+    vivado_path = os.environ["XILINX_VIVADO"]
     # additional SystemVerilog modules to make XPMs work with Verilator
     xpm_memory = f"{vivado_path}/data/ip/xpm/xpm_memory/hdl/xpm_memory.sv"
     xpm_cdc = f"{vivado_path}/data/ip/xpm/xpm_cdc/hdl/xpm_cdc.sv"

@@ -66,8 +66,7 @@ def check_verilator() -> None:
 
 
 def set_synthesis_tools_paths() -> None:
-    """Check that all synthesis tools can be found. If not, give a warning. If they are found, set
-    the appropiate environment variables"""
+    """Check that all synthesis tools can be found. If not, give a warning."""
     for envname, toolname in [
         ("XILINX_VIVADO", "vivado"),
         ("XILINX_VITIS", "vitis"),
@@ -90,8 +89,7 @@ def set_synthesis_tools_paths() -> None:
 
         if not p.exists():
             warning(f"Path for {toolname} found, but executable not found in {p}!")
-        else:
-            os.environ[envname.replace("XILINX_", "") + "_PATH"] = envname_path
+        # TODO: simply check "which" instead?
 
     if (
         "PLATFORM_REPO_PATHS" not in os.environ.keys()
