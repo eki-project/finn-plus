@@ -4,6 +4,7 @@ from finn.builder import build_dataflow
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 
 
+@pytest.mark.infrastructure
 @pytest.mark.parametrize("custom_steps", [[("custom_steps.step_from_external_module", 1)]])
 def test_custom_step_resolution(custom_steps: list[str]) -> None:
     step_names = [s[0] for s in custom_steps]
@@ -17,6 +18,7 @@ def test_custom_step_resolution(custom_steps: list[str]) -> None:
         assert fxn_steps[1 + i]() == expected_result
 
 
+@pytest.mark.infrastructure
 def test_fail_custom_step_resolution() -> None:
     # A name but not callable
     non_callable_step = 0  # noqa

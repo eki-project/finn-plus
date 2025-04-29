@@ -89,6 +89,7 @@ build-backend = "poetry.core.masonry.api"
 addopts = [ "--verbose" ]
 markers = [
    "slow: marks tests as slow",
+   "infrastructure: marks tests that refer to infrastructure functionality",
    "vivado: mark tests that require Vivado or Vivado HLS",
    "vitis: mark tests that require Vitis",
    "board: mark tests that require a PYNQ board",
