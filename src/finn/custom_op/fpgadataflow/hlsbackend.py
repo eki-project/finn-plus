@@ -282,7 +282,7 @@ compilation transformations?
     # TODO: Should have been removed by refactoring (PR #1318)
     # However, it is still used by some CustomOps, namely:
     # SplitMultiHeads, MergeMultiHeads, ScaledDotProductAttention, ElementwiseBinaryOperation,
-    # ReplicateStream, Squeeze, Unsqueeze
+    # ReplicateStream, Squeeze, Unsqueeze, StreamingConcat
     def hls_sname(self):
         """Get the naming convention used by Vitis HLS for stream signals
         Example: the TDATA for a stream called "out" would be out_V_TDATA.

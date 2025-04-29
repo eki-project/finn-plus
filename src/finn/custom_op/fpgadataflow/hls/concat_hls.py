@@ -28,6 +28,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
+
 from finn.custom_op.fpgadataflow import templates
 from finn.custom_op.fpgadataflow.concat import StreamingConcat
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
@@ -44,48 +45,8 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
         my_attrs = {}
         my_attrs.update(StreamingConcat.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
+        my_attrs.update({"cpp_interface": ("s", False, "hls_vector", {"packed", "hls_vector"})})
         return my_attrs
-
-    def generate_params(self, model, path):
-        elems_per_stream = self.get_nodeattr("ElemsPerStream")
-        inp_streams = []
-        commands = []
-        idt = self.get_input_datatype()
-        total_elems = self.get_total_elems()
-        total_bw = idt.bitwidth() * total_elems
-        for i, elems in enumerate(elems_per_stream):
-            bw = idt.bitwidth() * elems
-            inp_stream = "hls::stream<ap_uint<%d> > &in%d" % (bw, i)
-            inp_streams.append(inp_stream)
-            cmd = "in%d.read()" % i
-            commands.append(cmd)
-        out_stream = "hls::stream<ap_uint<%d> > &out0" % (total_bw)
-        inp_streams.append(out_stream)
-
-        impl_hls_code = []
-        impl_hls_code.append("void StreamingConcat(")
-        impl_hls_code.append(",".join(inp_streams))
-        impl_hls_code.append(", unsigned int numReps) {")
-        impl_hls_code.append("for(unsigned int i = 0; i < numReps; i++) {")
-        impl_hls_code.append("#pragma HLS PIPELINE II=1")
-        impl_hls_code.append("ap_uint<%d> out_elem;" % total_bw)
-        # FIXME: the order of streams for concatenation works out differently
-        # for cppsim vs rtlsim, addressed via reversing the order of commands
-        # for now
-        impl_hls_code.append("#ifdef __SYNTHESIS__")
-        impl_hls_code.append("out_elem = (" + ",".join(commands[::-1]) + ");")
-        impl_hls_code.append("#else")
-        impl_hls_code.append("out_elem = (" + ",".join(commands) + ");")
-        impl_hls_code.append("#endif")
-        impl_hls_code.append("out0.write(out_elem);")
-        impl_hls_code.append("}")
-        impl_hls_code.append("}")
-        impl_hls_code = "\n".join(impl_hls_code)
-
-        impl_filename = "{}/concat_impl.hpp".format(path)
-        f_impl = open(impl_filename, "w")
-        f_impl.write(impl_hls_code)
-        f_impl.close()
 
     def execute_node(self, context, graph):
         HLSBackend.execute_node(self, context, graph)
@@ -137,7 +98,7 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
                 % (input_elem_hls_type, stream_name, stream_name)
             )
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            'hls::stream<hls::vector<{}, SIMD>> out_{} ("out_{}");'.format(
+            'hls::stream<hls::vector<{}, SIMD>> out0_{} ("out0_{}");'.format(
                 self.get_output_datatype().get_hls_datatype_str(),
                 self.hls_sname(),
                 self.hls_sname(),
@@ -160,7 +121,7 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
             in_streams.append("in%d_%s" % (i, self.hls_sname()))
         in_stream_names = ", ".join(in_streams)
         in_stream_folds = ", ".join(input_folds)
-        comp_call = "StreamingConcat<{}>(out_{}, {});".format(
+        comp_call = "StreamingConcat<{}>(out0_{}, {});".format(
             in_stream_folds, self.hls_sname(), in_stream_names
         )
         self.code_gen_dict["$DOCOMPUTE$"] = [comp_call]
@@ -170,7 +131,7 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         oshape = self.get_folded_output_shape()
         oshape_cpp_str = str(oshape).replace("(", "{").replace(")", "}")
-        npy_out = "%s/output.npy" % code_gen_dir
+        npy_out = "%s/output_0.npy" % code_gen_dir
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
             'vectorstream2npy<%s, %s, SIMD>(debug_out_%s, %s, "%s");'
             % (
@@ -192,7 +153,7 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
                 % (input_elem_hls_type, i, self.hls_sname())
             )
         in_streams = ", ".join(in_streams)
-        out_stream = "hls::stream<hls::vector<%s, SIMD>> &out_%s" % (
+        out_stream = "hls::stream<hls::vector<%s, SIMD>> &out0_%s" % (
             self.get_output_datatype().get_hls_datatype_str(),
             self.hls_sname(),
         )
@@ -203,20 +164,20 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
         n_inputs = self.get_n_inputs()
         pragmas = []
         for i in range(n_inputs):
-            pragmas.append("#pragma HLS INTERFACE axis port=in%d_V" % i)
+            pragmas.append("#pragma HLS INTERFACE axis port=in%d_%s" % (i, self.hls_sname()))
         self.code_gen_dict["$PRAGMAS$"] = pragmas
         self.code_gen_dict["$PRAGMAS$"].append(
-            "#pragma HLS INTERFACE axis port=out_" + self.hls_sname()
+            "#pragma HLS INTERFACE axis port=out0_" + self.hls_sname()
         )
         for i in range(n_inputs):
             pragmas.append(
                 "#pragma HLS aggregate variable=in%d_%s compact=bit" % (i, self.hls_sname())
             )
-        pragmas.append("#pragma HLS aggregate variable=out_%s compact=bit" % self.hls_sname())
+        pragmas.append("#pragma HLS aggregate variable=out0_%s compact=bit" % self.hls_sname())
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
     def timeout_read_stream(self):
         """Set reading output stream procedure for HLS functions defined for one clock cycle"""
         self.code_gen_dict["$TIMEOUT_READ_STREAM$"] = [
-            "debug_out_{} << out_{}.read();".format(self.hls_sname(), self.hls_sname())
+            "debug_out_{} << out0_{}.read();".format(self.hls_sname(), self.hls_sname())
         ]
