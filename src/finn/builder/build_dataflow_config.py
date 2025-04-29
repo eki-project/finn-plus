@@ -29,7 +29,7 @@
 
 import numpy as np
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
@@ -157,6 +157,16 @@ class PartitioningConfiguration:
     # How much resources of a single FPGA should be used ideally. Used in some objective
     # functions.
     ideal_utilization: float = 0.75
+
+    # The list of resource types that the partitioner should consider.
+    # Only relevant if RESOURCE_UTILIZATION is chosen as a strategy
+    considered_resources: list[str] = field(
+        default_factory=lambda: ["LUT", "FF", "DSP", "BRAM_18K"]
+    )
+
+    # Number of seconds before the solver doing the partitioning
+    # times out.
+    partition_solver_timeout: int = 100
 
 
 #: List of steps that will be run as part of the standard dataflow build, in the

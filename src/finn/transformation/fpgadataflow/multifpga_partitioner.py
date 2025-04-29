@@ -4,24 +4,30 @@ import mip
 from abc import ABC, abstractmethod
 from mip import Model, xsum
 from pathlib import Path
-from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
-from finn.analysis.fpgadataflow.res_estimation import res_estimation
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     MFCommunicationKernel,
     MFTopology,
     PartitioningStrategy,
 )
-from finn.transformation.fpgadataflow.multifpga_network import Device
-from finn.transformation.fpgadataflow.multifpga_utils import get_inseperable_nodes, set_device_id
+from finn.transformation.fpgadataflow.multifpga_utils import (
+    available_resources,
+    get_estimated_model_resources,
+    get_inseperable_nodes,
+    set_device_id,
+)
 from finn.util.basic import make_build_dir
 from finn.util.logging import log
-from finn.util.platforms import Platform, platforms
+from finn.util.platforms import platforms
+
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
+
+    from finn.transformation.fpgadataflow.multifpga_network import Device
 
 
 class Partitioner(ABC):
@@ -104,7 +110,7 @@ class Partitioner(ABC):
         """The real solving function. Should be called indirectly via solve()"""
 
     @abstractmethod
-    def _write_solution_data(self, p: Path, node_index_name_map: dict[int, str]) -> None:
+    def _write_solution_data(self, p: Path, node_index_name_map: dict[int, str] | None) -> None:
         pass
 
     def solve(
@@ -112,7 +118,7 @@ class Partitioner(ABC):
         solver_timeout: int,
         snapshot_path: Path,
         solution_path: Path,
-        node_index_name_map: dict[int, str],
+        node_index_name_map: dict[int, str] | None = None,
     ) -> dict[int, Device] | None:
         """Try to optimize the objective function. If no feasible solution is found
         return None, otherwise return a mapping of nodes to their device. After trying
@@ -123,18 +129,6 @@ class Partitioner(ABC):
         if result is not None:
             self._write_solution_data(solution_path, node_index_name_map)
         return result
-
-    def _total_resources_per_device(self) -> dict[str, int]:
-        """Return the total resources per device. Normally, resources_per_device
-        is split into the different SLRs if there are some."""
-        if self.resources_per_device is None:
-            return {}
-        acc = {}
-        for restype in self.considered_resources:
-            acc[restype] = 0
-            for slr in self.resources_per_device:
-                acc[restype] += self.resources_per_device[slr][restype]
-        return acc
 
     def _create_model_snapshot(self, p: Path) -> None:
         """Create a snapshot of all model variables and conditions in a temporary
@@ -172,7 +166,7 @@ class Partitioner(ABC):
 
     def get_resource_use_by_device(self) -> dict[int, dict[str, Any]] | None:
         """Return the resources used by a device. This only works if the optimization goal was
-        resource usage.
+        resource usage. If no optimization was done, the dict will contain None's
         Actual implementation is left to the subclasses."""
         if self.strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
             return self._get_resource_use_by_device()
@@ -192,7 +186,7 @@ class AuroraPartitioner(Partitioner):
         resource_estimates: dict | None = None,
         considered_resources: list[str] | None = None,
         limit_nodes_per_device: int | None = None,
-        max_utilization: float = 0.75,
+        max_utilization: float | None = None,
         ideal_utilization: float | None = None,
     ) -> None:
         super().__init__(
@@ -379,7 +373,7 @@ class AuroraPartitioner(Partitioner):
                     )
 
             # Limit resource usage to (available resources * max usage in percent)
-            total_per_device = self._total_resources_per_device()
+            total_per_device = self.resources_per_device
             for device in range(self.device_count):
                 for resource_name in self.considered_resources:
                     assert (
@@ -497,9 +491,11 @@ class AuroraPartitioner(Partitioner):
         else:
             raise AssertionError(f"Unknown partitioning strategy: {self.strategy}")
 
-    def _write_solution_data(self, p: Path, node_index_name_map: dict[int, str]) -> None:
+    def _write_solution_data(self, p: Path, node_index_name_map: dict[int, str] | None) -> None:
         assert self.resource_estimates is not None
         sol = ""
+        if node_index_name_map is None:
+            node_index_name_map = {i: str(i) for i in range(self.node_count)}
         for node in range(self.node_count):
             sol += f"\n\nNode {node}: {node_index_name_map[node]}\n"
             sol += f"\t\tDevice: {self.chosen_device[node].x}\n"
@@ -507,9 +503,7 @@ class AuroraPartitioner(Partitioner):
                 if res not in self.resource_estimates[node].keys():
                     continue
                 sol += f"\t\t{res}:" + "{:.2f}%".format(
-                    100
-                    * self.resource_estimates[node][res]
-                    / self._total_resources_per_device()[res]
+                    100 * self.resource_estimates[node][res] / self.resources_per_device[res]
                 )
         with p.open("w+") as f:
             f.write(sol)
@@ -568,65 +562,11 @@ class PartitionForMultiFPGA(Transformation):
         try:
             self.partitioner_type = partitioners[communication_kernel]
         except KeyError as ke:
-            raise Exception(f"No partitioner type found for " f"{communication_kernel}") from ke
+            raise Exception(f"No partitioner type found for {communication_kernel}") from ke
         log.info(
             f"Based on the communication kernel, "
             f'partitioner "{self.partitioner_type.__name__}" was chosen!'
         )
-
-    def gather_resource_utilization(self, model: ModelWrapper) -> dict[int, dict[str, int]]:
-        """Gather the resources of all layers based on the estimation values from
-        the previous build steps.
-
-        IMPORTANT: If the ordering or number of nodes in the graph changes, this becomes invalid!
-        Returns a table like:
-        {
-            0: {
-                "LUT": ...,
-                "DSP": ...,
-                ...
-            },
-            ...
-        }"""
-        # TODO: Check / Clean up all the various estimate functions
-        model = model.transform(GiveUniqueNodeNames())
-        estimates = res_estimation(model, self.cfg.fpga_part)
-        hls_estimates = hls_synth_res_estimation(model)
-        for layer in hls_estimates.keys():
-            # Case 1: Only HLS estimate: Add it
-            if layer not in estimates.keys():
-                estimates[layer] = hls_estimates[layer]
-            else:
-                current_layer_estimates = hls_estimates[layer]
-                for restype in current_layer_estimates.keys():
-                    # Case 2: Res exists in both estimates: Take max
-                    if restype in estimates[layer].keys():
-                        estimates[layer][restype] = max(
-                            estimates[layer][restype], current_layer_estimates[restype]
-                        )
-                    # Case 3: Res exists only in hls: Add it
-                    else:
-                        estimates[layer][restype] = current_layer_estimates[restype]
-        est_by_index = {}
-        for i, node in enumerate(model.graph.node):
-            est_by_index[i] = estimates[node.name]
-        return est_by_index
-
-    def resources_per_device(self, p: Platform) -> dict[int, dict[str, int]]:
-        """Return the available resources as given by FINN platforms as a
-        dictionary instead of nested lists. First by SLR, then by resource name"""
-        assert p is not None
-        assert p.compute_resources is not None
-        res = p.compute_resources
-        new = {}
-        log.info(f"Retrieving resource per device for {p.__class__.__name__}")
-        log.info(f"SLRs: {len(res)}")
-        for slr in range(len(res)):
-            new[slr] = {}
-            for i, name in enumerate(["LUT", "FF", "BRAM_18K", "URAM", "DSP"]):
-                new[slr][name] = res[slr][i]
-        log.info(f"Resources: {new}")
-        return new
 
     def estimate_required_fpgas(self) -> int:
         """Use resource utilization to estimate how many FPGAs will be needed to
@@ -655,7 +595,9 @@ class PartitionForMultiFPGA(Transformation):
             raise Exception('Parameter "board" is required in config for MultiFPGA partitioning')
 
         # Calculate estimates
-        estimates = self.gather_resource_utilization(model)
+        assert self.cfg.fpga_part is not None  # TODO: Replace with exception
+        model = model.transform(GiveUniqueNodeNames())
+        estimates = get_estimated_model_resources(model, self.cfg.fpga_part)
         if (
             self.cfg.partitioning_configuration.partition_strategy
             == PartitioningStrategy.RESOURCE_UTILIZATION
@@ -675,13 +617,17 @@ class PartitionForMultiFPGA(Transformation):
                 )
 
         # Create the partitioner itself
+        device_resources = available_resources(
+            platforms[self.cfg.board](), self.cfg.partitioning_configuration.considered_resources
+        )
         partitioner = self.partitioner_type(
             devices=devices,
             topology=self.cfg.partitioning_configuration.topology,
             strategy=self.cfg.partitioning_configuration.partition_strategy,
             inseperable_nodes=inseperable_nodes,
             nodes=len(model.graph.node),
-            resources_per_device=self.resources_per_device(platforms[self.cfg.board]()),
+            resources_per_device=device_resources,
+            considered_resources=self.cfg.partitioning_configuration.considered_resources,
             resource_estimates=estimates,
             max_utilization=self.cfg.partitioning_configuration.max_utilization,
             ideal_utilization=self.cfg.partitioning_configuration.ideal_utilization,
@@ -692,7 +638,7 @@ class PartitionForMultiFPGA(Transformation):
         logdir = Path(make_build_dir("partition_solver_"))
         index_name_map = dict(enumerate([node.name for node in model.graph.node]))
         mapping = partitioner.solve(
-            solver_timeout=100,
+            solver_timeout=self.cfg.partitioning_configuration.partition_solver_timeout,
             snapshot_path=logdir / "snapshot.txt",
             solution_path=logdir / "solution.txt",
             node_index_name_map=index_name_map,

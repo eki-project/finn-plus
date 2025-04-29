@@ -22,6 +22,11 @@ from finn.builder.build_dataflow_config import (
     PartitioningStrategy,
     default_build_dataflow_steps,
 )
+from finn.transformation.fpgadataflow.multifpga_partitioner import (
+    AuroraPartitioner,
+    PartitionForMultiFPGA,
+)
+from finn.util import platforms
 from finn.util.test import get_test_model
 
 if TYPE_CHECKING:
@@ -136,3 +141,95 @@ def test_aurora_partition_solution_found(
             if transform_step == "step_set_fifo_depths":
                 break
         model = build_dataflow_steps.step_partition_for_multifpga(model, cfg)
+
+
+@pytest.mark.parametrize(
+    "distribution",
+    [
+        "equal-LUT",
+    ],
+)
+@pytest.mark.parametrize("distribution_args", [{"level": 1000}])
+@pytest.mark.parametrize("nodes", [1, 2, 3, 10, 99])
+@pytest.mark.parametrize("devices", [1, 2, 3, 7, 10, 100])
+@pytest.mark.parametrize("considered_resources", [["LUT", "FF", "DSP", "BRAM_18K"]])
+@pytest.mark.parametrize("board", ["U280", "Pynq-Z1"])
+@pytest.mark.parametrize("max_util", [0.85])
+@pytest.mark.parametrize("ideal_util", [0.75])
+@pytest.mark.parametrize("topology", [MFTopology.CHAIN])
+def test_aurora_partitioning_pure_resource_optimize(
+    distribution: str,
+    distribution_args: dict,
+    nodes: int,
+    devices: int,
+    considered_resources: list[str],
+    board: str,
+    ideal_util: float,
+    max_util: float,
+    topology: MFTopology,
+) -> None:
+    """Test partitioning with the Aurora model based on constructed data instead of real models"""
+    dist_type = distribution.split("-")[0]
+    dist_res = distribution.split("-")[1]
+    resource_estimates = {}
+    for node in range(nodes):
+        resource_estimates[node] = dict(
+            zip(considered_resources, [0 for _ in range(len(considered_resources))])
+        )
+        if dist_type == "equal":
+            resource_estimates[node][dist_res] = distribution_args["level"]
+
+    test_dir_identifier = (
+        f"test_pure_aurora_resource_opt_device{devices}"
+        "_node{nodes}_topo{topology.name}_{board}_dist{distribution}"
+    )
+    with custom_build(test_dir_identifier, True) as dirs:
+        root, temps, out = dirs
+        cfg = DataflowBuildConfig(
+            output_dir=str(out),
+            synth_clk_period_ns=5.0,
+            generate_outputs=[],
+            partitioning_configuration=PartitioningConfiguration(),
+        )
+        res_per_device = PartitionForMultiFPGA(cfg).resources_per_device(
+            platforms.platforms[board]()
+        )
+        part = AuroraPartitioner(
+            network_ports_per_device=2,
+            strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
+            devices=devices,
+            nodes=nodes,
+            considered_resources=considered_resources,
+            resources_per_device=res_per_device,
+            inseperable_nodes=[],
+            topology=topology,
+            max_utilization=max_util,
+            ideal_utilization=ideal_util,
+            resource_estimates=resource_estimates,
+        )
+        solution = part.solve(
+            100,
+            root / "snapshot.txt",
+            root / "solution.txt",
+            {k: f"node_{k}" for k in range(nodes)},
+        )
+
+        # Solution found
+        assert solution is not None
+
+        # Every device is utilized
+        usage = part.get_resource_use_by_device()
+        assert usage is not None
+        for device in usage.keys():
+            assert any(usage[device][restype] > 0 for restype in usage[device].keys())
+
+        # max_utilization not overstepped
+        total_per_device = part._total_resources_per_device()  # noqa
+        for device in usage.keys():
+            for restype, res in usage[device].values():
+                assert res <= max_util * total_per_device[restype]
+
+
+def test_enforce_utilization_limit() -> None:
+    """Test that the partitioner upholds the resource utilization limit"""
+    pass
