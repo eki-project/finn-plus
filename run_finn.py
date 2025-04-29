@@ -117,10 +117,21 @@ def main_group() -> None:
 @click.option(
     "--skip-dep-update",
     "-s",
-    default=skip_update_by_default(),
     is_flag=True,
     help="Whether to skip the dependency update. Can be changed in settings via"
     "AUTOMATIC_DEPENDENCY_UPDATES: false",
+)
+@click.option(
+    "--start",
+    default="",
+    help="If no start_step is given in the dataflow build config, "
+    "this starts the flow from the given step.",
+)
+@click.option(
+    "--stop",
+    default="",
+    help="If no stop_step is given in the dataflow build config, "
+    "this stops the flow at the given step.",
 )
 @click.argument("config")
 @click.argument("model")
@@ -129,6 +140,8 @@ def build(
     build_path: str,
     num_workers: int,
     skip_dep_update: bool,
+    start: str,
+    stop: str,
     config: str,
     model: str,
 ) -> None:
@@ -139,7 +152,13 @@ def build(
     assert_path_valid(model_path)
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
     status(f"Starting FINN build with config {config_path.name} and model {model_path.name}!")
-    prepare_finn(dep_path, config_path, build_dir, num_workers, skip_dep_update=skip_dep_update)
+    prepare_finn(
+        dep_path,
+        config_path,
+        build_dir,
+        num_workers,
+        skip_dep_update=(skip_dep_update or skip_update_by_default()),
+    )
     status("Creating dataflow build config...")
     dfbc: DataflowBuildConfig | None = None
     match config_path.suffix:
@@ -158,6 +177,11 @@ def build(
     if dfbc is None:
         error("Failed to generate dataflow build config!")
         sys.exit(1)
+    if dfbc.start_step is None and start != "":
+        dfbc.start_step = start
+    if dfbc.stop_step is None and stop != "":
+        dfbc.stop_step = stop
+    status(f"Output directory is {dfbc.output_dir}")
     Console().rule(
         f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
         f"{config_path.name}[/bold orange1][bold cyan] on model [/bold cyan]"
