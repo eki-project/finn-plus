@@ -80,5 +80,16 @@ def settings_found() -> bool:
     return _resolve_settings_path() is not None
 
 
+def skip_update_by_default() -> bool:
+    """Return whether the dependency update should be skipped. Reads the settings for this.
+    Dep updates will NOT be skipped, unless specified otherwise"""
+    settings = get_settings()
+    if "AUTOMATIC_DEPENDENCY_UPDATES" not in settings.keys():
+        return False
+    value = settings["AUTOMATIC_DEPENDENCY_UPDATES"]
+    assert type(value) is bool, "Field AUTOMATIC_DEPENDENCY_UPDATES in settings must be a bool"
+    return not value
+
+
 # Overwrite Settings when importing this module
 _update_settings()

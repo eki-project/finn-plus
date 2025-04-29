@@ -16,6 +16,7 @@ from interface.interface_globals import (
     get_settings,
     set_settings,
     settings_found,
+    skip_update_by_default,
     write_settings,
 )
 from interface.interface_utils import (
@@ -40,6 +41,7 @@ def prepare_finn(
     build_dir: Path | None,
     num_workers: int,
     is_test_run: bool = False,
+    skip_dep_update: bool = False,
 ) -> None:
     """Prepare a FINN environment by:
     0. Reading all settings and environment vars
@@ -62,7 +64,10 @@ def prepare_finn(
     os.environ["FINN_DEPS"] = str(deps_path.absolute())
 
     # Update / Install all dependencies
-    update_dependencies(deps_path)
+    if not skip_dep_update:
+        update_dependencies(deps_path)
+    else:
+        warning("Skipping dependency updates!")
     check_verilator()
 
     # Check synthesis tools
@@ -109,9 +114,24 @@ def main_group() -> None:
     default=-1,
     show_default=True,
 )
+@click.option(
+    "--skip-dep-update",
+    "-s",
+    default=skip_update_by_default(),
+    is_flag=True,
+    help="Whether to skip the dependency update. Can be changed in settings via"
+    "AUTOMATIC_DEPENDENCY_UPDATES: false",
+)
 @click.argument("config")
 @click.argument("model")
-def build(dependency_path: str, build_path: str, num_workers: int, config: str, model: str) -> None:
+def build(
+    dependency_path: str,
+    build_path: str,
+    num_workers: int,
+    skip_dep_update: bool,
+    config: str,
+    model: str,
+) -> None:
     config_path = Path(config).expanduser()
     model_path = Path(model).expanduser()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
@@ -119,7 +139,7 @@ def build(dependency_path: str, build_path: str, num_workers: int, config: str, 
     assert_path_valid(model_path)
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
     status(f"Starting FINN build with config {config_path.name} and model {model_path.name}!")
-    prepare_finn(dep_path, config_path, build_dir, num_workers)
+    prepare_finn(dep_path, config_path, build_dir, num_workers, skip_dep_update=skip_dep_update)
     status("Creating dataflow build config...")
     dfbc: DataflowBuildConfig | None = None
     match config_path.suffix:
