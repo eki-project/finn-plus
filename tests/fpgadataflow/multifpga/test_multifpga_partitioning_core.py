@@ -26,6 +26,7 @@ from finn.transformation.fpgadataflow.multifpga_partitioner import (
     AuroraPartitioner,
     PartitionForMultiFPGA,
 )
+from finn.transformation.fpgadataflow.multifpga_utils import available_resources
 from finn.util import platforms
 from finn.util.test import get_test_model
 
@@ -185,15 +186,7 @@ def test_aurora_partitioning_pure_resource_optimize(
     )
     with custom_build(test_dir_identifier, True) as dirs:
         root, temps, out = dirs
-        cfg = DataflowBuildConfig(
-            output_dir=str(out),
-            synth_clk_period_ns=5.0,
-            generate_outputs=[],
-            partitioning_configuration=PartitioningConfiguration(),
-        )
-        res_per_device = PartitionForMultiFPGA(cfg).resources_per_device(
-            platforms.platforms[board]()
-        )
+        res_per_device = available_resources(platforms.platforms[board](), considered_resources)
         part = AuroraPartitioner(
             network_ports_per_device=2,
             strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
@@ -224,10 +217,9 @@ def test_aurora_partitioning_pure_resource_optimize(
             assert any(usage[device][restype] > 0 for restype in usage[device].keys())
 
         # max_utilization not overstepped
-        total_per_device = part._total_resources_per_device()  # noqa
         for device in usage.keys():
             for restype, res in usage[device].values():
-                assert res <= max_util * total_per_device[restype]
+                assert res <= max_util * res_per_device[restype]
 
 
 def test_enforce_utilization_limit() -> None:
