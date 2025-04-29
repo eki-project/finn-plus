@@ -32,7 +32,13 @@ import os
 from finn.custom_op.fpgadataflow import templates
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.split import StreamingSplit
+from finn.util.basic import get_liveness_threshold_cycles
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+
+try:
+    import pyxsi_utils
+except ModuleNotFoundError:
+    pyxsi_utils = None
 
 
 class StreamingSplit_hls(StreamingSplit, HLSBackend):
@@ -48,7 +54,25 @@ class StreamingSplit_hls(StreamingSplit, HLSBackend):
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
+    # TODO: Overwritten from parent class HWCustomOp because it no longer offers a settable sname
+    def rtlsim_multi_io(self, sim, io_dict, sname="_V_", hook_postclk=None):
+        "Run rtlsim for this node, supports multiple i/o streams."
+        num_out_values = self.get_number_output_values()
+        total_cycle_count = pyxsi_utils.rtlsim_multi_io(
+            sim,
+            io_dict,
+            num_out_values,
+            sname=sname,
+            liveness_threshold=get_liveness_threshold_cycles(),
+            hook_postclk=hook_postclk,
+        )
+
+        self.set_nodeattr("cycles_rtlsim", total_cycle_count)
+
     def execute_node(self, context, graph):
+        # TODO: Should be moved to parent class HLSBackend after refactoring (PR #1318)
+        # However, the parent class can't handle that the parameter/initializer tensor input is
+        # not actually consumed by the HW backend (but hardcoded into a template parameter pack)
         mode = self.get_nodeattr("exec_mode")
         node = self.onnx_node
         ishape = self.get_normal_input_shape()
@@ -82,7 +106,7 @@ class StreamingSplit_hls(StreamingSplit, HLSBackend):
             # execute the precompiled model
             super().exec_precompiled_singlenode_model()
             # load output npy file
-            super().npy_to_dynamic_outputs(context, ["output_%d.npy" % i for i in range(n_outputs)])
+            super().npy_to_dynamic_output(context)
             for i in range(n_outputs):
                 assert (
                     context[node.output[i]].shape == exp_oshapes[i]

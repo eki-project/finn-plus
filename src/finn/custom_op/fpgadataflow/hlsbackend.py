@@ -279,6 +279,16 @@ compilation transformations?
         process_execute = subprocess.Popen(executable_path, stdout=subprocess.PIPE)
         process_execute.communicate()
 
+    # TODO: Should have been removed by refactoring (PR #1318)
+    # However, it is still used by some CustomOps, namely:
+    # SplitMultiHeads, MergeMultiHeads, ScaledDotProductAttention, ElementwiseBinaryOperation,
+    # ReplicateStream, Squeeze, Unsqueeze
+    def hls_sname(self):
+        """Get the naming convention used by Vitis HLS for stream signals
+        Example: the TDATA for a stream called "out" would be out_V_TDATA.
+        """
+        return "V"
+
     def execute_node(self, context, graph):
         mode = self.get_nodeattr("exec_mode")
         node = self.onnx_node
