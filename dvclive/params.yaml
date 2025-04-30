@@ -1,0 +1,20 @@
+params:
+  dut: ras
+  model_name: MobileNetv1-w4a4
+  validation_dataset: imagenet
+  act_mode: standalone
+  use_float: no
+  acc_opt: yesaccmin
+  folding: prefold
+  board: RFSoC2x2
+  clock_period_ns: 5
+  fifo_method: manual
+  enable_instrumentation: false
+  rtlsim_n: 5
+  output_products:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+metadata:
+  tool_version: '2022.2'
