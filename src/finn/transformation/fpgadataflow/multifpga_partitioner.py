@@ -263,7 +263,7 @@ class AuroraPartitioner(Partitioner):
         self.connections_per_device_helper = [
             [
                 self.model.add_var(
-                    name=f"next_node_from{node}_on_different_device_question", var_type=mip.INTEGER
+                    name=f"nodes_{node}_{node+1}_on_diff_devices", var_type=mip.INTEGER
                 )
                 for node in range(self.node_count)
             ]
@@ -459,7 +459,8 @@ class AuroraPartitioner(Partitioner):
                             for res in self.considered_resources
                         ]
                     )
-                    >= 0.0001
+                    # Needs to be really small so the model is still valid for very small designs
+                    >= 0.0000001
                 )  # type: ignore
 
             # The min resource diff to ideal on a device, regardless of resource type
@@ -475,7 +476,7 @@ class AuroraPartitioner(Partitioner):
 
                     # If we dont specify this, it will stay at the initial value of 0,
                     # since 0 is smaller than all the resource_diffs
-                    self.model += self.min_resource_diff[device] >= 0.0001
+                    self.model += self.min_resource_diff[device] >= 0.000000001
 
             # Maximum of the min resource diff of all devices
             max_diff = self.model.add_var("max_diff", var_type=mip.CONTINUOUS)
@@ -615,6 +616,13 @@ class PartitionForMultiFPGA(Transformation):
                     "Cannot partition with faulty resource estimations and "
                     "RESOURCE_UTILIZATION as PartitioningStrategy!"
                 )
+
+        # Stop if there are more devices than nodes
+        if devices > len(model.graph.node):
+            msg = f"Cannot partition a model with {len(model.graph.node)} to {devices} devices!"
+            log.error(msg)
+            log.critical("Infeasible model. Stopping.")
+            raise Exception(msg)  # TODO
 
         # Create the partitioner itself
         device_resources = available_resources(

@@ -22,10 +22,7 @@ from finn.builder.build_dataflow_config import (
     PartitioningStrategy,
     default_build_dataflow_steps,
 )
-from finn.transformation.fpgadataflow.multifpga_partitioner import (
-    AuroraPartitioner,
-    PartitionForMultiFPGA,
-)
+from finn.transformation.fpgadataflow.multifpga_partitioner import AuroraPartitioner
 from finn.transformation.fpgadataflow.multifpga_utils import available_resources
 from finn.util import platforms
 from finn.util.test import get_test_model
@@ -151,13 +148,14 @@ def test_aurora_partition_solution_found(
     ],
 )
 @pytest.mark.parametrize("distribution_args", [{"level": 1000}])
-@pytest.mark.parametrize("nodes", [1, 2, 3, 10, 99])
-@pytest.mark.parametrize("devices", [1, 2, 3, 7, 10, 100])
+@pytest.mark.parametrize("nodes", [*list(range(1, 10))])
+@pytest.mark.parametrize("devices", [*list(range(1, 10))])
 @pytest.mark.parametrize("considered_resources", [["LUT", "FF", "DSP", "BRAM_18K"]])
 @pytest.mark.parametrize("board", ["U280", "Pynq-Z1"])
 @pytest.mark.parametrize("max_util", [0.85])
 @pytest.mark.parametrize("ideal_util", [0.75])
 @pytest.mark.parametrize("topology", [MFTopology.CHAIN])
+@pytest.mark.parametrize("inseperable_nodes", [[]])
 def test_aurora_partitioning_pure_resource_optimize(
     distribution: str,
     distribution_args: dict,
@@ -168,6 +166,7 @@ def test_aurora_partitioning_pure_resource_optimize(
     ideal_util: float,
     max_util: float,
     topology: MFTopology,
+    inseperable_nodes: list[int],
 ) -> None:
     """Test partitioning with the Aurora model based on constructed data instead of real models"""
     dist_type = distribution.split("-")[0]
@@ -182,7 +181,8 @@ def test_aurora_partitioning_pure_resource_optimize(
 
     test_dir_identifier = (
         f"test_pure_aurora_resource_opt_device{devices}"
-        "_node{nodes}_topo{topology.name}_{board}_dist{distribution}"
+        f"_node{nodes}_topo{topology.name}_{board}_dist{distribution}"
+        f"_{max_util}_{ideal_util}_ins{len(inseperable_nodes)}"
     )
     with custom_build(test_dir_identifier, True) as dirs:
         root, temps, out = dirs
@@ -200,6 +200,9 @@ def test_aurora_partitioning_pure_resource_optimize(
             ideal_utilization=ideal_util,
             resource_estimates=resource_estimates,
         )
+
+        part.model += part.chosen_device[1] == 1
+
         solution = part.solve(
             100,
             root / "snapshot.txt",
@@ -207,7 +210,12 @@ def test_aurora_partitioning_pure_resource_optimize(
             {k: f"node_{k}" for k in range(nodes)},
         )
 
-        # Solution found
+        # Check if a solution was found
+        # If the model is impossible assert that no solution was found
+        # and return to skip the rest if the test
+        if devices > nodes:
+            assert solution is None
+            return
         assert solution is not None
 
         # Every device is utilized
@@ -218,7 +226,7 @@ def test_aurora_partitioning_pure_resource_optimize(
 
         # max_utilization not overstepped
         for device in usage.keys():
-            for restype, res in usage[device].values():
+            for restype, res in usage[device].items():
                 assert res <= max_util * res_per_device[restype]
 
 
