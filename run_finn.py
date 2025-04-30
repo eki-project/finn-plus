@@ -60,6 +60,9 @@ def prepare_finn(
         status(f"Using dependency path: {deps_path}")
     os.environ["FINN_DEPS"] = str(deps_path.absolute())
 
+    if "PYTHONPATH" not in os.environ.keys():
+        os.environ["PYTHONPATH"] = ""
+
     # Update / Install all dependencies
     update_dependencies(deps_path)
 
@@ -173,7 +176,7 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
         f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
     )
     subprocess.run(
-        shlex.split(f"python3 {script_path.name}", posix=IS_POSIX), cwd=script_path.parent
+        shlex.split(f"{sys.executable} {script_path.name}", posix=IS_POSIX), cwd=script_path.parent
     )
 
 
