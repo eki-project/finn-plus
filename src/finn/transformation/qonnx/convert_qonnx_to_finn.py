@@ -99,5 +99,4 @@ class ConvertQONNXtoFINN(Transformation):
         model = model.transform(AvgPoolAndTruncToQuantAvgPool())
         # Remove empty padding if it exists
         model = model.transform(RemoveIdentityOps())
-        model.save("models/metaFi_test3.onnx")
         return model, False
