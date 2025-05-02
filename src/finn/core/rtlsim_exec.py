@@ -28,6 +28,7 @@
 
 import numpy as np
 import os
+import sys
 from qonnx.custom_op.registry import getCustomOp
 
 from finn.util.basic import (
@@ -38,6 +39,8 @@ from finn.util.basic import (
     make_build_dir,
 )
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.util.deps import get_deps_path
+from finn.util.logging import log
 
 try:
     import pyxsi_utils
@@ -170,7 +173,7 @@ def rtlsim_exec_cppxsi(
         single_src_dir = make_build_dir("rtlsim_" + top_module_name + "_")
         debug = not (trace_file is None or trace_file == "")
         rtlsim_so = pyxsi_utils.compile_sim_obj(
-            top_module_name, all_verilog_srcs, single_src_dir, debug=debug
+            top_module_name, all_verilog_srcs, single_src_dir, debug=debug, logger=log
         )
         # save generated lib filename in attribute
         model.set_metadata_prop("rtlsim_so", rtlsim_so[0] + "/" + rtlsim_so[1])
@@ -274,7 +277,7 @@ def rtlsim_exec_cppxsi(
         f.write(fifosim_cpp_template)
 
     vivado_incl_dir = get_vivado_root() + "/data/xsim/include"
-    xsi_include_dir = get_finn_root() + "/deps/pyxsi/src"
+    xsi_include_dir = get_deps_path() / "pyxsi/src"
     # launch g++ to compile the rtlsim executable
     build_cmd = [
         "g++",
@@ -292,8 +295,11 @@ def rtlsim_exec_cppxsi(
     # write compilation command to a file for easy re-running/debugging
     with open(sim_base + "/compile_rtlsim.sh", "w") as f:
         f.write(" ".join(build_cmd))
-    launch_process_helper(build_cmd, cwd=sim_base)
-    assert os.path.isfile(sim_base + "/rtlsim_xsi"), "Failed to compile rtlsim executable"
+    stdout, stderr = launch_process_helper(build_cmd, cwd=sim_base)
+    if not os.path.isfile(sim_base + "/rtlsim_xsi"):
+        print(stdout)
+        print(stderr, file=sys.stderr)
+        raise RuntimeError("Failed to compile rtlsim executable")
 
     # launch the rtlsim executable
     # important to specify LD_LIBRARY_PATH here for XSI to work correctly

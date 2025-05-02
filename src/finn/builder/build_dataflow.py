@@ -147,6 +147,10 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             filename=logpath,
             filemode="w",
         )
+
+    # Capture all warnings.warn calls of qonnx,...
+    logging.captureWarnings(True)
+
     log = logging.getLogger("build_dataflow")
     # mirror stdout and stderr to log
     sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
