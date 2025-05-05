@@ -445,6 +445,7 @@ def test_end2end_mobilenet_rtlsim():
     # assert np.isclose(golden_prob, res_rtlsim_prob[0, 0, 0, :5]).all()
 
 
+@pytest.mark.skip(reason="Excessive runtime (~20 hours) after switch to XSI")
 @pytest.mark.xdist_group(name="end2end_mobilenet")
 @pytest.mark.slow
 @pytest.mark.vivado
