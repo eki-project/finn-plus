@@ -16,16 +16,16 @@ variables:
       - "full_ci"
   CPU_CORES:
     description: "Select number of CPU cores and test workers"
-    value: "64"
+    value: "32"
   PARALLEL_JOBS:
     description: "Number of parallel Slurm array jobs per Benchmark job"
-    value: "2"
+    value: "1"
   SLURM_TIMEOUT:
     description: "Select SLURM timeout"
-    value: "2-0" # [days-hours]
+    value: "1-0" # [days-hours]
   SLURM_PARTITION:
     description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
-    value: "largemem"
+    value: "normal"
   SLURM_QOS:
     description: "Optional QoS option (include --qos, e.g., --qos express)"
     value: ""
