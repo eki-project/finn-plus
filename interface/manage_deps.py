@@ -42,7 +42,7 @@ FINN_DEPS = {
     ),
     "pyxsi": (
         "https://github.com/fpjentzsch/pyxsi.git",
-        "eba6a10ee20266a931538535eb6f55ea3220bce5",
+        "bbef09f9520457186830505a99050256821d5079",
     ),
 }
 
