@@ -38,6 +38,17 @@ from typing import Any, List, Optional
 from finn.util.basic import alveo_default_platform, part_map
 
 
+class LogLevel(str, Enum):
+    """Log levels printed on the commandline for the build process."""
+
+    NONE = "NONE"
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
 class AutoFIFOSizingMethod(str, Enum):
     "Select the type of automatic FIFO sizing strategy."
 
@@ -334,6 +345,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: When True, additional verbose information will be written to the log file.
     #: Otherwise, these additional information will be suppressed.
     verbose: Optional[bool] = False
+
+    #: Log level to be used on the command line for finn-plus internal logging.
+    #: This is different from the log level used for the build process,
+    #: which is controlled using the verbose flag.
+    console_log_level: Optional[LogLevel] = LogLevel.NONE
 
     #: If given, only run the steps in the list. If not, run default steps.
     #: See `default_build_dataflow_steps` for the default list of steps.
