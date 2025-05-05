@@ -143,11 +143,9 @@ def test_aurora_partition_solution_found(
 
 @pytest.mark.parametrize(
     "distribution",
-    [
-        "equal-LUT",
-    ],
+    ["equal-LUT", "equal-FF"],
 )
-@pytest.mark.parametrize("distribution_args", [{"level": 1000}])
+@pytest.mark.parametrize("distribution_args", [{"level": 1000}, {"level": 10000}, {"level": 10e6}])
 @pytest.mark.parametrize("nodes", [*list(range(1, 10))])
 @pytest.mark.parametrize("devices", [*list(range(1, 10))])
 @pytest.mark.parametrize("considered_resources", [["LUT", "FF", "DSP", "BRAM_18K"]])
@@ -156,6 +154,7 @@ def test_aurora_partition_solution_found(
 @pytest.mark.parametrize("ideal_util", [0.75])
 @pytest.mark.parametrize("topology", [MFTopology.CHAIN])
 @pytest.mark.parametrize("inseperable_nodes", [[]])
+@pytest.mark.parametrize("network_ports", [2])
 def test_aurora_partitioning_pure_resource_optimize(
     distribution: str,
     distribution_args: dict,
@@ -167,6 +166,7 @@ def test_aurora_partitioning_pure_resource_optimize(
     max_util: float,
     topology: MFTopology,
     inseperable_nodes: list[int],
+    network_ports: int,
 ) -> None:
     """Test partitioning with the Aurora model based on constructed data instead of real models"""
     dist_type = distribution.split("-")[0]
@@ -188,7 +188,7 @@ def test_aurora_partitioning_pure_resource_optimize(
         root, temps, out = dirs
         res_per_device = available_resources(platforms.platforms[board](), considered_resources)
         part = AuroraPartitioner(
-            network_ports_per_device=2,
+            network_ports_per_device=network_ports,
             strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
             devices=devices,
             nodes=nodes,
@@ -201,8 +201,6 @@ def test_aurora_partitioning_pure_resource_optimize(
             resource_estimates=resource_estimates,
         )
 
-        part.model += part.chosen_device[1] == 1
-
         solution = part.solve(
             100,
             root / "snapshot.txt",
@@ -213,7 +211,11 @@ def test_aurora_partitioning_pure_resource_optimize(
         # Check if a solution was found
         # If the model is impossible assert that no solution was found
         # and return to skip the rest if the test
-        if devices > nodes:
+        overutilized_overall = (
+            nodes * distribution_args["level"] > res_per_device[dist_res] * devices
+        )
+        overutilized_per_device = distribution_args["level"] > max_util * res_per_device[dist_res]
+        if devices > nodes or overutilized_overall or overutilized_per_device:
             assert solution is None
             return
         assert solution is not None
@@ -229,7 +231,126 @@ def test_aurora_partitioning_pure_resource_optimize(
             for restype, res in usage[device].items():
                 assert res <= max_util * res_per_device[restype]
 
+        # Atleast 2 different device IDs (to catch the qonnx nodeattr bug)
+        if devices >= 2:
+            assert len(set(solution.values())) >= 2
 
-def test_enforce_utilization_limit() -> None:
+        # All nodes have an assignment
+        for i in range(nodes):
+            assert i in solution.keys()
+            assert solution[i] is not None
+
+        # Consecutive assignments
+        for i in range(nodes - 1):
+            assert abs(solution[i] - solution[i + 1]) <= 1
+
+        # No device was visited twice
+        if topology == MFTopology.CHAIN:
+            visited = [solution[0]]
+            for i in range(nodes - 1):
+                if solution[i + 1] != solution[i]:
+                    visited.append(solution[i + 1])
+        assert len(set(visited)) == len(visited)
+
+
+@pytest.mark.parametrize(
+    "platform", [platforms.Alveo_NxU280_Platform(), platforms.Zynq7020_Platform()]
+)
+@pytest.mark.parametrize("topology", [MFTopology.CHAIN])
+@pytest.mark.parametrize("network_ports", [2])
+@pytest.mark.parametrize("ideal_max_util", [(0.8, 0.9), (0.9, 1.0), (0.2, 0.8), (0.2, 1.0)])
+def test_enforce_utilization_limit(
+    platform: platforms.Platform,
+    topology: MFTopology,
+    network_ports: int,
+    ideal_max_util: tuple[float, float],
+) -> None:
     """Test that the partitioner upholds the resource utilization limit"""
-    pass
+    test_dir_identifier = f"test_util_limit_{platform.__class__.__name__}" f"_{topology.name}"
+    with custom_build(test_dir_identifier, True) as dirs:
+        root, temps, out = dirs
+        diff = 0.05
+        max_util = ideal_max_util[1]
+        ideal_util = ideal_max_util[0]
+        devices = 2
+        nodes = 2
+        considered_resources = ["LUT", "FF", "DSP", "BRAM_18K"]
+        res_per_device = available_resources(platform, considered_resources)
+        # Device0 is underutilized, Device1 is overutilized
+        resource_estimates = {
+            0: {res: res_per_device[res] * (max_util - diff) for res in considered_resources},
+            1: {res: res_per_device[res] * (max_util + diff) for res in considered_resources},
+        }
+        part = AuroraPartitioner(
+            network_ports_per_device=network_ports,
+            strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
+            devices=devices,
+            nodes=nodes,
+            considered_resources=considered_resources,
+            resources_per_device=res_per_device,
+            inseperable_nodes=[],
+            topology=topology,
+            max_utilization=max_util,
+            ideal_utilization=ideal_util,
+            resource_estimates=resource_estimates,
+        )
+
+        solution = part.solve(
+            100,
+            root / "snapshot.txt",
+            root / "solution.txt",
+            {k: f"node_{k}" for k in range(nodes)},
+        )
+        assert solution is None
+
+
+@pytest.mark.parametrize("devices", [2, 3, 10, 100])
+@pytest.mark.parametrize("nodes", [1, 2, 3, 10, 100, 110])
+@pytest.mark.parametrize("network_ports", [2, 3, 4])
+@pytest.mark.parametrize("topology", [MFTopology.CHAIN])
+@pytest.mark.parametrize(
+    "platform", [platforms.Alveo_NxU280_Platform(), platforms.Zynq7020_Platform()]
+)
+def test_impossible_inseperable_nodes(
+    devices: int, nodes: int, network_ports: int, topology: MFTopology, platform: platforms.Platform
+) -> None:
+    """Check that impossible device node combinations are caught"""
+
+    # TODO: Check all conditions that can fail in the partitioner with regards to
+    # inseperable groups
+
+    test_dir_identifier = f"test_all_inseperable_{devices}"
+    with custom_build(test_dir_identifier, True) as dirs:
+        root, temps, out = dirs
+        max_util = 0.9
+        ideal_util = 0.8
+        considered_resources = ["LUT", "FF", "DSP", "BRAM_18K"]
+        res_per_device = available_resources(platform, considered_resources)
+        resource_estimates = {
+            node: {res: ideal_util * res_per_device[res] for res in considered_resources}
+            for node in range(nodes)
+        }
+
+        # Ignore working configs, only test wrong configurations
+        if (nodes < devices) or ((devices == nodes) and (devices > 1)):
+            with pytest.raises(Exception):
+                part = AuroraPartitioner(
+                    network_ports_per_device=network_ports,
+                    strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
+                    devices=devices,
+                    nodes=nodes,
+                    considered_resources=considered_resources,
+                    resources_per_device=res_per_device,
+                    inseperable_nodes=[list(range(devices))],
+                    topology=topology,
+                    max_utilization=max_util,
+                    ideal_utilization=ideal_util,
+                    resource_estimates=resource_estimates,
+                )
+                solution = part.solve(
+                    100,
+                    root / "snapshot.txt",
+                    root / "solution.txt",
+                    {k: f"node_{k}" for k in range(nodes)},
+                )
+                assert solution is None

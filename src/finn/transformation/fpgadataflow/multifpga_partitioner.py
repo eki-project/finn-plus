@@ -205,6 +205,17 @@ class AuroraPartitioner(Partitioner):
         self.limit_nodes_per_device = limit_nodes_per_device
         self.model = Model()
         self.model.verbose = 1
+        if (
+            ideal_utilization is not None
+            and max_utilization is not None
+            and ideal_utilization > max_utilization
+        ):
+            msg = (
+                f"Cannot create partition if ideal utilization is set greater than max "
+                f"utilization ({ideal_utilization} > {max_utilization})"
+            )
+            log.critical(msg)
+            raise Exception(msg)
 
         log.debug("Creating partitioning model")
 
@@ -235,6 +246,42 @@ class AuroraPartitioner(Partitioner):
             )
 
         # Grouped nodes need to stay together
+        # First check that no group is too large
+        if len(self.inseperable_nodes) > 0:
+            nodes_in_groups = sum(len(group) for group in self.inseperable_nodes)
+            max_devices_possible = nodes - nodes_in_groups + len(self.inseperable_nodes)
+            for i, group in enumerate(self.inseperable_nodes):
+                # 1. Single group larger than the model itself
+                if len(group) > nodes:
+                    msg = (
+                        f"Group {i} of inseperable nodes is larger than the total set of all "
+                        f"nodes in the model. (Has {len(group)} nodes, but only {nodes} "
+                        "nodes in the graph!)"
+                    )
+                    log.critical(msg)
+                    raise Exception(msg)  # TODO
+                # 2. Num. nodes == Num. groups. Leads to atleast 1 empty device
+                if len(group) == nodes and devices > 1:
+                    msg = (
+                        f"Group {i} has the same number of nodes as the graph in total. However "
+                        "since more than 1 device is used, this would result in one device "
+                        "being completely empty, leading to an invalid partitioning model."
+                    )
+                    log.critical(msg)
+                    raise Exception(msg)  # TODO
+            # 3. Not enough devices to have this many nodes in groups
+            if devices > max_devices_possible:
+                msg = (
+                    f"Requested number of FPGAs ({devices}) is larger than the number of "
+                    f"devices possible. {nodes - nodes_in_groups} nodes can be alone on a "
+                    f"device, and {len(self.inseperable_nodes)} groups of nodes can be on a "
+                    f"device. The largest possible device count partitioning would "
+                    f"result in {max_devices_possible} devices"
+                )
+                log.critical(msg)
+                raise Exception(msg)
+
+        # Nodes in groups stay together
         for group in self.inseperable_nodes:
             for node in range(len(group) - 1):
                 self.model += self.chosen_device[group[node]] == self.chosen_device[group[node + 1]]
