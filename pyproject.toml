@@ -10,8 +10,6 @@ maintainers = [
 readme = "README.md"
 
 [tool.poetry]
-version = "0.0.0"
-
 packages = [
     { include = "finn", from = "src" },
     { include = "finn-rtllib" }
@@ -20,6 +18,7 @@ include = [
     "run_finn.py",
     "src/finn/qnn-data/cpp/*",
 ]
+version = "0.0.0"
 
 [tool.poetry.requires-plugins]
 poetry-dynamic-versioning = { version = ">=1.0.0,<2.0.0", extras = ["plugin"] }
