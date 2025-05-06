@@ -35,11 +35,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.custom_op.registry import getCustomOp
-from qonnx.transformation.general import (
-    ApplyConfig,
-    GiveReadableTensorNames,
-    GiveUniqueNodeNames,
-)
+from qonnx.transformation.general import ApplyConfig, GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
@@ -49,17 +45,11 @@ import finn.core.onnx_exec as oxe
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.create_dataflow_partition import (
-    CreateDataflowPartition,
-)
+from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
-from finn.transformation.fpgadataflow.minimize_accumulator_width import (
-    MinimizeAccumulatorWidth,
-)
-from finn.transformation.fpgadataflow.minimize_weight_bit_width import (
-    MinimizeWeightBitWidth,
-)
+from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
+from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
@@ -252,7 +242,7 @@ def test_fpgadataflow_vvau(
 
     input_dict = prepare_inputs(x_vvau)
     y_hwop = oxe.execute_onnx(model, input_dict)["global_out"]
-    model = model.transform(SpecializeLayers("xc7z020clg400-1"))
+    model = model.transform(SpecializeLayers("xczu7ev-ffvc1156-2-e"))
 
     if exec_mode == "cppsim":
         model = model.transform(SetExecMode("cppsim"))
@@ -261,7 +251,7 @@ def test_fpgadataflow_vvau(
     elif exec_mode == "rtlsim":
         model = model.transform(SetExecMode("rtlsim"))
         model = model.transform(GiveUniqueNodeNames())
-        model = model.transform(PrepareIP("xc7z020clg400-1", 5))
+        model = model.transform(PrepareIP("xczu7ev-ffvc1156-2-e", 5))
         model = model.transform(HLSSynthIP())
         model = model.transform(PrepareRTLSim())
     else:
@@ -301,6 +291,20 @@ def test_fpgadataflow_vvau(
         exp_cycles = exp_cycles_dict[node.name]
         assert np.isclose(exp_cycles, cycles_rtlsim, atol=10)
         assert exp_cycles != 0
+
+        # if rtlsim and internal_decoupled mode is selected, also run stitched IP rtlsim
+        if mem_mode == "internal_decoupled":
+            model = model.transform(InsertAndSetFIFODepths("xczu7ev-ffvc1156-2-e", 5))
+            model = model.transform(PrepareIP("xczu7ev-ffvc1156-2-e", 5))
+            model = model.transform(HLSSynthIP())
+            model = model.transform(CreateStitchedIP("xczu7ev-ffvc1156-2-e", 5))
+
+            model.set_metadata_prop("exec_mode", "rtlsim")
+            y_expected = oxe.execute_onnx(model, input_dict)["global_out"]
+
+            assert (
+                y_produced == y_expected
+            ).all(), "Output of ONNX model not matching output of stitched-IP RTL model!"
 
 
 def make_single_dw_conv_modelwrapper(conv_config, idt, wdt):

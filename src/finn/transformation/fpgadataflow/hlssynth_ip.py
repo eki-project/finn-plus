@@ -29,10 +29,10 @@
 
 import os
 import qonnx.custom_op.registry as registry
-import warnings
 from qonnx.transformation.base import NodeLocalTransformation
 
 from finn.util.fpgadataflow import is_hls_node
+from finn.util.logging import log
 
 
 class HLSSynthIP(NodeLocalTransformation):
@@ -71,7 +71,7 @@ class HLSSynthIP(NodeLocalTransformation):
                     # call the compilation function for this node
                     inst.ipgen_singlenode_code()
                 else:
-                    warnings.warn("Using pre-existing IP for %s" % node.name)
+                    log.info(f"Using pre-existing IP for {node.name}")
                 # ensure that executable path is now set
                 assert (
                     inst.get_nodeattr("ipgen_path") != ""

@@ -28,12 +28,12 @@
 
 import numpy as np
 import onnxruntime as rt
-import warnings
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import qonnx_make_model
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class UpsampleNearestNeighbour(HWCustomOp):
@@ -101,13 +101,6 @@ class UpsampleNearestNeighbour(HWCustomOp):
         normal_oshape = list(self.get_normal_output_shape())
         return tuple(normal_oshape)
 
-    def make_shape_compatible_op(self, model):
-        exp_ishape = self.get_normal_input_shape()
-        oshape = self.get_normal_output_shape()
-        ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
-        assert ishape == exp_ishape, "Unexpect input shape for UpsampleNearestNeighbour_Batch."
-        return super().make_const_shape_op(oshape)
-
     def infer_node_datatype(self, model):
         node = self.onnx_node
         # data type stays the same
@@ -118,12 +111,9 @@ class UpsampleNearestNeighbour(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         model.set_tensor_datatype(node.output[0], idt)
-
-    def verify_node(self):
-        pass
 
     def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""
@@ -160,7 +150,7 @@ class UpsampleNearestNeighbour(HWCustomOp):
         elif ishape[1] > 1 and ishape[2] == 1:
             scales_val = [1, int(round(odim / idim)), 1, 1]
         else:
-            warnings.warn(
+            log.warning(
                 """HW abstraction layer for Upsample cannot be executed.
             Upsampling only supported for 1D H, or 2D square scaling"""
             )

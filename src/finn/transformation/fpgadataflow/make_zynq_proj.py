@@ -36,9 +36,7 @@ from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNode
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from shutil import copy
 
-from finn.transformation.fpgadataflow.create_dataflow_partition import (
-    CreateDataflowPartition,
-)
+from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -48,6 +46,8 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir, pynq_native_port_width, pynq_part_map
+from finn.util.deps import get_deps_path
+from finn.util.logging import log
 
 from . import templates
 
@@ -88,9 +88,10 @@ class MakeZYNQProject(Transformation):
     value.
     """
 
-    def __init__(self, platform, enable_debug=False):
+    def __init__(self, platform, period_ns, enable_debug=False):
         super().__init__()
         self.platform = platform
+        self.period_ns = period_ns
         self.enable_debug = 1 if enable_debug else 0
 
     def apply(self, model):
@@ -100,7 +101,6 @@ class MakeZYNQProject(Transformation):
         odma_idx = 0
         aximm_idx = 0
         axilite_idx = 0
-        global_clk_ns = 0
         instance_names = {}
         for node in model.graph.node:
             assert node.op_type == "StreamingDataflowPartition", "Invalid link graph"
@@ -127,11 +127,6 @@ class MakeZYNQProject(Transformation):
                 "[current_project]" % ip_dirs_str
             )
             config.append("update_ip_catalog -rebuild -scan_changes")
-
-            # get metadata property clk_ns to calculate clock frequency
-            clk_ns = float(kernel_model.get_metadata_prop("clk_ns"))
-            if clk_ns > global_clk_ns:
-                global_clk_ns = clk_ns
 
             ifnames = eval(kernel_model.get_metadata_prop("vivado_stitch_ifnames"))
 
@@ -232,23 +227,25 @@ class MakeZYNQProject(Transformation):
         vivado_pynq_proj_dir = make_build_dir(prefix="vivado_zynq_proj_")
         model.set_metadata_prop("vivado_pynq_proj", vivado_pynq_proj_dir)
 
-        fclk_mhz = int(1 / (global_clk_ns * 0.001))
+        fclk_mhz = int(1 / (self.period_ns * 0.001))
 
         # create a TCL recipe for the project
         ipcfg = vivado_pynq_proj_dir + "/ip_config.tcl"
         config = "\n".join(config) + "\n"
         with open(ipcfg, "w") as f:
             f.write(
-                templates.custom_zynq_shell_template
-                % (
-                    fclk_mhz,
-                    axilite_idx,
-                    aximm_idx,
-                    self.platform,
-                    pynq_part_map[self.platform],
-                    config,
-                    self.enable_debug,
-                )
+                (
+                    templates.custom_zynq_shell_template
+                    % (
+                        fclk_mhz,
+                        axilite_idx,
+                        aximm_idx,
+                        self.platform,
+                        pynq_part_map[self.platform],
+                        config,
+                        self.enable_debug,
+                    )
+                ).replace("$BOARDFILES$", str(get_deps_path() / "board_files"))
             )
 
         # create a TCL recipe for the project
@@ -262,8 +259,13 @@ class MakeZYNQProject(Transformation):
 
         # call the synthesis script
         bash_command = ["bash", synth_project_sh]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
+        process_compile = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        _, stderr_data = process_compile.communicate()
+        stderr_stripped = stderr_data.decode().strip()
+        if stderr_stripped != "" and stderr_stripped is not None:
+            log.critical(stderr_stripped)  # Decode bytes and log as critical
         bitfile_name = vivado_pynq_proj_dir + "/finn_zynq_link.runs/impl_1/top_wrapper.bit"
         if not os.path.isfile(bitfile_name):
             raise Exception(
@@ -349,7 +351,9 @@ class ZynqBuild(Transformation):
             kernel_model.set_metadata_prop("platform", "zynq-iodma")
             kernel_model.save(dataflow_model_filename)
         # Assemble design from IPs
-        model = model.transform(MakeZYNQProject(self.platform, enable_debug=self.enable_debug))
+        model = model.transform(
+            MakeZYNQProject(self.platform, self.period_ns, enable_debug=self.enable_debug)
+        )
 
         # set platform attribute for correct remote execution
         model.set_metadata_prop("platform", "zynq-iodma")

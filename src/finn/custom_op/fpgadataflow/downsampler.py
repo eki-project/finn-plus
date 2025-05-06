@@ -27,7 +27,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import warnings
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
@@ -35,6 +34,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class DownSampler(HWCustomOp):
@@ -129,13 +129,6 @@ class DownSampler(HWCustomOp):
         folded_oshape = normal_oshape[:-1] + [fold, simd]
         return tuple(folded_oshape)
 
-    def make_shape_compatible_op(self, model):
-        exp_ishape = self.get_normal_input_shape()
-        oshape = self.get_normal_output_shape()
-        ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
-        assert ishape == exp_ishape, "Unexpect input shape for DownSampler."
-        return super().make_const_shape_op(oshape)
-
     def infer_node_datatype(self, model):
         node = self.onnx_node
         # data type stays the same
@@ -146,12 +139,9 @@ class DownSampler(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         model.set_tensor_datatype(node.output[0], idt)
-
-    def verify_node(self):
-        pass
 
     def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""

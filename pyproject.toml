@@ -1,0 +1,128 @@
+[tool.poetry]
+name = "finn"
+version = "0.10.1"
+description = ""
+authors = ["Yaman Umuroglu"]
+readme = "README.md"
+
+packages = [
+    { include = "finn", from = "src" },
+    { include = "finn-rtllib" }
+]
+include = [
+    "run_finn.py",
+    "src/finn/qnn-data/cpp/*",
+]
+
+
+[tool.poetry.scripts]
+finn = "run_finn:main"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.12"
+bitstring = "3.1.7"
+clize = "5.0.1"
+dataclasses-json = "0.5.7"
+gspread = "3.6.0"
+importlib-resources = "6.1.0"
+ipython = "8.12.2"
+numpy = "1.24.1"
+onnx = "1.17.0"
+onnxruntime = "1.18.1"
+pre-commit = "3.3.2"
+protobuf = "3.20.3"
+psutil = "5.9.4"
+pyscaffold = "4.6"
+scipy = "1.10.1"
+setupext-janitor = "^1.1.2"
+sigtools = "4.0.1"
+toposort = "1.7.0"
+vcdvcd = "1.0.5"
+wget = "3.2"
+pygments = "2.14.0"
+torch = "2.6.0"
+torchvision = "0.21.0"
+ipykernel = "6.21.2"
+jupyter = "1.0.0"
+markupsafe = "2.0.1"
+matplotlib = "3.7.0"
+pytest-dependency = "0.6.0"
+pytest-parallel = "0.1.1"
+netron = ">5.0.0"
+pandas = "1.5.3"
+scikit-learn = "1.2.1"
+tqdm = "4.64.1"
+pytest = "8.3.4"
+pytest-metadata = "3.1.1"
+pytest-html = "4.1.1"
+pytest-html-merger = "0.1.0"
+pytest-cov = "6.0.0"
+pytest-forked = "1.6.0"
+pytest-rerunfailures = "15.0"
+dvc = { version = "3.59.1", extras = ["webdav"] }
+dvclive = {version = "3.48.2", extras = ["image"] }
+deap = "1.3.1"
+pyyaml = "6.0.1"
+mip = "1.13.0"
+networkx = "2.8"
+future-annotations = "1.0.0"
+dependencies = "2.0.1"
+tokenize-rt = "4.2.1"
+tclwrapper = "0.0.1"
+setuptools = ">40.8.0"
+pytest-xdist = {version = "3.6.1", extras = ["setproctitle"]}
+
+qonnx = { git = "https://github.com/iksnagreb/qonnx.git", rev = "3d3d8964dbc5355d5c9be855d87b7b442508e3a4" }
+brevitas = { git = "https://github.com/iksnagreb/brevitas.git", rev = "003f9f4070c20639790c7b406a28612a089fc502" }
+dataset_loading = { git = "https://github.com/fbcotter/dataset_loading.git", tag="0.0.4" }
+termcolor = "^2.5.0"
+rich = "^13.9.4"
+click = "^8.1.8"
+onnxoptimizer = "^0.3.13"
+mashumaro = {extras = ["yaml"], version = "^3.15"}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+addopts = [ "--verbose" ]
+markers = [
+   "slow: marks tests as slow",
+   "vivado: mark tests that require Vivado or Vivado HLS",
+   "vitis: mark tests that require Vitis",
+   "board: mark tests that require a PYNQ board",
+   "brevitas_export : mark tests that test brevitas export functionality",
+   "streamline: mark tests that test streamlining functionality",
+   "util: mark tests that test util functions",
+   "transform: mark tests that test transformations (before hls layers)",
+   "fpgadataflow: mark tests related to hls layers",
+   "end2end: mark tests that run the end2end flow",
+   "notebooks: mark tests that execute all Jupyter notebooks",
+   "sanity_bnn: mark tests that execute the sanity BNN test",
+   "bnn_u250: mark tests that execute U250 BNN tests",
+   "bnn_kv260: mark tests that execute KV260 BNN tests",
+   "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
+   "bnn_zcu104: mark tests that execute ZCU104 BNN tests"
+]
+norecursedirs = [
+    "dist",
+    "build",
+    ".tox"
+]
+testpaths = "tests"
+
+[tool.isort]
+line_length=100
+indent='    '
+skip=[".tox",".venv","build","dist"]
+known_standard_library="setuptools"
+known_test="pytest"
+known_first_party="finn"
+sections=["FUTURE","STDLIB","TEST","THIRDPARTY","FIRSTPARTY","LOCALFOLDER"]
+default_section="THIRDPARTY"
+multi_line_output=3
+profile="black"
+ignore_comments=true
+ignore_whitespace=true
+honor_noqa=true

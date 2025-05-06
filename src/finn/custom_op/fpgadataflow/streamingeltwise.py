@@ -28,10 +28,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class StreamingEltwise(HWCustomOp):
@@ -99,15 +99,6 @@ class StreamingEltwise(HWCustomOp):
     def get_folded_output_shape(self, ind=0):
         return self.get_folded_input_shape()
 
-    def make_shape_compatible_op(self, model):
-        exp_ishape = self.get_normal_input_shape()
-        oshape = self.get_normal_output_shape()
-        ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
-        assert ishape == exp_ishape, "Unexpected input1 shape."
-        ishape = tuple(model.get_tensor_shape(self.onnx_node.input[1]))
-        assert ishape == exp_ishape, "Unexpected input2 shape."
-        return super().make_const_shape_op(oshape)
-
     def infer_node_datatype(self, model):
         node = self.onnx_node
         idt0 = model.get_tensor_datatype(node.input[0])
@@ -117,7 +108,7 @@ class StreamingEltwise(HWCustomOp):
                 str(self.get_input_datatype(0)),
                 str(idt0),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType0", idt0.name)
         idt1 = model.get_tensor_datatype(node.input[1])
         if idt1 != self.get_input_datatype(1):
@@ -126,14 +117,11 @@ class StreamingEltwise(HWCustomOp):
                 str(self.get_input_datatype(1)),
                 str(idt1),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType1", idt1.name)
         # enforce output data type (calculated based on idt)
         odt = self.get_output_datatype()
         model.set_tensor_datatype(self.onnx_node.output[0], odt)
-
-    def verify_node(self):
-        pass
 
     def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""
@@ -210,7 +198,6 @@ class StreamingEltwise(HWCustomOp):
 
     def get_verilog_top_module_intf_names(self):
         intf_names = super().get_verilog_top_module_intf_names()
-        sname = self.hls_sname()
         swidth = self.get_instream_width_padded()
-        intf_names["s_axis"] = [(x + "_" + sname, swidth) for x in ["in0", "in1"]]
+        intf_names["s_axis"] = [(x + "_V", swidth) for x in ["in0", "in1"]]
         return intf_names
