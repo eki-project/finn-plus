@@ -185,8 +185,8 @@ if __name__ == "__main__":
             exp = test_labels[i]
             obuf_normal = driver.execute(ibuf_normal)
             #obuf_normal = obuf_normal.reshape(bsize, -1)[:,0]
-            #TODO: detect automatically if argmax is needed or output is already top-1
-            obuf_normal = np.argmax(obuf_normal, axis=1)
+            if obuf_normal.shape[1] > 1:
+                obuf_normal = np.argmax(obuf_normal, axis=1)
             ret = np.bincount(obuf_normal.flatten() == exp.flatten(), minlength=2)
             nok += ret[0]
             ok += ret[1]
@@ -203,8 +203,8 @@ if __name__ == "__main__":
             ibuf_normal = imgs.reshape(driver.ishape_normal())
             obuf_normal = driver.execute(ibuf_normal)
             #obuf_normal = obuf_normal.reshape(bsize, -1)[:,0]
-            #TODO: detect automatically if argmax is needed or output is already top-1
-            obuf_normal = np.argmax(obuf_normal, axis=1)
+            if obuf_normal.shape[1] > 1:
+                obuf_normal = np.argmax(obuf_normal, axis=1)
             ret = np.bincount(obuf_normal.flatten() == exp.flatten(), minlength=2)
             nok += ret[0]
             ok += ret[1]
