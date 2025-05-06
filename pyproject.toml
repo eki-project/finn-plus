@@ -1,9 +1,16 @@
-[tool.poetry]
-name = "finn"
-version = "0.10.1"
-description = ""
-authors = ["Yaman Umuroglu"]
+[project]
+name = "finn-plus"
+dynamic = ["version"]
+maintainers = [
+  {name = "Felix Jentzsch", email = "felix.jentzsch@upb.de"},
+  {name = "Christoph Berganski", email = "christoph.berganski@upb.de"},
+  {name = "Linus Jungemann", email = "linus.jungemann@upb.de"},
+  {name = "Bjarne Wintermann", email = "bjarne.wintermann@upb.de"}
+]
 readme = "README.md"
+
+[tool.poetry]
+version = "0.0.0"
 
 packages = [
     { include = "finn", from = "src" },
@@ -14,6 +21,11 @@ include = [
     "src/finn/qnn-data/cpp/*",
 ]
 
+[tool.poetry.requires-plugins]
+poetry-dynamic-versioning = { version = ">=1.0.0,<2.0.0", extras = ["plugin"] }
+
+[tool.poetry-dynamic-versioning]
+enable = true
 
 [tool.poetry.scripts]
 finn = "run_finn:main"
@@ -81,8 +93,8 @@ onnxoptimizer = "^0.3.13"
 mashumaro = {extras = ["yaml"], version = "^3.15"}
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
 
 [tool.pytest.ini_options]
 addopts = [ "--verbose" ]
