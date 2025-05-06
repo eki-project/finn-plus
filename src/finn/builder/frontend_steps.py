@@ -57,15 +57,12 @@ import finn.transformation.streamline.absorb as absorb
 import finn.transformation.streamline.collapse_repeated as collapse
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.builder.build_dataflow_steps import verify_step
+from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.qonnx.fold_quant_weights import FoldQuantWeights
-from finn.transformation.qonnx.infer_quant_avg_pool_2d import (
-    AvgPoolAndTruncToQuantAvgPool,
-)
-from finn.transformation.qonnx.quant_act_to_multithreshold import (
-    default_filter_function_generator,
-)
+from finn.transformation.qonnx.infer_quant_avg_pool_2d import AvgPoolAndTruncToQuantAvgPool
+from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 
 
@@ -172,7 +169,6 @@ def step_convert_to_channels_last(model: ModelWrapper, cfg: DataflowBuildConfig)
 def step_convert_to_thresholds_new(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(FoldTransposeIntoQuantInit())
     model = model.transform(FoldQuantWeights())
-    model = model.transform(FoldConstants())
     model = model.transform(absorb.FactorOutMulSignMagnitude())
     model = model.transform(absorb.Absorb1BitMulIntoMatMul())
     model = model.transform(absorb.Absorb1BitMulIntoConv())
@@ -180,7 +176,7 @@ def step_convert_to_thresholds_new(model: ModelWrapper, cfg: DataflowBuildConfig
 
     trn = QuantToMultiThreshold(
         range_info=cfg.input_range_info[0],
-        rescale=0.01,
+        rescale=0.05,
         assume_monotonic=True,
         quant_filter=default_filter_function_generator(
             max_multithreshold_bit_width=cfg.max_multithreshold_bit_width
@@ -281,8 +277,11 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(to_hw.InferElementwiseBinaryOperation())
     model = model.transform(to_hw.InferReLUAsElementwiseMax())
     model = model.transform(to_hw.InferQuantAsFloat2Int())
+    model = model.transform(MinimizeAccumulatorWidth())
     # DuplicateStreams for forking outputs
     model = model.transform(to_hw.InferDuplicateStreamsLayer())
+    # TopK to LabelSelect
+    model = model.transform(to_hw.InferLabelSelectLayer())
     # get rid of Tranpose -> Tranpose identity seq
     # TODO this should not be necessary after chans-last conversion
     model = model.transform(absorb.AbsorbConsecutiveTransposes())
