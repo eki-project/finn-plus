@@ -8,7 +8,6 @@ from pathlib import Path
 from rich.console import Console
 
 from interface import DEBUG
-from interface.manage_deps import REQUIRED_VERILATOR_VERSION, check_verilator_version
 
 
 def error(msg: str) -> None:
@@ -42,27 +41,6 @@ def assert_path_valid(p: Path) -> None:
     if not p.exists():
         Console().print(f"[bold red]File or directory {p} does not exist. Stopping...[/bold red]")
         sys.exit(1)
-
-
-def check_verilator() -> None:
-    """Check that verilator exists and has the right version. Stop execution if not"""
-    console = Console()
-    verilator_version = check_verilator_version()
-    if verilator_version is None:
-        console.print(
-            "[bold red]ERROR: Verilator could not be found or executed properly after "
-            "the local installation. Stopping... [/bold red]"
-        )
-        sys.exit(1)
-    elif verilator_version is not None and verilator_version < REQUIRED_VERILATOR_VERSION:
-        console.print(
-            f"[bold orange1]WARNING: [/bold orange1][orange3]It seems you are using verilator "
-            f"version [bold]{verilator_version}[/bold]. "
-            f"The recommended version is [bold]{REQUIRED_VERILATOR_VERSION}[/bold]. "
-            "FIFO-Sizing or simulations might fail due to verilator errors.[/orange3]"
-        )
-    else:
-        console.print(f"[bold green]Verilator version {verilator_version} found![/bold green]")
 
 
 def set_synthesis_tools_paths() -> None:

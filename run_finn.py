@@ -20,7 +20,6 @@ from interface.interface_globals import (
 )
 from interface.interface_utils import (
     assert_path_valid,
-    check_verilator,
     error,
     resolve_build_dir,
     resolve_deps_path,
@@ -30,7 +29,7 @@ from interface.interface_utils import (
     warning,
     write_yaml,
 )
-from interface.manage_deps import update_dependencies
+from interface.manage_deps import install_pyxsi, update_dependencies
 from interface.manage_tests import run_test
 
 
@@ -61,12 +60,22 @@ def prepare_finn(
         status(f"Using dependency path: {deps_path}")
     os.environ["FINN_DEPS"] = str(deps_path.absolute())
 
+    if "PYTHONPATH" not in os.environ.keys():
+        os.environ["PYTHONPATH"] = ""
+
     # Update / Install all dependencies
     update_dependencies(deps_path)
-    check_verilator()
 
     # Check synthesis tools
     set_synthesis_tools_paths()
+
+    # Install pyXSI
+    pyxsi_status = install_pyxsi()
+    if pyxsi_status:
+        status("pyXSI installed successfully.")
+    else:
+        error("pyXSI installation failed.")
+        sys.exit(1)
 
     # Add OHMYXILINX?
     os.environ["OHMYXILINX"] = str((deps_path / "oh-my-xilinx").absolute())
@@ -167,7 +176,7 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
         f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
     )
     subprocess.run(
-        shlex.split(f"python3 {script_path.name}", posix=IS_POSIX), cwd=script_path.parent
+        shlex.split(f"{sys.executable} {script_path.name}", posix=IS_POSIX), cwd=script_path.parent
     )
 
 

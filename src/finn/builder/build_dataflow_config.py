@@ -38,6 +38,17 @@ from typing import Any, List, Optional
 from finn.util.basic import alveo_default_platform, part_map
 
 
+class LogLevel(str, Enum):
+    """Log levels printed on the commandline for the build process."""
+
+    NONE = "NONE"
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
 class AutoFIFOSizingMethod(str, Enum):
     "Select the type of automatic FIFO sizing strategy."
 
@@ -279,13 +290,17 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: setting the FIFO sizes.
     auto_fifo_strategy: Optional[AutoFIFOSizingMethod] = AutoFIFOSizingMethod.LARGEFIFO_RTLSIM
 
-    #: Avoid using C++ rtlsim for auto FIFO sizing and rtlsim throughput test
-    #: if set to True, always using Python instead
-    force_python_rtlsim: Optional[bool] = False
-
     #: Memory resource type for large FIFOs
     #: Only relevant when `auto_fifo_depths = True`
     large_fifo_mem_style: Optional[LargeFIFOMemStyle] = LargeFIFOMemStyle.AUTO
+
+    #: Enable input throttling for simulation-based FIFO sizing
+    #: Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM
+    fifosim_input_throttle: Optional[bool] = True
+
+    #: Enable saving waveforms from simulation-based FIFO sizing
+    #: Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM
+    fifosim_save_waveform: Optional[bool] = False
 
     #: Target clock frequency (in nanoseconds) for Vitis HLS synthesis.
     #: e.g. `hls_clk_period_ns=5.0` will target a 200 MHz clock.
@@ -330,6 +345,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: When True, additional verbose information will be written to the log file.
     #: Otherwise, these additional information will be suppressed.
     verbose: Optional[bool] = False
+
+    #: Log level to be used on the command line for finn-plus internal logging.
+    #: This is different from the log level used for the build process,
+    #: which is controlled using the verbose flag.
+    console_log_level: Optional[LogLevel] = LogLevel.NONE
 
     #: If given, only run the steps in the list. If not, run default steps.
     #: See `default_build_dataflow_steps` for the default list of steps.

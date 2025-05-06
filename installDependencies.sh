@@ -22,7 +22,15 @@ sudo apt-get update && sudo apt-get install -y \
     libfl2 \
     libfl-dev \
     zlib1g \
-    zlib1g-dev
+    zlib1g-dev \
+    pybind11-dev \
+    libfmt-dev \
+    libboost-dev \
+    libjansson-dev \
+    libgetdata-dev \
+    g++-10 \
+    libpython3.10-dev \
+    python3.10-dev
 
 xrt_found=$(dpkg -l | grep xrt | wc -l)
 if [ $xrt_found -eq 0 ]; then
