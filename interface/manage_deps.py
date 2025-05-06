@@ -201,10 +201,10 @@ def update_dependencies(location: Path) -> None:
                 shutil.rmtree(target, ignore_errors=True)
                 run_silent(f"git clone {giturl} {target}", None)
                 run_silent(f"git checkout {commit}", target)
-                if install:
-                    run_silent(f"{sys.executable} -m pip install {target}", None)
                 success, read_commit = check_commit(target, commit)
             if success:
+                if install:
+                    run_silent(f"{sys.executable} -m pip install {target}", None)
                 update_status(pkg_name, "Dependency ready!", "green")
             else:
                 update_status(
