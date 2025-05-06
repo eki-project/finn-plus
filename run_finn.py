@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 from rich.console import Console
 
-from finn.builder.build_dataflow import build_dataflow_cfg
-from finn.builder.build_dataflow_config import DataflowBuildConfig
 from interface import IS_POSIX
 from interface.interface_globals import (
     _resolve_settings_path,
@@ -154,6 +152,9 @@ def build(
     config: str,
     model: str,
 ) -> None:
+    from finn.builder.build_dataflow import build_dataflow_cfg
+    from finn.builder.build_dataflow_config import DataflowBuildConfig
+
     config_path = Path(config).expanduser()
     model_path = Path(model).expanduser()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
