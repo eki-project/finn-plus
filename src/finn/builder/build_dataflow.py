@@ -39,6 +39,7 @@ import sys
 import time
 from qonnx.core.modelwrapper import ModelWrapper
 from rich.console import Console
+from rich.logging import RichHandler
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
@@ -191,10 +192,30 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             filename=logpath,
             filemode="w",
         )
+
+    # Capture all warnings.warn calls of qonnx,...
+    logging.captureWarnings(True)
+
     log = logging.getLogger("build_dataflow")
     # mirror stdout and stderr to log
     sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
     sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
+
+    if cfg.console_log_level != "NONE":
+        # set up console logger
+        console = RichHandler(show_time=False, show_path=False)
+
+        if cfg.console_log_level == "DEBUG":
+            console.setLevel(logging.DEBUG)
+        elif cfg.console_log_level == "INFO":
+            console.setLevel(logging.INFO)
+        elif cfg.console_log_level == "WARNING":
+            console.setLevel(logging.WARNING)
+        elif cfg.console_log_level == "ERROR":
+            console.setLevel(logging.ERROR)
+        elif cfg.console_log_level == "CRITICAL":
+            console.setLevel(logging.CRITICAL)
+        logging.getLogger().addHandler(console)
 
     # start processing
     step_num = 1
