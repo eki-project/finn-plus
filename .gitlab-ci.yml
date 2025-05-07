@@ -150,6 +150,8 @@ FINN Test Suite 2022.2:
     - shopt -s expand_aliases
     - alias poetry=poetry-install/bin/poetry
   script:
+    # launch additional monitoring
+    - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
     # create virtual environment (.venv/) and install Python dependencies
     - poetry install
     # launch FINN, which will try to fetch (cached) additional dependencies
