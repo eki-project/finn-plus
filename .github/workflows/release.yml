@@ -20,7 +20,7 @@ jobs:
       - name: Config
         run: poetry config repositories.test https://test.pypi.org/legacy/
       - name: Build
-        run: | 
+        run: |
           poetry install
           poetry build
       - name: Publish
