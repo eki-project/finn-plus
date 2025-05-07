@@ -2,6 +2,7 @@ import pytest
 
 import nbformat
 import os
+from _pytest.mark.structures import ParameterSet
 from nbconvert.preprocessors import ExecutePreprocessor
 
 from finn.util.basic import get_finn_root
@@ -84,22 +85,28 @@ bnn_notebooks = [
 
 
 @pytest.mark.notebooks
-@pytest.mark.parametrize(
-    "notebook", basics_notebooks + advanced_notebooks + cyber_notebooks + bnn_notebooks
-)
-def test_notebook_exec(notebook, request):
-    with open(notebook) as f:
-        # Set different NETRON_PORT for each xdist group to avoid conflicts
-        xdist_groups = ["notebooks_general", "notebooks_cybsec", "notebooks_cnv", "notebooks_tfc"]
-        for mark in request.node.own_markers:
-            if mark.name == "xdist_group":
-                group = mark.kwargs["name"]
-                os.environ["NETRON_PORT"] = str(8081 + xdist_groups.index(group))
-                break
+class Test_notebooks:
+    @pytest.mark.parametrize(
+        "notebook", basics_notebooks + advanced_notebooks + cyber_notebooks + bnn_notebooks
+    )
+    def test_notebook_exec(self, notebook: ParameterSet, request):
+        with open(notebook) as f:
+            # Set different NETRON_PORT for each xdist group to avoid conflicts
+            xdist_groups = [
+                "notebooks_general",
+                "notebooks_cybsec",
+                "notebooks_cnv",
+                "notebooks_tfc",
+            ]
+            for mark in request.node.own_markers:
+                if mark.name == "xdist_group":
+                    group = mark.kwargs["name"]
+                    os.environ["NETRON_PORT"] = str(8081 + xdist_groups.index(group))
+                    break
 
-        nb = nbformat.read(f, as_version=4)
-        ep = ExecutePreprocessor(timeout=notebook_timeout_seconds, kernel_name="python3")
-        try:
-            assert ep.preprocess(nb) is not None, f"Got empty notebook for {notebook}"
-        except Exception:
-            assert False, f"Failed executing {notebook}"
+            nb = nbformat.read(f, as_version=4)
+            ep = ExecutePreprocessor(timeout=notebook_timeout_seconds, kernel_name="python3")
+            try:
+                assert ep.preprocess(nb) is not None, f"Got empty notebook for {notebook}"
+            except Exception:
+                assert False, f"Failed executing {notebook}"

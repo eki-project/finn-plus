@@ -38,6 +38,25 @@
 import pytest
 
 import onnxruntime as ort
+import os
+import shutil
+import tempfile
+
+
+@pytest.fixture(scope="class", autouse=True)
+def isolate_build_dir():
+    # Setup individual FINN_BUILD_DIR for each test class
+    top_build_dir = os.environ["FINN_BUILD_DIR"]
+    test_build_dir = tempfile.mkdtemp(suffix=None, prefix=None, dir=top_build_dir)
+    os.environ["FINN_BUILD_DIR"] = test_build_dir
+
+    # Execute test(s)
+    yield
+
+    # Clean up and reset FINN_BUILD_DIR
+    # TODO: Optionally save build dir of failed tests for debugging purposes
+    shutil.rmtree(test_build_dir)
+    os.environ["FINN_BUILD_DIR"] = top_build_dir
 
 
 @pytest.fixture(scope="session", autouse=True)

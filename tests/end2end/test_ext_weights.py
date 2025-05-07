@@ -39,75 +39,65 @@ import finn.builder.build_dataflow_config as build_cfg
 from finn.util.basic import make_build_dir
 from finn.util.test import load_test_checkpoint_or_skip
 
-target_clk_ns = 10
-build_dir = os.environ["FINN_BUILD_DIR"]
-onnx_zip_url = "https://github.com/Xilinx/finn-examples"
-onnx_zip_url += "/releases/download/v0.0.1a/onnx-models-bnn-pynq.zip"
-onnx_zip_local = build_dir + "/onnx-models-bnn-pynq.zip"
-onnx_dir_local = build_dir + "/onnx-models-bnn-pynq"
-mnist_url = "https://raw.githubusercontent.com/fgnt/mnist/master"
-mnist_local = build_dir + "/mnist"
-mnist_files = [
-    "train-images-idx3-ubyte.gz",
-    "train-labels-idx1-ubyte.gz",
-    "t10k-images-idx3-ubyte.gz",
-    "t10k-labels-idx1-ubyte.gz",
-]
-
 
 def get_checkpoint_name(step):
+    build_dir = os.environ["FINN_BUILD_DIR"]
+    onnx_dir_local = build_dir + "/onnx-models-bnn-pynq"
     if step == "build":
         # checkpoint for build step is an entire dir
-        return build_dir + "/end2end_ext_weights_build"
+        return os.environ["FINN_BUILD_DIR"] + "/end2end_ext_weights_build"
     elif step == "download":
         return onnx_dir_local + "/tfc-w2a2.onnx"
     else:
         # other checkpoints are onnx files
-        return build_dir + "/end2end_ext_weights_%s.onnx" % (step)
+        return os.environ["FINN_BUILD_DIR"] + "/end2end_ext_weights_%s.onnx" % (step)
 
 
 @pytest.mark.xdist_group(name="end2end_ext_weights")
 @pytest.mark.end2end
-def test_end2end_ext_weights_download():
-    if not os.path.isfile(onnx_zip_local):
-        wget.download(onnx_zip_url, out=onnx_zip_local)
-    assert os.path.isfile(onnx_zip_local)
-    subprocess.check_output(["unzip", "-o", onnx_zip_local, "-d", onnx_dir_local])
-    assert os.path.isfile(get_checkpoint_name("download"))
+class Test_end2end_ext_weights:
+    def test_end2end_ext_weights_download(self):
+        build_dir = os.environ["FINN_BUILD_DIR"]
+        onnx_zip_local = build_dir + "/onnx-models-bnn-pynq.zip"
+        onnx_dir_local = build_dir + "/onnx-models-bnn-pynq"
+        onnx_zip_url = "https://github.com/Xilinx/finn-examples"
+        onnx_zip_url += "/releases/download/v0.0.1a/onnx-models-bnn-pynq.zip"
+        if not os.path.isfile(onnx_zip_local):
+            wget.download(onnx_zip_url, out=onnx_zip_local)
+        assert os.path.isfile(onnx_zip_local)
+        subprocess.check_output(["unzip", "-o", onnx_zip_local, "-d", onnx_dir_local])
+        assert os.path.isfile(get_checkpoint_name("download"))
 
-
-@pytest.mark.xdist_group(name="end2end_ext_weights")
-@pytest.mark.slow
-@pytest.mark.vivado
-@pytest.mark.end2end
-def test_end2end_ext_weights_build():
-    model_file = get_checkpoint_name("download")
-    load_test_checkpoint_or_skip(model_file)
-    test_data = os.environ["FINN_ROOT"] + "/src/finn/qnn-data/test_ext_weights"
-    folding_config_file = test_data + "/tfc-w2a2-extw.json"
-    specialize_layers_config_file = test_data + "/specialize_layers_config.json"
-    output_dir = make_build_dir("test_end2end_ext_weights_build")
-    cfg = build.DataflowBuildConfig(
-        output_dir=output_dir,
-        verbose=True,
-        standalone_thresholds=True,
-        folding_config_file=folding_config_file,
-        specialize_layers_config_file=specialize_layers_config_file,
-        synth_clk_period_ns=target_clk_ns,
-        board="ZCU104",
-        shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ,
-        generate_outputs=[
-            build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
-            build_cfg.DataflowOutputType.BITFILE,
-            build_cfg.DataflowOutputType.PYNQ_DRIVER,
-            build_cfg.DataflowOutputType.DEPLOYMENT_PACKAGE,
-        ],
-    )
-    build.build_dataflow_cfg(model_file, cfg)
-    assert os.path.isfile(output_dir + "/deploy/bitfile/finn-accel.bit")
-    assert os.path.isfile(output_dir + "/deploy/bitfile/finn-accel.hwh")
-    assert os.path.isfile(output_dir + "/deploy/driver/driver.py")
-    assert os.path.isfile(output_dir + "/deploy/driver/runtime_weights/idma0.npy")
-    if os.path.isdir(get_checkpoint_name("build")):
-        shutil.rmtree(get_checkpoint_name("build"))
-    shutil.copytree(output_dir + "/deploy", get_checkpoint_name("build"))
+    @pytest.mark.slow
+    @pytest.mark.vivado
+    def test_end2end_ext_weights_build(self):
+        model_file = get_checkpoint_name("download")
+        load_test_checkpoint_or_skip(model_file)
+        test_data = os.environ["FINN_ROOT"] + "/src/finn/qnn-data/test_ext_weights"
+        folding_config_file = test_data + "/tfc-w2a2-extw.json"
+        specialize_layers_config_file = test_data + "/specialize_layers_config.json"
+        output_dir = make_build_dir("test_end2end_ext_weights_build")
+        cfg = build.DataflowBuildConfig(
+            output_dir=output_dir,
+            verbose=True,
+            standalone_thresholds=True,
+            folding_config_file=folding_config_file,
+            specialize_layers_config_file=specialize_layers_config_file,
+            synth_clk_period_ns=10,
+            board="ZCU104",
+            shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ,
+            generate_outputs=[
+                build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
+                build_cfg.DataflowOutputType.BITFILE,
+                build_cfg.DataflowOutputType.PYNQ_DRIVER,
+                build_cfg.DataflowOutputType.DEPLOYMENT_PACKAGE,
+            ],
+        )
+        build.build_dataflow_cfg(model_file, cfg)
+        assert os.path.isfile(output_dir + "/deploy/bitfile/finn-accel.bit")
+        assert os.path.isfile(output_dir + "/deploy/bitfile/finn-accel.hwh")
+        assert os.path.isfile(output_dir + "/deploy/driver/driver.py")
+        assert os.path.isfile(output_dir + "/deploy/driver/runtime_weights/idma0.npy")
+        if os.path.isdir(get_checkpoint_name("build")):
+            shutil.rmtree(get_checkpoint_name("build"))
+        shutil.copytree(output_dir + "/deploy", get_checkpoint_name("build"))
