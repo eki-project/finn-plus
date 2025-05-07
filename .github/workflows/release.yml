@@ -20,7 +20,9 @@ jobs:
       - name: Config
         run: poetry config repositories.test https://test.pypi.org/legacy/
       - name: Build
-        run: poetry build
+        run: | 
+          poetry install
+          poetry build
       - name: Publish
         run: poetry publish -r test -u __token__ -p ${{ secrets.PYPI_TOKEN }}
   test:
