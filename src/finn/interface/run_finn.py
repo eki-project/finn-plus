@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import click
+import importlib
 import os
 import shlex
 import subprocess
 import sys
-import importlib
 from pathlib import Path
 from rich.console import Console
 
