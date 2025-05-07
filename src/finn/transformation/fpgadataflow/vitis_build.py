@@ -201,7 +201,7 @@ class VitisLinkConfiguration:
                     f.write(f"sc={origin_cu}:{target_cu}\n")
 
             for sp_cu, sp_mem in self.sp.items():
-                f.write(f"sp={sp_cu}:{sp_mem}")
+                f.write(f"sp={sp_cu}:{sp_mem}\n")
 
             f.write(self.vivado_section + "\n")
 
