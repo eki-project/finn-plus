@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from interface.interface_utils import error, read_yaml, write_yaml
+from finn.interface.interface_utils import error, read_yaml, write_yaml
 
 # Variables that need to be Path() objects
-_SETTINGS_PATH_VARS = ["FINN_DEPS", "FINN_ROOT", "FINN_BUILD_DIR"]
+_SETTINGS_PATH_VARS = ["FINN_DEPS", "FINN_BUILD_DIR"]
 
 # Default fallback settings
 # FINN_BUILD_DIR is not existent. It should only be loaded from a settings file!

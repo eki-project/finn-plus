@@ -82,7 +82,6 @@ from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.collapse_repeated import CollapseRepeatedMul
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.util.basic import get_finn_root
 from finn.util.pytorch import NormalizePreProc
 from finn.util.test import (
     crop_center,
@@ -130,7 +129,7 @@ def test_end2end_mobilenet_export():
 
     # calculate golden output with pytorch/brevitas and save as .npy
     # get single image as input and prepare image
-    img = Image.open(get_finn_root() + "/tests/brevitas/king_charles.jpg")
+    img = Image.open(os.path.join(os.environ["FINN_TESTS"], "brevitas/king_charles.jpg"))
     # resize smallest side of the image to 256 pixels and resize larger side
     # with same ratio
     img = resize_smaller_side(256, img)

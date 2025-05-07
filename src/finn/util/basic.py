@@ -105,16 +105,7 @@ def get_rtlsim_trace_depth():
 
 
 def get_finn_root():
-    "Return the root directory that FINN is cloned into."
-
-    try:
-        return os.environ["FINN_ROOT"]
-    except KeyError:
-        raise Exception(
-            """Environment variable FINN_ROOT must be set
-        correctly. Please ensure you have launched the Docker contaier correctly.
-        """
-        )
+    raise Exception("get_finn_root() should not be used anymore.")
 
 
 def get_vivado_root():

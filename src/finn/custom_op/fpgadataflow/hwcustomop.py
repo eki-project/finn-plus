@@ -309,7 +309,7 @@ class HWCustomOp(CustomOp):
         ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls"]
         if self.onnx_node.op_type in ops:
             template_path = (
-                os.environ["FINN_ROOT"] + "/finn-rtllib/memstream/hdl/memstream_wrapper_template.v"
+                os.path.join(os.environ["FINN_RTLLIB"] + "/memstream/hdl/memstream_wrapper_template.v")
             )
             mname = self.onnx_node.name
             if self.onnx_node.op_type.startswith("Thresholding"):

@@ -148,7 +148,7 @@ class VVAU_rtl(VVAU, RTLBackend):
         # instantiate the RTL IP
         node_name = self.onnx_node.name
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
+        rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "mvu/")
         sourcefiles = [
             os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v"),
             rtllib_dir + "mvu_vvu_axi.sv",
@@ -267,7 +267,7 @@ class VVAU_rtl(VVAU, RTLBackend):
         return "mvu_vvu_8sx9_dsp58"
 
     def prepare_codegen_default(self, fpgapart, clk):
-        template_path = os.environ["FINN_ROOT"] + "/finn-rtllib/mvu/mvu_vvu_axi_wrapper.v"
+        template_path = os.path.join(os.environ["FINN_RTLLIB"], "mvu/mvu_vvu_axi_wrapper.v")
 
         code_gen_dict = {}
         code_gen_dict["$IS_MVU$"] = [str(0)]
@@ -291,7 +291,7 @@ class VVAU_rtl(VVAU, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/mvu/")
+            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "mvu/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
@@ -308,5 +308,5 @@ class VVAU_rtl(VVAU, RTLBackend):
 
     def get_verilog_paths(self):
         verilog_paths = super().get_verilog_paths()
-        verilog_paths.append(os.environ["FINN_ROOT"] + "/finn-rtllib/mvu")
+        verilog_paths.append(os.path.join(os.environ["FINN_RTLLIB"], "mvu"))
         return verilog_paths

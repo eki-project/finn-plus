@@ -4,8 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from interface import IS_POSIX
-from interface.interface_utils import status
+from finn.interface import IS_POSIX
+from finn.interface.interface_utils import status
 
 
 def run_test(variant: str, num_workers: str) -> None:
@@ -19,7 +19,7 @@ def run_test(variant: str, num_workers: str) -> None:
         ci_project_dir = os.environ["FINN_BUILD_DIR"]
     status(f"Putting test reports into {ci_project_dir}")
 
-    os.chdir(Path(__file__).parent.parent)
+    os.chdir(os.environ["FINN_TESTS"])
     match variant:
         case "quick":
             subprocess.run(

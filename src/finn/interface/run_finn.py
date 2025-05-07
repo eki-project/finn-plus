@@ -5,11 +5,12 @@ import os
 import shlex
 import subprocess
 import sys
+import importlib
 from pathlib import Path
 from rich.console import Console
 
-from interface import IS_POSIX
-from interface.interface_globals import (
+from finn.interface import IS_POSIX
+from finn.interface.interface_globals import (
     _resolve_settings_path,
     get_settings,
     set_settings,
@@ -17,7 +18,7 @@ from interface.interface_globals import (
     skip_update_by_default,
     write_settings,
 )
-from interface.interface_utils import (
+from finn.interface.interface_utils import (
     assert_path_valid,
     error,
     resolve_build_dir,
@@ -28,8 +29,25 @@ from interface.interface_utils import (
     warning,
     write_yaml,
 )
-from interface.manage_deps import install_pyxsi, update_dependencies
-from interface.manage_tests import run_test
+from finn.interface.manage_deps import install_pyxsi, update_dependencies
+from finn.interface.manage_tests import run_test
+
+
+# Resolves the path to modules which are not part of the FINN package hierarchy
+def _resolve_module_path(name: str) -> str:
+    # Try to import the module via importlib - allows "-" in names and resolve
+    # the absolute path to the first candidate location as a string
+    try:
+        return str(importlib.import_module(name).__path__[0])
+    except ModuleNotFoundError:
+        # Try a different location if notebooks have not been found, maybe we
+        # are in the Git repository root and should look there as well...
+        try:
+            return str(importlib.import_module(f"finn.{name}").__path__[0])
+        except ModuleNotFoundError:
+            warning(f"Could not resolve {name}. FINN might not work properly.")
+    # Return the empty string as a default...
+    return ""
 
 
 def prepare_finn(
@@ -96,14 +114,17 @@ def prepare_finn(
         resolved_build_dir.mkdir(parents=True)
     status(f"Build directory set to: {resolved_build_dir}")
 
-    # Resolve number of workers
+    # Resolve the number of workers
     workers = resolve_num_workers(num_workers, settings)
     status(f"Using {workers} workers.")
     os.environ["NUM_DEFAULT_WORKERS"] = str(workers)
 
-    # Set FINN_ROOT
-    os.environ["FINN_ROOT"] = str(Path(__file__).parent.absolute())
-    status(f"FINN_ROOT set to {Path(__file__).parent}")
+    # Resolve paths to some not properly packaged components...
+    os.environ["FINN_RTLLIB"] = _resolve_module_path("finn-rtllib")
+    os.environ["FINN_CUSTOM_HLS"] = _resolve_module_path("custom_hls")
+    os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
+    os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks")
+    os.environ["FINN_TESTS"] = _resolve_module_path("tests")
 
 
 @click.group()

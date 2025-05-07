@@ -108,7 +108,7 @@ class FMPadding_rtl(FMPadding, RTLBackend):
         return config
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtlsrc = os.environ["FINN_ROOT"] + "/finn-rtllib/fmpadding/hdl"
+        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "fmpadding/hdl")
         template_path = rtlsrc + "/fmpadding_template.v"
         dims = self.get_nodeattr("ImgDim")
         pads = self.get_nodeattr("Padding")
@@ -145,7 +145,7 @@ class FMPadding_rtl(FMPadding, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/fmpadding/hdl/")
+            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "fmpadding/hdl/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
