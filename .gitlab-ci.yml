@@ -100,7 +100,7 @@ Pre-Install:
     # TODO: cache resulting poetry.lock & .venv/ directory for following jobs
     - poetry install
     # let FINN download additional dependencies, cache resulting deps/ directory
-    - poetry run python3 run_finn.py deps update --path ./deps
+    - poetry run python3 src/finn/interface/run_finn.py deps update --path ./deps
   cache:
     key: $CI_COMMIT_SHA #TODO: cache based on relevant files
     paths:
@@ -155,7 +155,7 @@ FINN Test Suite 2022.2:
     # create virtual environment (.venv/) and install Python dependencies
     - poetry install
     # launch FINN, which will try to fetch (cached) additional dependencies
-    - poetry run python3 run_finn.py test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers 1 --num-test-workers $PYTEST_PARALLEL
+    - poetry run python3 src/finn/interface/run_finn.py test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers 1 --num-test-workers $PYTEST_PARALLEL
   artifacts:
     name: "test_reports"
     when: always
