@@ -25,6 +25,7 @@ jobs:
         run: poetry publish -r test -u __token__ -p ${{ secrets.PYPI_TOKEN }}
   test:
     runs-on: ubuntu-24.04
+    needs: deploy
     steps:
       - uses: actions/setup-python@v5
         with:
