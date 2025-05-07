@@ -184,6 +184,7 @@ class VitisLink(Transformation):
         object_files = []
         idma_idx = 0
         odma_idx = 0
+        mem_idx = 0
         instance_names = {}
         for node in model.graph.node:
             assert node.op_type == "StreamingDataflowPartition", "Invalid link graph"

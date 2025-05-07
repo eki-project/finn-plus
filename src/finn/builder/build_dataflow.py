@@ -153,13 +153,15 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     logging.captureWarnings(True)
 
     log = logging.getLogger("build_dataflow")
+
     # mirror stdout and stderr to log
     sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
     sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
+    console = Console(file=sys.stdout.console)
 
     if cfg.console_log_level != "NONE":
         # set up console logger
-        console = RichHandler(show_time=False, show_path=False)
+        console = RichHandler(show_time=False, show_path=False, console=console)
 
         if cfg.console_log_level == "DEBUG":
             console.setLevel(logging.DEBUG)
@@ -198,7 +200,6 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         except:  # noqa
             # print exception info and traceback
             extype, value, tb = sys.exc_info()
-            console = Console()
             console.print_exception(show_locals=False)
             # start postmortem debug if configured
             if cfg.enable_build_pdb_debug:
