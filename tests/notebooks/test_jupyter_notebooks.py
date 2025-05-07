@@ -5,13 +5,11 @@ import os
 from _pytest.mark.structures import ParameterSet
 from nbconvert.preprocessors import ExecutePreprocessor
 
-from finn.util.basic import get_finn_root
-
 notebook_timeout_seconds = 3600
-notebook_basic_dir = get_finn_root() + "/notebooks/basics/"
-notebook_advanced_dir = get_finn_root() + "/notebooks/advanced/"
-notebook_cyber_dir = get_finn_root() + "/notebooks/end2end_example/cybersecurity/"
-notebook_bnn_dir = get_finn_root() + "/notebooks/end2end_example/bnn-pynq/"
+notebook_basic_dir = os.path.join(os.environ["FINN_NOTEBOOKS"], "basics/")
+notebook_advanced_dir = os.path.join(os.environ["FINN_NOTEBOOKS"], "advanced/")
+notebook_cyber_dir = os.path.join(os.environ["FINN_NOTEBOOKS"], "end2end_example/cybersecurity/")
+notebook_bnn_dir = os.path.join(os.environ["FINN_NOTEBOOKS"], "end2end_example/bnn-pynq/")
 
 basics_notebooks = [
     pytest.param(

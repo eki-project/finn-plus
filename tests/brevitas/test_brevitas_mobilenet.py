@@ -29,6 +29,7 @@
 import pytest
 
 import numpy as np
+import os
 import torch
 from brevitas.export import export_qonnx
 from PIL import Image
@@ -50,7 +51,7 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 import finn.core.onnx_exec as oxe
 import finn.transformation.streamline.absorb as absorb
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
-from finn.util.basic import get_finn_root, make_build_dir
+from finn.util.basic import make_build_dir
 from finn.util.pytorch import NormalizePreProc
 from finn.util.test import crop_center, get_test_model_trained, resize_smaller_side
 
@@ -59,7 +60,7 @@ from finn.util.test import crop_center, get_test_model_trained, resize_smaller_s
 @pytest.mark.xfail
 def test_brevitas_mobilenet():
     # get single image as input and prepare image
-    img = Image.open(get_finn_root() + "/tests/brevitas/king_charles.jpg")
+    img = Image.open(os.path.join(os.environ["FINN_TESTS"], "brevitas/king_charles.jpg"))
     # resize smallest side of the image to 256 pixels and resize larger side
     # with same ratio
     img = resize_smaller_side(256, img)

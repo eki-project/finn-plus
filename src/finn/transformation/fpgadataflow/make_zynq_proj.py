@@ -70,7 +70,7 @@ def collect_ip_dirs(model, ipstitch_path):
     ip_dirs += [ipstitch_path + "/ip"]
     if need_memstreamer:
         # add RTL streamer IP
-        ip_dirs.append("$::env(FINN_ROOT)/finn-rtllib/memstream")
+        ip_dirs.append("$::env(FINN_RTLLIB)/memstream")
     return ip_dirs
 
 

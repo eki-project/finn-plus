@@ -15,8 +15,8 @@ from rich.live import Live
 from rich.table import Table
 from threading import Lock
 
+from finn.interface import IS_POSIX
 from finn.util.deps import get_deps_path
-from interface import IS_POSIX
 
 FINN_DEPS = {
     "finn-experimental": (

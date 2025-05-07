@@ -86,7 +86,7 @@ from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC, MoveScalarLinearPastInvariants
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.util.basic import get_finn_root, make_build_dir, test_board_map
+from finn.util.basic import make_build_dir, test_board_map
 from finn.util.pytorch import ToTensor
 from finn.util.test import (
     execute_parent,
@@ -251,11 +251,11 @@ def get_golden_io_pair(topology, wbits, abits, preproc=ToTensor(), return_topk=N
 def measure_top1_accuracy(model_chkpt, dataset, parent_chkpt=None):
     if dataset == "cifar10":
         trainx, trainy, testx, testy, valx, valy = cifar.load_cifar_data(
-            get_finn_root() + "/dataset", download=True, one_hot=False
+            "dataset", download=True, one_hot=False
         )
     elif dataset == "mnist":
         trainx, trainy, testx, testy, valx, valy = mnist.load_mnist_data(
-            get_finn_root() + "/dataset", download=True, one_hot=False
+            "dataset", download=True, one_hot=False
         )
     else:
         raise Exception("Unrecognized dataset")

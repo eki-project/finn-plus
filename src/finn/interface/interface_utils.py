@@ -7,7 +7,7 @@ import yaml
 from pathlib import Path
 from rich.console import Console
 
-from interface import DEBUG
+from finn.interface import DEBUG
 
 
 def error(msg: str) -> None:

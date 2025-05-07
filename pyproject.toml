@@ -12,12 +12,10 @@ readme = "README.md"
 [tool.poetry]
 packages = [
     { include = "finn", from = "src" },
-    { include = "finn-rtllib" }
-]
-include = [
-    { path = "run_finn.py", format = ["sdist", "wheel"] },
-    { path = "interface", format = ["sdist", "wheel"] },
-    { path = "src/finn/qnn-data/cpp/*", format = ["sdist", "wheel"] }
+    { include = "finn-rtllib", to = "finn" },
+    { include = "custom_hls", to = "finn" },
+    { include = "notebooks", to = "finn" },
+    { include = "tests", to = "finn" }
 ]
 version = "0.0.0"
 
@@ -28,7 +26,7 @@ poetry-dynamic-versioning = { version = ">=1.0.0,<2.0.0", extras = ["plugin"] }
 enable = true
 
 [tool.poetry.scripts]
-finn = "run_finn:main"
+finn = "finn.interface.run_finn:main"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
