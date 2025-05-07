@@ -8,5 +8,5 @@ sc=comm1.m_axis:comm2.s_axis
 sc=compute1.out:compute2.in
 sc=compute2.out:compute3.in
 sc=compute3.out:comm1.s_axis
-sp=compute1:data_port:HBM
+sp=compute1.data_port:HBM
 [vivado]

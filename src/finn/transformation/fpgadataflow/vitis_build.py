@@ -26,6 +26,7 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+from __future__ import annotations
 
 import json
 import os
@@ -157,11 +158,18 @@ class CreateVitisXO(Transformation):
         return (model, False)
 
 
+class InvalidVitisLinkConfigError(Exception):
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+
+
 class VitisLinkConfiguration:
     """Manages XO files, CU instantiations, stream connections,
     port connections, Vivado props, etc.
     It can output a linking configuration to pass to v++ and
-    create a shell script to run it"""
+    create a shell script to run it. Tries to be as strict and careful as possible,
+    and depending on the issue raises an Exception, logs an error or warning
+    or continues silently."""
 
     def __init__(self, platform: str, optimization_level: str, f_mhz: int) -> None:
         self.cu: list[str] = []
@@ -175,10 +183,46 @@ class VitisLinkConfiguration:
         self.f_mhz: int = f_mhz
 
     def add_cu(self, kernel_name: str, cu_name: str) -> None:
+        """Add a compute unit (instance of a kernel)"""
+        if cu_name in self.cu:
+            kern = next(kname for kname, cname in self.nk if cname == cu_name)
+            raise InvalidVitisLinkConfigError(
+                f"Tried creating CU {cu_name}, but a CU of this "
+                f"name of kernel {kern} already exists!"
+            )
         self.cu.append(cu_name)
         self.nk.append((kernel_name, cu_name))
 
     def add_sc(self, cu_sender: str, cu_receiver: str) -> None:
+        """Add a Streaming Connection between two CUs:
+        >>> lc = VitisLinkConfiguration("", "", 100)
+        >>> lc.add_cu("A", "a")
+        >>> lc.add_cu("B", "b")
+        >>> lc.add_sc("a.out", "b.in")
+        >>> lc.sc["a.out"]
+        ['b.in']
+        """
+        # Check formatting
+        for cu in [cu_sender, cu_receiver]:
+            splits = cu.split(".")
+            if len(splits) != 2:
+                raise InvalidVitisLinkConfigError(
+                    f"{cu} is incorrectly formatted. Required "
+                    f"syntax to add a streaming connection from CU "
+                    f'a on port out is "a.out".'
+                )
+
+        # Yield warning if the direction seems wrong
+        sender_port = cu_sender.split(".")[1]
+        receiver_port = cu_receiver.split(".")[1]
+        if sender_port.lower() in ["s_axis", "in"] or receiver_port.lower() in ["m_axis", "out"]:
+            log.error(
+                f"Adding connection sc={cu_sender}:{cu_receiver}. The port "
+                "names suggest that the order of sender and receiver might be "
+                "swapped. Proceeding now."
+            )
+
+        # Add the connection
         if cu_sender not in self.sc.keys():
             self.sc[cu_sender] = []
         self.sc[cu_sender].append(cu_receiver)
@@ -189,7 +233,84 @@ class VitisLinkConfiguration:
     def add_vivado_line(self, line: str) -> None:
         self.vivado_section += line
 
+    def add_xo(self, xo_file: Path) -> None:
+        """Add an XO file. This will emit an error if the XO file is not found, but it will
+        NOT raise an exception."""
+        if not xo_file.exists():
+            log.error(
+                f"Tried adding non-existing file {xo_file.absolute()}. "
+                f"Continuing in case this is on purpose."
+            )
+
+    def get_config_validation_errors(self) -> None | list[InvalidVitisLinkConfigError]:
+        """Check the configuration and if errors are found, return them"""
+        errors = []
+        # All CUs in SCs exist and CU ports are correctly formatted
+        for cu_sender, receivers in self.sc.items():
+            for cu_receiver in receivers:
+                sender_split = cu_sender.split(".")
+                if len(sender_split) != 2:
+                    errors.append(
+                        InvalidVitisLinkConfigError(
+                            f"SC {cu_sender}:{cu_receiver} "
+                            f"incorrectly formatted. "
+                            "Use the syntax CU.PORT"
+                        )
+                    )
+                sender_name = sender_split[0]
+                if sender_name not in self.cu:
+                    errors.append(
+                        InvalidVitisLinkConfigError(
+                            f"SC {cu_sender}:{cu_receiver} " f"uses the unknown CU {sender_name}"
+                        )
+                    )
+                receiver_split = cu_receiver.split(".")
+                if len(receiver_split) != 2:
+                    errors.append(
+                        InvalidVitisLinkConfigError(
+                            f"SC {cu_sender}:{cu_receiver} "
+                            f"incorrectly formatted. "
+                            "Use the syntax CU.PORT"
+                        )
+                    )
+                receiver_name = receiver_split[0]
+                if receiver_name not in self.cu:
+                    errors.append(
+                        InvalidVitisLinkConfigError(
+                            f"SC {cu_sender}:"
+                            f"{cu_receiver} uses the unknown "
+                            f"CU {receiver_name}"
+                        )
+                    )
+        # No two same named CUs
+        if len(set(self.cu)) != len(self.cu):
+            errors.append(
+                InvalidVitisLinkConfigError(
+                    "It seems that there are one or more CUs " "with the same name!"
+                )
+            )
+        for kernel, cu in self.nk:
+            for kernel2, cu2 in self.nk:
+                if cu == cu2 and kernel != kernel2:
+                    errors.append(
+                        InvalidVitisLinkConfigError(
+                            f"There are 2 or more CUs named {cu} "
+                            f"from different kernels ({kernel} "
+                            f"and {kernel2})"
+                        )
+                    )
+        if len(errors) > 0:
+            return errors
+        return None
+
     def generate_config(self, path: Path) -> None:
+        """Write the complete config to the given path. Raises an error if the
+        config is invalid"""
+        errors = self.get_config_validation_errors()
+        if errors is not None:
+            for err in errors:
+                log.error(f"{path}: {err}")
+            raise errors[0]
         with path.open("w+") as f:
             f.write("[connectivity]\n")
             for kernel_name, cu_name in self.nk:
@@ -203,23 +324,27 @@ class VitisLinkConfiguration:
             for sp_cu, sp_mem in self.sp.items():
                 f.write(f"sp={sp_cu}:{sp_mem}\n")
 
-            f.write(self.vivado_section + "\n")
+            f.write(self.vivado_section)
 
-    def generate_run_script(self, config_path: Path) -> None:
+    def generate_run_script(self, config_path: Path, target: Path | None = None) -> None:
+        """Generate a shell script to start v++ with the correct parameters.
+        Produces the shell script next to the path of the config file
+        unless a path is specified"""
         xo_string = " ".join(self.xo)
+        if not config_path.exists():
+            log.error(
+                f"Writing compilation / v++ script for non-existing configuration "
+                f"in {config_path.absolute()}. Continuing in case this is on purpose."
+            )
         runner_path = config_path.parent / "run_vitis_link.sh"
+        if target is not None:
+            runner_path = target
         with runner_path.open("w+") as f:
             f.write("#!/bin/bash\n")
             f.write(
-                f"v++ \
-                    --target hw \
-                    --platform {self.platform} \
-                    --link {xo_string} \
-                    --config {config_path} \
-                    --optimize {self.optimization_level} \
-                    --report_level estimate \
-                    --save-temps \
-                    --kernel_frequency {self.f_mhz}"
+                f"v++ --target hw --platform {self.platform} --link {xo_string} "
+                f"--config {config_path} --optimize {self.optimization_level} "
+                f"--report_level estimate --save-temps --kernel_frequency {self.f_mhz}"
             )
 
 
