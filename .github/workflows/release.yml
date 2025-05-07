@@ -12,9 +12,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-tags: true
-          ref: ${{ github.ref }}
+      - name: Fetch Tags
+        run: git fetch --tags origin
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
@@ -31,9 +30,8 @@ jobs:
     needs: deploy
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-tags: true
-          ref: ${{ github.ref }}
+      - name: Fetch Tags
+        run: git fetch --tags origin
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
