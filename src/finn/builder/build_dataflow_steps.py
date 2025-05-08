@@ -31,7 +31,6 @@ import json
 import numpy as np
 import os
 import shutil
-import warnings
 from copy import deepcopy
 from functools import partial
 from qonnx.core.modelwrapper import ModelWrapper
@@ -734,7 +733,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
         )
         log.info("C++ driver written into " + driver_dir)
     else:
-        warnings.warn(
+        log.warning(
             "The step step_make_driver is in the build list but will not be executed"
             + " since no driver is selected in generate_outputs in your build.py file!"
         )
