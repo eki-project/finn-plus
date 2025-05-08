@@ -173,9 +173,6 @@ def build(
     config: str,
     model: str,
 ) -> None:
-    from finn.builder.build_dataflow import build_dataflow_cfg
-    from finn.builder.build_dataflow_config import DataflowBuildConfig
-
     config_path = Path(config).expanduser()
     model_path = Path(model).expanduser()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
@@ -190,6 +187,12 @@ def build(
         num_workers,
         skip_dep_update=(skip_dep_update or skip_update_by_default()),
     )
+
+    # Can import from finn now, since all deps are installed
+    # and all environment variables are set correctly
+    from finn.builder.build_dataflow import build_dataflow_cfg
+    from finn.builder.build_dataflow_config import DataflowBuildConfig
+
     status("Creating dataflow build config...")
     dfbc: DataflowBuildConfig | None = None
     match config_path.suffix:
