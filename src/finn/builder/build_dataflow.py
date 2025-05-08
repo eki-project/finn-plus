@@ -161,7 +161,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
 
     if cfg.console_log_level != "NONE":
         # set up console logger
-        console = RichHandler(show_time=False, show_path=False, console=console)
+        console = RichHandler(show_time=True, show_path=False, console=console)
 
         if cfg.console_log_level == "DEBUG":
             console.setLevel(logging.DEBUG)
