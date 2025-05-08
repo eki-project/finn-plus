@@ -604,7 +604,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             )
             # instantiate a streamer and connect it to the IP
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-            swg_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "/memstream/hdl/")
+            swg_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
             file_suffix = "_memstream_wrapper.v"
             # automatically find memstream verilog component in code generation directory
             for fname in os.listdir(code_gen_dir):
