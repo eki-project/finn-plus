@@ -145,6 +145,13 @@ class MakeCPPDriver(Transformation):
         run_command("git submodule update --init --recursive", cwd=self.driver_dir)
         run_command("./buildDependencies.sh", cwd=self.driver_dir)
 
+        # Check if multiple different input/output types are used.
+        if len(set(driver_shapes["idt"])) > 1 or len(set(driver_shapes["odt"])) > 1:
+            raise RuntimeError(
+                "Multiple different input/output types for the C++ driver\
+                    are currently not supported."
+            )
+
         # * Writing the header file
         inputDatatype: str = MakeCPPDriver.resolve_dt_name(
             driver_shapes["idt"][0].replace("'", "")
@@ -206,6 +213,13 @@ class MakeCPPDriver(Transformation):
         # Create idma and odma entries
         jsonIdmas = []
         jsonOdmas = []
+
+        if len(driver_shapes["idma_names"]) > 1 or len(driver_shapes["odma_names"]) > 1:
+            log.warning(
+                "Using multiple input/output kernels in the C++ driver is supported,\
+                    but not well tested. You might encounter issues using this feature."
+            )
+
         for i in range(len(driver_shapes["idma_names"])):
             jsonIdmas.append(
                 {
