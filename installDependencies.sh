@@ -10,6 +10,7 @@ sudo apt-get update && sudo apt-get install -y \
     libxext6 \
     libxrender-dev \
     zsh \
+    zip \
     perl \
     make \
     autoconf \
