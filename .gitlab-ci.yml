@@ -229,7 +229,7 @@ FINN PyPI Test Suite 2022.2:
   script:
     # launch additional monitoring
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
-    # launch FINN, which will try to fetch (cached) additional dependencies
+    # launch FINN via test command, which includes dependency preparation
     - |
       source ./finn-plus-venv/bin/activate
       finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers 1 --num-test-workers $PYTEST_PARALLEL
