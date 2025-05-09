@@ -225,7 +225,7 @@ FINN PyPI Test Suite 2022.2:
     - ulimit -s unlimited # Increase stack size limit
     # create fresh venv and install finn-plus from PyPI
     - python3 -m venv finn-plus-venv
-    - finn-plus-venv/bin/pip install -i https://test.pypi.org/simple/ finn-plus
+    - finn-plus-venv/bin/pip install --extra-index-url https://test.pypi.org/simple/ finn-plus
   script:
     # launch additional monitoring
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
