@@ -28,7 +28,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -144,11 +143,7 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
     try:
         build_dir = Path(os.environ["FINN_BUILD_DIR"])
     except KeyError as keyerror:
-        raise Exception(
-            """Environment variable FINN_BUILD_DIR must be set
-        correctly. Please ensure you have launched the Docker contaier correctly.
-        """
-        ) from keyerror
+        raise Exception("""Environment variable FINN_BUILD_DIR is missing!""") from keyerror
 
     if not build_dir.exists():
         raise Exception(
@@ -156,21 +151,10 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
             "Make sure the FINN setup ran properly!"
         )
 
-    tmpdir = Path(tempfile.mkdtemp(prefix=prefix))
-    newdir = build_dir / tmpdir.name
-
-    try:
-        tmpdir.rename(newdir)
-    except OSError as oserror:
-        # Catch OSError 18: Invalid Cross-Device Link
-        if oserror.errno is not None and oserror.errno == 18:
-            shutil.move(tmpdir, newdir)
-        else:
-            raise Exception(f"Unexpected OSError: {oserror}") from oserror
-
+    tmpdir = Path(tempfile.mkdtemp(prefix=prefix, dir=build_dir))
     if return_as_path:
-        return newdir
-    return str(newdir)
+        return tmpdir
+    return str(tmpdir)
 
 
 class CppBuilder:
