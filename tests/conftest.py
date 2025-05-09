@@ -44,19 +44,31 @@ import tempfile
 
 
 @pytest.fixture(scope="class", autouse=True)
-def isolate_build_dir():
+def isolate_build_dir(request):
+    # Retrieve settings
+    isolate = os.environ.get("FINN_TESTS_ISOLATE_BUILD_DIRS", "1") == "1"
+    cleanup = os.environ.get("FINN_TESTS_CLEANUP_BUILD_DIRS", "0") == "1"
+
     # Setup individual FINN_BUILD_DIR for each test class
-    top_build_dir = os.environ["FINN_BUILD_DIR"]
-    test_build_dir = tempfile.mkdtemp(suffix=None, prefix=None, dir=top_build_dir)
-    os.environ["FINN_BUILD_DIR"] = test_build_dir
+    if isolate:
+        top_build_dir = os.environ["FINN_BUILD_DIR"]
+        try:
+            # use original test name (without [..parameters..] appended) in case of function scope
+            name = request.node.originalname
+        except AttributeError:
+            # fall back to class name in case of class scope
+            name = request.node.name
+        test_build_dir = tempfile.mkdtemp(prefix=name + "_", dir=top_build_dir)
+        os.environ["FINN_BUILD_DIR"] = test_build_dir
 
     # Execute test(s)
     yield
 
     # Clean up and reset FINN_BUILD_DIR
-    # TODO: Optionally save build dir of failed tests for debugging purposes
-    shutil.rmtree(test_build_dir)
-    os.environ["FINN_BUILD_DIR"] = top_build_dir
+    if isolate:
+        if cleanup:
+            shutil.rmtree(test_build_dir)
+        os.environ["FINN_BUILD_DIR"] = top_build_dir
 
 
 @pytest.fixture(scope="session", autouse=True)

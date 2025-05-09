@@ -98,13 +98,13 @@ from finn.util.test import (
 )
 
 
-build_dir = os.environ["FINN_BUILD_DIR"]
 target_clk_ns = 20
 mem_mode = "internal_decoupled"
 rtlsim_trace = False
 
 
 def get_checkpoint_name(board, topology, wbits, abits, step):
+    build_dir = os.environ["FINN_BUILD_DIR"]
     return build_dir + "/end2end_%s_%s_w%da%d_%s.onnx" % (
         board,
         topology,
