@@ -188,3 +188,55 @@ FINN Test Suite 2024.2:
     - poetry-install/bin/pip install poetry
     - shopt -s expand_aliases
     - alias poetry=poetry-install/bin/poetry
+
+FINN PyPI Test Suite 2022.2:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: test
+  rules:
+    # Do not run on a schedule
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # Do not run if test suite has been deselected
+    - if: $TEST_SUITE == "none"
+      when: never
+    # Always run, as long as there was no prior failure
+    - when: on_success
+  variables:
+    GIT_STRATEGY: empty # Do not pull repository, use PyPI installation instead
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
+    PYTEST_PARALLEL: "$CPU_CORES"
+  before_script:
+    - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
+    - cd $PATH_WORKDIR
+    - module load lang/Python/3.10.4-GCCcore-11.3.0
+    - module load devel/Autoconf/2.71-GCCcore-11.3.0
+    - module load lang/Bison/3.8.2-GCCcore-11.3.0
+    - module load lang/flex/2.6.4-GCCcore-11.3.0
+    - module load compiler/GCC/11.3.0
+    - module load lib/pybind11/2.9.2-GCCcore-11.3.0
+    - module load devel/Boost/1.79.0-GCC-11.3.0
+    - module load lib/fmt/9.1.0-GCCcore-11.3.0
+    - module load fpga
+    - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
+    - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
+    - ulimit -s unlimited # Increase stack size limit
+    # create fresh venv and install finn-plus from PyPI
+    - python3 -m venv finn-plus-venv
+    - finn-plus-venv/bin/pip install -i https://test.pypi.org/simple/ finn-plus
+  script:
+    # launch additional monitoring
+    - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
+    # launch FINN, which will try to fetch (cached) additional dependencies
+    - |
+      source ./finn-plus-venv/bin/activate
+      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers 1 --num-test-workers $PYTEST_PARALLEL
+  artifacts:
+    name: "test_reports"
+    when: always
+    paths:
+      - reports/
+    reports:
+      junit: reports/*.xml
