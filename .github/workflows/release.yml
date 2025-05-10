@@ -3,9 +3,6 @@ name: Release Python Package to PyPI
 on:
   release:
     types: [created]
-  push:
-    tags:
-      - 'v*'
 
 jobs:
   deploy:
@@ -18,13 +15,13 @@ jobs:
       - name: Setup
         run: pip install poetry poetry-dynamic-versioning
       - name: Config
-        run: poetry config repositories.test https://test.pypi.org/legacy/
+        run: poetry config repositories.pypi https://pypi.org/legacy/
       - name: Build
         run: |
           poetry install
           poetry build
       - name: Publish
-        run: poetry publish -r test -u __token__ -p ${{ secrets.PYPI_TOKEN }}
+        run: poetry publish -r pypi -u __token__ -p ${{ secrets.PYPI_TOKEN }}
   test:
     runs-on: ubuntu-24.04
     needs: deploy
@@ -36,4 +33,4 @@ jobs:
       - name: Setup
         run: pip install poetry poetry-dynamic-versioning
       - name: Install
-        run: pip install --extra-index-url https://test.pypi.org/simple/ finn-plus==$(poetry version -s)
+        run: pip install finn-plus==$(poetry version -s)
