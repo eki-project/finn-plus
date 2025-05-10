@@ -1,0 +1,36 @@
+name: Release Python Package to PyPI
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Setup
+        run: pip install poetry poetry-dynamic-versioning
+      - name: Config
+        run: poetry config repositories.pypi https://pypi.org/legacy/
+      - name: Build
+        run: |
+          poetry install
+          poetry build
+      - name: Publish
+        run: poetry publish -r pypi -u __token__ -p ${{ secrets.PYPI_TOKEN }}
+  test:
+    runs-on: ubuntu-24.04
+    needs: deploy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Setup
+        run: pip install poetry poetry-dynamic-versioning
+      - name: Install
+        run: pip install finn-plus==$(poetry version -s)

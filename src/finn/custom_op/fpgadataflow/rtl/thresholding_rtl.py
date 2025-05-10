@@ -279,7 +279,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         """Thresholding binary search RTL file list"""
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/thresholding/hdl/")
+            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "thresholding/hdl/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
@@ -304,7 +304,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         # by xsi and IPI generation
         self.set_nodeattr("gen_top_module", code_gen_dict["$TOP_MODULE$"][0])
 
-        rtlsrc = os.environ["FINN_ROOT"] + "/finn-rtllib/thresholding/hdl"
+        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "thresholding/hdl")
         template_path = rtlsrc + "/thresholding_template_wrapper.v"
         with open(template_path, "r") as f:
             template_wrapper = f.read()

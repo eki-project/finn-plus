@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import click
+import importlib
 import os
 import shlex
 import subprocess
@@ -8,17 +9,16 @@ import sys
 from pathlib import Path
 from rich.console import Console
 
-from finn.builder.build_dataflow import build_dataflow_cfg
-from finn.builder.build_dataflow_config import DataflowBuildConfig
-from interface import IS_POSIX
-from interface.interface_globals import (
+from finn.interface import IS_POSIX
+from finn.interface.interface_globals import (
     _resolve_settings_path,
     get_settings,
     set_settings,
     settings_found,
+    skip_update_by_default,
     write_settings,
 )
-from interface.interface_utils import (
+from finn.interface.interface_utils import (
     assert_path_valid,
     error,
     resolve_build_dir,
@@ -29,8 +29,25 @@ from interface.interface_utils import (
     warning,
     write_yaml,
 )
-from interface.manage_deps import install_pyxsi, update_dependencies
-from interface.manage_tests import run_test
+from finn.interface.manage_deps import install_pyxsi, update_dependencies
+from finn.interface.manage_tests import run_test
+
+
+# Resolves the path to modules which are not part of the FINN package hierarchy
+def _resolve_module_path(name: str) -> str:
+    # Try to import the module via importlib - allows "-" in names and resolve
+    # the absolute path to the first candidate location as a string
+    try:
+        return str(importlib.import_module(name).__path__[0])
+    except ModuleNotFoundError:
+        # Try a different location if notebooks have not been found, maybe we
+        # are in the Git repository root and should look there as well...
+        try:
+            return str(importlib.import_module(f"finn.{name}").__path__[0])
+        except ModuleNotFoundError:
+            warning(f"Could not resolve {name}. FINN might not work properly.")
+    # Return the empty string as a default...
+    return ""
 
 
 def prepare_finn(
@@ -39,6 +56,7 @@ def prepare_finn(
     build_dir: Path | None,
     num_workers: int,
     is_test_run: bool = False,
+    skip_dep_update: bool = False,
 ) -> None:
     """Prepare a FINN environment by:
     0. Reading all settings and environment vars
@@ -64,7 +82,10 @@ def prepare_finn(
         os.environ["PYTHONPATH"] = ""
 
     # Update / Install all dependencies
-    update_dependencies(deps_path)
+    if not skip_dep_update:
+        update_dependencies(deps_path)
+    else:
+        warning("Skipping dependency updates!")
 
     # Check synthesis tools
     set_synthesis_tools_paths()
@@ -93,14 +114,17 @@ def prepare_finn(
         resolved_build_dir.mkdir(parents=True)
     status(f"Build directory set to: {resolved_build_dir}")
 
-    # Resolve number of workers
+    # Resolve the number of workers
     workers = resolve_num_workers(num_workers, settings)
     status(f"Using {workers} workers.")
     os.environ["NUM_DEFAULT_WORKERS"] = str(workers)
 
-    # Set FINN_ROOT
-    os.environ["FINN_ROOT"] = str(Path(__file__).parent.absolute())
-    status(f"FINN_ROOT set to {Path(__file__).parent}")
+    # Resolve paths to some not properly packaged components...
+    os.environ["FINN_RTLLIB"] = _resolve_module_path("finn-rtllib")
+    os.environ["FINN_CUSTOM_HLS"] = _resolve_module_path("custom_hls")
+    os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
+    os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks")
+    os.environ["FINN_TESTS"] = _resolve_module_path("tests")
 
 
 @click.group()
@@ -118,9 +142,37 @@ def main_group() -> None:
     default=-1,
     show_default=True,
 )
+@click.option(
+    "--skip-dep-update",
+    "-s",
+    is_flag=True,
+    help="Whether to skip the dependency update. Can be changed in settings via"
+    "AUTOMATIC_DEPENDENCY_UPDATES: false",
+)
+@click.option(
+    "--start",
+    default="",
+    help="If no start_step is given in the dataflow build config, "
+    "this starts the flow from the given step.",
+)
+@click.option(
+    "--stop",
+    default="",
+    help="If no stop_step is given in the dataflow build config, "
+    "this stops the flow at the given step.",
+)
 @click.argument("config")
 @click.argument("model")
-def build(dependency_path: str, build_path: str, num_workers: int, config: str, model: str) -> None:
+def build(
+    dependency_path: str,
+    build_path: str,
+    num_workers: int,
+    skip_dep_update: bool,
+    start: str,
+    stop: str,
+    config: str,
+    model: str,
+) -> None:
     config_path = Path(config).expanduser()
     model_path = Path(model).expanduser()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
@@ -128,12 +180,25 @@ def build(dependency_path: str, build_path: str, num_workers: int, config: str, 
     assert_path_valid(model_path)
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
     status(f"Starting FINN build with config {config_path.name} and model {model_path.name}!")
-    prepare_finn(dep_path, config_path, build_dir, num_workers)
+    prepare_finn(
+        dep_path,
+        config_path,
+        build_dir,
+        num_workers,
+        skip_dep_update=(skip_dep_update or skip_update_by_default()),
+    )
+
+    # Can import from finn now, since all deps are installed
+    # and all environment variables are set correctly
+    from finn.builder.build_dataflow import build_dataflow_cfg
+    from finn.builder.build_dataflow_config import DataflowBuildConfig
+
     status("Creating dataflow build config...")
     dfbc: DataflowBuildConfig | None = None
     match config_path.suffix:
         case ".yaml" | ".yml":
-            raise NotImplementedError("Depends on a pending PR for YAML support.")
+            with config_path.open() as f:
+                dfbc = DataflowBuildConfig.from_yaml(f.read())
         case ".json":
             with config_path.open() as f:
                 dfbc = DataflowBuildConfig.from_json(f.read())
@@ -146,10 +211,15 @@ def build(dependency_path: str, build_path: str, num_workers: int, config: str, 
     if dfbc is None:
         error("Failed to generate dataflow build config!")
         sys.exit(1)
+    if dfbc.start_step is None and start != "":
+        dfbc.start_step = start
+    if dfbc.stop_step is None and stop != "":
+        dfbc.stop_step = stop
+    status(f"Output directory is {dfbc.output_dir}")
     Console().rule(
         f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
         f"{config_path.name}[/bold orange1][bold cyan] on model [/bold cyan]"
-        "[bold orange1]{model_path.name}[/bold orange1]"
+        f"[bold orange1]{model_path.name}[/bold orange1]"
     )
     build_dataflow_cfg(str(model_path), dfbc)
 
