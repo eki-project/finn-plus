@@ -15,7 +15,7 @@ jobs:
       - name: Setup
         run: pip install poetry poetry-dynamic-versioning
       - name: Config
-        run: poetry config repositories.pypi https://pypi.org/legacy/
+        run: poetry config repositories.pypi https://upload.pypi.org/legacy/
       - name: Build
         run: |
           poetry install
