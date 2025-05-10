@@ -88,7 +88,7 @@ part_map["V80"] = "xcv80-lsva4737-2MHP-e-s"
 
 
 def get_rtlsim_trace_depth():
-    """Return the trace depth for rtlsim via PyVerilator. Controllable
+    """Return the trace depth for rtlsim. Controllable
     via the RTLSIM_TRACE_DEPTH environment variable. If the env.var. is
     undefined, the default value of 1 is returned. A trace depth of 1
     will only show top-level signals and yield smaller .vcd files.
@@ -106,34 +106,28 @@ def get_rtlsim_trace_depth():
         return 1
 
 
-def get_remote_vivado():
-    """Return the address of the remote Vivado synthesis server as set by the,
-    REMOTE_VIVADO environment variable, otherwise return None"""
-
-    try:
-        return os.environ["REMOTE_VIVADO"]
-    except KeyError:
-        return None
-
-
 def get_finn_root():
-    "Return the root directory that FINN is cloned into."
+    raise Exception("get_finn_root() should not be used anymore.")
+
+
+def get_vivado_root():
+    "Return the root directory that Vivado is installed into."
 
     try:
-        return os.environ["FINN_ROOT"]
+        return os.environ["XILINX_VIVADO"]
     except KeyError:
         raise Exception(
-            """Environment variable FINN_ROOT must be set
+            """Environment variable XILINX_VIVADO must be set
         correctly. Please ensure you have launched the Docker contaier correctly.
         """
         )
 
 
-def pyverilate_get_liveness_threshold_cycles():
+def get_liveness_threshold_cycles():
     """Return the number of no-output cycles rtlsim will wait before assuming
     the simulation is not finishing and throwing an exception."""
 
-    return int(os.getenv("LIVENESS_THRESHOLD", 10000))
+    return int(os.getenv("LIVENESS_THRESHOLD", 1000000))
 
 
 def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path:

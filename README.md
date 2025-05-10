@@ -37,7 +37,7 @@ This is a very quick overview of how to get started, for additional information 
 ### Requirements
 The primary dependencies currently are:
 - Python >= 3.10 (<= 3.12)
-- Poetry
+- Poetry >= 2.0
 - Vivado, Vitis, Vitis HLS (preferably 2022.2 or 2024.2)
 - Some basic system-level packages, refer to the "installDependencies.sh" script
 

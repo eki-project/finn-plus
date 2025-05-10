@@ -31,6 +31,7 @@
 docompute_template = """
 #define HLS_CONSTEXPR_ENABLE
 #define AP_INT_MAX_W $AP_INT_MAX_W$
+#define HLS_NO_XIL_FPO_LIB
 #include "cnpy.h"
 #include "npy2apintstream.hpp"
 #include "npy2vectorstream.hpp"
@@ -138,7 +139,7 @@ set config_bnnlibdir "$FINNHLSLIB$"
 puts "finn-hlslib dir: $config_bnnlibdir"
 set config_attentionlibdir "$ATTENTIONHLSLIB$"
 puts "attention-hlslib dir: $config_attentionlibdir"
-set config_customhlsdir "$::env(FINN_ROOT)/custom_hls"
+set config_customhlsdir "$::env(FINN_CUSTOM_HLS)"
 puts "custom HLS dir: $config_customhlsdir"
 set config_toplevelfxn "$TOPFXN$"
 set config_clkperiod $CLKPERIOD$

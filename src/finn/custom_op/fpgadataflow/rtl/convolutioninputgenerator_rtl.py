@@ -30,17 +30,13 @@ import math
 import numpy as np
 import os
 import shutil
-from qonnx.core.datatype import DataType
 from qonnx.custom_op.general import im2col
 from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 
-import finn.util.verilator_helper as verilator
 from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
-from finn.util.basic import get_rtlsim_trace_depth, make_build_dir
-from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 
 # RTL Convolution Input Generator / Sliding Window Generator (SWG)
 # Matches and extends the functionality of all ConvolutionInputGenerator_* functions
@@ -281,7 +277,6 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
 
     def execute_node(self, context, graph):
         mode = self.get_nodeattr("exec_mode")
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
         if mode == "cppsim":
             ConvolutionInputGenerator.execute_node(self, context, graph)
@@ -301,75 +296,16 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
                 im2col_out = im2col_out.reshape(1, ofm_h, ofm_w, ifm_ch * k_h * k_w)
                 context[node.output[0]] = im2col_out
         elif mode == "rtlsim":
-            node = self.onnx_node
-            exp_ishape = self.get_normal_input_shape()
-            exp_oshape = self.get_normal_output_shape()
-            folded_ishape = self.get_folded_input_shape()
-
-            inp = context[node.input[0]]
-            assert str(inp.dtype) == "float32", "Input datatype is not float32"
-            assert (
-                inp.shape == exp_ishape
-            ), """Input shape doesn't match expected shape (1, ifm_dim, ifm_dim, ifm_ch)."""
-            if self.get_input_datatype() == DataType["BIPOLAR"]:
-                # store bipolar activations as binary
-                inp = (inp + 1) / 2
-                export_idt = DataType["BINARY"]
-            else:
-                export_idt = self.get_input_datatype()
-
-            # reshape input into folded form
-            inp = inp.reshape(folded_ishape)
-            # make copy before saving array
-            reshaped_input = inp.copy()
-            np.save(os.path.join(code_gen_dir, "input_0.npy"), reshaped_input)
-
-            sim = self.get_rtlsim()
-            nbits = self.get_instream_width()
-            rtlsim_inp = npy_to_rtlsim_input(
-                "{}/input_0.npy".format(code_gen_dir), export_idt, nbits
-            )
-            super().reset_rtlsim(sim)
-            super().toggle_clk(sim)
-            rtlsim_output = self.rtlsim(sim, rtlsim_inp)
-            odt = export_idt
-            target_bits = odt.bitwidth()
-            packed_bits = self.get_outstream_width()
-            out_npy_path = "{}/output.npy".format(code_gen_dir)
-            out_shape = self.get_folded_output_shape()
-            rtlsim_output_to_npy(
-                rtlsim_output, out_npy_path, odt, out_shape, packed_bits, target_bits
-            )
-            # load and reshape output
-            output = np.load(out_npy_path)
-            output = np.asarray([output], dtype=np.float32).reshape(*exp_oshape)
-            context[node.output[0]] = output
-
-            # binary -> bipolar if needed
-            if self.get_output_datatype() == DataType["BIPOLAR"]:
-                out = context[node.output[0]]
-                out = 2 * out - 1
-                context[node.output[0]] = out
-            assert (
-                context[node.output[0]].shape == exp_oshape
-            ), """Output
-            shape doesn't match expected shape (1, ofm_dim_h, ofm_dim_w, k_h*k_w*ifm_ch)."""
-        else:
-            raise Exception(
-                """Invalid value for attribute exec_mode! Is currently set to: {}
-            has to be set to one of the following value ("cppsim", "rtlsim")""".format(
-                    mode
-                )
-            )
+            RTLBackend.execute_node(self, context, graph)
 
     def prepare_codegen_default(self):
         """Fills code generation dict for the default implementation style by computing
         the incremental addressing scheme for the circular buffer."""
         if self.get_nodeattr("dynamic_mode"):
-            template_select = "/finn-rtllib/swg/swg_template_default_dynamic.sv"
+            template_select = "swg/swg_template_default_dynamic.sv"
         else:
-            template_select = "/finn-rtllib/swg/swg_template_default.sv"
-        template_path = os.environ["FINN_ROOT"] + template_select
+            template_select = "swg/swg_template_default.sv"
+        template_path = os.path.join(os.environ["FINN_RTLLIB"], template_select)
         code_gen_dict = {}
 
         ifm_ch = self.get_nodeattr("IFMChannels")
@@ -548,7 +484,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         the loop controller configuration and partitioning the fixed buffer into
         shift-registers (for parallel read access) and line buffers (for efficient
         LUTRAM/BRAM/URAM implementation)."""
-        template_path = os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_template_parallel.sv"
+        template_path = os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_template_parallel.sv")
         code_gen_dict = {}
 
         ifm_ch = self.get_nodeattr("IFMChannels")
@@ -885,12 +821,12 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         with open(template_path, "r") as f:
             template = f.read()
         if self.get_nodeattr("dynamic_mode"):
-            template_select = "/finn-rtllib/swg/swg_template_wrapper_dynamic.v"
+            template_select = "swg/swg_template_wrapper_dynamic.v"
         else:
-            template_select = "/finn-rtllib/swg/swg_template_wrapper.v"
-        with open(os.environ["FINN_ROOT"] + template_select, "r") as f:
+            template_select = "swg/swg_template_wrapper.v"
+        with open(os.path.join(os.environ["FINN_RTLLIB"], template_select), "r") as f:
             template_wrapper = f.read()
-        with open(os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_template_axilite.v", "r") as f:
+        with open(os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_template_axilite.v"), "r") as f:
             template_axilite = f.read()
         for key in code_gen_dict:
             # transform list into long string separated by '\n'
@@ -918,44 +854,31 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
                 f.write(template_axilite)
 
         # Copy static source file for common core components
-        shutil.copy2(os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_common.sv", code_gen_dir)
-        shutil.copy2(os.environ["FINN_ROOT"] + "/finn-rtllib/swg/swg_pkg.sv", code_gen_dir)
+        shutil.copy2(os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_common.sv"), code_gen_dir)
+        shutil.copy2(os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_pkg.sv"), code_gen_dir)
 
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
         self.set_nodeattr("ipgen_path", code_gen_dir)
         self.set_nodeattr("ip_path", code_gen_dir)
 
-    def prepare_rtlsim(self):
-        """Creates a Verilator emulation library for the RTL code generated
-        for this node, sets the rtlsim_so attribute to its path and returns
-        a PyVerilator wrapper around it."""
-        # Modified to use generated (System-)Verilog instead of HLS output products
-
-        verilator.checkForVerilator()
-
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        verilog_paths = [code_gen_dir]
+    def get_rtl_file_list(self, abspath=False):
+        if abspath:
+            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
+            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "swg/")
+        else:
+            code_gen_dir = ""
+            rtllib_dir = ""
         verilog_files = [
-            "swg_pkg.sv",
-            self.get_nodeattr("gen_top_module") + "_wrapper.v",
-            self.get_nodeattr("gen_top_module") + "_impl.sv",
-            "swg_common.sv",
+            rtllib_dir + "swg_pkg.sv",
+            code_gen_dir + self.get_nodeattr("gen_top_module") + "_wrapper.v",
+            code_gen_dir + self.get_nodeattr("gen_top_module") + "_impl.sv",
+            rtllib_dir + "swg_common.sv",
         ]
         if self.get_nodeattr("dynamic_mode"):
-            verilog_files.append(self.get_nodeattr("gen_top_module") + "_axilite.v")
+            verilog_files.append(code_gen_dir + self.get_nodeattr("gen_top_module") + "_axilite.v")
 
-        # build the Verilator emu library
-        sim = verilator.buildPyVerilator(
-            verilog_files,
-            build_dir=make_build_dir("pyverilator_" + self.onnx_node.name + "_"),
-            verilog_path=verilog_paths,
-            trace_depth=get_rtlsim_trace_depth(),
-            top_module_name=self.get_verilog_top_module_name(),
-        )
-        # save generated lib filename in attribute
-        self.set_nodeattr("rtlsim_so", sim.lib._name)
-        return sim
+        return verilog_files
 
     def code_generation_ipi(self):
         """Constructs and returns the TCL for node instantiation in Vivado IPI."""

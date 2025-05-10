@@ -86,7 +86,7 @@ from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC, MoveScalarLinearPastInvariants
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.util.basic import get_finn_root, make_build_dir, test_board_map
+from finn.util.basic import make_build_dir, test_board_map
 from finn.util.pytorch import ToTensor
 from finn.util.test import (
     execute_parent,
@@ -98,13 +98,13 @@ from finn.util.test import (
 )
 
 
-build_dir = os.environ["FINN_BUILD_DIR"]
 target_clk_ns = 20
 mem_mode = "internal_decoupled"
 rtlsim_trace = False
 
 
 def get_checkpoint_name(board, topology, wbits, abits, step):
+    build_dir = os.environ["FINN_BUILD_DIR"]
     return build_dir + "/end2end_%s_%s_w%da%d_%s.onnx" % (
         board,
         topology,
@@ -251,11 +251,11 @@ def get_golden_io_pair(topology, wbits, abits, preproc=ToTensor(), return_topk=N
 def measure_top1_accuracy(model_chkpt, dataset, parent_chkpt=None):
     if dataset == "cifar10":
         trainx, trainy, testx, testy, valx, valy = cifar.load_cifar_data(
-            get_finn_root() + "/dataset", download=True, one_hot=False
+            "dataset", download=True, one_hot=False
         )
     elif dataset == "mnist":
         trainx, trainy, testx, testy, valx, valy = mnist.load_mnist_data(
-            get_finn_root() + "/dataset", download=True, one_hot=False
+            "dataset", download=True, one_hot=False
         )
     else:
         raise Exception("Unrecognized dataset")
@@ -313,7 +313,6 @@ def deploy_based_on_board(model, model_title, topology, wbits, abits, board):
     # create directory for deployment files
     deployment_dir = deploy_dir_root + "/" + board + "/" + model_title
     os.makedirs(deployment_dir)
-    model.set_metadata_prop("pynq_deployment_dir", deployment_dir)
 
     # get and copy necessary files
     # .bit and .hwh file
@@ -697,8 +696,8 @@ class TestEnd2End:
     @pytest.mark.vivado
     def test_ipgen(self, topology, wbits, abits, board):
         build_data = get_build_env(board, target_clk_ns)
-        if build_data["kind"] == "alveo" and ("VITIS_PATH" not in os.environ):
-            pytest.skip("VITIS_PATH not set")
+        if build_data["kind"] == "alveo" and ("XILINX_VITIS" not in os.environ):
+            pytest.skip("XILINX_VITIS not set")
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "minimize_bit_width")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         model = model.transform(GiveUniqueNodeNames())
@@ -765,11 +764,11 @@ class TestEnd2End:
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         n_nodes = len(model.graph.node)
         perf_est = model.analysis(dataflow_performance)
-        ret_b1 = throughput_test_rtlsim(model, batchsize=1)
+        ret_b1 = throughput_test_rtlsim(model, target_clk_ns, batchsize=1)
         latency = int(ret_b1["cycles"])
         cycles_per_sample_est = perf_est["max_cycles"]
         batchsize = 2 * n_nodes
-        ret = throughput_test_rtlsim(model, batchsize=batchsize)
+        ret = throughput_test_rtlsim(model, target_clk_ns, batchsize=batchsize)
         res_cycles = ret["cycles"]
         est_cycles = latency + cycles_per_sample_est * batchsize
         assert (abs(res_cycles - est_cycles) / res_cycles) < 0.15
@@ -795,8 +794,8 @@ class TestEnd2End:
     @pytest.mark.vitis
     def test_build(self, topology, wbits, abits, board):
         build_data = get_build_env(board, target_clk_ns)
-        if build_data["kind"] == "alveo" and ("VITIS_PATH" not in os.environ):
-            pytest.skip("VITIS_PATH not set")
+        if build_data["kind"] == "alveo" and ("XILINX_VITIS" not in os.environ):
+            pytest.skip("XILINX_VITIS not set")
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "fifodepth")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         model = model.transform(build_data["build_fxn"])
@@ -808,8 +807,8 @@ class TestEnd2End:
     @pytest.mark.vitis
     def test_make_pynq_driver(self, topology, wbits, abits, board):
         build_data = get_build_env(board, target_clk_ns)
-        if build_data["kind"] == "alveo" and ("VITIS_PATH" not in os.environ):
-            pytest.skip("VITIS_PATH not set")
+        if build_data["kind"] == "alveo" and ("XILINX_VITIS" not in os.environ):
+            pytest.skip("XILINX_VITIS not set")
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "build")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         board_to_driver_platform = "alveo" if build_data["kind"] == "alveo" else "zynq-iodma"

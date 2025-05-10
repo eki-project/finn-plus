@@ -47,7 +47,7 @@ def out_of_context_synth(
         omx_path = get_deps_path() / "oh-my-xilinx"
     else:
         omx_path = os.environ["OHMYXILINX"]
-    # ensure that vivado is in PATH: source $VIVADO_PATH/settings64.sh
+    # ensure that vivado is in PATH: source VIVADO_INSTALLATION/settings64.sh
     if which("vivado") is None:
         raise Exception("vivado is not in PATH, ensure settings64.sh is sourced.")
 

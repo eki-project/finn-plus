@@ -26,15 +26,11 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import numpy as np
 import os
 import shutil
 
-import finn.util.verilator_helper as verilator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
-from finn.util.basic import get_rtlsim_trace_depth, make_build_dir
-from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 
 
 class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
@@ -67,58 +63,10 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
 
     def execute_node(self, context, graph):
         mode = self.get_nodeattr("exec_mode")
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-
         if mode == "cppsim":
             StreamingDataWidthConverter.execute_node(self, context, graph)
         elif mode == "rtlsim":
-            node = self.onnx_node
-            exp_ishape = self.get_normal_input_shape()
-            exp_oshape = self.get_normal_output_shape()
-            folded_ishape = self.get_folded_input_shape()
-
-            inp = context[node.input[0]]
-            assert str(inp.dtype) == "float32", "Input datatype is not float32"
-            assert inp.shape == tuple(
-                exp_ishape
-            ), """Input shape doesn't
-            match expected shape."""
-            export_idt = self.get_input_datatype()
-
-            reshaped_input = inp.reshape(folded_ishape)
-            np.save(os.path.join(code_gen_dir, "input_0.npy"), reshaped_input)
-
-            sim = self.get_rtlsim()
-            nbits = self.get_instream_width()
-            rtlsim_inp = npy_to_rtlsim_input(
-                "{}/input_0.npy".format(code_gen_dir), export_idt, nbits
-            )
-            super().reset_rtlsim(sim)
-            super().toggle_clk(sim)
-            rtlsim_output = self.rtlsim(sim, rtlsim_inp)
-            odt = export_idt
-            target_bits = odt.bitwidth()
-            packed_bits = self.get_outstream_width()
-            out_npy_path = "{}/output.npy".format(code_gen_dir)
-            out_shape = self.get_folded_output_shape()
-            rtlsim_output_to_npy(
-                rtlsim_output, out_npy_path, odt, out_shape, packed_bits, target_bits
-            )
-            # load and reshape output
-            output = np.load(out_npy_path)
-            output = np.asarray([output], dtype=np.float32).reshape(*exp_oshape)
-            context[node.output[0]] = output
-
-            assert context[node.output[0]].shape == tuple(
-                exp_oshape
-            ), """Output shape doesn't match expected shape."""
-        else:
-            raise Exception(
-                """Invalid value for attribute exec_mode! Is currently set to: {}
-            has to be set to one of the following value ("cppsim", "rtlsim")""".format(
-                    mode
-                )
-            )
+            RTLBackend.execute_node(self, context, graph)
 
     def get_template_values(self):
         topname = self.get_verilog_top_module_name()
@@ -132,7 +80,7 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         return code_gen_dict
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtlsrc = os.environ["FINN_ROOT"] + "/finn-rtllib/dwc/hdl"
+        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "dwc/hdl")
         template_path = rtlsrc + "/dwc_template.v"
         code_gen_dict = self.get_template_values()
         # save top module name so we can refer to it after this node has been renamed
@@ -161,33 +109,21 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         self.set_nodeattr("ipgen_path", code_gen_dir)
         self.set_nodeattr("ip_path", code_gen_dir)
 
-    def prepare_rtlsim(self):
-        """Creates a Verilator emulation library for the RTL code generated
-        for this node, sets the rtlsim_so attribute to its path and returns
-        a PyVerilator wrapper around it."""
-        # Modified to use generated (System-)Verilog instead of HLS output products
+    def get_rtl_file_list(self, abspath=False):
+        if abspath:
+            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
+            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "dwc/hdl/")
+        else:
+            code_gen_dir = ""
+            rtllib_dir = ""
 
-        verilator.checkForVerilator()
-
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        verilog_paths = [code_gen_dir]
         verilog_files = [
-            "dwc_axi.sv",
-            "dwc.sv",
-            self.get_nodeattr("gen_top_module") + ".v",
+            rtllib_dir + "dwc_axi.sv",
+            rtllib_dir + "dwc.sv",
+            code_gen_dir + self.get_nodeattr("gen_top_module") + ".v",
         ]
 
-        # build the Verilator emu library
-        sim = verilator.buildPyVerilator(
-            verilog_files,
-            build_dir=make_build_dir("pyverilator_" + self.onnx_node.name + "_"),
-            verilog_path=verilog_paths,
-            trace_depth=get_rtlsim_trace_depth(),
-            top_module_name=self.get_verilog_top_module_name(),
-        )
-        # save generated lib filename in attribute
-        self.set_nodeattr("rtlsim_so", sim.lib._name)
-        return sim
+        return verilog_files
 
     def code_generation_ipi(self):
         """Constructs and returns the TCL for node instantiation in Vivado IPI."""
