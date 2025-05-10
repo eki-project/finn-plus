@@ -1,28 +1,37 @@
-[tool.poetry]
-name = "finn"
-version = "0.10.1"
-description = ""
-authors = ["Yaman Umuroglu"]
+[project]
+name = "finn-plus"
+dynamic = ["version"]
+maintainers = [
+  {name = "Felix Jentzsch", email = "felix.jentzsch@upb.de"},
+  {name = "Christoph Berganski", email = "christoph.berganski@upb.de"},
+  {name = "Linus Jungemann", email = "linus.jungemann@upb.de"},
+  {name = "Bjarne Wintermann", email = "bjarne.wintermann@upb.de"}
+]
 readme = "README.md"
 
+[tool.poetry]
 packages = [
     { include = "finn", from = "src" },
-    { include = "finn-rtllib" }
+    { include = "finn-rtllib", to = "finn" },
+    { include = "custom_hls", to = "finn" },
+    { include = "notebooks", to = "finn" },
+    { include = "tests", to = "finn" }
 ]
-include = [
-    "run_finn.py",
-    "src/finn/qnn-data/cpp/*",
-]
+version = "0.0.0"
 
+[tool.poetry.requires-plugins]
+poetry-dynamic-versioning = { version = ">=1.0.0,<2.0.0", extras = ["plugin"] }
+
+[tool.poetry-dynamic-versioning]
+enable = true
 
 [tool.poetry.scripts]
-finn = "run_finn:main"
+finn = "finn.interface.run_finn:main"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
 bitstring = "3.1.7"
 clize = "5.0.1"
-dataclasses-json = "0.5.7"
 gspread = "3.6.0"
 importlib-resources = "6.1.0"
 ipython = "8.12.2"
@@ -72,9 +81,6 @@ tclwrapper = "0.0.1"
 setuptools = ">40.8.0"
 pytest-xdist = {version = "3.6.1", extras = ["setproctitle"]}
 
-qonnx = { git = "https://github.com/iksnagreb/qonnx.git", rev = "3d3d8964dbc5355d5c9be855d87b7b442508e3a4" }
-brevitas = { git = "https://github.com/iksnagreb/brevitas.git", rev = "003f9f4070c20639790c7b406a28612a089fc502" }
-dataset_loading = { git = "https://github.com/fbcotter/dataset_loading.git", tag="0.0.4" }
 termcolor = "^2.5.0"
 rich = "^13.9.4"
 click = "^8.1.8"
@@ -82,13 +88,14 @@ onnxoptimizer = "^0.3.13"
 mashumaro = {extras = ["yaml"], version = "^3.15"}
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
 
 [tool.pytest.ini_options]
 addopts = [ "--verbose" ]
 markers = [
    "slow: marks tests as slow",
+   "infrastructure: marks tests that refer to infrastructure functionality",
    "vivado: mark tests that require Vivado or Vivado HLS",
    "vitis: mark tests that require Vitis",
    "board: mark tests that require a PYNQ board",
