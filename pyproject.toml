@@ -1,5 +1,6 @@
 [project]
 name = "finn-plus"
+description = "Fork of FINN, a QNN dataflow compiler for AMD/Xilinx FPGAs"
 dynamic = ["version"]
 maintainers = [
   {name = "Felix Jentzsch", email = "felix.jentzsch@upb.de"},
@@ -8,6 +9,10 @@ maintainers = [
   {name = "Bjarne Wintermann", email = "bjarne.wintermann@upb.de"}
 ]
 readme = "README.md"
+
+[project.urls]
+"GitHub" = "https://github.com/eki-project/finn-plus"
+"EKI Project" = "https://www.eki-project.tech/"
 
 [tool.poetry]
 packages = [
