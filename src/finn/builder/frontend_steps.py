@@ -47,7 +47,11 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.transformation.quant_constant_folding import FoldTransposeIntoQuantInit
 from qonnx.transformation.remove import RemoveIdentityOps
-from qonnx.transformation.streamline import Streamline
+from qonnx.transformation.streamline import (
+    Streamline,
+    default_streamline_tensor_filter,
+    macprod_or_dynadd_streamline_tensor_filter,
+)
 from qonnx.util.range_analysis import RangeInfo
 from quant_to_multithreshold import QuantToMultiThreshold
 from warnings import warn
@@ -110,7 +114,13 @@ def step_aggregate_scale_bias(model: ModelWrapper, cfg: DataflowBuildConfig):
         if isinstance(cfg.input_range_info, list):
             for ind, inp in enumerate(model.graph.input):
                 current_irange[inp.name] = cfg.input_range_info[ind]
-    aggr_trn = Streamline(irange=current_irange)
+    if cfg.scalebias_aggregate_prenonlinear:
+        # aggregate in front of non-linearities (default filter)
+        tensor_filter = default_streamline_tensor_filter
+    else:
+        # aggregate after MAC nodes + dynamic adds
+        tensor_filter = macprod_or_dynadd_streamline_tensor_filter
+    aggr_trn = Streamline(irange=current_irange, tensor_filter=tensor_filter)
     model = model.transform(aggr_trn)
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
@@ -241,13 +251,8 @@ def step_convert_to_thresholds_old(model: ModelWrapper, cfg: DataflowBuildConfig
     return model
 
 
-def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Convert eligible nodes to `HWCustomOp` subclasses that represent HW
-    layers. Which nodes and particular configurations can be converted to HW
-    is limited, see the source code of the `convert_to_hw` module for more.
-    In the end am empty json file is created which can be used to set user specific
-    preferred implementation styles for each node."""
-
+def step_apply_fixedpt_qnt(model: ModelWrapper, cfg: DataflowBuildConfig):
+    "Apply fixed-point quantization to the model, if enabled."
     if cfg.fixedpt_config is not None:
         with open(cfg.fixedpt_config, "r") as f:
             fxp_dict = json.load(f)
@@ -255,6 +260,15 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
         for k, v in fxp_dict.items():
             fxp_dict[k] = DataType[v]
         model = model.transform(FixedPointQuantizeParamsFromDict(fxp_dict))
+    return model
+
+
+def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Convert eligible nodes to `HWCustomOp` subclasses that represent HW
+    layers. Which nodes and particular configurations can be converted to HW
+    is limited, see the source code of the `convert_to_hw` module for more.
+    In the end am empty json file is created which can be used to set user specific
+    preferred implementation styles for each node."""
 
     if cfg.standalone_thresholds:
         # doing this first causes all threshold layers to be standalone
