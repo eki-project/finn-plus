@@ -211,11 +211,21 @@ def build(
     if dfbc is None:
         error("Failed to generate dataflow build config!")
         sys.exit(1)
+
+    # Set start and stop steps
     if dfbc.start_step is None and start != "":
         dfbc.start_step = start
     if dfbc.stop_step is None and stop != "":
         dfbc.stop_step = stop
+
+    # Set output directory to where the config lies, not where FINN lies
+    if not Path(dfbc.output_dir).is_absolute():
+        dfbc.output_dir = str((config_path.parent / dfbc.output_dir).absolute())
     status(f"Output directory is {dfbc.output_dir}")
+
+    # Add path of config to sys.path so that custom steps can be found
+    sys.path.append(str(config_path.parent.absolute()))
+
     Console().rule(
         f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
         f"{config_path.name}[/bold orange1][bold cyan] on model [/bold cyan]"
