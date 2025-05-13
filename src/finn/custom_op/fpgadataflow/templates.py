@@ -29,9 +29,12 @@
 
 # template for single node execution
 docompute_template = """
+#define HLS_CONSTEXPR_ENABLE
 #define AP_INT_MAX_W $AP_INT_MAX_W$
+#define HLS_NO_XIL_FPO_LIB
 #include "cnpy.h"
 #include "npy2apintstream.hpp"
+#include "npy2vectorstream.hpp"
 #include <vector>
 #include "bnn-library.h"
 
@@ -58,10 +61,56 @@ $SAVEASCNPY$
 
 """
 
+# template for single node execution with timeout (for single clock hls operations)
+docompute_template_timeout = """
+#define AP_INT_MAX_W $AP_INT_MAX_W$
+#include "cnpy.h"
+#include "npy2apintstream.hpp"
+#include "npy2vectorstream.hpp"
+#include <vector>
+#include "bnn-library.h"
+
+// includes for network parameters
+$GLOBALS$
+
+// defines for network parameters
+$DEFINES$
+
+int main(){
+$PRAGMAS$
+
+$STREAMDECLARATIONS$
+
+$READNPYDATA$
+
+unsigned timeout = 0;
+while(timeout < $TIMEOUT_VALUE$){
+
+$DOCOMPUTE$
+
+if($TIMEOUT_CONDITION$){
+timeout++;
+}
+
+else{
+$TIMEOUT_READ_STREAM$
+timeout = 0;
+}
+}
+
+$DATAOUTSTREAM$
+
+$SAVEASCNPY$
+
+}
+
+"""
+
 # templates for single node ip generation
 
 # cpp file
 ipgen_template = """
+#define HLS_CONSTEXPR_ENABLE
 #define AP_INT_MAX_W $AP_INT_MAX_W$
 
 #include "bnn-library.h"
@@ -86,15 +135,17 @@ puts "HLS project: $config_proj_name"
 set config_hwsrcdir "$HWSRCDIR$"
 puts "HW source dir: $config_hwsrcdir"
 set config_proj_part "$FPGAPART$"
-set config_bnnlibdir "$::env(FINN_ROOT)/deps/finn-hlslib"
+set config_bnnlibdir "$FINNHLSLIB$"
 puts "finn-hlslib dir: $config_bnnlibdir"
-set config_customhlsdir "$::env(FINN_ROOT)/custom_hls"
+set config_attentionlibdir "$ATTENTIONHLSLIB$"
+puts "attention-hlslib dir: $config_attentionlibdir"
+set config_customhlsdir "$::env(FINN_CUSTOM_HLS)"
 puts "custom HLS dir: $config_customhlsdir"
 set config_toplevelfxn "$TOPFXN$"
 set config_clkperiod $CLKPERIOD$
 
 open_project $config_proj_name
-add_files $config_hwsrcdir/top_$TOPFXN$.cpp -cflags "-std=c++14 -I$config_bnnlibdir -I$config_customhlsdir"
+add_files $config_hwsrcdir/top_$TOPFXN$.cpp -cflags "-std=c++14 -I$config_bnnlibdir -I$config_customhlsdir -I$config_attentionlibdir"
 
 set_top $config_toplevelfxn
 open_solution sol1

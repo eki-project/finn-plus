@@ -28,13 +28,12 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import warnings
-from onnx import TensorProto
 from onnx import helper as oh
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
+from finn.util.logging import log
 
 
 def _is_fifo_node(node):
@@ -104,9 +103,9 @@ class InsertFIFO(Transformation):
                     if consumers == []:
                         continue
                     if len(consumers) > 1:
-                        warnings.warn(
-                            first_node.name
-                            + ": HLS node with fan-out higher than 1 cannot be stitched"
+                        log.warning(
+                            f"{first_node.name} : HLS node with fan-out higher\
+                                than 1 cannot be stitched"
                         )
                     consumer = consumers[0]
                     if _suitable_node(consumer) is True:
@@ -114,6 +113,8 @@ class InsertFIFO(Transformation):
                         # determine fifo node attributes
                         fld_shape = n0.get_folded_output_shape()
                         dtype = n0.get_output_datatype()
+                        n0_otensor = model.get_tensor_valueinfo(output_name)
+                        n0_tensor_dtype = n0_otensor.type.tensor_type.elem_type
 
                         # check if folded_shape of output of first node and
                         # input of the second node is equal
@@ -145,7 +146,7 @@ class InsertFIFO(Transformation):
                             # or unless create_shallow_fifos is specified
                             fifo_output_tensor = oh.make_tensor_value_info(
                                 model.make_new_valueinfo_name(),
-                                TensorProto.FLOAT,
+                                n0_tensor_dtype,
                                 n0.get_normal_output_shape(),
                             )
                             graph.value_info.append(fifo_output_tensor)
@@ -196,13 +197,17 @@ class InsertFIFO(Transformation):
                     fld_shape = n0.get_folded_input_shape(inp_ind)
                     n_shape = n0.get_normal_input_shape(inp_ind)
                     dtype = n0.get_input_datatype(inp_ind)
+                    n0_itensor = model.get_tensor_valueinfo(graph_in_name)
+                    n0_tensor_dtype = n0_itensor.type.tensor_type.elem_type
                     fifo_depth = n0.get_nodeattr("inFIFODepths")[inp_ind]
 
                     if fifo_depth > 2 or self.create_shallow_fifos:
+                        # Ensure that create shallow fifo condition doesn't create depth=1 fifos
+                        fifo_depth = max(fifo_depth, 2)
                         # create fifo node
                         fifo_output_tensor = oh.make_tensor_value_info(
                             model.make_new_valueinfo_name(),
-                            TensorProto.FLOAT,
+                            n0_tensor_dtype,
                             n0.get_normal_input_shape(inp_ind),
                         )
                         graph.value_info.append(fifo_output_tensor)
@@ -231,11 +236,9 @@ class InsertFIFO(Transformation):
                         # set fifo output tensor as new input tensor of second node
                         first_node.input[inp_ind] = fifo_output_tensor.name
                     else:
-                        warnings.warn(
-                            """Input FIFO for %s has depth %d and won't
-                        be created. This may cause RTL simulation issues.
-                        """
-                            % (graph_in_name, fifo_depth)
+                        log.warning(
+                            f"Input FIFO for {graph_in_name} has depth {fifo_depth} and won't\
+                                be created. This may cause RTL simulation issues."
                         )
 
             # insert FIFO as last node, except when last node is DMA
@@ -256,14 +259,18 @@ class InsertFIFO(Transformation):
                     fld_shape = n0.get_folded_output_shape(out_ind)
                     n_shape = n0.get_normal_output_shape(out_ind)
                     dtype = n0.get_output_datatype(out_ind)
+                    n0_otensor = model.get_tensor_valueinfo(graph_out_name)
+                    n0_tensor_dtype = n0_otensor.type.tensor_type.elem_type
                     fifo_depth = n0.get_nodeattr("outFIFODepths")[out_ind]
 
                     if fifo_depth > 2 or self.create_shallow_fifos:
+                        # Ensure that create shallow fifo condition doesn't create depth=1 fifos
+                        fifo_depth = max(fifo_depth, 2)
                         # create fifo node
                         fifo_input_tensor = oh.make_tensor_value_info(
                             model.make_new_valueinfo_name(),
-                            TensorProto.FLOAT,
-                            n0.get_normal_output_shape(),
+                            n0_tensor_dtype,
+                            n0.get_normal_output_shape(out_ind),
                         )
                         graph.value_info.append(fifo_input_tensor)
                         model.set_tensor_datatype(fifo_input_tensor.name, dtype)
@@ -289,13 +296,12 @@ class InsertFIFO(Transformation):
                         graph.node.append(fifo_node)
 
                         # set fifo output tensor as new input tensor of second node
-                        final_node.output[0] = fifo_input_tensor.name
+                        final_node.output[out_ind] = fifo_input_tensor.name
                     else:
-                        warnings.warn(
-                            """Output FIFO for %s has depth %d and won't
+                        log.warning(
+                            f"""Output FIFO for {graph_out_name} has depth {fifo_depth} and won't
                         be created. This may cause RTL simulation issues.
                         """
-                            % (graph_out_name, fifo_depth)
                         )
 
         return (model, graph_modified)

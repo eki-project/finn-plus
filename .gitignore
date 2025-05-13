@@ -40,6 +40,7 @@ __pycache__/*
 .cache/*
 .*.swp
 *.ipynb_checkpoints*
+*.sif
 
 # Project files
 .vscode
@@ -49,6 +50,9 @@ __pycache__/*
 .settings
 .idea
 tags
+poetry.lock
+*.code-workspace
+.env
 
 # Package files
 *.egg
@@ -96,3 +100,9 @@ MANIFEST
 
 # downloaded dep repos
 /deps/
+
+# local test directories for benchmarking infrastructure
+bench_input
+bench_output
+bench_save
+bench_work

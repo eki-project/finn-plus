@@ -25,12 +25,13 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 import math
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class StreamingFIFO(HWCustomOp):
@@ -70,13 +71,6 @@ class StreamingFIFO(HWCustomOp):
 
         return my_attrs
 
-    def make_shape_compatible_op(self, model):
-        exp_ishape = self.get_normal_input_shape()
-        oshape = self.get_normal_output_shape()
-        ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
-        assert ishape == tuple(exp_ishape), "Unexpect input shape for StreamingFIFO."
-        return super().make_const_shape_op(oshape)
-
     def infer_node_datatype(self, model):
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
@@ -86,13 +80,10 @@ class StreamingFIFO(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("dataType", idt.name)
         # data type stays the same
         model.set_tensor_datatype(node.output[0], idt)
-
-    def verify_node(self):
-        pass
 
     def get_verilog_top_module_intf_names(self):
         ret = super().get_verilog_top_module_intf_names()
@@ -106,7 +97,7 @@ class StreamingFIFO(HWCustomOp):
         depth = self.get_adjusted_depth()
         assert depth >= 1, """Depth is too low"""
         if depth > 256 and self.get_nodeattr("impl_style") == "rtl":
-            warnings.warn("Depth is high, set between 2 and 256 for efficient SRL implementation")
+            log.warning("Depth is high, set between 2 and 256 for efficient SRL implementation")
         return self.get_nodeattr("normal_shape")
 
     def get_normal_output_shape(self, ind=0):
