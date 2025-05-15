@@ -15,30 +15,49 @@ from rich.live import Live
 from rich.table import Table
 from threading import Lock
 
+from finn.interface import IS_POSIX
 from finn.util.deps import get_deps_path
-from interface import IS_POSIX
 
 FINN_DEPS = {
     "finn-experimental": (
         "https://github.com/Xilinx/finn-experimental.git",
         "0724be21111a21f0d81a072fccc1c446e053f851",
+        False,
     ),
     "brevitas": (
         "https://github.com/iksnagreb/brevitas.git",
         "003f9f4070c20639790c7b406a28612a089fc502",
+        True,
     ),
-    "cnpy": ("https://github.com/rogersce/cnpy.git", "4e8810b1a8637695171ed346ce68f6984e585ef4"),
+    "qonnx": (
+        "https://github.com/iksnagreb/qonnx.git",
+        "3d3d8964dbc5355d5c9be855d87b7b442508e3a4",
+        True,
+    ),
+    "dataset_loading": (
+        "https://github.com/fbcotter/dataset_loading.git",
+        "5b9faa226e5f7c857579d31cdd9acde8cdfb816f",
+        True,
+    ),
+    "cnpy": (
+        "https://github.com/rogersce/cnpy.git",
+        "4e8810b1a8637695171ed346ce68f6984e585ef4",
+        False,
+    ),
     "oh-my-xilinx": (
         "https://github.com/maltanar/oh-my-xilinx.git",
         "0b59762f9e4c4f7e5aa535ee9bc29f292434ca7a",
+        False,
     ),
     "finn-hlslib": (
         "https://github.com/Xilinx/finn-hlslib.git",
         "5c5ad631e3602a8dd5bd3399a016477a407d6ee7",
+        False,
     ),
     "attention-hlslib": (
         "https://github.com/iksnagreb/attention-hlslib.git",
         "afc9720f10e551e1f734e137b21bb6d0a8342177",
+        False,
     ),
     "AuroraFlow": (
         "https://github.com/pc2/AuroraFlow.git",
@@ -47,6 +66,7 @@ FINN_DEPS = {
     "pyxsi": (
         "https://github.com/fpjentzsch/pyxsi.git",
         "bbef09f9520457186830505a99050256821d5079",
+        False,
     ),
 }
 
@@ -167,7 +187,7 @@ def update_dependencies(location: Path) -> None:
             return True
 
         def pull_dep(args: tuple) -> bool:
-            pkg_name, giturl, commit = args
+            pkg_name, giturl, commit, install = args
             target = (location / pkg_name).absolute()
             update_status(pkg_name, "Pulling data...", "orange1")
             if target.exists():
@@ -187,7 +207,12 @@ def update_dependencies(location: Path) -> None:
                 run_silent(f"git checkout {commit}", target)
                 success, read_commit = check_commit(target, commit)
             if success:
-                update_status(pkg_name, "Dependency ready!", "green")
+                if install:
+                    update_status(pkg_name, "Installing dependency (pip)!", "orange1")
+                    run_silent(f"{sys.executable} -m pip install {target}", None)
+                    update_status(pkg_name, "Dependency ready & installed (pip)!", "green")
+                else:
+                    update_status(pkg_name, "Dependency ready!", "green")
             else:
                 update_status(
                     pkg_name,
@@ -224,7 +249,7 @@ def update_dependencies(location: Path) -> None:
             else:
                 update_status(
                     pkg_name,
-                    f"Installation failed! " f"Expected commit {commit} but got {read_commit}",
+                    f"Installation failed! Expected commit {commit} but got {read_commit}",
                     "red",
                 )
                 return False
@@ -237,8 +262,8 @@ def update_dependencies(location: Path) -> None:
 
         with ThreadPoolExecutor(100) as tpe:
             futures = []
-            for name, (giturl, commit) in FINN_DEPS.items():
-                futures.append(tpe.submit(pull_dep, (name, giturl, commit)))
+            for name, (giturl, commit, install) in FINN_DEPS.items():
+                futures.append(tpe.submit(pull_dep, (name, giturl, commit, install)))
             for name, (giturl, commit, copy_from_here) in FINN_BOARDFILES.items():
                 futures.append(tpe.submit(pull_board, (name, giturl, commit, copy_from_here)))
             for name, (url, do_unzip, target) in DIRECT_DOWNLOAD_DEPS.items():
@@ -254,11 +279,11 @@ def update_dependencies(location: Path) -> None:
         sys.exit(1)
 
 
-def install_pyxsi():
+def install_pyxsi() -> bool:
     # TODO: integrate properly into the rich.Live above?
     # Will soon be replaced by finnXSI
-    pyxsi_path = os.path.join(get_deps_path(), "pyxsi")
-    pyxsi_so_path = os.path.join(pyxsi_path, "pyxsi.so")
+    pyxsi_path = get_deps_path() / "pyxsi"
+    pyxsi_so_path = pyxsi_path / "pyxsi.so"
 
     # Disable PyXSI makefile Docker wrapper
     os.environ["PYXSI_MAKE_USE_DOCKER"] = "0"
@@ -270,11 +295,13 @@ def install_pyxsi():
         return False
 
     # Check if .so was created
-    if not os.path.isfile(pyxsi_so_path):
+    if not pyxsi_so_path.exists():
         return False
 
     # Set environment variables
     os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{pyxsi_path}:{pyxsi_path}/py"
+    sys.path.append(str(pyxsi_path))
+    sys.path.append(str(pyxsi_path / "py"))
     vivado_path = os.environ["XILINX_VIVADO"]
     if "LD_LIBRARY_PATH" not in os.environ.keys():
         os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"

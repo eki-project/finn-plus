@@ -73,6 +73,7 @@ class DataflowOutputType(str, Enum):
     RTLSIM_PERFORMANCE = "rtlsim_performance"
     BITFILE = "bitfile"
     PYNQ_DRIVER = "pynq_driver"
+    CPP_DRIVER = "cpp_driver"
     DEPLOYMENT_PACKAGE = "deployment_package"
 
 
@@ -201,7 +202,7 @@ default_build_dataflow_steps = [
     "step_measure_rtlsim_performance",
     "step_out_of_context_synthesis",
     "step_synthesize_bitfile",
-    "step_make_pynq_driver",
+    "step_make_driver",
     "step_deployment_package",
 ]
 
@@ -445,6 +446,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Configuration that provides parameters for Multi-FPGA partitioning.
     #: If set to something other than None, we assume the Multi-FPGA case
     partitioning_configuration: Optional[PartitioningConfiguration] = None
+
+    #: Determine if the C++ driver should be generated instead of the PYNQ driver
+    #: If set to latest newest version will be used
+    #: If set to commit hash specified version will be used
+    cpp_driver_version: Optional[str] = "latest"
 
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:

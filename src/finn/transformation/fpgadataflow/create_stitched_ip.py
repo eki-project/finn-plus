@@ -308,9 +308,9 @@ class CreateStitchedIP(Transformation):
         model = model.transform(ReplaceVerilogRelPaths())
         ip_dirs = ["list"]
         # add RTL streamer IP
-        ip_dirs.append("$::env(FINN_ROOT)/finn-rtllib/memstream")
+        ip_dirs.append("$::env(FINN_RTLLIB)/memstream")
         if self.signature:
-            ip_dirs.append("$::env(FINN_ROOT)/finn-rtllib/axi_info")
+            ip_dirs.append("$::env(FINN_RTLLIB)/axi_info")
         if model.graph.node[0].op_type not in ["StreamingFIFO_rtl", "IODMA_hls"]:
             log.warning(
                 """First node is not StreamingFIFO or IODMA.
@@ -529,7 +529,7 @@ class CreateStitchedIP(Transformation):
                 "[ipx::get_file_groups xilinx_simulationcheckpoint]" % block_name
             )
         # add a rudimentary driver mdd to get correct ranges in xparameters.h later on
-        example_data_dir = os.environ["FINN_ROOT"] + "/src/finn/qnn-data/mdd-data"
+        example_data_dir = os.path.join(os.environ["FINN_QNN_DATA"], "mdd-data")
         copytree(example_data_dir, vivado_stitch_proj_dir + "/data")
 
         #####

@@ -56,7 +56,7 @@ from . import templates
 
 
 def _check_vitis_envvars():
-    assert "VITIS_PATH" in os.environ, "VITIS_PATH must be set for Vitis"
+    assert "XILINX_VITIS" in os.environ, "XILINX_VITIS must be set for Vitis"
     assert "PLATFORM_REPO_PATHS" in os.environ, "PLATFORM_REPO_PATHS must be set for Vitis"
     assert (
         "XILINX_XRT" in os.environ
@@ -184,6 +184,7 @@ class VitisLink(Transformation):
         object_files = []
         idma_idx = 0
         odma_idx = 0
+        mem_idx = 0
         instance_names = {}
         for node in model.graph.node:
             assert node.op_type == "StreamingDataflowPartition", "Invalid link graph"

@@ -25,10 +25,12 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+from __future__ import annotations
 
 import os
 import subprocess
 import tempfile
+from pathlib import Path
 from qonnx.util.basic import roundup_to_integer_multiple
 
 from finn.util.logging import log
@@ -105,16 +107,7 @@ def get_rtlsim_trace_depth():
 
 
 def get_finn_root():
-    "Return the root directory that FINN is cloned into."
-
-    try:
-        return os.environ["FINN_ROOT"]
-    except KeyError:
-        raise Exception(
-            """Environment variable FINN_ROOT must be set
-        correctly. Please ensure you have launched the Docker contaier correctly.
-        """
-        )
+    raise Exception("get_finn_root() should not be used anymore.")
 
 
 def get_vivado_root():
@@ -137,21 +130,25 @@ def get_liveness_threshold_cycles():
     return int(os.getenv("LIVENESS_THRESHOLD", 1000000))
 
 
-def make_build_dir(prefix=""):
+def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path:
     """Creates a folder with given prefix to be used as a build dir.
     Use this function instead of tempfile.mkdtemp to ensure any generated files
     will survive on the host after the FINN Docker container exits."""
     try:
-        tmpdir = tempfile.mkdtemp(prefix=prefix)
-        newdir = tmpdir.replace("/tmp", os.environ["FINN_BUILD_DIR"])
-        os.makedirs(newdir)
-        return newdir
-    except KeyError:
+        build_dir = Path(os.environ["FINN_BUILD_DIR"])
+    except KeyError as keyerror:
+        raise Exception("""Environment variable FINN_BUILD_DIR is missing!""") from keyerror
+
+    if not build_dir.exists():
         raise Exception(
-            """Environment variable FINN_BUILD_DIR must be set
-        correctly. Please ensure you have launched the Docker contaier correctly.
-        """
+            f"FINN_BUILD_DIR at {build_dir} does not exist! "
+            "Make sure the FINN setup ran properly!"
         )
+
+    tmpdir = Path(tempfile.mkdtemp(prefix=prefix, dir=build_dir))
+    if return_as_path:
+        return tmpdir
+    return str(tmpdir)
 
 
 class CppBuilder:
