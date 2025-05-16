@@ -88,6 +88,7 @@ from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeW
 from finn.transformation.fpgadataflow.multifpga_create_sdp import (
     CreateMultiFPGAStreamingDataflowPartition,
 )
+from finn.transformation.fpgadataflow.multifpga_kernel_preparation import PrepareAuroraFlow
 from finn.transformation.fpgadataflow.multifpga_network import (
     AssignNetworkMetadata,
     AuroraNetworkMetadata,
@@ -699,7 +700,27 @@ def step_prepare_network_infrastructure(
     )
     model = model.transform(AssignNetworkMetadata(metadata_type, topo_creation_type))
 
-    return model  # noqa
+    # Package kernels
+    if metadata_type == AuroraNetworkMetadata:
+        model = model.transform(PrepareAuroraFlow())
+    else:
+        msg = f"No kernel packaging transformation found for {metadata_type.__name__}!"
+        log.error(msg)
+        raise Exception(msg)
+
+    return model
+
+
+def step_make_multifpga(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Convenience step that performs all Multi-FPGA requiring steps at once.
+    Requires: Resource estimates, all nodes are HW ops
+
+    Output if successful: A graph of StreamingDataflowPartition nodes, each with a device_id,
+    a partition_id and stored paths to network config and packaged communication kernels"""
+    model = step_partition_for_multifpga(model, cfg)
+    model = step_create_multifpga_sdp(model, cfg)
+    model = step_prepare_network_infrastructure(model, cfg)
+    return model
 
 
 def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):

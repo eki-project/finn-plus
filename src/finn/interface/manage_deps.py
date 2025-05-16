@@ -62,6 +62,7 @@ FINN_DEPS = {
     "AuroraFlow": (
         "https://github.com/pc2/AuroraFlow.git",
         "ebc82a00bff399fdb5c8455d40a5cadd5b10a686",
+        False,
     ),
     "pyxsi": (
         "https://github.com/fpjentzsch/pyxsi.git",

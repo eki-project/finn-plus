@@ -82,7 +82,15 @@ class Partitioner(ABC):
         self.device_count = devices
         self.node_count = nodes
         self.network_ports_per_device = network_ports_per_device
-        self.model = Model()
+        try:
+            self.model = Model()
+        except OSError:
+            log.warning(
+                "Creation of mip.Model failed. This might be known bug "
+                "(LD_LIBRARY_PATH only modified at runtime to point to "
+                "libgurobi instead of before). Falling back to CBC"
+            )
+            self.model = Model(solver_name=mip.CBC)
         self.latest_snapshot_path: Path | None = None
         log.info("Partitioner initialized.")
         log.info(f"Strategy: {self.strategy.name}")
@@ -203,8 +211,7 @@ class AuroraPartitioner(Partitioner):
             ideal_utilization,
         )
         self.limit_nodes_per_device = limit_nodes_per_device
-        self.model = Model()
-        self.model.verbose = 1
+        self.model.verbose = 0
         if (
             ideal_utilization is not None
             and max_utilization is not None
@@ -643,7 +650,8 @@ class PartitionForMultiFPGA(Transformation):
             raise Exception('Parameter "board" is required in config for MultiFPGA partitioning')
 
         # Calculate estimates
-        assert self.cfg.fpga_part is not None  # TODO: Replace with exception
+        if self.cfg.fpga_part is None:
+            self.cfg.fpga_part = self.cfg._resolve_fpga_part()  # noqa
         model = model.transform(GiveUniqueNodeNames())
         estimates = get_estimated_model_resources(model, self.cfg.fpga_part)
         if (
