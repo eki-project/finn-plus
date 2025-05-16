@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from interface.interface_utils import error, read_yaml, write_yaml
+from finn.interface.interface_utils import error, read_yaml, write_yaml
 
 # Variables that need to be Path() objects
-_SETTINGS_PATH_VARS = ["FINN_DEPS", "FINN_ROOT", "FINN_BUILD_DIR"]
+_SETTINGS_PATH_VARS = ["FINN_DEPS", "FINN_BUILD_DIR"]
 
 # Default fallback settings
 # FINN_BUILD_DIR is not existent. It should only be loaded from a settings file!
@@ -78,6 +78,17 @@ def get_settings(force_update: bool = False) -> dict:
 def settings_found() -> bool:
     """Try to resolve the settings path. If none is found, return false, else true."""
     return _resolve_settings_path() is not None
+
+
+def skip_update_by_default() -> bool:
+    """Return whether the dependency update should be skipped. Reads the settings for this.
+    Dep updates will NOT be skipped, unless specified otherwise"""
+    settings = get_settings()
+    if "AUTOMATIC_DEPENDENCY_UPDATES" not in settings.keys():
+        return False
+    value = settings["AUTOMATIC_DEPENDENCY_UPDATES"]
+    assert type(value) is bool, "Field AUTOMATIC_DEPENDENCY_UPDATES in settings must be a bool"
+    return not value
 
 
 # Overwrite Settings when importing this module

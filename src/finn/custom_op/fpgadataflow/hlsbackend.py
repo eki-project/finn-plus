@@ -238,15 +238,14 @@ class HLSBackend(ABC):
         builder = CppBuilder()
         # to enable additional debug features please uncommand the next line
         # builder.append_includes("-DDEBUG")
-        builder.append_includes("-I$FINN_ROOT/src/finn/qnn-data/cpp")
+        builder.append_includes("-I$FINN_QNN_DATA/cpp")
         builder.append_includes("-I" + str(get_deps_path() / "cnpy"))
         builder.append_includes("-I" + str(get_deps_path() / "finn-hlslib"))
         # TODO: Is it ok to add this here? Add some specialization to the
         #  attention operator? Eventually integrate this into the finn-hlslib?
         builder.append_includes("-I" + str(get_deps_path() / "attention-hlslib"))
-        builder.append_includes("-I$FINN_ROOT/custom_hls")
-        builder.append_includes("-I{}/include".format(os.environ["HLS_PATH"]))
-        builder.append_includes("-I{}/include".format(os.environ["VITIS_PATH"]))
+        builder.append_includes("-I$FINN_CUSTOM_HLS")
+        builder.append_includes("-I{}/include".format(os.environ["XILINX_HLS"]))
         builder.append_includes("--std=c++14")
         builder.append_includes("-O3")
         builder.append_sources(code_gen_dir + "/*.cpp")

@@ -38,6 +38,42 @@
 import pytest
 
 import onnxruntime as ort
+import os
+import shutil
+import tempfile
+from pathlib import Path
+
+
+@pytest.fixture(scope="class", autouse=True)
+def isolate_build_dir(request):
+    # Retrieve settings
+    isolate = os.environ.get("FINN_TESTS_ISOLATE_BUILD_DIRS", "1") == "1"
+    cleanup = os.environ.get("FINN_TESTS_CLEANUP_BUILD_DIRS", "0") == "1"
+
+    # Create the top test dir if it doesnt exist yet
+    top_build_dir = Path(os.environ["FINN_BUILD_DIR"])
+    if not top_build_dir.exists():
+        top_build_dir.mkdir(parents=True)
+
+    # Setup individual FINN_BUILD_DIR for each test class
+    if isolate:
+        try:
+            # use original test name (without [..parameters..] appended) in case of function scope
+            name = request.node.originalname
+        except AttributeError:
+            # fall back to class name in case of class scope
+            name = request.node.name
+        test_build_dir = Path(tempfile.mkdtemp(prefix=name + "_", dir=top_build_dir))
+        os.environ["FINN_BUILD_DIR"] = str(test_build_dir)
+
+    # Execute test(s)
+    yield
+
+    # Clean up and reset FINN_BUILD_DIR
+    if isolate:
+        if cleanup:
+            shutil.rmtree(test_build_dir)
+        os.environ["FINN_BUILD_DIR"] = str(top_build_dir)
 
 
 @pytest.fixture(scope="session", autouse=True)

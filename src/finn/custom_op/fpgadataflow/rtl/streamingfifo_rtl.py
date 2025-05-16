@@ -76,7 +76,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         return ret
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtlsrc = os.environ["FINN_ROOT"] + "/finn-rtllib/fifo/hdl"
+        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "fifo/hdl")
         template_path = rtlsrc + "/fifo_template.v"
 
         # save top module name so we can refer to it after this node has been renamed
@@ -196,7 +196,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/fifo/hdl/")
+            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "fifo/hdl/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""

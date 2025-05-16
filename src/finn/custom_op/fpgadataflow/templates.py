@@ -139,7 +139,7 @@ set config_bnnlibdir "$FINNHLSLIB$"
 puts "finn-hlslib dir: $config_bnnlibdir"
 set config_attentionlibdir "$ATTENTIONHLSLIB$"
 puts "attention-hlslib dir: $config_attentionlibdir"
-set config_customhlsdir "$::env(FINN_ROOT)/custom_hls"
+set config_customhlsdir "$::env(FINN_CUSTOM_HLS)"
 puts "custom HLS dir: $config_customhlsdir"
 set config_toplevelfxn "$TOPFXN$"
 set config_clkperiod $CLKPERIOD$

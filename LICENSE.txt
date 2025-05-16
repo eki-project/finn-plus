@@ -1,5 +1,10 @@
+Copyright for portions of project FINN+ is held by AMD as part of project FINN
+and is provided under the BSD license. All other copyright for project FINN+
+is held by Paderborn University and is provided under the same license.
+
 Copyright (C) 2020-2022, Xilinx, Inc.
-Copyright (C) 2022-2024, Advanced Micro Devices, Inc.
+Copyright (C) 2022-2025, Advanced Micro Devices, Inc.
+Copyright (C) 2025, Paderborn University
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -12,7 +17,7 @@ modification, are permitted provided that the following conditions are met:
   this list of conditions and the following disclaimer in the documentation
   and/or other materials provided with the distribution.
 
-* Neither the name of FINN nor the names of its
+* Neither the name of FINN/FINN+ nor the names of its
   contributors may be used to endorse or promote products derived from
   this software without specific prior written permission.
 

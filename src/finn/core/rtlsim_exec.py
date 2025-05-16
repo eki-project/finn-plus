@@ -32,7 +32,6 @@ import sys
 from qonnx.custom_op.registry import getCustomOp
 
 from finn.util.basic import (
-    get_finn_root,
     get_liveness_threshold_cycles,
     get_vivado_root,
     launch_process_helper,
@@ -185,7 +184,7 @@ def rtlsim_exec_cppxsi(
         sim_base, sim_rel = rtlsim_so.split("xsim.dir")
         sim_rel = "xsim.dir" + sim_rel
     # prepare the C++ sim driver template
-    fifosim_cpp_fname = get_finn_root() + "/src/finn/qnn-data/cpp/xsi_simdriver.cpp"
+    fifosim_cpp_fname = os.path.join(os.environ["FINN_QNN_DATA"], "cpp/xsi_simdriver.cpp")
     with open(fifosim_cpp_fname, "r") as f:
         fifosim_cpp_template = f.read()
 

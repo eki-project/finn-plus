@@ -28,9 +28,11 @@
 
 import clize
 import datetime
+import importlib
 import json
 import logging
 import os
+from typing import Callable
 
 import pdb  # isort: split
 import sys
@@ -65,7 +67,7 @@ class PrintLogger(object):
         self.console.flush()
 
 
-def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True):
+def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[Callable]:
     steps = cfg.steps
     if steps is None:
         steps = default_build_dataflow_steps
@@ -73,7 +75,49 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True):
     for transform_step in steps:
         if type(transform_step) is str:
             # lookup step function from step name
-            steps_as_fxns.append(build_dataflow_step_lookup[transform_step])
+            if transform_step in build_dataflow_step_lookup.keys():
+                steps_as_fxns.append(build_dataflow_step_lookup[transform_step])
+            else:
+                if "." not in transform_step:
+                    if transform_step not in globals().keys():
+                        msg = (
+                            f"Step {transform_step} is not a default step, not in globals() "
+                            "and not an importable name!"
+                        )
+                        raise Exception(msg)
+                    else:  # noqa
+                        fxn_step = globals()[transform_step]
+                        if not callable(fxn_step):
+                            msg = (
+                                f"Step {transform_step} was resolved in globals(), but is "
+                                "not callable object. If the name was already in use, consider "
+                                "moving your custom step into it's own module and importing it "
+                                "via yourmodule.yourstep!"
+                            )
+                            raise Exception(msg)
+                        steps_as_fxns.append(fxn_step)
+                        continue
+                else:
+                    split_step = transform_step.split(".")
+                    module_path, fxn_step_name = split_step[:-1], split_step[-1]
+                    try:
+                        imported_module = importlib.import_module(".".join(module_path))
+                        fxn_step = getattr(imported_module, fxn_step_name)
+                        if callable(fxn_step):
+                            steps_as_fxns.append(fxn_step)
+                            continue
+                        else:  # noqa
+                            msg = (
+                                f"Could import custom step module, but final name is not a "
+                                f"callable object. Path was {transform_step}"
+                            )
+                            raise Exception(msg)
+                    except ModuleNotFoundError as mnf:
+                        msg = (
+                            f"Could not resolve build step: {transform_step}. "
+                            "The given step is neither importable nor a default step."
+                        )
+                        raise Exception(msg) from mnf
         elif callable(transform_step):
             # treat step as function to be called as-is
             steps_as_fxns.append(transform_step)
@@ -153,13 +197,15 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     logging.captureWarnings(True)
 
     log = logging.getLogger("build_dataflow")
+
     # mirror stdout and stderr to log
     sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
     sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
+    console = Console(file=sys.stdout.console)
 
     if cfg.console_log_level != "NONE":
         # set up console logger
-        console = RichHandler(show_time=False, show_path=False)
+        console = RichHandler(show_time=True, show_path=False, console=console)
 
         if cfg.console_log_level == "DEBUG":
             console.setLevel(logging.DEBUG)
@@ -198,7 +244,6 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         except:  # noqa
             # print exception info and traceback
             extype, value, tb = sys.exc_info()
-            console = Console()
             console.print_exception(show_locals=False)
             # start postmortem debug if configured
             if cfg.enable_build_pdb_debug:
