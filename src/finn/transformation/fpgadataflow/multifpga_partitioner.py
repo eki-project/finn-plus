@@ -18,6 +18,7 @@ from finn.transformation.fpgadataflow.multifpga_utils import (
     available_resources,
     get_estimated_model_resources,
     get_inseperable_nodes,
+    is_single_in_out_model,
     set_device_id,
 )
 from finn.util.basic import make_build_dir
@@ -633,8 +634,14 @@ class PartitionForMultiFPGA(Transformation):
             return model, False
 
         # Dont split during branches. Find all layers that should be on the same device.
-        # TODO: Implementation
         log.debug("Gathering inseperable nodes...")
+        if not is_single_in_out_model(model):
+            msg = (
+                "The model has either more than 1 input or more than 1 output nodes. "
+                "This might cause issue during partitioning. Please check your ONNX file."
+            )
+            log.error(msg)
+            raise Exception(msg)  # TODO
         inseperable_nodes = get_inseperable_nodes(model)
 
         # Number of devices to partition to

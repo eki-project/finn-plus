@@ -970,6 +970,7 @@ build_dataflow_step_lookup = {
     "step_partition_for_multifpga": step_partition_for_multifpga,
     "step_create_multifpga_sdp": step_create_multifpga_sdp,
     "step_prepare_network_infrastructure": step_prepare_network_infrastructure,
+    "step_make_multifpga": step_make_multifpga,
     "step_create_stitched_ip": step_create_stitched_ip,
     "step_measure_rtlsim_performance": step_measure_rtlsim_performance,
     "step_make_driver": step_make_driver,
