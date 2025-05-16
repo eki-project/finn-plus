@@ -42,7 +42,7 @@ from qonnx.transformation.general import (
     RemoveUnusedTensors,
 )
 
-from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
+from finn.builder.build_dataflow_config import DataflowBuildConfig, FpgaMemoryType, VitisOptStrategy
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
@@ -156,6 +156,116 @@ class CreateVitisXO(Transformation):
             "Vitis .xo file not created, check logs under %s" % vivado_proj_dir
         )
         return (model, False)
+
+
+class BuildAllXOs(Transformation):
+    """Built from the former VitisBuild transformation. Seperated out for more modular use.
+    Packages all StreamingDataflowPartitions into XO files, saves their path as a node attribute.
+    These can then be used for linking. Also works with Multi-FPGA (_currently_ (!) assigns IODMA
+    to the first and last SDP)"""
+
+    # TODO: Rather pass the arguments as needed, not the entire config.
+    def __init__(self, cfg: DataflowBuildConfig) -> None:
+        super().__init__()
+        self.cfg = cfg
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        is_mulitfpga = False
+        if self.cfg.partitioning_configuration is not None:
+            if model.get_metadata_prop("is_multifpga") != "True":
+                log.critical(
+                    "A Multi-FPGA partitioning configuration was given, but the "
+                    'model metadata prop "is_multifpga" is not set to true. '
+                    "Proceeding with the single FPGA case."
+                )
+            else:
+                is_mulitfpga = True
+        _check_vitis_envvars()
+        if is_mulitfpga:
+            # Confirm the shape of the SDP graph (one line, one input, one output)
+            bad_shape_found = False
+            for i, node in enumerate(model.graph.node):
+                if getCustomOp(node).op_type != "StreamingDataflowPartition":
+                    bad_shape_found = True
+                    log.error(
+                        f"Node {node.name} is not a StreamingDataflowPartition. "
+                        f"Did you run all necessary steps first?"
+                    )
+                pre, suc = model.find_direct_predecessors(node), model.find_direct_successors(node)
+                if i == 0 and pre is not None:
+                    bad_shape_found = True
+                    log.critical("Node 0 in the graph has unexpected predecessors!")
+                elif i == len(model.graph.node) - 1 and suc is not None:
+                    bad_shape_found = True
+                    log.critical("The last node has unexpected successors!")
+                if i not in [0, len(model.graph.node) - 1]:
+                    if pre is None or len(pre) != 1:
+                        bad_shape_found = True
+                        log.critical(
+                            f"Node {i} ({node.name}) has more or "
+                            f"less than 1 predecessor. Expected exactly 1!"
+                        )
+                    if suc is None or len(suc) != 1:
+                        bad_shape_found = True
+                        log.critical(
+                            f"Node {i} ({node.name}) has more or "
+                            f"less than 1 successor. Expected exactly 1!"
+                        )
+            if bad_shape_found:
+                raise Exception(
+                    "Bad graph found. Cannot produce XOs. " "Please check the logs for errors!"
+                )
+
+            # Insert IODMAs
+            first_node_path = getCustomOp(model.graph.node[0]).get_nodeattr("model")
+            last_node_path = getCustomOp(model.graph.node[-1]).get_nodeattr("model")
+            first_node_model = ModelWrapper(first_node_path)
+            last_node_model = ModelWrapper(last_node_path)
+            first_node_model = first_node_model.transform(
+                InsertIODMA(512, insert_input=True, insert_output=False)
+            )
+            first_node_model = first_node_model.transform(HLSSynthIP())
+            last_node_model = last_node_model.transform(
+                InsertIODMA(512, insert_input=False, insert_output=True)
+            )
+            last_node_model = last_node_model.transform(HLSSynthIP())
+            first_node_model.save(first_node_path)
+            last_node_model.save(last_node_path)
+
+            # Do all other necessary steps on all SDPs
+            for sdp_node in model.graph.node:
+                submodel_transforms = [
+                    InsertDWC(),
+                    GiveUniqueNodeNames(),
+                    GiveReadableTensorNames(),
+                    SpecializeLayers(self.cfg.fpga_part),
+                    GiveUniqueNodeNames(),
+                    GiveReadableTensorNames(),
+                    CreateDataflowPartition(
+                        partition_model_dir=make_build_dir(f"dataflow_partition_{sdp_node.name}")
+                    ),
+                    GiveUniqueNodeNames(),
+                    GiveReadableTensorNames(),
+                    InsertFIFO(),
+                    RemoveUnusedTensors(),
+                    GiveUniqueNodeNames(prefix=sdp_node.name + "_"),
+                    PrepareIP(self.cfg.fpga_part, self.cfg.synth_clk_period_ns),
+                    HLSSynthIP(),
+                    CreateStitchedIP(
+                        self.cfg.fpga_part, self.cfg.synth_clk_period_ns, sdp_node.name, vitis=True
+                    ),
+                    CreateVitisXO(sdp_node.name),
+                ]
+                submodel_path = getCustomOp(sdp_node).get_nodeattr("model")
+                submodel = ModelWrapper(submodel_path)
+                for transform in submodel_transforms:
+                    submodel = submodel.transform(transform)
+                submodel.set_metadata_prop("platform", "alveo")
+                submodel.save(submodel_path)
+        else:
+            # TODO: Move over here from VitisBuild
+            raise NotImplementedError()
+        return model, False
 
 
 class InvalidVitisLinkConfigError(Exception):
