@@ -91,7 +91,7 @@ def _get_start_nodes(g: nx.DiGraph) -> list[str]:
 def is_single_in_out_model(model: ModelWrapper) -> bool:
     """Return whether the given model has only one input and one output"""
     g = onnx_to_networkx(model)
-    return _get_start_nodes(g) == 1 and _get_end_nodes(g) == 1
+    return len(_get_start_nodes(g)) == 1 and len(_get_end_nodes(g)) == 1
 
 
 def _convert_to_index_groups(model: ModelWrapper, split_names: list[list[str]]) -> list[list[int]]:
