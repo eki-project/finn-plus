@@ -1,0 +1,12 @@
+[connectivity]
+nk=comm_kernel:1:comm1
+nk=comm_kernel:1:comm2
+nk=compute:1:compute1
+nk=compute:1:compute2
+nk=compute:1:compute3
+sc=comm1.m_axis:comm2.s_axis
+sc=compute1.out:compute2.in
+sc=compute2.out:compute3.in
+sc=compute3.out:comm1.s_axis
+sp=compute1.data_port:HBM
+[vivado]
