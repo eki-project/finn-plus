@@ -138,3 +138,17 @@ profile="black"
 ignore_comments=true
 ignore_whitespace=true
 honor_noqa=true
+
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+"src/**.py" = [
+    "RET504",   # Assign to var before return
+    "PERF401",  # Replace for-loop with list comprehension
+    "SIM118",   # Using "a in b" instead of "a in b.keys()"
+    "UP015",    # open("file.txt", "r") -> open("file.txt")
+    "ANN401",   # Don't use the "Any" type
+    "I001"      # Unsorted imports (done by pre-commit)
+]
