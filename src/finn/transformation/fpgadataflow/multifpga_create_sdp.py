@@ -5,6 +5,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.multifpga_utils import (
@@ -52,6 +53,7 @@ class CreateMultiFPGAStreamingDataflowPartition(Transformation):
 
         # Create the SDFPs
         model = model.transform(CreateDataflowPartition(str(cdfp_dir)))
+        model = model.transform(GiveUniqueNodeNames())
 
         # Set the SDP's device_id
         for node in model.graph.node:

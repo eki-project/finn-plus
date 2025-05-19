@@ -3,7 +3,7 @@ from __future__ import annotations
 import yaml
 from abc import ABC, abstractmethod
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PosixPath, PurePath, WindowsPath
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from typing import Any, Callable
@@ -27,14 +27,25 @@ class NetworkMetadata(ABC):
     def __init__(self, load_from: Path | ModelWrapper | None = None) -> None:
         self.table = {}
         if load_from is not None:
-            if type(load_from) is Path:
-                self.load(load_from)
-            elif type(load_from) is ModelWrapper:
+            if type(load_from) is ModelWrapper:
                 p = load_from.get_metadata_prop("network_metadata")
                 assert p is not None
                 p = Path(p)
                 assert p.exists()
                 self.load(p)
+            elif issubclass(type(load_from), PurePath):
+                # Additional assert required because PyLance cannot detect the issubclass entry
+                # condition and wants an extra assert that load_from is NOT a modelwrapper
+                assert isinstance(load_from, (PurePath, PosixPath, WindowsPath))
+                assert load_from.exists(), (
+                    f"Could not load NetworkMetadata from {load_from}, "
+                    f"since no such file exists!"
+                )
+                self.load(load_from)
+            else:
+                raise Exception(
+                    f"Could not load NetworkMetadata " f"from unknown type: {type(load_from)}"
+                )
 
     @abstractmethod
     def __getitem__(self, key: Any) -> Any:

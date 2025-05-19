@@ -44,23 +44,28 @@ def test_aurora_chain_metadata(
     model = model.transform(AssignNetworkMetadata(communication_metadata_type, communication_type))
 
     # Check that the assignments worked as expected
-    m = AuroraNetworkMetadata(load_from=model)
-    for i, n1 in enumerate(model.graph.node):
-        if i == len(model.graph.node) - 1:
-            break
-        n2 = model.graph.node[i + 1]
-        d1 = get_device_id(n1)
-        d2 = get_device_id(n2)
-        assert d1 is not None
-        assert d2 is not None
+    metadata_path = model.get_metadata_prop("network_metadata")
+    assert metadata_path is not None
+    metadata_path = Path(metadata_path)
+    m1 = AuroraNetworkMetadata(load_from=model)
+    m2 = AuroraNetworkMetadata(load_from=metadata_path)
+    for m in [m1, m2]:
+        for i, n1 in enumerate(model.graph.node):
+            if i == len(model.graph.node) - 1:
+                break
+            n2 = model.graph.node[i + 1]
+            d1 = get_device_id(n1)
+            d2 = get_device_id(n2)
+            assert d1 is not None
+            assert d2 is not None
 
-        if d1 != d2:
-            # Specific for line connections
-            assert m.get_connections(d1, d2) == 1
-            assert m.get_connections(d2, d1) == 1
-            # TODO: Add case for the last node
-            if i > 0:
-                assert m[d1, f"aurora_flow_1_dev{d1}", DataDirection.TX] == (n1.name, n2.name)
-            else:
-                assert m[d1, f"aurora_flow_0_dev{d1}", DataDirection.TX] == (n1.name, n2.name)
-            assert m[d2, f"aurora_flow_0_dev{d2}", DataDirection.RX] == (n2.name, n1.name)
+            if d1 != d2:
+                # Specific for line connections
+                assert m.get_connections(d1, d2) == 1
+                assert m.get_connections(d2, d1) == 1
+                # TODO: Add case for the last node
+                if i > 0:
+                    assert m[d1, f"aurora_flow_1_dev{d1}", DataDirection.TX] == (n1.name, n2.name)
+                else:
+                    assert m[d1, f"aurora_flow_0_dev{d1}", DataDirection.TX] == (n1.name, n2.name)
+                assert m[d2, f"aurora_flow_0_dev{d2}", DataDirection.RX] == (n2.name, n1.name)

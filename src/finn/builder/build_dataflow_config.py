@@ -145,7 +145,7 @@ class MFTopology(str, Enum):
 @dataclass
 class PartitioningConfiguration:
     # The number of FPGAs to use for Multi-FPGA. If left on -1,
-    # this will be determined automatically
+    # this will be determined automatically (TODO)
     num_fpgas: int = -1
 
     # The number of ports per device - this might change in meaning,
@@ -179,6 +179,13 @@ class PartitioningConfiguration:
     # Number of seconds before the solver doing the partitioning
     # times out.
     partition_solver_timeout: int = 100
+
+    # Determines how many synthesis processes can run in parallel. Keep in mind
+    # that very roughly estimated, one synthesis should be able to use up to 100 GB RAM,
+    # (sometimes more) depending on the model and version of Vivado. For example on a
+    # 512 GB node, you can run roughly 4 Synthesis in parallel.
+    # Defaults to 1, in order not to crash local computers with OOM errors
+    parallel_synthesis_workers: int = 1
 
 
 #: List of steps that will be run as part of the standard dataflow build, in the
