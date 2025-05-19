@@ -11,9 +11,6 @@ import numpy as np
 # Operating system stuff, e.g. paths
 import os
 
-# Python warning subsystem
-import warnings
-
 # QONNX/FINN datatypes
 from qonnx.core.datatype import DataType
 
@@ -28,6 +25,9 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # Converts inputs/outputs to/from RTL simulation format
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+
+# FINN logging
+from finn.util.logging import log
 
 
 # Squeeze operation: Removes single-dimension entries from the shape of a tensor
@@ -103,7 +103,7 @@ class Squeeze(HWCustomOp):
         # truly a dynamic list of axes changing at runtime.
         if len(node.input) > 1:
             # Issue a warning to make the user aware of this potential issue
-            warnings.warn(
+            log.warning(
                 f"{node.name}: Providing dimensions to squeeze as an input"
                 f" might invalidate shape inference if these are not constant."
             )
@@ -121,7 +121,7 @@ class Squeeze(HWCustomOp):
             # Get the new datatype
             new_dtype = model.get_tensor_datatype(node.input[0])
             # Issue a warning message
-            warnings.warn(
+            log.warning(
                 f"{node.name}: inp_dtype changing from"
                 f" {self.inp_dtype} to {new_dtype}"
             )
@@ -131,14 +131,14 @@ class Squeeze(HWCustomOp):
         # implementation, the datatype of this input is ignored here
         if len(node.input) > 1:
             # Issue a warning to make the user aware of this potential issue
-            warnings.warn(
+            log.warning(
                 f"{node.name}: Providing dimensions to squeeze as an input"
                 f" will be ignored by datatype inference."
             )
         # Make sure the output always has the same type as the input
         if self.out_dtype != self.inp_dtype:
             # Issue a warning message
-            warnings.warn(
+            log.warning(
                 f"{node.name}: out_dtype changing from"
                 f" {self.out_dtype} to {self.inp_dtype}"
             )

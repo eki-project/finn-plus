@@ -51,13 +51,7 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
 from finn.util.basic import alveo_default_platform, alveo_part_map, pynq_part_map
-from finn.util.pyverilator import pyverilate_stitched_ip
 from finn.util.test import load_test_checkpoint_or_skip
-
-test_pynq_board = os.getenv("PYNQ_BOARD", default="Pynq-Z1")
-test_fpga_part = pynq_part_map[test_pynq_board]
-
-ip_stitch_model_dir = os.environ["FINN_BUILD_DIR"]
 
 
 def create_one_fc_model(mem_mode="internal_embedded"):
@@ -193,113 +187,80 @@ def create_two_fc_model(mem_mode="internal_decoupled"):
     return model
 
 
-@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
+@pytest.mark.xdist_group(name="fpgadataflow_ipstitch")
+@pytest.mark.end2end
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
-def test_fpgadataflow_ipstitch_gen_model(mem_mode):
-    model = create_one_fc_model(mem_mode)
-    if model.graph.node[0].op_type == "StreamingDataflowPartition":
-        sdp_node = getCustomOp(model.graph.node[0])
-        assert sdp_node.__class__.__name__ == "StreamingDataflowPartition"
-        assert os.path.isfile(sdp_node.get_nodeattr("model"))
-        model = load_test_checkpoint_or_skip(sdp_node.get_nodeattr("model"))
-    model = model.transform(InsertTLastMarker())
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareIP(test_fpga_part, 5))
-    model = model.transform(HLSSynthIP())
-    assert model.graph.node[0].op_type == "MVAU_hls"
-    assert model.graph.node[-1].op_type == "TLastMarker_hls"
-    model.save(ip_stitch_model_dir + "/test_fpgadataflow_ipstitch_gen_model_%s.onnx" % mem_mode)
-
-
 @pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
-@pytest.mark.fpgadataflow
-@pytest.mark.vivado
-def test_fpgadataflow_ipstitch_do_stitch(mem_mode):
-    model = load_test_checkpoint_or_skip(
-        ip_stitch_model_dir + "/test_fpgadataflow_ipstitch_gen_model_%s.onnx" % mem_mode
-    )
-    model = model.transform(CreateStitchedIP(test_fpga_part, 5))
-    vivado_stitch_proj_dir = model.get_metadata_prop("vivado_stitch_proj")
-    assert vivado_stitch_proj_dir is not None
-    assert os.path.isdir(vivado_stitch_proj_dir)
-    assert os.path.isfile(vivado_stitch_proj_dir + "/ip/component.xml")
-    vivado_stitch_vlnv = model.get_metadata_prop("vivado_stitch_vlnv")
-    assert vivado_stitch_vlnv is not None
-    assert vivado_stitch_vlnv == "xilinx_finn:finn:finn_design:1.0"
-    model.save(ip_stitch_model_dir + "/test_fpgadataflow_ip_stitch_%s.onnx" % mem_mode)
+class Test_fpgadataflow_ipstitch_flow:
+    test_pynq_board = "Pynq-Z1"
+    test_fpga_part = pynq_part_map[test_pynq_board]
 
+    def test_fpgadataflow_ipstitch_gen_model(self, mem_mode):
+        ip_stitch_model_dir = os.environ["FINN_BUILD_DIR"]
+        model = create_one_fc_model(mem_mode)
+        if model.graph.node[0].op_type == "StreamingDataflowPartition":
+            sdp_node = getCustomOp(model.graph.node[0])
+            assert sdp_node.__class__.__name__ == "StreamingDataflowPartition"
+            assert os.path.isfile(sdp_node.get_nodeattr("model"))
+            model = load_test_checkpoint_or_skip(sdp_node.get_nodeattr("model"))
+        model = model.transform(InsertTLastMarker())
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(PrepareIP(self.test_fpga_part, 5))
+        model = model.transform(HLSSynthIP())
+        assert model.graph.node[0].op_type == "MVAU_hls"
+        assert model.graph.node[-1].op_type == "TLastMarker_hls"
+        model.save(ip_stitch_model_dir + "/test_fpgadataflow_ipstitch_gen_model_%s.onnx" % mem_mode)
 
-@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
-@pytest.mark.fpgadataflow
-@pytest.mark.vivado
-def test_fpgadataflow_ipstitch_rtlsim(mem_mode):
-    model = load_test_checkpoint_or_skip(
-        ip_stitch_model_dir + "/test_fpgadataflow_ip_stitch_%s.onnx" % mem_mode
-    )
-    model.set_metadata_prop("rtlsim_trace", "whole_trace.vcd")
-    sim = pyverilate_stitched_ip(model)
-    exp_io = [
-        "ap_clk",
-        "ap_rst_n",
-        "s_axis_0_tdata",
-        "s_axis_0_tready",
-        "s_axis_0_tvalid",
-        "m_axis_0_tdata",
-        "m_axis_0_tkeep",
-        "m_axis_0_tlast",
-        "m_axis_0_tready",
-        "m_axis_0_tvalid",
-        "s_axi_control_0_araddr",
-        "s_axi_control_0_arready",
-        "s_axi_control_0_arvalid",
-        "s_axi_control_0_awaddr",
-        "s_axi_control_0_awready",
-        "s_axi_control_0_awvalid",
-        "s_axi_control_0_bready",
-        "s_axi_control_0_bresp",
-        "s_axi_control_0_bvalid",
-        "s_axi_control_0_rdata",
-        "s_axi_control_0_rready",
-        "s_axi_control_0_rresp",
-        "s_axi_control_0_rvalid",
-        "s_axi_control_0_wdata",
-        "s_axi_control_0_wready",
-        "s_axi_control_0_wstrb",
-        "s_axi_control_0_wvalid",
-    ]
-    assert sorted(dir(sim.io)) == sorted(exp_io)
-    model.set_metadata_prop("exec_mode", "rtlsim")
-    idt = model.get_tensor_datatype("inp")
-    ishape = model.get_tensor_shape("inp")
-    x = gen_finn_dt_tensor(idt, ishape)
-    # x = np.zeros(ishape, dtype=np.float32)
-    # x = np.asarray([[-2, -1, 0, 1]], dtype=np.float32)
-    rtlsim_res = execute_onnx(model, {"inp": x})["outp"]
-    assert (rtlsim_res == x).all()
+    def test_fpgadataflow_ipstitch_do_stitch(self, mem_mode):
+        ip_stitch_model_dir = os.environ["FINN_BUILD_DIR"]
+        model = load_test_checkpoint_or_skip(
+            ip_stitch_model_dir + "/test_fpgadataflow_ipstitch_gen_model_%s.onnx" % mem_mode
+        )
+        model = model.transform(CreateStitchedIP(self.test_fpga_part, 5))
+        vivado_stitch_proj_dir = model.get_metadata_prop("vivado_stitch_proj")
+        assert vivado_stitch_proj_dir is not None
+        assert os.path.isdir(vivado_stitch_proj_dir)
+        assert os.path.isfile(vivado_stitch_proj_dir + "/ip/component.xml")
+        vivado_stitch_vlnv = model.get_metadata_prop("vivado_stitch_vlnv")
+        assert vivado_stitch_vlnv is not None
+        assert vivado_stitch_vlnv == "xilinx_finn:finn:finn_design:1.0"
+        model.save(ip_stitch_model_dir + "/test_fpgadataflow_ip_stitch_%s.onnx" % mem_mode)
 
+    def test_fpgadataflow_ipstitch_rtlsim(self, mem_mode):
+        ip_stitch_model_dir = os.environ["FINN_BUILD_DIR"]
+        model = load_test_checkpoint_or_skip(
+            ip_stitch_model_dir + "/test_fpgadataflow_ip_stitch_%s.onnx" % mem_mode
+        )
+        model.set_metadata_prop("rtlsim_trace", "whole_trace.wdb")
+        model.set_metadata_prop("exec_mode", "rtlsim")
+        idt = model.get_tensor_datatype("inp")
+        ishape = model.get_tensor_shape("inp")
+        x = gen_finn_dt_tensor(idt, ishape)
+        # x = np.zeros(ishape, dtype=np.float32)
+        # x = np.asarray([[-2, -1, 0, 1]], dtype=np.float32)
+        rtlsim_res = execute_onnx(model, {"inp": x})["outp"]
+        assert (rtlsim_res == x).all()
 
-@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
-@pytest.mark.fpgadataflow
-@pytest.mark.vivado
-@pytest.mark.slow
-def test_fpgadataflow_ipstitch_synth_ooc(mem_mode):
-    model = load_test_checkpoint_or_skip(
-        ip_stitch_model_dir + "/test_fpgadataflow_ip_stitch_%s.onnx" % mem_mode
-    )
-    model = model.transform(SynthOutOfContext(test_fpga_part, 5))
-    ret = model.get_metadata_prop("res_total_ooc_synth")
-    assert ret is not None
-    # example expected output: (details may differ based on Vivado version etc)
-    # "{'vivado_proj_folder': ...,
-    # 'LUT': 708.0, 'FF': 1516.0, 'DSP': 0.0, 'BRAM': 0.0, 'WNS': 0.152, '': 0,
-    # 'fmax_mhz': 206.27062706270627}"
-    ret = eval(ret)
-    assert ret["LUT"] > 0
-    assert ret["FF"] > 0
-    assert ret["DSP"] == 0
-    assert ret["BRAM"] == 0
-    assert ret["fmax_mhz"] > 100
+    @pytest.mark.slow
+    def test_fpgadataflow_ipstitch_synth_ooc(self, mem_mode):
+        ip_stitch_model_dir = os.environ["FINN_BUILD_DIR"]
+        model = load_test_checkpoint_or_skip(
+            ip_stitch_model_dir + "/test_fpgadataflow_ip_stitch_%s.onnx" % mem_mode
+        )
+        model = model.transform(SynthOutOfContext(self.test_fpga_part, 5))
+        ret = model.get_metadata_prop("res_total_ooc_synth")
+        assert ret is not None
+        # example expected output: (details may differ based on Vivado version etc)
+        # "{'vivado_proj_folder': ...,
+        # 'LUT': 708.0, 'FF': 1516.0, 'DSP': 0.0, 'BRAM': 0.0, 'WNS': 0.152, '': 0,
+        # 'fmax_mhz': 206.27062706270627}"
+        ret = eval(ret)
+        assert ret["LUT"] > 0
+        assert ret["FF"] > 0
+        assert ret["DSP"] == 0
+        assert ret["BRAM"] == 0
+        assert ret["fmax_mhz"] > 100
 
 
 @pytest.mark.fpgadataflow
@@ -316,7 +277,6 @@ def test_fpgadataflow_ipstitch_iodma_floorplan():
     assert getCustomOp(model.graph.node[0]).get_nodeattr("partition_id") == 0
     assert getCustomOp(model.graph.node[1]).get_nodeattr("partition_id") == 2
     assert getCustomOp(model.graph.node[2]).get_nodeattr("partition_id") == 1
-    model.save(ip_stitch_model_dir + "/test_fpgadataflow_ipstitch_iodma_floorplan.onnx")
 
 
 # board
@@ -330,8 +290,8 @@ def test_fpgadataflow_ipstitch_iodma_floorplan():
 @pytest.mark.vivado
 @pytest.mark.vitis
 def test_fpgadataflow_ipstitch_vitis_end2end(board, period_ns, extw):
-    if "VITIS_PATH" not in os.environ:
-        pytest.skip("VITIS_PATH not set")
+    if "XILINX_VITIS" not in os.environ:
+        pytest.skip("XILINX_VITIS not set")
     platform = alveo_default_platform[board]
     fpga_part = alveo_part_map[board]
     model = create_two_fc_model("external" if extw else "internal_decoupled")
@@ -344,7 +304,6 @@ def test_fpgadataflow_ipstitch_vitis_end2end(board, period_ns, extw):
     model = model.transform(PrepareIP(fpga_part, period_ns))
     model = model.transform(HLSSynthIP())
     model = model.transform(VitisBuild(fpga_part, period_ns, platform))
-    model.save(ip_stitch_model_dir + "/test_fpgadataflow_ipstitch_vitis.onnx")
     assert model.get_metadata_prop("platform") == "alveo"
     assert os.path.isdir(model.get_metadata_prop("vitis_link_proj"))
     assert os.path.isfile(model.get_metadata_prop("bitfile"))
@@ -364,7 +323,6 @@ def test_fpgadataflow_ipstitch_zynqbuild_end2end(board):
         model = load_test_checkpoint_or_skip(sdp_node.get_nodeattr("model"))
     # bitfile using ZynqBuild
     model = model.transform(ZynqBuild(board, 10))
-    model.save(ip_stitch_model_dir + "/test_fpgadataflow_ipstitch_customzynq.onnx")
 
     bitfile_name = model.get_metadata_prop("bitfile")
     assert bitfile_name is not None

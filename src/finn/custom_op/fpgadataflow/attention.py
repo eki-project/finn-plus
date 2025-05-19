@@ -5,20 +5,24 @@
 # Python builtin math functions: math.ceil returns int, while np.ceil returns
 # float
 import math
+
 # Numpy math and arrays
 import numpy as np
-# Python warning subsystem
-import warnings
 
 # QONNX/FINN datatypes
 from qonnx.core.datatype import DataType
+
 # Multithreshold activations
 from qonnx.custom_op.general.multithreshold import multithreshold
+
 # Some utils for working with tensors in qonnx
 from qonnx.util.basic import calculate_matvec_accumulator_range
 
 # Derive custom operators form the FINN base custom op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+# FINN logging
+from finn.util.logging import log
 
 
 # Softmax function on numpy arrays with overflow handling matching the HLS
@@ -218,7 +222,7 @@ class ScaledDotProductAttention(HWCustomOp):
         # Test for changing query input datatype
         if q_dtype != self.get_nodeattr("QType"):
             # Issue a warning message
-            warnings.warn("QType changing for %s: %s -> %s " % (
+            log.warning("QType changing for %s: %s -> %s " % (
                 node.name,
                 str(self.get_nodeattr("QType")),
                 str(q_dtype),
@@ -226,7 +230,7 @@ class ScaledDotProductAttention(HWCustomOp):
         # Test for changing key input datatype
         if k_dtype != self.get_nodeattr("KType"):
             # Issue a warning message
-            warnings.warn("KType changing for %s: %s -> %s " % (
+            log.warning("KType changing for %s: %s -> %s " % (
                 node.name,
                 str(self.get_nodeattr("KType")),
                 str(k_dtype),
@@ -234,7 +238,7 @@ class ScaledDotProductAttention(HWCustomOp):
         # Test for changing value input datatype
         if v_dtype != self.get_nodeattr("VType"):
             # Issue a warning message
-            warnings.warn("VType changing for %s: %s -> %s " % (
+            log.warning("VType changing for %s: %s -> %s " % (
                 node.name,
                 str(self.get_nodeattr("VType")),
                 str(v_dtype),
@@ -253,7 +257,7 @@ class ScaledDotProductAttention(HWCustomOp):
             # Test for changing mask input datatype
             if mask_dtype != self.get_nodeattr("MType"):
                 # Issue a warning message
-                warnings.warn("MType changing for %s: %s -> %s " % (
+                log.warning("MType changing for %s: %s -> %s " % (
                     node.name,
                     str(self.get_nodeattr("MType")),
                     str(mask_dtype),

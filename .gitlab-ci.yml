@@ -1,7 +1,8 @@
+include: .gitlab-ci-base.yml
+
 stages:
   - sync
-  - singularity_build
-  - load_deps
+  - build
   - test
 
 variables:
@@ -10,23 +11,23 @@ variables:
     value: ""
   TEST_SUITE:
     description: "Select test suite to run"
-    value: "none" # DEBUG
+    value: "quicktest_ci" # DEBUG
     options:
       - "none"
-      - "quicktest"
-      - "full"
+      - "quicktest_ci"
+      - "full_ci"
   CPU_CORES:
     description: "Select number of CPU cores and test workers"
-    value: "64"
+    value: "32"
   CPU_CORES_BENCH:
     description: "Select number of CPU cores for benchmark runs"
     value: "8"
   PARALLEL_JOBS:
     description: "Number of parallel Slurm array jobs per Benchmark job"
-    value: "2"
+    value: "1"
   SLURM_TIMEOUT:
     description: "Select SLURM timeout"
-    value: "2-0" # [days-hours]
+    value: "1-0" # [days-hours]
   SLURM_PARTITION:
     description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
     value: "normal"
@@ -36,16 +37,15 @@ variables:
   MANUAL_CFG_PATH:
     description: "Use this config file instead of configs stored in the repo. Path must be accessible to runner"
     value: ""
-  FINN_XILINX_VERSION:
-    value: "2022.2"
 
 workflow:
   name: '$PIPELINE_NAME'
   rules:
-    # Run pipeline for GitHub PRs to dev (does not support PRs from forks)
+    # Run pipeline for GitHub PRs to dev or main (does not support PRs from forks)
     - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "dev"
-    # Run pipeline for pushes to dev
-    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "main"
+    # Run pipeline for pushes to dev or main
+    - if: $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "main"
     # Run pipeline if manually triggered via API or web GUI
     - if: $CI_PIPELINE_SOURCE == "api"
     - if: $CI_PIPELINE_SOURCE == "web"
@@ -72,47 +72,11 @@ Sync finn-dev:
     - git pull upstream dev
     - git push origin finn-dev
 
-Singularity Image Build:
+Build:
   id_tokens:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
-  stage: singularity_build
-  tags:
-    # Run where full Docker + Singularity is available
-    - image_build
-  rules:
-    # Do not run on a schedule
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    # Always run for dev branch to ensure default image is up to date
-    - if: $CI_COMMIT_REF_SLUG == "dev"
-    # For other branches only run if relevant files changed relative to dev branch
-    - changes:
-        paths:
-          - requirements.txt
-          - docker/Dockerfile.finn
-          - docker/finn_entrypoint.sh
-          - docker/quicktest.sh
-        compare_to: "dev"
-  script:
-    - docker build --no-cache -f docker/Dockerfile.finn --tag=finn_docker_export .
-    - apptainer build --force finn_singularity_image.sif docker-daemon://finn_docker_export:latest
-    - rsync -vh finn_singularity_image.sif $PATH_SINGULARITY_IMG_BUILD/finn-plus/finn_$CI_COMMIT_REF_SLUG.sif
-    - echo SINGULARITY_IMG_SELECT=finn_$CI_COMMIT_REF_SLUG.sif > FINN_environment.env
-  after_script: # Clean caches
-    - echo 'y' | docker image prune
-    - echo 'y' | docker builder prune
-    - echo 'y' | apptainer cache clean
-  # Save env var selecting Singularity image to be used in subsequent jobs
-  artifacts:
-    reports:
-      dotenv: FINN_environment.env
-
-Fetch Repos:
-  id_tokens:
-    CI_JOB_JWT:
-      aud: https://git.uni-paderborn.de
-  stage: load_deps
+  stage: build
   tags:
     - login
   rules:
@@ -121,21 +85,32 @@ Fetch Repos:
       when: never
     # Otherwise run
     - when: always
+  before_script:
+    - !reference [.n2_setup_general, before_script]
+    - !reference [.n2_setup_xilinx_2022_2, before_script]
+    # Install current version of Poetry
+    - python3 -m venv poetry-install
+    - poetry-install/bin/pip install poetry
+    - shopt -s expand_aliases
+    - alias poetry=poetry-install/bin/poetry
+  script:
+    # Let Poetry create virtual environment (.venv) and install Python dependencies
+    # TODO: is it possible to cache the entire venv for the following jobs?
+    - poetry install
+    # Build .whl
+    - poetry build --clean --format=wheel
+    # Let FINN download additional dependencies, cache resulting deps directory
+    - |
+      source .venv/bin/activate
+      finn deps update --path ./deps
+  artifacts:
+    name: "finn-plus_package"
+    paths:
+      - dist/*.whl
   cache:
-    key: $CI_COMMIT_SHA
+    key: $CI_COMMIT_SHA #TODO: cache based on relevant files
     paths:
       - deps
-  variables:
-    SINGULARITY_IMG_SELECT: "finn_dev.sif" # default, may be overwritten by dotenv artifact
-  script:
-    - ./fetch-repos.sh
-    # Workaround for https://gitlab.com/gitlab-org/gitlab/-/issues/349538
-    # Passing artifacts from optional parent jobs to child pipelines is not supported
-    # Therefore, we pass the dotenv artifact from "Singularity Image Build" through this job
-    - echo SINGULARITY_IMG_SELECT=$SINGULARITY_IMG_SELECT > FINN_environment_passthrough.env
-  artifacts:
-    reports:
-      dotenv: FINN_environment_passthrough.env
 
 FINN Test Suite 2022.2:
   id_tokens:
@@ -157,18 +132,17 @@ FINN Test Suite 2022.2:
     paths:
       - deps
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p largemem -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
+    GIT_STRATEGY: empty # Do not pull repository, use PyPI installation instead
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
     PYTEST_PARALLEL: "$CPU_CORES"
-    FINN_XILINX_VERSION: "2022.2"
-  before_script:
-    - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
-    - cd $PATH_WORKDIR/finn-plus
-    - chmod 755 ./test.sh
-    - module load system singularity
-    - ulimit -s unlimited # Increase stack size limit
-    - export FINN_SINGULARITY=$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT
+  extends: .setup_full_2022_2
   script:
-    - ./run-docker.sh ./test.sh $TEST_SUITE
+    # Launch additional monitoring
+    - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
+    # Launch FINN via test command, includes preparation of (cached) dependencies
+    - |
+      source ./finn-plus-venv/bin/activate
+      finn test --variant $TEST_SUITE --dependency-path ./finn-plus/deps --build-path $FINN_BUILD_DIR --num-workers 1 --num-test-workers $PYTEST_PARALLEL
   artifacts:
     name: "test_reports"
     when: always
@@ -178,9 +152,9 @@ FINN Test Suite 2022.2:
       junit: reports/*.xml
 
 FINN Test Suite 2024.2:
-  extends: FINN Test Suite 2022.2
-  variables:
-    FINN_XILINX_VERSION: "2024.2"
+  extends:
+    - FINN Test Suite 2022.2
+    - .setup_full_2024_2
 
 Bench (Manual):
   stage: test

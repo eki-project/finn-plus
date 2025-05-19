@@ -28,10 +28,10 @@
 
 import math
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 # does not do anything at the ONNX node-by-node level, and input-output
 # tensor shapes are the same. performs data width conversion at the rtlsim level
@@ -137,13 +137,6 @@ class StreamingDataWidthConverter(HWCustomOp):
         out_width = self.get_nodeattr("outWidth")
         return out_width
 
-    def make_shape_compatible_op(self, model):
-        exp_ishape = self.get_normal_input_shape()
-        oshape = self.get_normal_output_shape()
-        ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
-        assert ishape == tuple(exp_ishape), "Unexpect input shape for StreamingDWC."
-        return super().make_const_shape_op(oshape)
-
     def infer_node_datatype(self, model):
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
@@ -153,7 +146,7 @@ class StreamingDataWidthConverter(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("dataType", idt.name)
         # data type stays the same
         model.set_tensor_datatype(node.output[0], idt)

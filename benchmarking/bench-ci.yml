@@ -1,3 +1,5 @@
+include: .gitlab-ci-base.yml
+
 stages:
   - build
   - measure
@@ -22,15 +24,15 @@ FINN Build:
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES_BENCH --exclusive --array 0-$( expr $PARALLEL_JOBS - 1 )"
     NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
-    PYTEST_PARALLEL: "$CPU_CORES_BENCH"
-  before_script:
-    - cp -dfR .. $PATH_WORKDIR # Copy to working directory (e.g. RAMdisk)
-    - cd $PATH_WORKDIR/finn-plus
-    - module load system singularity
-    - ulimit -s unlimited # Increase stack size limit
-    - export FINN_SINGULARITY=$PATH_SINGULARITY_IMG/finn-plus/$SINGULARITY_IMG_SELECT
+  extends: .setup_full_2022_2
   script:
-    - ./run-docker.sh python benchmarking/bench.py $BENCH_CFG
+    # Launch additional monitoring
+    - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
+    # Launch benchmarking script directly (TODO: deeper integration)
+    - |
+      source ./finn-plus-venv/bin/activate
+      finn deps update
+      python ./finn-plus/benchmarking/bench.py $BENCH_CFG
   cache:
     key: $CI_COMMIT_SHA
     policy: pull

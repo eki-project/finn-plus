@@ -26,11 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import numpy as np
-import warnings
 from abc import ABC, abstractmethod
 from onnx import TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
+
+from finn.util.logging import log
 
 np_default_dtype = np.float32
 
@@ -428,7 +429,7 @@ class QuantReluHandler(QuantActBaseHandler):
             # Assume the channels to be in axis 1
             cdim = 1
             # Issue a warning to the user, so they are aware of this
-            warnings.warn(
+            log.warning(
                 f"No layout annotations for {self._q_node.input[0]}:"
                 f" Assuming channel dimension at index {cdim}"
             )
@@ -607,7 +608,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
                 # Assume the channels to be in axis 1
                 cdim = 1
                 # Issue a warning to the user, so they are aware of this
-                warnings.warn(
+                log.warning(
                     f"No layout annotations for {self._q_node.input[0]}:"
                     f" Assuming channel dimension at index {cdim}"
                 )

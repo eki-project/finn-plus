@@ -8,9 +8,6 @@ import math
 # Need numpy for modifying the onnx graph tensors, which are numpy style arrays
 import numpy as np
 
-# Output warning messages
-import warnings
-
 # Utility for handling ONNX nodes and tensors
 from onnx import NodeProto
 from onnx import helper as oh
@@ -46,6 +43,9 @@ from finn.transformation.util import (
     is_softmax,
     op_types,
 )
+
+# Output warning messages
+from finn.util.logging import log
 
 
 # Convert the operator pattern corresponding to scaled dot-product attention to
@@ -94,7 +94,7 @@ class InferScaledDotProductAttention(Transformation):
                     # Issue a warning of near match of the supported attention
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Mismatch in head or embedding dim at {lhs[-1].name}: "
                         f" {(qh, ql, qe)} vs. {(kh, kl, ke)}"
@@ -109,7 +109,7 @@ class InferScaledDotProductAttention(Transformation):
                     # Issue a warning of near match of the supported attention
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Missing Transpose near {lhs[-1].name}: "
                         f" {op_types([transpose])[0]}"
@@ -124,7 +124,7 @@ class InferScaledDotProductAttention(Transformation):
                     # Issue a warning of near match of the supported attention
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Fork Transpose near {node.name}: {transpose.name}"
                     )
@@ -188,7 +188,7 @@ class InferScaledDotProductAttention(Transformation):
                     # Issue a warning of near match of the supported attention
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Unsupported activation near {node.name}: "
                         f" One of {', '.join(op_types(acts))}"
@@ -224,7 +224,7 @@ class InferScaledDotProductAttention(Transformation):
                         # Issue a warning of near match of the supported
                         # attention pattern
                         # @formatter:off
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}: Skipping near match: "
                             f"Unsupported de-quantizer near {maybe_mask.name}: "
                             f" {op_types(dequant_softmax)}"
@@ -265,7 +265,7 @@ class InferScaledDotProductAttention(Transformation):
                             # Issue a warning of near match of the supported
                             # attention pattern
                             # @formatter:off
-                            warnings.warn(
+                            log.warning(
                                 f"{self.__class__.__name__}: Skipping near"
                                 f" match: Invalid values in mask near"
                                 f" {maybe_mask.name}: {np.unique(mask_tensor)}"
@@ -303,7 +303,7 @@ class InferScaledDotProductAttention(Transformation):
                         # Handling dynamic masks is more difficult and there is
                         # no solution for now.
                         # @formatter:off
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}: Skipping near match: "
                             f"Unsupported dynamic mask near {maybe_mask.name}: "
                             f" {mask}"
@@ -317,7 +317,7 @@ class InferScaledDotProductAttention(Transformation):
                     # Issue a warning of near match of the supported attention
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Unsupported de-quantizer near {lhs[1].name}: "
                         f" {dequant_softmax.op_type}"
@@ -338,7 +338,7 @@ class InferScaledDotProductAttention(Transformation):
                         # Issue a warning of near match of the supported
                         # attention pattern
                         # @formatter:off
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}: Skipping near match: "
                             f"Non-constant dequantizer near {node.name}: "
                             f" {dequant_softmax.name}"
@@ -352,7 +352,7 @@ class InferScaledDotProductAttention(Transformation):
                         # Issue a warning of near match of the supported
                         # attention pattern
                         # @formatter:off
-                        warnings.warn(
+                        log.warning(
                             f"{self.__class__.__name__}: Skipping near match: "
                             f"Non-scalar dequantizer near {node.name}: "
                             f" {dequant_softmax.name}"
@@ -594,7 +594,7 @@ class AbsorbMultiThresholdIntoScaledDotProductAttention(Transformation):
                     # Issue a warning to make the user aware of this mismatch
                     # pattern
                     # @formatter:off
-                    warnings.warn(
+                    log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f" {attention.name} already has an activation:"
                         f" {get_by_name(attention.attribute, 'ActAVMatMul').s}"
