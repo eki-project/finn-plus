@@ -1,0 +1,13 @@
+params:
+  dut: resnet50
+  model_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/resnet50_w1a2_exported.onnx
+  folding_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/U250_folding_config.json
+  specialize_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/U250_specialize_layers.json
+  floorplan_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/floorplan_resnet50.json
+  board: RFSoC2x2
+  clock_period_ns: 10
+  fifo_method: live
+  output_products:
+  - bitfile
+  - pynq_driver
+  - deployment_package
