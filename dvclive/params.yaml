@@ -1,0 +1,35 @@
+params:
+  dut: mvau
+  idt: INT2
+  wdt: INT4
+  act: INT4
+  sparsity_type: none
+  sparsity_amount: 0
+  nhw:
+  - 1
+  - 32
+  - 32
+  mw: 64
+  mh: 64
+  sf: -1
+  nf: -1
+  m: 1
+  mem_mode: internal_embedded
+  ram_style: distributed
+  ram_style_thr: distributed
+  dut_duplication: 1
+  output_products:
+  - estimate_reports
+  - stitched_ip
+  - rtlsim_performance
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  board: RFSoC2x2
+  clock_period_ns: 10
+dut_info:
+  simd: 1
+  pe: 1
+  zero_weights: 0.06
+  easy_weights: 0.49
