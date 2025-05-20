@@ -267,10 +267,10 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         extype, value, tb = sys.exc_info()
         if print_full_traceback:
             # print exception info and traceback
-            log.error("Internal compiler error:")
+            log.error("FINN Internal compiler error:")
             console.print_exception(show_locals=False)
         else:
-            console.print(f"[bold red]FINN User Error: [/bold red]{e}")
+            console.print(f"[bold red]FINN Error: [/bold red]{e}")
             log.error(f"{e}")
             print("Build failed")
             return -1  # A user error shouldn't be need to be fixed using PDB
@@ -278,8 +278,6 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         # start postmortem debug if configured
         if cfg.enable_build_pdb_debug:
             pdb.post_mortem(tb)
-        else:
-            print("enable_build_pdb_debug not set in build config, exiting...")
         print("Build failed")
         return -1
 
