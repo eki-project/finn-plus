@@ -28,7 +28,7 @@ def collect_ip_dirs(model, ipstitch_path):
     ip_dirs += [ipstitch_path + "/ip"]
     if need_memstreamer:
         # add RTL streamer IP
-        ip_dirs.append("$::env(FINN_ROOT)/finn-rtllib/memstream")
+        ip_dirs.append("$::env(FINN_RTLLIB)/memstream")
     return ip_dirs
 
 
@@ -71,7 +71,7 @@ class GenerateInstrumentationIP(Transformation):
         ko = out_shape_folded[-1]
         # fill out instrumentation wrapper template
         with open(
-            os.path.join(os.environ["FINN_ROOT"], "custom_hls", "instrumentation.template.cpp"), "r"
+            os.path.join(os.environ["FINN_CUSTOM_HLS"], "instrumentation.template.cpp"), "r"
         ) as f:
             instrwrp_cpp = f.read()
         instrwrp_cpp = instrwrp_cpp.replace("@PENDING@", str(pending))
@@ -150,7 +150,7 @@ class PrepareInstrumentationSim(Transformation):
         # TODO: Support simulation with AXI-lite control interfaces (e.g., for dynamic pipelines)
         # fill in testbench template
         with open(
-            os.path.join(os.environ["FINN_ROOT"], "custom_hls", "instrumentation_tb.template.sv"),
+            os.path.join(os.environ["FINN_CUSTOM_HLS"], "instrumentation_tb.template.sv"),
             "r",
         ) as f:
             testbench_sv = f.read()
@@ -158,7 +158,7 @@ class PrepareInstrumentationSim(Transformation):
             f.write(testbench_sv)
         # fill in testbench project creator template
         with open(
-            os.path.join(os.environ["FINN_ROOT"], "custom_hls", "instrumentation_sim.template.tcl"),
+            os.path.join(os.environ["FINN_CUSTOM_HLS"], "instrumentation_sim.template.tcl"),
             "r",
         ) as f:
             testbench_tcl = f.read()
