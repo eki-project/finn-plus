@@ -35,6 +35,7 @@ from qonnx.core.datatype import DataType
 from qonnx.util.basic import gen_finn_dt_tensor
 
 from finn.util.basic import make_build_dir
+from finn.util.deps import get_deps_path
 
 
 @pytest.mark.util
@@ -94,10 +95,10 @@ def test_npy2vectorstream(test_shape, dtype):
     with open(test_dir + "/test.cpp", "w") as f:
         f.write("\n".join(test_app_string))
     cmd_compile = """
-g++ -o test_npy2vectorstream test.cpp $FINN_ROOT/deps/cnpy/cnpy.cpp \
--I$FINN_ROOT/deps/cnpy/ -I{}/include -I$FINN_ROOT/src/finn/qnn-data/cpp \
+g++ -o test_npy2vectorstream test.cpp {}/cnpy/cnpy.cpp \
+-I{}/cnpy/ -I{}/include -I$FINN_QNN_DATA/cpp \
 --std=c++14 -lz """.format(
-        os.environ["HLS_PATH"]
+        get_deps_path(), get_deps_path(), os.environ["XILINX_HLS"]
     )
     with open(test_dir + "/compile.sh", "w") as f:
         f.write(cmd_compile)

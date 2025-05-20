@@ -30,12 +30,23 @@
 import numpy as np
 import os
 from dataclasses import dataclass
-from dataclasses_json import dataclass_json
 from enum import Enum
+from mashumaro.mixins.json import DataClassJSONMixin
+from mashumaro.mixins.yaml import DataClassYAMLMixin
 from typing import Any, List, Optional
 
-from finn.transformation.fpgadataflow.vitis_build import VitisOptStrategy
 from finn.util.basic import alveo_default_platform, part_map
+
+
+class LogLevel(str, Enum):
+    """Log levels printed on the commandline for the build process."""
+
+    NONE = "NONE"
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
 
 
 class AutoFIFOSizingMethod(str, Enum):
@@ -62,18 +73,26 @@ class DataflowOutputType(str, Enum):
     RTLSIM_PERFORMANCE = "rtlsim_performance"
     BITFILE = "bitfile"
     PYNQ_DRIVER = "pynq_driver"
+    CPP_DRIVER = "cpp_driver"
     DEPLOYMENT_PACKAGE = "deployment_package"
 
 
-class VitisOptStrategyCfg(str, Enum):
-    """Vitis optimization strategy with serializable string enum values."""
+class VitisOptStrategy(Enum):
+    "Values applicable to VitisBuild optimization strategy."
+
+    DEFAULT = "0"
+    POWER = "1"
+    PERFORMANCE = "2"
+    PERFORMANCE_BEST = "3"
+    SIZE = "s"
+    BUILD_SPEED = "quick"
+
+
+class FpgaMemoryType(str, Enum):
+    "Memory Type used by the FPGA to store input/output data"
 
     DEFAULT = "default"
-    POWER = "power"
-    PERFORMANCE = "performance"
-    PERFORMANCE_BEST = "performance_best"
-    SIZE = "size"
-    BUILD_SPEED = "quick"
+    HOST_MEM = "host_memory"
 
 
 class LargeFIFOMemStyle(str, Enum):
@@ -123,7 +142,7 @@ default_build_dataflow_steps = [
     "step_measure_rtlsim_performance",
     "step_out_of_context_synthesis",
     "step_synthesize_bitfile",
-    "step_make_pynq_driver",
+    "step_make_driver",
     "step_deployment_package",
 ]
 
@@ -146,9 +165,8 @@ estimate_only_dataflow_steps = [
 hw_codegen_dataflow_steps = estimate_only_dataflow_steps + ["step_hw_codegen"]
 
 
-@dataclass_json
 @dataclass
-class DataflowBuildConfig:
+class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     """Build configuration to be passed to the build_dataflow function. Can be
     serialized into or de-serialized from JSON files for persistence.
     See list of attributes below for more information on the build configuration.
@@ -273,13 +291,17 @@ class DataflowBuildConfig:
     #: setting the FIFO sizes.
     auto_fifo_strategy: Optional[AutoFIFOSizingMethod] = AutoFIFOSizingMethod.LARGEFIFO_RTLSIM
 
-    #: Avoid using C++ rtlsim for auto FIFO sizing and rtlsim throughput test
-    #: if set to True, always using Python instead
-    force_python_rtlsim: Optional[bool] = False
-
     #: Memory resource type for large FIFOs
     #: Only relevant when `auto_fifo_depths = True`
     large_fifo_mem_style: Optional[LargeFIFOMemStyle] = LargeFIFOMemStyle.AUTO
+
+    #: Enable input throttling for simulation-based FIFO sizing
+    #: Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM
+    fifosim_input_throttle: Optional[bool] = True
+
+    #: Enable saving waveforms from simulation-based FIFO sizing
+    #: Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM
+    fifosim_save_waveform: Optional[bool] = False
 
     #: Target clock frequency (in nanoseconds) for Vitis HLS synthesis.
     #: e.g. `hls_clk_period_ns=5.0` will target a 200 MHz clock.
@@ -304,7 +326,11 @@ class DataflowBuildConfig:
 
     #: Vitis optimization strategy
     #: Only relevant when `shell_flow_type = ShellFlowType.VITIS_ALVEO`
-    vitis_opt_strategy: Optional[VitisOptStrategyCfg] = VitisOptStrategyCfg.DEFAULT
+    vitis_opt_strategy: Optional[VitisOptStrategy] = VitisOptStrategy.DEFAULT
+
+    #: FPGA memory type
+    #: Can be used to use host memory for input/output data instead of DDR or HBM memory
+    fpga_memory: Optional[FpgaMemoryType] = FpgaMemoryType.DEFAULT
 
     #: Whether intermediate ONNX files will be saved during the build process.
     #: These can be useful for debugging if the build fails.
@@ -321,9 +347,14 @@ class DataflowBuildConfig:
     #: Whether pdb postmortem debuggig will be launched when the build fails
     enable_build_pdb_debug: Optional[bool] = True
 
-    #: When True, all warnings and compiler output will be printed in stdout.
-    #: Otherwise, these will be suppressed and only appear in the build log.
+    #: When True, additional verbose information will be written to the log file.
+    #: Otherwise, these additional information will be suppressed.
     verbose: Optional[bool] = False
+
+    #: Log level to be used on the command line for finn-plus internal logging.
+    #: This is different from the log level used for the build process,
+    #: which is controlled using the verbose flag.
+    console_log_level: Optional[LogLevel] = LogLevel.NONE
 
     #: If given, only run the steps in the list. If not, run default steps.
     #: See `default_build_dataflow_steps` for the default list of steps.
@@ -355,6 +386,11 @@ class DataflowBuildConfig:
     #: If set to True, FIFOs with impl_style=vivado will be kept during
     #: rtlsim, otherwise they will be replaced by RTL implementations.
     rtlsim_use_vivado_comps: Optional[bool] = True
+
+    #: Determine if the C++ driver should be generated instead of the PYNQ driver
+    #: If set to latest newest version will be used
+    #: If set to commit hash specified version will be used
+    cpp_driver_version: Optional[str] = "latest"
 
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:
@@ -390,18 +426,6 @@ class DataflowBuildConfig:
             n_clock_cycles_per_sec = 10**9 / self.synth_clk_period_ns
             n_cycles_per_frame = n_clock_cycles_per_sec / self.target_fps
             return int(n_cycles_per_frame)
-
-    def _resolve_vitis_opt_strategy(self):
-        # convert human-readable enum to value expected by v++
-        name_to_strategy = {
-            VitisOptStrategyCfg.DEFAULT: VitisOptStrategy.DEFAULT,
-            VitisOptStrategyCfg.POWER: VitisOptStrategy.POWER,
-            VitisOptStrategyCfg.PERFORMANCE: VitisOptStrategy.PERFORMANCE,
-            VitisOptStrategyCfg.PERFORMANCE_BEST: VitisOptStrategy.PERFORMANCE_BEST,
-            VitisOptStrategyCfg.SIZE: VitisOptStrategy.SIZE,
-            VitisOptStrategyCfg.BUILD_SPEED: VitisOptStrategy.BUILD_SPEED,
-        }
-        return name_to_strategy[self.vitis_opt_strategy]
 
     def _resolve_vitis_platform(self):
         if self.vitis_platform is not None:

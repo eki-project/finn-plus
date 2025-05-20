@@ -27,10 +27,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class GlobalAccPool(HWCustomOp):
@@ -87,13 +87,6 @@ class GlobalAccPool(HWCustomOp):
         oshape = tuple(unfolded_shape[:-1] + [folds, pe])
         return oshape
 
-    def make_shape_compatible_op(self, model):
-        exp_ishape = self.get_normal_input_shape()
-        oshape = self.get_normal_output_shape()
-        ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
-        assert ishape == exp_ishape, "Unexpected input shape."
-        return super().make_const_shape_op(oshape)
-
     def infer_node_datatype(self, model):
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
@@ -103,13 +96,10 @@ class GlobalAccPool(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         odt = self.get_output_datatype()
         model.set_tensor_datatype(self.onnx_node.output[0], odt)
-
-    def verify_node(self):
-        pass
 
     def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""

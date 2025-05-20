@@ -27,42 +27,47 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import clize
+import datetime
+import importlib
 import json
 import logging
 import os
-import pdb  # NOQA
+from typing import Callable
+
+import pdb  # isort: split
 import sys
 import time
-import traceback
 from qonnx.core.modelwrapper import ModelWrapper
+from rich.console import Console
+from rich.logging import RichHandler
 
-from finn.builder.build_dataflow_config import (
-    DataflowBuildConfig,
-    default_build_dataflow_steps,
-)
+from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
 
 
 # adapted from https://stackoverflow.com/a/39215961
-class StreamToLogger(object):
+class PrintLogger(object):
     """
-    Fake file-like stream object that redirects writes to a logger instance.
+    Create a custom stream handler that writes to both the console and the log file.
     """
 
-    def __init__(self, logger, level):
+    def __init__(self, logger, level, originalstream):
         self.logger = logger
         self.level = level
+        self.console = originalstream
         self.linebuf = ""
 
     def write(self, buf):
         for line in buf.rstrip().splitlines():
             self.logger.log(self.level, line.rstrip())
+            timestamp = datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S")
+            self.console.write(f"[{timestamp}] " + line + "\n")
 
     def flush(self):
-        pass
+        self.console.flush()
 
 
-def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True):
+def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[Callable]:
     steps = cfg.steps
     if steps is None:
         steps = default_build_dataflow_steps
@@ -70,7 +75,49 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True):
     for transform_step in steps:
         if type(transform_step) is str:
             # lookup step function from step name
-            steps_as_fxns.append(build_dataflow_step_lookup[transform_step])
+            if transform_step in build_dataflow_step_lookup.keys():
+                steps_as_fxns.append(build_dataflow_step_lookup[transform_step])
+            else:
+                if "." not in transform_step:
+                    if transform_step not in globals().keys():
+                        msg = (
+                            f"Step {transform_step} is not a default step, not in globals() "
+                            "and not an importable name!"
+                        )
+                        raise Exception(msg)
+                    else:  # noqa
+                        fxn_step = globals()[transform_step]
+                        if not callable(fxn_step):
+                            msg = (
+                                f"Step {transform_step} was resolved in globals(), but is "
+                                "not callable object. If the name was already in use, consider "
+                                "moving your custom step into it's own module and importing it "
+                                "via yourmodule.yourstep!"
+                            )
+                            raise Exception(msg)
+                        steps_as_fxns.append(fxn_step)
+                        continue
+                else:
+                    split_step = transform_step.split(".")
+                    module_path, fxn_step_name = split_step[:-1], split_step[-1]
+                    try:
+                        imported_module = importlib.import_module(".".join(module_path))
+                        fxn_step = getattr(imported_module, fxn_step_name)
+                        if callable(fxn_step):
+                            steps_as_fxns.append(fxn_step)
+                            continue
+                        else:  # noqa
+                            msg = (
+                                f"Could import custom step module, but final name is not a "
+                                f"callable object. Path was {transform_step}"
+                            )
+                            raise Exception(msg)
+                    except ModuleNotFoundError as mnf:
+                        msg = (
+                            f"Could not resolve build step: {transform_step}. "
+                            "The given step is neither importable nor a default step."
+                        )
+                        raise Exception(msg) from mnf
         elif callable(transform_step):
             # treat step as function to be called as-is
             steps_as_fxns.append(transform_step)
@@ -110,71 +157,94 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     """
     # if start_step is specified, override the input model
     if cfg.start_step is None:
-        print("Building dataflow accelerator from " + model_filename)
+        print(f"Building dataflow accelerator from {model_filename}")
         model = ModelWrapper(model_filename)
     else:
         intermediate_model_filename = resolve_step_filename(cfg.start_step, cfg, -1)
-        print(
-            "Building dataflow accelerator from intermediate checkpoint"
-            + intermediate_model_filename
+        out = (
+            f"Building dataflow accelerator from intermediate"
+            f" checkpoint {intermediate_model_filename}"
         )
+        print(out)
         model = ModelWrapper(intermediate_model_filename)
     assert type(model) is ModelWrapper
     finn_build_dir = os.environ["FINN_BUILD_DIR"]
 
-    print("Intermediate outputs will be generated in " + finn_build_dir)
-    print("Final outputs will be generated in " + cfg.output_dir)
-    print("Build log is at " + cfg.output_dir + "/build_dataflow.log")
+    print(f"Intermediate outputs will be generated in {finn_build_dir}")
+    print(f"Final outputs will be generated in {cfg.output_dir}")
+    print(f"Build log is at {cfg.output_dir}/build_dataflow.log")
     # create the output dir if it doesn't exist
-    if not os.path.exists(cfg.output_dir):
-        os.makedirs(cfg.output_dir)
+    os.makedirs(cfg.output_dir, exist_ok=True)
+
+    # set up logger
+    logpath = os.path.join(cfg.output_dir, "build_dataflow.log")
+    if cfg.verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="[%(asctime)s]%(levelname)s: %(pathname)s:%(lineno)d: %(message)s",
+            filename=logpath,
+            filemode="w",
+        )
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="[%(asctime)s]%(levelname)s: %(message)s",
+            filename=logpath,
+            filemode="w",
+        )
+
+    # Capture all warnings.warn calls of qonnx,...
+    logging.captureWarnings(True)
+
+    log = logging.getLogger("build_dataflow")
+
+    # mirror stdout and stderr to log
+    sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
+    sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
+    console = Console(file=sys.stdout.console)
+
+    if cfg.console_log_level != "NONE":
+        # set up console logger
+        console = RichHandler(show_time=True, show_path=False, console=console)
+
+        if cfg.console_log_level == "DEBUG":
+            console.setLevel(logging.DEBUG)
+        elif cfg.console_log_level == "INFO":
+            console.setLevel(logging.INFO)
+        elif cfg.console_log_level == "WARNING":
+            console.setLevel(logging.WARNING)
+        elif cfg.console_log_level == "ERROR":
+            console.setLevel(logging.ERROR)
+        elif cfg.console_log_level == "CRITICAL":
+            console.setLevel(logging.CRITICAL)
+        logging.getLogger().addHandler(console)
+
+    # start processing
     step_num = 1
     time_per_step = dict()
     build_dataflow_steps = resolve_build_steps(cfg)
-    # set up logger
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="[%(asctime)s] %(message)s",
-        filename=cfg.output_dir + "/build_dataflow.log",
-        filemode="a",
-    )
-    log = logging.getLogger("build_dataflow")
-    stdout_logger = StreamToLogger(log, logging.INFO)
-    stderr_logger = StreamToLogger(log, logging.ERROR)
-    stdout_orig = sys.stdout
-    stderr_orig = sys.stderr
+
     for transform_step in build_dataflow_steps:
         try:
             step_name = transform_step.__name__
-            print("Running step: %s [%d/%d]" % (step_name, step_num, len(build_dataflow_steps)))
-            # redirect output to logfile
-            if not cfg.verbose:
-                sys.stdout = stdout_logger
-                sys.stderr = stderr_logger
-                # also log current step name to logfile
-                print("Running step: %s [%d/%d]" % (step_name, step_num, len(build_dataflow_steps)))
+            print(f"Running step: {step_name} [{step_num}/{len(build_dataflow_steps)}]")
+
             # run the step
             step_start = time.time()
             model = transform_step(model, cfg)
             step_end = time.time()
-            # restore stdout/stderr
-            sys.stdout = stdout_orig
-            sys.stderr = stderr_orig
             time_per_step[step_name] = step_end - step_start
-            chkpt_name = "%s.onnx" % (step_name)
+            chkpt_name = f"{step_name}.onnx"
             if cfg.save_intermediate_models:
-                intermediate_model_dir = cfg.output_dir + "/intermediate_models"
+                intermediate_model_dir = os.path.join(cfg.output_dir, "intermediate_models")
                 if not os.path.exists(intermediate_model_dir):
                     os.makedirs(intermediate_model_dir)
-                model.save("%s/%s" % (intermediate_model_dir, chkpt_name))
+                model.save(os.path.join(intermediate_model_dir, chkpt_name))
             step_num += 1
         except:  # noqa
-            # restore stdout/stderr
-            sys.stdout = stdout_orig
-            sys.stderr = stderr_orig
             # print exception info and traceback
             extype, value, tb = sys.exc_info()
-            traceback.print_exc()
+            console.print_exception(show_locals=False)
             # start postmortem debug if configured
             if cfg.enable_build_pdb_debug:
                 pdb.post_mortem(tb)
@@ -183,7 +253,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             print("Build failed")
             return -1
 
-    with open(cfg.output_dir + "/time_per_step.json", "w") as f:
+    with open(os.path.join(cfg.output_dir, "time_per_step.json"), "w") as f:
         json.dump(time_per_step, f, indent=2)
     print("Completed successfully")
     return 0

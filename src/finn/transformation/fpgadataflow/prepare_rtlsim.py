@@ -30,20 +30,13 @@
 import qonnx.custom_op.registry as registry
 from qonnx.transformation.base import NodeLocalTransformation
 
-from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
-    ReplaceVerilogRelPaths,
-)
+from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
-
-try:
-    from pyverilator import PyVerilator
-except ModuleNotFoundError:
-    PyVerilator = None
 
 
 class PrepareRTLSim(NodeLocalTransformation):
-    """For a graph with generated RTL sources (after HLSSynthIP), create a
-    Verilator emulation library for each node to prepare for rtlsim
+    """For a graph with generated RTL sources (after HLSSynthIP), create an
+    emulation library for each node to prepare for rtlsim
     execution and set the rtlsim_so property to the path to the generated
     emulation library.
 

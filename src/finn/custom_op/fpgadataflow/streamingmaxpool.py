@@ -28,13 +28,13 @@
 
 import numpy as np
 import onnxruntime as rt
-import warnings
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.maxpoolnhwc import compute_pool_output_dim
 from qonnx.util.basic import qonnx_make_model
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 # TODO: consider splitting this into separate implementations for 1D and 2D
 # similar to what we do for ConvolutionInputGenerator
@@ -136,11 +136,9 @@ class StreamingMaxPool(HWCustomOp):
         # derived from StreamingMaxPool_Batch loop nest
         ifm_dim, k, ifm_ch = self.get_1d_attrs_normalized()
 
-        warnings.warn(
-            """Estimated latency for layer {} can be lower than
-             actual latency!""".format(
-                self.onnx_node.name
-            )
+        log.warning(
+            f"""Estimated latency for layer {self.onnx_node.name} can be lower than
+             actual latency!"""
         )
         if self.is_1d():
             _, _, _, nf, _ = self.get_folded_output_shape()
@@ -166,13 +164,6 @@ class StreamingMaxPool(HWCustomOp):
         """For streaming maxpool out stream width is the same as in stream width"""
         return self.get_instream_width()
 
-    def make_shape_compatible_op(self, model):
-        exp_ishape = self.get_normal_input_shape()
-        oshape = self.get_normal_output_shape()
-        ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
-        assert ishape == exp_ishape, "Unexpect input shape for StreamingMaxPool."
-        return super().make_const_shape_op(oshape)
-
     def infer_node_datatype(self, model):
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
@@ -182,13 +173,10 @@ class StreamingMaxPool(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("dataType", idt.name)
         # data type stays the same
         model.set_tensor_datatype(node.output[0], idt)
-
-    def verify_node(self):
-        pass
 
     def execute_node(self, context, graph):
         # create a standard add node to help calculate the result
