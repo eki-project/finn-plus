@@ -1,0 +1,22 @@
+params:
+  dut: ras
+  model_name: MobileNetv2-w4a4
+  validation_dataset: imagenet
+  act_mode: thresholding
+  acc_opt: noaccmin
+  folding: prefold
+  board: RFSoC2x2
+  clock_period_ns: 5
+  fifo_method: live
+  folding_path: 
+    /pc2/groups/hpc-prf-ekiapp/felix/ci_cfg/ras/MobileNetv2-w8a8_QAT_thresholding_nofifo.json
+  use_float: no
+  top1: no
+  rtlsim_n: 5
+  output_products:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+metadata:
+  tool_version: '2022.2'
