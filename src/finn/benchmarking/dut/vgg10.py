@@ -5,7 +5,7 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 
-from bench_base import bench
+from finn.benchmarking.bench_base import bench
 
 
 def step_pre_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):

@@ -22,7 +22,7 @@ from finn.transformation.fpgadataflow.minimize_weight_bit_width import (
 )
 import finn.builder.build_dataflow_config as build_cfg
 
-from bench_base import bench
+from finn.benchmarking.bench_base import bench
 
 class bench_mvau(bench):
 

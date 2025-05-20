@@ -1,6 +1,6 @@
 import finn.builder.build_dataflow_config as build_cfg
 
-from bench_base import bench
+from finn.benchmarking.bench_base import bench
 
 # # custom steps
 # from custom_steps import (

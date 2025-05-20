@@ -180,7 +180,7 @@ Bench:
       when: never
     - if: $MANUAL_CFG_PATH == ""
   trigger:
-    include: benchmarking/bench-ci.yml
+    include: src/finn/benchmarking/bench-ci.yml
     strategy: depend
     forward:
       pipeline_variables: true

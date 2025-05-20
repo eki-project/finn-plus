@@ -22,14 +22,14 @@ import json
 import finn.builder.build_dataflow_config as build_cfg
 from finn.builder.build_dataflow_config import AutoFIFOSizingMethod
 from qonnx.core.modelwrapper import ModelWrapper
-from bench_base import bench
+from finn.benchmarking.bench_base import bench
 
 # Range information structure for seeding the range analysis for converting
 # quantized activations to MultiThreshold
 from qonnx.util.range_analysis import RangeInfo
 
 # Custom build steps required to streamline and convert the attention operator
-from dut.transformer_custom_steps import (
+from finn.benchmarking.dut.transformer_custom_steps import (
     prepare_graph,
     step_streamline,
     step_convert_attention_to_hw,

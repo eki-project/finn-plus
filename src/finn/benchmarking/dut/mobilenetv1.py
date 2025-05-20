@@ -1,4 +1,4 @@
-from bench_base import bench
+from finn.benchmarking.bench_base import bench
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.change_datalayout import ChangeDataLayoutQuantAvgPool2d
 from qonnx.transformation.double_to_single_float import DoubleToSingleFloat

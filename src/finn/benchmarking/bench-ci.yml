@@ -28,11 +28,10 @@ FINN Build:
   script:
     # Launch additional monitoring
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
-    # Launch benchmarking script directly (TODO: deeper integration)
+    # Launch benchmarking script via FINN CLI, includes deps update and environment preparation
     - |
       source ./finn-plus-venv/bin/activate
-      finn deps update
-      python ./finn-plus/benchmarking/bench.py $BENCH_CFG
+      finn bench $BENCH_CFG
   cache:
     key: $CI_COMMIT_SHA
     policy: pull
@@ -56,7 +55,7 @@ Measurement:
     - when: always
   script:
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
-    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python benchmarking/measure.py"
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python src/finn/benchmarking/measure.py"
   artifacts:
     name: "measurement_artifacts"
     when: always
@@ -74,5 +73,5 @@ Result Collection:
     # Also run on failure of previous tasks to collect partial results
     - when: always
   script:
-    - python3.10 benchmarking/collect.py
+    - python3.10 src/finn/benchmarking/collect.py
     - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git

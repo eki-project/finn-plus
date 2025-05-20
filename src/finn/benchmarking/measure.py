@@ -3,7 +3,7 @@ import sys
 import subprocess
 import shutil
 
-from util import delete_dir_contents
+from finn.benchmarking.util import delete_dir_contents
 
 
 if __name__ == "__main__":

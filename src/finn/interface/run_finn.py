@@ -32,6 +32,7 @@ from finn.interface.interface_utils import (
 from finn.interface.manage_deps import install_pyxsi, update_dependencies
 from finn.interface.manage_tests import run_test
 
+from finn.benchmarking.bench import start_bench_run
 
 # Resolves the path to modules which are not part of the FINN package hierarchy
 def _resolve_module_path(name: str) -> str:
@@ -260,6 +261,32 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
     )
 
 
+@click.command(help="Run a given benchmark configuration.")
+@click.option(
+    "--bench_config",
+    help="Name or path of experiment configuration file",
+    default="",
+)
+@click.option("--dependency-path", "-d", default="")
+@click.option("--num-workers", "-n", default=-1, show_default=True)
+@click.option(
+    "--build-path",
+    "-b",
+    help="Specify a build temp path of your choice",
+    default="",
+)
+def bench(
+    bench_config: str, dependency_path: str, num_workers: int, build_path: str
+) -> None:
+    console = Console()
+    build_dir = Path(build_path).expanduser() if build_path != "" else None
+    dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
+    prepare_finn(dep_path, Path(), build_dir, num_workers, is_test_run=True)
+    console.rule("RUNNING BENCHMARK")
+    exit_code = start_bench_run(bench_config)
+    sys.exit(exit_code)
+
+
 @click.command(help="Run a given test. Uses /tmp/FINN_TMP as the temporary file location")
 @click.option(
     "--variant",
@@ -385,6 +412,7 @@ def main() -> None:
     main_group.add_command(config)
     main_group.add_command(deps)
     main_group.add_command(build)
+    main_group.add_command(bench)
     main_group.add_command(test)
     main_group.add_command(run)
     main_group()

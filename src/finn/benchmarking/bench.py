@@ -7,15 +7,15 @@ import traceback
 import onnxruntime as ort
 import importlib
 
-from util import delete_dir_contents
+from finn.benchmarking.util import delete_dir_contents
 
-from dut.mvau import bench_mvau
-from dut.resnet50 import bench_resnet50
-from dut.metafi import bench_metafi
-from dut.synthetic_nonlinear import bench_synthetic_nonlinear
-from dut.transformer import bench_transformer
-from dut.vgg10 import bench_vgg10
-from dut.mobilenetv1 import bench_mobilenetv1
+from finn.benchmarking.dut.mvau import bench_mvau
+from finn.benchmarking.dut.resnet50 import bench_resnet50
+from finn.benchmarking.dut.metafi import bench_metafi
+from finn.benchmarking.dut.synthetic_nonlinear import bench_synthetic_nonlinear
+from finn.benchmarking.dut.transformer import bench_transformer
+from finn.benchmarking.dut.vgg10 import bench_vgg10
+from finn.benchmarking.dut.mobilenetv1 import bench_mobilenetv1
 
 dut = dict()
 dut["mvau"] = bench_mvau
@@ -27,7 +27,7 @@ dut["vgg10"] = bench_vgg10
 dut["mobilenetv1"] = bench_mobilenetv1
 
 
-def main(config_name):
+def start_bench_run(config_name):
     exit_code = 0
     # Attempt to work around onnxruntime issue on Slurm-managed clusters:
     # See https://github.com/microsoft/onnxruntime/issues/8313
@@ -193,7 +193,3 @@ def main(config_name):
 
     print("Stopping job")
     return exit_code
-
-if __name__ == "__main__":
-    exit_code = main(sys.argv[1])
-    sys.exit(exit_code)

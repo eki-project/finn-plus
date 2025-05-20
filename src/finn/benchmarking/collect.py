@@ -1,9 +1,9 @@
 import json
 import os
 import shutil
-from dvclive import Live
+from dvclive.live import Live
 
-from util import delete_dir_contents
+from finn.benchmarking.util import delete_dir_contents
 
 
 def log_dvc_metric(live, prefix, name, value):

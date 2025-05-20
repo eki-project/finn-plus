@@ -1,14 +1,14 @@
 import finn.builder.build_dataflow_config as build_cfg
 from finn.util.basic import alveo_default_platform
 
-from dut.resnet50_custom_steps import (
+from finn.benchmarking.dut.resnet50_custom_steps import (
         step_resnet50_tidy,
         step_resnet50_streamline,
         step_resnet50_convert_to_hw,
         step_resnet50_slr_floorplan,
     )
 
-from bench_base import bench
+from finn.benchmarking.bench_base import bench
 
 class bench_resnet50(bench):
     def step_build_setup(self):
