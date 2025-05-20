@@ -32,7 +32,6 @@ from finn.interface.interface_utils import (
 from finn.interface.manage_deps import install_pyxsi, update_dependencies
 from finn.interface.manage_tests import run_test
 
-from finn.benchmarking.bench import start_bench_run
 
 # Resolves the path to modules which are not part of the FINN package hierarchy
 def _resolve_module_path(name: str) -> str:
@@ -275,14 +274,16 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
     help="Specify a build temp path of your choice",
     default="",
 )
-def bench(
-    bench_config: str, dependency_path: str, num_workers: int, build_path: str
-) -> None:
+def bench(bench_config: str, dependency_path: str, num_workers: int, build_path: str) -> None:
     console = Console()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
     prepare_finn(dep_path, Path(), build_dir, num_workers, is_test_run=True)
     console.rule("RUNNING BENCHMARK")
+
+    # Late import because we need prepare_finn to setup remaining dependencies first
+    from finn.benchmarking.bench import start_bench_run
+
     exit_code = start_bench_run(bench_config)
     sys.exit(exit_code)
 
