@@ -251,9 +251,14 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         console.print(f"[red]Error: {str(ue)}")
         print("Build failed")
         return -1
+    except KeyboardInterrupt:
+        console.print("[red]Aborting...")
+        print("Build failed")
+        return -1
     except:  # noqa
         # print exception info and traceback
         extype, value, tb = sys.exc_info()
+        console.print("[red]Internal Compiler Error:")
         console.print_exception(show_locals=False)
         # start postmortem debug if configured
         if cfg.enable_build_pdb_debug:
