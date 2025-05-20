@@ -32,6 +32,7 @@ import importlib
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Callable
 
 import pdb  # isort: split
@@ -43,7 +44,7 @@ from rich.logging import RichHandler
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
-from finn.util.exception import UserException
+from finn.util.exception import FINNConfigurationError, FINNError, UserError
 
 
 # adapted from https://stackoverflow.com/a/39215961
@@ -142,14 +143,19 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
 def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: int = 0):
     step_names = list(map(lambda x: x.__name__, resolve_build_steps(cfg, partial=False)))
     if step_name not in step_names:
-        raise UserException(
+        raise FINNConfigurationError(
             f"Cannot restart from step {step_name}.Step {step_name} for restarting not found."
         )
     step_no = step_names.index(step_name) + step_delta
     if step_no < 0 or step_no >= len(step_names):
-        raise RuntimeError("Invalid step+delta combination")
+        raise FINNConfigurationError("Invalid step+delta combination")
     filename = cfg.output_dir + "/intermediate_models/"
     filename += "%s.onnx" % (step_names[step_no])
+    if not Path(filename).exists():
+        raise FINNConfigurationError(
+            f"Expected model file at {filename} to start from step "
+            f"{step_name}, but could not find it!"
+        )
     return filename
 
 
@@ -247,19 +253,27 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
                     os.makedirs(intermediate_model_dir)
                 model.save(os.path.join(intermediate_model_dir, chkpt_name))
             step_num += 1
-    except UserException as ue:
-        console.print(f"[red]Error: {str(ue)}")
-        print("Build failed")
-        return -1
     except KeyboardInterrupt:
-        console.print("[red]Aborting...")
+        log.error("KeyboardInterrupt detected. Aborting...")
         print("Build failed")
         return -1
-    except:  # noqa
-        # print exception info and traceback
+    except (Exception, FINNError) as e:
+        # Print full traceback if we are on debug log level
+        # or encountered a non-user error
+        print_full_traceback = True
+        if issubclass(type(e), UserError) and log.level != logging.DEBUG:
+            print_full_traceback = False
+
         extype, value, tb = sys.exc_info()
-        console.print("[red]Internal Compiler Error:")
-        console.print_exception(show_locals=False)
+        if print_full_traceback:
+            # print exception info and traceback
+            log.error("Internal compiler error:")
+            console.print_exception(show_locals=False)
+        else:
+            log.error(f"FINN User Error: {e}")
+            print("Build failed")
+            return -1  # A user error shouldn't be need to be fixed using PDB
+
         # start postmortem debug if configured
         if cfg.enable_build_pdb_debug:
             pdb.post_mortem(tb)
