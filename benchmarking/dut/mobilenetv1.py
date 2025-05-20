@@ -136,7 +136,7 @@ class bench_mobilenetv1(bench):
             "step_hw_ipgen",
             "step_create_stitched_ip",
             "step_synthesize_bitfile",
-            "step_make_pynq_driver",
+            "step_make_driver",
             "step_deployment_package",
         ]
         # mobilenet_build_steps_alveo = [

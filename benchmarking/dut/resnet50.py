@@ -31,7 +31,7 @@ class bench_resnet50(bench):
             "step_measure_rtlsim_performance", # was not in finn-examples
             "step_out_of_context_synthesis", # was not in finn-examples
             "step_synthesize_bitfile",
-            "step_make_pynq_driver",
+            "step_make_driver",
             "step_deployment_package",
         ]
 

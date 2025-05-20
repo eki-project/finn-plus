@@ -315,7 +315,7 @@ class bench_mvau(bench):
                 "step_measure_rtlsim_performance",
                 "step_out_of_context_synthesis",
                 "step_synthesize_bitfile",
-                "step_make_pynq_driver",
+                "step_make_driver",
                 "step_deployment_package",
             ]
         )

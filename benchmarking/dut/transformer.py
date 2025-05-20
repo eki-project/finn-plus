@@ -971,7 +971,7 @@ class bench_transformer(bench):
                 # "step_measure_rtlsim_performance", # not possible due to float components
                 "step_out_of_context_synthesis", # for synthesis results (e.g. utilization)
                 "step_synthesize_bitfile", 
-                "step_make_pynq_driver",
+                "step_make_driver",
                 "step_deployment_package",
             ]
         )
