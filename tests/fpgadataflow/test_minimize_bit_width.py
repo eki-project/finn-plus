@@ -38,12 +38,8 @@ from typing import Optional, Union
 
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU
-from finn.transformation.fpgadataflow.minimize_accumulator_width import (
-    MinimizeAccumulatorWidth,
-)
-from finn.transformation.fpgadataflow.minimize_weight_bit_width import (
-    MinimizeWeightBitWidth,
-)
+from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
+from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 
 
 def make_unit_test_model(wdt: DataType, idt: DataType, tdt: Optional[DataType] = None):
@@ -217,8 +213,8 @@ def calculate_accumulator_bit_width(
     else:
         raise Exception("Considering only MVAU and VVAU currently")
     # collect attributes used to determine the accumulator bit width bound
-    wdt = inst.get_weight_datatype()
-    idt = inst.get_input_datatype()
+    wdt = inst.get_input_datatype(1)
+    idt = inst.get_input_datatype(0)
     rww = inst.get_nodeattr("runtime_writeable_weights")
     # if runtime-writeable weights, then use the lower bound on the accumulator bit
     # width as determined by the input and weight data types and size of dot product

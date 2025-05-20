@@ -27,12 +27,12 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.util.basic import interleave_matrix_outer_dim_from_partitions
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class Thresholding(HWCustomOp):
@@ -68,20 +68,16 @@ class Thresholding(HWCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def make_shape_compatible_op(self, model):
-        oshape = self.get_normal_output_shape()
-        return super().make_const_shape_op(oshape)
-
     def infer_node_datatype(self, model):
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
-        if idt != self.get_input_datatype():
+        if idt != self.get_input_datatype(0):
             warn_str = "inputDataType changing for %s: %s -> %s " % (
                 node.name,
-                str(self.get_input_datatype().name),
+                str(self.get_input_datatype(0).name),
                 str(idt.name),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         # set output datatype from property
         odt = self.get_output_datatype()
@@ -113,23 +109,17 @@ class Thresholding(HWCustomOp):
 
     def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""
-        return DataType[self.get_nodeattr("inputDataType")]
+        if ind == 0:
+            dt = DataType[self.get_nodeattr("inputDataType")]
+        elif ind == 1:
+            dt = DataType[self.get_nodeattr("weightDataType")]
+        else:
+            raise Exception("Index out of range")
+        return dt
 
     def get_output_datatype(self, ind=0):
         """Returns FINN DataType of output."""
         return DataType[self.get_nodeattr("outputDataType")]
-
-    def get_weight_datatype(self):
-        """Returns FINN DataType of thresholds, here called weights."""
-        return DataType[self.get_nodeattr("weightDataType")]
-
-    def get_weightstream_width(self):
-        """Returns weight stream width"""
-        pe = self.get_nodeattr("PE")
-        wp = self.get_weight_datatype().bitwidth()
-        n_thres_steps = self.get_nodeattr("numSteps")
-        w_width = pe * wp * n_thres_steps
-        return w_width
 
     def minimize_accumulator_width(self, model):
         "Minimize threshold width ('accumulator width' here due to convention)"
@@ -137,8 +127,8 @@ class Thresholding(HWCustomOp):
         threshold_tensor = self.get_hw_compatible_threshold_tensor(thresholds)
         min_threshold = thresholds.min()
         max_threshold = thresholds.max()
-        min_input = self.get_input_datatype().min()
-        max_input = self.get_input_datatype().max()
+        min_input = self.get_input_datatype(0).min()
+        max_input = self.get_input_datatype(0).max()
         # get range required by threshold values
         tdt_min = min(min_input, min_threshold)
         tdt_max = max(max_input, max_threshold)
@@ -158,8 +148,25 @@ class Thresholding(HWCustomOp):
         return DataType[self.get_nodeattr("weightDataType")]
 
     def get_instream_width(self, ind=0):
-        i_bits = self.get_input_datatype().bitwidth()
-        return i_bits * self.get_nodeattr("PE")
+        if ind == 0:
+            i_bits = self.get_input_datatype(0).bitwidth()
+            width = i_bits * self.get_nodeattr("PE")
+        elif ind == 1:
+            # try to access mem_mode attribute, doesn't exist for RTL Thresholding
+            try:
+                mem_mode = self.get_nodeattr("mem_mode")
+            except AttributeError:
+                mem_mode = 0
+            if mem_mode == "internal_decoupled":
+                pe = self.get_nodeattr("PE")
+                wp = self.get_input_datatype(1).bitwidth()
+                n_thres_steps = self.get_nodeattr("numSteps")
+                width = pe * wp * n_thres_steps
+            else:
+                width = 0
+        else:
+            raise Exception("Index out of range")
+        return width
 
     def get_outstream_width(self, ind=0):
         o_bits = self.get_output_datatype().bitwidth()
@@ -212,7 +219,7 @@ class Thresholding(HWCustomOp):
         not as expected (2)."""
         n_thres_steps = orig_thres_matrix.shape[1]
         assert n_thres_steps == self.get_nodeattr("numSteps"), "Mismatch in threshold steps"
-        if not self.get_input_datatype().signed():
+        if not self.get_input_datatype(0).signed():
             # ensure all thresholds are nonnegative
             assert (orig_thres_matrix >= 0).all()
         # ensure all thresholds are integer
@@ -243,21 +250,34 @@ class Thresholding(HWCustomOp):
         inp_values = context[node.input[0]]
         th_val = context[node.input[1]]
         out_bias = self.get_nodeattr("ActVal")
-        # MT expects inputs to be in the shape (N,C,H,W) or (N, C)
-        # if 4D then input values in context are (N,H,W,C) and need to
-        # be transposed.
-        # if 2D then inputs can be passed directly to MT function
-        is_4d = len(inp_values.shape) == 4
-        if is_4d:
-            inp_values = np.transpose(inp_values, (0, 3, 1, 2))
+
+        # Consider the data layout for transposing the input into the format
+        # accepted by the multithreshold function above, i.e, the channel
+        # dimension is along the axis with index 1.
+        data_layout = None
+        # If there is no layout annotation, guess based on rank of the tensor
+        # TODO: Currently there is no mechanism here to get the layout
+        #  annotation, we allways guess, but this matches the previous behavior.
+        if len(inp_values.shape) < 5:
+            # Maps tensor rank to layout annotation
+            rank_to_layout = {0: None, 1: "C", 2: "NC", 3: "NWC", 4: "NHWC"}
+            # Lookup the layout required by this input shape
+            data_layout = rank_to_layout[len(inp_values.shape)]
+        # Lookup the index of the channel dimension in the data layout
+        # Note: Assumes there is at most one "C" which denotes the channel
+        # dimension
+        cdim = data_layout.index("C") if "C" in data_layout else 1
+        # Rearrange the input to the expected (N, C, ...) layout
+        inp_values = inp_values.swapaxes(cdim, 1)
         y = multithreshold(inp_values, th_val, out_bias=out_bias)
-        if is_4d:
-            y = y.transpose(0, 2, 3, 1)
+        # Rearrange the output back to the original layout
+        y = y.swapaxes(cdim, 1)
+
         act = DataType[self.get_nodeattr("outputDataType")]
         if act == DataType["BIPOLAR"]:
             # binary to bipolar
             y = 2 * y - 1
-        context[node.output[0]] = y
+        context[node.output[0]] = y.astype(np.float32)
 
     def calc_tmem(self):
         """Calculates and returns TMEM."""

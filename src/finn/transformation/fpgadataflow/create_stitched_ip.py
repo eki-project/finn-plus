@@ -31,17 +31,15 @@ import json
 import multiprocessing as mp
 import os
 import subprocess
-import warnings
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_num_default_workers
 from shutil import copytree
 
-from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
-    ReplaceVerilogRelPaths,
-)
+from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+from finn.util.logging import log
 
 
 def is_external_input(model, node, i):
@@ -99,6 +97,7 @@ class CreateStitchedIP(Transformation):
         self.has_s_axis = False
         self.s_axis_idx = 0
         self.clock_reset_are_external = False
+        self.clock2x_is_external = False
         self.create_cmds = []
         self.connect_cmds = []
         # keep track of top-level interface names
@@ -110,6 +109,15 @@ class CreateStitchedIP(Transformation):
             "aximm": [],
             "axilite": [],
         }
+
+    def is_double_pumped(self, node):
+        if node.op_type.startswith("MVAU"):
+            inst = getCustomOp(node)
+            try:
+                pumped_compute = inst.get_nodeattr("pumpedCompute")
+            except AttributeError:
+                pumped_compute = 0
+            return pumped_compute or inst.get_nodeattr("pumpedMemory")
 
     def connect_clk_rst(self, node):
         inst_name = node.name
@@ -139,6 +147,23 @@ class CreateStitchedIP(Transformation):
                 "connect_bd_net [get_bd_ports ap_clk] [get_bd_pins %s/%s]"
                 % (inst_name, clock_intf_name)
             )
+        # make clk2x external, if it isn't already and connect clk2x
+        if self.is_double_pumped(node):
+            clock2x_intf_name = node_inst.get_verilog_top_module_intf_names()["clk2x"][0]
+            if not self.clock2x_is_external:
+                self.connect_cmds.append(
+                    "make_bd_pins_external [get_bd_pins %s/%s]" % (inst_name, clock2x_intf_name)
+                )
+                self.connect_cmds.append("set_property name ap_clk2x [get_bd_ports ap_clk2x_0]")
+                self.clock2x_is_external = True
+                self.intf_names["clk2x"] = ["ap_clk2x"]
+            # otherwise connect clk2x
+            else:
+                if self.is_double_pumped(node):
+                    self.connect_cmds.append(
+                        "connect_bd_net [get_bd_ports ap_clk2x] [get_bd_pins %s/%s]"
+                        % (inst_name, clock2x_intf_name)
+                    )
 
     def connect_axi(self, node):
         inst_name = node.name
@@ -283,11 +308,11 @@ class CreateStitchedIP(Transformation):
         model = model.transform(ReplaceVerilogRelPaths())
         ip_dirs = ["list"]
         # add RTL streamer IP
-        ip_dirs.append("$::env(FINN_ROOT)/finn-rtllib/memstream")
+        ip_dirs.append("$::env(FINN_RTLLIB)/memstream")
         if self.signature:
-            ip_dirs.append("$::env(FINN_ROOT)/finn-rtllib/axi_info")
+            ip_dirs.append("$::env(FINN_RTLLIB)/axi_info")
         if model.graph.node[0].op_type not in ["StreamingFIFO_rtl", "IODMA_hls"]:
-            warnings.warn(
+            log.warning(
                 """First node is not StreamingFIFO or IODMA.
                 You may experience incorrect stitched-IP rtlsim or hardware
                 behavior. It is strongly recommended to insert FIFOs prior to
@@ -296,7 +321,7 @@ class CreateStitchedIP(Transformation):
         if model.graph.node[0].op_type == "StreamingFIFO_rtl":
             firstfifo = getCustomOp(model.graph.node[0])
             if firstfifo.get_nodeattr("impl_style") == "vivado":
-                warnings.warn(
+                log.warning(
                     """First FIFO has impl_style=vivado, which may cause
                     simulation glitches (e.g. dropping the first input sample
                     after reset)."""
@@ -378,8 +403,11 @@ class CreateStitchedIP(Transformation):
         tcl.extend(self.connect_cmds)
         fclk_mhz = 1 / (self.clk_ns * 0.001)
         fclk_hz = fclk_mhz * 1000000
-        model.set_metadata_prop("clk_ns", str(self.clk_ns))
         tcl.append("set_property CONFIG.FREQ_HZ %d [get_bd_ports /ap_clk]" % round(fclk_hz))
+        if self.clock2x_is_external:
+            tcl.append(
+                "set_property CONFIG.FREQ_HZ %d [get_bd_ports /ap_clk2x]" % round(2 * fclk_hz)
+            )
         tcl.append("validate_bd_design")
         tcl.append("save_bd_design")
         # create wrapper hdl (for rtlsim later on)
@@ -501,7 +529,7 @@ class CreateStitchedIP(Transformation):
                 "[ipx::get_file_groups xilinx_simulationcheckpoint]" % block_name
             )
         # add a rudimentary driver mdd to get correct ranges in xparameters.h later on
-        example_data_dir = os.environ["FINN_ROOT"] + "/src/finn/qnn-data/mdd-data"
+        example_data_dir = os.path.join(os.environ["FINN_QNN_DATA"], "mdd-data")
         copytree(example_data_dir, vivado_stitch_proj_dir + "/data")
 
         #####
@@ -605,8 +633,15 @@ close $ofile
             f.write("vivado -mode batch -source make_project.tcl\n")
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", make_project_sh]
-        process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
-        process_compile.communicate()
+        process_compile = subprocess.Popen(
+            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        (_, stderr_data) = process_compile.communicate()
+
+        stderr_stripped = stderr_data.decode().strip()
+        if stderr_stripped != "" and stderr_stripped is not None:
+            log.critical(stderr_stripped)  # Decode bytes and log as critical
+
         # wrapper may be created in different location depending on Vivado version
         if not os.path.isfile(wrapper_filename):
             # check in alternative location (.gen instead of .srcs)
