@@ -44,7 +44,7 @@ from rich.logging import RichHandler
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
-from finn.util.exception import FINNConfigurationError, FINNError, UserError
+from finn.util.exception import FINNConfigurationError, FINNDataflowError, FINNError, FINNUserError
 
 
 # adapted from https://stackoverflow.com/a/39215961
@@ -148,7 +148,7 @@ def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: 
         )
     step_no = step_names.index(step_name) + step_delta
     if step_no < 0 or step_no >= len(step_names):
-        raise FINNConfigurationError("Invalid step+delta combination")
+        raise FINNDataflowError("Invalid step+delta combination")
     filename = cfg.output_dir + "/intermediate_models/"
     filename += "%s.onnx" % (step_names[step_no])
     if not Path(filename).exists():
@@ -254,14 +254,14 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
                 model.save(os.path.join(intermediate_model_dir, chkpt_name))
             step_num += 1
     except KeyboardInterrupt:
-        log.error("KeyboardInterrupt detected. Aborting...")
+        print("KeyboardInterrupt detected. Aborting...")
         print("Build failed")
         return -1
     except (Exception, FINNError) as e:
         # Print full traceback if we are on debug log level
         # or encountered a non-user error
         print_full_traceback = True
-        if issubclass(type(e), UserError) and log.level != logging.DEBUG:
+        if issubclass(type(e), FINNUserError) and log.level != logging.DEBUG:
             print_full_traceback = False
 
         extype, value, tb = sys.exc_info()
@@ -270,7 +270,8 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             log.error("Internal compiler error:")
             console.print_exception(show_locals=False)
         else:
-            log.error(f"FINN User Error: {e}")
+            console.print(f"[bold red]FINN User Error: [/bold red]{e}")
+            log.error(f"{e}")
             print("Build failed")
             return -1  # A user error shouldn't be need to be fixed using PDB
 
