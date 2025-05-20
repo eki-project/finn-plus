@@ -5,9 +5,9 @@
         "model_dir": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/radioml_0"],
 
         "board": ["RFSoC2x2"],
-        "clock_period_ns": [10],
+        "synth_clk_period_ns": [10],
 
-        "output_products": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["transformer"],
@@ -15,8 +15,8 @@
         "model_dir": ["/pc2/groups/hpc-prf-ekiapp/felix/ci_models/radioml_convformer"],
 
         "board": ["RFSoC2x2"],
-        "clock_period_ns": [10],
+        "synth_clk_period_ns": [10],
 
-        "output_products": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     }
 ]

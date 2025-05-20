@@ -3,6 +3,7 @@ import os
 import subprocess
 import copy
 import json
+import yaml
 import time
 import traceback
 import glob
@@ -130,7 +131,14 @@ class bench():
         #TODO: setup a logger so output can go to console (with task id prefix) and log simultaneously
         #TODO: coordinate with new builder loggin setup
 
-        # General configuration
+        # Setup some basic global default configuration
+        # TODO: are these class members even used anymore?
+        if "synth_clk_period_ns" in params:
+            self.clock_period_ns = params["synth_clk_period_ns"]
+        else:
+            self.clock_period_ns = 10
+            self.params["synth_clk_period_ns"] = self.clock_period_ns
+
         # TODO: do not allow multiple targets in a single bench job due to measurement?
         if "board" in params:
             self.board = params["board"]
@@ -144,12 +152,12 @@ class bench():
             self.part = part_map[self.board]
         else:
             raise Exception("No part specified for board %s" % self.board)
-
-        if "clock_period_ns" in params:
-            self.clock_period_ns = params["clock_period_ns"]
+    
+        if self.board in alveo_part_map:
+            self.params["shell_flow_type"] = build_cfg.ShellFlowType.VITIS_ALVEO
+            self.params["vitis_platform"] = alveo_default_platform[self.board]
         else:
-            self.clock_period_ns = 10
-            self.params["clock_period_ns"] = self.clock_period_ns
+            self.params["shell_flow_type"] = build_cfg.ShellFlowType.VIVADO_ZYNQ
 
         # Clear FINN tmp build dir before every run (to avoid excessive ramdisk usage and duplicate debug artifacts)
         print("Clearing FINN BUILD DIR ahead of run")
@@ -214,14 +222,20 @@ class bench():
         for (name, source_path, archive) in self.local_artifacts_collection:
             target_path = os.path.join(self.save_dir, name, "run_%d" % (self.run_id))
             self.save_artifact(target_path, source_path, archive)
-    
+
     # must be defined by subclass
     def step_export_onnx(self):
         pass
 
-    # must be defined by subclass
+    # can be overwritten by subclass if setup is too complex for YAML definition
     def step_build_setup(self):
-        pass
+        dut_yaml_name = self.params["dut"] + ".yml"
+        dut_path = os.path.join(os.path.dirname(__file__), "dut", dut_yaml_name)
+        if os.path.isfile(dut_path):
+            with open(dut_path, "r") as f:
+                return DataflowBuildConfig.from_yaml(f)
+        else:
+            raise Exception("No DUT-specific YAML build definition found") 
 
     # defaults to normal build flow, may be overwritten by subclass
     def run(self):
@@ -381,6 +395,13 @@ class bench():
     def steps_full_build_flow(self):
         # Default step sequence for benchmarking a full FINN builder flow
 
+        ### LIST OF ADDITIONAL YAML OPTIONS (beyond DataflowBuildConfig)
+        custom_params = [
+            "model_dir", # used to setup onnx/npy input
+            "model_path", # used to setup onnx/npy input
+            # model-gen parameters, such as seed, simd, pe, etc. (TODO: separate from builder options)
+        ]
+
         ### MODEL CREATION/IMPORT ###
         # TODO: track fixed input onnx models with DVC
         if "model_dir" in self.params:
@@ -398,26 +419,12 @@ class bench():
                 # microbenchmarks might skip because no valid model can be generated for given params
                 return "skipped"
 
-        if "folding_path" in self.params:
-            self.build_inputs["folding_path"] = self.params["folding_path"]
-        if "specialize_path" in self.params:
-            self.build_inputs["specialize_path"] = self.params["specialize_path"]
-        if "floorplan_path" in self.params:
-            self.build_inputs["floorplan_path"] = self.params["floorplan_path"]
-
         ### BUILD SETUP ###
-        # TODO: convert to YAML-based builder config
-        # TODO: split up into default config, dut-specific config, and run-specific config
+        # Initialize from YAML (default) or custom script (if dedicated subclass is defined)
         cfg = self.step_build_setup()
-        cfg.generate_outputs = self.params["output_products"]
+
+        # Set some global defaults (could still be overwritten by run-specific YAML)
         cfg.output_dir = self.build_inputs["build_dir"]
-        cfg.synth_clk_period_ns = self.clock_period_ns
-        cfg.board = self.board
-        if self.board in alveo_part_map:
-            cfg.shell_flow_type=build_cfg.ShellFlowType.VITIS_ALVEO
-            cfg.vitis_platform=alveo_default_platform[self.board]
-        else:
-            cfg.shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ
         # enable extra performance optimizations (physopt)
         # TODO: check OMX synth strategy again!
         cfg.vitis_opt_strategy=build_cfg.VitisOptStrategy.PERFORMANCE_BEST
@@ -427,61 +434,21 @@ class bench():
         cfg.force_python_rtlsim = False
         cfg.split_large_fifos = True
         cfg.save_intermediate_models = True # Save the intermediate model graphs
-        cfg.verify_save_full_context = True, # Output full context dump for verification steps
+        cfg.verify_save_full_context = True # Output full context dump for verification steps
+        cfg.enable_instrumentation = True
         #rtlsim_use_vivado_comps # TODO ?
         #cfg.default_swg_exception
         #cfg.large_fifo_mem_style
 
-        # Switch between instrumentation or IODMA wrapper (TODO: combine both in one bitstream)
-        if "enable_instrumentation" in self.params:
-            cfg.enable_instrumentation = self.params["enable_instrumentation"]
-        else:
-            cfg.enable_instrumentation = True
-
-        # "manual or "characterize" or "largefifo_rtlsim" or "live"
-        if "fifo_method" in self.params:
-            if self.params["fifo_method"] == "manual":
-                cfg.auto_fifo_depths = False
-            elif self.params["fifo_method"] == "live":
-                cfg.auto_fifo_depths = False
-                cfg.live_fifo_sizing = True
-                cfg.enable_instrumentation = True
-                cfg.synth_clk_period_ns = 10 # force conservative 100 MHz clock
+        # Overwrite build config settings with run-specific YAML build definition
+        for key in self.params:
+            if hasattr(cfg, key):
+                setattr(cfg, key, self.params[key])
             else:
-                cfg.auto_fifo_depths = True
-                cfg.auto_fifo_strategy = self.params["fifo_method"]
-        # only relevant for "characterize" method: "rtlsim" or "analytical"
-        if "fifo_strategy" in self.params:
-            cfg.characteristic_function_strategy = self.params["fifo_strategy"]
-
-        # Batch size used for RTLSim performance measurement (and in-depth FIFO test here)
-        # TODO: determine automatically or replace by exact instr wrapper sim
-        if "rtlsim_n" in self.params:
-            cfg.rtlsim_batch_size=self.params["rtlsim_n"]
-
-        # Batch size used for FIFO sizing (largefifo_rtlsim only)
-        if "fifo_rtlsim_n" in self.params:
-            cfg.fifosim_n_inferences=self.params["fifo_rtlsim_n"]
-
-        # Manual correction factor for FIFO-Sim input throttling
-        if "fifo_throttle_factor" in self.params:
-            cfg.fifo_throttle_factor = self.params["fifo_throttle_factor"]
-
-        if "folding_path" in self.build_inputs:
-            cfg.folding_config_file = self.build_inputs["folding_path"]
-        if "specialize_path" in self.build_inputs:
-            cfg.specialize_layers_config_file = self.build_inputs["specialize_path"]
-        if "floorplan_path" in self.build_inputs:
-            cfg.floorplan_path = self.build_inputs["floorplan_path"]
-
-        if "target_fps" in self.params:
-            if self.params["target_fps"] == "None":
-                cfg.target_fps = None
-            else:
-                cfg.target_fps = self.params["target_fps"]
-
-        if "validation_dataset" in self.params:
-            cfg.validation_dataset = self.params["validation_dataset"]
+                if key not in custom_params:
+                    pass
+                    #TODO: be more strict? support custom extra options like MetaFi uses?
+                    #raise Exception("Unrecognized builder config defined in YAML: %s" % key)
 
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?

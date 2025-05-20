@@ -1,0 +1,28 @@
+steps:
+  - # step_residual_tidy
+  - # step_extract_absorb_bias
+  - # step_residual_topo
+  - # step_pre_streamline
+  - # step_residual_streamline
+  - # step_residual_convert_to_hw
+  - step_create_dataflow_partition
+  - # step_set_preferred_impl_style
+  - step_specialize_layers
+  - step_target_fps_parallelization
+  - step_apply_folding_config
+  - step_minimize_bit_width
+  - step_generate_estimate_reports
+  - step_set_fifo_depths
+  - step_hw_codegen
+  - step_hw_ipgen
+  - step_create_stitched_ip
+  - step_measure_rtlsim_performance
+  - step_out_of_context_synthesis
+  - step_synthesize_bitfile
+  - step_make_driver
+  - step_deployment_package
+
+target_fps: null # 23
+
+#TODO: where is this used and why?
+use_conv_rtl: True # use rtl for conv layers (MVAU cannot use rtl in our model)

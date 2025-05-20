@@ -14,9 +14,7 @@
         "model_bits": [2],
         "model_norm": ["none"],
         "model_mask": ["none"],
-        "model_positional_encoding": ["binary"],
-
-        "dut_duplication": [1]
+        "model_positional_encoding": ["binary"]
     },
     {
         "dut": ["transformer"],
@@ -33,9 +31,7 @@
         "model_bits": [2],
         "model_norm": ["none"],
         "model_mask": ["none"],
-        "model_positional_encoding": ["binary"],
-
-        "dut_duplication": [1]
+        "model_positional_encoding": ["binary"]
     },
     {
         "dut": ["transformer"],
@@ -52,9 +48,7 @@
         "model_bits": [2],
         "model_norm": ["none"],
         "model_mask": ["none"],
-        "model_positional_encoding": ["binary"],
-
-        "dut_duplication": [1]
+        "model_positional_encoding": ["binary"]
     },
     {
         "dut": ["transformer"],
@@ -71,9 +65,7 @@
         "model_bits": [2],
         "model_norm": ["none"],
         "model_mask": ["none"],
-        "model_positional_encoding": ["binary"],
-
-        "dut_duplication": [1]
+        "model_positional_encoding": ["binary"]
     },
     {
         "dut": ["transformer"],
@@ -90,8 +82,6 @@
         "model_bits": [2, 4, 6, 8],
         "model_norm": ["none"],
         "model_mask": ["none"],
-        "model_positional_encoding": ["binary"],
-
-        "dut_duplication": [1]
+        "model_positional_encoding": ["binary"]
     }
 ]

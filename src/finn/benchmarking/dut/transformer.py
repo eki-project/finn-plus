@@ -29,7 +29,7 @@ from finn.benchmarking.bench_base import bench
 from qonnx.util.range_analysis import RangeInfo
 
 # Custom build steps required to streamline and convert the attention operator
-from finn.benchmarking.dut.transformer_custom_steps import (
+from finn.builder.custom_step_library.transformer import (
     prepare_graph,
     step_streamline,
     step_convert_attention_to_hw,

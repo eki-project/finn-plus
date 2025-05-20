@@ -12,11 +12,11 @@
         "rb_num_layers": [4],
 
         "board": ["RFSoC2x2"],
-        "clock_period_ns": [10],
+        "synth_clk_period_ns": [10],
 
         "rtlsim_n": [5],
 
-        "fifo_method": ["live"],
+        "live_fifo_sizing": [True],
         "output_products": [["bitfile", "pynq_driver", "deployment_package"]]
     },
     {
@@ -32,13 +32,15 @@
         "rb_num_layers": [4],
 
         "board": ["RFSoC2x2"],
-        "clock_period_ns": [10],
+        "synth_clk_period_ns": [10],
 
-        "rtlsim_n": [5],
+        "rtlsim_batch_size": [5],
 
-        "fifo_method": ["characterize"],
-        "fifo_strategy": ["analytical", "rtlsim"],
-        "output_products": [["stitched_ip", "rtlsim_performance", "bitfile", "pynq_driver", "deployment_package"]]
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["characterize"],
+        "characteristic_function_strategy": ["analytical", "rtlsim"],
+
+        "generate_outputs": [["stitched_ip", "rtlsim_performance", "bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["synthetic_nonlinear"],
@@ -53,12 +55,14 @@
         "rb_num_layers": [4],
 
         "board": ["RFSoC2x2"],
-        "clock_period_ns": [10],
+        "synth_clk_period_ns": [10],
 
-        "rtlsim_n": [5],
+        "rtlsim_batch_size": [5],
 
-        "fifo_method": ["largefifo_rtlsim"],
-        "fifo_rtlsim_n": [2],
-        "output_products": [["stitched_ip", "rtlsim_performance", "bitfile", "pynq_driver", "deployment_package"]]
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["largefifo_rtlsim"],
+
+        "fifosim_n_inferences": [2],
+        "generate_outputs": [["stitched_ip", "rtlsim_performance", "bitfile", "pynq_driver", "deployment_package"]]
     }
 ]

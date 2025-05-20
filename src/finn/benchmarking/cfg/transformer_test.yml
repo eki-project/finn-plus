@@ -17,8 +17,8 @@
         "model_positional_encoding": ["binary"],
 
         "board": ["RFSoC2x2"],
-        "clock_period_ns": [10],
+        "synth_clk_period_ns": [10],
 
-        "output_products": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     }
 ]

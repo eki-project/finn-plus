@@ -264,7 +264,7 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
 @click.option(
     "--bench_config",
     help="Name or path of experiment configuration file",
-    default="",
+    required=True
 )
 @click.option("--dependency-path", "-d", default="")
 @click.option("--num-workers", "-n", default=-1, show_default=True)

@@ -21,6 +21,6 @@
 
         "dut_duplication": [1],
 
-        "output_products": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     }
     ]

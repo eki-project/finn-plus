@@ -1,30 +1,24 @@
 import itertools
-import sys
 import os
 import json
+import yaml
 import time
 import traceback
 import onnxruntime as ort
-import importlib
 
 from finn.benchmarking.util import delete_dir_contents
+from finn.benchmarking.bench_base import bench
 
 from finn.benchmarking.dut.mvau import bench_mvau
-from finn.benchmarking.dut.resnet50 import bench_resnet50
-from finn.benchmarking.dut.metafi import bench_metafi
 from finn.benchmarking.dut.synthetic_nonlinear import bench_synthetic_nonlinear
 from finn.benchmarking.dut.transformer import bench_transformer
-from finn.benchmarking.dut.vgg10 import bench_vgg10
-from finn.benchmarking.dut.mobilenetv1 import bench_mobilenetv1
 
+
+# Register custom bench subclasses that offer more control than YAML-based flow
 dut = dict()
 dut["mvau"] = bench_mvau
-dut["resnet50"] = bench_resnet50
-dut["metafi"] = bench_metafi
 dut["synthetic_nonlinear"] = bench_synthetic_nonlinear
 dut["transformer"] = bench_transformer
-dut["vgg10"] = bench_vgg10
-dut["mobilenetv1"] = bench_mobilenetv1
 
 
 def start_bench_run(config_name):
@@ -96,7 +90,7 @@ def start_bench_run(config_name):
     print("Loading config %s" % (config_path))
     if os.path.exists(config_path):
         with open(config_path, "r") as f:
-            config = json.load(f)
+            config = yaml.load(f, Loader=yaml.SafeLoader)
     else:
         print("ERROR: config file not found")
         return
@@ -150,8 +144,9 @@ def start_bench_run(config_name):
             if params["dut"] in dut:
                 bench_object = dut[params["dut"]](params, task_id, run_id, work_dir, artifacts_dir, save_dir)
             else:
-                print("ERROR: unknown DUT specified")
-                return 1
+                # If no custom bench subclass is defined, fall back to base class,
+                # expect DUT-specific YAML definition instead
+                bench_object = bench(params, task_id, run_id, work_dir, artifacts_dir, save_dir)
         else:
             print("ERROR: no DUT specified")
             return 1
