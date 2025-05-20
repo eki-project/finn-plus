@@ -477,8 +477,7 @@ class MakePYNQDriverInstrumentation(Transformation):
 
         # create (copy) the static instrumentation driver
         driver_template = (
-            os.environ["FINN_ROOT"]
-            + "/src/finn/qnn-data/templates/driver/driver_instrumentation.py"
+            os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_instrumentation.py"
         )
         driver_py = pynq_driver_dir + "/driver.py"
         shutil.copy(driver_template, driver_py)
