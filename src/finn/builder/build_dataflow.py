@@ -223,6 +223,14 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             print(f"Building dataflow accelerator from {model_filename}")
             model = ModelWrapper(model_filename)
         else:
+            if model_filename != "":
+                log.warning(
+                    "When using a start-step, FINN automatically searches "
+                    "for the correct model to use from previous runs, overwriting your "
+                    "passed model file (but still using it's path for the location of the "
+                    "temporary file directory, etc.). This behaviour might change "
+                    "in future versions!"
+                )
             intermediate_model_filename = resolve_step_filename(cfg.start_step, cfg, -1)
             out = (
                 f"Building dataflow accelerator from intermediate"
