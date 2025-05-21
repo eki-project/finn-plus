@@ -31,7 +31,7 @@ FINN Build:
     # Launch benchmarking script via FINN CLI, includes deps update and environment preparation
     - |
       source ./finn-plus-venv/bin/activate
-      finn bench --bench_config $BENCH_CFG
+      finn bench --dependency-path ./finn-plus/deps --build-path $FINN_BUILD_DIR --num-workers $CPU_CORES_BENCH --bench_config $BENCH_CFG
   cache:
     key: $CI_COMMIT_SHA
     policy: pull

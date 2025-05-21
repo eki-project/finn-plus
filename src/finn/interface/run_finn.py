@@ -261,11 +261,7 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
 
 
 @click.command(help="Run a given benchmark configuration.")
-@click.option(
-    "--bench_config",
-    help="Name or path of experiment configuration file",
-    required=True
-)
+@click.option("--bench_config", help="Name or path of experiment configuration file", required=True)
 @click.option("--dependency-path", "-d", default="")
 @click.option("--num-workers", "-n", default=-1, show_default=True)
 @click.option(
@@ -278,7 +274,7 @@ def bench(bench_config: str, dependency_path: str, num_workers: int, build_path:
     console = Console()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    prepare_finn(dep_path, Path(), build_dir, num_workers, is_test_run=True)
+    prepare_finn(dep_path, Path(), build_dir, num_workers)
     console.rule("RUNNING BENCHMARK")
 
     # Late import because we need prepare_finn to setup remaining dependencies first
