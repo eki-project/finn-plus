@@ -30,11 +30,11 @@
 .setup_venv_from_whl:
   before_script:
     # Move everything to working directory (e.g., RAMdisk)
-    - cp -dfR .. $PATH_WORKDIR
+    - cp -dfR . $PATH_WORKDIR
     - cd $PATH_WORKDIR
     # Create fresh virtual environment and install finn-plus from .whl (artifact)
     - python3 -m venv finn-plus-venv
-    - finn-plus-venv/bin/pip install ./finn-plus/dist/*.whl
+    - finn-plus-venv/bin/pip install dist/*.whl
 
 .setup_full_2022_2:
   before_script:

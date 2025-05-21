@@ -30,8 +30,8 @@ FINN Build:
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
     # Launch benchmarking script via FINN CLI, includes deps update and environment preparation
     - |
-      source ./finn-plus-venv/bin/activate
-      finn bench --dependency-path ./finn-plus/deps --build-path $FINN_BUILD_DIR --num-workers $CPU_CORES_BENCH --bench_config $BENCH_CFG
+      source finn-plus-venv/bin/activate
+      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers $CPU_CORES_BENCH --bench_config $BENCH_CFG
   cache:
     key: $CI_COMMIT_SHA
     policy: pull
