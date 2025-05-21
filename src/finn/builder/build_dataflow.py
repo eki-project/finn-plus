@@ -253,7 +253,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             print("Build failed")
             metadata = {
                 "status": "failed",
-                "tool_version": os.path.basename(os.environ.get("$XILINX_VIVADO")),
+                "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
             }
             with open(cfg.output_dir + "/report/metadata_builder.json", "w") as f:
                 json.dump(metadata, f, indent=2)
@@ -264,7 +264,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         json.dump(time_per_step, f, indent=2)
     metadata = {
         "status": "ok",
-        "tool_version": os.path.basename(os.environ.get("$XILINX_VIVADO")),
+        "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
     }
     with open(cfg.output_dir + "/report/metadata_builder.json", "w") as f:
         json.dump(metadata, f, indent=2)
