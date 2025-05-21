@@ -32,6 +32,7 @@ import importlib
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Callable
 
 import pdb  # isort: split
@@ -43,6 +44,7 @@ from rich.logging import RichHandler
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
+from finn.util.exception import FINNConfigurationError, FINNDataflowError, FINNError, FINNUserError
 
 
 # adapted from https://stackoverflow.com/a/39215961
@@ -140,12 +142,20 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
 
 def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: int = 0):
     step_names = list(map(lambda x: x.__name__, resolve_build_steps(cfg, partial=False)))
-    assert step_name in step_names, "start_step %s not found" + step_name
+    if step_name not in step_names:
+        raise FINNConfigurationError(
+            f"Cannot restart from step {step_name}.Step {step_name} for restarting not found."
+        )
     step_no = step_names.index(step_name) + step_delta
-    assert step_no >= 0, "Invalid step+delta combination"
-    assert step_no < len(step_names), "Invalid step+delta combination"
+    if step_no < 0 or step_no >= len(step_names):
+        raise FINNDataflowError("Invalid step+delta combination")
     filename = cfg.output_dir + "/intermediate_models/"
     filename += "%s.onnx" % (step_names[step_no])
+    if not Path(filename).exists():
+        raise FINNConfigurationError(
+            f"Expected model file at {filename} to start from step "
+            f"{step_name}, but could not find it!"
+        )
     return filename
 
 
@@ -155,19 +165,6 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     :param model_filename: ONNX model filename to build
     :param cfg: Build configuration
     """
-    # if start_step is specified, override the input model
-    if cfg.start_step is None:
-        print(f"Building dataflow accelerator from {model_filename}")
-        model = ModelWrapper(model_filename)
-    else:
-        intermediate_model_filename = resolve_step_filename(cfg.start_step, cfg, -1)
-        out = (
-            f"Building dataflow accelerator from intermediate"
-            f" checkpoint {intermediate_model_filename}"
-        )
-        print(out)
-        model = ModelWrapper(intermediate_model_filename)
-    assert type(model) is ModelWrapper
     finn_build_dir = os.environ["FINN_BUILD_DIR"]
 
     print(f"Intermediate outputs will be generated in {finn_build_dir}")
@@ -205,27 +202,50 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
 
     if cfg.console_log_level != "NONE":
         # set up console logger
-        console = RichHandler(show_time=True, show_path=False, console=console)
+        consoleHandler = RichHandler(show_time=True, show_path=False, console=console)
 
         if cfg.console_log_level == "DEBUG":
-            console.setLevel(logging.DEBUG)
+            consoleHandler.setLevel(logging.DEBUG)
         elif cfg.console_log_level == "INFO":
-            console.setLevel(logging.INFO)
+            consoleHandler.setLevel(logging.INFO)
         elif cfg.console_log_level == "WARNING":
-            console.setLevel(logging.WARNING)
+            consoleHandler.setLevel(logging.WARNING)
         elif cfg.console_log_level == "ERROR":
-            console.setLevel(logging.ERROR)
+            consoleHandler.setLevel(logging.ERROR)
         elif cfg.console_log_level == "CRITICAL":
-            console.setLevel(logging.CRITICAL)
-        logging.getLogger().addHandler(console)
+            consoleHandler.setLevel(logging.CRITICAL)
+        logging.getLogger().addHandler(consoleHandler)
 
-    # start processing
-    step_num = 1
-    time_per_step = dict()
-    build_dataflow_steps = resolve_build_steps(cfg)
+    # Setup done, start processing
+    try:
+        # if start_step is specified, override the input model
+        if cfg.start_step is None:
+            print(f"Building dataflow accelerator from {model_filename}")
+            model = ModelWrapper(model_filename)
+        else:
+            if model_filename != "":
+                log.warning(
+                    "When using a start-step, FINN automatically searches "
+                    "for the correct model to use from previous runs, overwriting your "
+                    "passed model file (but still using it's path for the location of the "
+                    "temporary file directory, etc.). This behaviour might change "
+                    "in future versions!"
+                )
+            intermediate_model_filename = resolve_step_filename(cfg.start_step, cfg, -1)
+            out = (
+                f"Building dataflow accelerator from intermediate"
+                f" checkpoint {intermediate_model_filename}"
+            )
+            print(out)
+            model = ModelWrapper(intermediate_model_filename)
+        assert type(model) is ModelWrapper
 
-    for transform_step in build_dataflow_steps:
-        try:
+        # start processing
+        step_num = 1
+        time_per_step = dict()
+        build_dataflow_steps = resolve_build_steps(cfg)
+
+        for transform_step in build_dataflow_steps:
             step_name = transform_step.__name__
             print(f"Running step: {step_name} [{step_num}/{len(build_dataflow_steps)}]")
 
@@ -241,17 +261,33 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
                     os.makedirs(intermediate_model_dir)
                 model.save(os.path.join(intermediate_model_dir, chkpt_name))
             step_num += 1
-        except:  # noqa
+    except KeyboardInterrupt:
+        print("KeyboardInterrupt detected. Aborting...")
+        print("Build failed")
+        return -1
+    except (Exception, FINNError) as e:
+        # Print full traceback if we are on debug log level
+        # or encountered a non-user error
+        print_full_traceback = True
+        if issubclass(type(e), FINNUserError) and log.level != logging.DEBUG:
+            print_full_traceback = False
+
+        extype, value, tb = sys.exc_info()
+        if print_full_traceback:
             # print exception info and traceback
-            extype, value, tb = sys.exc_info()
+            log.error("FINN Internal compiler error:")
             console.print_exception(show_locals=False)
-            # start postmortem debug if configured
-            if cfg.enable_build_pdb_debug:
-                pdb.post_mortem(tb)
-            else:
-                print("enable_build_pdb_debug not set in build config, exiting...")
+        else:
+            console.print(f"[bold red]FINN Error: [/bold red]{e}")
+            log.error(f"{e}")
             print("Build failed")
-            return -1
+            return -1  # A user error shouldn't be need to be fixed using PDB
+
+        # start postmortem debug if configured
+        if cfg.enable_build_pdb_debug:
+            pdb.post_mortem(tb)
+        print("Build failed")
+        return -1
 
     with open(os.path.join(cfg.output_dir, "time_per_step.json"), "w") as f:
         json.dump(time_per_step, f, indent=2)
