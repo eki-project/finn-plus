@@ -22,6 +22,7 @@ FINN Build:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
   variables:
+    GIT_STRATEGY: empty # Do not pull repository, use PyPI installation instead
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES_BENCH --exclusive --array 0-$( expr $PARALLEL_JOBS - 1 )"
     NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
   extends: .setup_full_2022_2
