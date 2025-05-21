@@ -1,12 +1,12 @@
 steps:
-  - # step_residual_tidy
-  - # step_extract_absorb_bias
-  - # step_residual_topo
-  - # step_pre_streamline
-  - # step_residual_streamline
-  - # step_residual_convert_to_hw
+  #- step_residual_tidy
+  #- step_extract_absorb_bias
+  #- step_residual_topo
+  #- step_pre_streamline
+  #- step_residual_streamline
+  #- step_residual_convert_to_hw
   - step_create_dataflow_partition
-  - # step_set_preferred_impl_style
+  #- step_set_preferred_impl_style
   - step_specialize_layers
   - step_target_fps_parallelization
   - step_apply_folding_config
