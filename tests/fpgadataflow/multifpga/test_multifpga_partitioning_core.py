@@ -25,6 +25,7 @@ from finn.builder.build_dataflow_config import (
 from finn.transformation.fpgadataflow.multifpga_partitioner import AuroraPartitioner
 from finn.transformation.fpgadataflow.multifpga_utils import available_resources
 from finn.util import platforms
+from finn.util.exception import FINNError
 from finn.util.test import get_test_model
 
 if TYPE_CHECKING:
@@ -333,7 +334,7 @@ def test_impossible_inseperable_nodes(
 
         # Ignore working configs, only test wrong configurations
         if (nodes < devices) or ((devices == nodes) and (devices > 1)):
-            with pytest.raises(Exception):
+            with pytest.raises(FINNError):
                 part = AuroraPartitioner(
                     network_ports_per_device=network_ports,
                     strategy=PartitioningStrategy.RESOURCE_UTILIZATION,

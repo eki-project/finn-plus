@@ -16,6 +16,7 @@ from finn.builder.build_dataflow_config import (
 from finn.builder.build_dataflow_steps import step_partition_for_multifpga
 from finn.transformation.fpgadataflow.multifpga_partitioner import PartitionForMultiFPGA
 from finn.util.basic import make_build_dir
+from finn.util.exception import FINNError
 from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
 
 
@@ -28,12 +29,12 @@ def test_multifpga_metadata_info_set_after_partitioning(
 ) -> None:
     dt = DataType["BINARY"]
     model = make_multi_fclayer_model(3, dt, dt, dt, 10)
-    output_dir = make_build_dir("test_multifpga_metadata_info_output_dir")
+    output_dir = str(make_build_dir("test_multifpga_metadata_info_output_dir"))
     cfg = DataflowBuildConfig(output_dir, 5.0, [])
     cfg.partitioning_configuration = partition_config
 
     # TODO: As soon as partitioning move this whole test into the proper partitioning test
-    with pytest.raises(Exception):  # noqa
+    with pytest.raises(FINNError):
         model = step_partition_for_multifpga(model, cfg)
     if partition_config is not None and partition_config.num_fpgas > 1:
         assert model.get_metadata_prop("is_multifpga") == "True"

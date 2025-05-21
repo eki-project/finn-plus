@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.res_estimation import res_estimation
+from finn.util.exception import FINNMultiFPGAError
 
 if TYPE_CHECKING:
     from onnx import NodeProto
@@ -100,8 +101,8 @@ def _convert_to_index_groups(model: ModelWrapper, split_names: list[list[str]]) 
     for i, node in enumerate(model.graph.node):
         # TODO: Eventually remove this requirement
         if node.name in idxs.keys():
-            raise Exception(
-                "Cannot properly collect inseperable nodes " "- nodes don't have unique names!"
+            raise FINNMultiFPGAError(
+                "Cannot properly collect inseperable nodes - nodes don't have unique names!"
             )
         idxs[node.name] = i
     return [[idxs[nodename] for nodename in insep_nodes] for insep_nodes in split_names]

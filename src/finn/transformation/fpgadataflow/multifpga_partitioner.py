@@ -22,6 +22,7 @@ from finn.transformation.fpgadataflow.multifpga_utils import (
     set_device_id,
 )
 from finn.util.basic import make_build_dir
+from finn.util.exception import FINNMultiFPGAConfigError, FINNMultiFPGAError
 from finn.util.logging import log
 from finn.util.platforms import platforms
 
@@ -107,12 +108,11 @@ class Partitioner(ABC):
         if (self.strategy == PartitioningStrategy.RESOURCE_UTILIZATION) and (
             None in [self.max_utilization, self.ideal_util, self.resource_estimates]
         ):
-            log.error(
+            raise FINNMultiFPGAError(
                 f"One of the required partitioner parameters for the strategy "
                 f"{self.strategy.name} was not found. Please provide max_utilization, "
                 "ideal_utilization and resource_estimates!"
             )
-            raise Exception("Missing partitioner paremeter!")  # TODO: Replace
 
     @abstractmethod
     def _solve(self, solver_timeout: int) -> dict[int, Device] | None:
@@ -211,6 +211,8 @@ class AuroraPartitioner(Partitioner):
             max_utilization,
             ideal_utilization,
         )
+        if self.model is None or type(self.model) is not Model:
+            raise FINNMultiFPGAError("Creation of partitioner model unexpectedly failed")
         self.limit_nodes_per_device = limit_nodes_per_device
         self.model.verbose = 0
         if (
@@ -218,12 +220,11 @@ class AuroraPartitioner(Partitioner):
             and max_utilization is not None
             and ideal_utilization > max_utilization
         ):
-            msg = (
-                f"Cannot create partition if ideal utilization is set greater than max "
-                f"utilization ({ideal_utilization} > {max_utilization})"
+            raise FINNMultiFPGAConfigError(
+                "Cannot create Multi-FPGA partition if the requested ideal utilization"
+                "is greater than the requested max allowed utilization "
+                f"({ideal_utilization:.2%} > {max_utilization:.2%})"
             )
-            log.critical(msg)
-            raise Exception(msg)
 
         log.debug("Creating partitioning model")
 
@@ -261,33 +262,27 @@ class AuroraPartitioner(Partitioner):
             for i, group in enumerate(self.inseperable_nodes):
                 # 1. Single group larger than the model itself
                 if len(group) > nodes:
-                    msg = (
+                    raise FINNMultiFPGAError(
                         f"Group {i} of inseperable nodes is larger than the total set of all "
                         f"nodes in the model. (Has {len(group)} nodes, but only {nodes} "
                         "nodes in the graph!)"
                     )
-                    log.critical(msg)
-                    raise Exception(msg)  # TODO
                 # 2. Num. nodes == Num. groups. Leads to atleast 1 empty device
                 if len(group) == nodes and devices > 1:
-                    msg = (
+                    raise FINNMultiFPGAError(
                         f"Group {i} has the same number of nodes as the graph in total. However "
                         "since more than 1 device is used, this would result in one device "
                         "being completely empty, leading to an invalid partitioning model."
                     )
-                    log.critical(msg)
-                    raise Exception(msg)  # TODO
             # 3. Not enough devices to have this many nodes in groups
             if devices > max_devices_possible:
-                msg = (
+                raise FINNMultiFPGAError(
                     f"Requested number of FPGAs ({devices}) is larger than the number of "
                     f"devices possible. {nodes - nodes_in_groups} nodes can be alone on a "
                     f"device, and {len(self.inseperable_nodes)} groups of nodes can be on a "
                     f"device. The largest possible device count partitioning would "
                     f"result in {max_devices_possible} devices"
                 )
-                log.critical(msg)
-                raise Exception(msg)
 
         # Nodes in groups stay together
         for group in self.inseperable_nodes:
@@ -381,9 +376,9 @@ class AuroraPartitioner(Partitioner):
                 raise NotImplementedError()
 
             case _:
-                raise AssertionError(
+                raise FINNMultiFPGAConfigError(
                     f"Invalid communication scheme for Aurora partitioner: {self.topology}"
-                )  # TODO
+                )
 
         # Objective Function
         if self.strategy == PartitioningStrategy.LAYER_COUNT:
@@ -458,19 +453,15 @@ class AuroraPartitioner(Partitioner):
                                 "on a single device. Partitioning might fail!"
                             )
                         else:
-                            log.error(
+                            raise FINNMultiFPGAConfigError(
                                 f"Node {node}'s usage of {restype} is above "
                                 f"the allowed utilization "
                                 f"({self.resource_estimates[node][restype]} > "
-                                f"{max_util})."
-                            )
-                            log.error(
+                                f"{max_util}). "
                                 "Theoretical max per device would "
                                 f"be {total_per_device[restype]} "
                                 "on a single device. Partitioning will fail!"
                             )
-                            # TODO: When we have a nice exiting mechanism, FINN should stop
-                            # TODO: here already
 
             # Balance so that the maximum difference to the ideal load over all devices and
             # resources is as low as possible
@@ -490,7 +481,6 @@ class AuroraPartitioner(Partitioner):
                         var_type=mip.CONTINUOUS,
                     )
 
-                    # TODO: Ignore linewidth linter rule in the future to make this more readable
                     # Resource util in relative terms (0-1)
                     self.model += self.resource_use_relative[device][resource_name] == (
                         self.resource_use_int[device][resource_name]
@@ -611,14 +601,24 @@ class PartitionForMultiFPGA(Transformation):
 
     def __init__(self, cfg: DataflowBuildConfig) -> None:
         self.cfg = cfg
-        # TODO: Replace assert
-        assert self.cfg.partitioning_configuration is not None
+        if self.cfg.partitioning_configuration is None:
+            raise FINNMultiFPGAConfigError(
+                "When trying to partition for Multi-FPGA (either "
+                "through a specific step or step_make_multifpga), a partitioning configuration "
+                "needs to be provided in your dataflow build configuration. Take a look at "
+                "finn/builder/build_dataflow_config.py for the definition of the partitioning "
+                "configuration."
+            )
         communication_kernel = self.cfg.partitioning_configuration.communication_kernel
         partitioners = {MFCommunicationKernel.AURORA: AuroraPartitioner}
         try:
             self.partitioner_type = partitioners[communication_kernel]
         except KeyError as ke:
-            raise Exception(f"No partitioner type found for {communication_kernel}") from ke
+            raise FINNMultiFPGAConfigError(
+                f"There is currently no partitioner implementation "
+                f"for usage with the communication kernel "
+                f"{communication_kernel.name}"
+            ) from ke
         log.info(
             f"Based on the communication kernel, "
             f'partitioner "{self.partitioner_type.__name__}" was chosen!'
@@ -636,12 +636,10 @@ class PartitionForMultiFPGA(Transformation):
         # Dont split during branches. Find all layers that should be on the same device.
         log.debug("Gathering inseperable nodes...")
         if not is_single_in_out_model(model):
-            msg = (
+            raise FINNMultiFPGAConfigError(
                 "The model has either more than 1 input or more than 1 output nodes. "
                 "This might cause issue during partitioning. Please check your ONNX file."
             )
-            log.error(msg)
-            raise Exception(msg)  # TODO
         inseperable_nodes = get_inseperable_nodes(model)
 
         # Number of devices to partition to
@@ -653,8 +651,9 @@ class PartitionForMultiFPGA(Transformation):
 
         # Needed to resolve platform
         if self.cfg.board is None:
-            log.critical('Parameter "board" is required in config for MultiFPGA partitioning')
-            raise Exception('Parameter "board" is required in config for MultiFPGA partitioning')
+            raise FINNMultiFPGAConfigError(
+                'Parameter "board" is required in config ' "for MultiFPGA partitioning"
+            )
 
         # Calculate estimates
         if self.cfg.fpga_part is None:
@@ -674,17 +673,18 @@ class PartitionForMultiFPGA(Transformation):
                         "resource types. Cannot partition using resource estimates!"
                     )
             if missing_estimates:
-                raise Exception(
+                raise FINNMultiFPGAError(
                     "Cannot partition with faulty resource estimations and "
-                    "RESOURCE_UTILIZATION as PartitioningStrategy!"
+                    "RESOURCE_UTILIZATION as PartitioningStrategy. Check logs to find information"
+                    "about which layers have missing resource estimates!"
                 )
 
         # Stop if there are more devices than nodes
         if devices > len(model.graph.node):
-            msg = f"Cannot partition a model with {len(model.graph.node)} to {devices} devices!"
-            log.error(msg)
-            log.critical("Infeasible model. Stopping.")
-            raise Exception(msg)  # TODO
+            raise FINNMultiFPGAConfigError(
+                f"Model infeasible: Cannot partition a model with "
+                f"{len(model.graph.node)} to {devices} devices!"
+            )
 
         # Create the partitioner itself
         device_resources = available_resources(
@@ -720,12 +720,15 @@ class PartitionForMultiFPGA(Transformation):
             )
 
         if mapping is None:
-            log.critical("Could not find a feasible solution to the partition model.")
-            # TODO: Custom errors
-            raise Exception("Could not find a feasible solution to the partition model.")
+            raise FINNMultiFPGAConfigError(
+                f"No feasible partitioning solution could be found for "
+                f"the given model and configuration. If you are sure "
+                f"that everything is set up correctly, try using a "
+                f"different solver. Reports can be found at: "
+                f"{logdir.absolute()}"
+            )
 
         # TODO: Warning for very low resource usage
-
         # TODO: Use index or name?
         for i, node in enumerate(model.graph.node):
             # We have to cast to int here, because the solver returns a float

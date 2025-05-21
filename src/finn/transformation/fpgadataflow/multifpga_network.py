@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from finn.transformation.fpgadataflow.multifpga_utils import get_device_id
 from finn.util.basic import make_build_dir
+from finn.util.exception import FINNMultiFPGAConfigError, FINNMultiFPGAError
 from finn.util.logging import log
 
 CommunicationKernelName = str
@@ -43,8 +44,8 @@ class NetworkMetadata(ABC):
                 )
                 self.load(load_from)
             else:
-                raise Exception(
-                    f"Could not load NetworkMetadata " f"from unknown type: {type(load_from)}"
+                raise FINNMultiFPGAError(
+                    f"Could not load NetworkMetadata from unknown type: {type(load_from)}"
                 )
 
     @abstractmethod
@@ -140,10 +141,15 @@ class AuroraNetworkMetadata(NetworkMetadata):
                 found_free_spot = True
 
         if not found_free_spot:
-            # TODO: Replace with exceptions when we have the infrastructure
-            assert (
-                len(self.table[on_device]) < self.ports_per_device
-            ), f"Too many kernels / ports required for this device ({on_device})!"
+            current_ports_used = len(self.table[on_device])
+            if current_ports_used > self.ports_per_device:
+                raise FINNMultiFPGAConfigError(
+                    f"Could not add a connection between devices "
+                    f"{on_device} and {other_device}, because "
+                    f"{on_device} already uses all of it's "
+                    f"{self.ports_per_device} communication ports. "
+                    f"Cannot map this model to this setup."
+                )
             new_aurora = f"aurora_flow_{len(self.table[on_device])}_dev{on_device}"
             self.table[on_device][new_aurora] = {
                 "partner": other_device,

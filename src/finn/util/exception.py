@@ -41,3 +41,17 @@ class FINNDataflowError(FINNInternalError):
 
     def __init__(self, *args: object) -> None:
         super().__init__(*args)
+
+
+class FINNMultiFPGAError(FINNInternalError):
+    """Internal Multi-FPGA error during one of the transformations"""
+
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+
+
+class FINNMultiFPGAConfigError(FINNUserError):
+    """Multi-FPGA Error in the configuration or the model"""
+
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
