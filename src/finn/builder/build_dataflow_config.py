@@ -29,7 +29,7 @@
 
 import numpy as np
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
@@ -119,6 +119,73 @@ class VerificationStepType(str, Enum):
     NODE_BY_NODE_RTLSIM = "node_by_node_rtlsim"
     #: verify after step_create_stitched_ip, using stitched-ip Verilog
     STITCHED_IP_RTLSIM = "stitched_ip_rtlsim"
+
+
+class PartitioningStrategy(str, Enum):
+    # Strategy to partition based on the estimated resource
+    # utilization of the layers
+    RESOURCE_UTILIZATION = "resource_utilization"
+
+    # Partition based on the number of layers per device
+    # Much simpler but usable in case no estimates
+    # are available
+    LAYER_COUNT = "layer_count"
+
+
+class MFCommunicationKernel(str, Enum):
+    AURORA = "aurora"
+
+
+class MFTopology(str, Enum):
+    CHAIN = "chain"
+    RETURNCHAIN = "returnchain"
+    CIRCLE = "circle"
+
+
+@dataclass
+class PartitioningConfiguration:
+    # The number of FPGAs to use for Multi-FPGA. If left on -1,
+    # this will be determined automatically (TODO)
+    num_fpgas: int = -1
+
+    # The number of ports per device - this might change in meaning,
+    # depending on the communication kernel used
+    ports_per_device: int = 2
+
+    # What strategy to use to partition the dataflow graph
+    partition_strategy: PartitioningStrategy = PartitioningStrategy.RESOURCE_UTILIZATION
+
+    # Tells the flow what topology to use. This determines the transformation
+    # that creates the network metadata necessary for kernel packing
+    topology: MFTopology = MFTopology.CHAIN
+
+    # What kind of kernel is used to communicate in the network
+    communication_kernel: MFCommunicationKernel = MFCommunicationKernel.AURORA
+
+    # How much a FPGA can be utilized at max. The solver will fail if it
+    # cannot comply with this limitation
+    max_utilization: float = 0.85
+
+    # How much resources of a single FPGA should be used ideally. Used in some objective
+    # functions.
+    ideal_utilization: float = 0.75
+
+    # The list of resource types that the partitioner should consider.
+    # Only relevant if RESOURCE_UTILIZATION is chosen as a strategy
+    considered_resources: list[str] = field(
+        default_factory=lambda: ["LUT", "FF", "DSP", "BRAM_18K"]
+    )
+
+    # Number of seconds before the solver doing the partitioning
+    # times out.
+    partition_solver_timeout: int = 100
+
+    # Determines how many synthesis processes can run in parallel. Keep in mind
+    # that very roughly estimated, one synthesis should be able to use up to 100 GB RAM,
+    # (sometimes more) depending on the model and version of Vivado. For example on a
+    # 512 GB node, you can run roughly 4 Synthesis in parallel.
+    # Defaults to 1, in order not to crash local computers with OOM errors
+    parallel_synthesis_workers: int = 1
 
 
 #: List of steps that will be run as part of the standard dataflow build, in the
@@ -341,7 +408,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     enable_hw_debug: Optional[bool] = False
 
     #: Whether pdb postmortem debuggig will be launched when the build fails
-    enable_build_pdb_debug: Optional[bool] = True
+    enable_build_pdb_debug: Optional[bool] = False
 
     #: When True, additional verbose information will be written to the log file.
     #: Otherwise, these additional information will be suppressed.
@@ -382,6 +449,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: If set to True, FIFOs with impl_style=vivado will be kept during
     #: rtlsim, otherwise they will be replaced by RTL implementations.
     rtlsim_use_vivado_comps: Optional[bool] = True
+
+    #: Configuration that provides parameters for Multi-FPGA partitioning.
+    #: If set to something other than None, we assume the Multi-FPGA case
+    partitioning_configuration: Optional[PartitioningConfiguration] = None
 
     #: Determine if the C++ driver should be generated instead of the PYNQ driver
     #: If set to latest newest version will be used

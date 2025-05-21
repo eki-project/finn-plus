@@ -63,6 +63,8 @@ from finn.analysis.fpgadataflow.res_estimation import res_estimation, res_estima
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     DataflowOutputType,
+    MFCommunicationKernel,
+    MFTopology,
     ShellFlowType,
     VerificationStepType,
 )
@@ -83,6 +85,17 @@ from finn.transformation.fpgadataflow.make_driver import MakeCPPDriver, MakePYNQ
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
+from finn.transformation.fpgadataflow.multifpga_create_sdp import (
+    CreateMultiFPGAStreamingDataflowPartition,
+)
+from finn.transformation.fpgadataflow.multifpga_kernel_preparation import PrepareAuroraFlow
+from finn.transformation.fpgadataflow.multifpga_network import (
+    AssignNetworkMetadata,
+    AuroraNetworkMetadata,
+    CreateChainNetworkMetadata,
+    CreateReturnChainNetworkMetadata,
+)
+from finn.transformation.fpgadataflow.multifpga_partitioner import PartitionForMultiFPGA
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
@@ -613,6 +626,103 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
+def step_partition_for_multifpga(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Assign the device_id parameter to all nodes in the graph. If we are not in a Multi-FPGA case
+    (model attribute is_multifpga) this step does nothing"""
+    if cfg.partitioning_configuration is None or cfg.partitioning_configuration.num_fpgas == 1:
+        model.set_metadata_prop("is_multifpga", "False")
+        log.warning(
+            "Tried partitioning a single FPGA model. Setting is_multipga=False. "
+            "If this was on purpose, make sure a partitioning config is given, "
+            "and that it has more target devices than 1!"
+        )
+        return model
+    model.set_metadata_prop("is_multifpga", "True")
+    model = model.transform(PartitionForMultiFPGA(cfg))
+    return model  # noqa
+
+
+def step_create_multifpga_sdp(model: ModelWrapper, _: DataflowBuildConfig) -> ModelWrapper:
+    """Create StreamingDataflowPartitions from the graph based on the device ids that were
+    assigned by step_partition_for_multifpga"""
+    if model.get_metadata_prop("is_multifpga") in [None, "False"]:
+        return model
+    model = model.transform(CreateMultiFPGAStreamingDataflowPartition())
+    return model  # noqa
+
+
+def step_prepare_network_infrastructure(
+    model: ModelWrapper, cfg: DataflowBuildConfig
+) -> ModelWrapper:
+    """Create network metadata for this flow and package the correct kernels with it."""
+    if model.get_metadata_prop("is_multifpga") in [None, "False"]:
+        log.warning(
+            'Tried executing "step_prepare_network_infrastructure" although '
+            "no MultiFPGA setting was detected. Skipping.."
+        )
+        return model
+
+    if cfg.partitioning_configuration is None:
+        msg = "MultiFPGA enabled, but no partitioning configuration given!"
+        log.critical(msg)
+        raise Exception(msg)  # TODO: Custom error
+
+    metadata_types = {MFCommunicationKernel.AURORA: AuroraNetworkMetadata}
+
+    topology_creation_types = {
+        MFTopology.CHAIN: CreateChainNetworkMetadata,
+        MFTopology.RETURNCHAIN: CreateReturnChainNetworkMetadata,
+    }
+
+    # Get the metadata type
+    try:
+        metadata_type = metadata_types[cfg.partitioning_configuration.communication_kernel]
+    except KeyError as ke:
+        msg = (
+            f"No NetworkMetadata type found for communication kernel"
+            f" {cfg.partitioning_configuration.communication_kernel}"
+        )
+        log.critical(msg)
+        raise Exception(msg) from ke  # TODO: Custom error
+
+    # Get the metadata creation type
+    try:
+        topo_creation_type = topology_creation_types[cfg.partitioning_configuration.topology]
+    except KeyError as ke:
+        msg = f"No NetworkMetadata creator for topology: {cfg.partitioning_configuration.topology}"
+        log.critical(msg)
+        raise Exception(msg) from ke  # TODO: Custom error
+
+    # Create the metadata
+    log.debug(
+        f"Creating NetworkMetadata using {metadata_type.__name__} "
+        f"and {topo_creation_type.__name__}"
+    )
+    model = model.transform(AssignNetworkMetadata(metadata_type, topo_creation_type))
+
+    # Package kernels
+    if metadata_type == AuroraNetworkMetadata:
+        model = model.transform(PrepareAuroraFlow())
+    else:
+        msg = f"No kernel packaging transformation found for {metadata_type.__name__}!"
+        log.error(msg)
+        raise Exception(msg)
+
+    return model
+
+
+def step_make_multifpga(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Convenience step that performs all Multi-FPGA requiring steps at once.
+    Requires: Resource estimates, all nodes are HW ops
+
+    Output if successful: A graph of StreamingDataflowPartition nodes, each with a device_id,
+    a partition_id and stored paths to network config and packaged communication kernels"""
+    model = step_partition_for_multifpga(model, cfg)
+    model = step_create_multifpga_sdp(model, cfg)
+    model = step_prepare_network_infrastructure(model, cfg)
+    return model
+
+
 def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Create stitched IP for a graph after all HLS IP blocks have been generated.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
@@ -857,6 +967,10 @@ build_dataflow_step_lookup = {
     "step_hw_codegen": step_hw_codegen,
     "step_hw_ipgen": step_hw_ipgen,
     "step_set_fifo_depths": step_set_fifo_depths,
+    "step_partition_for_multifpga": step_partition_for_multifpga,
+    "step_create_multifpga_sdp": step_create_multifpga_sdp,
+    "step_prepare_network_infrastructure": step_prepare_network_infrastructure,
+    "step_make_multifpga": step_make_multifpga,
     "step_create_stitched_ip": step_create_stitched_ip,
     "step_measure_rtlsim_performance": step_measure_rtlsim_performance,
     "step_make_driver": step_make_driver,

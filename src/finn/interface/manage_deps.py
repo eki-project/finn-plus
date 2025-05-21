@@ -59,6 +59,16 @@ FINN_DEPS = {
         "afc9720f10e551e1f734e137b21bb6d0a8342177",
         False,
     ),
+    "AuroraFlow": (
+        "https://github.com/pc2/AuroraFlow.git",
+        "ebc82a00bff399fdb5c8455d40a5cadd5b10a686",
+        False,
+    ),
+    "vitis_dummy_kernel": (
+        "https://github.com/bwintermann/vitis_dummy_kernel.git",
+        "afe583868dfa2205b2e89e5c6ead5506d8a2ad64",
+        False,
+    ),
     "pyxsi": (
         "https://github.com/fpjentzsch/pyxsi.git",
         "bbef09f9520457186830505a99050256821d5079",
