@@ -48,6 +48,10 @@ set BOARD %s
 set FPGA_PART %s
 create_project finn_zynq_link ./ -part $FPGA_PART
 
+# Prevent limitation on number of elements for string representations of Vivado collections of objects
+# Otherwise we might run into the default limit of 500 if we have many IP_REPO_PATHS
+set_param tcl.collectionResultDisplayLimit 0
+
 # set board part repo paths to find PYNQ-Z1/Z2
 set paths_prop [get_property BOARD_PART_REPO_PATHS [current_project]]
 set paths_param [get_param board.repoPaths]
@@ -90,6 +94,7 @@ if {$BOARD == "ZCU104"} {
 create_bd_design "top"
 if {$ZYNQ_TYPE == "zynq_us+"} {
     set zynq_ps_vlnv [get_property VLNV [get_ipdefs "xilinx.com:ip:zynq_ultra_ps_e:*"]]
+    set zynq_ps_clkname "pl_clk0"
     create_bd_cell -type ip -vlnv $zynq_ps_vlnv zynq_ps
     apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset "1" }  [get_bd_cells zynq_ps]
     #activate one slave port, deactivate the second master port
@@ -100,6 +105,7 @@ if {$ZYNQ_TYPE == "zynq_us+"} {
     set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ [expr int($FREQ_MHZ)]] [get_bd_cells zynq_ps]
 } elseif {$ZYNQ_TYPE == "zynq_7000"} {
     set zynq_ps_vlnv [get_property VLNV [get_ipdefs "xilinx.com:ip:processing_system7:*"]]
+    set zynq_ps_clkname "FCLK_CLK0"
     create_bd_cell -type ip -vlnv $zynq_ps_vlnv zynq_ps
     apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 -config {make_external "FIXED_IO, DDR" apply_board_preset "1" Master "Disable" Slave "Disable" }  [get_bd_cells zynq_ps]
     set_property -dict [list CONFIG.PCW_USE_S_AXI_HP0 {1}] [get_bd_cells zynq_ps]
@@ -164,6 +170,17 @@ if {%d == 1} {
                                                               [get_bd_intf_nets idma0_m_axis_0] {AXIS_SIGNALS "Data and Trigger" CLK_SRC "/zynq_ps/FCLK_CLK0" SYSTEM_ILA "Auto" APC_EN "0" } \
                                                               [get_bd_intf_nets StreamingDataflowPartition_1_m_axis_0] {AXIS_SIGNALS "Data and Trigger" CLK_SRC "/zynq_ps/FCLK_CLK0" SYSTEM_ILA "Auto" APC_EN "0" } \
                                                              ]
+}
+
+# set up GPIO to trigger reset
+if {%d == 1} {
+    create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 axi_gpio_0
+    set_property -dict [list CONFIG.C_ALL_OUTPUTS {1} CONFIG.C_DOUT_DEFAULT {0x00000001} CONFIG.C_GPIO_WIDTH {1}] [get_bd_cells axi_gpio_0]
+    connect_bd_intf_net [get_bd_intf_pins axi_gpio_0/S_AXI] -boundary_type upper [get_bd_intf_pins axi_interconnect_0/M00_AXI]
+    assign_axi_addr_proc axi_gpio_0/S_AXI
+    connect_bd_net [get_bd_pins axi_gpio_0/s_axi_aclk] [get_bd_pins axi_interconnect_0/ACLK]
+    connect_bd_net [get_bd_pins axi_gpio_0/s_axi_aresetn] [get_bd_pins axi_interconnect_0/ARESETN]
+    connect_bd_net [get_bd_pins axi_gpio_0/gpio_io_o] [get_bd_pins rst_zynq_ps_*/aux_reset_in]
 }
 
 #finalize clock and reset connections for interconnects

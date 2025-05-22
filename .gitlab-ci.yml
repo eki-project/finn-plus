@@ -93,11 +93,11 @@ Sync finn-dev:
 
 .setup_venv_from_whl: &setup_venv_from_whl
   # Move everything to working directory (e.g., RAMdisk)
-  - cp -dfR .. $PATH_WORKDIR
+  - cp -dfR . $PATH_WORKDIR
   - cd $PATH_WORKDIR
   # Create fresh virtual environment and install finn-plus from .whl (artifact)
   - python3 -m venv finn-plus-venv
-  - finn-plus-venv/bin/pip install ./finn-plus/dist/*.whl
+  - finn-plus-venv/bin/pip install dist/*.whl
 
 Build:
   id_tokens:
@@ -171,8 +171,8 @@ FINN Test Suite 2022.2:
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
     # Launch FINN via test command, includes preparation of (cached) dependencies
     - |
-      source ./finn-plus-venv/bin/activate
-      finn test --variant $TEST_SUITE --dependency-path ./finn-plus/deps --build-path $FINN_BUILD_DIR --num-workers 1 --num-test-workers $PYTEST_PARALLEL
+      source finn-plus-venv/bin/activate
+      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers 1 --num-test-workers $PYTEST_PARALLEL
   artifacts:
     name: "test_reports"
     when: always

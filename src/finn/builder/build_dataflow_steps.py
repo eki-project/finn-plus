@@ -79,7 +79,12 @@ from finn.transformation.fpgadataflow.derive_characteristic import (
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
-from finn.transformation.fpgadataflow.make_driver import MakeCPPDriver, MakePYNQDriver
+from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
+from finn.transformation.fpgadataflow.make_driver import (
+    MakeCPPDriver,
+    MakePYNQDriverInstrumentation,
+    MakePYNQDriverIODMA,
+)
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
@@ -617,6 +622,26 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Create stitched IP for a graph after all HLS IP blocks have been generated.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
 
+    # introduce tLAST marker, required for instrumentation
+    if cfg.enable_instrumentation:
+        model = model.transform(
+            InsertTLastMarker(
+                # only insert marker on output (input TLAST is ignored for these use-cases anyway)
+                both=False,
+                # use ap_axiu instead of qdma_axis
+                external=False,
+                # static number of iterations (based on what the compiler/folding sets up)
+                dynamic=False,
+            )
+        )
+        # give a proper name to the inserted node, important for codegen
+        # TODO: deal with multi-I/O accelerators?
+        model.graph.node[-1].name = "TLastMarker_0"
+        # re-run codegen and HLS IP gen, will affect only the new TLastMarker layer assuming
+        # all other IPs have been generated already
+        model = model.transform(PrepareIP(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period()))
+        model = model.transform(HLSSynthIP())
+
     if DataflowOutputType.STITCHED_IP in cfg.generate_outputs:
         stitched_ip_dir = cfg.output_dir + "/stitched_ip"
         model = model.transform(
@@ -717,7 +742,14 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
     driver_dir = os.path.join(cfg.output_dir, "driver")
     if DataflowOutputType.PYNQ_DRIVER in cfg.generate_outputs:
         # generate PYNQ driver
-        model = model.transform(MakePYNQDriver(cfg._resolve_driver_platform()))
+        if cfg.enable_instrumentation:
+            model = model.transform(
+                MakePYNQDriverInstrumentation(
+                    cfg._resolve_driver_platform(), cfg.synth_clk_period_ns
+                )
+            )
+        else:
+            model = model.transform(MakePYNQDriverIODMA(cfg._resolve_driver_platform()))
         shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
         log.info("PYNQ Python driver written into " + driver_dir)
     elif DataflowOutputType.CPP_DRIVER in cfg.generate_outputs:
@@ -779,6 +811,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
                     cfg.board,
                     cfg.synth_clk_period_ns,
                     cfg.enable_hw_debug,
+                    cfg.enable_instrumentation,
                     partition_model_dir=partition_model_dir,
                 )
             )

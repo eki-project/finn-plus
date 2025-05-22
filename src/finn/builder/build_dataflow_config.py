@@ -340,6 +340,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: debug signals in the generated hardware)
     enable_hw_debug: Optional[bool] = False
 
+    #: Whether the accelerator will be simulated and synthesized with an
+    #: instrumentation wrapper attached to accurately measure performance.
+    enable_instrumentation: Optional[bool] = False
+
     #: Whether pdb postmortem debuggig will be launched when the build fails
     enable_build_pdb_debug: Optional[bool] = False
 
