@@ -1,4 +1,4 @@
-include: .gitlab-ci-base.yml
+include: ci/.gitlab-setup.yml
 
 stages:
   - sync
@@ -164,7 +164,7 @@ Bench (Manual):
       when: never
     - if: $MANUAL_CFG_PATH != ""
   trigger:
-    include: benchmarking/bench-ci.yml
+    include: ci/.gitlab-bench.yml
     strategy: depend
     forward:
       pipeline_variables: true
@@ -180,7 +180,7 @@ Bench:
       when: never
     - if: $MANUAL_CFG_PATH == ""
   trigger:
-    include: src/finn/benchmarking/bench-ci.yml
+    include: ci/.gitlab-bench.yml
     strategy: depend
     forward:
       pipeline_variables: true

@@ -1,4 +1,4 @@
-include: .gitlab-ci-base.yml
+include: ci/.gitlab-setup.yml
 
 stages:
   - build
@@ -56,7 +56,7 @@ Measurement:
     - when: always
   script:
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
-    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python src/finn/benchmarking/measure.py"
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python ci/measure.py"
   artifacts:
     name: "measurement_artifacts"
     when: always
@@ -74,5 +74,5 @@ Result Collection:
     # Also run on failure of previous tasks to collect partial results
     - when: always
   script:
-    - python3.10 src/finn/benchmarking/collect.py
+    - python3.10 ci/collect.py
     - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
