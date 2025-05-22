@@ -1,0 +1,16 @@
+params:
+  dut: vgg10
+  model_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/VGG-10/radioml_w4a4_small_tidy.onnx
+  folding_config_file: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/VGG-10/ZCU104_folding_config.json
+  specialize_layers_config_file: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/VGG-10/ZCU104_specialize_layers.json
+  board: RFSoC2x2
+  synth_clk_period_ns: 10
+  live_fifo_sizing: true
+  rtlsim_batch_size: 5
+  generate_outputs:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2022.2'
