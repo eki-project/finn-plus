@@ -40,9 +40,6 @@ cd %s
 custom_zynq_shell_template = """
 set FREQ_MHZ %s
 set NUM_AXILITE %d
-#if {$NUM_AXILITE > 9} {
-#    error "Maximum 10 AXI-Lite interfaces supported"
-#}
 set NUM_AXIMM %d
 set BOARD %s
 set FPGA_PART %s
