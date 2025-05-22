@@ -1,0 +1,25 @@
+params:
+  dut: synthetic_nonlinear
+  dim: 64
+  kernel_size: 5
+  ch: 8
+  simd: 8
+  pe: 8
+  parallel_window: 1
+  lb_num_layers: 1
+  rb_num_layers: 4
+  board: RFSoC2x2
+  synth_clk_period_ns: 10
+  rtlsim_batch_size: 5
+  auto_fifo_depths: true
+  auto_fifo_strategy: characterize
+  characteristic_function_strategy: analytical
+  generate_outputs:
+  - stitched_ip
+  - rtlsim_performance
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2022.2'
