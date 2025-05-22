@@ -32,28 +32,30 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.error = False
         self.fifo_widths = fifo_widths
         self.num_fifos = len(self.fifo_widths)
-        # Account for additional FIFO depth and implicit registers introduced by the virtual FIFO HLS implementation that are not present in real FIFOs
-        # This results in a minimum possible FIFO depth of 1 + 8 = 9, which should be improved in a future virtual FIFO implementation (TODO)
+        # Account for additional FIFO depth and implicit registers introduced by the virtual FIFO
+        # HLS implementation that are not present in real FIFOs. This results in a minimum possible
+        # FIFO depth of 1 + 8 = 9, which should be improved in a future implementation (TODO).
         self.fifo_depth_offset = 8
 
         # Sanity check
-        # We expect 3 AXI-Lite peripherals next to the virtual FIFOs: instrumentation_wrap_0, axi_gpio_0 (for reset), zynq_ps
-        # We don't expect any additional FINN SDPs with AXI-Lite interface, such as runtime-writable weights
+        # We expect 3 AXI-Lite peripherals next to the virtual FIFOs:
+        # instrumentation_wrap_0, axi_gpio_0 (for reset), zynq_ps
+        # We expect no additional FINN SDPs with AXI-Lite, such as runtime-writable weights
         if (len(self.ip_dict.keys()) - 3) != self.num_fifos:
             print(
-                "Error: Number of expected FIFOs (%d) doesn't match number of AXI-Lite interfaces (%d)"
+                "Error: # of expected FIFOs (%d) doesn't match # of AXI-Lite interfaces (%d)"
                 % (self.num_fifos, len(self.ip_dict.keys()) - 3)
             )
             self.error = True
 
     def configure_fifo(self, i, mode, depth=2):
-        ### Virtual FIFO register map ###
+        # Virtual FIFO register map
         mode_offset = 0x10
         depth_offset = 0x18
-        occupancy_offset = 0x20
-        occupancy_ctrl_offset = 0x24
-        max_occupancy_offset = 0x30
-        max_occupancy_ctrl_offset = 0x34
+        # occupancy_offset = 0x20
+        # occupancy_ctrl_offset = 0x24
+        # max_occupancy_offset = 0x30
+        # max_occupancy_ctrl_offset = 0x34
 
         ip_name = "StreamingDataflowPartition_%d" % i
         getattr(self, ip_name).write(offset=mode_offset, value=mode)
@@ -68,7 +70,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         return total_size_kB
 
     def size_iteratively(self, start_depth, iteration_runtime, reduction_factor=0.5):
-        ### Iterative FIFO-sizing function ###
+        # Iterative FIFO-sizing function
         fifo_minimum_reached = [False] * self.num_fifos
 
         if isinstance(start_depth, list):
@@ -172,9 +174,11 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
     def determine_start_depth(
         self,
     ):
-        ### Attempt to determine start depth for all FIFOs automatically ###
-        # If it doesn't find a working setting, start depth must be set manually, potentially on per-FIFO basis
+        # Attempt to determine start depth for all FIFOs automatically.
+        # If it doesn't find a working setting start depth must be set manually,
+        # potentially on per-FIFO basis.
         start_depth = 1
+        last_start_depth = 1
         last_interval = 0
         start_depth_found = False
 
@@ -231,9 +235,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Profile performance of FINN-generated accelerator using instrumentation wrapper"
+        description="Perform iterative FIFO-Sizing on live FINN accelerator"
     )
-    parser.add_argument("--runtime", help="Runtime in seconds", type=int, default=10)
     parser.add_argument(
         "--frequency", help="FPGA clock frequency in MHz", type=float, default=100.0
     )
@@ -251,7 +254,6 @@ if __name__ == "__main__":
     )
     # parse arguments
     args = parser.parse_args()
-    runtime = args.runtime
     frequency = args.frequency
     seed = args.seed
     bitfile = args.bitfile
@@ -295,7 +297,7 @@ if __name__ == "__main__":
     print("Determining start depth..")
     (start_depth, iteration_runtime) = accel.determine_start_depth()
 
-    ### First pass
+    # First pass
     print("Starting first pass..")
     pass1_result = accel.size_iteratively(start_depth, iteration_runtime)
     (
@@ -307,7 +309,7 @@ if __name__ == "__main__":
         duration,
     ) = pass1_result
 
-    ### Visualize results and save as "fifo_sizing_graph.png"
+    # Visualize results and save as "fifo_sizing_graph.png"
     fig, ax1 = plt.subplots()
 
     color = "tab:red"
@@ -331,7 +333,7 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.savefig(os.path.join(report_dir, "fifo_sizing_graph.png"), dpi=300)
 
-    ### Second pass for fine-tuning
+    # Second pass for fine-tuning
     print("Starting second pass..")
     pass2_result = accel.size_iteratively(fifo_depths, iteration_runtime, reduction_factor=0.95)
     (
@@ -343,7 +345,7 @@ if __name__ == "__main__":
         duration,
     ) = pass2_result
 
-    ### Generate fifo_sizing_report.json
+    # Generate fifo_sizing_report.json
     fifo_report = {
         "error": accel.error,
         "fifo_size_total_kB": log_total_fifo_size[-1],
@@ -371,7 +373,7 @@ if __name__ == "__main__":
     with open(os.path.join(report_dir, "fifo_sizing_report.json"), "w") as f:
         json.dump(fifo_report, f, indent=2)
 
-    ### Generate fifo_depth_export.json to export FIFO depths for use in FINN
+    # Generate fifo_depth_export.json to export FIFO depths for use in FINN
     fifo_depth_export = {}
     for fifo, depth in enumerate(fifo_depths):
         fifo_name = "StreamingFIFO_rtl_%d" % fifo
@@ -392,7 +394,7 @@ if __name__ == "__main__":
         with open(os.path.join(report_dir, "folding_config_lfs.json"), "w") as f:
             json.dump(folding_config_lfs, f, indent=2)
 
-    ### Generate the usual instrumentation performance report based on final state
+    # Generate the usual instrumentation performance report based on final state
     min_latency = log_min_latency[-1]
     latency = log_latency[-1]
     interval = log_interval[-1]
