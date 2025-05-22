@@ -6,6 +6,7 @@ from qonnx.transformation.base import Transformation
 
 from finn.custom_op.fpgadataflow.templates import ipgentcl_template
 from finn.util.basic import make_build_dir
+from finn.util.deps import get_deps_path
 from finn.util.hls import CallHLS
 
 
@@ -87,6 +88,8 @@ class GenerateInstrumentationIP(Transformation):
         ipgentcl = ipgentcl_template
         ipgentcl = ipgentcl.replace("$PROJECTNAME$", prjname)
         ipgentcl = ipgentcl.replace("$HWSRCDIR$", wrapper_output_dir)
+        ipgentcl = ipgentcl.replace("$FINNHLSLIB$", str(get_deps_path() / "finn-hlslib"))
+        ipgentcl = ipgentcl.replace("$ATTENTIONHLSLIB$", str(get_deps_path() / "attention-hlslib"))
         ipgentcl = ipgentcl.replace("$TOPFXN$", "instrumentation_wrapper")
         ipgentcl = ipgentcl.replace("$FPGAPART$", self.fpga_part)
         ipgentcl = ipgentcl.replace("$CLKPERIOD$", str(self.clk_period_ns))
