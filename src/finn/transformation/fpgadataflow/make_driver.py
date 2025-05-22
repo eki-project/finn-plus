@@ -462,12 +462,13 @@ class MakePYNQDriverIODMA(Transformation):
 
 
 class MakePYNQDriverInstrumentation(Transformation):
-    def __init__(self, platform, clk_period_ns):
+    def __init__(self, platform, clk_period_ns, live_fifo_sizing):
         super().__init__()
         self.platform = platform
         self.clk_period_ns = clk_period_ns
+        self.live_fifo_sizing = live_fifo_sizing
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper):
         # TODO: support runtime-writable and external weights
         # TODO: support Alveo and Versal platforms
 
@@ -479,13 +480,45 @@ class MakePYNQDriverInstrumentation(Transformation):
         driver_template = (
             os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_instrumentation.py"
         )
-        driver_py = pynq_driver_dir + "/driver.py"
+        if self.live_fifo_sizing:
+            driver_py = pynq_driver_dir + "/driver_instrumentation.py"
+        else:
+            driver_py = pynq_driver_dir + "/driver.py"
         shutil.copy(driver_template, driver_py)
+
+        # add-on driver for live fifosizing
+        if self.live_fifo_sizing:
+            driver_template = os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_fifosizing.py"
+            driver_py = pynq_driver_dir + "/driver.py"
+            shutil.copy(driver_template, driver_py)
 
         # write default settings to driver config file
         settings = {
             "fclk_mhz": (1.0 / self.clk_period_ns) * 1e3,
         }
+        if self.live_fifo_sizing:
+            # export FIFO widths to the settings file as well
+            # at this stage, the FIFOs are already wrapped in StreamingDataflowPartitions
+            fifo_widths = {}
+            for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
+                sdp_node_inst = getCustomOp(sdp_node)
+                # JSON doesn't support int keys
+                sdp_id = str(sdp_node_inst.get_nodeattr("partition_id"))
+                dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
+                kernel_model = ModelWrapper(dataflow_model_filename)
+                for node in kernel_model.graph.node:
+                    if node.op_type.startswith("StreamingFIFO"):
+                        node_inst = getCustomOp(node)
+                        fifo_widths[sdp_id] = node_inst.get_instream_width()
+            settings["fifo_widths"] = fifo_widths
+            # export original folding config to settings file,
+            # so that the driver can generate a final cfg with live fifo sizes applied
+            folding_path = model.get_metadata_prop("folding_config_before_lfs")
+            if folding_path:
+                with open(folding_path, "r") as f:
+                    folding_cfg = json.load(f)
+                settings["folding_config_before_lfs"] = folding_cfg
+
         settingsfile = pynq_driver_dir + "/settings.json"
         with open(settingsfile, "w") as f:
             json.dump(settings, f, indent=2)
