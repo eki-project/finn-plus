@@ -46,7 +46,6 @@ from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     FpgaMemoryType,
     MFCommunicationKernel,
-    MFTopology,
     VitisOptStrategy,
 )
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
@@ -56,12 +55,18 @@ from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
-from finn.transformation.fpgadataflow.multifpga_network import AuroraNetworkMetadata
+from finn.transformation.fpgadataflow.multifpga_network import AuroraNetworkMetadata, DataDirection
 from finn.transformation.fpgadataflow.multifpga_utils import get_device_id
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir
 from finn.util.deps import get_deps_path
+from finn.util.exception import (
+    FINNConfigurationError,
+    FINNMultiFPGAConfigError,
+    FINNMultiFPGAError,
+    FINNVitisLinkConfigError,
+)
 from finn.util.logging import log
 
 from . import templates
@@ -291,11 +296,6 @@ class BuildAllXOs(Transformation):
         return model, False
 
 
-class InvalidVitisLinkConfigError(Exception):
-    def __init__(self, *args: object) -> None:
-        super().__init__(*args)
-
-
 class VitisLinkConfiguration:
     """Manages XO files, CU instantiations, stream connections,
     port connections, Vivado props, etc.
@@ -321,7 +321,7 @@ class VitisLinkConfiguration:
         """Add a compute unit (instance of a kernel)"""
         if cu_name in self.cu:
             kern = next(kname for kname, cname in self.nk if cname == cu_name)
-            raise InvalidVitisLinkConfigError(
+            raise FINNVitisLinkConfigError(
                 f"Tried creating CU {cu_name}, but a CU of this "
                 f"name of kernel {kern} already exists!"
             )
@@ -341,7 +341,7 @@ class VitisLinkConfiguration:
         for cu in [cu_sender, cu_receiver]:
             splits = cu.split(".")
             if len(splits) != 2:
-                raise InvalidVitisLinkConfigError(
+                raise FINNVitisLinkConfigError(
                     f"{cu} is incorrectly formatted. Required "
                     f"syntax to add a streaming connection from CU "
                     f'a on port out is "a.out".'
@@ -372,21 +372,29 @@ class VitisLinkConfiguration:
     def add_vivado_line(self, line: str) -> None:
         self.vivado_section += line
 
-    def add_xo(self, xo_file: Path) -> None:
+    def add_xo(self, xo_files: Path | list[Path]) -> None:
         """Add an XO file. This will emit an error if the XO file is not found, but it will
-        NOT raise an exception."""
-        if not xo_file.exists():
-            log.error(
-                f"Tried adding non-existing file {xo_file.absolute()}. "
-                f"Continuing in case this is on purpose."
-            )
-        self.xo.append(xo_file)
+        NOT raise an exception. Ignores duplicate calls"""
+        if type(xo_files) is Path:
+            all_xos = [xo_files]
+        if type(xo_files) is list:
+            all_xos = xo_files
+        for xo_file in all_xos:
+            if xo_file in self.xo:
+                log.warning(f"Ignoring duplicate addition of .xo: {xo_file.name}")
+                continue
+            if not xo_file.exists():
+                log.error(
+                    f"Tried adding non-existing file {xo_file.absolute()}. "
+                    f"Continuing in case this is on purpose."
+                )
+            self.xo.append(xo_file)
 
     def add_connectivity(self, txt: str) -> None:
         """Add further lines to the connectivity section. For example to assign clocks or ports"""
         self.connectivity_section += txt
 
-    def get_config_validation_errors(self) -> None | list[InvalidVitisLinkConfigError]:
+    def get_config_validation_errors(self) -> None | list[FINNVitisLinkConfigError]:
         """Check the configuration and if errors are found, return them"""
         errors = []
         # All CUs in SCs exist and CU ports are correctly formatted
@@ -395,7 +403,7 @@ class VitisLinkConfiguration:
                 sender_split = cu_sender.split(".")
                 if len(sender_split) != 2:
                     errors.append(
-                        InvalidVitisLinkConfigError(
+                        FINNVitisLinkConfigError(
                             f"SC {cu_sender}:{cu_receiver} "
                             f"incorrectly formatted. "
                             "Use the syntax CU.PORT"
@@ -404,14 +412,14 @@ class VitisLinkConfiguration:
                 sender_name = sender_split[0]
                 if sender_name not in self.cu:
                     errors.append(
-                        InvalidVitisLinkConfigError(
+                        FINNVitisLinkConfigError(
                             f"SC {cu_sender}:{cu_receiver} uses the unknown CU {sender_name}"
                         )
                     )
                 receiver_split = cu_receiver.split(".")
                 if len(receiver_split) != 2:
                     errors.append(
-                        InvalidVitisLinkConfigError(
+                        FINNVitisLinkConfigError(
                             f"SC {cu_sender}:{cu_receiver} "
                             f"incorrectly formatted. "
                             "Use the syntax CU.PORT"
@@ -420,7 +428,7 @@ class VitisLinkConfiguration:
                 receiver_name = receiver_split[0]
                 if receiver_name not in self.cu:
                     errors.append(
-                        InvalidVitisLinkConfigError(
+                        FINNVitisLinkConfigError(
                             f"SC {cu_sender}:"
                             f"{cu_receiver} uses the unknown "
                             f"CU {receiver_name}"
@@ -429,7 +437,7 @@ class VitisLinkConfiguration:
         # No two same named CUs
         if len(set(self.cu)) != len(self.cu):
             errors.append(
-                InvalidVitisLinkConfigError(
+                FINNVitisLinkConfigError(
                     "It seems that there are one or more CUs with the same name!"
                 )
             )
@@ -437,7 +445,7 @@ class VitisLinkConfiguration:
             for kernel2, cu2 in self.nk:
                 if cu == cu2 and kernel != kernel2:
                     errors.append(
-                        InvalidVitisLinkConfigError(
+                        FINNVitisLinkConfigError(
                             f"There are 2 or more CUs named {cu} "
                             f"from different kernels ({kernel} "
                             f"and {kernel2})"
@@ -454,7 +462,11 @@ class VitisLinkConfiguration:
         if errors is not None:
             for err in errors:
                 log.error(f"{path}: {err}")
-            raise errors[0]
+            if len(errors) == 1:
+                raise errors[0]
+            raise FINNVitisLinkConfigError(
+                "Multiple VitisLinkConfig errors ocurred. " "Please check your logs to fix them."
+            )
         with path.open("w+") as f:
             f.write("[connectivity]\n")
             for kernel_name, cu_name in self.nk:
@@ -475,6 +487,9 @@ class VitisLinkConfiguration:
                 f.write(self.connectivity_section + "\n")
 
             f.write(self.vivado_section)
+
+        if not path.exists():
+            raise FINNMultiFPGAError(f"Failed to create vitis config at {path}.")
 
     def generate_run_script(self, config_path: Path, target: Path | None = None) -> None:
         """Generate a shell script to start v++ with the correct parameters.
@@ -497,148 +512,251 @@ class VitisLinkConfiguration:
                 f"--report_level estimate --save-temps --kernel_frequency {self.f_mhz}"
             )
 
+        if not runner_path.exists():
+            raise FINNConfigurationError(f"Failed to create config run script at {runner_path}")
 
-# TODO: Replace with generic variant, replace asserts with exceptions and logging
-# Everything hardcoded in this transform will be made configurable / automatic
-class AuroraChainVitisLink(Transformation):
-    """Simple MultiFPGA Link transform. Will be replaced with the ported improved
-    approach soon. Only for testing purposes.
-    Valid configuration: AURORA Kernels + CHAIN topology, on a U280"""
+
+class MultiVitisLink(Transformation):
+    # TODO: Pass args explicitly, not the whole config
+    def __init__(self, cfg: DataflowBuildConfig) -> None:
+        super().__init__()
+        self.cfg = cfg
+
+    def get_aurora_xos(self, model: ModelWrapper, device: int) -> list[Path]:
+        """Get a list of all aurora XO paths for a device"""
+        storage_path = model.get_metadata_prop("aurora_storage")
+        if storage_path is None:
+            raise Exception("Run Aurora kernel packaging beforehand!")  # TODO: Exception
+        storage_path = Path(storage_path)
+        metadata = AuroraNetworkMetadata(model)
+        return [
+            storage_path / Path(kernelname + ".xo")
+            for kernelname in metadata.get_aurora_kernels(device)
+        ]
+
+    def package_dummy_kernels(self) -> tuple[Path, Path]:
+        """Prepare dummy kernels that might be needed when a kernel is in duplex mode
+        but only needs one connected port. Returns a tuple containing the path to
+        the RX kernel .xo and the TX kernel .xo"""
+        dummy_kernel_dir = get_deps_path() / "vitis_dummy_kernel"
+        rx_dummy = dummy_kernel_dir / "rx_dummy_kernel.xo"
+        tx_dummy = dummy_kernel_dir / "tx_dummy_kernel.xo"
+        if not rx_dummy.exists() or not tx_dummy.exists():
+            subprocess.run(["make"], cwd=dummy_kernel_dir, stdout=subprocess.DEVNULL)
+        return rx_dummy, tx_dummy
+
+    def execute_synthesis_parallel(
+        self, configs: list[VitisLinkConfiguration], workers: int
+    ) -> None:
+        """Execute the list of synthesis in parallel. Can be used for faster design space
+        exploration or for Multi-FPGA applications.
+        This creates the necessary temp dirs by itself as well"""
+
+        if workers < 1:
+            raise FINNMultiFPGAConfigError(
+                f"Number of synthesis workers set to {workers}. " "Needs to be atleast 1!"
+            )
+        if workers == 1 and len(configs) > 1:
+            log.warning(
+                "The number of parallel synthesis workers was set to 1, despite having "
+                "multiple synthesis queued up. This may take a long time!"
+            )
+
+        def run_link_config(config: VitisLinkConfiguration, index: int) -> None:
+            link_dir = Path(make_build_dir(f"parallel_link{index}_"))
+            config.generate_config(link_dir / "config.txt")
+            config.generate_run_script(link_dir / "config.txt")
+            subprocess.run("bash run_vitis_link.sh", shell=True, cwd=link_dir)
+            if not (link_dir / "a.xclbin").exists():
+                log.critical(
+                    f"a.xclbin not found in link directory. "
+                    f"Synthesis / implementation (probably) failed. Check {link_dir} "
+                    f"and the logs."
+                )
+            # TODO: Move bitstreams after synthesis
+
+        with ThreadPoolExecutor(max_workers=workers) as tpe:
+            tpe.map(run_link_config, configs, list(range(len(configs))))
+        tpe.shutdown(wait=True)
+
+    # TODO: Refactor / remove when merging with single-fpga case
+    # TODO: since IODMAs might be part of the graph?
+    def check_all_sdp(self, model: ModelWrapper, allow_dmas: bool = False) -> None:
+        """Check if all nodes in the graph are SDPs. If not raise an error."""
+        for sdp in model.graph.node:
+            if allow_dmas and sdp.op_type == "IODMA_hls":
+                continue
+            if sdp.op_type != "StreamingDataflowPartition":
+                raise FINNMultiFPGAError(
+                    f"Detected non-SDP node in graph when " f"trying to link. Node: {sdp.name}"
+                )
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        # TODO: Change this when merging with single-fpga case, since
+        # TODO: the transform still can be successful without a partitioning config
+        # TODO: in that case
+        if self.cfg.partitioning_configuration is None:
+            raise FINNMultiFPGAError(
+                "Cannot do Multi-FPGA link when no partitioning " "configuration is given"
+            )
+
+        if (
+            self.cfg.vitis_opt_strategy is None
+            or self.cfg.vitis_opt_strategy != VitisOptStrategy.PERFORMANCE_BEST
+        ):
+            log.warning(
+                "Consider setting vitis_opt_strategy to PERFORMANCE_BEST to get the best"
+                "synthesis / implementation results. Setting strategy to default values."
+            )
+            self.cfg.vitis_opt_strategy = VitisOptStrategy.DEFAULT
+
+        # Check if all nodes are StreamingDataflowPartitions
+        self.check_all_sdp(model, allow_dmas=False)
+
+        # Prepare dummy kernels
+        rx_dummy_xo, tx_dummy_xo = self.package_dummy_kernels()
+
+        # All configs, one per device
+        configs: dict[int, VitisLinkConfiguration] = {}
+
+        # Switch on the communication kernel used
+        match self.cfg.partitioning_configuration.communication_kernel:
+            case MFCommunicationKernel.AURORA:
+                metadata = AuroraNetworkMetadata(model)
+                dummy_kernels_per_device: dict[int, int] = {}
+                for i, sdp in enumerate(model.graph.node):
+                    this_device = get_device_id(sdp)
+                    if this_device is None:
+                        raise FINNMultiFPGAConfigError(
+                            f"The node {sdp.name} does not have a set "
+                            f"device_id attribute. Make sure that "
+                            f"CreateMultiFPGAStreamingDataflowPartition,"
+                            f" or another SDP creating transformation "
+                            f"was run before calling VitisLink!"
+                        )
+
+                    # Create a VitisLinkConfiguration
+                    if this_device not in configs.keys():
+                        configs[this_device] = VitisLinkConfiguration(
+                            self.cfg._resolve_vitis_platform(),  # noqa
+                            self.cfg.vitis_opt_strategy.value,
+                            round(1000 / self.cfg.synth_clk_period_ns),
+                        )
+                    this_config = configs[this_device]
+
+                    # Initialize SDP kernel
+                    this_config.add_cu(sdp.name, sdp.name)
+                    if i in [0, len(model.graph.node)]:
+                        # TODO: I/ODMA might not necessarily be on first or last node
+                        this_config.add_sp(sdp.name + ".m_axi_gmem0", "HBM[0]")
+
+                    # Get the metadata entry for >this< device and >this< SDP
+                    # (there might be multiple SDP on a single device)
+                    sending_to = metadata.sends_to_aurora(sdp.name, this_device)
+                    receiving_from = metadata.receives_from_aurora(sdp.name, this_device)
+                    if len(set(sending_to)) != len(sending_to):
+                        raise FINNMultiFPGAError(
+                            f"There are multiple Aurora kernels of the same "
+                            f"name in the Aurora kernels that SDP {sdp.name} "
+                            f"sends to! ({sending_to})"
+                        )
+                    if len(set(receiving_from)) != len(sending_to):
+                        raise FINNMultiFPGAError(
+                            f"There are multiple Aurora kernels of the same "
+                            f"name in the Aurora kernels that SDP {sdp.name} "
+                            f"sends to! ({sending_to})"
+                        )
+
+                    # Add aurora kernels
+                    this_config.add_xo(self.get_aurora_xos(model, this_device))
+                    # Save kernel_name + instance name for each filename
+                    aurora_names: dict[str, str] = {}
+                    # TODO: Depends on the order of aurora kernels.
+                    # TODO: Should not be a problem, but still improve at some point
+                    for aurora_number, aurora_kernel in enumerate(sending_to + receiving_from):
+                        # TODO: Force aurora to be QSFP attached SLR (SLR2 for U280 for example)
+                        aurora_names[aurora_kernel] = f"aurora_flow_{aurora_number}"
+                        this_config.add_cu(
+                            f"aurora_flow_{aurora_number}", f"aurora_flow_{aurora_number}"
+                        )
+                        this_config.add_connect(
+                            f"io_clk_qsfp{aurora_number}_refclkb_00",
+                            f"aurora_flow_{aurora_number}/gt_refclk_{aurora_number}",
+                        )
+                        this_config.add_connect(
+                            f"aurora_flow_{aurora_number}/gt_port", f"io_gt_qsfp{aurora_number}_00"
+                        )
+                        this_config.add_connect(
+                            f"aurora_flow_{aurora_number}/init_clk",
+                            "ii_level0_wire/ulp_m_aclk_freerun_ref_00",
+                        )
+
+                        if aurora_kernel in sending_to:
+                            this_config.add_sc(
+                                sdp.name + ".m_axis_0", aurora_names[aurora_kernel] + ".tx_axis"
+                            )
+                        if aurora_kernel in receiving_from:
+                            this_config.add_sc(
+                                aurora_names[aurora_kernel] + ".rx_axis", sdp.name + ".s_axis_0"
+                            )
+
+                    # Add dummy kernels
+                    if this_device not in dummy_kernels_per_device.keys():
+                        dummy_kernels_per_device[this_device] = 0
+                    open_rx_connections = metadata.get_open_duplex_connections(
+                        DataDirection.RX, this_device
+                    )
+                    open_tx_connections = metadata.get_open_duplex_connections(
+                        DataDirection.TX, this_device
+                    )
+                    for rx_missing_aurora in open_rx_connections:
+                        aurora_name = aurora_names[rx_missing_aurora]
+                        dummy_instance = f"rx_dummy_kernel_{dummy_kernels_per_device[this_device]}"
+                        dummy_kernels_per_device[this_device] += 1
+                        this_config.add_cu("rx_dummy_kernel", dummy_instance)
+                        this_config.add_sc(aurora_name + ".rx_axis", dummy_instance + ".A")
+                        this_config.add_xo(rx_dummy_xo)
+                    for tx_missing_aurora in open_tx_connections:
+                        aurora_name = aurora_names[tx_missing_aurora]
+                        dummy_instance = f"tx_dummy_kernel_{dummy_kernels_per_device[this_device]}"
+                        dummy_kernels_per_device[this_device] += 1
+                        this_config.add_cu("tx_dummy_kernel", dummy_instance)
+                        this_config.add_sc(dummy_instance + ".A", aurora_name + ".tx_axis")
+                        this_config.add_xo(tx_dummy_xo)
+
+                    # Add performance optimization directives
+                    if self.cfg.vitis_opt_strategy == VitisOptStrategy.PERFORMANCE_BEST:
+                        this_config.add_vivado_line(
+                            "[vivado]\n"
+                            "prop=run.impl_1.STEPS.OPT_DESIGN.ARGS.DIRECTIVE=ExploreWithRemap\n"
+                            "prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE=Explore\n"
+                            "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.IS_ENABLED=true\n"
+                            "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE=Explore\n"
+                            "prop=run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE=Explore\n"
+                        )
+
+            case _:
+                raise NotImplementedError()
+
+        # Run synthesis
+        self.execute_synthesis_parallel(
+            list(configs.values()), self.cfg.partitioning_configuration.parallel_synthesis_workers
+        )
+        return model, False
+
+
+class MultiVitisBuild(Transformation):
+    """Build Multi-FPGA designs. Will eventually be merged with VitisBuild to unify both single
+    and multi FPGA flows"""
 
     def __init__(self, cfg: DataflowBuildConfig) -> None:
         super().__init__()
         self.cfg = cfg
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        # Aurora + Chain config enables the following assumptions:
-        # - Each device is only visited once
-        # - Every SDP is on a different device
-        # - Aurora count per device
-
-        # Testing related assertions
-        assert self.cfg.board is not None
-        assert self.cfg.partitioning_configuration is not None
-        assert self.cfg.partitioning_configuration.topology == MFTopology.CHAIN
-        assert (
-            self.cfg.partitioning_configuration.communication_kernel == MFCommunicationKernel.AURORA
-        )
-        assert self.cfg.vitis_opt_strategy is not None
-
-        # Build dummy kernels if necessary. Used to connect open
-        # ports while Aurora is in Duplex mode
-        dummy_kernel_dir = get_deps_path() / "vitis_dummy_kernel"
-        rx_dummy = dummy_kernel_dir / "rx_dummy_kernel.xo"
-        tx_dummy = dummy_kernel_dir / "tx_dummy_kernel.xo"
-        if not rx_dummy.exists() or not tx_dummy.exists():
-            subprocess.run(["make"], cwd=dummy_kernel_dir, stdout=subprocess.DEVNULL)
-
-        # Load metadata
-        metadata = AuroraNetworkMetadata(model)
-        assert metadata.table != {}
-        aurora_storage = model.get_metadata_prop("aurora_storage")
-        assert aurora_storage is not None
-        aurora_storage = Path(aurora_storage)
-
-        # Configs
-        configs: dict[int, VitisLinkConfiguration] = {}
-        for i, sdp in enumerate(model.graph.node):
-            this_device = get_device_id(sdp)
-            assert this_device is not None
-
-            # Create config
-            configs[this_device] = VitisLinkConfiguration(
-                self.cfg._resolve_vitis_platform(),  # noqa
-                self.cfg.vitis_opt_strategy.value,
-                round(1000 / self.cfg.synth_clk_period_ns),
-            )
-            this_config = configs[this_device]
-            submodel = ModelWrapper(getCustomOp(sdp).get_nodeattr("model"))
-
-            # Get aurora XOs and kernel names
-            aurora_kernels = metadata.get_aurora_kernels(this_device)
-            sdp_xo = submodel.get_metadata_prop("vitis_xo")
-            assert sdp_xo is not None
-            xos = [Path(sdp_xo)] + [
-                aurora_storage / Path(kernel_name + ".xo") for kernel_name in aurora_kernels
-            ]
-            if i == 0:
-                xos.append(rx_dummy)
-                this_config.add_cu("rx_dummy_kernel", "rx_dummy_kernel")
-            elif i == len(configs) - 1:
-                xos.append(tx_dummy)
-                this_config.add_cu("tx_dummy_kernel", "tx_dummy_kernel")
-            else:
-                xos += [rx_dummy, tx_dummy]
-                this_config.add_cu("rx_dummy_kernel", "rx_dummy_kernel")
-                this_config.add_cu("tx_dummy_kernel", "tx_dummy_kernel")
-            for xo in xos:
-                assert xo.exists()
-                this_config.add_xo(xo)
-
-            # Add CUs
-            this_config.add_cu(sdp.name, sdp.name)
-            this_config.add_cu("aurora_flow_0", "aurora_flow_0")
-            this_config.add_connect("io_clk_qsfp0_refclkb_00", "aurora_flow_0/gt_refclk_0")
-            this_config.add_connect("aurora_flow_0/gt_port", "io_gt_qsfp0_00")
-            this_config.add_connect(
-                "aurora_flow_0/init_clk", "ii_level0_wire/ulp_m_aclk_freerun_ref_00"
-            )
-            if i not in [0, len(configs) - 1]:
-                this_config.add_cu("aurora_flow_1", "aurora_flow_1")
-                this_config.add_connect("io_clk_qsfp1_refclkb_00", "aurora_flow_1/gt_refclk_1")
-                this_config.add_connect("aurora_flow_1/gt_port", "io_gt_qsfp1_00")
-                this_config.add_connect(
-                    "aurora_flow_1/init_clk", "ii_level0_wire/ulp_m_aclk_freerun_ref_00"
-                )
-
-            # Add connections
-            if i == 0:
-                this_config.add_sc(sdp.name + ".m_axis_0", "aurora_flow_0.tx_axis")
-                this_config.add_sc("aurora_flow_0.rx_axis", "rx_dummy_kernel.A")
-            elif i == len(configs) - 1:
-                this_config.add_sc("aurora_flow_0.rx_axis", sdp.name + ".s_axis_0")
-                this_config.add_sc("tx_dummy_kernel.A", "aurora_flow_0.tx_axis")
-            else:
-                this_config.add_sc("aurora_flow_0.rx_axis", sdp.name + ".s_axis_0")
-                this_config.add_sc(sdp.name + ".m_axis_0", "aurora_flow_1.tx_axis")
-                this_config.add_sc("tx_dummy_kernel.A", "aurora_flow_0.tx_axis")
-                this_config.add_sc("aurora_flow_1.rx_axis", "rx_dummy_kernel.A")
-
-            if i in [0, len(configs) - 1]:
-                this_config.add_sp(sdp.name + ".m_axi_gmem0", "HBM[0]")
-
-            if self.cfg.vitis_opt_strategy == VitisOptStrategy.PERFORMANCE_BEST:
-                this_config.add_vivado_line(
-                    "[vivado]\n"
-                    "prop=run.impl_1.STEPS.OPT_DESIGN.ARGS.DIRECTIVE=ExploreWithRemap\n"
-                    "prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE=Explore\n"
-                    "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.IS_ENABLED=true\n"
-                    "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE=Explore\n"
-                    "prop=run.impl_1.STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE=Explore\n"
-                )
-        # Start all the synthesis runs
-        execute_synthesis_parallel(
-            list(configs.values()), self.cfg.partitioning_configuration.parallel_synthesis_workers
-        )
+        model = model.transform(BuildAllXOs(self.cfg))
+        model = model.transform(MultiVitisLink(self.cfg))
         return model, False
-
-
-# TODO: Make this part of the new VitisLink
-def execute_synthesis_parallel(configs: list[VitisLinkConfiguration], workers: int) -> None:
-    """Execute the list of synthesis in parallel. Can be used for faster design space
-    exploration or for Multi-FPGA applications.
-
-    This creates the necessary temp dirs by itself also"""
-
-    def run_link_config(config: VitisLinkConfiguration, index: int) -> None:
-        link_dir = Path(make_build_dir(f"parallel_link{index}_"))
-        config.generate_config(link_dir / "config.txt")
-        config.generate_run_script(link_dir / "config.txt")
-        subprocess.run("bash run_vitis_link.sh", shell=True, cwd=link_dir)
-
-    with ThreadPoolExecutor(max_workers=workers) as tpe:
-        tpe.map(run_link_config, configs, list(range(len(configs))))
-    tpe.shutdown(wait=True)
 
 
 class VitisLink(Transformation):

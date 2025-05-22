@@ -144,9 +144,9 @@ class MFTopology(str, Enum):
 
 @dataclass
 class PartitioningConfiguration:
-    # The number of FPGAs to use for Multi-FPGA. If left on -1,
-    # this will be determined automatically (TODO)
-    num_fpgas: int = -1
+    # The number of FPGAs to use for Multi-FPGA
+    # TODO: Allow -1, etc.
+    num_fpgas: int = 0
 
     # The number of ports per device - this might change in meaning,
     # depending on the communication kernel used
@@ -172,6 +172,7 @@ class PartitioningConfiguration:
 
     # The list of resource types that the partitioner should consider.
     # Only relevant if RESOURCE_UTILIZATION is chosen as a strategy
+    # TODO: Add HBM / DDR
     considered_resources: list[str] = field(
         default_factory=lambda: ["LUT", "FF", "DSP", "BRAM_18K"]
     )

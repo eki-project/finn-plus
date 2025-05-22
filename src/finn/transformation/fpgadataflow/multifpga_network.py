@@ -208,6 +208,72 @@ class AuroraNetworkMetadata(NetworkMetadata):
         """Return all devices used in this network metadata"""
         return list(self.table.keys())
 
+    def sends_to_aurora(self, sdp_name: str, device: int) -> list[str]:
+        """Return the names of aurora kernels that this SDP kernel will output data to
+        >>> am = AuroraNetworkMetadata()
+        >>> am.add_connection(0, "sdp0", 1, "sdp1")
+        >>> am.add_connection(1, "sdp1", 2, "sdp2")
+        >>> am.sends_to_aurora("sdp1", 1)
+        ['aurora_flow_1_dev1']
+        """
+        kernels = []
+        if device not in self.table.keys():
+            raise FINNMultiFPGAError(f"There is no such device ({device}) in the metadata table!")
+        for aurora_kernel, connection in self.table[device].items():
+            if connection[DataDirection.TX] is None:
+                continue
+            if connection[DataDirection.TX][0] == sdp_name:
+                kernels.append(aurora_kernel)
+        return kernels
+
+    def receives_from_aurora(self, sdp_name: str, device: int) -> list[str]:
+        """Return the names of aurora kernels that this SDP kernel will receive data from
+        >>> am = AuroraNetworkMetadata()
+        >>> am.add_connection(0, "sdp0", 1, "sdp1")
+        >>> am.add_connection(1, "sdp1", 2, "sdp2")
+        >>> am.receives_from_aurora("sdp1", 1)
+        ['aurora_flow_0_dev1']
+        """
+        kernels = []
+        if device not in self.table.keys():
+            raise FINNMultiFPGAError(f"There is no such device ({device}) in the metadata table!")
+        for aurora_kernel, connection in self.table[device].items():
+            if connection[DataDirection.RX] is None:
+                continue
+            if connection[DataDirection.RX][0] == sdp_name:
+                kernels.append(aurora_kernel)
+        return kernels
+
+    def get_open_duplex_connections(
+        self, direction: DataDirection, on_device: int | None = None
+    ) -> list[str]:
+        """Get a list of all Aurora kernels, that, in the given direction, have an open port.
+        (Unused duplex port). If on_device is None, its checked for all devices
+        >>> am = AuroraNetworkMetadata()
+        >>> am.add_connection(0, "sdp0", 1, "sdp1")
+        >>> am.add_connection(1, "sdp1", 2, "sdp2")
+        >>> am.get_open_duplex_connections(DataDirection.RX)
+        ['aurora_flow_0_dev0', 'aurora_flow_1_dev1']
+        >>> am.get_open_duplex_connections(DataDirection.TX)
+        ['aurora_flow_0_dev1', 'aurora_flow_0_dev2']
+        >>> am.get_open_duplex_connections(DataDirection.TX, on_device=2)
+        ['aurora_flow_0_dev2']
+        """
+        kernels = []
+        if on_device is not None and on_device not in self.table.keys():
+            raise FINNMultiFPGAError(
+                f"Tried checking for open duplex connections on device "
+                f"{on_device}, which is not to be found in the metadata "
+                "table!"
+            )
+        for device in self.table.keys():
+            if on_device is not None and on_device != device:
+                continue
+            for aurora_kernel, connection in self.table[device].items():
+                if connection[direction] is None:
+                    kernels.append(aurora_kernel)
+        return kernels
+
 
 class CreateNetworkMetadata(ABC):
     """Run this transformation to create metadata necessary for Multi-FPGA settings. Pass the type

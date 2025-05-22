@@ -30,28 +30,36 @@ class FINNUserError(FINNError):
 
 
 class FINNConfigurationError(FINNUserError):
-    """Error emitted when FINN is configured incorrectly"""
+    """(User) Error emitted when FINN is configured incorrectly"""
 
     def __init__(self, *args: object) -> None:
         super().__init__(*args)
 
 
 class FINNDataflowError(FINNInternalError):
-    """Errors regarding the dataflow, dataflow config, step resolution, etc."""
+    """(Internal) Errors regarding the dataflow, dataflow config, step resolution, etc."""
 
     def __init__(self, *args: object) -> None:
         super().__init__(*args)
 
 
 class FINNMultiFPGAError(FINNInternalError):
-    """Internal Multi-FPGA error during one of the transformations"""
+    """(Internal) Multi-FPGA error during one of the transformations"""
 
     def __init__(self, *args: object) -> None:
         super().__init__(*args)
 
 
 class FINNMultiFPGAConfigError(FINNUserError):
-    """Multi-FPGA Error in the configuration or the model"""
+    """(User) Multi-FPGA Error in the configuration or the model"""
+
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+
+
+class FINNVitisLinkConfigError(FINNInternalError):
+    """(Internal) An error appearing in a vitis link configuration when trying to
+    generate a script or config. May happen in both single- and multifpga cases"""
 
     def __init__(self, *args: object) -> None:
         super().__init__(*args)

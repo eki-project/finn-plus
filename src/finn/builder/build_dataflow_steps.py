@@ -110,7 +110,7 @@ from finn.transformation.fpgadataflow.set_fifo_depths import (
 from finn.transformation.fpgadataflow.set_folding import SetFolding
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
-from finn.transformation.fpgadataflow.vitis_build import VitisBuild
+from finn.transformation.fpgadataflow.vitis_build import MultiVitisBuild, VitisBuild
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
@@ -118,6 +118,7 @@ from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth
+from finn.util.exception import FINNMultiFPGAConfigError
 from finn.util.logging import log
 from finn.util.test import execute_parent
 
@@ -717,6 +718,10 @@ def step_make_multifpga(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelW
 
     Output if successful: A graph of StreamingDataflowPartition nodes, each with a device_id,
     a partition_id and stored paths to network config and packaged communication kernels"""
+    if cfg.partitioning_configuration is None or cfg.partitioning_configuration.num_fpgas == 0:
+        raise FINNMultiFPGAConfigError(
+            "Multi-FPGA configuration missing or num_fpgas=0. Fix the config and retry."
+        )
     model = step_partition_for_multifpga(model, cfg)
     model = step_create_multifpga_sdp(model, cfg)
     model = step_prepare_network_infrastructure(model, cfg)
@@ -939,6 +944,12 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
+def step_multifpga_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Minimal synthesis step for Multi-FPGA. To be merged with step_synthesize_bitfile."""
+    model = model.transform(MultiVitisBuild(cfg))
+    return model  # noqa
+
+
 def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Create a deployment package including the driver and bitfile."""
 
@@ -976,5 +987,6 @@ build_dataflow_step_lookup = {
     "step_make_driver": step_make_driver,
     "step_out_of_context_synthesis": step_out_of_context_synthesis,
     "step_synthesize_bitfile": step_synthesize_bitfile,
+    "step_multifpga_synthesis": step_multifpga_synthesis,
     "step_deployment_package": step_deployment_package,
 }
