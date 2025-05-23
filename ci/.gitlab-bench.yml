@@ -75,5 +75,7 @@ Result Collection:
     # Also run on failure of previous tasks to collect partial results
     - when: always
   script:
+    # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
+    - dvc pull
     - python3.10 ci/collect.py
     - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
