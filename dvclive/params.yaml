@@ -1,0 +1,22 @@
+params:
+  dut: mobilenetv1
+  model_path: 
+    /pc2/groups/hpc-prf-ekiapp/felix/ci_models/MobileNetV1/mobilenetv1-w4a4_pre_post_tidy_opset-11.onnx
+  folding_config_file: 
+    /pc2/groups/hpc-prf-ekiapp/felix/ci_models/MobileNetV1/ZCU102_folding_config.json
+  specialize_layers_config_file: 
+    /pc2/groups/hpc-prf-ekiapp/felix/ci_models/MobileNetV1/ZCU102_specialize_layers.json
+  board: RFSoC2x2
+  synth_clk_period_ns: 10
+  auto_fifo_depths: false
+  rtlsim_batch_sizauto_fifo_depths:
+  - estimate_reports
+  - rtlsim_performance
+  - stitched_ip
+  - out_of_context_synth
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2022.2'
