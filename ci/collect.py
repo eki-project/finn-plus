@@ -397,9 +397,10 @@ if __name__ == "__main__":
                 "folding",
                 experiment_name + ".json",
             )
-            configuration["fifo_method"] = ["manual"]
+            configuration["live_fifo_sizing"] = [False]
+            configuration["auto_fifo_depths"] = [False]
             configuration["target_fps"] = ["None"]
-            configuration["folding_path"] = [import_folding_path]
+            configuration["folding_config_file"] = [import_folding_path]
 
             follow_up_bench_cfg.append(configuration)
 

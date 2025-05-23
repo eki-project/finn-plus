@@ -1,3 +1,8 @@
+model_path: models/resnet50/resnet50_w1a2_exported.onnx
+folding_config_file: models/resnet50/U250_folding_config.json
+specialize_layers_config_file: models/resnet50/U250_specialize_layers.json
+vitis_floorplan_file: models/resnet50/floorplan_resnet50.json
+
 steps:
   - finn.builder.custom_step_library.resnet.step_resnet50_tidy # Custom step
   - finn.builder.custom_step_library.resnet.step_resnet50_streamline # Custom step
@@ -10,10 +15,12 @@ steps:
   - step_set_fifo_depths
   - step_hw_codegen
   - step_hw_ipgen
-  #- finn.builder.custom_step_library.resnet.step_resnet50_slr_floorplan # Custom step
   - step_create_stitched_ip
   - step_measure_rtlsim_performance
   - step_out_of_context_synthesis
   - step_synthesize_bitfile
   - step_make_driver
   - step_deployment_package
+
+# folding config comes with FIFO sizes
+auto_fifo_depths: False

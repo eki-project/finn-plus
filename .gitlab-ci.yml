@@ -11,7 +11,7 @@ variables:
     value: ""
   TEST_SUITE:
     description: "Select test suite to run"
-    value: "quicktest_ci" # DEBUG
+    value: "full_ci"
     options:
       - "none"
       - "quicktest_ci"
@@ -35,15 +35,14 @@ variables:
     description: "Optional QoS option (include --qos, e.g., --qos express)"
     value: ""
   MANUAL_CFG_PATH:
-    description: "Use this config file instead of configs stored in the repo. Path must be accessible to runner"
+    description: "Name (in ci/cfg/) or path (relative to LOCAL_CFG_DIR) of benchmarking config to run"
     value: ""
 
 workflow:
   name: '$PIPELINE_NAME'
   rules:
-    # Run pipeline for GitHub PRs to dev or main (does not support PRs from forks)
+    # Run pipeline for GitHub PRs to dev (does not support PRs from forks)
     - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "dev"
-    - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "main"
     # Run pipeline for pushes to dev or main
     - if: $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH == "main"
     # Run pipeline if manually triggered via API or web GUI
@@ -124,6 +123,9 @@ FINN Test Suite 2022.2:
     # Do not run if test suite has been deselected
     - if: $TEST_SUITE == "none"
       when: never
+    # Do not run for PRs to dev (run only for pushes)
+    - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "dev"
+      when: never
     # Always run, as long as there was no prior failure
     - when: on_success
   cache:
@@ -155,6 +157,15 @@ FINN Test Suite 2024.2:
   extends:
     - FINN Test Suite 2022.2
     - .setup_full_2024_2
+  rules:
+    # Do not run on a schedule
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # Do not run if test suite has been deselected
+    - if: $TEST_SUITE == "none"
+      when: never
+    # Always run, as long as there was no prior failure
+    - when: on_success
 
 Bench (Manual):
   stage: test
@@ -172,7 +183,7 @@ Bench (Manual):
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
     BENCH_CFG: "manual"
 
-Bench:
+Bench (Basic):
   stage: test
   rules:
     # Do not run on a schedule
@@ -188,4 +199,26 @@ Bench:
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
   parallel:
     matrix:
-      - BENCH_CFG: [mvau_test, resnet50_test, metafi_test, transformer_test, transformer_radioml_all, synthetic_fifotest, vgg10_test, mobilenetv1_test]
+      - BENCH_CFG: [regression_basic]
+
+Bench (Extended):
+  stage: test
+  rules:
+    # Do not run on a schedule
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # Do not run for PRs to dev (run only for pushes)
+    - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "dev"
+      when: never
+    - if: $MANUAL_CFG_PATH == ""
+  trigger:
+    include: ci/.gitlab-bench.yml
+    strategy: depend
+    forward:
+      pipeline_variables: true
+  variables:
+    PARENT_PIPELINE_ID: $CI_PIPELINE_ID
+    PARALLEL_JOBS: "4"
+  parallel:
+    matrix:
+      - BENCH_CFG: [regression_extended, microbenchmark_basic]

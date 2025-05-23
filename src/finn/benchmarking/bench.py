@@ -44,11 +44,13 @@ def start_bench_run(config_name):
 
         # Gather benchmarking configs
         if config_name == "manual":
-            config_path = os.path.join(os.environ.get("LOCAL_CFG_DIR"), os.environ.get("MANUAL_CFG_PATH"))
+            # First check if the repo contains a config with this name (in ci/cfg/*)
+            config_path = os.path.join("ci", "cfg", os.environ.get("MANUAL_CFG_PATH") + ".yml")
+            if not os.path.exists(config_path):
+                # Otherwise look in LOCAL_CFG_DIR for the filename
+                config_path = os.path.join(os.environ.get("LOCAL_CFG_DIR"), os.environ.get("MANUAL_CFG_PATH"))
         else:
-            configs_path = os.path.join("ci", "cfg")
-            config_select = config_name + ".yml"
-            config_path = os.path.join(configs_path, config_select)
+            config_path = os.path.join("ci", "cfg", config_name + ".yml")
         print("Job launched with SLURM ID: %d" % (job_id))
     except KeyError:
         # Launched without SLURM, assume test run on local machine

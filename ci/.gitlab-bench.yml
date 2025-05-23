@@ -29,6 +29,7 @@ FINN Build:
     # Launch additional monitoring
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
     # Launch benchmarking script via FINN CLI, includes deps update and environment preparation
+    # TODO: cache dvc pull
     - |
       source finn-plus-venv/bin/activate
       dvc pull

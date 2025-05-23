@@ -977,7 +977,7 @@ class bench_transformer(bench):
         )
 
         # TESTING custom vs live FIFO-sizing
-        if self.params.get("fifo_method") == "live":
+        if self.params.get("live_fifo_sizing"):
             # insert default FIFO-sizing step (behind step_generate_estimate_reports)
             for i in range(len(cfg.steps)):
                 if cfg.steps[i] == "step_generate_estimate_reports":
