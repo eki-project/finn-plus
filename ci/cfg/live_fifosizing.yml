@@ -1,0 +1,50 @@
+[
+    # Real models
+    {
+        "dut": ["vgg10"],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["mobilenetv1"],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["resnet50"],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]]
+    },
+
+    # Synthetic non-linear models
+    {
+        "dut": ["synthetic_nonlinear"],
+        "dim": [64],
+        "kernel_size": [5],
+        "ch": [8],
+        "simd": [8],
+        "pe": [8],
+        "parallel_window": [1],
+
+        "lb_num_layers": [1],
+        "rb_num_layers": [4, 8, 16],
+
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["synthetic_nonlinear"],
+        "dim": [64],
+        "kernel_size": [5],
+        "ch": [8],
+        "simd": [1],
+        "pe": [1],
+        "parallel_window": [0],
+
+        "lb_num_layers": [1],
+        "rb_num_layers": [4, 8, 16],
+
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]]
+    }
+]

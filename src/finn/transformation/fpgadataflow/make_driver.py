@@ -312,9 +312,10 @@ class MakePYNQDriverIODMA(Transformation):
     under the runtime_weights/ subfolder of the pynq_driver_dir.
     """
 
-    def __init__(self, platform):
+    def __init__(self, platform, validation_datset=None):
         super().__init__()
         self.platform = platform
+        self.validation_datset = validation_datset
 
     def apply(self, model):
         # create a temporary folder for the generated driver
@@ -428,8 +429,16 @@ class MakePYNQDriverIODMA(Transformation):
         )
         shutil.copy(validate_template, validate_py)
 
-        # generate weight files for runtime-writable layers
+        # generate settings.json for generated driver
+        if self.validation_datset is not None:
+            settings = {
+                "validation_dataset": self.validation_datset,
+            }
+            settingsfile = pynq_driver_dir + "/settings.json"
+            with open(settingsfile, "w") as f:
+                json.dump(settings, f, indent=2)
 
+        # generate weight files for runtime-writable layers
         for sdp_ind, sdp_node in enumerate(model.graph.node):
             assert sdp_node.op_type == "StreamingDataflowPartition"
             # get dataflow model

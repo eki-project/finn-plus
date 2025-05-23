@@ -1,0 +1,48 @@
+[
+    # ResNet-50
+    {
+        "dut": ["resnet50"],
+        "board": ["U250"],
+        "synth_clk_period_ns": [4],
+        "rtlsim_batch_size": [3],
+        # no deployment package because Alveo deployment is not yet supported by CI
+        "generate_outputs": [["estimate_reports", "rtlsim_performance", "stitched_ip", "out_of_context_synth", "bitfile"]]
+    },
+
+    # 4x GPT Transformer models (currently disabled due to streamlining issues!)
+    # {
+    #     "dut": ["transformer"],
+    #     "seed": [12],
+    #     "model_dir": ["models/gpt_a_6b_gpt2-s256-t2048-l2-h4-e256",
+    #                   "models/gpt_b_4b_gpt2-s256-t2048-l2-h4-e256",
+    #                   "models/gpt_c_gpt2-s512-t2048-l2-h4-e512",
+    #                   "models/gpt_d_gpt2-s256-t2048-l1-h2-e256"],
+    #     "board": ["U280"],
+    #     "synth_clk_period_ns": [10],
+    #     "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    # }
+
+    # 5x RadioML Transformer models
+    {
+        "dut": ["transformer"],
+        "seed": [12],
+        "model_dir": ["models/rml_transformer_0",
+                      "models/rml_transformer_a",
+                      "models/rml_transformer_b",
+                      "models/rml_transformer_c",
+                      "models/rml_transformer_d",],
+        "board": ["RFSoC2x2"],
+        "synth_clk_period_ns": [10],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+
+    # 1x RadioML Conformer model
+    {
+        "dut": ["transformer"],
+        "seed": [12],
+        "model_dir": ["models/rml_conformer"],
+        "board": ["RFSoC2x2"],
+        "synth_clk_period_ns": [10],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    }
+]

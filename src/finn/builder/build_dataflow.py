@@ -171,7 +171,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     print(f"Final outputs will be generated in {cfg.output_dir}")
     print(f"Build log is at {cfg.output_dir}/build_dataflow.log")
     # create the output dir if it doesn't exist
-    os.makedirs(cfg.output_dir, exist_ok=True)
+    os.makedirs(os.path.join(cfg.output_dir, "report"), exist_ok=True)
 
     # set up logger
     logpath = os.path.join(cfg.output_dir, "build_dataflow.log")
@@ -253,7 +253,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             step_start = time.time()
             model = transform_step(model, cfg)
             step_end = time.time()
-            time_per_step[step_name] = step_end - step_start
+            time_per_step[step_name] = round(step_end - step_start)
             chkpt_name = f"{step_name}.onnx"
             if cfg.save_intermediate_models:
                 intermediate_model_dir = os.path.join(cfg.output_dir, "intermediate_models")
@@ -281,16 +281,35 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             console.print(f"[bold red]FINN Error: [/bold red]{e}")
             log.error(f"{e}")
             print("Build failed")
+            metadata = {
+                "status": "failed",
+                "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
+            }
+            with open(os.path.join(cfg.output_dir, "report/metadata_builder.json"), "w") as f:
+                json.dump(metadata, f, indent=2)
             return -1  # A user error shouldn't be need to be fixed using PDB
 
         # start postmortem debug if configured
         if cfg.enable_build_pdb_debug:
             pdb.post_mortem(tb)
         print("Build failed")
+        metadata = {
+            "status": "failed",
+            "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
+        }
+        with open(os.path.join(cfg.output_dir, "report/metadata_builder.json"), "w") as f:
+            json.dump(metadata, f, indent=2)
         return -1
 
-    with open(os.path.join(cfg.output_dir, "time_per_step.json"), "w") as f:
+    time_per_step["total_build_time"] = sum(time_per_step.values())
+    with open(os.path.join(cfg.output_dir, "report/time_per_step.json"), "w") as f:
         json.dump(time_per_step, f, indent=2)
+    metadata = {
+        "status": "ok",
+        "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
+    }
+    with open(os.path.join(cfg.output_dir, "report/metadata_builder.json"), "w") as f:
+        json.dump(metadata, f, indent=2)
     print("Completed successfully")
     return 0
 

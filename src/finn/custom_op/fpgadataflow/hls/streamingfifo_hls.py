@@ -66,7 +66,7 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
             )
         )
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            'hls::stream<ap_uint<{}>> out_{} ("out_{}");'.format(
+            'hls::stream<ap_uint<{}>> out0_{} ("out0_{}");'.format(
                 self.get_outstream_width(), self.hls_sname(), self.hls_sname()
             )
         )
@@ -88,7 +88,7 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
             VirtualFIFO<Width>(in_fifo, out_fifo, mode, depth, occupancy, max_occupancy);
 
             // FIFO -> AXI-Stream
-            move(out_fifo, out_%s);
+            move(out_fifo, out0_%s);
             """
             % (self.hls_sname(), self.hls_sname())
         ]
@@ -99,7 +99,7 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
         out_packed_bits = self.get_outstream_width()
         out_packed_hls_type = "ap_uint<%d>" % out_packed_bits
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            """void %s(hls::stream<%s > &in0_%s, hls::stream<%s > &out_%s, ap_uint<32> mode,
+            """void %s(hls::stream<%s > &in0_%s, hls::stream<%s > &out0_%s, ap_uint<32> mode,
             ap_uint<32> depth, ap_uint<32> &occupancy, ap_uint<32> &max_occupancy)"""
             % (
                 self.onnx_node.name,
@@ -115,7 +115,7 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
             "#pragma HLS INTERFACE axis port=in0_" + self.hls_sname()
         ]
         self.code_gen_dict["$PRAGMAS$"].append(
-            "#pragma HLS INTERFACE axis port=out_" + self.hls_sname()
+            "#pragma HLS INTERFACE axis port=out0_" + self.hls_sname()
         )
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE s_axilite port=mode")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE s_axilite port=depth")

@@ -260,6 +260,30 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
     )
 
 
+@click.command(help="Run a given benchmark configuration.")
+@click.option("--bench_config", help="Name or path of experiment configuration file", required=True)
+@click.option("--dependency-path", "-d", default="")
+@click.option("--num-workers", "-n", default=-1, show_default=True)
+@click.option(
+    "--build-path",
+    "-b",
+    help="Specify a build temp path of your choice",
+    default="",
+)
+def bench(bench_config: str, dependency_path: str, num_workers: int, build_path: str) -> None:
+    console = Console()
+    build_dir = Path(build_path).expanduser() if build_path != "" else None
+    dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
+    prepare_finn(dep_path, Path(), build_dir, num_workers)
+    console.rule("RUNNING BENCHMARK")
+
+    # Late import because we need prepare_finn to setup remaining dependencies first
+    from finn.benchmarking.bench import start_bench_run
+
+    exit_code = start_bench_run(bench_config)
+    sys.exit(exit_code)
+
+
 @click.command(help="Run a given test. Uses /tmp/FINN_TMP as the temporary file location")
 @click.option(
     "--variant",
@@ -385,6 +409,7 @@ def main() -> None:
     main_group.add_command(config)
     main_group.add_command(deps)
     main_group.add_command(build)
+    main_group.add_command(bench)
     main_group.add_command(test)
     main_group.add_command(run)
     main_group()

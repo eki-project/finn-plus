@@ -1,0 +1,81 @@
+include: ci/.gitlab-setup.yml
+
+stages:
+  - build
+  - measure
+  - collect
+
+variables:
+  BENCH_CFG:
+    description: "Select config, usually provided by parent pipeline"
+    value: ""
+
+workflow:
+  name: "bench_$BENCH_CFG"
+
+FINN Build:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: build
+  needs:
+    - job: Build
+      pipeline: $PARENT_PIPELINE_ID
+  variables:
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES_BENCH --exclusive --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
+  extends: .setup_full_2022_2
+  script:
+    # Launch additional monitoring
+    - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
+    # Launch benchmarking script via FINN CLI, includes deps update and environment preparation
+    # TODO: cache dvc pull
+    - |
+      source finn-plus-venv/bin/activate
+      dvc pull
+      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers $CPU_CORES_BENCH --bench_config $BENCH_CFG
+  cache:
+    key: $CI_COMMIT_SHA
+    policy: pull
+    paths:
+      - deps
+  artifacts:
+    name: "build_artifacts"
+    when: always
+    paths:
+      - build_artifacts/
+
+Measurement:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: measure
+  tags:
+    - board
+  rules:
+    # Also run on failure of previous tasks to measure partial results
+    - when: always
+  script:
+    # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python ci/measure.py"
+  artifacts:
+    name: "measurement_artifacts"
+    when: always
+    paths:
+      - measurement_artifacts/
+
+Result Collection:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: collect
+  tags:
+    - image_build
+  rules:
+    # Also run on failure of previous tasks to collect partial results
+    - when: always
+  script:
+    # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
+    - dvc pull
+    - python3.10 ci/collect.py
+    - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
