@@ -46,7 +46,7 @@ def start_bench_run(config_name):
         if config_name == "manual":
             config_path = os.path.join(os.environ.get("LOCAL_CFG_DIR"), os.environ.get("MANUAL_CFG_PATH"))
         else:
-            configs_path = os.path.join(os.path.dirname(__file__), "../../..", "ci/cfg")
+            configs_path = os.path.join("ci", "cfg")
             config_select = config_name + ".yml"
             config_path = os.path.join(configs_path, config_select)
         print("Job launched with SLURM ID: %d" % (job_id))
