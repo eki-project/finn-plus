@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import yaml
 from shutil import copy as shcopy
 from shutil import copytree
 
@@ -17,8 +18,6 @@ from finn.benchmarking.templates import (
 from finn.benchmarking.util import delete_dir_contents, power_xml_to_dict
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.util.basic import alveo_default_platform, alveo_part_map, part_map
-
-# TODO: merge this file into bench.py once most functionality has been moved to builder
 
 
 def start_test_batch_fast(results_path, project_path, run_target, pairs):
@@ -109,7 +108,7 @@ class bench:
         # TODO: coordinate with new builder loggin setup
 
         # Setup some basic global default configuration
-        # TODO: are these class members even used anymore?
+        # TODO: clean up or remove these attributes
         if "synth_clk_period_ns" in params:
             self.clock_period_ns = params["synth_clk_period_ns"]
         else:
@@ -135,6 +134,23 @@ class bench:
             self.params["vitis_platform"] = alveo_default_platform[self.board]
         else:
             self.params["shell_flow_type"] = build_cfg.ShellFlowType.VIVADO_ZYNQ
+
+        # Load custom (= non build_dataflow_config) parameters from topology-specific .yml
+        custom_params = [
+            "model_dir",  # used to setup onnx/npy input
+            "model_path",  # used to setup onnx/npy input
+            # model-gen parameters, such as seed, simd, pe, etc.
+            # TODO: separate these more cleanly from builder options
+        ]
+
+        dut_yaml_name = self.params["dut"] + ".yml"
+        dut_path = os.path.join(os.path.dirname(__file__), "dut", dut_yaml_name)
+        if os.path.isfile(dut_path):
+            with open(dut_path, "r") as f:
+                dut_cfg = yaml.load(f, Loader=yaml.SafeLoader)
+            for key in dut_cfg:
+                if key in custom_params:
+                    self.params[key] = dut_cfg[key]
 
         # Clear FINN tmp build dir before every run
         print("Clearing FINN BUILD DIR ahead of run")
@@ -244,15 +260,6 @@ class bench:
 
     def steps_full_build_flow(self):
         # Default step sequence for benchmarking a full FINN builder flow
-
-        # LIST OF ADDITIONAL YAML OPTIONS (beyond DataflowBuildConfig)
-        custom_params = [
-            "model_dir",  # used to setup onnx/npy input
-            "model_path",  # used to setup onnx/npy input
-            # model-gen parameters, such as seed, simd, pe, etc.
-            # TODO: separate these from builder options
-        ]
-
         # MODEL CREATION/IMPORT
         # TODO: track fixed input onnx models with DVC
         if "model_dir" in self.params:
@@ -281,7 +288,8 @@ class bench:
         # enable extra performance optimizations (physopt)
         # TODO: check OMX synth strategy again!
         cfg.vitis_opt_strategy = build_cfg.VitisOptStrategy.PERFORMANCE_BEST
-        cfg.verbose = False
+        cfg.verbose = True
+        cfg.console_log_level = "ERROR"
         cfg.enable_build_pdb_debug = False
         # cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
         cfg.force_python_rtlsim = False
@@ -294,14 +302,10 @@ class bench:
         # cfg.large_fifo_mem_style
 
         # Overwrite build config settings with run-specific YAML build definition
+        # TODO: warn/error if there are unrecognized options set?
         for key in self.params:
             if hasattr(cfg, key):
                 setattr(cfg, key, self.params[key])
-            else:
-                if key not in custom_params:
-                    pass
-                    # TODO: be more strict? support custom extra options like MetaFi uses?
-                    # raise Exception("Unrecognized builder config defined in YAML: %s" % key)
 
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?
