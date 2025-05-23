@@ -1,0 +1,19 @@
+params:
+  dut: resnet50
+  model_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/resnet50_w1a2_exported.onnx
+  folding_config_file: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/U250_folding_config.json
+  specialize_layers_config_file: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/U250_specialize_layers.json
+  floorplan_path: /pc2/groups/hpc-prf-ekiapp/felix/ci_models/ResNet-50/floorplan_resnet50.json
+  board: U250
+  synth_clk_period_ns: 4
+  auto_fifo_depths: false
+  rtlsim_batch_size: 5
+  generate_outputs:
+  - estimate_reports
+  - rtlsim_performance
+  - stitched_ip
+  - out_of_context_synth
+  shell_flow_type: vitis_alveo
+  vitis_platform: xilinx_u250_gen3x16_xdma_2_1_202010_1
+metadata:
+  tool_version: '2022.2'
