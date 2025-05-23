@@ -27,14 +27,15 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import argparse
-import os
-import numpy as np
-from PIL import Image
-from dataset_loading import FileQueue, ImgQueue
 import json
-from pynq import PL
+import numpy as np
+import os
+from dataset_loading import FileQueue, ImgQueue
 from driver import io_shape_dict
 from driver_base import FINNExampleOverlay
+from PIL import Image
+from pynq import PL
+
 
 def img_resize(img, size):
     w, h = img.size
@@ -49,12 +50,14 @@ def img_resize(img, size):
         ow = int(size * w / h)
         return img.resize((ow, oh), Image.BILINEAR)
 
+
 def img_center_crop(img, size):
     crop_height, crop_width = (size, size)
     image_width, image_height = img.size
-    crop_top = int(round((image_height - crop_height) / 2.))
-    crop_left = int(round((image_width - crop_width) / 2.))
+    crop_top = int(round((image_height - crop_height) / 2.0))
+    crop_left = int(round((image_width - crop_width) / 2.0))
     return img.crop((crop_left, crop_top, crop_left + crop_width, crop_top + crop_height))
+
 
 def pre_process(img_np):
     img = Image.fromarray(img_np.astype(np.uint8))
@@ -63,9 +66,10 @@ def pre_process(img_np):
     img = np.array(img, dtype=np.uint8)
     return img
 
-def setup_dataloader(val_path, label_file_path = None, batch_size=100, n_images = 50000):
+
+def setup_dataloader(val_path, label_file_path=None, batch_size=100, n_images=50000):
     if label_file_path is None:
-        val_folders = [ f.name for f in os.scandir(val_path) if f.is_dir() ]
+        val_folders = [f.name for f in os.scandir(val_path) if f.is_dir()]
         val_folders = sorted(val_folders)
         assert len(val_folders) == 1000, "Expected 1000 subfolders in ILSVRC2012 val"
         files = []
@@ -74,17 +78,18 @@ def setup_dataloader(val_path, label_file_path = None, batch_size=100, n_images 
             current_files = sorted(os.listdir(os.path.join(val_path, folder)))
             current_files = [os.path.join(folder, file) for file in current_files]
             files.extend(current_files)
-            labels.extend([idx]*len(current_files))
+            labels.extend([idx] * len(current_files))
         files = files[:n_images]
     else:
-        files = ['ILSVRC2012_val_{:08d}.JPEG'.format(i) for i in range(1,n_images+1)]
+        files = ["ILSVRC2012_val_{:08d}.JPEG".format(i) for i in range(1, n_images + 1)]
         labels = np.loadtxt(label_file_path, dtype=int, usecols=1)
 
     file_queue = FileQueue()
-    file_queue.load_epochs(list(zip(files,labels)), shuffle=False)
+    file_queue.load_epochs(list(zip(files, labels)), shuffle=False)
     img_queue = ImgQueue(maxsize=batch_size)
     img_queue.start_loaders(file_queue, num_threads=1, img_dir=val_path, transform=pre_process)
     return img_queue
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -93,7 +98,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batchsize", help="number of samples for inference", type=int, default=100
     )
-    parser.add_argument("--dataset", help="dataset to use (mnist, cifar10, cifar100, imagenet)", default="")
+    parser.add_argument(
+        "--dataset", help="dataset to use (mnist, cifar10, cifar100, imagenet)", default=""
+    )
     parser.add_argument(
         "--platform", help="Target platform: zynq-iodma alveo", default="zynq-iodma"
     )
@@ -154,6 +161,7 @@ if __name__ == "__main__":
         )
     elif dataset == "cifar100":
         from dataset_loading import cifar
+
         trainx, trainy, testx, testy, valx, valy = cifar.load_cifar_data(
             dataset_root, download=True, one_hot=False, cifar10=False
         )
@@ -184,7 +192,7 @@ if __name__ == "__main__":
             ibuf_normal = test_imgs[i].reshape(driver.ishape_normal())
             exp = test_labels[i]
             obuf_normal = driver.execute(ibuf_normal)
-            #obuf_normal = obuf_normal.reshape(bsize, -1)[:,0]
+            # obuf_normal = obuf_normal.reshape(bsize, -1)[:,0]
             if obuf_normal.shape[1] > 1:
                 obuf_normal = np.argmax(obuf_normal, axis=1)
             ret = np.bincount(obuf_normal.flatten() == exp.flatten(), minlength=2)
@@ -202,7 +210,7 @@ if __name__ == "__main__":
             exp = np.array(lbls)
             ibuf_normal = imgs.reshape(driver.ishape_normal())
             obuf_normal = driver.execute(ibuf_normal)
-            #obuf_normal = obuf_normal.reshape(bsize, -1)[:,0]
+            # obuf_normal = obuf_normal.reshape(bsize, -1)[:,0]
             if obuf_normal.shape[1] > 1:
                 obuf_normal = np.argmax(obuf_normal, axis=1)
             ret = np.bincount(obuf_normal.flatten() == exp.flatten(), minlength=2)

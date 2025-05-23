@@ -1,15 +1,8 @@
-import json
 import numpy as np
-import os
-import shutil
-import torch
-import copy
-from brevitas.export import export_qonnx
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.general.im2col import compute_conv_output_dim
-from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import (
     GiveRandomTensorNames,
     GiveReadableTensorNames,
@@ -21,16 +14,12 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.merge_onnx_models import MergeONNXModels
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
-import finn.builder.build_dataflow as build
+
 import finn.builder.build_dataflow_config as build_cfg
-from finn.util.basic import make_build_dir
-from finn.benchmarking.util import summarize_table, summarize_section, power_xml_to_dict, delete_dir_contents
-from finn.util.test import get_trained_network_and_ishape
-from finn.util.basic import alveo_default_platform
-
-
-
 from finn.benchmarking.bench_base import bench
+
+from finn.util.basic import make_build_dir
+
 
 def generate_random_threshold_values(
     data_type, num_input_channels, num_steps, narrow=False, per_tensor=False
@@ -49,6 +38,7 @@ def generate_random_threshold_values(
 
 def sort_thresholds_increasing(thresholds):
     return np.sort(thresholds, axis=1)
+
 
 def make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_window=0):
     # hardcoded parameters
@@ -164,7 +154,9 @@ def make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_window
 
 
 def combine_blocks(lb, rb, ifm_dim, ch, pe):
-    # assumes left branch (lb) and right branch (rb) each have a single (dynamic) input/output with the same shape
+    # assumes left branch (lb) and right branch (rb) each have a
+    # single (dynamic) input/output with the same shape
+
     # to avoid mix-ups, start by giving all tensors random names
     lb = lb.transform(GiveRandomTensorNames())
     rb = rb.transform(GiveRandomTensorNames())
@@ -249,17 +241,14 @@ def combine_blocks(lb, rb, ifm_dim, ch, pe):
     model = model.transform(GiveReadableTensorNames())
     return model
 
+
 class bench_synthetic_nonlinear(bench):
     def step_export_onnx(self, onnx_export_path):
         np.random.seed(0)
         tmp_output_dir = make_build_dir("test_fifosizing")
 
-        #TODO: allow manual folding/fifo config as input
-
-        #TODO: is a scenario possible where reducing depth of a single FIFO at a time is not sufficient for testing tightness?
-        #      e.g. reducing > 1 FIFOs simultaneously does not cause a throughput drop while reducing a single FIFO does?
-
-        #TODO: how to determine rtlsim_n automatically?
+        # TODO: allow manual folding/fifo config as input
+        # TODO: how to determine rtlsim_n automatically?
 
         # conv parameters
         dim = self.params["dim"]

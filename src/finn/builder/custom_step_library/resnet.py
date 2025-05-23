@@ -34,7 +34,6 @@ from qonnx.transformation.composed import ComposedTransformation
 from qonnx.transformation.double_to_single_float import DoubleToSingleFloat
 from qonnx.transformation.fold_constants import FoldConstants
 from qonnx.transformation.general import (
-    ApplyConfig,
     ConvertDivToMul,
     ConvertSubToAdd,
     GiveReadableTensorNames,
@@ -52,7 +51,7 @@ from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.transformation.remove import RemoveIdentityOps
 
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
-from finn.builder.build_dataflow_config import DataflowBuildConfig, ShellFlowType
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.streamline.absorb import (
     Absorb1BitMulIntoConv,

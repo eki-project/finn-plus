@@ -1,31 +1,24 @@
-
+import json
 import math
 import numpy as np
-import json
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
-from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import (
     calculate_matvec_accumulator_range,
     gen_finn_dt_tensor,
-    qonnx_make_model
+    qonnx_make_model,
 )
-from finn.transformation.fpgadataflow.minimize_accumulator_width import (
-    MinimizeAccumulatorWidth,
-)
-from finn.transformation.fpgadataflow.minimize_weight_bit_width import (
-    MinimizeWeightBitWidth,
-)
-import finn.builder.build_dataflow_config as build_cfg
 
+import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.bench_base import bench
+from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
+from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
+
 
 class bench_mvau(bench):
-
     def _make_single_mvau_model(
         self,
         W,
@@ -77,7 +70,7 @@ class bench_mvau(bench):
             actval = 0
             no_act = 1
         mvau_node = helper.make_node(
-            "MVAU_hls", #TODO: add rtl support (configurable as param)
+            "MVAU_hls",  # TODO: add rtl support (configurable as param)
             node_inp_list,
             ["outp"],
             domain="finn.custom_op.fpgadataflow.hls",
@@ -101,7 +94,9 @@ class bench_mvau(bench):
             runtime_writeable_weights=0,
         )
 
-        graph = helper.make_graph(nodes=[mvau_node], name="mvau_graph", inputs=[inp], outputs=[outp])
+        graph = helper.make_graph(
+            nodes=[mvau_node], name="mvau_graph", inputs=[inp], outputs=[outp]
+        )
         model = qonnx_make_model(graph, producer_name="mvau-model")
         model = ModelWrapper(model)
 
@@ -194,10 +189,14 @@ class bench_mvau(bench):
                 W[idx] = 0.0
                 W = np.reshape(W, (mw, mh))
             elif sparsity_type == "rows_random":
-                idx_mw = np.random.choice(mw, size=int(self.params["sparsity_amount"] * mw), replace=False)
+                idx_mw = np.random.choice(
+                    mw, size=int(self.params["sparsity_amount"] * mw), replace=False
+                )
                 W[idx_mw, :] = 0.0
             elif sparsity_type == "cols_random":
-                idx_mh = np.random.choice(mh, size=int(self.params["sparsity_amount"] * mh), replace=False)
+                idx_mh = np.random.choice(
+                    mh, size=int(self.params["sparsity_amount"] * mh), replace=False
+                )
                 W[:, idx_mh] = 0.0
             elif sparsity_type == "rows_regular":
                 if self.params["sparsity_amount"] == 0.25:
@@ -206,7 +205,11 @@ class bench_mvau(bench):
                     idx_mw = np.arange(0, mw, step=2)
                 elif self.params["sparsity_amount"] == 0.75:
                     idx_mw = np.concatenate(
-                        (np.arange(0, mw, step=4), np.arange(1, mw, step=4), np.arange(2, mw, step=4))
+                        (
+                            np.arange(0, mw, step=4),
+                            np.arange(1, mw, step=4),
+                            np.arange(2, mw, step=4),
+                        )
                     )
                 else:
                     print("regular sparsity only applicable for amount 0.25/0.5/0.75, skipping")
@@ -219,7 +222,11 @@ class bench_mvau(bench):
                     idx_mh = np.arange(0, mh, step=2)
                 elif self.params["sparsity_amount"] == 0.75:
                     idx_mh = np.concatenate(
-                        (np.arange(0, mh, step=4), np.arange(1, mh, step=4), np.arange(2, mh, step=4))
+                        (
+                            np.arange(0, mh, step=4),
+                            np.arange(1, mh, step=4),
+                            np.arange(2, mh, step=4),
+                        )
                     )
                 else:
                     print("regular sparsity only applicable for amount 0.25/0.5/0.75, skipping")
@@ -262,13 +269,15 @@ class bench_mvau(bench):
                 odt = DataType["INT32"]
         else:
             odt = act
-            # set range for threshold values according to worst-case accumulator range (not weight value specific)
+            # set range for threshold values according to worst-case accumulator range
+            # (not weight value specific)
             # this could result in some thresholds being clipped by MinimizeAccumulatorWidth
             # lower_range = calculate_matvec_accumulator_range(wdt.min() * np.ones_like(W), idt)
             # upper_range = calculate_matvec_accumulator_range(wdt.max() * np.ones_like(W), idt)
             # acc_min = min(min(lower_range), min(upper_range))
             # acc_max = max(max(lower_range), max(upper_range))
-            # set range for threshold values according to actual accumulator range for the generated weights
+            # set range for threshold values according to actual accumulator range
+            # for the generated weights
             (acc_min, acc_max) = calculate_matvec_accumulator_range(W, idt)
             n_steps = act.get_num_possible_values() - 1
             T = np.random.randint(acc_min, acc_max - 1, (mh, n_steps)).astype(np.float32)
@@ -285,13 +294,26 @@ class bench_mvau(bench):
 
         # Create model
         model = self._make_single_mvau_model(
-            W, numInputVectors, pe, simd, m, wdt, idt, odt, T, tdt, mem_mode, ram_style, ram_style_thr
+            W,
+            numInputVectors,
+            pe,
+            simd,
+            m,
+            wdt,
+            idt,
+            odt,
+            T,
+            tdt,
+            mem_mode,
+            ram_style,
+            ram_style_thr,
         )
         model = model.transform(GiveUniqueNodeNames())
-        node = model.get_nodes_by_op_type("MVAU_hls")[0]
-        inst = getCustomOp(node)
+        # node = model.get_nodes_by_op_type("MVAU_hls")[0]
+        # inst = getCustomOp(node)
 
-        self.target_node = "MVAU_hls" # display results of analysis passes only for the first occurence of this op type
+        # display results of analysis passes only for the first occurence of this op type
+        self.target_node = "MVAU_hls"
 
         # log additional info about the generated model (e.g. SIMD/PE or sparsity)
         with open(self.build_inputs["build_dir"] + "/report/dut_info.json", "w") as f:
@@ -317,6 +339,6 @@ class bench_mvau(bench):
                 "step_synthesize_bitfile",
                 "step_make_driver",
                 "step_deployment_package",
-            ]
+            ],
         )
         return cfg

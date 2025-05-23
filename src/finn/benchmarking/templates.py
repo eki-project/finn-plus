@@ -1,5 +1,6 @@
 # Template strings for benchmarking
 
+# flake8: noqa
 
 # power report scripting based on Lucas Reuter:
 template_open = """

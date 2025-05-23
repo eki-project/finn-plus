@@ -4,14 +4,13 @@
 
 # Copies (deep-copies) python objects
 import copy
+import json
 
 # Numpy for loading and comparing the verification input/output
 import numpy as np
 
 # YAML for loading experiment configurations
 import yaml
-
-import json
 
 # QONNX quantization data types
 from qonnx.core.datatype import DataType
@@ -113,10 +112,7 @@ from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStre
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 
 # Splitting and removing of FIFOs from the model graph
-from finn.transformation.fpgadataflow.set_fifo_depths import (
-    RemoveShallowFIFOs,
-    SplitLargeFIFOs,
-)
+from finn.transformation.fpgadataflow.set_fifo_depths import RemoveShallowFIFOs, SplitLargeFIFOs
 
 # Graph transformation setting the folding, i.e., parallelization configuration
 from finn.transformation.fpgadataflow.set_folding import SetFolding
@@ -130,15 +126,12 @@ from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 # Folds quantizers into weight tensor initializers, needed for lowering
 # convolutions to MatMuls
 from finn.transformation.qonnx.fold_quant_weights import FoldQuantWeights
-from finn.transformation.qonnx.quant_act_to_multithreshold import (
-    default_filter_function_generator,
-)
+from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
 
 # Cleanup transformation getting rid of 3d data layout
 from finn.transformation.squeeze import Squeeze
 from finn.transformation.streamline.absorb import (
     AbsorbAddIntoMultiThreshold,
-    AbsorbMulIntoMultiThreshold,
     AbsorbSignBiasIntoMultiThreshold,
 )
 
@@ -148,14 +141,10 @@ from finn.transformation.streamline.collapse_repeated import CollapseRepeatedTra
 
 # FINN streamlining transformations removing nodes without real effect from the
 # graph
-from finn.transformation.streamline.remove import (
-    RemoveIdentityReshape,
-    RemoveIdentityTranspose,
-)
+from finn.transformation.streamline.remove import RemoveIdentityReshape, RemoveIdentityTranspose
 
 # FINN streamlining transformations reordering the graph
 from finn.transformation.streamline.reorder import (
-    MoveAddPastMul,
     MoveMulPastAdd,
     MoveSqueezePastMatMul,
     MoveSqueezePastMultiThreshold,

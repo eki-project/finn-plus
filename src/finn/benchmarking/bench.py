@@ -1,18 +1,16 @@
 import itertools
-import os
 import json
-import yaml
+import onnxruntime as ort
+import os
 import time
 import traceback
-import onnxruntime as ort
+import yaml
 
-from finn.benchmarking.util import delete_dir_contents
 from finn.benchmarking.bench_base import bench
-
 from finn.benchmarking.dut.mvau import bench_mvau
 from finn.benchmarking.dut.synthetic_nonlinear import bench_synthetic_nonlinear
 from finn.benchmarking.dut.transformer import bench_transformer
-
+from finn.benchmarking.util import delete_dir_contents
 
 # Register custom bench subclasses that offer more control than YAML-based flow
 dut = dict()
@@ -27,19 +25,24 @@ def start_bench_run(config_name):
     # See https://github.com/microsoft/onnxruntime/issues/8313
     # This seems to happen only when assigned CPU cores are not contiguous
     _default_session_options = ort.capi._pybind_state.get_default_session_options()
+
     def get_default_session_options_new():
         _default_session_options.inter_op_num_threads = 1
         _default_session_options.intra_op_num_threads = 1
         return _default_session_options
+
     ort.capi._pybind_state.get_default_session_options = get_default_session_options_new
 
     try:
         # Launched via SLURM, expect additional CI env vars
         job_id = int(os.environ["SLURM_JOB_ID"])
-        # experiment_dir = os.environ.get("EXPERIMENT_DIR") # original experiment dir (before potential copy to ramdisk)
+        # original experiment dir (before potential copy to ramdisk):
+        # experiment_dir = os.environ.get("EXPERIMENT_DIR")
         experiment_dir = os.environ.get("CI_PROJECT_DIR")
-        save_dir = os.path.join(os.environ.get("LOCAL_ARTIFACT_DIR"),
-                            "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + os.environ.get("CI_PIPELINE_NAME"))
+        save_dir = os.path.join(
+            os.environ.get("LOCAL_ARTIFACT_DIR"),
+            "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + os.environ.get("CI_PIPELINE_NAME"),
+        )
         work_dir = os.environ["PATH_WORKDIR"]
 
         # Gather benchmarking configs
@@ -48,7 +51,9 @@ def start_bench_run(config_name):
             config_path = os.path.join("ci", "cfg", os.environ.get("MANUAL_CFG_PATH") + ".yml")
             if not os.path.exists(config_path):
                 # Otherwise look in LOCAL_CFG_DIR for the filename
-                config_path = os.path.join(os.environ.get("LOCAL_CFG_DIR"), os.environ.get("MANUAL_CFG_PATH"))
+                config_path = os.path.join(
+                    os.environ.get("LOCAL_CFG_DIR"), os.environ.get("MANUAL_CFG_PATH")
+                )
         else:
             config_path = os.path.join("ci", "cfg", config_name + ".yml")
         print("Job launched with SLURM ID: %d" % (job_id))
@@ -60,7 +65,7 @@ def start_bench_run(config_name):
         work_dir = "bench_work"
         os.makedirs(work_dir, exist_ok=True)
         delete_dir_contents(work_dir)
-        config_path = config_name # expect caller to provide direct path to a single config file
+        config_path = config_name  # expect caller to provide direct path to a single config file
         print("Local test job launched without SLURM")
 
     try:
@@ -129,7 +134,8 @@ def start_bench_run(config_name):
 
     # Run benchmark
     # TODO: integrate this loop (especially status logging) into the bench class
-    # TODO: log stdout of individual tasks of the job array into seperate files as artifacts (GitLab web interface is not readable), coordinate with new logging
+    # TODO: log stdout of individual tasks of the job array into seperate files as artifacts
+    # (GitLab web interface is not readable), coordinate with new logging
     for run, run_id in enumerate(selected_runs):
         print(
             "Starting run %d/%d (id %d of %d total runs)"
@@ -144,7 +150,9 @@ def start_bench_run(config_name):
         # Create bench object for respective DUT
         if "dut" in params:
             if params["dut"] in dut:
-                bench_object = dut[params["dut"]](params, task_id, run_id, work_dir, artifacts_dir, save_dir)
+                bench_object = dut[params["dut"]](
+                    params, task_id, run_id, work_dir, artifacts_dir, save_dir
+                )
             else:
                 # If no custom bench subclass is defined, fall back to base class,
                 # expect DUT-specific YAML definition instead
@@ -168,7 +176,7 @@ def start_bench_run(config_name):
 
         log_dict["output"] = bench_object.output_dict
 
-        # examine status reported by builder (which catches all exceptions before they reach us here)
+        # examine status reported by builder (which catches all exceptions before they reach us)
         # we could also fail the pipeline if functional verification fails (TODO)
         builder_log_path = os.path.join(bench_object.report_dir, "metadata_builder.json")
         if os.path.isfile(builder_log_path):

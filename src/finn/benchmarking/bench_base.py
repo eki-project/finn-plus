@@ -1,49 +1,25 @@
-import itertools
-import os
-import subprocess
-import copy
-import json
-import yaml
-import time
-import traceback
 import glob
+import json
+import os
 import shutil
-import numpy as np
+import subprocess
 from shutil import copy as shcopy
 from shutil import copytree
-import finn.core.onnx_exec as oxe
-from qonnx.custom_op.registry import getCustomOp
-from qonnx.transformation.base import Transformation
-from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
-from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
-from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
-from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
-from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
-from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
-from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
-from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
-from finn.analysis.fpgadataflow.res_estimation import res_estimation
-from finn.transformation.fpgadataflow.make_zynq_proj import collect_ip_dirs
-import finn.builder.build_dataflow_config as build_cfg
-from finn.util.basic import make_build_dir, pynq_native_port_width, part_map, alveo_default_platform, alveo_part_map
-from finn.benchmarking.templates import template_open, template_single_test, template_sim_power, template_switching_simulation_tb, zynq_harness_template
-from finn.benchmarking.util import summarize_table, summarize_section, power_xml_to_dict, delete_dir_contents
-from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
-    ReplaceVerilogRelPaths,
-)
-from qonnx.util.basic import (
-    gen_finn_dt_tensor,
-    roundup_to_integer_multiple,
-)
+
 import finn.builder.build_dataflow as build
-from finn.analysis.fpgadataflow.post_synth_res import post_synth_res
-from qonnx.core.modelwrapper import ModelWrapper
+import finn.builder.build_dataflow_config as build_cfg
+from finn.benchmarking.templates import (
+    template_open,
+    template_sim_power,
+    template_single_test,
+    template_switching_simulation_tb,
+)
+from finn.benchmarking.util import delete_dir_contents, power_xml_to_dict
 from finn.builder.build_dataflow_config import DataflowBuildConfig
-import pandas as pd
-import onnxruntime as ort
-#TODO: merge this file into bench.py once most functionality has been moved to builder
+from finn.util.basic import alveo_default_platform, alveo_part_map, part_map
+
+# TODO: merge this file into bench.py once most functionality has been moved to builder
+
 
 def start_test_batch_fast(results_path, project_path, run_target, pairs):
     # Prepare tcl script
@@ -87,7 +63,7 @@ def sim_power_report(results_path, project_path, in_width, out_width, dtype_widt
     script = script.replace("$SAIF_FILE_PATH$", os.getcwd() + "/switching.saif")
     script = script.replace("$SIM_DURATION_NS$", str(int(sim_duration_ns)))
     script = script.replace("$REPORT_PATH$", results_path)
-    script = script.replace("$REPORT_NAME$", f"sim")
+    script = script.replace("$REPORT_NAME$", "sim")
     with open(os.getcwd() + "/power_report.tcl", "w") as tcl_file:
         tcl_file.write(script)
 
@@ -117,7 +93,8 @@ def sim_power_report(results_path, project_path, in_width, out_width, dtype_widt
     with open(power_report_json, "w") as json_file:
         json_file.write(json.dumps(power_report_dict, indent=2))
 
-class bench():
+
+class bench:
     def __init__(self, params, task_id, run_id, work_dir, artifacts_dir, save_dir, debug=True):
         super().__init__()
         self.params = params
@@ -128,8 +105,8 @@ class bench():
         self.save_dir = save_dir
         self.debug = debug
 
-        #TODO: setup a logger so output can go to console (with task id prefix) and log simultaneously
-        #TODO: coordinate with new builder loggin setup
+        # TODO: setup a logger so output can go to console (with task id prefix)
+        # TODO: coordinate with new builder loggin setup
 
         # Setup some basic global default configuration
         # TODO: are these class members even used anymore?
@@ -152,42 +129,46 @@ class bench():
             self.part = part_map[self.board]
         else:
             raise Exception("No part specified for board %s" % self.board)
-    
+
         if self.board in alveo_part_map:
             self.params["shell_flow_type"] = build_cfg.ShellFlowType.VITIS_ALVEO
             self.params["vitis_platform"] = alveo_default_platform[self.board]
         else:
             self.params["shell_flow_type"] = build_cfg.ShellFlowType.VIVADO_ZYNQ
 
-        # Clear FINN tmp build dir before every run (to avoid excessive ramdisk usage and duplicate debug artifacts)
+        # Clear FINN tmp build dir before every run
         print("Clearing FINN BUILD DIR ahead of run")
         delete_dir_contents(os.environ["FINN_BUILD_DIR"])
 
         # Initialize dictionary to collect all benchmark results
-        # TODO: remove completely or only use for meta data, actual results go into run-specific .json files within /report
+        # TODO: remove completely or only use for meta data,
+        # actual results go into run-specific .json files within /report
         self.output_dict = {}
 
-        # Inputs (e.g., ONNX model, golden I/O pair, folding config, etc.) for custom FINN build flow
+        # Inputs (e.g., ONNX model, golden I/O pair, folding config, etc.)
         self.build_inputs = {}
 
-        # Collect tuples of (name, source path, archive?) to save as pipeline artifacts upon run completion or fail by exception
+        # Collect tuples of (name, source path, archive?) to save as pipeline artifacts
         self.artifacts_collection = []
 
-        # Collect tuples of (name, source path, archive?) to save as local artifacts upon run completion or fail by exception
+        # Collect tuples of (name, source path, archive?) to save as local artifacts
         self.local_artifacts_collection = []
         if self.debug:
-            # Save entire FINN build dir and working dir
-            # TODO: add option to only save upon exception (in FINN builder or benchmarking infrastructure)
-            self.local_artifacts_collection.append(("debug_finn_tmp", os.environ["FINN_BUILD_DIR"], True))
-            #self.local_artifacts_collection.append(("debug_finn_cwd", os.environ["FINN_ROOT"], False))
+            # Save entire FINN_BUILD_DIR
+            # TODO: add option to only save upon error/exception
+            self.local_artifacts_collection.append(
+                ("debug_finn_tmp", os.environ["FINN_BUILD_DIR"], True)
+            )
 
-        ### SETUP ###
+        # SETUP
         # Use a temporary dir for buildflow-related files (next to FINN_BUILD_DIR)
         # Ensure it exists but is empty (clear potential artifacts from previous runs)
         tmp_buildflow_dir = os.path.join(self.work_dir, "buildflow")
         os.makedirs(tmp_buildflow_dir, exist_ok=True)
         delete_dir_contents(tmp_buildflow_dir)
-        self.build_inputs["build_dir"] = os.path.join(tmp_buildflow_dir, "build_output") # TODO remove in favor of self.build_dir
+        self.build_inputs["build_dir"] = os.path.join(
+            tmp_buildflow_dir, "build_output"
+        )  # TODO remove in favor of self.build_dir
         self.build_dir = os.path.join(tmp_buildflow_dir, "build_output")
         self.report_dir = os.path.join(self.build_dir, "report")
         os.makedirs(self.report_dir, exist_ok=True)
@@ -196,7 +177,9 @@ class bench():
         self.local_artifacts_collection.append(("build_output", self.build_dir, False))
         # Save reports and deployment package as pipeline artifacts
         self.artifacts_collection.append(("reports", self.report_dir, False))
-        self.artifacts_collection.append(("reports", os.path.join(self.build_dir, "build_dataflow.log"), False))
+        self.artifacts_collection.append(
+            ("reports", os.path.join(self.build_dir, "build_dataflow.log"), False)
+        )
         self.artifacts_collection.append(("deploy", os.path.join(self.build_dir, "deploy"), True))
 
     def save_artifact(self, target_path, source_path, archive=False):
@@ -213,13 +196,15 @@ class bench():
 
     def save_artifacts_collection(self):
         # this should be called upon successful or failed completion of a run
-        for (name, source_path, archive) in self.artifacts_collection:
-            target_path = os.path.join(self.artifacts_dir, "runs_output", "run_%d" % (self.run_id), name)
+        for name, source_path, archive in self.artifacts_collection:
+            target_path = os.path.join(
+                self.artifacts_dir, "runs_output", "run_%d" % (self.run_id), name
+            )
             self.save_artifact(target_path, source_path, archive)
 
     def save_local_artifacts_collection(self):
         # this should be called upon successful or failed completion of a run
-        for (name, source_path, archive) in self.local_artifacts_collection:
+        for name, source_path, archive in self.local_artifacts_collection:
             target_path = os.path.join(self.save_dir, name, "run_%d" % (self.run_id))
             self.save_artifact(target_path, source_path, archive)
 
@@ -235,7 +220,7 @@ class bench():
             with open(dut_path, "r") as f:
                 return DataflowBuildConfig.from_yaml(f)
         else:
-            raise Exception("No DUT-specific YAML build definition found") 
+            raise Exception("No DUT-specific YAML build definition found")
 
     # defaults to normal build flow, may be overwritten by subclass
     def run(self):
@@ -243,31 +228,32 @@ class bench():
 
     def step_parse_builder_output(self, build_dir):
         # TODO: output as .json or even add as new build step
-        ### CHECK FOR VERIFICATION STEP SUCCESS ###
-        if (os.path.exists(os.path.join(build_dir, "verification_output"))):
+        # CHECK FOR VERIFICATION STEP SUCCESS
+        if os.path.exists(os.path.join(build_dir, "verification_output")):
             # Collect all verification output filenames
             outputs = glob.glob(os.path.join(build_dir, "verification_output/*.npy"))
             # Extract the verification status for each verification output by matching
             # to the SUCCESS string contained in the filename
-            status = all([
-                out.split("_")[-1].split(".")[0] == "SUCCESS" for out in outputs
-            ])
-    
+            status = all([out.split("_")[-1].split(".")[0] == "SUCCESS" for out in outputs])
+
             # Construct a dictionary reporting the verification status as string
-            self.output_dict["builder_verification"] = {"verification": {True: "success", False: "fail"}[status]}
+            self.output_dict["builder_verification"] = {
+                "verification": {True: "success", False: "fail"}[status]
+            }
             # TODO: mark job as failed if verification fails?
 
     def steps_full_build_flow(self):
         # Default step sequence for benchmarking a full FINN builder flow
 
-        ### LIST OF ADDITIONAL YAML OPTIONS (beyond DataflowBuildConfig)
+        # LIST OF ADDITIONAL YAML OPTIONS (beyond DataflowBuildConfig)
         custom_params = [
-            "model_dir", # used to setup onnx/npy input
-            "model_path", # used to setup onnx/npy input
-            # model-gen parameters, such as seed, simd, pe, etc. (TODO: separate from builder options)
+            "model_dir",  # used to setup onnx/npy input
+            "model_path",  # used to setup onnx/npy input
+            # model-gen parameters, such as seed, simd, pe, etc.
+            # TODO: separate these from builder options
         ]
 
-        ### MODEL CREATION/IMPORT ###
+        # MODEL CREATION/IMPORT
         # TODO: track fixed input onnx models with DVC
         if "model_dir" in self.params:
             # input ONNX model and verification input/output pairs are provided
@@ -279,12 +265,14 @@ class bench():
             self.build_inputs["onnx_path"] = self.params["model_path"]
         else:
             # input ONNX model (+ optional I/O pair for verification) will be generated
-            self.build_inputs["onnx_path"] = os.path.join(self.build_inputs["build_dir"], "model_export.onnx")
+            self.build_inputs["onnx_path"] = os.path.join(
+                self.build_inputs["build_dir"], "model_export.onnx"
+            )
             if self.step_export_onnx(self.build_inputs["onnx_path"]) == "skipped":
-                # microbenchmarks might skip because no valid model can be generated for given params
+                # microbenchmarks might skip because no model can be generated for given params
                 return "skipped"
 
-        ### BUILD SETUP ###
+        # BUILD SETUP
         # Initialize from YAML (default) or custom script (if dedicated subclass is defined)
         cfg = self.step_build_setup()
 
@@ -292,18 +280,18 @@ class bench():
         cfg.output_dir = self.build_inputs["build_dir"]
         # enable extra performance optimizations (physopt)
         # TODO: check OMX synth strategy again!
-        cfg.vitis_opt_strategy=build_cfg.VitisOptStrategy.PERFORMANCE_BEST
+        cfg.vitis_opt_strategy = build_cfg.VitisOptStrategy.PERFORMANCE_BEST
         cfg.verbose = False
         cfg.enable_build_pdb_debug = False
-        #cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
+        # cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
         cfg.force_python_rtlsim = False
         cfg.split_large_fifos = True
-        cfg.save_intermediate_models = True # Save the intermediate model graphs
-        cfg.verify_save_full_context = True # Output full context dump for verification steps
+        cfg.save_intermediate_models = True  # Save the intermediate model graphs
+        cfg.verify_save_full_context = True  # Output full context dump for verification steps
         cfg.enable_instrumentation = True
-        #rtlsim_use_vivado_comps # TODO ?
-        #cfg.default_swg_exception
-        #cfg.large_fifo_mem_style
+        # rtlsim_use_vivado_comps # TODO ?
+        # cfg.default_swg_exception
+        # cfg.large_fifo_mem_style
 
         # Overwrite build config settings with run-specific YAML build definition
         for key in self.params:
@@ -312,15 +300,15 @@ class bench():
             else:
                 if key not in custom_params:
                     pass
-                    #TODO: be more strict? support custom extra options like MetaFi uses?
-                    #raise Exception("Unrecognized builder config defined in YAML: %s" % key)
+                    # TODO: be more strict? support custom extra options like MetaFi uses?
+                    # raise Exception("Unrecognized builder config defined in YAML: %s" % key)
 
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?
         os.environ["LIVENESS_THRESHOLD"] = "10000000"
 
-        ### BUILD ###
+        # BUILD
         build.build_dataflow_cfg(self.build_inputs["onnx_path"], cfg)
 
-        ### ANALYSIS ###
+        # ANALYSIS
         self.step_parse_builder_output(self.build_inputs["build_dir"])

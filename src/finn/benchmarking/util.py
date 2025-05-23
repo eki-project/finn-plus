@@ -1,7 +1,9 @@
 # Utility functions for benchmarking
-import os, shutil
 import json
+import os
+import shutil
 import xml.etree.ElementTree as ET
+
 
 def _find_rows_and_headers(table):
     rows = table.findall("tablerow")
@@ -12,6 +14,7 @@ def _find_rows_and_headers(table):
         if len(headers) > 0:
             break
     return (rows, headers)
+
 
 def summarize_table(table):
     table_summary = {}
@@ -38,6 +41,7 @@ def summarize_table(table):
 
     return table_summary
 
+
 def summarize_section(section):
     section_summary = {}
     section_summary["tables"] = []
@@ -54,6 +58,7 @@ def summarize_section(section):
 
     return section_summary
 
+
 def power_xml_to_dict(xml_path):
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -65,6 +70,7 @@ def power_xml_to_dict(xml_path):
 
     return result
 
+
 def delete_dir_contents(dir):
     for filename in os.listdir(dir):
         file_path = os.path.join(dir, filename)
@@ -74,7 +80,8 @@ def delete_dir_contents(dir):
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)
         except Exception as e:
-            print('Failed to delete %s. Reason: %s' % (file_path, e))
+            print("Failed to delete %s. Reason: %s" % (file_path, e))
+
 
 def merge_dicts(a: dict, b: dict):
     for key in b:
@@ -87,6 +94,7 @@ def merge_dicts(a: dict, b: dict):
             a[key] = b[key]
     return a
 
+
 def merge_logs(log_a, log_b, log_out):
     # merges json log (list of nested dicts) b into a, not vice versa (TODO)
 
@@ -98,8 +106,8 @@ def merge_logs(log_a, log_b, log_out):
     for idx, run_a in enumerate(a):
         for run_b in b:
             if run_a["run_id"] == run_b["run_id"]:
-                #a[idx] |= run_b # requires Python >= 3.9
-                #a[idx] = {**run_a, **run_b}
+                # a[idx] |= run_b # requires Python >= 3.9
+                # a[idx] = {**run_a, **run_b}
                 a[idx] = merge_dicts(run_a, run_b)
                 break
 

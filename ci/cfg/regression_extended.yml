@@ -13,7 +13,7 @@
     # {
     #     "dut": ["transformer"],
     #     "seed": [12],
-    #     "model_dir": ["models/gpt_a_6b_gpt2-s256-t2048-l2-h4-e256", 
+    #     "model_dir": ["models/gpt_a_6b_gpt2-s256-t2048-l2-h4-e256",
     #                   "models/gpt_b_4b_gpt2-s256-t2048-l2-h4-e256",
     #                   "models/gpt_c_gpt2-s512-t2048-l2-h4-e512",
     #                   "models/gpt_d_gpt2-s256-t2048-l1-h2-e256"],
