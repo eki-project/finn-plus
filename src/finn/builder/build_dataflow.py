@@ -171,7 +171,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     print(f"Final outputs will be generated in {cfg.output_dir}")
     print(f"Build log is at {cfg.output_dir}/build_dataflow.log")
     # create the output dir if it doesn't exist
-    os.makedirs(cfg.output_dir, exist_ok=True)
+    os.makedirs(os.path.join(cfg.output_dir, "report"), exist_ok=True)
 
     # set up logger
     logpath = os.path.join(cfg.output_dir, "build_dataflow.log")
@@ -285,7 +285,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
                 "status": "failed",
                 "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
             }
-            with open(cfg.output_dir + "/report/metadata_builder.json", "w") as f:
+            with open(os.path.join(cfg.output_dir, "report/metadata_builder.json"), "w") as f:
                 json.dump(metadata, f, indent=2)
             return -1  # A user error shouldn't be need to be fixed using PDB
 
@@ -297,7 +297,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             "status": "failed",
             "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
         }
-        with open(cfg.output_dir + "/report/metadata_builder.json", "w") as f:
+        with open(os.path.join(cfg.output_dir, "report/metadata_builder.json"), "w") as f:
             json.dump(metadata, f, indent=2)
         return -1
 
@@ -308,7 +308,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         "status": "ok",
         "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
     }
-    with open(cfg.output_dir + "/report/metadata_builder.json", "w") as f:
+    with open(os.path.join(cfg.output_dir, "report/metadata_builder.json"), "w") as f:
         json.dump(metadata, f, indent=2)
     print("Completed successfully")
     return 0

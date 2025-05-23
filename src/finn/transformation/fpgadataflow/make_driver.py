@@ -312,7 +312,7 @@ class MakePYNQDriverIODMA(Transformation):
     under the runtime_weights/ subfolder of the pynq_driver_dir.
     """
 
-    def __init__(self, platform, validation_datset):
+    def __init__(self, platform, validation_datset=None):
         super().__init__()
         self.platform = platform
         self.validation_datset = validation_datset
