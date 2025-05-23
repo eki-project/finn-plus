@@ -17,7 +17,7 @@
         "rtlsim_n": [5],
 
         "live_fifo_sizing": [True],
-        "output_products": [["bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]]
     },
     {
         "dut": ["synthetic_nonlinear"],

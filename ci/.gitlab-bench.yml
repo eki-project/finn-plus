@@ -22,7 +22,6 @@ FINN Build:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
   variables:
-    GIT_STRATEGY: empty # Do not pull repository, install from wheel (artifact) instead
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES_BENCH --exclusive --array 0-$( expr $PARALLEL_JOBS - 1 )"
     NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
   extends: .setup_full_2022_2
@@ -32,6 +31,7 @@ FINN Build:
     # Launch benchmarking script via FINN CLI, includes deps update and environment preparation
     - |
       source finn-plus-venv/bin/activate
+      dvc pull
       finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers $CPU_CORES_BENCH --bench_config $BENCH_CFG
   cache:
     key: $CI_COMMIT_SHA
