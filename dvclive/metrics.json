@@ -1,0 +1,46 @@
+{
+    "status": "ok",
+    "hls_estimate": {
+        "resources": {
+            "LUT": 425298.0,
+            "FF": 335637.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 629.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 122010,
+            "FF": 106359,
+            "SRL": 9356,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 1,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "performance": {
+            "error": false,
+            "checksum": 0,
+            "min_latency_cycles": 2549316,
+            "latency_cycles": 2580783,
+            "interval_cycles": 903174,
+            "frequency_mhz": 100,
+            "min_latency_ms": 25.493415,
+            "latency_ms": 25.808088,
+            "throughput_fps": 111,
+            "min_pipeline_depth": 2.82,
+            "pipeline_depth": 2.86
+        }
+    },
+    "fifosizing": {
+        "live": {
+            "error": false,
+            "fifo_size_total_kB": 232
+        }
+    },
+    "total_build_time": 30725
+}
