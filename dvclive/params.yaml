@@ -1,0 +1,13 @@
+params:
+  dut: mobilenetv1
+  generate_outputs:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+  model_path: models/mobilenetv1/mobilenetv1-w4a4_pre_post_tidy_opset-11.onnx
+metadata:
+  tool_version: '2022.2'
