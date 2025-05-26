@@ -1,5 +1,5 @@
 model_path: models/mobilenetv1/mobilenetv1-w4a4_pre_post_tidy_opset-11.onnx
-folding_config_file: models/mobilenetv1/ZCU102_folding_config.json
+folding_config_file: models/mobilenetv1/ZCU102_folding_config_live_fifo.json
 specialize_layers_config_file: models/mobilenetv1/ZCU102_specialize_layers.json
 
 steps:
