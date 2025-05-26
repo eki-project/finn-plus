@@ -134,8 +134,9 @@ def start_bench_run(config_name):
 
     # Run benchmark
     # TODO: integrate this loop (especially status logging) into the bench class
-    # TODO: log stdout of individual tasks of the job array into seperate files as artifacts
-    # (GitLab web interface is not readable), coordinate with new logging
+    successful_runs = []
+    skipped_runs = []
+    failed_runs = []
     for run, run_id in enumerate(selected_runs):
         print(
             "Starting run %d/%d (id %d of %d total runs)"
@@ -165,12 +166,14 @@ def start_bench_run(config_name):
             result = bench_object.run()
             if result == "skipped":
                 log_dict["status"] = "skipped"
-                print("BENCH RUN SKIPPED")
+                print("BENCH RUN %d SKIPPED" % run_id)
+                skipped_runs.append(run_id)
             else:
                 log_dict["status"] = "ok"
         except Exception:
             log_dict["status"] = "failed"
-            print("BENCH RUN FAILED WITH EXCEPTION: " + traceback.format_exc())
+            print("BENCH RUN %d FAILED WITH EXCEPTION: %s" % (run_id, traceback.format_exc()))
+            failed_runs.append(run_id)
             exit_code = 1
 
         log_dict["output"] = bench_object.output_dict
@@ -182,12 +185,15 @@ def start_bench_run(config_name):
             with open(builder_log_path, "r") as f:
                 builder_log = json.load(f)
             if builder_log["status"] == "failed":
-                print("BENCH RUN FAILED (BUILDER REPORTED FAILURE)")
+                print("BENCH RUN %d FAILED (BUILDER REPORTED FAILURE)" % run_id)
+                failed_runs.append(run_id)
                 exit_code = 1
             else:
-                print("BENCH RUN COMPLETED (BUILDER REPORTED SUCCESS)")
+                print("BENCH RUN %d COMPLETED (BUILDER REPORTED SUCCESS)" % run_id)
+                successful_runs.append(run_id)
         else:
-            print("BENCH RUN COMPLETED")
+            print("BENCH RUN %d COMPLETED" % run_id)
+            successful_runs.append(run_id)
 
         # log metadata of this run to its own report directory
         log_path = os.path.join(bench_object.report_dir, "metadata_bench.json")
@@ -199,5 +205,8 @@ def start_bench_run(config_name):
         # save local artifacts of this run (e.g., full build dir, detailed debug info)
         bench_object.save_local_artifacts_collection()
 
-    print("STOPPING JOB")
+    print("STOPPING JOB %d (of %d total jobs)" % (task_id, task_count))
+    print("JOB %d SUCCESSFUL RUNS: %s" % (task_id, successful_runs))
+    print("JOB %d SKIPPED RUNS: %s" % (task_id, skipped_runs))
+    print("JOB %d FAILED RUNS: %s" % (task_id, failed_runs))
     return exit_code
