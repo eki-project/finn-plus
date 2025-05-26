@@ -350,14 +350,14 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Whether pdb postmortem debuggig will be launched when the build fails
     enable_build_pdb_debug: Optional[bool] = False
 
-    #: When True, additional verbose information will be written to the log file.
-    #: Otherwise, these additional information will be suppressed.
+    #: When True, additional information (level = DEBUG) will be written to the log file.
+    #: Otherwise, this additional information will be suppressed (level = INFO).
     verbose: Optional[bool] = False
 
     #: Log level to be used on the command line for finn-plus internal logging.
-    #: This is different from the log level used for the build process,
+    #: This is different from the log level used for build_dataflow.log,
     #: which is controlled using the verbose flag.
-    console_log_level: Optional[LogLevel] = LogLevel.NONE
+    console_log_level: Optional[LogLevel] = LogLevel.ERROR
 
     #: If given, only run the steps in the list. If not, run default steps.
     #: See `default_build_dataflow_steps` for the default list of steps.

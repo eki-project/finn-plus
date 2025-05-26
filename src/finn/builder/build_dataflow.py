@@ -39,8 +39,10 @@ import pdb  # isort: split
 import sys
 import time
 from qonnx.core.modelwrapper import ModelWrapper
+from rich import print as rprint
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.traceback import Traceback
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
@@ -159,21 +161,41 @@ def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: 
     return filename
 
 
+def log_and_exit(cfg: DataflowBuildConfig, time_per_step: dict = None, exit_code: int = 0):
+    if exit_code:
+        print("Build failed")
+        status = "failed"
+    else:
+        print("Build completed successfully")
+        status = "ok"
+
+    # Generate metadata_builder.json
+    metadata = {
+        "status": status,
+        "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
+    }
+    with open(os.path.join(cfg.output_dir, "report/metadata_builder.json"), "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    # Generate time_per_step.json
+    if time_per_step is not None:
+        time_per_step["total_build_time"] = sum(time_per_step.values())
+        with open(os.path.join(cfg.output_dir, "report/time_per_step.json"), "w") as f:
+            json.dump(time_per_step, f, indent=2)
+
+    return exit_code
+
+
 def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     """Best-effort build a dataflow accelerator using the given configuration.
 
     :param model_filename: ONNX model filename to build
     :param cfg: Build configuration
     """
-    finn_build_dir = os.environ["FINN_BUILD_DIR"]
-
-    print(f"Intermediate outputs will be generated in {finn_build_dir}")
-    print(f"Final outputs will be generated in {cfg.output_dir}")
-    print(f"Build log is at {cfg.output_dir}/build_dataflow.log")
-    # create the output dir if it doesn't exist
+    # Create the output (report) dir if it doesn't exist
     os.makedirs(os.path.join(cfg.output_dir, "report"), exist_ok=True)
 
-    # set up logger
+    # Set up logger
     logpath = os.path.join(cfg.output_dir, "build_dataflow.log")
     if cfg.verbose:
         logging.basicConfig(
@@ -195,15 +217,16 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
 
     log = logging.getLogger("build_dataflow")
 
-    # mirror stdout and stderr to log
+    # Mirror stdout and stderr to log
     sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
     sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
     console = Console(file=sys.stdout.console)
 
+    # Set up console logger
     if cfg.console_log_level != "NONE":
-        # set up console logger
-        consoleHandler = RichHandler(show_time=True, show_path=False, console=console)
-
+        consoleHandler = RichHandler(
+            show_time=True, log_time_format="[%Y-%m-%d %H:%M:%S]", show_path=False, console=console
+        )
         if cfg.console_log_level == "DEBUG":
             consoleHandler.setLevel(logging.DEBUG)
         elif cfg.console_log_level == "INFO":
@@ -216,9 +239,13 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             consoleHandler.setLevel(logging.CRITICAL)
         logging.getLogger().addHandler(consoleHandler)
 
-    # Setup done, start processing
+    print(f"Intermediate outputs will be generated in {os.environ['FINN_BUILD_DIR']}")
+    print(f"Final outputs will be generated in {cfg.output_dir}")
+    print(f"Build log is at {cfg.output_dir}/build_dataflow.log")
+
+    # Setup done, start build flow
     try:
-        # if start_step is specified, override the input model
+        # If start_step is specified, override the input model
         if cfg.start_step is None:
             print(f"Building dataflow accelerator from {model_filename}")
             model = ModelWrapper(model_filename)
@@ -240,7 +267,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             model = ModelWrapper(intermediate_model_filename)
         assert type(model) is ModelWrapper
 
-        # start processing
+        # Start processing
         step_num = 1
         time_per_step = dict()
         build_dataflow_steps = resolve_build_steps(cfg)
@@ -249,7 +276,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             step_name = transform_step.__name__
             print(f"Running step: {step_name} [{step_num}/{len(build_dataflow_steps)}]")
 
-            # run the step
+            # Run the step
             step_start = time.time()
             model = transform_step(model, cfg)
             step_end = time.time()
@@ -263,55 +290,24 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             step_num += 1
     except KeyboardInterrupt:
         print("KeyboardInterrupt detected. Aborting...")
-        print("Build failed")
-        return -1
+        return log_and_exit(cfg, time_per_step, -1)
     except (Exception, FINNError) as e:
-        # Print full traceback if we are on debug log level
-        # or encountered a non-user error
-        print_full_traceback = True
-        if issubclass(type(e), FINNUserError) and log.level != logging.DEBUG:
-            print_full_traceback = False
-
-        extype, value, tb = sys.exc_info()
-        if print_full_traceback:
-            # print exception info and traceback
-            log.error("FINN Internal compiler error:")
-            console.print_exception(show_locals=False)
+        if issubclass(type(e), FINNUserError):
+            # Handle FINN USER ERROR
+            log.error(f"FINN ERROR: {e}")
         else:
-            console.print(f"[bold red]FINN Error: [/bold red]{e}")
-            log.error(f"{e}")
-            print("Build failed")
-            metadata = {
-                "status": "failed",
-                "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
-            }
-            with open(os.path.join(cfg.output_dir, "report/metadata_builder.json"), "w") as f:
-                json.dump(metadata, f, indent=2)
-            return -1  # A user error shouldn't be need to be fixed using PDB
+            # Handle remaining errors (= FINN INTERNAL COMPILER ERROR)
+            log.error(f"FINN INTERNAL COMPILER ERROR: {e}")
 
-        # start postmortem debug if configured
-        if cfg.enable_build_pdb_debug:
-            pdb.post_mortem(tb)
-        print("Build failed")
-        metadata = {
-            "status": "failed",
-            "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
-        }
-        with open(os.path.join(cfg.output_dir, "report/metadata_builder.json"), "w") as f:
-            json.dump(metadata, f, indent=2)
-        return -1
+        # Print traceback for interal errors or if in debug mode
+        if not issubclass(type(e), FINNUserError) or log.level == logging.DEBUG:
+            rprint(Traceback(show_locals=False))
+            # Start postmortem debug if configured
+            if cfg.enable_build_pdb_debug:
+                pdb.post_mortem(e.__traceback__)
 
-    time_per_step["total_build_time"] = sum(time_per_step.values())
-    with open(os.path.join(cfg.output_dir, "report/time_per_step.json"), "w") as f:
-        json.dump(time_per_step, f, indent=2)
-    metadata = {
-        "status": "ok",
-        "tool_version": os.path.basename(os.environ.get("XILINX_VIVADO")),
-    }
-    with open(os.path.join(cfg.output_dir, "report/metadata_builder.json"), "w") as f:
-        json.dump(metadata, f, indent=2)
-    print("Completed successfully")
-    return 0
+        return log_and_exit(cfg, time_per_step, -1)
+    return log_and_exit(cfg, time_per_step, 0)
 
 
 def build_dataflow_directory(path_to_cfg_dir: str):

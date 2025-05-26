@@ -165,13 +165,12 @@ def start_bench_run(config_name):
             result = bench_object.run()
             if result == "skipped":
                 log_dict["status"] = "skipped"
-                print("Run skipped")
+                print("BENCH RUN SKIPPED")
             else:
                 log_dict["status"] = "ok"
-                print("Run successfully completed")
         except Exception:
             log_dict["status"] = "failed"
-            print("Run failed: " + traceback.format_exc())
+            print("BENCH RUN FAILED WITH EXCEPTION: " + traceback.format_exc())
             exit_code = 1
 
         log_dict["output"] = bench_object.output_dict
@@ -183,8 +182,12 @@ def start_bench_run(config_name):
             with open(builder_log_path, "r") as f:
                 builder_log = json.load(f)
             if builder_log["status"] == "failed":
-                print("Run failed (builder reported failure)")
+                print("BENCH RUN FAILED (BUILDER REPORTED FAILURE)")
                 exit_code = 1
+            else:
+                print("BENCH RUN COMPLETED (BUILDER REPORTED SUCCESS)")
+        else:
+            print("BENCH RUN COMPLETED")
 
         # log metadata of this run to its own report directory
         log_path = os.path.join(bench_object.report_dir, "metadata_bench.json")
@@ -196,5 +199,5 @@ def start_bench_run(config_name):
         # save local artifacts of this run (e.g., full build dir, detailed debug info)
         bench_object.save_local_artifacts_collection()
 
-    print("Stopping job")
+    print("STOPPING JOB")
     return exit_code
