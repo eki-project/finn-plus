@@ -165,8 +165,8 @@ class Test_end2end_cybsec_mlp:
         )
         build.build_dataflow_cfg(model_file, cfg)
         # check the generated files
-        assert os.path.isfile(output_dir + "/time_per_step.json")
-        assert os.path.isfile(output_dir + "/final_hw_config.json")
+        assert os.path.isfile(output_dir + "/report/time_per_step.json")
+        assert os.path.isfile(output_dir + "/report/final_hw_config.json")
         assert os.path.isfile(output_dir + "/template_specialize_layers_config.json")
         assert os.path.isfile(output_dir + "/driver/driver.py")
         est_cycles_report = output_dir + "/report/estimate_layer_cycles.json"

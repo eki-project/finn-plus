@@ -48,9 +48,9 @@ def test_end2end_build_dataflow_directory():
     build_dataflow_directory(target_dir)
     # check the generated files
     output_dir = target_dir + "/output_tfc_w1a1_Pynq-Z1"
-    assert os.path.isfile(output_dir + "/time_per_step.json")
-    assert os.path.isfile(output_dir + "/auto_folding_config.json")
-    assert os.path.isfile(output_dir + "/final_hw_config.json")
+    assert os.path.isfile(output_dir + "/report/time_per_step.json")
+    assert os.path.isfile(output_dir + "/report/auto_folding_config.json")
+    assert os.path.isfile(output_dir + "/report/final_hw_config.json")
     assert os.path.isfile(output_dir + "/template_specialize_layers_config.json")
     assert os.path.isfile(output_dir + "/stitched_ip/ip/component.xml")
     assert os.path.isfile(output_dir + "/driver/driver.py")

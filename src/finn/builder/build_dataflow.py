@@ -292,6 +292,10 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         print("KeyboardInterrupt detected. Aborting...")
         return log_and_exit(cfg, time_per_step, -1)
     except (Exception, FINNError) as e:
+        # Re-raise exception if we are in a PyTest session so we don't miss it
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            raise
+
         if issubclass(type(e), FINNUserError):
             # Handle FINN USER ERROR
             log.error(f"FINN ERROR: {e}")
