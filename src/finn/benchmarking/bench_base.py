@@ -104,9 +104,6 @@ class bench:
         self.save_dir = save_dir
         self.debug = debug
 
-        # TODO: setup a logger so output can go to console (with task id prefix)
-        # TODO: coordinate with new builder loggin setup
-
         # Setup some basic global default configuration
         # TODO: clean up or remove these attributes
         if "synth_clk_period_ns" in params:

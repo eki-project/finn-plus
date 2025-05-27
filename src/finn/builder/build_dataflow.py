@@ -161,7 +161,62 @@ def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: 
     return filename
 
 
-def log_and_exit(cfg: DataflowBuildConfig, time_per_step: dict = None, exit_code: int = 0):
+def setup_logging(cfg: DataflowBuildConfig):
+    # Set up global logger, the force=True has the following effects:
+    # - If multiple build are run in a row, the log file will be re-created for each,
+    #   which is needed if the file was deleted/moved or the output dir changed
+    # - In a PyTest session, this logger will replace the PyTest log handlers, so logs
+    #   (+ captured warnings!) will end up in the log file instead of being collected by PyTest
+    logpath = os.path.join(cfg.output_dir, "build_dataflow.log")
+    if cfg.verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="[%(asctime)s]%(levelname)s: %(pathname)s:%(lineno)d: %(message)s",
+            filename=logpath,
+            filemode="w",
+            force=True,
+        )
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="[%(asctime)s]%(levelname)s: %(message)s",
+            filename=logpath,
+            filemode="w",
+            force=True,
+        )
+
+    # Capture all warnings.warn calls of qonnx, ...
+    logging.captureWarnings(True)
+
+    # Mirror stdout and stderr to log
+    log = logging.getLogger("build_dataflow")
+    if not isinstance(sys.stdout, PrintLogger):
+        # Prevent rediricting stdout/sterr multiple times
+        sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
+        sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
+    console = Console(file=sys.stdout.console)
+
+    # Mirror a configurable log level to console (default = ERROR)
+    if cfg.console_log_level != "NONE":
+        consoleHandler = RichHandler(
+            show_time=True, log_time_format="[%Y-%m-%d %H:%M:%S]", show_path=False, console=console
+        )
+        if cfg.console_log_level == "DEBUG":
+            consoleHandler.setLevel(logging.DEBUG)
+        elif cfg.console_log_level == "INFO":
+            consoleHandler.setLevel(logging.INFO)
+        elif cfg.console_log_level == "WARNING":
+            consoleHandler.setLevel(logging.WARNING)
+        elif cfg.console_log_level == "ERROR":
+            consoleHandler.setLevel(logging.ERROR)
+        elif cfg.console_log_level == "CRITICAL":
+            consoleHandler.setLevel(logging.CRITICAL)
+        logging.getLogger().addHandler(consoleHandler)
+
+    return log
+
+
+def exit_buildflow(cfg: DataflowBuildConfig, time_per_step: dict = None, exit_code: int = 0):
     if exit_code:
         print("Build failed")
         status = "failed"
@@ -192,52 +247,10 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     :param model_filename: ONNX model filename to build
     :param cfg: Build configuration
     """
+    log = setup_logging(cfg)
+
     # Create the output (report) dir if it doesn't exist
     os.makedirs(os.path.join(cfg.output_dir, "report"), exist_ok=True)
-
-    # Set up logger
-    logpath = os.path.join(cfg.output_dir, "build_dataflow.log")
-    if cfg.verbose:
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format="[%(asctime)s]%(levelname)s: %(pathname)s:%(lineno)d: %(message)s",
-            filename=logpath,
-            filemode="w",
-        )
-    else:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="[%(asctime)s]%(levelname)s: %(message)s",
-            filename=logpath,
-            filemode="w",
-        )
-
-    # Capture all warnings.warn calls of qonnx,...
-    logging.captureWarnings(True)
-
-    log = logging.getLogger("build_dataflow")
-
-    # Mirror stdout and stderr to log
-    sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
-    sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
-    console = Console(file=sys.stdout.console)
-
-    # Set up console logger
-    if cfg.console_log_level != "NONE":
-        consoleHandler = RichHandler(
-            show_time=True, log_time_format="[%Y-%m-%d %H:%M:%S]", show_path=False, console=console
-        )
-        if cfg.console_log_level == "DEBUG":
-            consoleHandler.setLevel(logging.DEBUG)
-        elif cfg.console_log_level == "INFO":
-            consoleHandler.setLevel(logging.INFO)
-        elif cfg.console_log_level == "WARNING":
-            consoleHandler.setLevel(logging.WARNING)
-        elif cfg.console_log_level == "ERROR":
-            consoleHandler.setLevel(logging.ERROR)
-        elif cfg.console_log_level == "CRITICAL":
-            consoleHandler.setLevel(logging.CRITICAL)
-        logging.getLogger().addHandler(consoleHandler)
 
     print(f"Intermediate outputs will be generated in {os.environ['FINN_BUILD_DIR']}")
     print(f"Final outputs will be generated in {cfg.output_dir}")
@@ -290,7 +303,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             step_num += 1
     except KeyboardInterrupt:
         print("KeyboardInterrupt detected. Aborting...")
-        return log_and_exit(cfg, time_per_step, -1)
+        return exit_buildflow(cfg, time_per_step, -1)
     except (Exception, FINNError) as e:
         # Re-raise exception if we are in a PyTest session so we don't miss it
         if "PYTEST_CURRENT_TEST" in os.environ:
@@ -310,8 +323,8 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             if cfg.enable_build_pdb_debug:
                 pdb.post_mortem(e.__traceback__)
 
-        return log_and_exit(cfg, time_per_step, -1)
-    return log_and_exit(cfg, time_per_step, 0)
+        return exit_buildflow(cfg, time_per_step, -1)
+    return exit_buildflow(cfg, time_per_step, 0)
 
 
 def build_dataflow_directory(path_to_cfg_dir: str):

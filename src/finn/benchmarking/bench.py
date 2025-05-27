@@ -2,6 +2,7 @@ import itertools
 import json
 import onnxruntime as ort
 import os
+import sys
 import time
 import traceback
 import yaml
@@ -17,6 +18,24 @@ dut = dict()
 dut["mvau"] = bench_mvau
 dut["synthetic_nonlinear"] = bench_synthetic_nonlinear
 dut["transformer"] = bench_transformer
+
+
+class PrefixPrinter(object):
+    """
+    Create a custom stream handler that adds a prefix
+    """
+
+    def __init__(self, prefix, originalstream):
+        self.console = originalstream
+        self.prefix = prefix
+        self.linebuf = ""
+
+    def write(self, buf):
+        for line in buf.rstrip().splitlines():
+            self.console.write(f"[{self.prefix}] " + line + "\n")
+
+    def flush(self):
+        self.console.flush()
 
 
 def start_bench_run(config_name):
@@ -130,21 +149,23 @@ def start_bench_run(config_name):
         while idx < total_runs:
             selected_runs.append(idx)
             idx = idx + task_count
-    print("This job will perform %d out of %d total runs" % (len(selected_runs), total_runs))
+    print(
+        "STARTING JOB %d. IT WILL PERFORM %d OUT OF %d TOTAL RUNS"
+        % (task_id, len(selected_runs), total_runs)
+    )
 
     # Run benchmark
-    # TODO: integrate this loop (especially status logging) into the bench class
     successful_runs = []
     skipped_runs = []
     failed_runs = []
     for run, run_id in enumerate(selected_runs):
         print(
-            "Starting run %d/%d (id %d of %d total runs)"
+            "STARTING RUN %d/%d (ID %d OF %d TOTAL RUNS)"
             % (run + 1, len(selected_runs), run_id, total_runs)
         )
 
         params = config_expanded[run_id]
-        print("Run parameters: %s" % (str(params)))
+        print("RUN %d PARAMETERS: %s" % (run_id, str(params)))
 
         log_dict = {"run_id": run_id, "task_id": task_id, "params": params}
 
@@ -159,11 +180,18 @@ def start_bench_run(config_name):
                 # expect DUT-specific YAML definition instead
                 bench_object = bench(params, task_id, run_id, work_dir, artifacts_dir, save_dir)
         else:
-            print("ERROR: no DUT specified")
+            print("ERROR: NO DUT SPECIFIED")
             return 1
 
+        # Wrap stdout/stderr with an additional prefix to identify the run in the live console
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        sys.stdout = PrefixPrinter("RUN %d (%s)" % (run_id, params["dut"]), sys.stdout)
+        sys.stderr = PrefixPrinter("RUN %d (%s)" % (run_id, params["dut"]), sys.stderr)
         try:
             result = bench_object.run()
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
             if result == "skipped":
                 log_dict["status"] = "skipped"
                 print("BENCH RUN %d SKIPPED" % run_id)
@@ -171,6 +199,8 @@ def start_bench_run(config_name):
             else:
                 log_dict["status"] = "ok"
         except Exception:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
             log_dict["status"] = "failed"
             print("BENCH RUN %d FAILED WITH EXCEPTION: %s" % (run_id, traceback.format_exc()))
             failed_runs.append(run_id)
