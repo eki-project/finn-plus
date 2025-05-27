@@ -151,6 +151,65 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
     return str(tmpdir)
 
 
+def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
+    """Helper function to launch a process in a way that facilitates logging
+    stdout/stderr with Python loggers.
+    Returns (cmd_out, cmd_err) if successful, raises CalledProcessError otherwise."""
+    process = subprocess.run(args, capture_output=True, env=proc_env, cwd=cwd, text=True)
+    cmd_out = process.stdout.strip()
+    cmd_err = process.stderr.strip()
+
+    # Handle stdout
+    if cmd_out:
+        if print_stdout is True:
+            log.info(cmd_out)
+        else:
+            # Print with DEBUG level regardless
+            log.debug(cmd_out)
+
+    # Handle stderr, depending on return code
+    if process.returncode == 0:
+        # Process completed successfully, log stderr only as WARNING
+        if cmd_err:
+            log.warning(cmd_err)
+    else:
+        # Process failed, log stderr as ERROR
+        if cmd_err:
+            log.error(cmd_err)
+
+        # Log additional ERROR message
+        if isinstance(args, list):
+            cmd = " ".join(args)
+        else:
+            cmd = args
+        log.error(f"Launched process returned non-zero exit code ({process.returncode}): {cmd}")
+
+    # Raise CalledProcessError for non-zero return code
+    process.check_returncode()
+    return (cmd_out, cmd_err)
+
+
+def which(program):
+    "Python equivalent of the shell cmd 'which'."
+
+    # source:
+    # https://stackoverflow.com/questions/377017/test-if-executable-exists-in-python
+    def is_exe(fpath):
+        return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
+
+    fpath, fname = os.path.split(program)
+    if fpath:
+        if is_exe(program):
+            return program
+    else:
+        for path in os.environ["PATH"].split(os.pathsep):
+            exe_file = os.path.join(path, program)
+            if is_exe(exe_file):
+                return exe_file
+
+    return None
+
+
 class CppBuilder:
     """Builds the g++ compiler command to produces the executable of the c++ code
     in code_gen_dir which is passed to the function build() of this class."""
@@ -194,50 +253,7 @@ class CppBuilder:
             f.write("#!/bin/bash \n")
             f.write(bash_compile + "\n")
         bash_command = ["bash", self.compile_script]
-        process_compile = subprocess.Popen(
-            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-        )
-        _, stderr_data = process_compile.communicate()
-        if stderr_data.strip():
-            log.critical(stderr_data.strip())  # Decode bytes and log as critical
-
-
-def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
-    """Helper function to launch a process in a way that facilitates logging
-    stdout/stderr with Python loggers.
-    Returns (cmd_out, cmd_err)."""
-    if proc_env is None:
-        proc_env = os.environ.copy()
-    with subprocess.Popen(
-        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=proc_env, cwd=cwd, text=True
-    ) as proc:
-        (cmd_out, cmd_err) = proc.communicate()
-    if cmd_out.strip() and print_stdout is True:
-        log.info(cmd_out.strip())
-    if cmd_err.strip():
-        log.critical(cmd_err.strip())
-    return (cmd_out, cmd_err)
-
-
-def which(program):
-    "Python equivalent of the shell cmd 'which'."
-
-    # source:
-    # https://stackoverflow.com/questions/377017/test-if-executable-exists-in-python
-    def is_exe(fpath):
-        return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
-
-    fpath, fname = os.path.split(program)
-    if fpath:
-        if is_exe(program):
-            return program
-    else:
-        for path in os.environ["PATH"].split(os.pathsep):
-            exe_file = os.path.join(path, program)
-            if is_exe(exe_file):
-                return exe_file
-
-    return None
+        launch_process_helper(bash_command, print_stdout=False)
 
 
 mem_primitives_versal = {
