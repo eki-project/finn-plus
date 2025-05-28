@@ -1,0 +1,20 @@
+params:
+  dut: synthetic_nonlinear
+  dim: 64
+  kernel_size: 5
+  ch: 8
+  simd: 8
+  pe: 8
+  parallel_window: 1
+  lb_num_layers: 1
+  rb_num_layers: 16
+  live_fifo_sizing: true
+  generate_outputs:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2022.2'
