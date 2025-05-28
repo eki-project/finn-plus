@@ -247,10 +247,10 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     :param model_filename: ONNX model filename to build
     :param cfg: Build configuration
     """
-    log = setup_logging(cfg)
-
     # Create the output (report) dir if it doesn't exist
     os.makedirs(os.path.join(cfg.output_dir, "report"), exist_ok=True)
+
+    log = setup_logging(cfg)
 
     print(f"Intermediate outputs will be generated in {os.environ['FINN_BUILD_DIR']}")
     print(f"Final outputs will be generated in {cfg.output_dir}")
