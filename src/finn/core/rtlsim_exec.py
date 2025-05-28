@@ -28,8 +28,8 @@
 
 import numpy as np
 import os
-import sys
 from qonnx.custom_op.registry import getCustomOp
+from subprocess import CalledProcessError
 
 from finn.util.basic import (
     get_liveness_threshold_cycles,
@@ -39,6 +39,7 @@ from finn.util.basic import (
 )
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.deps import get_deps_path
+from finn.util.exception import FINNError
 from finn.util.logging import log
 
 try:
@@ -294,11 +295,12 @@ def rtlsim_exec_cppxsi(
     # write compilation command to a file for easy re-running/debugging
     with open(sim_base + "/compile_rtlsim.sh", "w") as f:
         f.write(" ".join(build_cmd))
-    stdout, stderr = launch_process_helper(build_cmd, cwd=sim_base)
+    try:
+        launch_process_helper(build_cmd, cwd=sim_base, print_stdout=False)
+    except CalledProcessError:
+        raise FINNError("Failed to compile rtlsim executable")
     if not os.path.isfile(sim_base + "/rtlsim_xsi"):
-        print(stdout)
-        print(stderr, file=sys.stderr)
-        raise RuntimeError("Failed to compile rtlsim executable")
+        raise FINNError("Failed to compile rtlsim executable")
 
     # launch the rtlsim executable
     # important to specify LD_LIBRARY_PATH here for XSI to work correctly

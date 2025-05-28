@@ -29,7 +29,6 @@
 
 import json
 import os
-import subprocess
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -38,6 +37,7 @@ from qonnx.transformation.general import (
     GiveUniqueNodeNames,
     RemoveUnusedTensors,
 )
+from subprocess import CalledProcessError
 
 from finn.builder.build_dataflow_config import FpgaMemoryType, VitisOptStrategy
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
@@ -49,8 +49,8 @@ from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
-from finn.util.basic import make_build_dir
-from finn.util.logging import log
+from finn.util.basic import launch_process_helper, make_build_dir
+from finn.util.exception import FINNError
 
 from . import templates
 
@@ -142,16 +142,14 @@ class CreateVitisXO(Transformation):
             f.write("vivado -mode batch -source gen_xo.tcl\n")
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", package_xo_sh]
-        process_compile = subprocess.Popen(
-            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        _, stderr_data = process_compile.communicate()
-        stderr_stripped = stderr_data.decode().strip()
-        if stderr_stripped != "" and stderr_stripped is not None:
-            log.critical(stderr_stripped)  # Decode bytes and log as critical
-        assert os.path.isfile(xo_path), (
-            "Vitis .xo file not created, check logs under %s" % vivado_proj_dir
-        )
+        try:
+            launch_process_helper(bash_command, print_stdout=False)
+        except CalledProcessError:
+            # Check success manually by looking for .xo file
+            pass
+        if not os.path.isfile(xo_path):
+            raise FINNError("Vitis .xo file not created, check logs under %s" % vivado_proj_dir)
+
         return (model, False)
 
 
@@ -327,18 +325,17 @@ class VitisLink(Transformation):
             )
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", script]
-        process_compile = subprocess.Popen(
-            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        _, stderr_data = process_compile.communicate()
-        stderr_stripped = stderr_data.decode().strip()
-        if stderr_stripped != "" and stderr_stripped is not None:
-            log.critical(stderr_stripped)  # Decode bytes and log as critical
-        # TODO rename xclbin appropriately here?
+
+        try:
+            launch_process_helper(bash_command, print_stdout=False)
+        except CalledProcessError:
+            # Check success manually by looking for .xo file
+            pass
         xclbin = link_dir + "/a.xclbin"
-        assert os.path.isfile(xclbin), (
-            "Vitis .xclbin file not created, check logs under %s" % link_dir
-        )
+        if not os.path.isfile(xclbin):
+            raise FINNError("Vitis .xclbin file not created, check logs under %s" % link_dir)
+
+        # TODO rename xclbin appropriately here?
         model.set_metadata_prop("bitfile", xclbin)
 
         # run Vivado to gen xml report
@@ -350,13 +347,7 @@ class VitisLink(Transformation):
             f.write("vivado -mode batch -source %s\n" % (link_dir + "/gen_report_xml.tcl"))
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", gen_rep_xml_sh]
-        process_genxml = subprocess.Popen(
-            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        _, stderr_data = process_genxml.communicate()
-        stderr_stripped = stderr_data.decode().strip()
-        if stderr_stripped != "" and stderr_stripped is not None:
-            log.critical(stderr_stripped)  # Decode bytes and log as critical
+        launch_process_helper(bash_command, print_stdout=False)
         # filename for the synth utilization report
         synth_report_filename = link_dir + "/synth_report.xml"
         model.set_metadata_prop("vivado_synth_rpt", synth_report_filename)

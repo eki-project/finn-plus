@@ -29,13 +29,13 @@
 
 import math
 import os
-import subprocess
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from shutil import copy
+from subprocess import CalledProcessError
 
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
@@ -47,9 +47,14 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.instrumentation import GenerateInstrumentationIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
-from finn.util.basic import make_build_dir, pynq_native_port_width, pynq_part_map
+from finn.util.basic import (
+    launch_process_helper,
+    make_build_dir,
+    pynq_native_port_width,
+    pynq_part_map,
+)
 from finn.util.deps import get_deps_path
-from finn.util.logging import log
+from finn.util.exception import FINNError
 
 from . import templates
 
@@ -399,16 +404,15 @@ class MakeZYNQProject(Transformation):
 
         # call the synthesis script
         bash_command = ["bash", synth_project_sh]
-        process_compile = subprocess.Popen(
-            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        _, stderr_data = process_compile.communicate()
-        stderr_stripped = stderr_data.decode().strip()
-        if stderr_stripped != "" and stderr_stripped is not None:
-            log.critical(stderr_stripped)  # Decode bytes and log as critical
+        try:
+            launch_process_helper(bash_command, print_stdout=False)
+        except CalledProcessError:
+            # Check success manually by looking for bitfile
+            pass
+
         bitfile_name = vivado_pynq_proj_dir + "/finn_zynq_link.runs/impl_1/top_wrapper.bit"
         if not os.path.isfile(bitfile_name):
-            raise Exception(
+            raise FINNError(
                 "Synthesis failed, no bitfile found. Check logs under %s" % vivado_pynq_proj_dir
             )
         deploy_bitfile_name = vivado_pynq_proj_dir + "/resizer.bit"

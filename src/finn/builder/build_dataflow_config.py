@@ -173,16 +173,16 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     """
 
     #: Directory where the final build outputs will be written into
-    output_dir: str
+    output_dir: Optional[str] = None
 
     #: Target clock frequency (in nanoseconds) for Vivado synthesis.
     #: e.g. synth_clk_period_ns=5.0 will target a 200 MHz clock.
     #: If hls_clk_period_ns is not specified it will default to this value.
-    synth_clk_period_ns: float
+    synth_clk_period_ns: Optional[float] = None
 
     #: Which output(s) to generate from the build flow.  See documentation of
     #: DataflowOutputType for available options.
-    generate_outputs: List[DataflowOutputType]
+    generate_outputs: Optional[List[DataflowOutputType]] = None
 
     #: (Optional) Path to configuration JSON file in which user can specify
     #: a preferred implementation style (HLS or RTL) for each node.
@@ -350,14 +350,14 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Whether pdb postmortem debuggig will be launched when the build fails
     enable_build_pdb_debug: Optional[bool] = False
 
-    #: When True, additional verbose information will be written to the log file.
-    #: Otherwise, these additional information will be suppressed.
+    #: When True, additional information (level = DEBUG) will be written to the log file.
+    #: Otherwise, this additional information will be suppressed (level = INFO).
     verbose: Optional[bool] = False
 
     #: Log level to be used on the command line for finn-plus internal logging.
-    #: This is different from the log level used for the build process,
+    #: This is different from the log level used for build_dataflow.log,
     #: which is controlled using the verbose flag.
-    console_log_level: Optional[LogLevel] = LogLevel.NONE
+    console_log_level: Optional[LogLevel] = LogLevel.ERROR
 
     #: If given, only run the steps in the list. If not, run default steps.
     #: See `default_build_dataflow_steps` for the default list of steps.
@@ -394,6 +394,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: If set to latest newest version will be used
     #: If set to commit hash specified version will be used
     cpp_driver_version: Optional[str] = "latest"
+
+    #: Specify validation dataset to be used for deployment of the PYNQ driver
+    validation_dataset: Optional[str] = None
 
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:
