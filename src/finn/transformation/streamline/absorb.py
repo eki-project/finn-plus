@@ -39,11 +39,7 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 
-from finn.transformation.util import group_inputs_by_category
 from finn.util.logging import log
-
-# Protobuf onnx graph node type
-from onnx import NodeProto  # noqa
 
 
 # Note: Old name kept for compatibility reasons but actually allows to absorb
@@ -203,17 +199,13 @@ class AbsorbAddIntoMultiThreshold(Transformation):
             if n.op_type == "Add" and not model.is_fork_node(n) and not model.is_join_node(n):
                 consumer = model.find_consumer(n.output[0])
                 if consumer is not None and consumer.op_type == "MultiThreshold":
-                    # As Add is not a join node, there must be one initializer
-                    # and one dynamic input. We do not know their order, but
-                    # can group them accordingly to extract the tensor names
-                    (start,), (add_weight,) = group_inputs_by_category(n, model)
-                    threshold = consumer.input[1]
-                    A = model.get_initializer(add_weight)
-                    T = model.get_initializer(threshold)
-                    # Test for the thresholds actually being initializers
-                    # Note: No need to validate the add_weights anymore, this
-                    # is already handled by the grouping and is_join_node test.
+                    add_weight_name = n.input[1]
+                    threshold_name = consumer.input[1]
+                    A = model.get_initializer(add_weight_name)
+                    T = model.get_initializer(threshold_name)
+                    assert A is not None, "Initializer for add weights is not set."
                     assert T is not None, "Initializer for thresholds is not set."
+                    start_name = n.input[0]
                     # we can only absorb 0d or 1d adds
                     is_scalar = A.ndim == 0 or all(x == 1 for x in A.shape)
                     actual_ndims = len(tuple(filter(lambda x: x > 1, A.shape)))
@@ -245,9 +237,9 @@ class AbsorbAddIntoMultiThreshold(Transformation):
                             Tnew = T - A  # noqa: Not lowercase
                             # Tnew = T - A.reshape(-1, T.shape[1])
                             # compute new thresholds and set initializer
-                            model.set_initializer(threshold, Tnew)
+                            model.set_initializer(threshold_name, Tnew)
                             # wire add input directly to MultiThreshold
-                            consumer.input[0] = start
+                            consumer.input[0] = start_name
                             # remove the add node
                             graph.node.remove(n)
                             graph_modified = True
@@ -341,26 +333,20 @@ class Absorb1BitMulIntoMatMul(Transformation):
         graph_modified = False
         for n in graph.node:
             node_ind += 1
-            # Note: Join-node test is implicitly covered by testing for the
-            # initializer below
-            # Note: This cannot handle fork-nodes, as only the first consumer is
-            # considered below.
             # TODO: Fork-nodes could be handled if the muls are the same in all
             #  branches, but this is not checked nor rewired at all right now.
             if n.op_type == "MatMul" and not model.is_fork_node(n):
                 matmul_weight_name = n.input[1]
                 W = model.get_initializer(matmul_weight_name)
                 Wdt = model.get_tensor_datatype(matmul_weight_name)
-                # Just skip matmuls with non-existing weight initializers
+                # Skip matmuls with no initializers
                 if W is None:
                     continue
                 consumer = model.find_consumer(n.output[0])
-                # Note: Join-node test is implicitly covered by testing for the
-                # initializer below
                 if consumer is not None and consumer.op_type == "Mul":
                     mul_weight_name = consumer.input[1]
                     A = model.get_initializer(mul_weight_name)
-                    # Just skip muls with non-existing scale initializers
+                    # Skip muls with no initializers
                     if A is None:
                         continue
                     is_1bit = model.get_tensor_datatype(mul_weight_name).bitwidth() == 1
@@ -389,26 +375,18 @@ class Absorb1BitMulIntoConv(Transformation):
         graph_modified = False
         for n in graph.node:
             node_ind += 1
-            # Note: Join-node test is implicitly covered by testing for the
-            # initializer below
-            # Note: This cannot handle fork-nodes, as only the first consumer is
-            # considered below.
-            # TODO: Fork-nodes could be handled if the muls are the same in all
-            #  branches, but this is not checked nor rewired at all right now.
             if n.op_type == "Conv" and not model.is_fork_node(n):
                 conv_weight_name = n.input[1]
                 W = model.get_initializer(conv_weight_name)
                 Wdt = model.get_tensor_datatype(conv_weight_name)
-                # Just skip convs with non-existing weight initializers
+                # Skip convs with no initializers
                 if W is None:
                     continue
                 consumer = model.find_consumer(n.output[0])
-                # Note: Join-node test is implicitly covered by testing for the
-                # initializer below
                 if consumer is not None and consumer.op_type == "Mul":
                     mul_weight_name = consumer.input[1]
                     A = model.get_initializer(mul_weight_name)
-                    # Just skip muls with non-existing scale initializers
+                    # Skip muls with no initializers
                     if A is None:
                         continue
                     is_1bit = model.get_tensor_datatype(mul_weight_name).bitwidth() == 1
