@@ -200,7 +200,7 @@ class HLSBackend(ABC):
                                 is_port_conflict = True
                 if is_port_conflict:
                     log.warning(
-                        "Vitis HLS IPGen failed due to race condition "
+                        f"Vitis HLS IPGen ({code_gen_dir}) failed due to race condition "
                         "(XCD server port conflict). Retrying..."
                     )
                 else:
