@@ -111,6 +111,7 @@ from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth
+from finn.util.exception import FINNUserError
 from finn.util.logging import log
 from finn.util.test import execute_parent
 
@@ -705,6 +706,8 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     # introduce tLAST marker, required for instrumentation
     if cfg.enable_instrumentation:
+        if cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
+            raise FINNUserError("Instrumentation is not yet implemented for Alveo/Vitis flow")
         model = model.transform(
             InsertTLastMarker(
                 # only insert marker on output (input TLAST is ignored for these use-cases anyway)

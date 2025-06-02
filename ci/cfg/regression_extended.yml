@@ -6,7 +6,8 @@
         "synth_clk_period_ns": [4],
         "rtlsim_batch_size": [3],
         # no deployment package because Alveo deployment is not yet supported by CI
-        "generate_outputs": [["estimate_reports", "rtlsim_performance", "stitched_ip", "out_of_context_synth", "bitfile"]]
+        "generate_outputs": [["estimate_reports", "rtlsim_performance", "stitched_ip", "out_of_context_synth", "bitfile"]],
+        "enable_instrumentation": [False]
     },
 
     # 4x GPT Transformer models (currently disabled due to streamlining issues!)
