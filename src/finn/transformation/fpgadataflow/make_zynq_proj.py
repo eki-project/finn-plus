@@ -395,7 +395,7 @@ class MakeZYNQProject(Transformation):
 
         # create a TCL recipe for the project
         synth_project_sh = vivado_pynq_proj_dir + "/synth_project.sh"
-        working_dir = os.environ["PWD"]
+        working_dir = os.getcwd()
         with open(synth_project_sh, "w") as f:
             f.write("#!/bin/bash \n")
             f.write("cd {}\n".format(vivado_pynq_proj_dir))

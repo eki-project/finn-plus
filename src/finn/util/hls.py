@@ -54,7 +54,7 @@ class CallHLS:
         assert which("vitis_hls") is not None, "vitis_hls not found in PATH"
         self.code_gen_dir = code_gen_dir
         self.ipgen_script = str(self.code_gen_dir) + "/ipgen.sh"
-        working_dir = os.environ["PWD"]
+        working_dir = os.getcwd()
         f = open(self.ipgen_script, "w")
         f.write("#!/bin/bash \n")
         f.write("cd {}\n".format(code_gen_dir))

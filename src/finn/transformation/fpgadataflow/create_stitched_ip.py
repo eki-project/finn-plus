@@ -627,7 +627,7 @@ close $ofile
             f.write(tcl_string)
         # create a shell script and call Vivado
         make_project_sh = vivado_stitch_proj_dir + "/make_project.sh"
-        working_dir = os.environ["PWD"]
+        working_dir = os.getcwd()
         with open(make_project_sh, "w") as f:
             f.write("#!/bin/bash \n")
             f.write("cd {}\n".format(vivado_stitch_proj_dir))
