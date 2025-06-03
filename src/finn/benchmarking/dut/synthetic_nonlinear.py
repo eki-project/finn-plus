@@ -192,7 +192,10 @@ def combine_blocks(lb, rb, ifm_dim, ch, pe):
     add_config["numInputVectors"] = [1, ifm_dim, ifm_dim]
     add_config["NumChannels"] = ch
     add_config["PE"] = pe
-    add_config["inputDataType"] = lb.get_tensor_datatype(lb_output.name).name
+    add_config["inputDataTypes"] = [
+        lb.get_tensor_datatype(lb_output.name).name,
+        rb.get_tensor_datatype(rb_output.name).name,
+    ]
 
     nodes_lb = [node for node in lb.graph.node]
     nodes_rb = [node for node in rb.graph.node]
