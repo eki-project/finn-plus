@@ -30,11 +30,13 @@ import argparse
 import json
 import numpy as np
 import os
+import time
 from dataset_loading import FileQueue, ImgQueue
 from driver import io_shape_dict
 from driver_base import FINNExampleOverlay
 from PIL import Image
 from pynq import PL
+from pynq.pl_server.device import Device
 
 
 def img_resize(img, size):
@@ -91,44 +93,46 @@ def setup_dataloader(val_path, label_file_path=None, batch_size=100, n_images=50
     return img_queue
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Validate top-1 accuracy for FINN-generated accelerator"
-    )
-    parser.add_argument(
-        "--batchsize", help="number of samples for inference", type=int, default=100
-    )
-    parser.add_argument(
-        "--dataset", help="dataset to use (mnist, cifar10, cifar100, imagenet)", default=""
-    )
-    parser.add_argument(
-        "--platform", help="Target platform: zynq-iodma alveo", default="zynq-iodma"
-    )
-    parser.add_argument(
-        "--bitfile", help='name of bitfile (i.e. "resizer.bit")', default="resizer.bit"
-    )
-    parser.add_argument(
-        "--dataset_root", help="dataset root dir for download/reuse", default="/tmp"
-    )
-    parser.add_argument(
-        "--reportfile",
-        help="Name of output .json report file",
-        type=str,
-        default="validation.json",
-    )
-    parser.add_argument(
-        "--settingsfile", help="Name of optional input .json settings file", type=str, default=""
-    )
-    # parse arguments
-    args = parser.parse_args()
-    bsize = args.batchsize
-    dataset = args.dataset
-    bitfile = args.bitfile
-    platform = args.platform
-    reportfile = args.reportfile
-    settingsfile = args.settingsfile
-    dataset_root = args.dataset_root
+def run_idle(*args, **kwargs):
+    # Program FPGA without running accelerator. Only used in the context of power measurement
+    runtime = kwargs["runtime"]
+    frequency = kwargs["frequency"]
+    bitfile = kwargs["bitfile"]
+    bsize = kwargs["batchsize"]
+    platform = kwargs["platform"]
+    devID = kwargs["device"]
+    device = Device.devices[devID]
 
+    # program FPGA and load driver
+    PL.reset()  # reset PYNQ cache
+    FINNExampleOverlay(
+        bitfile_name=bitfile,
+        device=device,
+        platform=platform,
+        io_shape_dict=io_shape_dict,
+        fclk_mhz=frequency,
+        batch_size=bsize,
+        runtime_weight_dir="runtime_weights/",
+    )
+
+    print("Running idle for %d seconds.." % runtime)
+    time.sleep(runtime)
+    print("Done.")
+
+
+def main(*args, **kwargs):
+    frequency = kwargs["frequency"]
+    bitfile = kwargs["bitfile"]
+    reportfile = kwargs["reportfile"]
+    settingsfile = kwargs["settingsfile"]
+    bsize = kwargs["batchsize"]
+    platform = kwargs["platform"]
+    dataset_root = kwargs["dataset_root"]
+    devID = kwargs["device"]
+    device = Device.devices[devID]
+
+    if "dataset" in kwargs:
+        dataset = kwargs["dataset"]
     # overwrite settings if specified in settings file
     if settingsfile != "":
         with open(settingsfile, "r") as f:
@@ -140,8 +144,10 @@ if __name__ == "__main__":
     PL.reset()  # reset PYNQ cache
     driver = FINNExampleOverlay(
         bitfile_name=bitfile,
+        device=device,
         platform=platform,
         io_shape_dict=io_shape_dict,
+        fclk_mhz=frequency,
         batch_size=bsize,
         runtime_weight_dir="runtime_weights/",
     )
@@ -229,3 +235,35 @@ if __name__ == "__main__":
     }
     with open(reportfile, "w") as f:
         json.dump(report, f, indent=2)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Validate top-1 accuracy for FINN-generated accelerator"
+    )
+    parser.add_argument(
+        "--batchsize", help="number of samples for inference", type=int, default=100
+    )
+    parser.add_argument(
+        "--dataset", help="dataset to use (mnist, cifar10, cifar100, imagenet)", default=""
+    )
+    parser.add_argument(
+        "--platform", help="Target platform: zynq-iodma alveo", default="zynq-iodma"
+    )
+    parser.add_argument(
+        "--bitfile", help='name of bitfile (i.e. "resizer.bit")', default="resizer.bit"
+    )
+    parser.add_argument(
+        "--dataset_root", help="dataset root dir for download/reuse", default="/tmp"
+    )
+    parser.add_argument(
+        "--reportfile",
+        help="Name of output .json report file",
+        type=str,
+        default="validation.json",
+    )
+    parser.add_argument(
+        "--settingsfile", help="Name of optional input .json settings file", type=str, default=""
+    )
+    args = parser.parse_args()
+    main([], vars(args))

@@ -86,35 +86,42 @@ class FINNInstrumentationOverlay(Overlay):
         return (overflow_err, underflow_err, frame, checksum, min_latency, latency, interval)
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Profile FINN-generated accelerator using instrumentation wrapper"
-    )
-    parser.add_argument("--runtime", help="Runtime in seconds", type=int, default=10)
-    parser.add_argument(
-        "--frequency", help="FPGA clock frequency in MHz", type=float, default=100.0
-    )
-    parser.add_argument("--seed", help="LFSR seed for input data generation", type=int, default=1)
-    parser.add_argument("--device", help="FPGA device to be used", type=int, default=0)
-    parser.add_argument("--bitfile", help="Name of bitfile", default="finn-accel.bit")
-    parser.add_argument(
-        "--reportfile",
-        help="Name of output .json report file",
-        type=str,
-        default="measured_performance.json",
-    )
-    parser.add_argument(
-        "--settingsfile", help="Name of optional input .json settings file", type=str, default=""
-    )
-    # parse arguments
-    args = parser.parse_args()
-    runtime = args.runtime
-    frequency = args.frequency
-    seed = args.seed
-    bitfile = args.bitfile
-    reportfile = args.reportfile
-    settingsfile = args.settingsfile
-    devID = args.device
+def run_idle(*args, **kwargs):
+    # Program FPGA without running accelerator. Only used in the context of power measurement
+    runtime = kwargs["runtime"]
+    frequency = kwargs["frequency"]
+    seed = kwargs["seed"]
+    bitfile = kwargs["bitfile"]
+    settingsfile = kwargs["settingsfile"]
+    devID = kwargs["device"]
+
+    device = Device.devices[devID]
+
+    # overwrite frequency if specified in settings file
+    if settingsfile != "":
+        with open(settingsfile, "r") as f:
+            settings = json.load(f)
+            if "fclk_mhz" in settings:
+                frequency = settings["fclk_mhz"]
+
+    print("Programming FPGA..")
+    PL.reset()  # reset PYNQ cache
+    FINNInstrumentationOverlay(bitfile_name=bitfile, device=device, fclk_mhz=frequency, seed=seed)
+
+    print("Running idle for %d seconds.." % runtime)
+    time.sleep(runtime)
+    print("Done.")
+
+
+def main(*args, **kwargs):
+    runtime = kwargs["runtime"]
+    frequency = kwargs["frequency"]
+    seed = kwargs["seed"]
+    bitfile = kwargs["bitfile"]
+    reportfile = kwargs["reportfile"]
+    settingsfile = kwargs["settingsfile"]
+    devID = kwargs["device"]
+
     device = Device.devices[devID]
 
     # overwrite frequency if specified in settings file
@@ -132,7 +139,7 @@ if __name__ == "__main__":
     )
 
     # start accelerator
-    print("Running accelerator..")
+    print("Running accelerator for %d seconds.." % runtime)
     accel.start_accelerator()
 
     # let it run for specified runtime
@@ -167,3 +174,27 @@ if __name__ == "__main__":
         json.dump(report, f, indent=2)
 
     print("Done.")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Profile FINN-generated accelerator using instrumentation wrapper"
+    )
+    parser.add_argument("--runtime", help="Runtime in seconds", type=int, default=10)
+    parser.add_argument(
+        "--frequency", help="FPGA clock frequency in MHz", type=float, default=100.0
+    )
+    parser.add_argument("--seed", help="LFSR seed for input data generation", type=int, default=1)
+    parser.add_argument("--device", help="FPGA device to be used", type=int, default=0)
+    parser.add_argument("--bitfile", help="Name of bitfile", default="finn-accel.bit")
+    parser.add_argument(
+        "--reportfile",
+        help="Name of output .json report file",
+        type=str,
+        default="measured_performance.json",
+    )
+    parser.add_argument(
+        "--settingsfile", help="Name of optional input .json settings file", type=str, default=""
+    )
+    args = parser.parse_args()
+    main([], vars(args))

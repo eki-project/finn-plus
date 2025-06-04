@@ -320,7 +320,9 @@ if __name__ == "__main__":
             )
 
             # power measurement
-            # TODO
+            log_all_metrics_from_report(
+                id, live, "measured_power.json", prefix="measurement/power/"
+            )
 
             # live fifosizing report + graph png
             log_metrics_from_report(
