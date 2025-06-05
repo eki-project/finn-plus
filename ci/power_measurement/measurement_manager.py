@@ -664,7 +664,7 @@ class PowerSupply:
             self._instrument.write(f":OUTP {channel}, ON")  # turn channel on again
         else:
             print(
-                "ERROR: Trying to set something other than CH1 to 12.2V @ 10A is not supported!!!"
+                "[MM] ERROR: Trying to set something other than CH1 to 12.2V @ 10A is not supported!!!"
             )  # TODO change this if other settings should be supported
 
     def measure_voltage(self, channel):
@@ -908,6 +908,7 @@ class Experiment:
         the experiment as a module that can be interfaced with. The setup also includes the creation of a Recorder
         to aquire measurements.
         """
+        print(f"[MM] SETTING UP EXPERIMENT: {self._title}")
 
         # add all paths for  experiment
         # check if path is already in sys.path
@@ -918,16 +919,16 @@ class Experiment:
                 sys.path.insert(0, path)
             else:
                 print(
-                    f"Path: {path} already part of sys.path. Removing from experiment import paths"
+                    f"[MM] Path: {path} already part of sys.path. Removing from experiment import paths"
                 )
                 self._import_paths.remove(path)
 
         # add driver path aswell
         if self._driver not in sys.path:
-            print("Adding driver to path")
+            print("[MM] Adding driver to path")
             sys.path.insert(0, self._driver)
         else:
-            print("driver already part of path")
+            print("[MM] Driver already part of path")
 
         # setup experiment module
         spec = importlib.util.spec_from_file_location("experiment", self._config["experiment_path"])
@@ -935,8 +936,10 @@ class Experiment:
         sys.modules["experiment"] = self._experiment_module
         spec.loader.exec_module(self._experiment_module)
 
-        print(f"rails: {self._rails}\nsensors: {self._sensors}")
-        print(f"power_supply_ip {self._power_supply_ip}")
+        print(f"[MM] MONITORING RAILS: {self._rails}")
+        print(f"[MM] MONITORING SENSORS: {self._sensors}")
+        if self._power_supply_ip is not None:
+            print(f"[MM] POWER SUPPLY IP: {self._power_supply_ip}")
         self._recorder = Recorder(
             self._rails,
             self._sensors,
@@ -952,10 +955,9 @@ class Experiment:
         Before an experiment is executed it is initialized and then run with the specified configuration.
         """
         self._setup_experiment()
+        print(f"[MM] STARTING EXPERIMENT: {self._title}")
 
         for i in range(1, self._iterations + 1):
-            print("Startring experiment run", i)
-
             if self._record_warmup:
                 self._recorder.start()
 
@@ -965,7 +967,9 @@ class Experiment:
                 kwargs = function.get("kwargs", None)
                 kwargs["bitfile"] = self._config["FINN"]["bitstream"]
 
-                print(f"Calling func_name {name} with args: {args}\n kwargs {kwargs}")
+                print(
+                    f"[MM] STARTING ITERATION {i} OF FUNCTION {name} WITH ARGS= {args}\n KWARGS= {kwargs}"
+                )
                 func = getattr(self._experiment_module, name)
 
                 if self._end_after is None:
@@ -975,20 +979,19 @@ class Experiment:
                     p = multiprocessing.Process(target=func, args=args, kwargs=kwargs)
                     p.start()
                 else:
-                    print(
-                        "ERROR, DO NOT USE THIS FEATURE"
-                    )  # TODO: fix for fixed warmup, what if multiple functions are defined?
+                    # TODO: fix for fixed warmup, what if multiple functions are defined?
+                    print("[MM] ERROR, DO NOT USE THIS FEATURE")
                     p = multiprocessing.Process(target=func, args=args, kwargs=kwargs)
                     p.start()
-                    print(f"Experiment will be stopped after end_afer = {self._end_after}s")
+                    print(f"[MM] Experiment will be stopped after end_afer = {self._end_after}s")
                     time.sleep(self._end_after)
                     p.terminate()  # FIXME pynq cannot allocate memory after killing process
                     # os.kill(p.pid, signal.SIGTERM)
 
-                print(f"Warmup for {self._warmup}s before starting measurment...")
                 time.sleep(self._warmup)
 
                 if not self._record_warmup and not self._recorder.is_running():
+                    print(f"[MM] STARTING RECORDING AFTER {self._warmup} s OF WARMUP")
                     self._recorder.start()
 
                 # wait on DUT to finish
@@ -1070,5 +1073,5 @@ if __name__ == "__main__":
         ex_flow = ExperimentFlow(json_path)
         ex_flow.start_experiments()
     else:
-        print("ERROR: Provide path to experiment json config as argument")
+        print("[MM] ERROR: Provide path to experiment json config as argument")
         sys.exit(1)

@@ -6,6 +6,24 @@ import subprocess
 import sys
 
 
+class PrefixPrinter(object):
+    """
+    Create a custom stream handler that adds a prefix
+    """
+
+    def __init__(self, prefix, originalstream):
+        self.console = originalstream
+        self.prefix = prefix
+        self.linebuf = ""
+
+    def write(self, buf):
+        for line in buf.rstrip().splitlines():
+            self.console.write(f"[{self.prefix}] " + line + "\n")
+
+    def flush(self):
+        self.console.flush()
+
+
 def delete_dir_contents(dir):
     for filename in os.listdir(dir):
         file_path = os.path.join(dir, filename)
@@ -15,12 +33,12 @@ def delete_dir_contents(dir):
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)
         except Exception as e:
-            print("Failed to delete %s. Reason: %s" % (file_path, e))
+            print("ERROR: Failed to delete %s. Reason: %s" % (file_path, e))
 
 
 if __name__ == "__main__":
     exit_code = 0
-    print("Looking for deployment packages in artifacts..")
+    print("SCANNING DEPLOYMENT PACKAGES IN BUILD ARTIFACTS..")
     # Find deployment packages from artifacts
     artifacts_in_dir = os.path.join("build_artifacts", "runs_output")
     artifacts_out_dir = os.path.join("measurement_artifacts", "runs_output")
@@ -31,15 +49,13 @@ if __name__ == "__main__":
         deploy_archive = os.path.join(run_in_dir, "deploy.zip")
         extract_dir = "measurement"
         if os.path.isfile(deploy_archive):
-            print("Found deployment package in %s, extracting.." % run_in_dir)
+            print("FOUND DEPLOYMENT PACKAGE IN %s, EXTRACTING.." % run_in_dir)
 
             # Extract to temporary dir
             os.makedirs(extract_dir, exist_ok=True)
             delete_dir_contents(extract_dir)
             shutil.unpack_archive(deploy_archive, extract_dir)
 
-            # Run driver
-            print("Running measurement manager..")
             # run validate.py (from IODMA driver) if present, otherwise driver.py (instrumentation)
             # TODO: unify IODMA/instrumentation shell & driver
             if os.path.isfile(f"{extract_dir}/driver/validate.py"):
@@ -112,8 +128,17 @@ if __name__ == "__main__":
             with open(f"{extract_dir}/measurement_config.json", "w") as f:
                 json.dump(measurement_cfg, f, indent=2)
 
-            # Launch experiment manager with generated config
+            # Prefix stdout to make it easier to identify the run in the console output
+            print(
+                "LAUNCHING MEASUREMENT MANAGER FOR DEPLOY PACKAGE: %s"
+                % os.path.basename(run_in_dir)
+            )
             sys.stdout.flush()
+            original_stdout = sys.stdout
+            original_stderr = sys.stderr
+            sys.stdout = PrefixPrinter(os.path.basename(run_in_dir), sys.stdout)
+            sys.stderr = PrefixPrinter(os.path.basename(run_in_dir), sys.stderr)
+            # Launch experiment manager with generated config
             result = subprocess.run(
                 [
                     sys.executable,
@@ -121,12 +146,14 @@ if __name__ == "__main__":
                     f"{extract_dir}/measurement_config.json",
                 ]
             )
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
 
             if result.returncode != 0:
-                print("Measurement manager reported error!")
+                print("ERROR: MEASUREMENT MANAGER NON-ZERO EXIT CODE!")
                 exit_code = 1
             else:
-                print("Measurement finished successfully.")
+                print("MEASUREMENT MANAGER COMPLETED SUCCESSFULLY.")
 
             # parse power measurement results into a compact report
             # TODO: aggregate results from multiple runs
@@ -154,6 +181,7 @@ if __name__ == "__main__":
                 json.dump(power_report, f, indent=2)
 
             # Copy results back to artifact directory
+            captured_reports = []
             for report in [
                 "measured_performance.json",
                 "measured_power.json",
@@ -165,13 +193,12 @@ if __name__ == "__main__":
             ]:
                 report_path = os.path.join(extract_dir, report)
                 if os.path.isfile(report_path):
-                    print("Copying %s to %s" % (report_path, reports_dir))
+                    captured_reports.append(report)
                     os.makedirs(reports_dir, exist_ok=True)
                     shutil.copy(report_path, reports_dir)
 
-            print("Clearing temporary directory..")
             # Clear temporary dir
             delete_dir_contents(extract_dir)
-            print("Done.")
-    print("Processed all deployment packages.")
+            print("CAPTURED REPORTS: %s" % ", ".join(captured_reports))
+    print("PROCESSED ALL DEPLOYMENT PACKAGES. EXITING..")
     sys.exit(exit_code)

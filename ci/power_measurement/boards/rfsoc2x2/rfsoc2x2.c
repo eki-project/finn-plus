@@ -122,13 +122,13 @@ void writeData(int fdi2c, unsigned char address, unsigned char reg, int value){
     int status;
 
     if (ioctl(fdi2c, I2C_SLAVE_FORCE, address) < 0){
-        printf("ERROR: Unable to set I2C slave address 0x%02X\n", address);
+        printf("[I2C Driver] ERROR: Unable to set I2C slave address 0x%02X\n", address);
         exit(1);
     }
 
     status = i2c_smbus_write_byte_data(fdi2c, CMD_PAGE, address);
     if (status < 0) {
-        printf("ERROR: Unable to write page address to I2C slave at 0x%02X: %d\n", address, status);
+        printf("[I2C Driver] ERROR: Unable to write page address to I2C slave at 0x%02X: %d\n", address, status);
         exit(1);
     }
 
@@ -136,7 +136,7 @@ void writeData(int fdi2c, unsigned char address, unsigned char reg, int value){
 
     status = i2c_smbus_write_word_data(fdi2c, reg, value);
     if (status < 0) {
-        printf("ERROR: Unable to write value to I2C reg at 0x%02X: %d\n", reg, status);
+        printf("[I2C Driver] ERROR: Unable to write value to I2C reg at 0x%02X: %d\n", reg, status);
         exit(1);
     }
 }
@@ -146,13 +146,13 @@ int readData(int fdi2c, unsigned char address, unsigned char reg){
     int value;
 
     if (ioctl(fdi2c, I2C_SLAVE_FORCE, address) < 0){
-        printf("ERROR: Unable to set I2C slave address 0x%02X\n", address);
+        printf("[I2C Driver] ERROR: Unable to set I2C slave address 0x%02X\n", address);
         exit(1);
     }
 
     status = i2c_smbus_write_byte_data(fdi2c, CMD_PAGE, address);
     if (status < 0) {
-        printf("ERROR: Unable to write page address to I2C slave at 0x%02X: %d\n", address, status);
+        printf("[I2C Driver] ERROR: Unable to write page address to I2C slave at 0x%02X: %d\n", address, status);
         exit(1);
     }
 
@@ -196,18 +196,20 @@ double readPower(int fdi2c, unsigned char address){
 }
 
 int initialize() {
+    // Disable stdout buffering
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     //Fill rails array
     for(int i = 0; i < NUM_OF_RAILS; i++) {
         rails[i] = &(sensors[i].s_rail);
     }
 
-    //Calibrate ina226
-    printf("Calibrating INA226 sensors...\n");
+    //Calibrate INA226
     for(int i = 0; i < NUM_OF_RAILS; i++) {
         int fdi2c;
         fdi2c = open(sensors[i].bus, O_RDWR);
         if(fdi2c < 0) {
-            printf("ERROR: Opening %s failed\n", sensors[i].bus);
+            printf("[I2C Driver] ERROR: Opening %s failed\n", sensors[i].bus);
             return -1;
         }
 
@@ -215,7 +217,7 @@ int initialize() {
         writeData(fdi2c, sensors[i].address, REG_CAL, sensors[i].calibration_value);
         close(fdi2c);
     }
-    printf("Done calibrating INA226 sensors.\n");
+    printf("[I2C Driver] Calibrated %d INA226 sensors.\n", NUM_OF_RAILS);
     return 0;
 }
 
