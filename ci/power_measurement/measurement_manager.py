@@ -971,6 +971,7 @@ class Experiment:
                 if self._end_after is None:
                     # func(*args, **kwargs)
                     # execute asynchronously to implement proper warmup
+                    sys.stdout.flush()
                     p = multiprocessing.Process(target=func, args=args, kwargs=kwargs)
                     p.start()
                 else:
@@ -1051,7 +1052,7 @@ class ExperimentFlow:
         for experiment in self._experiments:
             experiment.start_experiment()
 
-    # Checks for a given experient config if the globally defined sections are present or not.
+    # Checks for a given experiment config if the globally defined sections are present or not.
     # If experiment already defines global section leave as is, otherwise append global section to experiment.
     def _append_global(self, experiment_config):
         """Helper method to check if sections from the global configuration need to be appended
@@ -1060,7 +1061,6 @@ class ExperimentFlow:
 
         for gk in self._config["global"].keys():
             if gk not in experiment_config.keys():
-                print(f"Section {gk} not in experiment configuration. Adding section...")
                 experiment_config[gk] = self._config["global"][gk]
 
 
@@ -1070,4 +1070,5 @@ if __name__ == "__main__":
         ex_flow = ExperimentFlow(json_path)
         ex_flow.start_experiments()
     else:
-        print("Please provide path to experiment json config as argument")
+        print("ERROR: Provide path to experiment json config as argument")
+        sys.exit(1)

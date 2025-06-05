@@ -113,9 +113,10 @@ if __name__ == "__main__":
                 json.dump(measurement_cfg, f, indent=2)
 
             # Launch experiment manager with generated config
+            sys.stdout.flush()
             result = subprocess.run(
                 [
-                    "python",
+                    sys.executable,
                     "ci/power_measurement/measurement_manager.py",
                     f"{extract_dir}/measurement_config.json",
                 ]

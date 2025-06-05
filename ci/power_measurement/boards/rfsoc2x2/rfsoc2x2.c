@@ -202,31 +202,23 @@ int initialize() {
     }
 
     //Calibrate ina226
+    printf("Calibrating INA226 sensors...\n");
     for(int i = 0; i < NUM_OF_RAILS; i++) {
         int fdi2c;
         fdi2c = open(sensors[i].bus, O_RDWR);
         if(fdi2c < 0) {
-            printf("Opening %s failed\n", sensors[i].bus);
+            printf("ERROR: Opening %s failed\n", sensors[i].bus);
             return -1;
         }
 
-        printf("bus: %s name: %s addr: 0x%02X cal_val: 0x%04X\n", sensors[i].bus, sensors[i].s_rail.rail_name, sensors[i].address, sensors[i].calibration_value);
+        //printf("bus: %s name: %s addr: 0x%02X cal_val: 0x%04X\n", sensors[i].bus, sensors[i].s_rail.rail_name, sensors[i].address, sensors[i].calibration_value);
         writeData(fdi2c, sensors[i].address, REG_CAL, sensors[i].calibration_value);
-
-        printf("Done calibrating sensor. Closing fd...\n");
         close(fdi2c);
     }
+    printf("Done calibrating INA226 sensors.\n");
     return 0;
 }
 
 int main(int argc, char* argv[]) {
-    initialize();
-    // //read_all_voltages();
-    // for(int i = 0; i < NUM_OF_RAILS; i++) {
-    //     printf("id: %d, name: %s\n", rails[i]->id, rails[i]->rail_name);
-    // }
-
-    // struct rail** test = get_rails();
-    // printf("new test: %s\n", (*test[0]).rail_name);
-    return 0;
+    return initialize();
 }
