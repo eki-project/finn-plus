@@ -27,17 +27,19 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import json
+import multiprocessing
 import numpy as np
 import os
 import qonnx
 import shlex
 import shutil
 import subprocess
+import sys
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from string import Template
-from typing import Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import finn.util
 from finn.util.basic import make_build_dir
@@ -115,19 +117,29 @@ class MakeCPPDriver(Transformation):
                     shlex.split(command), cwd=cwd, check=True, text=True, capture_output=True
                 )
                 if debug:
-                    print(result.stdout)  # Print the output for debugging purposes
+                    # Print the output for debugging purposes
+                    print(result.stdout)
             except subprocess.CalledProcessError as e:
                 print(f"Error running command: {command}")
                 print(f"Output:{e.stdout}; Error:{e.stderr}")
                 raise e
 
         # Step-by-step equivalent of the provided bash script
+        log.info("Downloading C++ driver template...")
         run_command("git init", cwd=cpp_driver_dir)
         run_command(f"git remote add origin {self.repository_url}", cwd=cpp_driver_dir)
         run_command(f"git fetch origin {self.commit_hash} --depth=1", cwd=cpp_driver_dir)
         run_command("git checkout FETCH_HEAD", cwd=cpp_driver_dir)
         run_command("git submodule update --init --recursive", cwd=cpp_driver_dir)
         run_command("./buildDependencies.sh", cwd=cpp_driver_dir)
+
+        log.info("Generating template files...")
+        # Check if multiple different input/output types are used.
+        if len(set(driver_shapes["idt"])) > 1 or len(set(driver_shapes["odt"])) > 1:
+            raise RuntimeError(
+                "Multiple different input/output types for the C++ driver\
+                    are currently not supported."
+            )
 
         # * Writing the header file
         inputDatatype: str = MakeCPPDriver.resolve_dt_name(
@@ -160,6 +172,12 @@ class MakeCPPDriver(Transformation):
                 "xclbinutil not in PATH or not installed.\
                 Required to read kernel names for driver config!"
             )
+
+        # Check if the ip_layout.json file already exists and remove it
+        # This is to avoid issues with overwriting the file
+        if os.path.exists(os.path.join(self.build_dir, "ip_layout.json")):
+            os.remove(os.path.join(self.build_dir, "ip_layout.json"))
+
         run_command(
             f"xclbinutil -i {xclbin_path} --dump-section IP_LAYOUT:JSON:ip_layout.json --force",
             cwd=os.path.dirname(xclbin_path),
@@ -223,6 +241,94 @@ class MakeCPPDriver(Transformation):
         )
         with open(json_path, "w+") as f:
             f.write(json.dumps(data, indent=4))
+
+        log.info("Created runtime json config file")
+
+        def configure_cmake(
+            source_dir: str,
+            build_dir: str,
+            cmake_args: Optional[List[str]] = None,
+            cmake_executable: str = f"{sys.executable} -m cmake",
+        ):
+            os.makedirs(build_dir, exist_ok=True)
+            args = shlex.split(cmake_executable)
+            if cmake_args:
+                args.extend(cmake_args)
+            args.append(os.path.abspath(source_dir))
+            log.info(f"Configuring with:{' '.join(args)}")
+            result = subprocess.run(args, cwd=build_dir, capture_output=True, text=True)
+            if result.returncode != 0:
+                log.critical(f"Configure failed with error:\n{result.stderr}")
+                raise subprocess.CalledProcessError(
+                    result.returncode, args, result.stdout, result.stderr
+                )
+
+        def build_cmake(
+            build_dir: str,
+            cmake_executable: str = "make",
+            build_target: Optional[str] = None,
+            build_args: Optional[List[str]] = None,
+        ):
+            args = [cmake_executable]
+            if build_target:
+                args += [build_target]
+            if build_args:
+                args.extend(build_args)
+            log.info(f"Building with:{' '.join(args)}")
+            result = subprocess.run(args, cwd=build_dir, capture_output=True, text=True)
+            if result.returncode != 0:
+                log.critical(f"Build failed with error:\n{result.stderr}")
+                raise subprocess.CalledProcessError(
+                    result.returncode, args, result.stdout, result.stderr
+                )
+
+        cmake_args = f"-DCMAKE_BUILD_TYPE=Release -DFINN_ENABLE_SANITIZERS=Off\
+        -DFINN_HEADER_LOCATION={os.path.abspath(self.header_path)} -DFINN_BUILD_DOC=Off"
+        cmake_args = shlex.split(cmake_args)
+
+        configure_cmake(
+            source_dir=self.driver_dir,
+            build_dir=os.path.join(self.driver_dir, "build"),
+            cmake_args=cmake_args,
+        )
+        # Use number of CPU cores for parallel build
+        num_cores = multiprocessing.cpu_count()
+        build_cmake(
+            build_dir=os.path.join(self.driver_dir, "build"), build_args=["-j", str(num_cores)]
+        )
+
+        # TODO: Generating weight files
+        # weights_dir = output_dir + "/runtime_weights"
+
+        # os.makedirs(weights_dir)
+        # idma_idx = 0
+        # ext_weight_dma_cnt = 0
+
+        # for node in model.graph.node:
+        #     assert (
+        #         node.op_type == "StreamingDataflowPartition"
+        #     ), "CreateDataflowPartition needs to be applied before driver generation"
+
+        #     if len(node.input) > 0:
+        #         producer = model.find_producer(node.input[0])
+        #         init_tensor = model.get_initializer(node.input[0])
+        #     else:
+        #         producer = None
+        #         init_tensor = None
+
+        #     if producer is None:  # input dma?
+        #         sdp_inst = getCustomOp(node)
+        #         idma_name = sdp_inst.get_nodeattr("instance_name")
+        #         df_model = ModelWrapper(sdp_inst.get_nodeattr("model"))
+        #         assert df_model.graph.node[0].op_type == "IODMA"
+        #         iodma_node = getCustomOp(df_model.graph.node[0])
+        #         if iodma_node.get_nodeattr("burstMode") == "wrap":  # input weights dma?
+        #             init_tensor = df_model.get_initializer(iodma_node.onnx_node.input[0])
+        #             ext_weight_dma_cnt += 1
+        #             w_dtype = df_model.get_tensor_datatype(iodma_node.onnx_node.input[0])
+        #             init_external_tensor = to_external_tensor(init_tensor, w_dtype)
+        #             np.save(weights_dir + "/" + idma_name + ".npy", init_external_tensor)
+        #         idma_idx += 1
 
         return (model, False)
 
@@ -319,7 +425,8 @@ class MakePYNQDriverIODMA(Transformation):
                 df_model = ModelWrapper(sdp_inst.get_nodeattr("model"))
                 assert df_model.graph.node[0].op_type == "IODMA_hls"
                 iodma_node = getCustomOp(df_model.graph.node[0])
-                if iodma_node.get_nodeattr("burstMode") == "wrap":  # input weights dma?
+                # input weights dma?
+                if iodma_node.get_nodeattr("burstMode") == "wrap":
                     init_tensor = df_model.get_initializer(iodma_node.onnx_node.input[0])
                     ext_weight_dma_cnt += 1
                     w_dtype = df_model.get_tensor_datatype(iodma_node.onnx_node.input[0])
