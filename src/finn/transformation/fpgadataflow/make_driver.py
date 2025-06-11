@@ -44,6 +44,7 @@ from typing import Dict, List, Optional, Tuple
 import finn.util
 from finn.util.basic import make_build_dir
 from finn.util.data_packing import get_driver_shapes, to_external_tensor
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
 from . import template_driver
@@ -75,7 +76,7 @@ class MakeCPPDriver(Transformation):
         elif "FIXED" in s:
             return "DatatypeFixed" + s.replace("FIXED", "")
         else:
-            raise RuntimeError(f"Unknown datatype for C++ Driver:{s}")
+            raise FINNInternalError(f"Unknown datatype for C++ Driver:{s}")
 
     def __init__(
         self,
@@ -84,9 +85,11 @@ class MakeCPPDriver(Transformation):
     ):
         super().__init__()
         self.platform: str = platform
-        assert (
-            platform == "alveo"
-        ), "CPP driver only supported for Alveo devices, please use PYNQ driver instead."
+
+        if platform != "alveo":
+            raise FINNUserError(
+                "CPP driver only supported for Alveo devices, please use PYNQ driver instead."
+            )
         self.version = version
 
         # Define variables for the repository URL and commit hash
@@ -100,17 +103,20 @@ class MakeCPPDriver(Transformation):
         driver_shapes: Dict = get_driver_shapes(model)
         ext_weight_dma_cnt: int  # noqa
         weights_dir: str  # noqa
+        # TODO: Enable weight file generation
         # ext_weight_dma_cnt, weights_dir = write_weights(model, cpp_driver_dir)
 
-        # * Creating the driver dir if it doesnt exist yet
-        # create a temporary folder for the generated driver
+        # Create a temporary directory for the generated C++ driver code
         cpp_driver_dir = make_build_dir(prefix="cpp_driver_")
+        # Store the driver directory path in model metadata
         model.set_metadata_prop("cpp_driver_dir", cpp_driver_dir)
+        # Get the path to the FPGA bitstream from model metadata
         xclbin_path = model.get_metadata_prop("bitfile")
+        # Define paths for configuration files
         json_path = os.path.join(cpp_driver_dir, "acceleratorconfig.json")
         header_path = os.path.join(cpp_driver_dir, "AcceleratorDatatypes.h")
 
-        # Get the base C++ driver repo
+        # Helper function to execute shell commands safely with error handling
         def run_command(command, cwd=None, debug=False):
             try:
                 result = subprocess.run(
@@ -124,13 +130,16 @@ class MakeCPPDriver(Transformation):
                 print(f"Output:{e.stdout}; Error:{e.stderr}")
                 raise e
 
-        # Step-by-step equivalent of the provided bash script
+        # Clone and set up the C++ driver repository
         log.info("Downloading C++ driver template...")
+        # Initialize git repo and fetch specified version
         run_command("git init", cwd=cpp_driver_dir)
         run_command(f"git remote add origin {self.repository_url}", cwd=cpp_driver_dir)
         run_command(f"git fetch origin {self.commit_hash} --depth=1", cwd=cpp_driver_dir)
         run_command("git checkout FETCH_HEAD", cwd=cpp_driver_dir)
+        # Initialize and update all git submodules
         run_command("git submodule update --init --recursive", cwd=cpp_driver_dir)
+        # Build required dependencies
         run_command("./buildDependencies.sh", cwd=cpp_driver_dir)
 
         log.info("Generating template files...")
@@ -173,35 +182,39 @@ class MakeCPPDriver(Transformation):
                 Required to read kernel names for driver config!"
             )
 
-        # Check if the ip_layout.json file already exists and remove it
-        # This is to avoid issues with overwriting the file
-        if os.path.exists(os.path.join(self.build_dir, "ip_layout.json")):
-            os.remove(os.path.join(self.build_dir, "ip_layout.json"))
-
+        # Extract IP layout information from the FPGA bitstream
+        # Use xclbinutil to dump the IP layout section from the bitstream to a JSON file
         run_command(
             f"xclbinutil -i {xclbin_path} --dump-section IP_LAYOUT:JSON:ip_layout.json --force",
             cwd=os.path.dirname(xclbin_path),
         )
+        # Load the IP layout information from the generated JSON file
         ips = None
         with open(os.path.join(os.path.dirname(xclbin_path), "ip_layout.json")) as f:
             ips = json.loads(f.read())["ip_layout"]["m_ip_data"]
 
-        # Get only ips that are kernels
+        # Define a filter function to identify input/output DMA kernels
+        # Filters for kernels that have valid base addresses
+        # and contain "idma" or "odma" in their names
         isIO = (
             lambda x: x["m_type"] == "IP_KERNEL"
             and x["m_base_address"] != "not_used"
             and ("idma" in x["m_name"] or "odma" in x["m_name"])
         )
+        # Extract lists of input and output DMA kernel names
         idmas = [x["m_name"] for x in ips if isIO(x) and "idma" in x["m_name"]]
         odmas = [x["m_name"] for x in ips if isIO(x) and "odma" in x["m_name"]]
 
+        # Helper function to format kernel names for the driver configuration
+        # Converts "kernelName:instance" to "kernelName:{instance}" format
         def formatKernelName(kname: str):
             kparts = kname.split(":")
             return kparts[0] + ":{" + kparts[1] + "}"
 
-        # Create idma and odma entries
+        # Create JSON configuration entries for input and output DMAs
         jsonIdmas = []
         jsonOdmas = []
+        # Map driver's idma names to actual kernels and include shape information
         for i in range(len(driver_shapes["idma_names"])):
             jsonIdmas.append(
                 {
@@ -215,6 +228,7 @@ class MakeCPPDriver(Transformation):
                     "packedShape": driver_shapes["ishape_packed"][i],
                 }
             )
+        # Map driver's odma names to actual kernels and include shape information
         for i in range(len(driver_shapes["odma_names"])):
             jsonOdmas.append(
                 {
@@ -229,33 +243,48 @@ class MakeCPPDriver(Transformation):
                 }
             )
 
+        # Create the final JSON configuration structure
         data = []
         data.append(
             {
+                # Specify which XRT device to use (0 = first device)
                 "xrtDeviceIndex": 0,
+                # Store the absolute path to the bitstream
                 "xclbinPath": os.path.abspath(xclbin_path),
-                "name": "MainDevice",
-                "idmas": jsonIdmas,
-                "odmas": jsonOdmas,
+                "name": "MainDevice",  # Assign a name to this device configuration
+                "idmas": jsonIdmas,  # Include the input DMA configurations
+                "odmas": jsonOdmas,  # Include the output DMA configurations
             }
         )
+        # Write the complete configuration to the JSON file
         with open(json_path, "w+") as f:
             f.write(json.dumps(data, indent=4))
 
         log.info("Created runtime json config file")
 
+        # Helper function to configure CMake build system
         def configure_cmake(
-            source_dir: str,
-            build_dir: str,
-            cmake_args: Optional[List[str]] = None,
+            source_dir: str,  # Directory containing CMakeLists.txt
+            build_dir: str,  # Directory where build files will be generated
+            # Additional CMake arguments as string
+            cmake_args: Optional[str] = None,
+            # Command to invoke CMake
             cmake_executable: str = f"{sys.executable} -m cmake",
         ):
+            # Create build directory if it doesn't exist
             os.makedirs(build_dir, exist_ok=True)
+            # Split the cmake executable command into arguments
             args = shlex.split(cmake_executable)
+            # Add any additional CMake arguments if provided
             if cmake_args:
+                cmake_args = shlex.split(cmake_args)
                 args.extend(cmake_args)
+            # Set CMake policy version to ensure compatibility
+            # Needed because CMake 4.0.2 is installed by FINN+ and set minimum version
+            # requirements are not correctly picked up by CMake
+            args.append("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
             args.append(os.path.abspath(source_dir))
-            log.info(f"Configuring with:{' '.join(args)}")
+            log.info(f"Configuring with: {' '.join(args)}")
             result = subprocess.run(args, cwd=build_dir, capture_output=True, text=True)
             if result.returncode != 0:
                 log.critical(f"Configure failed with error:\n{result.stderr}")
@@ -263,38 +292,90 @@ class MakeCPPDriver(Transformation):
                     result.returncode, args, result.stdout, result.stderr
                 )
 
+        # Helper function to build the configured CMake project
         def build_cmake(
-            build_dir: str,
+            build_dir: str,  # Directory containing the configured build files
+            # Build tool to use (default: make)
             cmake_executable: str = "make",
+            # Specific target to build (if any)
             build_target: Optional[str] = None,
+            # Additional build arguments
             build_args: Optional[List[str]] = None,
         ):
+            # Prepare the build command with the executable
             args = [cmake_executable]
+            # Add optional build target if specified
             if build_target:
                 args += [build_target]
+            # Add any additional build arguments
             if build_args:
                 args.extend(build_args)
             log.info(f"Building with:{' '.join(args)}")
+            # Execute the build command
             result = subprocess.run(args, cwd=build_dir, capture_output=True, text=True)
+            # Handle build failures
             if result.returncode != 0:
                 log.critical(f"Build failed with error:\n{result.stderr}")
                 raise subprocess.CalledProcessError(
                     result.returncode, args, result.stdout, result.stderr
                 )
 
+        # Define CMake configuration options for the driver build
+        # - Release build type for optimized performance
+        # - Disable sanitizers for production builds
+        # - Set custom header location
+        # - Disable documentation generation
         cmake_args = f"-DCMAKE_BUILD_TYPE=Release -DFINN_ENABLE_SANITIZERS=Off\
-        -DFINN_HEADER_LOCATION={os.path.abspath(self.header_path)} -DFINN_BUILD_DOC=Off"
-        cmake_args = shlex.split(cmake_args)
+        -DFINN_HEADER_LOCATION={os.path.abspath(header_path)} -DFINN_BUILD_DOC=Off"
 
+        # Configure the CMake project
         configure_cmake(
-            source_dir=self.driver_dir,
-            build_dir=os.path.join(self.driver_dir, "build"),
+            source_dir=cpp_driver_dir,
+            build_dir=os.path.join(cpp_driver_dir, "build"),
             cmake_args=cmake_args,
         )
-        # Use number of CPU cores for parallel build
+        # Determine optimal number of build threads based on CPU cores
         num_cores = multiprocessing.cpu_count()
         build_cmake(
-            build_dir=os.path.join(self.driver_dir, "build"), build_args=["-j", str(num_cores)]
+            build_dir=os.path.join(cpp_driver_dir, "build"), build_args=["-j", str(num_cores)]
+        )
+
+        # Helper function to verify that the built driver uses the correct datatypes
+        def check_finn_types(bin_dir: str, expectedInputType: str, expectedOutputType: str) -> None:
+            # Run the built finnhpc executable with the --check flag to output datatype information
+            result = subprocess.run(
+                "./finnhpc --check".split(), cwd=bin_dir, capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                log.critical(f"Running datatype check failed with error:\n{result.stderr}")
+                raise subprocess.CalledProcessError(result.returncode, result.stdout, result.stderr)
+            output = result.stdout
+            output_lines = output.splitlines()
+
+            # Verify that the compiled driver's datatypes match the expected types
+            # First line contains input type, second line contains output type
+            if (
+                expectedInputType not in output_lines[0]
+                or expectedOutputType not in output_lines[1]
+            ):
+                log.error(
+                    f"FINN types check failed. Expected Types: {expectedInputType},\
+                        {expectedOutputType}"
+                )
+                log.error(f"                           Actual Types: {output}")
+                raise FINNInternalError(
+                    "Expected C++ driver types to match\
+                    expected types."
+                )
+
+        # Make the compiled finnhpc executable file executable (chmod +x)
+        os.chmod(os.path.join(cpp_driver_dir, "build", "bin", "finnhpc"), 0o755)
+
+        # Verify that the driver was compiled with the correct datatypes
+        check_finn_types(
+            bin_dir=os.path.join(cpp_driver_dir, "build", "bin"),
+            expectedInputType=inputDatatype,
+            expectedOutputType=outputDatatype,
         )
 
         # TODO: Generating weight files
