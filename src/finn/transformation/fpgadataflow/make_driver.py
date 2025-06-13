@@ -42,6 +42,7 @@ from string import Template
 from typing import Dict, List, Optional, Tuple
 
 import finn.util
+from finn.builder.build_dataflow_config import FpgaMemoryType
 from finn.util.basic import make_build_dir
 from finn.util.data_packing import get_driver_shapes, to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -82,6 +83,7 @@ class MakeCPPDriver(Transformation):
         self,
         platform: str,
         version: str,
+        host_mem: str,
     ):
         super().__init__()
         self.platform: str = platform
@@ -98,6 +100,11 @@ class MakeCPPDriver(Transformation):
             self.commit_hash = "HEAD"
         else:
             self.commit_hash = version
+
+        if host_mem == FpgaMemoryType.HOST_MEM:
+            self.host_memory = True
+        else:
+            self.host_memory = False
 
     def apply(self, model: ModelWrapper) -> Tuple[ModelWrapper, bool]:
         driver_shapes: Dict = get_driver_shapes(model)
@@ -320,13 +327,17 @@ class MakeCPPDriver(Transformation):
                     result.returncode, args, result.stdout, result.stderr
                 )
 
+        host_memory_usage = "ON" if self.host_memory else "OFF"
+
         # Define CMake configuration options for the driver build
         # - Release build type for optimized performance
         # - Disable sanitizers for production builds
         # - Set custom header location
         # - Disable documentation generation
+        # - Enable/Disable host memory usage
         cmake_args = f"-DCMAKE_BUILD_TYPE=Release -DFINN_ENABLE_SANITIZERS=Off\
-        -DFINN_HEADER_LOCATION={os.path.abspath(header_path)} -DFINN_BUILD_DOC=Off"
+        -DFINN_HEADER_LOCATION={os.path.abspath(header_path)} -DFINN_BUILD_DOC=Off\
+            -DFINN_USE_HOST_MEM={host_memory_usage}"
 
         # Configure the CMake project
         configure_cmake(

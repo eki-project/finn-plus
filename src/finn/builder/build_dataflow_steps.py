@@ -844,6 +844,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
             MakeCPPDriver(
                 cfg._resolve_driver_platform(),
                 version=cfg.cpp_driver_version,
+                host_mem=cfg.fpga_memory,
             )
         )
         shutil.copytree(
