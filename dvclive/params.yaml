@@ -1,0 +1,13 @@
+params:
+  dut: vgg10
+  generate_outputs:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+  model_path: models/vgg10/radioml_w4a4_small_tidy.onnx
+metadata:
+  tool_version: '2022.2'
