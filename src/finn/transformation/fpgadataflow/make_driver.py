@@ -51,7 +51,7 @@ from finn.util.logging import log
 from . import template_driver
 
 
-def update_bitfile_path_after_copy(json_path: str, bitfile_path: str) -> None:
+def update_bitfile_path_after_copy(bitfile_path: str, json_path: str) -> None:
     """
     Update the xclbinPath in the JSON configuration to point to the new bitfile location.
 
@@ -59,6 +59,13 @@ def update_bitfile_path_after_copy(json_path: str, bitfile_path: str) -> None:
         json_path (str): Path to the JSON configuration file
         bitfile_path (str): New path to the bitfile (.xclbin)
     """
+    if json_path is None or not os.path.exists(json_path):
+        raise FINNInternalError("JSON configuration file does not exist or is not specified.")
+    if bitfile_path is None or not os.path.exists(bitfile_path):
+        raise FINNInternalError("Bitfile path does not exist or is not specified.")
+    if not json_path.endswith(".json"):
+        raise FINNInternalError("Provided path is not a JSON file.")
+
     # Read the current JSON configuration
     with open(json_path, "r") as f:
         data = json.load(f)
