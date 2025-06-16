@@ -85,6 +85,7 @@ from finn.transformation.fpgadataflow.make_driver import (
     MakeCPPDriver,
     MakePYNQDriverInstrumentation,
     MakePYNQDriverIODMA,
+    update_bitfile_path_after_copy,
 )
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
@@ -853,6 +854,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
             dirs_exist_ok=True,
             copy_function=shutil.copyfile,
         )
+
         log.info("C++ driver written into " + driver_dir)
     else:
         log.warning(
@@ -905,12 +907,16 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
                     partition_model_dir=partition_model_dir,
                 )
             )
-            copy(model.get_metadata_prop("bitfile"), bitfile_dir + "/finn-accel.bit")
+
+            bitfile_path = os.path.join(bitfile_dir, "finn-accel.bit")
+            copy(model.get_metadata_prop("bitfile"), bitfile_path)
             copy(model.get_metadata_prop("hw_handoff"), bitfile_dir + "/finn-accel.hwh")
             copy(
                 model.get_metadata_prop("vivado_synth_rpt"),
                 report_dir + "/post_synth_resources.xml",
             )
+
+            model.set_metadata_prop("bitfile_output", os.path.abspath(bitfile_path))
 
             post_synth_resources = model.analysis(post_synth_res)
             with open(report_dir + "/post_synth_resources.json", "w") as f:
@@ -936,11 +942,15 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
                     fpga_memory_type=cfg.fpga_memory,
                 )
             )
-            copy(model.get_metadata_prop("bitfile"), bitfile_dir + "/finn-accel.xclbin")
+
+            bitfile_path = os.path.join(bitfile_dir, "finn-accel.xclbin")
+            copy(model.get_metadata_prop("bitfile"), bitfile_path)
             copy(
                 model.get_metadata_prop("vivado_synth_rpt"),
                 report_dir + "/post_synth_resources.xml",
             )
+
+            model.set_metadata_prop("bitfile_output", os.path.abspath(bitfile_path))
 
             post_synth_resources = model.analysis(post_synth_res)
             with open(report_dir + "/post_synth_resources.json", "w") as f:
@@ -964,6 +974,11 @@ def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig):
         shutil.copytree(
             driver_dir, deploy_dir + "/driver", dirs_exist_ok=True, copy_function=shutil.copyfile
         )
+        update_bitfile_path_after_copy(
+            os.path.join(deploy_dir, "bitfile", "finn-accel.xclbin"),
+            os.path.join(deploy_dir, "driver", "acceleratorconfig.json"),
+        )
+
     return model
 
 

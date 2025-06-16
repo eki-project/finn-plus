@@ -51,6 +51,27 @@ from finn.util.logging import log
 from . import template_driver
 
 
+def update_bitfile_path_after_copy(json_path: str, bitfile_path: str) -> None:
+    """
+    Update the xclbinPath in the JSON configuration to point to the new bitfile location.
+
+    Args:
+        json_path (str): Path to the JSON configuration file
+        bitfile_path (str): New path to the bitfile (.xclbin)
+    """
+    # Read the current JSON configuration
+    with open(json_path, "r") as f:
+        data = json.load(f)
+
+    # Update the xclbinPath for each device in the configuration
+    for device_config in data:
+        device_config["xclbinPath"] = os.path.abspath(bitfile_path)
+
+    # Write the updated configuration back to the file
+    with open(json_path, "w") as f:
+        json.dump(data, f, indent=4)
+
+
 class MakeCPPDriver(Transformation):
     """Create CPP code to correctly interface the generated
     accelerator, including data packing/unpacking. Should be called
@@ -118,7 +139,7 @@ class MakeCPPDriver(Transformation):
         # Store the driver directory path in model metadata
         model.set_metadata_prop("cpp_driver_dir", cpp_driver_dir)
         # Get the path to the FPGA bitstream from model metadata
-        xclbin_path = model.get_metadata_prop("bitfile")
+        xclbin_path = model.get_metadata_prop("bitfile_output")
         # Define paths for configuration files
         json_path = os.path.join(cpp_driver_dir, "acceleratorconfig.json")
         header_path = os.path.join(cpp_driver_dir, "AcceleratorDatatypes.h")
