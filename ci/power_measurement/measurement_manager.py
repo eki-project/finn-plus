@@ -968,7 +968,7 @@ class Experiment:
                 kwargs["bitfile"] = self._config["FINN"]["bitstream"]
 
                 print(
-                    f"[MM] STARTING ITERATION {i} OF FUNCTION {name} WITH ARGS= {args}\n KWARGS= {kwargs}"
+                    f"[MM] STARTING ITERATION {i} OF FUNCTION {name} WITH ARGS= {args}, KWARGS= {kwargs}"
                 )
                 func = getattr(self._experiment_module, name)
 
@@ -991,7 +991,7 @@ class Experiment:
                 time.sleep(self._warmup)
 
                 if not self._record_warmup and not self._recorder.is_running():
-                    print(f"[MM] STARTING RECORDING AFTER {self._warmup} s OF WARMUP")
+                    print(f"[MM] STARTING RECORDING AFTER {self._warmup} s OF WARMUP", flush=True)
                     self._recorder.start()
 
                 # wait on DUT to finish

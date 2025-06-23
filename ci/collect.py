@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+from datetime import date
 from dvclive.live import Live
 
 
@@ -14,11 +15,6 @@ def delete_dir_contents(dir):
                 shutil.rmtree(file_path)
         except Exception as e:
             print("Failed to delete %s. Reason: %s" % (file_path, e))
-
-
-def log_dvc_metric(live, prefix, name, value):
-    # sanitize '/' in name because DVC uses it to nest metrics (which we do via prefix)
-    live.log_metric(prefix + name.replace("/", "-"), value, plot=False)
 
 
 def open_json_report(id, report_name):
@@ -39,28 +35,92 @@ def open_json_report(id, report_name):
         return None
 
 
-def log_all_metrics_from_report(id, live, report_name, prefix=""):
-    report = open_json_report(id, report_name)
-    if report:
-        for key in report:
-            log_dvc_metric(live, prefix, key, report[key])
+# Wrapper around DVC Live object
+class DVCLoggerHelper:
+    def __init__(self, experiment_name, experiment_msg, id, params):
+        self.id = id
 
+        # extract logging settings from params
+        self.store_as_experiment = params["params"].get("store_results_in_dvc_experiment", True)
+        self.store_as_data = params["params"].get("store_results_in_dvc_data", False)
 
-def log_metrics_from_report(id, live, report_name, keys, prefix=""):
-    report = open_json_report(id, report_name)
-    if report:
-        for key in keys:
-            if key in report:
-                log_dvc_metric(live, prefix, key, report[key])
+        if self.store_as_experiment:
+            # Start DVC Live experiment session
+            # TODO: cache images once we switch to a cache provider that works with DVC Studio
+            self.live = Live(
+                exp_name=experiment_name, exp_message=experiment_msg, cache_images=False
+            )
+        else:
+            self.live = None
 
+        if self.store_as_data:
+            self.data_dict = dict()
+        else:
+            self.data_dict = None
 
-def log_nested_metrics_from_report(id, live, report_name, key_top, keys, prefix=""):
-    report = open_json_report(id, report_name)
-    if report:
-        if key_top in report:
+        self.log_params(params)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.store_as_experiment:
+            # End DVC Live experiment session
+            self.live.end()
+
+    def log_params(self, params):
+        if self.store_as_experiment:
+            self.live.log_params(params)
+        if self.store_as_data:
+            self.data_dict.update(params)
+
+    def log_metric(self, prefix, name, value):
+        # sanitize '/' in name because DVC uses it to nest metrics (which we do via prefix)
+        name = name.replace("/", "-")
+
+        if self.store_as_experiment:
+            self.live.log_metric(prefix + name, value, plot=False)
+        if self.store_as_data:
+            # store in nested dictionary structure based on prefix
+            if "metrics" not in self.data_dict:
+                self.data_dict["metrics"] = dict()
+            _dict = self.data_dict["metrics"]
+
+            for key in prefix.split("/"):
+                if key:
+                    if key not in _dict:
+                        _dict[key] = dict()
+                    _dict = _dict[key]
+            _dict[name] = value
+
+    def log_image(self, image_name, image_path):
+        if self.store_as_experiment:
+            self.live.log_image(image_name, image_path)
+
+    def log_artifact(self, artifact_path):
+        if self.store_as_experiment:
+            self.live.log_artifact(artifact_path)
+
+    def log_all_metrics_from_report(self, report_name, prefix=""):
+        report = open_json_report(self.id, report_name)
+        if report:
+            for key in report:
+                self.log_metric(prefix, key, report[key])
+
+    def log_metrics_from_report(self, report_name, keys, prefix=""):
+        report = open_json_report(self.id, report_name)
+        if report:
             for key in keys:
-                if key in report[key_top]:
-                    log_dvc_metric(live, prefix, key, report[key_top][key])
+                if key in report:
+                    self.log_metric(prefix, key, report[key])
+
+    def log_nested_metrics_from_report(self, report_name, key_top, keys, prefix=""):
+        report = open_json_report(self.id, report_name)
+        if report:
+            if key_top in report:
+                for key in keys:
+                    if key in report[key_top]:
+                        self.log_metric(prefix, key, report[key_top][key])
 
 
 if __name__ == "__main__":
@@ -83,6 +143,8 @@ if __name__ == "__main__":
     output_folding_dir = os.path.join(output_cfg_dir, "folding")
     output_cfg_path = os.path.join(output_cfg_dir, "follow-up.json")
 
+    microbench_result_data = dict()
+
     for id in run_ids:
         print("Processing run %d" % id)
         experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + str(id)
@@ -95,14 +157,11 @@ if __name__ == "__main__":
             + str(id)
             + ")"
         )
-        # TODO: cache images once we switch to a cache provider that works with DVC Studio
-        with Live(exp_name=experiment_name, exp_message=experiment_msg, cache_images=False) as live:
-            # PARAMS
-            # input parameters logged by benchmarking infrastructure
-            metadata_bench = open_json_report(id, "metadata_bench.json")
-            params = {"params": metadata_bench["params"]}
-            live.log_params(params)
 
+        # initialize logging wrapper with input parameters logged by benchmarking infrastructure
+        metadata_bench = open_json_report(id, "metadata_bench.json")
+        params = {"params": metadata_bench["params"]}
+        with DVCLoggerHelper(experiment_name, experiment_msg, id, params) as dvc_logger:
             # optional metadata logged by builder
             metadata_builder = open_json_report(id, "metadata_builder.json")
             if metadata_builder:
@@ -111,13 +170,13 @@ if __name__ == "__main__":
                         "tool_version": metadata_builder["tool_version"],
                     }
                 }
-                live.log_params(metadata)
+                dvc_logger.log_params(metadata)
 
             # optional dut_info.json (additional information generated during model generation)
             dut_info_report = open_json_report(id, "dut_info.json")
             if dut_info_report:
                 dut_info = {"dut_info": dut_info_report}
-                live.log_params(dut_info)
+                dvc_logger.log_params(dut_info)
 
             # METRICS
             # TODO: for microbenchmarks, only summarize results for target node (surrounding SDP?)
@@ -131,22 +190,19 @@ if __name__ == "__main__":
                     status_builder = metadata_builder["status"]
                     if status_builder == "failed":
                         status = "failed"
-            log_dvc_metric(live, "", "status", status)
+            dvc_logger.log_metric("", "status", status)
 
             # verification steps
             if "output" in metadata_bench:
                 if "builder_verification" in metadata_bench["output"]:
-                    log_dvc_metric(
-                        live,
+                    dvc_logger.log_metric(
                         "",
                         "verification",
                         metadata_bench["output"]["builder_verification"]["verification"],
                     )
 
             # estimate_layer_resources.json
-            log_nested_metrics_from_report(
-                id,
-                live,
+            dvc_logger.log_nested_metrics_from_report(
                 "estimate_layer_resources.json",
                 "total",
                 [
@@ -159,9 +215,7 @@ if __name__ == "__main__":
             )
 
             # estimate_layer_resources_hls.json
-            log_nested_metrics_from_report(
-                id,
-                live,
+            dvc_logger.log_nested_metrics_from_report(
                 "estimate_layer_resources_hls.json",
                 "total",
                 [
@@ -177,9 +231,7 @@ if __name__ == "__main__":
             )
 
             # estimate_network_performance.json
-            log_metrics_from_report(
-                id,
-                live,
+            dvc_logger.log_metrics_from_report(
                 "estimate_network_performance.json",
                 [
                     "critical_path_cycles",
@@ -192,9 +244,7 @@ if __name__ == "__main__":
             )
 
             # rtlsim_performance.json
-            log_metrics_from_report(
-                id,
-                live,
+            dvc_logger.log_metrics_from_report(
                 "rtlsim_performance.json",
                 [
                     "N",
@@ -210,14 +260,12 @@ if __name__ == "__main__":
             )
 
             # fifo_sizing.json
-            log_metrics_from_report(
-                id, live, "fifo_sizing.json", ["total_fifo_size_kB"], prefix="fifosizing/"
+            dvc_logger.log_metrics_from_report(
+                "fifo_sizing.json", ["total_fifo_size_kB"], prefix="fifosizing/"
             )
 
             # stitched IP DCP synth resource report
-            log_nested_metrics_from_report(
-                id,
-                live,
+            dvc_logger.log_nested_metrics_from_report(
                 "post_synth_resources_dcp.json",
                 "(top)",
                 [
@@ -236,9 +284,7 @@ if __name__ == "__main__":
             # TODO: generalize to all build flows and bitfile synth
             layer_categories = ["MAC", "Eltwise", "Thresholding", "FIFO", "DWC", "SWG", "Other"]
             for category in layer_categories:
-                log_nested_metrics_from_report(
-                    id,
-                    live,
+                dvc_logger.log_nested_metrics_from_report(
                     "res_breakdown_build_output.json",
                     category,
                     [
@@ -254,9 +300,7 @@ if __name__ == "__main__":
                 )
 
             # ooc_synth_and_timing.json (OOC synth / step_out_of_context_synthesis)
-            log_metrics_from_report(
-                id,
-                live,
+            dvc_logger.log_metrics_from_report(
                 "ooc_synth_and_timing.json",
                 [
                     "LUT",
@@ -270,9 +314,7 @@ if __name__ == "__main__":
                 ],
                 prefix="synth(ooc)/resources/",
             )
-            log_metrics_from_report(
-                id,
-                live,
+            dvc_logger.log_metrics_from_report(
                 "ooc_synth_and_timing.json",
                 [
                     "WNS",
@@ -283,9 +325,7 @@ if __name__ == "__main__":
             )
 
             # post_synth_resources.json (shell synth / step_synthesize_bitfile)
-            log_nested_metrics_from_report(
-                id,
-                live,
+            dvc_logger.log_nested_metrics_from_report(
                 "post_synth_resources.json",
                 "(top)",
                 [
@@ -304,14 +344,12 @@ if __name__ == "__main__":
             # TODO: only exported as post_route_timing.rpt, not .json
 
             # instrumentation measurement
-            log_all_metrics_from_report(
-                id, live, "measured_performance.json", prefix="measurement/performance/"
+            dvc_logger.log_all_metrics_from_report(
+                "measured_performance.json", prefix="measurement/performance/"
             )
 
             # IODMA validation accuracy
-            log_metrics_from_report(
-                id,
-                live,
+            dvc_logger.log_metrics_from_report(
                 "validation.json",
                 [
                     "top-1_accuracy",
@@ -320,14 +358,12 @@ if __name__ == "__main__":
             )
 
             # power measurement
-            log_all_metrics_from_report(
-                id, live, "measured_power.json", prefix="measurement/power/"
+            dvc_logger.log_all_metrics_from_report(
+                "measured_power.json", prefix="measurement/power/"
             )
 
             # live fifosizing report + graph png
-            log_metrics_from_report(
-                id,
-                live,
+            dvc_logger.log_metrics_from_report(
                 "fifo_sizing_report.json",
                 [
                     "error",
@@ -344,10 +380,10 @@ if __name__ == "__main__":
                 "fifo_sizing_graph.png",
             )
             if os.path.isfile(image):
-                live.log_image("fifosizing_pass_1", image)
+                dvc_logger.log_image("fifosizing_pass_1", image)
 
             # time_per_step.json
-            log_metrics_from_report(id, live, "time_per_step.json", ["total_build_time"])
+            dvc_logger.log_metrics_from_report("time_per_step.json", ["total_build_time"])
 
             # ARTIFACTS
             # Log build reports as they come from GitLab artifacts,
@@ -365,7 +401,14 @@ if __name__ == "__main__":
                 shutil.copytree(run_report_dir1, dvc_report_dir, dirs_exist_ok=True)
             if os.path.isdir(run_report_dir2):
                 shutil.copytree(run_report_dir2, dvc_report_dir, dirs_exist_ok=True)
-            live.log_artifact(dvc_report_dir)
+            dvc_logger.log_artifact(dvc_report_dir)
+
+            # Save microbenchmark results in a list per DUT for later aggregation
+            dut = params["params"]["dut"]
+            if dut not in microbench_result_data:
+                # Initialize data dict for this DUT
+                microbench_result_data[dut] = list()
+            microbench_result_data[dut].append(dvc_logger.data_dict)
 
         # Prepare benchmarking config for follow-up runs after live FIFO-sizing
         folding_config_lfs_path = os.path.join(
@@ -405,6 +448,35 @@ if __name__ == "__main__":
             configuration["folding_config_file"] = [import_folding_path]
 
             follow_up_bench_cfg.append(configuration)
+
+    # Save microbenchmark results as (DVC-tracked? TODO) JSON for each DUT
+    for dut in microbench_result_data:
+        if None not in microbench_result_data[dut]:
+            # dut_dir = os.path.join("ci", "benchmark_data", dut) TODO
+            dut_dir = os.path.join(os.environ.get("LOCAL_BENCHMARK_DIR_STORE"), dut)
+            os.makedirs(dut_dir, exist_ok=True)
+            dut_json_path = os.path.join(
+                dut_dir,
+                date.today().strftime("%Y-%m-%d")
+                + "_"
+                + os.environ.get("CI_COMMIT_SHORT_SHA")
+                + "_"
+                + os.environ.get("CI_PIPELINE_ID")
+                + "_"
+                + str(len(microbench_result_data[dut]))
+                + ".json",
+            )
+            dut_json = {
+                "dut": dut,
+                "date": date.today().strftime("%Y-%m-%d"),
+                "commit": os.environ.get("CI_COMMIT_SHA"),
+                "pipeline_id": os.environ.get("CI_PIPELINE_ID"),
+                "pipeline_name": os.environ.get("CI_PIPELINE_NAME"),
+                "runs": microbench_result_data[dut],
+            }
+            print("Saving microbenchmark results for %s to %s" % (dut, dut_json_path))
+            with open(dut_json_path, "w") as f:
+                json.dump(dut_json, f, indent=2)
 
     # Save aggregated benchmarking config for follow-up job
     if follow_up_bench_cfg:

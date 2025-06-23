@@ -6,24 +6,6 @@ import subprocess
 import sys
 
 
-class PrefixPrinter(object):
-    """
-    Create a custom stream handler that adds a prefix
-    """
-
-    def __init__(self, prefix, originalstream):
-        self.console = originalstream
-        self.prefix = prefix
-        self.linebuf = ""
-
-    def write(self, buf):
-        for line in buf.rstrip().splitlines():
-            self.console.write(f"[{self.prefix}] " + line + "\n")
-
-    def flush(self):
-        self.console.flush()
-
-
 def delete_dir_contents(dir):
     for filename in os.listdir(dir):
         file_path = os.path.join(dir, filename)
@@ -134,21 +116,22 @@ if __name__ == "__main__":
                 % os.path.basename(run_in_dir)
             )
             sys.stdout.flush()
-            original_stdout = sys.stdout
-            original_stderr = sys.stderr
-            sys.stdout = PrefixPrinter(os.path.basename(run_in_dir), sys.stdout)
-            sys.stderr = PrefixPrinter(os.path.basename(run_in_dir), sys.stderr)
             # Launch experiment manager with generated config
             result = subprocess.run(
                 [
                     sys.executable,
                     "ci/power_measurement/measurement_manager.py",
                     f"{extract_dir}/measurement_config.json",
-                ]
+                ],
+                capture_output=True,
+                text=True,
             )
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
 
+            # Print stdout/stderr and check return code
+            for line in result.stdout.splitlines():
+                print(f"[{os.path.basename(run_in_dir)}] {line}")
+            for line in result.stderr.splitlines():
+                print(f"[{os.path.basename(run_in_dir)}] {line}")
             if result.returncode != 0:
                 print("ERROR: MEASUREMENT MANAGER NON-ZERO EXIT CODE!")
                 exit_code = 1
