@@ -233,6 +233,7 @@ def test_large_model():
     ret = unsupported_layers(model)
     assert ret[0] is False, "Model should not be supported, but was not detected as such"
 
+
 @pytest.mark.analysis
 def test_large_model_step():
     inp1 = create_tensor()
@@ -295,7 +296,6 @@ def test_large_model_step():
 
     model = qonnx_make_model(mul_graph)
     model = ModelWrapper(model)
-
 
     with pytest.raises(FINNUserError):
         step_check_unsupported_nodes(model, None)
