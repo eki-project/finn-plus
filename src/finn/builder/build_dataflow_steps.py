@@ -401,6 +401,19 @@ def step_check_unsupported_nodes(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     if not results[0]:
         raise FINNUserError(f"Unsupported combination of layers found after node {results[1].name}")
+    
+    warnlist=[]
+    for node in model.graph.node:
+        # Skip nodes that are not hw layers
+        if node.domain == "finn.custom_op.fpgadataflow":
+            continue
+        warnlist.append(node.name)
+        
+    if warnlist:
+        log.warning(
+            "The following nodes will not be implemented on the FPGA and need to be executed manually: "
+            + ", ".join(warnlist)
+        )
 
     return model
 
