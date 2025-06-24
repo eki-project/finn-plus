@@ -974,10 +974,11 @@ def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig):
         shutil.copytree(
             driver_dir, deploy_dir + "/driver", dirs_exist_ok=True, copy_function=shutil.copyfile
         )
-        update_bitfile_path_after_copy(
-            os.path.join(deploy_dir, "bitfile", "finn-accel.xclbin"),
-            os.path.join(deploy_dir, "driver", "acceleratorconfig.json"),
-        )
+        if DataflowOutputType.CPP_DRIVER in cfg.generate_outputs:
+            update_bitfile_path_after_copy(
+                os.path.join(deploy_dir, "bitfile", "finn-accel.xclbin"),
+                os.path.join(deploy_dir, "driver", "acceleratorconfig.json"),
+            )
 
     return model
 
