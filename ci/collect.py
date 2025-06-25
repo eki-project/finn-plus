@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import sys
 from datetime import date
 from dvclive.live import Live
 
@@ -179,7 +180,6 @@ if __name__ == "__main__":
                 dvc_logger.log_params(dut_info)
 
             # METRICS
-            # TODO: for microbenchmarks, only summarize results for target node (surrounding SDP?)
             # TODO: make all logs consistent (at generation), e.g., BRAM vs BRAM18 vs BRAM36)
 
             # status
@@ -325,9 +325,23 @@ if __name__ == "__main__":
             )
 
             # post_synth_resources.json (shell synth / step_synthesize_bitfile)
+            # special handling for microbenchmarks to extract only the relevant layer
+            report_hierarchy_level = "(top)"
+            if metadata_bench["params"]["dut"] == "mvau":
+                resource_report = open_json_report(id, "post_synth_resources.json")
+                if resource_report:
+                    for key in resource_report:
+                        if "MVAU" in key:
+                            report_hierarchy_level = key
+                            break
+                    if report_hierarchy_level == "(top)":
+                        print("ERROR: No MVAU found in post_synth_resources.json")
+                        sys.exit(1)
+            # TODO: also do this for other reports or make it optional/configurable
+
             dvc_logger.log_nested_metrics_from_report(
                 "post_synth_resources.json",
-                "(top)",
+                report_hierarchy_level,
                 [
                     "LUT",
                     "FF",

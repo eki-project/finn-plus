@@ -21,7 +21,10 @@ variables:
     value: "32"
   CPU_CORES_BENCH:
     description: "Select number of CPU cores for benchmark runs"
-    value: "8"
+    value: "32"
+  MEM_BENCH:
+    description: "Select memory for each benchmark job"
+    value: "128G"
   PARALLEL_JOBS:
     description: "Number of parallel Slurm array jobs per Benchmark job"
     value: "1"
@@ -32,7 +35,7 @@ variables:
     description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
     value: "normal"
   SLURM_QOS:
-    description: "Optional QoS option (include --qos, e.g., --qos express)"
+    description: "Optional --exclusive or QoS option (include --qos, e.g., --qos express)"
     value: ""
   MANUAL_CFG_PATH:
     description: "Name (in ci/cfg/) or path (relative to LOCAL_CFG_DIR) of benchmarking config to run"
