@@ -34,6 +34,7 @@ class bench_mvau(bench):
         mem_mode="const",
         ram_style="auto",
         ram_style_thresholds="auto",
+        backend="hls",
     ):
         mw = W.shape[0]
         mh = W.shape[1]
@@ -69,8 +70,16 @@ class bench_mvau(bench):
             node_inp_list = ["inp", "weights"]
             actval = 0
             no_act = 1
+
+        if backend == "hls":
+            customop_name = "MVAU_hls"
+            resType = "lut"
+        elif backend == "rtl":
+            customop_name = "MVAU_rtl"
+            resType = "dsp"
+
         mvau_node = helper.make_node(
-            "MVAU_hls",  # TODO: add rtl support (configurable as param)
+            customop_name,
             node_inp_list,
             ["outp"],
             domain="finn.custom_op.fpgadataflow.hls",
@@ -87,7 +96,7 @@ class bench_mvau(bench):
             ActVal=actval,
             binaryXnorMode=binary_xnor_mode,
             noActivation=no_act,
-            resType="lut",
+            resType=resType,
             mem_mode=mem_mode,
             ram_style=ram_style,
             ram_style_thresholds=ram_style_thresholds,
@@ -137,6 +146,8 @@ class bench_mvau(bench):
         mem_mode = self.params["mem_mode"]
         ram_style = self.params["ram_style"]
         ram_style_thr = self.params["ram_style_thr"]
+
+        backend = self.params["backend"]
 
         output_dict = {}
 
@@ -307,12 +318,14 @@ class bench_mvau(bench):
             mem_mode,
             ram_style,
             ram_style_thr,
+            backend,
         )
         model = model.transform(GiveUniqueNodeNames())
         # node = model.get_nodes_by_op_type("MVAU_hls")[0]
         # inst = getCustomOp(node)
 
         # display results of analysis passes only for the first occurence of this op type
+        # TODO: not used currently
         self.target_node = "MVAU_hls"
 
         # log additional info about the generated model (e.g. SIMD/PE or sparsity)
