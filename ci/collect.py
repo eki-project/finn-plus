@@ -397,7 +397,7 @@ if __name__ == "__main__":
                 dvc_logger.log_image("fifosizing_pass_1", image)
 
             # time_per_step.json
-            dvc_logger.log_metrics_from_report("time_per_step.json", ["total_build_time"])
+            dvc_logger.log_all_metrics_from_report("time_per_step.json", prefix="time/")
 
             # ARTIFACTS
             # Log build reports as they come from GitLab artifacts,
