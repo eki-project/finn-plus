@@ -61,6 +61,7 @@ from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_es
 from finn.analysis.fpgadataflow.op_and_param_counts import aggregate_dict_keys, op_and_param_counts
 from finn.analysis.fpgadataflow.post_synth_res import post_synth_res
 from finn.analysis.fpgadataflow.res_estimation import res_estimation, res_estimation_complete
+from finn.analysis.fpgadataflow.unsupported_layers import unsupported_layers
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     DataflowOutputType,
@@ -390,6 +391,32 @@ def step_specialize_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
     model = model.transform(InferShapes())
     model = model.transform(InferDataTypes())
+    return model
+
+
+def step_check_unsupported_nodes(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Check if the model contains unsupported nodes for dataflow synthesis.
+    If unsupported nodes are found, raise an error with a list of those nodes."""
+
+    results = model.analysis(unsupported_layers)
+
+    if not results[0]:
+        raise FINNUserError(f"Unsupported combination of layers found after node {results[1].name}")
+
+    warnlist = []
+    for node in model.graph.node:
+        # Skip nodes that are not hw layers
+        if node.domain == "finn.custom_op.fpgadataflow":
+            continue
+        warnlist.append(node.name)
+
+    if warnlist:
+        log.warning(
+            "The following nodes will not be implemented on the FPGA and need to be executed \
+                manually: "
+            + ", ".join(warnlist)
+        )
+
     return model
 
 
@@ -990,6 +1017,7 @@ build_dataflow_step_lookup = {
     "step_streamline": step_streamline,
     "step_convert_to_hw": step_convert_to_hw,
     "step_specialize_layers": step_specialize_layers,
+    "step_check_unsupported_nodes": step_check_unsupported_nodes,
     "step_create_dataflow_partition": step_create_dataflow_partition,
     "step_target_fps_parallelization": step_target_fps_parallelization,
     "step_apply_folding_config": step_apply_folding_config,
