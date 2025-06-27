@@ -40,10 +40,11 @@ class VivadoPowerEstimation(Transformation):
 
         power_summary_dict = dict()
         if self.simulate_switching_activity:
+            # Simulate for at least 100 cycles (in case layer is fully unrolled)
             # TODO: improve heuristic for sim duration,
             # probably too short for anything but (single layer) microbenchmarks
-            estimate_network_performance = model.analysis(dataflow_performance)
-            sim_duration_ns = estimate_network_performance["max_cycles"] * 1 * self.clk_period_ns
+            perf_estimate = model.analysis(dataflow_performance)
+            sim_duration_ns = max(100, perf_estimate["max_cycles"]) * self.clk_period_ns
 
             input_tensor = model.graph.input[0]
             output_tensor = model.graph.output[0]

@@ -73,16 +73,18 @@ class bench_mvau(bench):
 
         if backend == "hls":
             customop_name = "MVAU_hls"
+            domain = "finn.custom_op.fpgadataflow.hls"
             resType = "lut"
         elif backend == "rtl":
             customop_name = "MVAU_rtl"
+            domain = "finn.custom_op.fpgadataflow.rtl"
             resType = "dsp"
 
         mvau_node = helper.make_node(
             customop_name,
             node_inp_list,
             ["outp"],
-            domain="finn.custom_op.fpgadataflow.hls",
+            domain=domain,
             backend="fpgadataflow",
             MW=mw,
             MH=mh,
@@ -172,6 +174,25 @@ class bench_mvau(bench):
             return "skipped"
         output_dict["simd"] = simd
         output_dict["pe"] = pe
+
+        # Restrictions for RTL MVAU
+        if backend == "rtl":
+            # only standalone thresholds supported
+            if act is not None:
+                return "skipped"
+            # only decoupled mem mode supported
+            if mem_mode != "internal_decoupled":
+                return "skipped"
+            # only signed weights supported
+            if not wdt.signed():
+                return "skipped"
+            # bitwidth restrictions
+            if idt.bitwidth() < 4 or idt.bitwidth() > 8:
+                return "skipped"
+            if wdt.bitwidth() < 4 or wdt.bitwidth() > 8:
+                return "skipped"
+            # TODO: narrow-range restrictions for DSP48E1
+            # TODO: special case of 9-bit signed input
 
         # Generate weights
         np.random.seed(123456)  # TODO: verify or switch to modern numpy random generation
@@ -324,10 +345,6 @@ class bench_mvau(bench):
         # node = model.get_nodes_by_op_type("MVAU_hls")[0]
         # inst = getCustomOp(node)
 
-        # display results of analysis passes only for the first occurence of this op type
-        # TODO: not used currently
-        self.target_node = "MVAU_hls"
-
         # log additional info about the generated model (e.g. SIMD/PE or sparsity)
         with open(self.build_inputs["build_dir"] + "/report/dut_info.json", "w") as f:
             json.dump(output_dict, f, indent=2)
@@ -349,6 +366,7 @@ class bench_mvau(bench):
                 "step_create_stitched_ip",
                 "step_measure_rtlsim_performance",
                 "step_out_of_context_synthesis",
+                "step_vivado_power_estimation",
                 "step_synthesize_bitfile",
                 "step_make_driver",
                 "step_deployment_package",
