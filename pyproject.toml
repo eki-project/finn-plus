@@ -85,6 +85,7 @@ tokenize-rt = "4.2.1"
 tclwrapper = "0.0.1"
 setuptools = ">40.8.0"
 pytest-xdist = {version = "3.6.1", extras = ["setproctitle"]}
+cmake = "4.0.2"
 
 termcolor = "^2.5.0"
 rich = "^13.9.4"

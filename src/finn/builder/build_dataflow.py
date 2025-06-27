@@ -88,7 +88,7 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
                             f"Step {transform_step} is not a default step, not in globals() "
                             "and not an importable name!"
                         )
-                        raise Exception(msg)
+                        raise FINNConfigurationError(msg)
                     else:  # noqa
                         fxn_step = globals()[transform_step]
                         if not callable(fxn_step):
@@ -98,7 +98,7 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
                                 "moving your custom step into it's own module and importing it "
                                 "via yourmodule.yourstep!"
                             )
-                            raise Exception(msg)
+                            raise FINNConfigurationError(msg)
                         steps_as_fxns.append(fxn_step)
                         continue
                 else:
@@ -115,18 +115,18 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
                                 f"Could import custom step module, but final name is not a "
                                 f"callable object. Path was {transform_step}"
                             )
-                            raise Exception(msg)
+                            raise FINNConfigurationError(msg)
                     except ModuleNotFoundError as mnf:
                         msg = (
                             f"Could not resolve build step: {transform_step}. "
                             "The given step is neither importable nor a default step."
                         )
-                        raise Exception(msg) from mnf
+                        raise FINNConfigurationError(msg) from mnf
         elif callable(transform_step):
             # treat step as function to be called as-is
             steps_as_fxns.append(transform_step)
         else:
-            raise Exception("Could not resolve build step: " + str(transform_step))
+            raise FINNConfigurationError("Could not resolve build step: " + str(transform_step))
     if partial:
         step_names = list(map(lambda x: x.__name__, steps_as_fxns))
         if cfg.start_step is None:
