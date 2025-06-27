@@ -197,6 +197,13 @@ class bench_mvau(bench):
             # TODO: narrow-range restrictions for DSP48E1
             # TODO: special case of 9-bit signed input
 
+        # Weight stream width limitation for HLS MVAU
+        if backend == "hls" and mem_mode == "internal_decoupled":
+            weighstream_width = simd * pe * wdt.bitwidth()
+            if weighstream_width > 8192:
+                print("HLS MVAU weight stream too wide (> 8192), skipping")
+                return "skipped"
+
         # Generate weights
         np.random.seed(123456)  # TODO: verify or switch to modern numpy random generation
 
