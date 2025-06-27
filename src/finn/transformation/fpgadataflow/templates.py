@@ -263,6 +263,9 @@ close_saif
 
 read_saif $SAIF_FILE_PATH$
 report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
+
+close_sim -force
+close_project
 """
 
 # TODO: configurable clock frequency instead of hardcoded 100 MHz

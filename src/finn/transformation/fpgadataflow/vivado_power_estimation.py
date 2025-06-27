@@ -87,7 +87,7 @@ class VivadoPowerEstimation(Transformation):
                 script.write(f"vivado -mode batch -source {tmp_dir}/power_report.tcl\n")
 
             # Run script
-            launch_process_helper(["bash", bash_script])
+            launch_process_helper(["bash", bash_script], cwd=tmp_dir)
 
             # Parse results
             power_report_dict = power_xml_to_dict(f"{self.report_dir}/power_estimate_sim.xml")
@@ -121,6 +121,7 @@ class VivadoPowerEstimation(Transformation):
             # script = script.replace("$SWITCH_TARGET$", switch_target)
             script = script.replace("$REPORT_PATH$", self.report_dir)
             script = script.replace("$REPORT_NAME$", f"power_estimate_{toggle_rate}_{static_prob}")
+        script = script + "\nclose_project\n"
         with open(tmp_dir + "/power_report.tcl", "w") as tcl_file:
             tcl_file.write(script)
 
@@ -131,7 +132,7 @@ class VivadoPowerEstimation(Transformation):
             script.write(f"vivado -mode batch -source {tmp_dir}/power_report.tcl\n")
 
         # Run script
-        launch_process_helper(["bash", bash_script])
+        launch_process_helper(["bash", bash_script], cwd=tmp_dir)
 
         # Parse results
         for toggle_rate, static_prob in activity_settings:
