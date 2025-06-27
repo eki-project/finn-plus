@@ -160,6 +160,9 @@ class bench_mvau(bench):
             act = DataType[act]
 
         # Determine and log folding
+        if sf > mw or nf > mh:
+            print("Invalid sf/nf configuration, skipping")
+            return "skipped"
         if sf == -1:
             sf = mw
         simd = mw // sf
