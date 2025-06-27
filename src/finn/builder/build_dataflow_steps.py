@@ -104,6 +104,7 @@ from finn.transformation.fpgadataflow.set_folding import SetFolding
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
+from finn.transformation.fpgadataflow.vivado_power_estimation import VivadoPowerEstimation
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
@@ -879,6 +880,23 @@ def step_out_of_context_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig)
     return model
 
 
+def step_vivado_power_estimation(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Run Vivado power estimation on the stitched IP after OOC synthesis."""
+    if DataflowOutputType.OOC_SYNTH not in cfg.generate_outputs:
+        raise FINNUserError("Vivado power estimation needs OOC synth")
+
+    report_dir = cfg.output_dir + "/report"
+    model.transform(
+        VivadoPowerEstimation(
+            report_dir,
+            cfg.synth_clk_period_ns,
+            cfg.vivado_power_simulate_activity,
+            cfg.vivado_power_simulation_type,
+        )
+    )
+    return model
+
+
 def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Synthesize a bitfile for the using the specified shell flow, using either
     Vivado or Vitis, to target the specified board."""
@@ -978,6 +996,7 @@ build_dataflow_step_lookup = {
     "step_measure_rtlsim_performance": step_measure_rtlsim_performance,
     "step_make_driver": step_make_driver,
     "step_out_of_context_synthesis": step_out_of_context_synthesis,
+    "step_vivado_power_estimation": step_vivado_power_estimation,
     "step_synthesize_bitfile": step_synthesize_bitfile,
     "step_deployment_package": step_deployment_package,
 }

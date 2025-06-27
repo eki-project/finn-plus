@@ -371,6 +371,11 @@ if __name__ == "__main__":
                 prefix="measurement/validation/",
             )
 
+            # power estimation
+            dvc_logger.log_all_metrics_from_report(
+                "power_estimate_summary.json", prefix="vivado_estimate/power/"
+            )
+
             # power measurement
             dvc_logger.log_all_metrics_from_report(
                 "measured_power.json", prefix="measurement/power/"

@@ -221,3 +221,105 @@ open_project $VITIS_PROJ_PATH$/_x/link/vivado/vpl/prj/prj.xpr
 open_run impl_1
 report_utilization -hierarchical -hierarchical_depth 5 -file $VITIS_PROJ_PATH$/synth_report.xml -format xml
 """
+
+# Template scripts for Vivado power estimation
+# Initially based on code from Lucas Reuter
+# Modified by Felix Jentzsch
+
+template_vivado_open = """
+open_project  $PROJ_PATH$
+open_run $RUN$
+"""
+
+template_vivado_power_fixed = """
+#set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -hier -type lut [get_cells -r finn_design_i/.*]
+#set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -hier -type register [get_cells -r finn_design_i/.*]
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type lut -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type register -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type lut_ram -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type dsp -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type io_output -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type bram_enable -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type bram_wr_enable -all
+
+set_switching_activity -deassert_resets
+report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
+#reset_switching_activity -hier -type lut [get_cells -r finn_design_i/.*]
+#reset_switching_activity -hier -type register [get_cells -r finn_design_i/.*]
+"""
+
+template_vivado_power_simulated = """
+set_property SOURCE_SET sources_1 [get_filesets sim_1]
+import_files -fileset sim_1 -norecurse $TB_FILE_PATH$
+set_property top switching_simulation_tb [get_filesets sim_1]
+update_compile_order -fileset sim_1
+
+launch_simulation -mode post-implementation -type $SIM_TYPE$
+restart
+open_saif $SAIF_FILE_PATH$
+log_saif [get_objects -r *]
+run $SIM_DURATION_NS$ ns
+close_saif
+
+read_saif $SAIF_FILE_PATH$
+report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
+"""
+
+# TODO: configurable clock frequency instead of hardcoded 100 MHz
+template_switching_simulation_tb = """
+`timescale 1 ns/10 ps
+
+module switching_simulation_tb;
+reg clk;
+reg rst;
+
+//dut inputs
+reg tready;
+reg [$INSTREAM_WIDTH$-1:0] tdata;
+reg tvalid;
+
+//dut outputs
+wire [$OUTSTREAM_WIDTH$-1:0] accel_tdata;
+wire accel_tready;
+wire accel_tvalid;
+
+finn_design_wrapper dut(
+        .ap_clk(clk),
+        .ap_rst_n(rst),
+        .m_axis_0_tdata(accel_tdata),
+        .m_axis_0_tready(tready),
+        .m_axis_0_tvalid(accel_tvalid),
+        .s_axis_0_tdata(tdata),
+        .s_axis_0_tready(accel_tready),
+        .s_axis_0_tvalid(tvalid)
+        );
+
+always
+    begin
+        clk = 0;
+        #5;
+        clk = 1;
+        #5;
+    end
+
+integer i;
+initial
+    begin
+        tready = 0;
+        tdata = 0;
+        tvalid = 0;
+        rst = 0;
+        #100;
+        rst = 1;
+        tvalid = 1;
+        tready = 1;
+        while(1)
+            begin
+                for (i = 0; i < $INSTREAM_WIDTH$/$DTYPE_WIDTH$; i = i+1) begin
+                    tdata[i*$DTYPE_WIDTH$ +: $DTYPE_WIDTH$] = $RANDOM_FUNCTION$;
+                end
+                #10;
+            end
+    end
+endmodule
+"""
