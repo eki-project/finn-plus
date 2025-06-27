@@ -234,6 +234,13 @@ def build(
 @click.option("--dependency-path", "-d", default="")
 @click.option("--build-path", "-b", help="Specify a build temp path of your choice", default="")
 @click.option(
+    "--skip-dep-update",
+    "-s",
+    is_flag=True,
+    help="Whether to skip the dependency update. Can be changed in settings via"
+    "AUTOMATIC_DEPENDENCY_UPDATES: false",
+)
+@click.option(
     "--num-workers",
     "-n",
     help="Number of parallel workers for FINN to use. When -1, automatically use 75% of cores",
@@ -241,12 +248,20 @@ def build(
     show_default=True,
 )
 @click.argument("script")
-def run(dependency_path: str, build_path: str, num_workers: int, script: str) -> None:
+def run(
+    dependency_path: str, build_path: str, skip_dep_update: bool, num_workers: int, script: str
+) -> None:
     script_path = Path(script).expanduser()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     assert_path_valid(script_path)
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    prepare_finn(dep_path, script_path, build_dir, num_workers)
+    prepare_finn(
+        dep_path,
+        script_path,
+        build_dir,
+        num_workers,
+        skip_dep_update=(skip_dep_update or skip_update_by_default()),
+    )
     Console().rule(
         f"[bold cyan]Starting script "
         f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"

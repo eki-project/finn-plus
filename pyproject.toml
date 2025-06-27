@@ -85,6 +85,7 @@ tokenize-rt = "4.2.1"
 tclwrapper = "0.0.1"
 setuptools = ">40.8.0"
 pytest-xdist = {version = "3.6.1", extras = ["setproctitle"]}
+cmake = "4.0.2"
 
 termcolor = "^2.5.0"
 rich = "^13.9.4"
@@ -115,7 +116,8 @@ markers = [
    "bnn_u250: mark tests that execute U250 BNN tests",
    "bnn_kv260: mark tests that execute KV260 BNN tests",
    "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
-   "bnn_zcu104: mark tests that execute ZCU104 BNN tests"
+   "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
+   "analysis: mark tests that run analysis tests",
 ]
 norecursedirs = [
     "dist",
