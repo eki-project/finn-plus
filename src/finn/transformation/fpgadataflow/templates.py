@@ -249,22 +249,33 @@ report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
 """
 
 template_vivado_power_simulated = """
+# disable multi-threading in an attempt to increase stability
+set_param general.maxThreads 1
 set_property SOURCE_SET sources_1 [get_filesets sim_1]
 import_files -fileset sim_1 -norecurse $TB_FILE_PATH$
 set_property top switching_simulation_tb [get_filesets sim_1]
 update_compile_order -fileset sim_1
+set_property XELAB.MT_LEVEL off [get_filesets sim_1]
 
 launch_simulation -mode post-implementation -type $SIM_TYPE$
+after 1000
 restart
+after 1000
 open_saif $SAIF_FILE_PATH$
+after 1000
 log_saif [get_objects -r *]
+after 1000
 run $SIM_DURATION_NS$ ns
+after 1000
 close_saif
+after 1000
+close_sim -force
+after 1000
 
 read_saif $SAIF_FILE_PATH$
+after 1000
 report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
-
-close_sim -force
+after 1000
 close_project
 """
 
