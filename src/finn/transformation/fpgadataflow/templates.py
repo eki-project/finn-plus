@@ -279,7 +279,7 @@ after 1000
 close_project
 """
 
-# TODO: configurable clock frequency instead of hardcoded 100 MHz
+# TODO: configurable clock frequency instead of hardcoded 200 MHz
 template_switching_simulation_tb = """
 `timescale 1 ns/10 ps
 
@@ -311,9 +311,9 @@ finn_design_wrapper dut(
 always
     begin
         clk = 0;
-        #5;
+        #2.5;
         clk = 1;
-        #5;
+        #2.5;
     end
 
 integer i;
@@ -323,7 +323,7 @@ initial
         tdata = 0;
         tvalid = 0;
         rst = 0;
-        #100;
+        #50;
         rst = 1;
         tvalid = 1;
         tready = 1;
@@ -332,7 +332,7 @@ initial
                 for (i = 0; i < $INSTREAM_WIDTH$/$DTYPE_WIDTH$; i = i+1) begin
                     tdata[i*$DTYPE_WIDTH$ +: $DTYPE_WIDTH$] = $RANDOM_FUNCTION$;
                 end
-                #10;
+                #5;
             end
     end
 endmodule

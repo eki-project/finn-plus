@@ -24,7 +24,7 @@ FINN Build:
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES_BENCH --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
     NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
-  extends: .setup_full_2022_2
+  extends: .setup_full_2024_2
   script:
     # Launch additional monitoring
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
