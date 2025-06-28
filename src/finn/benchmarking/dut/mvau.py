@@ -200,8 +200,8 @@ class bench_mvau(bench):
         # Weight stream width limitation for HLS MVAU
         if backend == "hls" and mem_mode == "internal_decoupled":
             weighstream_width = simd * pe * wdt.bitwidth()
-            if weighstream_width > 8192:
-                print("HLS MVAU weight stream too wide (> 8192), skipping")
+            if weighstream_width > 8191:
+                print("HLS MVAU weight stream too wide (> 8191), skipping")
                 return "skipped"
 
         # Generate weights
