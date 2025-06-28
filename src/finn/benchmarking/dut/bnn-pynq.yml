@@ -1,0 +1,6 @@
+# This defines the build flow for the bnn-pynq models (cnv & tfc)
+
+# No steps defined here -> use default steps
+
+# Workaround for auto FIFO-sizing from finn-examples
+default_swg_exceptions: True
