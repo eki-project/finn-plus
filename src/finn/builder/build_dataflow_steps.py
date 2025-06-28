@@ -722,6 +722,9 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     with open(cfg.output_dir + "/report/fifo_sizing.json", "w") as f:
         json.dump(fifo_info, f, indent=2)
 
+    # With this step moved before step_hw_codegen and step_hw_ipgen, the following
+    # could be removed, but we keep it for now for backwards compatibility:
+
     # after FIFOs are ready to go, call PrepareIP and HLSSynthIP again
     # this will only run for the new nodes (e.g. FIFOs and DWCs)
     model = model.transform(PrepareIP(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period()))
