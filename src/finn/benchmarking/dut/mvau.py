@@ -204,6 +204,13 @@ class bench_mvau(bench):
                 print("HLS MVAU weight stream too wide (> 8191), skipping")
                 return "skipped"
 
+        # ram_style has no effect for internal_embedded mode
+        # LUTs (distributed) are always used, so skip if this is not explicitly requested
+        # to avoid confusion when interpreting microbenchmark results
+        if backend == "hls" and mem_mode == "internal_embedded":
+            if ram_style != "distributed":
+                return "skipped"
+
         # Generate weights
         np.random.seed(123456)  # TODO: verify or switch to modern numpy random generation
 
