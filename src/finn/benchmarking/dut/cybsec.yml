@@ -1,0 +1,10 @@
+# This defines the build flow for the Cybersecurity finn-example, which is an MLP topology
+
+# There is a single variant, so we define a fixed path to the model file
+model_path: models/cybsec/unsw_nb15-mlp-w2a2.onnx
+
+# No steps defined here -> use default steps
+
+# Automatic folding:
+target_fps: 1000000
+mvau_wwidth_max: 80
