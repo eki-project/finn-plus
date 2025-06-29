@@ -245,9 +245,9 @@ def step_qonnx_to_finn(model: ModelWrapper, cfg: DataflowBuildConfig):
     If such nodes are found the step will run the tidy-up step from QONNX
     and then convert the QONNX model to the FINN-ONNX dialect.
     """
-    # Check if any QONNX nodes exist, i.e. BinaryQuant, Quant or Trunc
+    # Check if any QONNX nodes exist, i.e. BipolarQuant, BinaryQuant, Quant or Trunc
     q_count = 0
-    for op_type in ["BinaryQuant", "Quant", "Trunc"]:
+    for op_type in ["BipolarQuant", "BinaryQuant", "Quant", "Trunc"]:
         q_count += len(model.get_nodes_by_op_type(op_type))
     if q_count == 0:
         return model
