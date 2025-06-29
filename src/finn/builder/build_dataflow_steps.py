@@ -354,6 +354,25 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
     nodes, which point to a separate ONNX file. Dataflow accelerator synthesis
     can only be performed on those HWCustomOp sub-graphs."""
 
+    # Check if there are unsupported layers somewhere between supported layers
+    # This would cause a "cyclic-free graph partitioning violated" error otherwise
+    # TODO: print list of all offending layer's names
+    results = model.analysis(unsupported_layers)
+    if not results[0]:
+        raise FINNUserError(f"Unsupported combination of layers found after node {results[1].name}")
+
+    # Warn if unsupported layers remain at the start or end of the graph
+    # This is allowed but they will need to be implemented separately (e.g., in custom software)
+    warnlist = [
+        node.name for node in model.graph.node if node.domain != "finn.custom_op.fpgadataflow"
+    ]
+    if warnlist:
+        log.warning(
+            "The following nodes at the start/end of the graph will not be mapped to the "
+            "accelerator, so they will need to be implemented manually (e.g., in software): "
+            + ", ".join(warnlist)
+        )
+
     parent_model = model.transform(
         CreateDataflowPartition(
             partition_model_dir=cfg.output_dir + "/intermediate_models/supported_op_partitions"
@@ -392,32 +411,6 @@ def step_specialize_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
     model = model.transform(InferShapes())
     model = model.transform(InferDataTypes())
-    return model
-
-
-def step_check_unsupported_nodes(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Check if the model contains unsupported nodes for dataflow synthesis.
-    If unsupported nodes are found, raise an error with a list of those nodes."""
-
-    results = model.analysis(unsupported_layers)
-
-    if not results[0]:
-        raise FINNUserError(f"Unsupported combination of layers found after node {results[1].name}")
-
-    warnlist = []
-    for node in model.graph.node:
-        # Skip nodes that are not hw layers
-        if node.domain == "finn.custom_op.fpgadataflow":
-            continue
-        warnlist.append(node.name)
-
-    if warnlist:
-        log.warning(
-            "The following nodes will not be implemented on the FPGA and need to be executed \
-                manually: "
-            + ", ".join(warnlist)
-        )
-
     return model
 
 
@@ -1038,7 +1031,6 @@ build_dataflow_step_lookup = {
     "step_streamline": step_streamline,
     "step_convert_to_hw": step_convert_to_hw,
     "step_specialize_layers": step_specialize_layers,
-    "step_check_unsupported_nodes": step_check_unsupported_nodes,
     "step_create_dataflow_partition": step_create_dataflow_partition,
     "step_target_fps_parallelization": step_target_fps_parallelization,
     "step_apply_folding_config": step_apply_folding_config,
