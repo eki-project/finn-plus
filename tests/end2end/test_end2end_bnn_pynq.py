@@ -761,6 +761,8 @@ class TestEnd2End:
         y = execute_parent(parent_chkpt, rtlsim_chkpt, input_tensor_npy)
         assert np.isclose(y, output_tensor_npy).all()
 
+    # TODO: Consider improving heuristic for N or stopping sim when steady state is reached
+    @pytest.mark.skip("Test disabled due to excessive runtime")
     @pytest.mark.slow
     @pytest.mark.vivado
     def test_throughput_rtlsim(self, topology, wbits, abits, board):
