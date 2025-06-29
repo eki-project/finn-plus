@@ -50,8 +50,9 @@ class GenerateInstrumentationIP(Transformation):
         wrapper_output_dir = make_build_dir(prefix="code_gen_ipgen_Instrumentation_")
         model.set_metadata_prop("instrumentation_ipgen", wrapper_output_dir)
 
-        # conservative max for pending feature maps: number of layers
-        pending = len(model.graph.node)
+        # conservative max for pending feature maps: number of layers,
+        # miminum = 8 to handle very small models (e.g., single layer microbenchmarks)
+        pending = max(8, len(model.graph.node))
         # query the parallelism-dependent folded input shape from the
         # node consuming the graph input
         inp_name = model.graph.input[0].name
