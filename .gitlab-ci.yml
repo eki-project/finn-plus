@@ -102,9 +102,12 @@ Build:
     # Build .whl
     - poetry build --clean --format=wheel
     # Let FINN download additional dependencies, cache resulting deps directory
+    # Also fetch & checkout DVC-managed data, $CI_DVC_CACHE_DIR persists between jobs
     - |
       source .venv/bin/activate
       finn deps update --path ./deps
+      dvc config cache.dir $CI_DVC_CACHE_DIR
+      dvc pull
   artifacts:
     name: "finn-plus_package"
     paths:
