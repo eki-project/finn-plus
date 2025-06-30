@@ -51,7 +51,8 @@ class GenerateInstrumentationIP(Transformation):
         model.set_metadata_prop("instrumentation_ipgen", wrapper_output_dir)
 
         # conservative max for pending feature maps: number of layers
-        pending = len(model.graph.node)
+        # DEBUG: make heuristic even less aggressive for special cases, e.g., cybsec
+        pending = len(model.graph.node) * 8
         # query the parallelism-dependent folded input shape from the
         # node consuming the graph input
         inp_name = model.graph.input[0].name
