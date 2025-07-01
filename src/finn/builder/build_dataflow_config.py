@@ -400,6 +400,15 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Specify validation dataset to be used for deployment of the PYNQ driver
     validation_dataset: Optional[str] = None
 
+    #: Whether to simulate the switching activity of the design for Vivado power estimation
+    #: If set to False, use only a fixed set of static toggle rates and static probabilities
+    #: If set to True, use simulated activity to generate an additonal power report
+    vivado_power_simulate_activity: Optional[bool] = True
+
+    #: Whether to use "functional" or "timing" simulation for Vivado power estimation,
+    #: only relevant if vivado_power_simulate_activity is True.
+    vivado_power_simulation_type: Optional[str] = "functional"
+
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:
             # use same clk for synth and hls if not explicitly specified

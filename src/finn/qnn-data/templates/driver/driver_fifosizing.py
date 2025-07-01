@@ -233,35 +233,50 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         return (start_depth, iteration_runtime)
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Perform iterative FIFO-Sizing on live FINN accelerator"
-    )
-    parser.add_argument(
-        "--frequency", help="FPGA clock frequency in MHz", type=float, default=100.0
-    )
-    parser.add_argument("--seed", help="LFSR seed for input data generation", type=int, default=1)
-    parser.add_argument("--device", help="FPGA device to be used", type=int, default=0)
-    parser.add_argument("--bitfile", help="Name of bitfile", default="finn-accel.bit")
-    parser.add_argument(
-        "--reportfile",
-        help="Name of output .json report file",
-        type=str,
-        default="measured_performance.json",
-    )
-    parser.add_argument(
-        "--settingsfile", help="Name of optional input .json settings file", type=str, default=""
-    )
-    # parse arguments
-    args = parser.parse_args()
-    frequency = args.frequency
-    seed = args.seed
-    bitfile = args.bitfile
-    reportfile = args.reportfile
-    report_dir = os.path.dirname(reportfile)
-    settingsfile = args.settingsfile
-    devID = args.device
+def run_idle(*args, **kwargs):
+    # Program FPGA without running accelerator. Only used in the context of power measurement
+    runtime = kwargs["runtime"]
+    frequency = kwargs["frequency"]
+    seed = kwargs["seed"]
+    bitfile = kwargs["bitfile"]
+    settingsfile = kwargs["settingsfile"]
+    devID = kwargs["device"]
+
     device = Device.devices[devID]
+
+    # TODO: deduplicate code, unify drivers
+    if settingsfile != "":
+        with open(settingsfile, "r") as f:
+            settings = json.load(f)
+            if "fclk_mhz" in settings:
+                frequency = settings["fclk_mhz"]
+            fifo_widths = settings["fifo_widths"]
+
+    print("Programming FPGA..")
+    sys.setrecursionlimit(10000)
+    PL.reset()
+    accel = FINNLiveFIFOOverlay(
+        bitfile_name=bitfile, device=device, fclk_mhz=frequency, seed=seed, fifo_widths=fifo_widths
+    )
+    if accel.error:
+        print("Error: Accelerator initialization failed.")
+        sys.exit(1)
+
+    print("Running idle for %d seconds.." % runtime)
+    time.sleep(runtime)
+    print("Done.")
+
+
+def main(*args, **kwargs):
+    frequency = kwargs["frequency"]
+    seed = kwargs["seed"]
+    bitfile = kwargs["bitfile"]
+    reportfile = kwargs["reportfile"]
+    settingsfile = kwargs["settingsfile"]
+    devID = kwargs["device"]
+
+    device = Device.devices[devID]
+    report_dir = os.path.dirname(reportfile)
     folding_config_lfs = None
 
     # overwrite frequency if specified in settings file
@@ -415,3 +430,26 @@ if __name__ == "__main__":
         json.dump(report, f, indent=2)
 
     print("Done.")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Perform iterative FIFO-Sizing on live FINN accelerator"
+    )
+    parser.add_argument(
+        "--frequency", help="FPGA clock frequency in MHz", type=float, default=100.0
+    )
+    parser.add_argument("--seed", help="LFSR seed for input data generation", type=int, default=1)
+    parser.add_argument("--device", help="FPGA device to be used", type=int, default=0)
+    parser.add_argument("--bitfile", help="Name of bitfile", default="finn-accel.bit")
+    parser.add_argument(
+        "--reportfile",
+        help="Name of output .json report file",
+        type=str,
+        default="measured_performance.json",
+    )
+    parser.add_argument(
+        "--settingsfile", help="Name of optional input .json settings file", type=str, default=""
+    )
+    args = parser.parse_args()
+    main([], vars(args))

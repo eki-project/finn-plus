@@ -44,11 +44,6 @@ FINN_DEPS = {
         "4e8810b1a8637695171ed346ce68f6984e585ef4",
         False,
     ),
-    "oh-my-xilinx": (
-        "https://github.com/maltanar/oh-my-xilinx.git",
-        "0b59762f9e4c4f7e5aa535ee9bc29f292434ca7a",
-        False,
-    ),
     "finn-hlslib": (
         "https://github.com/Xilinx/finn-hlslib.git",
         "5c5ad631e3602a8dd5bd3399a016477a407d6ee7",
@@ -108,7 +103,7 @@ GIT_CLONE_TIMEOUT = 120
 
 
 # Tuple that defines a dep status
-# Example: ("oh-my-xilinx", False, "Wrong commit")
+# Example: ("qonnx", False, "Wrong commit")
 Status = tuple[str, bool, str]
 
 

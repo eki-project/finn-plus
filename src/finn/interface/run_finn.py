@@ -98,10 +98,6 @@ def prepare_finn(
         error("pyXSI installation failed.")
         sys.exit(1)
 
-    # Add OHMYXILINX?
-    os.environ["OHMYXILINX"] = str((deps_path / "oh-my-xilinx").absolute())
-    os.environ["PATH"] = os.environ["PATH"] + ":" + os.environ["OHMYXILINX"]
-
     # Resolve the build directory
     resolved_build_dir = resolve_build_dir(
         flow_config, build_dir, settings, is_test_run=is_test_run

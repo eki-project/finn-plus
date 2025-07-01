@@ -22,7 +22,7 @@ FINN Build:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES_BENCH --exclusive --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES_BENCH --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
     NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
   extends: .setup_full_2022_2
   script:
@@ -56,6 +56,8 @@ Measurement:
     # Also run on failure of previous tasks to measure partial results
     - when: always
   script:
+    # Build power measurement driver (TODO: support other boards)
+    - make -C ci/power_measurement/boards/rfsoc2x2 shared
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python ci/measure.py"
   artifacts:

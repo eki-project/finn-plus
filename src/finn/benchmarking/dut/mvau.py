@@ -34,6 +34,7 @@ class bench_mvau(bench):
         mem_mode="const",
         ram_style="auto",
         ram_style_thresholds="auto",
+        backend="hls",
     ):
         mw = W.shape[0]
         mh = W.shape[1]
@@ -69,11 +70,21 @@ class bench_mvau(bench):
             node_inp_list = ["inp", "weights"]
             actval = 0
             no_act = 1
+
+        if backend == "hls":
+            customop_name = "MVAU_hls"
+            domain = "finn.custom_op.fpgadataflow.hls"
+            resType = "lut"
+        elif backend == "rtl":
+            customop_name = "MVAU_rtl"
+            domain = "finn.custom_op.fpgadataflow.rtl"
+            resType = "dsp"
+
         mvau_node = helper.make_node(
-            "MVAU_hls",  # TODO: add rtl support (configurable as param)
+            customop_name,
             node_inp_list,
             ["outp"],
-            domain="finn.custom_op.fpgadataflow.hls",
+            domain=domain,
             backend="fpgadataflow",
             MW=mw,
             MH=mh,
@@ -87,7 +98,7 @@ class bench_mvau(bench):
             ActVal=actval,
             binaryXnorMode=binary_xnor_mode,
             noActivation=no_act,
-            resType="lut",
+            resType=resType,
             mem_mode=mem_mode,
             ram_style=ram_style,
             ram_style_thresholds=ram_style_thresholds,
@@ -138,6 +149,8 @@ class bench_mvau(bench):
         ram_style = self.params["ram_style"]
         ram_style_thr = self.params["ram_style_thr"]
 
+        backend = self.params["backend"]
+
         output_dict = {}
 
         # convert string to FINN DataType
@@ -147,6 +160,9 @@ class bench_mvau(bench):
             act = DataType[act]
 
         # Determine and log folding
+        if sf > mw or nf > mh:
+            print("Invalid sf/nf configuration, skipping")
+            return "skipped"
         if sf == -1:
             sf = mw
         simd = mw // sf
@@ -161,6 +177,25 @@ class bench_mvau(bench):
             return "skipped"
         output_dict["simd"] = simd
         output_dict["pe"] = pe
+
+        # Restrictions for RTL MVAU
+        if backend == "rtl":
+            # only standalone thresholds supported
+            if act is not None:
+                return "skipped"
+            # only decoupled mem mode supported
+            if mem_mode != "internal_decoupled":
+                return "skipped"
+            # only signed weights supported
+            if not wdt.signed():
+                return "skipped"
+            # bitwidth restrictions
+            if idt.bitwidth() < 4 or idt.bitwidth() > 8:
+                return "skipped"
+            if wdt.bitwidth() < 4 or wdt.bitwidth() > 8:
+                return "skipped"
+            # TODO: narrow-range restrictions for DSP48E1
+            # TODO: special case of 9-bit signed input
 
         # Generate weights
         np.random.seed(123456)  # TODO: verify or switch to modern numpy random generation
@@ -307,13 +342,11 @@ class bench_mvau(bench):
             mem_mode,
             ram_style,
             ram_style_thr,
+            backend,
         )
         model = model.transform(GiveUniqueNodeNames())
         # node = model.get_nodes_by_op_type("MVAU_hls")[0]
         # inst = getCustomOp(node)
-
-        # display results of analysis passes only for the first occurence of this op type
-        self.target_node = "MVAU_hls"
 
         # log additional info about the generated model (e.g. SIMD/PE or sparsity)
         with open(self.build_inputs["build_dir"] + "/report/dut_info.json", "w") as f:
@@ -336,6 +369,7 @@ class bench_mvau(bench):
                 "step_create_stitched_ip",
                 "step_measure_rtlsim_performance",
                 "step_out_of_context_synthesis",
+                "step_vivado_power_estimation",
                 "step_synthesize_bitfile",
                 "step_make_driver",
                 "step_deployment_package",

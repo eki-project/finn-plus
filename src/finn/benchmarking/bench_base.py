@@ -1,96 +1,16 @@
 import glob
-import json
 import os
 import shutil
-import subprocess
 import yaml
 from shutil import copy as shcopy
 from shutil import copytree
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
-from finn.benchmarking.templates import (
-    template_open,
-    template_sim_power,
-    template_single_test,
-    template_switching_simulation_tb,
-)
-from finn.benchmarking.util import delete_dir_contents, power_xml_to_dict
+
+from finn.benchmarking.util import delete_dir_contents
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.util.basic import alveo_default_platform, alveo_part_map, part_map
-
-
-def start_test_batch_fast(results_path, project_path, run_target, pairs):
-    # Prepare tcl script
-    script = template_open.replace("$PROJ_PATH$", project_path)
-    # script = script.replace("$PERIOD$", period)
-    script = script.replace("$RUN$", run_target)
-    for toggle_rate, static_prob in pairs:
-        script = script + template_single_test
-        script = script.replace("$TOGGLE_RATE$", str(toggle_rate))
-        script = script.replace("$STATIC_PROB$", str(static_prob))
-        # script = script.replace("$SWITCH_TARGET$", switch_target)
-        script = script.replace("$REPORT_PATH$", results_path)
-        script = script.replace("$REPORT_NAME$", f"{toggle_rate}_{static_prob}")
-    with open(os.getcwd() + "/power_report.tcl", "w") as tcl_file:
-        tcl_file.write(script)
-
-    # Prepare bash script
-    bash_script = os.getcwd() + "/report_power.sh"
-    with open(bash_script, "w") as script:
-        script.write("#!/bin/bash \n")
-        script.write(f"vivado -mode batch -source {os.getcwd()}/power_report.tcl\n")
-
-    # Run script
-    sub_proc = subprocess.Popen(["bash", bash_script])
-    sub_proc.communicate()
-
-    # Parse results
-    for toggle_rate, static_prob in pairs:
-        power_report_dict = power_xml_to_dict(f"{results_path}/{toggle_rate}_{static_prob}.xml")
-        power_report_json = f"{results_path}/{toggle_rate}_{static_prob}.json"
-        with open(power_report_json, "w") as json_file:
-            json_file.write(json.dumps(power_report_dict, indent=2))
-
-
-def sim_power_report(results_path, project_path, in_width, out_width, dtype_width, sim_duration_ns):
-    # Prepare tcl script
-    script = template_open.replace("$PROJ_PATH$", project_path)
-    script = script.replace("$RUN$", "impl_1")
-    script = script + template_sim_power
-    script = script.replace("$TB_FILE_PATH$", os.getcwd() + "/switching_simulation_tb.v")
-    script = script.replace("$SAIF_FILE_PATH$", os.getcwd() + "/switching.saif")
-    script = script.replace("$SIM_DURATION_NS$", str(int(sim_duration_ns)))
-    script = script.replace("$REPORT_PATH$", results_path)
-    script = script.replace("$REPORT_NAME$", "sim")
-    with open(os.getcwd() + "/power_report.tcl", "w") as tcl_file:
-        tcl_file.write(script)
-
-    # Prepare testbench
-    testbench = template_switching_simulation_tb.replace("$INSTREAM_WIDTH$", str(in_width))
-    testbench = testbench.replace("$OUTSTREAM_WIDTH$", str(out_width))
-    testbench = testbench.replace("$DTYPE_WIDTH$", str(dtype_width))
-    testbench = testbench.replace(
-        "$RANDOM_FUNCTION$", "$urandom_range(0, {max})".format(max=2**dtype_width - 1)
-    )
-    with open(os.getcwd() + "/switching_simulation_tb.v", "w") as tb_file:
-        tb_file.write(testbench)
-
-    # Prepare shell script
-    bash_script = os.getcwd() + "/report_power.sh"
-    with open(bash_script, "w") as script:
-        script.write("#!/bin/bash \n")
-        script.write(f"vivado -mode batch -source {os.getcwd()}/power_report.tcl\n")
-
-    # Run script
-    sub_proc = subprocess.Popen(["bash", bash_script])
-    sub_proc.communicate()
-
-    # Parse results
-    power_report_dict = power_xml_to_dict(f"{results_path}/sim.xml")
-    power_report_json = f"{results_path}/sim.json"
-    with open(power_report_json, "w") as json_file:
-        json_file.write(json.dumps(power_report_dict, indent=2))
 
 
 class bench:
