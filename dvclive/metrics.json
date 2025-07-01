@@ -1,0 +1,9 @@
+{
+    "status": "failed",
+    "verification": "success",
+    "time": {
+        "step_prepare_graph": 71,
+        "step_streamline": 129,
+        "total_build_time": 200
+    }
+}
