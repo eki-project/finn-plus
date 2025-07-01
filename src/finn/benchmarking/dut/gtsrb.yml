@@ -1,0 +1,32 @@
+# This defines the build flow for the GTSRB finn-example, which is a cnv-w1a1 topology
+
+# There is a single variant, so we define a fixed path to model and corresponding config files
+model_path: models/gtsrb/cnv_1w1a_gtsrb.onnx
+folding_config_file: models/gtsrb/gtsrb_folding_config.json
+specialize_layers_config_file: models/gtsrb/gtsrb_specialize_layers.json
+
+steps:
+  - finn.builder.custom_step_library.general.add_preproc_divide_by_255 # Custom step
+  - finn.builder.custom_step_library.general.add_postproc_top1 # Custom step
+  - step_qonnx_to_finn
+  - step_tidy_up
+  - step_streamline
+  - step_convert_to_hw
+  - step_create_dataflow_partition
+  - step_specialize_layers
+  - step_target_fps_parallelization
+  - step_apply_folding_config
+  - step_minimize_bit_width
+  - step_generate_estimate_reports
+  - step_set_fifo_depths
+  - step_hw_codegen
+  - step_hw_ipgen
+  - step_create_stitched_ip
+  - step_measure_rtlsim_performance
+  - step_out_of_context_synthesis
+  - step_synthesize_bitfile
+  - step_make_driver
+  - step_deployment_package
+
+# Stems from finn-examples, but could probably be removed as folding config is given
+target_fps: 3000
