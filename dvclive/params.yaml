@@ -1,0 +1,16 @@
+params:
+  dut: vgg10
+  folding_config_file: models/vgg10/ZCU104_specialize_layers_hls.json
+  specialize_layers_config_file: models/vgg10/ZCU104_folding_config_hls_embedded.json
+  standalone_thresholds: false
+  generate_outputs:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 5
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+  model_path: models/vgg10/radioml_w4a4_small_tidy.onnx
+metadata:
+  tool_version: '2024.2'
