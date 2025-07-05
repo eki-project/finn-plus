@@ -2,7 +2,7 @@
 
 # There is a single variant, so we define a fixed path to model and corresponding config files
 model_path: models/gtsrb/cnv_1w1a_gtsrb.onnx
-folding_config_file: models/gtsrb/gtsrb_folding_config.json
+folding_config_file: models/gtsrb/gtsrb_folding_config_live_fifo.json
 specialize_layers_config_file: models/gtsrb/gtsrb_specialize_layers.json
 
 steps:
