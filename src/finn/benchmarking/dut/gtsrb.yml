@@ -30,3 +30,6 @@ steps:
 
 # Stems from finn-examples, but could probably be removed as folding config is given
 target_fps: 3000
+
+# folding config comes with FIFO sizes
+auto_fifo_depths: False

@@ -2,9 +2,10 @@
 
 # There is a single variant, so we define a fixed path to the model file
 model_path: models/cybsec/unsw_nb15-mlp-w2a2.onnx
+folding_config_file: models/cybsec/cybsec_folding_config_64_interval.json
 
 # No steps defined here -> use default steps
 
-# Automatic folding:
-target_fps: 1000000
-mvau_wwidth_max: 80
+# Automatic folding (replaced by fixed folding to be independent of clock frequency)
+#target_fps: 1000000
+#mvau_wwidth_max: 80

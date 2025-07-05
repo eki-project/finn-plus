@@ -6,7 +6,8 @@
         "model_path": [models/bnn-pynq/cnv-w1a1_qonnx.onnx],
         "folding_config_file": [models/bnn-pynq/cnv-w1a1_folding_config_live_fifo.json],
         "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a1_specialize_layers.json],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "auto_fifo_depths": False,
     },
     # cnv-w1a2
     {
@@ -14,7 +15,8 @@
         "model_path": [models/bnn-pynq/cnv-w1a2_qonnx.onnx],
         "folding_config_file": [models/bnn-pynq/cnv-w1a2_folding_config_live_fifo.json],
         "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a2_specialize_layers.json],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "auto_fifo_depths": False,
     },
     # cnv-w2a2
     {
@@ -22,7 +24,8 @@
         "model_path": [models/bnn-pynq/cnv-w2a2_qonnx.onnx],
         "folding_config_file": [models/bnn-pynq/cnv-w2a2_folding_config_live_fifo.json],
         "specialize_layers_config_file": [models/bnn-pynq/cnv-w2a2_specialize_layers.json],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "auto_fifo_depths": False,
     },
     # tfc-w1a1
     {
