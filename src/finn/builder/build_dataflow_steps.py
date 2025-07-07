@@ -356,7 +356,6 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
 
     # Check if there are unsupported layers somewhere between supported layers
     # This would cause a "cyclic-free graph partitioning violated" error otherwise
-    # TODO: print list of all offending layer's names
     results = model.analysis(unsupported_layers)
     if not results[0]:
         raise FINNUserError(f"Unsupported combination of layers found after node {results[1].name}")
@@ -367,6 +366,7 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
         node.name for node in model.graph.node if node.domain != "finn.custom_op.fpgadataflow"
     ]
     if warnlist:
+        warnlist = [w.name for w in warnlist]
         log.warning(
             "The following nodes at the start/end of the graph will not be mapped to the "
             "accelerator, so they will need to be implemented manually (e.g., in software): "
