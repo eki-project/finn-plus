@@ -16,6 +16,7 @@
   before_script:
     - module load fpga
     - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    - export PLATFORM_PATH=$FINN_CUSTOM_PLATFORM_PATH # override with custom platform path
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
 
@@ -24,6 +25,7 @@
     - module load fpga
     - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
     - module swap xilinx/vitis/24.2 # switch to Vitis/Vivado 2024.2
+    - export PLATFORM_PATH=$FINN_CUSTOM_PLATFORM_PATH # override with custom platform path
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
 
