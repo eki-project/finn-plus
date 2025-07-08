@@ -457,6 +457,7 @@ class InsertAndSetFIFODepths(Transformation):
         model.set_metadata_prop("wrapper_filename", "")
         model.set_metadata_prop("vivado_stitch_vlnv", "")
         model.set_metadata_prop("vivado_stitch_ifnames", "")
+        model.set_metadata_prop("exec_mode", "")
 
         # reflect final values in attributes
         for node in model.graph.node:
