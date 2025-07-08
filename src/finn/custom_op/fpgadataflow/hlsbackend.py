@@ -331,7 +331,7 @@ compilation transformations?
             folded_ishape = self.get_folded_input_shape(i)
             inp_val = context[inp]
             # Make sure the input has the right container datatype
-            if inp_val.dtype is not np.float32:
+            if inp_val.dtype != np.float32:
                 # Issue a warning to make the user aware of this type-cast
                 log.warning(
                     f"{node.name}: Changing input container datatype from "
