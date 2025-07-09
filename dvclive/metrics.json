@@ -1,0 +1,75 @@
+{
+    "status": "failed",
+    "estimate": {
+        "resources": {
+            "LUT": 175590.0,
+            "DSP": 4.0,
+            "BRAM_18K": 3866.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 57683577,
+            "max_cycles": 903168,
+            "max_cycles_node_name": "MVAU_hls_3",
+            "estimated_throughput_fps": 276.8034297052154,
+            "estimated_latency_ns": 230734308
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 170213.0,
+            "FF": 147075.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 474.0,
+            "URAM": 0.0
+        }
+    },
+    "rtlsim": {
+        "performance": {
+            "N": 3,
+            "TIMEOUT": 0,
+            "latency_cycles": 2548346,
+            "cycles": 4357376,
+            "fclk[mhz]": 250.0,
+            "throughput[images-s]": 172.12193760648609,
+            "stable_throughput[images-s]": 414.58682277242497
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 232
+    },
+    "synth(ooc)": {
+        "resources": {
+            "LUT": 220475.0,
+            "LUTRAM": 41252.0,
+            "FF": 213027.0,
+            "DSP": 0.0,
+            "BRAM": 2016.0,
+            "BRAM_18K": 384.0,
+            "BRAM_36K": 1824.0,
+            "URAM": 0.0
+        },
+        "timing": {
+            "WNS": -2.078,
+            "fmax_mhz": 164.52780519907867
+        }
+    },
+    "time": {
+        "step_resnet50_tidy": 25,
+        "step_resnet50_streamline": 261,
+        "step_resnet50_convert_to_hw": 11,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 1,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 20,
+        "step_generate_estimate_reports": 0,
+        "step_set_fifo_depths": 1086,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 52,
+        "step_create_stitched_ip": 2022,
+        "step_measure_rtlsim_performance": 14129,
+        "step_out_of_context_synthesis": 3221,
+        "total_build_time": 20828
+    }
+}
