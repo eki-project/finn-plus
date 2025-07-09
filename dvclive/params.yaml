@@ -1,0 +1,17 @@
+params:
+  dut: resnet50
+  board: U250
+  synth_clk_period_ns: 5
+  rtlsim_batch_size: 3
+  generate_outputs:
+  - estimate_reports
+  - rtlsim_performance
+  - stitched_ip
+  - out_of_context_synth
+  - bitfile
+  enable_instrumentation: false
+  shell_flow_type: vitis_alveo
+  vitis_platform: xilinx_u250_gen3x16_xdma_4_1_202210_1
+  model_path: models/resnet50/resnet50_w1a2_exported.onnx
+metadata:
+  tool_version: '2024.2'
