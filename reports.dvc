@@ -1,0 +1,6 @@
+outs:
+- md5: e67cb37bb9ae8244eb145c6747303adb.dir
+  size: 977300
+  nfiles: 15
+  hash: md5
+  path: reports
