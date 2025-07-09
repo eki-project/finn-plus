@@ -1,0 +1,6 @@
+outs:
+- md5: 2c70a1a55b525dbd4a80bcba512142b6.dir
+  size: 891270
+  nfiles: 15
+  hash: md5
+  path: reports
