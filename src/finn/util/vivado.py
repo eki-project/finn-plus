@@ -29,7 +29,6 @@
 import os
 
 from finn.util.basic import launch_process_helper, which
-from finn.util.deps import get_deps_path
 from finn.util.logging import log
 
 
@@ -41,21 +40,14 @@ def out_of_context_synth(
     clk_period_ns=5.0,
 ):
     "Run out-of-context Vivado synthesis, return resources and slack."
-
-    # get oh-my-xilinx path
-    if "OHMYXILINX" not in os.environ:
-        omx_path = get_deps_path() / "oh-my-xilinx"
-    else:
-        omx_path = os.environ["OHMYXILINX"]
     # ensure that vivado is in PATH: source VIVADO_INSTALLATION/settings64.sh
     if which("vivado") is None:
         raise Exception("vivado is not in PATH, ensure settings64.sh is sourced.")
 
-    script = "vivadocompile.sh"
+    script_path = os.path.join(os.environ["FINN_QNN_DATA"], "vivado_scripts", "vivadocompile.sh")
     # vivadocompile.sh <top-level-entity> <clock-name (optional)> <fpga-part (optional)>
-    call_omx = "zsh %s/%s %s %s %s %f" % (
-        omx_path,
-        script,
+    call_omx = "zsh %s %s %s %s %f" % (
+        script_path,
         top_name,
         clk_name,
         fpga_part,

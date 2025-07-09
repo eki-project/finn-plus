@@ -27,10 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
-import subprocess
-
-from finn.util.basic import which
-from finn.util.logging import log
+from finn.util.basic import launch_process_helper, which
 
 
 class CallHLS:
@@ -57,7 +54,7 @@ class CallHLS:
         assert which("vitis_hls") is not None, "vitis_hls not found in PATH"
         self.code_gen_dir = code_gen_dir
         self.ipgen_script = str(self.code_gen_dir) + "/ipgen.sh"
-        working_dir = os.environ["PWD"]
+        working_dir = os.getcwd()
         f = open(self.ipgen_script, "w")
         f.write("#!/bin/bash \n")
         f.write("cd {}\n".format(code_gen_dir))
@@ -65,10 +62,4 @@ class CallHLS:
         f.write("cd {}\n".format(working_dir))
         f.close()
         bash_command = ["bash", self.ipgen_script]
-        process_compile = subprocess.Popen(
-            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        _, stderr_data = process_compile.communicate()
-        stderr_stripped = stderr_data.decode().strip()
-        if stderr_stripped != "" and stderr_stripped is not None:
-            log.critical(stderr_stripped)  # Decode bytes and log as critical
+        launch_process_helper(bash_command, print_stdout=False)

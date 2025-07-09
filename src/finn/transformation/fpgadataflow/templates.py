@@ -40,13 +40,14 @@ cd %s
 custom_zynq_shell_template = """
 set FREQ_MHZ %s
 set NUM_AXILITE %d
-if {$NUM_AXILITE > 9} {
-    error "Maximum 10 AXI-Lite interfaces supported"
-}
 set NUM_AXIMM %d
 set BOARD %s
 set FPGA_PART %s
 create_project finn_zynq_link ./ -part $FPGA_PART
+
+# Prevent limitation on number of elements for string representations of Vivado collections of objects
+# Otherwise we might run into the default limit of 500 if we have many IP_REPO_PATHS
+set_param tcl.collectionResultDisplayLimit 0
 
 # set board part repo paths to find PYNQ-Z1/Z2
 set paths_prop [get_property BOARD_PART_REPO_PATHS [current_project]]
@@ -90,6 +91,7 @@ if {$BOARD == "ZCU104"} {
 create_bd_design "top"
 if {$ZYNQ_TYPE == "zynq_us+"} {
     set zynq_ps_vlnv [get_property VLNV [get_ipdefs "xilinx.com:ip:zynq_ultra_ps_e:*"]]
+    set zynq_ps_clkname "pl_clk0"
     create_bd_cell -type ip -vlnv $zynq_ps_vlnv zynq_ps
     apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset "1" }  [get_bd_cells zynq_ps]
     #activate one slave port, deactivate the second master port
@@ -100,6 +102,7 @@ if {$ZYNQ_TYPE == "zynq_us+"} {
     set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ [expr int($FREQ_MHZ)]] [get_bd_cells zynq_ps]
 } elseif {$ZYNQ_TYPE == "zynq_7000"} {
     set zynq_ps_vlnv [get_property VLNV [get_ipdefs "xilinx.com:ip:processing_system7:*"]]
+    set zynq_ps_clkname "FCLK_CLK0"
     create_bd_cell -type ip -vlnv $zynq_ps_vlnv zynq_ps
     apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 -config {make_external "FIXED_IO, DDR" apply_board_preset "1" Master "Disable" Slave "Disable" }  [get_bd_cells zynq_ps]
     set_property -dict [list CONFIG.PCW_USE_S_AXI_HP0 {1}] [get_bd_cells zynq_ps]
@@ -166,6 +169,17 @@ if {%d == 1} {
                                                              ]
 }
 
+# set up GPIO to trigger reset
+if {%d == 1} {
+    create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 axi_gpio_0
+    set_property -dict [list CONFIG.C_ALL_OUTPUTS {1} CONFIG.C_DOUT_DEFAULT {0x00000001} CONFIG.C_GPIO_WIDTH {1}] [get_bd_cells axi_gpio_0]
+    connect_bd_intf_net [get_bd_intf_pins axi_gpio_0/S_AXI] -boundary_type upper [get_bd_intf_pins axi_interconnect_0/M00_AXI]
+    assign_axi_addr_proc axi_gpio_0/S_AXI
+    connect_bd_net [get_bd_pins axi_gpio_0/s_axi_aclk] [get_bd_pins axi_interconnect_0/ACLK]
+    connect_bd_net [get_bd_pins axi_gpio_0/s_axi_aresetn] [get_bd_pins axi_interconnect_0/ARESETN]
+    connect_bd_net [get_bd_pins axi_gpio_0/gpio_io_o] [get_bd_pins rst_zynq_ps_*/aux_reset_in]
+}
+
 #finalize clock and reset connections for interconnects
 if {$ZYNQ_TYPE == "zynq_us+"} {
     apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} }  [get_bd_pins axi_interconnect_0/M*_ACLK]
@@ -180,18 +194,20 @@ validate_bd_design
 set_property SYNTH_CHECKPOINT_MODE "Hierarchical" [ get_files top.bd ]
 make_wrapper -files [get_files top.bd] -import -fileset sources_1 -top
 
-set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
-set_property STEPS.SYNTH_DESIGN.ARGS.DIRECTIVE AlternateRoutability [get_runs synth_1]
-set_property STEPS.SYNTH_DESIGN.ARGS.RETIMING true [get_runs synth_1]
-set_property strategy Performance_ExtraTimingOpt [get_runs impl_1]
-set_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
-set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
-set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
-set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
+# TODO: make strategies and optimization options configurable
+#set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
+#set_property STEPS.SYNTH_DESIGN.ARGS.DIRECTIVE AlternateRoutability [get_runs synth_1]
+#set_property STEPS.SYNTH_DESIGN.ARGS.RETIMING true [get_runs synth_1]
+#set_property strategy Performance_ExtraTimingOpt [get_runs impl_1]
+#set_property STEPS.OPT_DESIGN.ARGS.DIRECTIVE Explore [get_runs impl_1]
+#set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+#set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+#set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
 
 # out-of-context synth can't be used for bitstream generation
 # set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} -value {-mode out_of_context} -objects [get_runs synth_1]
-launch_runs -to_step write_bitstream impl_1
+# TODO: make number of jobs configurable
+launch_runs -jobs 4 -to_step write_bitstream impl_1
 wait_on_run [get_runs impl_1]
 
 # generate synthesis report
@@ -204,4 +220,106 @@ vitis_gen_xml_report_tcl_template = """
 open_project $VITIS_PROJ_PATH$/_x/link/vivado/vpl/prj/prj.xpr
 open_run impl_1
 report_utilization -hierarchical -hierarchical_depth 5 -file $VITIS_PROJ_PATH$/synth_report.xml -format xml
+"""
+
+# Template scripts for Vivado power estimation
+# Initially based on code from Lucas Reuter
+# Modified by Felix Jentzsch
+
+template_vivado_open = """
+open_project  $PROJ_PATH$
+open_run $RUN$
+"""
+
+template_vivado_power_fixed = """
+#set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -hier -type lut [get_cells -r finn_design_i/.*]
+#set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -hier -type register [get_cells -r finn_design_i/.*]
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type lut -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type register -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type lut_ram -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type dsp -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type io_output -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type bram_enable -all
+set_switching_activity -toggle_rate $TOGGLE_RATE$ -static_probability $STATIC_PROB$ -type bram_wr_enable -all
+
+set_switching_activity -deassert_resets
+report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
+#reset_switching_activity -hier -type lut [get_cells -r finn_design_i/.*]
+#reset_switching_activity -hier -type register [get_cells -r finn_design_i/.*]
+"""
+
+template_vivado_power_simulated = """
+set_property SOURCE_SET sources_1 [get_filesets sim_1]
+import_files -fileset sim_1 -norecurse $TB_FILE_PATH$
+set_property top switching_simulation_tb [get_filesets sim_1]
+update_compile_order -fileset sim_1
+
+launch_simulation -mode post-implementation -type $SIM_TYPE$
+restart
+open_saif $SAIF_FILE_PATH$
+log_saif [get_objects -r *]
+run $SIM_DURATION_NS$ ns
+close_saif
+
+read_saif $SAIF_FILE_PATH$
+report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
+"""
+
+# TODO: configurable clock frequency instead of hardcoded 100 MHz
+template_switching_simulation_tb = """
+`timescale 1 ns/10 ps
+
+module switching_simulation_tb;
+reg clk;
+reg rst;
+
+//dut inputs
+reg tready;
+reg [$INSTREAM_WIDTH$-1:0] tdata;
+reg tvalid;
+
+//dut outputs
+wire [$OUTSTREAM_WIDTH$-1:0] accel_tdata;
+wire accel_tready;
+wire accel_tvalid;
+
+finn_design_wrapper dut(
+        .ap_clk(clk),
+        .ap_rst_n(rst),
+        .m_axis_0_tdata(accel_tdata),
+        .m_axis_0_tready(tready),
+        .m_axis_0_tvalid(accel_tvalid),
+        .s_axis_0_tdata(tdata),
+        .s_axis_0_tready(accel_tready),
+        .s_axis_0_tvalid(tvalid)
+        );
+
+always
+    begin
+        clk = 0;
+        #5;
+        clk = 1;
+        #5;
+    end
+
+integer i;
+initial
+    begin
+        tready = 0;
+        tdata = 0;
+        tvalid = 0;
+        rst = 0;
+        #100;
+        rst = 1;
+        tvalid = 1;
+        tready = 1;
+        while(1)
+            begin
+                for (i = 0; i < $INSTREAM_WIDTH$/$DTYPE_WIDTH$; i = i+1) begin
+                    tdata[i*$DTYPE_WIDTH$ +: $DTYPE_WIDTH$] = $RANDOM_FUNCTION$;
+                end
+                #10;
+            end
+    end
+endmodule
 """

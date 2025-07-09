@@ -30,8 +30,8 @@ FINN_DEPS = {
         True,
     ),
     "qonnx": (
-        "https://github.com/iksnagreb/qonnx.git",
-        "3d3d8964dbc5355d5c9be855d87b7b442508e3a4",
+        "https://github.com/fpjentzsch/qonnx.git",
+        "fab7dca2e1734cf8767fa3f6161f674aaa26a402",
         True,
     ),
     "dataset_loading": (
@@ -42,11 +42,6 @@ FINN_DEPS = {
     "cnpy": (
         "https://github.com/rogersce/cnpy.git",
         "4e8810b1a8637695171ed346ce68f6984e585ef4",
-        False,
-    ),
-    "oh-my-xilinx": (
-        "https://github.com/maltanar/oh-my-xilinx.git",
-        "0b59762f9e4c4f7e5aa535ee9bc29f292434ca7a",
         False,
     ),
     "finn-hlslib": (
@@ -108,7 +103,7 @@ GIT_CLONE_TIMEOUT = 120
 
 
 # Tuple that defines a dep status
-# Example: ("oh-my-xilinx", False, "Wrong commit")
+# Example: ("qonnx", False, "Wrong commit")
 Status = tuple[str, bool, str]
 
 

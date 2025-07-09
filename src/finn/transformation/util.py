@@ -52,6 +52,11 @@ def is_end(node: NodeProto, model: ModelWrapper):  # noqa
     return node is not None and not model.find_direct_predecessors(node)
 
 
+# Tests whether a tensor is a scalar, i.e., whether all dimensions are 1
+def is_scalar(tensor):
+    return tensor is not None and all(x == 1 for x in tensor.shape)
+
+
 # Follow all input branches of a node until reaching a matmul
 def all_upstream_to_matmul(node: NodeProto, model: ModelWrapper):  # noqa
     # Check whether the node is either a matmul node or the end of the graph
