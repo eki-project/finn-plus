@@ -1,9 +1,11 @@
 from enum import Enum
+from math import log2
 from onnx.onnx_ml_pb2 import NodeProto
 from typing import Any
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.util.exception import FINNInternalError, FINNUserError
 
 
 class ArbiterStrategy(Enum):
@@ -30,9 +32,37 @@ class Arbiter(HWCustomOp, RTLBackend):
             "channels": ("s", True, ""),
             # List of bitwidths of the channels
             "bitwidths": ("ints", True, []),
+            # Incoming/Outgoing bandwith
+            "muxed_bitwidth": ("i", True, 0),
         }
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
+
+    def get_channel_data(self) -> list[tuple[int, str, int]]:
+        """Return a list of tuples that describe all signals: (index, channel_name, bitwidth)"""
+        names = str(self.get_nodeattr("channels")).split(" ")
+        bitwidths = self.get_nodeattr("bitwidths")
+        if len(names) != len(bitwidths):
+            raise FINNInternalError(
+                f"Cannot use (De)Mux Arbiter custom_op: The number of "
+                f"channels ({len(names)}) does not match the number of "
+                f"bitwidths given ({len(bitwidths)})!"
+            )
+        return [(i, names[i], bitwidths[i]) for i in range(len(names))]
+
+    def get_header_bitwidth(self) -> int:
+        """Return the number of bits required for the header to identify the data source"""
+        return int(log2(len(self.get_channel_data())))
+
+    def get_out_bitwidth(self) -> int:
+        return int(self.get_nodeattr("muxed_bitwidth"))
+
+    def check_out_bitwidth(self) -> None:
+        """Check that the outgoing bitwidth is large enough for the header + the largest data
+        from any channel. If not, raise an error"""
+        longest_bitwidth = max([data[2] for data in self.get_channel_data()])
+        if longest_bitwidth + self.get_header_bitwidth() > self.get_out_bitwidth():
+            raise FINNUserError("TODO")
 
 
 class MuxArbiter(Arbiter):
@@ -40,7 +70,7 @@ class MuxArbiter(Arbiter):
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self) -> dict:
-        my_attrs = {"arbiter_strategy": ("int", True, ArbiterStrategy.ROUND_ROBIN_FLEXIBLE)}
+        my_attrs = {"arbiter_strategy": ("i", True, ArbiterStrategy.ROUND_ROBIN_FLEXIBLE)}
         my_attrs.update(Arbiter.get_nodeattr_types(self))
         return super().get_nodeattr_types()
 
