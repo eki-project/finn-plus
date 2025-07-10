@@ -41,8 +41,14 @@ gspread = "3.6.0"
 importlib-resources = "6.5.2"
 ipython = "8.37.0"
 numpy = "1.26.4"
-onnx = "1.18.0"
-onnxruntime = "1.22.0"
+# Cannot upgrade onnx and onnxruntime any further. For now this seems to be the
+# last compatible pair which is also consistent with qonnx.
+# Upgrading onnx will result in model IR version not supported by onnxruntime
+# Upgrading onnxruntime fixes some MaxPool edge case which however requires onnx
+# to be upgraded to produce a consistent model, but this in turn cannot be done
+# due to the model IR version support issue...
+onnx = "1.17.0"
+onnxruntime = "1.20.1"
 pre-commit = "4.2.0"
 protobuf = "4.25.8"
 psutil = "5.9.4"
