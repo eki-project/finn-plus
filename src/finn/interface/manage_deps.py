@@ -30,8 +30,8 @@ FINN_DEPS = {
         True,
     ),
     "qonnx": (
-        "https://github.com/iksnagreb/qonnx.git",
-        "3d3d8964dbc5355d5c9be855d87b7b442508e3a4",
+        "https://github.com/fpjentzsch/qonnx.git",
+        "fab7dca2e1734cf8767fa3f6161f674aaa26a402",
         True,
     ),
     "dataset_loading": (

@@ -93,6 +93,7 @@ class ConvertQONNXtoFINN(Transformation):
         )
         # Recompute datatypes
         model = model.transform(InferDataTypes())
+        model = model.transform(InferDataLayouts())
         # Convert AvgPool -> Mul -> Trunc structure to QuantAvgPool2d
         model = model.transform(AvgPoolAndTruncToQuantAvgPool())
         # Remove empty padding if it exists

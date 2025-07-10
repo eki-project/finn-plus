@@ -217,6 +217,12 @@ class InferThresholdingLayer(Transformation):
                     please run RoundAndClipThresholds to convert thresholds to integer."""
                 )
 
+                # TODO: this should be removed in favor of proper layout handling in the frontend
+                #  this workaround is currently still needed to handle standalone NCHW MTs at the
+                #  input of the graph, e.g., for cnv (bnn-pynq) models
+                # NOTE: careful, this requires proper layout annotation for input AND output,
+                #  otherwise the graph could break because only one of two Transpose gets inserted
+
                 # check layout of inputs/outputs, and convert if needed
                 # check layout and convert if necessary
                 thl_in_layout = model.get_tensor_layout(thl_input)
