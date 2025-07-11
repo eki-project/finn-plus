@@ -25,7 +25,7 @@ def _resolve_settings_path() -> Path | None:
         error(f"Settings path specified via FINN_SETTINGS, but settings could not be found at {p}!")
         return None
     paths = [
-        Path(__file__).parent.parent / "settings.yaml",
+        Path(__file__).parent.parent.parent.parent / "settings.yaml",
         Path.home() / ".finn" / "settings.yaml",
         Path.home() / ".config" / "settings.yaml",
     ]
