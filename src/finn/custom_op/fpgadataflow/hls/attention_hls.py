@@ -188,6 +188,9 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             # Number of thresholds is given as the last dimension of the
             # threshold tensor, first dimension is covering all output elements
             num = ts.shape[-1]  # noqa
+            # Explicitly broadcast thresholds from per-tensor to per-channel
+            # TODO: Consider adjusting length and fold instead
+            ts = np.broadcast_to(ts, (length, num))
             # Partition the thresholds along the length into folds of parallel
             # elements
             ts = interleave_matrix_outer_dim_from_partitions(ts, length // fold)

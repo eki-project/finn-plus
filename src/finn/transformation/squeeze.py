@@ -11,6 +11,9 @@ from qonnx.core.modelwrapper import ModelWrapper
 # QONNX graph transformation base class
 from qonnx.transformation.base import Transformation
 
+# Transformation adding layout annotations to tensors
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
+
 # Transformations running qonnx datatype inference
 from qonnx.transformation.infer_datatypes import InferDataTypes
 
@@ -27,7 +30,7 @@ from qonnx.util.basic import get_by_name, remove_by_name
 from finn.util.logging import log
 
 # Small utility functions for graph transformations
-from .util import is_threshold
+from .util import is_attention, is_threshold
 
 
 # Squeezes, i.e., removes, dimensions of size 1
@@ -406,6 +409,10 @@ class Squeeze(Transformation):
                 if any(is_threshold(op) for op in model.find_consumers(name)):
                     # Skip without warning
                     continue
+                # ... same for attention (all parameters are thresholds)
+                if any(is_attention(op) for op in model.find_consumers(name)):
+                    # Skip without warning
+                    continue
                 # First squeeze the actual data of the initializer tensors
                 model.set_initializer(name, np.squeeze(init))
                 # Now also annotate the squeezed shape, otherwise the following
@@ -421,6 +428,7 @@ class Squeeze(Transformation):
         # model graph
         model = model.transform(InferShapes())
         model = model.transform(InferDataTypes())
+        model = model.transform((InferDataLayouts()))
         # Return the transformed model and indicate whether this transformation
         # needs to be repeated
         # Note: Never repeat this transformation as it might break when
