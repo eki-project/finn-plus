@@ -85,7 +85,6 @@ deap = "~1.4.3"
 pyyaml = "~6.0.2"
 mip = "~1.13.0"
 networkx = "~3.4.2"
-future-annotations = "1.0.0"
 dependencies = "2.0.1"  # dependencies==2.0.1 required by brvitas
 tokenize-rt = "~4.2.1"
 tclwrapper = "0.0.1"
