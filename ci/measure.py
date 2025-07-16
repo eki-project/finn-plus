@@ -96,13 +96,70 @@ if __name__ == "__main__":
                     {
                         "title": "idle",
                         "functions": [{"name": "run_idle", "args": [], "kwargs": driver_args}],
-                        "num_runs": 1,
+                        "iterations": 5,
                         "warmup": 10,
                     },
                     {
                         "title": "load",
-                        "functions": [{"name": "main", "args": [], "kwargs": driver_args}],
-                        "num_runs": 1,
+                        "functions": [
+                            {
+                                "name": "main",
+                                "args": [],
+                                "kwargs": {
+                                    "settingsfile": f"{extract_dir}/driver/settings.json",
+                                    "reportfile": f"{extract_dir}/measured_performance.json",
+                                    "runtime": 30,  # not relevant for live FIFO-Sizing
+                                    "frequency": 100.0,  # will be overwritten by settingsfile (TODO)
+                                    "seed": 1,
+                                    "device": 0,
+                                },
+                            }
+                        ],
+                        "iterations": 5,
+                        "warmup": 10,
+                    },
+                    {
+                        "title": "load60",
+                        "functions": [
+                            {
+                                "name": "main",
+                                "args": [],
+                                "kwargs": {
+                                    "settingsfile": f"{extract_dir}/driver/settings.json",
+                                    "reportfile": f"{extract_dir}/measured_performance.json",
+                                    "runtime": 70,  # not relevant for live FIFO-Sizing
+                                    "frequency": 100.0,  # will be overwritten by settingsfile (TODO)
+                                    "seed": 1,
+                                    "device": 0,
+                                },
+                            }
+                        ],
+                        "iterations": 5,
+                        "warmup": 10,
+                    },
+                    {
+                        "title": "load60seed",
+                        "functions": [
+                            {
+                                "name": "main",
+                                "args": [],
+                                "kwargs": {
+                                    "settingsfile": f"{extract_dir}/driver/settings.json",
+                                    "reportfile": f"{extract_dir}/measured_performance.json",
+                                    "runtime": 70,  # not relevant for live FIFO-Sizing
+                                    "frequency": 100.0,  # will be overwritten by settingsfile (TODO)
+                                    "seed": 42,
+                                    "device": 0,
+                                },
+                            }
+                        ],
+                        "iterations": 5,
+                        "warmup": 10,
+                    },
+                    {
+                        "title": "idleAfter",
+                        "functions": [{"name": "run_idle", "args": [], "kwargs": driver_args}],
+                        "iterations": 5,
                         "warmup": 10,
                     },
                 ],
@@ -139,26 +196,31 @@ if __name__ == "__main__":
                 print("MEASUREMENT MANAGER COMPLETED SUCCESSFULLY.")
 
             # parse power measurement results into a compact report
-            # TODO: aggregate results from multiple runs
-            # TODO: make aggregation board-specific
-            df = pd.read_excel(os.path.join(extract_dir, "idle_run_1.xlsx"))
-            power_pl_ps_idle = round(df["0V85_power"].mean() * 0.001, 3)
-            power_total_idle = round(df["total_power"].mean() * 0.001, 3)
-            df = pd.read_excel(os.path.join(extract_dir, "load_run_1.xlsx"))
-            power_pl_ps_load = round(df["0V85_power"].mean() * 0.001, 3)
-            power_total_load = round(df["total_power"].mean() * 0.001, 3)
+            power_report = dict()
 
-            power_pl_ps_dyn_load_comp = round(power_pl_ps_load - power_pl_ps_idle, 3)
-            power_total_dyn_load_comp = round(power_total_load - power_total_idle, 3)
+            for exp_name in ["idle", "load", "load60", "load60seed", "idleAfter"]:
+                for iteration in range(1, 6):
+                    exp_report_path = os.path.join(extract_dir, f"{exp_name}_run_{iteration}.xlsx")
 
-            power_report = {
-                "power_pl_ps_load": power_pl_ps_load,
-                "power_pl_ps_idle": power_pl_ps_idle,
-                "power_pl_ps_dyn": power_pl_ps_dyn_load_comp,
-                "power_total_load": power_total_load,
-                "power_total_idle": power_total_idle,
-                "power_total_dyn": power_total_dyn_load_comp,
-            }
+                    df = pd.read_excel(exp_report_path)
+                    power_report[f"{exp_name}_run_{iteration}_chip_mean"] = round(
+                        df["0V85_power"].mean() * 0.001, 3
+                    )
+                    power_report[f"{exp_name}_run_{iteration}_chip_std"] = round(
+                        df["0V85_power"].std() * 0.001, 3
+                    )
+
+            # power_pl_ps_dyn_load_comp = round(power_pl_ps_load - power_pl_ps_idle, 3)
+            # power_total_dyn_load_comp = round(power_total_load - power_total_idle, 3)
+            # power_report = {
+            #     "power_pl_ps_load": power_pl_ps_load,
+            #     "power_pl_ps_idle": power_pl_ps_idle,
+            #     "power_pl_ps_dyn": power_pl_ps_dyn_load_comp,
+            #     "power_total_load": power_total_load,
+            #     "power_total_idle": power_total_idle,
+            #     "power_total_dyn": power_total_dyn_load_comp,
+            # }
+
             power_log_path = os.path.join(extract_dir, "measured_power.json")
             with open(power_log_path, "w") as f:
                 json.dump(power_report, f, indent=2)
