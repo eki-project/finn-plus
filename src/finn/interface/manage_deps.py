@@ -26,7 +26,7 @@ FINN_DEPS = {
     ),
     "brevitas": (
         "https://github.com/iksnagreb/brevitas.git",
-        "003f9f4070c20639790c7b406a28612a089fc502",
+        "84fdc7c258aefd230f1e5c5e5c0318dbbe1e09a1",
         True,
     ),
     "qonnx": (
