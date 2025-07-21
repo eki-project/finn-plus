@@ -103,6 +103,13 @@ def test_brevitas_avg_pool_export(
     model = model.transform(ConvertQONNXtoFINN())
     model = model.transform(InferShapes())
     model = model.transform(InferDataTypes())
+    
+    found = False
+    for node in model.graph.node:
+        if node.op_type == "QuantAvgPool2d":
+            found = True
+            break
+    assert found, "QuantAvgPool2d node not found in the exported model."
 
     # reference brevitas output
     ref_output_array = model_brevitas(input_tensor).detach().numpy()

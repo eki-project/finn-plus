@@ -27,7 +27,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-import math
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.registry import getCustomOp
@@ -120,165 +119,143 @@ class AvgPoolAndTruncToQuantAvgPool(Transformation):
     def apply(self, model):
         graph = model.graph
         node_ind = 0
-        for n in graph.node:
+        for avg_pool_node in graph.node:
             node_ind += 1
-            if n.op_type == "AveragePool":
-                mul_node = model.find_direct_successors(n)
-                if mul_node is not None and len(mul_node) == 1 and mul_node[0].op_type == "Mul":
-                    mul_node = mul_node[0]
-                    t_node = model.find_direct_successors(mul_node)
-                    if t_node is not None and len(t_node) == 1 and t_node[0].op_type == "Trunc":
-                        t_node = t_node[0]
-                        running_node_index = node_ind
-                        # Check node for compatibility
-                        # Avg pooling node
-                        k_s = get_by_name(n.attribute, "kernel_shape")
-                        if k_s is None or len(k_s.ints) != 2 or len(set(k_s.ints)) != 1:
+            if avg_pool_node.op_type == "AveragePool":
+                t_node = model.find_direct_successors(avg_pool_node)
+                if t_node is not None and len(t_node) == 1 and t_node[0].op_type == "Trunc":
+                    t_node = t_node[0]
+                    running_node_index = node_ind
+                    # Check node for compatibility
+                    # Avg pooling node
+                    k_s = get_by_name(avg_pool_node.attribute, "kernel_shape")
+                    if k_s is None or len(k_s.ints) != 2 or len(set(k_s.ints)) != 1:
+                        raise ValueError(
+                            "FINN only supports average pooling with " "2D square kernels."
+                        )
+                    k_s = k_s.ints[0]
+
+                    pads = get_by_name(avg_pool_node.attribute, "pads")
+                    if pads is None or len(set(pads.ints)) != 1 or pads.ints[0] != 0:
+                        raise ValueError("FINN dosn't support padding for average pooling.")
+
+                    stride = get_by_name(avg_pool_node.attribute, "strides")
+                    if stride is None or len(stride.ints) != 2 or len(set(stride.ints)) != 1:
+                        raise ValueError(
+                            "FINN only supports 2D strides with equal values in " "each direction."
+                        )
+                    stride = stride.ints[0]
+
+                    # Trunc node
+                    rounding_mode = get_by_name(t_node.attribute, "rounding_mode")
+                    normalized_mode_string = rounding_mode.s.upper()
+                    if rounding_mode is None or normalized_mode_string != b"FLOOR":
+                        raise ValueError(
+                            "The Trunc node must have the rounding_mode " "set to 'FLOOR'."
+                        )
+                    for inp in t_node.input[1:]:
+                        if model.get_initializer(inp) is None:
                             raise ValueError(
-                                "FINN only supports average pooling with " "2D square kernels."
+                                f"All inputs of the Trunc node, "
+                                f"except the first, must be statically "
+                                f"initialized. However, {inp} is not."
                             )
-                        k_s = k_s.ints[0]
-
-                        pads = get_by_name(n.attribute, "pads")
-                        if pads is None or len(set(pads.ints)) != 1 or pads.ints[0] != 0:
-                            raise ValueError("FINN dosn't support padding for average pooling.")
-
-                        stride = get_by_name(n.attribute, "strides")
-                        if stride is None or len(stride.ints) != 2 or len(set(stride.ints)) != 1:
-                            raise ValueError(
-                                "FINN only supports 2D strides with equal values in "
-                                "each direction."
-                            )
-                        stride = stride.ints[0]
-
-                        # Mul node
-                        mul_val = model.get_initializer(mul_node.input[1])
-                        if mul_val is None or len(mul_val.shape) != 0 or mul_val != k_s * k_s:
-                            raise ValueError(
-                                f"The Mul node after the AveragePool node must have "
-                                f"static initialization at the second input, "
-                                f"further the initialization must be of zero dimension "
-                                f"and the value of the initialization must be "
-                                f"the quadratic value of the kernel size, "
-                                f"in this case {k_s * k_s}."
-                            )
-
-                        # Trunc node
-                        rounding_mode = get_by_name(t_node.attribute, "rounding_mode")
-                        normalized_mode_string = rounding_mode.s.upper()
-                        if rounding_mode is None or normalized_mode_string != b"FLOOR":
-                            raise ValueError(
-                                "The Trunc node must have the rounding_mode " "set to 'FLOOR'."
-                            )
-                        for inp in t_node.input[1:]:
-                            if model.get_initializer(inp) is None:
-                                raise ValueError(
-                                    f"All inputs of the Trunc node, "
-                                    f"except the first, must be statically "
-                                    f"initialized. However, {inp} is not."
-                                )
-                        zero_pt = model.get_initializer(t_node.input[2])
-                        if len(zero_pt.shape) != 0 or zero_pt != 0:
-                            raise ValueError(
-                                f"Finn only supports 0 as the zero point for "
-                                f"the Trunc node, it currently is {zero_pt}."
-                            )
-                        trunc_in_bits = model.get_initializer(t_node.input[3]).flatten()
-                        trunc_out_bits = model.get_initializer(t_node.input[4]).flatten()
-                        if len(trunc_in_bits.shape) != 1 or len(trunc_out_bits.shape) != 1:
-                            raise ValueError(
-                                f"Finn only supports scalar bit widths "
-                                f"for the Trunc node. The input bit width "
-                                f"currently is: {trunc_in_bits}, "
-                                f"while the output bit width is: {trunc_out_bits}."
-                            )
-                        trunc_in_bits = int(trunc_in_bits[0])
-                        trunc_out_bits = int(trunc_out_bits[0])
-
-                        # Calculate parameters for the QuantAvgPool2d node,
-                        # Calculate input bit width. Basically this backwards:
-                        # https://github.com/Xilinx/finn-base/blob/
-                        # 7c2603a95e90e4de2575020e575c24eab6a15889/src/finn/custom_op/
-                        # general/quantavgpool2d.py#L94
-                        ibits = math.floor(math.log(2**trunc_in_bits / (k_s * k_s), 2))
-                        # Get sign
-                        signed = _get_signed_from_upstream(model, t_node)
-                        # ToDo: Change this to NHWC,
-                        #  when the channels last layout comes around.
-                        data_layout = "NCHW"
-
-                        # Insert scale nodes, QuantAvgPool2d node and required tensors
-                        scale = model.get_initializer(t_node.input[1])
-                        scale_div_tensor = helper.make_tensor_value_info(
-                            model.make_new_valueinfo_name(),
-                            TensorProto.FLOAT,
-                            None,
+                    zero_pt = model.get_initializer(t_node.input[2])
+                    if len(zero_pt.shape) != 0 or zero_pt != 0:
+                        raise ValueError(
+                            f"Finn only supports 0 as the zero point for "
+                            f"the Trunc node, it currently is {zero_pt}."
                         )
-                        graph.value_info.append(scale_div_tensor)
-                        model.set_initializer(scale_div_tensor.name, scale)
-
-                        act_scale_div_tensor = helper.make_tensor_value_info(
-                            model.make_new_valueinfo_name(),
-                            TensorProto.FLOAT,
-                            None,
+                    trunc_in_bits = model.get_initializer(t_node.input[3]).flatten()
+                    trunc_out_bits = model.get_initializer(t_node.input[5]).flatten()
+                    if len(trunc_in_bits.shape) != 1 or len(trunc_out_bits.shape) != 1:
+                        raise ValueError(
+                            f"Finn only supports scalar bit widths "
+                            f"for the Trunc node. The input bit width "
+                            f"currently is: {trunc_in_bits}, "
+                            f"while the output bit width is: {trunc_out_bits}."
                         )
-                        graph.value_info.append(act_scale_div_tensor)
+                    trunc_in_bits = int(trunc_in_bits[0])
+                    trunc_out_bits = int(trunc_out_bits[0])
 
-                        scale_div_node = helper.make_node(
-                            "Div",
-                            [n.input[0], scale_div_tensor.name],
-                            [act_scale_div_tensor.name],
-                        )
-                        graph.node.insert(running_node_index, scale_div_node)
-                        running_node_index += 1
+                    # Get sign
+                    signed = _get_signed_from_upstream(model, t_node)
+                    # ToDo: Change this to NHWC,
+                    #  when the channels last layout comes around.
+                    data_layout = "NCHW"
 
-                        act_scale_mul_tensor = helper.make_tensor_value_info(
-                            model.make_new_valueinfo_name(),
-                            TensorProto.FLOAT,
-                            None,
-                        )
-                        graph.value_info.append(act_scale_mul_tensor)
+                    # Insert scale nodes, QuantAvgPool2d node and required tensors
+                    scale = model.get_initializer(t_node.input[1])
+                    output_scale = model.get_initializer(t_node.input[4])
+                    scale_div_tensor = helper.make_tensor_value_info(
+                        model.make_new_valueinfo_name(),
+                        TensorProto.FLOAT,
+                        None,
+                    )
+                    graph.value_info.append(scale_div_tensor)
+                    model.set_initializer(scale_div_tensor.name, scale)
 
-                        QuantAvgPool2d_node = helper.make_node(
-                            "QuantAvgPool2d",
-                            [act_scale_div_tensor.name],
-                            [act_scale_mul_tensor.name],
-                            domain="qonnx.custom_op.general",
-                            stride=stride,
-                            kernel=k_s,
-                            ibits=ibits,
-                            obits=trunc_out_bits,
-                            signed=int(signed),
-                            data_layout=data_layout,
-                        )
-                        graph.node.insert(running_node_index, QuantAvgPool2d_node)
-                        running_node_index += 1
+                    act_scale_div_tensor = helper.make_tensor_value_info(
+                        model.make_new_valueinfo_name(),
+                        TensorProto.FLOAT,
+                        None,
+                    )
+                    graph.value_info.append(act_scale_div_tensor)
 
-                        scale_mul_tensor = helper.make_tensor_value_info(
-                            model.make_new_valueinfo_name(),
-                            TensorProto.FLOAT,
-                            None,
-                        )
-                        graph.value_info.append(scale_mul_tensor)
-                        model.set_initializer(scale_mul_tensor.name, scale)
+                    scale_div_node = helper.make_node(
+                        "Div",
+                        [avg_pool_node.input[0], scale_div_tensor.name],
+                        [act_scale_div_tensor.name],
+                    )
+                    graph.node.insert(running_node_index, scale_div_node)
+                    running_node_index += 1
 
-                        scale_mul_node = helper.make_node(
-                            "Mul",
-                            [act_scale_mul_tensor.name, scale_mul_tensor.name],
-                            [t_node.output[0]],
-                        )
-                        graph.node.insert(running_node_index, scale_mul_node)
-                        running_node_index += 1
+                    act_scale_mul_tensor = helper.make_tensor_value_info(
+                        model.make_new_valueinfo_name(),
+                        TensorProto.FLOAT,
+                        None,
+                    )
+                    graph.value_info.append(act_scale_mul_tensor)
 
-                        # Remove old nodes
-                        graph.node.remove(n)
-                        graph.node.remove(mul_node)
-                        graph.node.remove(t_node)
+                    QuantAvgPool2d_node = helper.make_node(
+                        "QuantAvgPool2d",
+                        [act_scale_div_tensor.name],
+                        [act_scale_mul_tensor.name],
+                        domain="qonnx.custom_op.general",
+                        stride=stride,
+                        kernel=k_s,
+                        ibits=trunc_in_bits,
+                        obits=trunc_out_bits,
+                        signed=int(signed),
+                        data_layout=data_layout,
+                    )
+                    graph.node.insert(running_node_index, QuantAvgPool2d_node)
+                    running_node_index += 1
 
-                        # Recompute shapes and datatypes
-                        model = model.transform(InferShapes())
-                        model = model.transform(InferDataTypes())
+                    scale_mul_tensor = helper.make_tensor_value_info(
+                        model.make_new_valueinfo_name(),
+                        TensorProto.FLOAT,
+                        None,
+                    )
+                    graph.value_info.append(scale_mul_tensor)
+                    model.set_initializer(scale_mul_tensor.name, output_scale)
 
-                        return model, True
+                    scale_mul_node = helper.make_node(
+                        "Mul",
+                        [act_scale_mul_tensor.name, scale_mul_tensor.name],
+                        [t_node.output[0]],
+                    )
+                    graph.node.insert(running_node_index, scale_mul_node)
+                    running_node_index += 1
+
+                    # Remove old nodes
+                    graph.node.remove(avg_pool_node)
+                    graph.node.remove(t_node)
+
+                    # Recompute shapes and datatypes
+                    model = model.transform(InferShapes())
+                    model = model.transform(InferDataTypes())
+
+                    return model, True
 
         return model, False
