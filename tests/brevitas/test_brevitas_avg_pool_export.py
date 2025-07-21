@@ -103,7 +103,7 @@ def test_brevitas_avg_pool_export(
     model = model.transform(ConvertQONNXtoFINN())
     model = model.transform(InferShapes())
     model = model.transform(InferDataTypes())
-    
+
     found = False
     for node in model.graph.node:
         if node.op_type == "QuantAvgPool2d":
