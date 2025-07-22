@@ -141,8 +141,6 @@ class bench_mvau(bench):
         numInputVectors = self.params["nhw"]
         mw = self.params["mw"]
         mh = self.params["mh"]
-        sf = self.params["sf"]
-        nf = self.params["nf"]
         m = self.params["m"]
 
         mem_mode = self.params["mem_mode"]
@@ -159,16 +157,26 @@ class bench_mvau(bench):
         if act is not None:
             act = DataType[act]
 
-        # Determine and log folding
-        if sf > mw or nf > mh:
-            print("Invalid sf/nf configuration, skipping")
-            return "skipped"
-        if sf == -1:
-            sf = mw
-        simd = mw // sf
-        if nf == -1:
-            nf = mh
-        pe = mh // nf
+        # two methods of defining folding:
+        if "sf" in self.params:
+            # via sf & nf
+            sf = self.params["sf"]
+            nf = self.params["nf"]
+            # Determine and log folding
+            if sf > mw or nf > mh:
+                print("Invalid sf/nf configuration, skipping")
+                return "skipped"
+            if sf == -1:
+                sf = mw
+            simd = mw // sf
+            if nf == -1:
+                nf = mh
+            pe = mh // nf
+        else:
+            # via simd & pe
+            simd = self.params["simd"]
+            pe = self.params["pe"]
+
         if mw % simd != 0 or mh % pe != 0:
             print("Invalid simd/pe configuration, skipping")
             return "skipped"
