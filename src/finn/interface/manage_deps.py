@@ -50,8 +50,8 @@ FINN_DEPS = {
         False,
     ),
     "finn-hlslib": (
-        "https://github.com/Xilinx/finn-hlslib.git",
-        "5c5ad631e3602a8dd5bd3399a016477a407d6ee7",
+        "https://github.com/eki-project/finn-hlslib.git",
+        "feature/annotated_mux",
         False,
     ),
     "attention-hlslib": (
