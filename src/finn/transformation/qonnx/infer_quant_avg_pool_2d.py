@@ -112,7 +112,7 @@ def _get_signed_from_upstream(model, trunc_node):
 class AvgPoolAndTruncToQuantAvgPool(Transformation):
     """
     Convert a section of nodes of the pattern:
-    AveragePool -> Mul (scalar) -> Trunc
+    AveragePool -> Trunc
     To the FINN op: QuantAvgPool2d
     """
 

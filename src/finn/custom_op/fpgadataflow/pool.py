@@ -206,12 +206,9 @@ class Pool(HWCustomOp):
             # determine bits to shift
             ibits = self.get_input_datatype().bitwidth()
             obits = self.get_output_datatype().bitwidth()
-            max_value = 2**ibits - 1
-            max_value = max_value * k2
-            max_bit_width = int(max_value).bit_length()
-            shift_bits = max_bit_width - obits
+            shift_bits = ibits - obits
             shift_bits = shift_bits if shift_bits >= 0 else 0
-            result = np.sum(tmp_values, axis=3)
+            result = np.sum(tmp_values, axis=3) / k2
             result = np.right_shift(result.astype(int), shift_bits)
         oshape = context[node.output[0]].shape
         context[node.output[0]] = np.asarray(result, dtype=np.float32).reshape(oshape)

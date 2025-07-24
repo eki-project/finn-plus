@@ -102,7 +102,9 @@ class Pool_hls(Pool, HLSBackend):
             else:
                 act_hls_dt = "ap_uint<{}>".format(accum_bits)
             self.code_gen_dict["$DOCOMPUTE$"] += [
-                "QuantAvgPoolFunction<{},{},{}> pool_fxn;".format(act_hls_dt, o_hls_dt, size)
+                "QuantAvgPoolFunction<{},{},{},KernelSize> pool_fxn;".format(
+                    act_hls_dt, o_hls_dt, size
+                )
             ]
         else:
             raise Exception("Pool_Batch doesn't currently support " + fxn)
