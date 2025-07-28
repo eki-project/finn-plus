@@ -236,63 +236,63 @@ class bench_mvau(bench):
                     return "skipped"
         else:
             if self.params["sparsity_amount"] == 0:
-                print("sparsity amount = 0 not applicable for selected sparsity, skipping")
-                return "skipped"
-            if sparsity_type == "unstructured":
-                idx = np.random.choice(
-                    mw * mh, size=int(self.params["sparsity_amount"] * mw * mh), replace=False
-                )
-                W = np.reshape(W, -1)
-                W[idx] = 0.0
-                W = np.reshape(W, (mw, mh))
-            elif sparsity_type == "rows_random":
-                idx_mw = np.random.choice(
-                    mw, size=int(self.params["sparsity_amount"] * mw), replace=False
-                )
-                W[idx_mw, :] = 0.0
-            elif sparsity_type == "cols_random":
-                idx_mh = np.random.choice(
-                    mh, size=int(self.params["sparsity_amount"] * mh), replace=False
-                )
-                W[:, idx_mh] = 0.0
-            elif sparsity_type == "rows_regular":
-                if self.params["sparsity_amount"] == 0.25:
-                    idx_mw = np.arange(0, mw, step=4)
-                elif self.params["sparsity_amount"] == 0.5:
-                    idx_mw = np.arange(0, mw, step=2)
-                elif self.params["sparsity_amount"] == 0.75:
-                    idx_mw = np.concatenate(
-                        (
-                            np.arange(0, mw, step=4),
-                            np.arange(1, mw, step=4),
-                            np.arange(2, mw, step=4),
-                        )
-                    )
-                else:
-                    print("regular sparsity only applicable for amount 0.25/0.5/0.75, skipping")
-                    return "skipped"
-                W[idx_mw, :] = 0.0
-            elif sparsity_type == "cols_regular":
-                if self.params["sparsity_amount"] == 0.25:
-                    idx_mh = np.arange(0, mh, step=4)
-                elif self.params["sparsity_amount"] == 0.5:
-                    idx_mh = np.arange(0, mh, step=2)
-                elif self.params["sparsity_amount"] == 0.75:
-                    idx_mh = np.concatenate(
-                        (
-                            np.arange(0, mh, step=4),
-                            np.arange(1, mh, step=4),
-                            np.arange(2, mh, step=4),
-                        )
-                    )
-                else:
-                    print("regular sparsity only applicable for amount 0.25/0.5/0.75, skipping")
-                    return "skipped"
-                W[:, idx_mh] = 0.0
-
+                pass
             else:
-                print("ERROR: unknown sparsity type")
-                raise Exception("ERROR: unknown sparsity type")
+                if sparsity_type == "unstructured":
+                    idx = np.random.choice(
+                        mw * mh, size=int(self.params["sparsity_amount"] * mw * mh), replace=False
+                    )
+                    W = np.reshape(W, -1)
+                    W[idx] = 0.0
+                    W = np.reshape(W, (mw, mh))
+                elif sparsity_type == "rows_random":
+                    idx_mw = np.random.choice(
+                        mw, size=int(self.params["sparsity_amount"] * mw), replace=False
+                    )
+                    W[idx_mw, :] = 0.0
+                elif sparsity_type == "cols_random":
+                    idx_mh = np.random.choice(
+                        mh, size=int(self.params["sparsity_amount"] * mh), replace=False
+                    )
+                    W[:, idx_mh] = 0.0
+                elif sparsity_type == "rows_regular":
+                    if self.params["sparsity_amount"] == 0.25:
+                        idx_mw = np.arange(0, mw, step=4)
+                    elif self.params["sparsity_amount"] == 0.5:
+                        idx_mw = np.arange(0, mw, step=2)
+                    elif self.params["sparsity_amount"] == 0.75:
+                        idx_mw = np.concatenate(
+                            (
+                                np.arange(0, mw, step=4),
+                                np.arange(1, mw, step=4),
+                                np.arange(2, mw, step=4),
+                            )
+                        )
+                    else:
+                        print("regular sparsity only applicable for amount 0.25/0.5/0.75, skipping")
+                        return "skipped"
+                    W[idx_mw, :] = 0.0
+                elif sparsity_type == "cols_regular":
+                    if self.params["sparsity_amount"] == 0.25:
+                        idx_mh = np.arange(0, mh, step=4)
+                    elif self.params["sparsity_amount"] == 0.5:
+                        idx_mh = np.arange(0, mh, step=2)
+                    elif self.params["sparsity_amount"] == 0.75:
+                        idx_mh = np.concatenate(
+                            (
+                                np.arange(0, mh, step=4),
+                                np.arange(1, mh, step=4),
+                                np.arange(2, mh, step=4),
+                            )
+                        )
+                    else:
+                        print("regular sparsity only applicable for amount 0.25/0.5/0.75, skipping")
+                        return "skipped"
+                    W[:, idx_mh] = 0.0
+
+                else:
+                    print("ERROR: unknown sparsity type")
+                    raise Exception("ERROR: unknown sparsity type")
 
         # TODO: implement enforce option which prevents naturally occurring sparsity
         # params["sparsity_enforce"]
