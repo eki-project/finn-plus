@@ -94,12 +94,6 @@ if __name__ == "__main__":
                 },
                 "experiments": [
                     {
-                        "title": "idle",
-                        "functions": [{"name": "run_idle", "args": [], "kwargs": driver_args}],
-                        "num_runs": 1,
-                        "warmup": 10,
-                    },
-                    {
                         "title": "load",
                         "functions": [{"name": "main", "args": [], "kwargs": driver_args}],
                         "num_runs": 1,
@@ -141,23 +135,13 @@ if __name__ == "__main__":
             # parse power measurement results into a compact report
             # TODO: aggregate results from multiple runs
             # TODO: make aggregation board-specific
-            df = pd.read_excel(os.path.join(extract_dir, "idle_run_1.xlsx"))
-            power_pl_ps_idle = round(df["0V85_power"].mean() * 0.001, 3)
-            power_total_idle = round(df["total_power"].mean() * 0.001, 3)
             df = pd.read_excel(os.path.join(extract_dir, "load_run_1.xlsx"))
             power_pl_ps_load = round(df["0V85_power"].mean() * 0.001, 3)
             power_total_load = round(df["total_power"].mean() * 0.001, 3)
 
-            power_pl_ps_dyn_load_comp = round(power_pl_ps_load - power_pl_ps_idle, 3)
-            power_total_dyn_load_comp = round(power_total_load - power_total_idle, 3)
-
             power_report = {
                 "power_pl_ps_load": power_pl_ps_load,
-                "power_pl_ps_idle": power_pl_ps_idle,
-                "power_pl_ps_dyn": power_pl_ps_dyn_load_comp,
                 "power_total_load": power_total_load,
-                "power_total_idle": power_total_idle,
-                "power_total_dyn": power_total_dyn_load_comp,
             }
             power_log_path = os.path.join(extract_dir, "measured_power.json")
             with open(power_log_path, "w") as f:
