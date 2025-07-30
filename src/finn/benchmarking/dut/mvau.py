@@ -202,6 +202,11 @@ class bench_mvau(bench):
                 return "skipped"
             if wdt.bitwidth() < 4 or wdt.bitwidth() > 8:
                 return "skipped"
+            # PE = 1 cases (at least with accumulator width = output width = 24 bit)
+            # are known to cause instrumentation degeneration bug!
+            # TODO: fix
+            if pe == 1:
+                return "skipped"
             # TODO: narrow-range restrictions for DSP48E1
             # TODO: special case of 9-bit signed input
 
