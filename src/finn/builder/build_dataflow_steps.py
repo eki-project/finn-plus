@@ -917,18 +917,19 @@ def step_out_of_context_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig)
 
 def step_vivado_power_estimation(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Run Vivado power estimation on the stitched IP after OOC synthesis."""
-    if DataflowOutputType.OOC_SYNTH not in cfg.generate_outputs:
-        raise FINNUserError("Vivado power estimation needs OOC synth")
+    if DataflowOutputType.VIVADO_POWER in cfg.generate_outputs:
+        if DataflowOutputType.OOC_SYNTH not in cfg.generate_outputs:
+            raise FINNUserError("Vivado power estimation needs OOC synth")
 
-    report_dir = cfg.output_dir + "/report"
-    model.transform(
-        VivadoPowerEstimation(
-            report_dir,
-            cfg.synth_clk_period_ns,
-            cfg.vivado_power_simulate_activity,
-            cfg.vivado_power_simulation_type,
+        report_dir = cfg.output_dir + "/report"
+        model.transform(
+            VivadoPowerEstimation(
+                report_dir,
+                cfg.synth_clk_period_ns,
+                cfg.vivado_power_simulate_activity,
+                cfg.vivado_power_simulation_type,
+            )
         )
-    )
     return model
 
 

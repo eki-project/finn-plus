@@ -70,6 +70,7 @@ class DataflowOutputType(str, Enum):
     STITCHED_IP = "stitched_ip"
     ESTIMATE_REPORTS = "estimate_reports"
     OOC_SYNTH = "out_of_context_synth"
+    VIVADO_POWER = "vivado_power_estimate"
     RTLSIM_PERFORMANCE = "rtlsim_performance"
     BITFILE = "bitfile"
     PYNQ_DRIVER = "pynq_driver"
