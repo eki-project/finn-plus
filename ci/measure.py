@@ -21,22 +21,26 @@ def delete_dir_contents(dir):
 if __name__ == "__main__":
     exit_code = 0
     print("SCANNING DEPLOYMENT PACKAGES IN BUILD ARTIFACTS..")
+
+    # Re-use this env var to define where to get build artifacts
+    path_override = os.environ.get("MANUAL_CFG_PATH")
+
     # Find deployment packages from artifacts
-    artifacts_in_dir = os.path.join("build_artifacts", "runs_output")
+    artifacts_in_dir = os.path.join(path_override, "build_output")
     artifacts_out_dir = os.path.join("measurement_artifacts", "runs_output")
     for run in os.listdir(artifacts_in_dir):
         run_in_dir = os.path.join(artifacts_in_dir, run)
         run_out_dir = os.path.join(artifacts_out_dir, run)
         reports_dir = os.path.join(run_out_dir, "reports")
-        deploy_archive = os.path.join(run_in_dir, "deploy.zip")
+        deploy_dir = os.path.join(run_in_dir, "deploy")
         extract_dir = "measurement"
-        if os.path.isfile(deploy_archive):
-            print("FOUND DEPLOYMENT PACKAGE IN %s, EXTRACTING.." % run_in_dir)
+        if os.path.isdir(deploy_dir):
+            print("FOUND DEPLOYMENT PACKAGE IN %s, COPYING.." % run_in_dir)
 
             # Extract to temporary dir
             os.makedirs(extract_dir, exist_ok=True)
             delete_dir_contents(extract_dir)
-            shutil.unpack_archive(deploy_archive, extract_dir)
+            shutil.copytree(deploy_dir, extract_dir)
 
             # run validate.py (from IODMA driver) if present, otherwise driver.py (instrumentation)
             # TODO: unify IODMA/instrumentation shell & driver

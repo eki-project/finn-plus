@@ -20,7 +20,9 @@ def delete_dir_contents(dir):
 
 def open_json_report(id, report_name):
     # look in both, build & measurement, artifacts
-    path1 = os.path.join("build_artifacts", "runs_output", "run_%d" % (id), "reports", report_name)
+    # Re-use this env var to define where to get build artifacts
+    path_override = os.environ.get("MANUAL_CFG_PATH")
+    path1 = os.path.join(path_override, "build_output", "run_%d" % (id), "report", report_name)
     path2 = os.path.join(
         "measurement_artifacts", "runs_output", "run_%d" % (id), "reports", report_name
     )
@@ -125,8 +127,11 @@ class DVCLoggerHelper:
 
 
 if __name__ == "__main__":
+    # Re-use this env var to define where to get build artifacts
+    path_override = os.environ.get("MANUAL_CFG_PATH")
+
     # Go through all runs found in the artifacts and log their results to DVC
-    run_dir_list = os.listdir(os.path.join("build_artifacts", "runs_output"))
+    run_dir_list = os.listdir(os.path.join(path_override, "build_output"))
     print("Looking for runs in build artifacts")
     run_ids = []
     for run_dir in run_dir_list:
@@ -407,9 +412,8 @@ if __name__ == "__main__":
             # ARTIFACTS
             # Log build reports as they come from GitLab artifacts,
             # but copy them to a central dir first so all runs share the same path
-            run_report_dir1 = os.path.join(
-                "build_artifacts", "runs_output", "run_%d" % (id), "reports"
-            )
+            path_override = os.environ.get("MANUAL_CFG_PATH")
+            run_report_dir1 = os.path.join(path_override, "build_output", "run_%d" % (id), "report")
             run_report_dir2 = os.path.join(
                 "measurement_artifacts", "runs_output", "run_%d" % (id), "reports"
             )
