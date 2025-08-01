@@ -51,7 +51,7 @@ FINN_DEPS = {
     ),
     "finn-hlslib": (
         "https://github.com/eki-project/finn-hlslib.git",
-        "feature/annotated_mux",
+        "98daf5f2c2411f7487f40b7df575a9da78409d3e",
         False,
     ),
     "attention-hlslib": (

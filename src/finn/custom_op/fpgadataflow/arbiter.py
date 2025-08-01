@@ -4,6 +4,7 @@ from math import log2
 from onnx.onnx_ml_pb2 import NodeProto
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import Any
+from typing_extensions import override
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
@@ -31,13 +32,14 @@ class Arbiter(HWCustomOp):
     """Base class for a (De)Mux arbiter custom op."""
 
     def __init__(self, onnx_node: NodeProto, **kwargs: Any) -> None:
-        super().__init__(onnx_node, **kwargs)
+        super().__init__(onnx_node, **kwargs)  # type: ignore[no-untyped-call]
 
     @abstractmethod
     def get_mode(self) -> ArbiterMode:
         """Return whether this custom op is a muxing arbiter or a demuxer"""
 
-    def get_nodeattr_types(self) -> dict:
+    @override
+    def get_nodeattr_types(self) -> dict[str, Any]:
         my_attrs = {
             # A space seperated list of names for the incoming/outgoing streams
             "channels": ("s", True, ""),
@@ -46,7 +48,7 @@ class Arbiter(HWCustomOp):
             # Incoming/Outgoing bandwith
             "muxed_bitwidth": ("i", True, 0),
         }
-        my_attrs.update(RTLBackend.get_nodeattr_types(self))
+        my_attrs.update(RTLBackend.get_nodeattr_types(self))  # type: ignore[no-untyped-call]
         return my_attrs
 
     def set_channel_data(self, model: ModelWrapper) -> None:

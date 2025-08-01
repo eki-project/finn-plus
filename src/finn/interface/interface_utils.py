@@ -95,12 +95,12 @@ def resolve_build_dir(
     if "FINN_BUILD_DIR" in os.environ.keys():
         p = Path(os.environ["FINN_BUILD_DIR"])
         if not p.is_absolute():
-            return flow_config.parent / p
+            return flow_config.parent.parent.parent / p
         return p
     if "FINN_BUILD_DIR" in settings.keys():
         p = Path(settings["FINN_BUILD_DIR"])
         if not p.is_absolute():
-            return flow_config.parent / p
+            return flow_config.parent.parent.parent / p
         return p
     if is_test_run:
         # Need a different fallback because tests have no build config

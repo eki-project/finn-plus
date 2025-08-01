@@ -39,6 +39,7 @@ class DeMuxBase_hls(HLSBackend, HWCustomOp):  # noqa
             # A space seperated list of names for the incoming/outgoing streams
             "streams": ("s", True, ""),
             # List of bitwidths of the channels
+            # TODO: Get from node.get_input/output_datatype().bitwidth
             "bitwidths": ("ints", True, []),
             # Incoming/Outgoing bandwith
             "muxed_bitwidth": ("i", True, 0),
@@ -46,10 +47,15 @@ class DeMuxBase_hls(HLSBackend, HWCustomOp):  # noqa
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
+    # CODE GEN FUNCTIONS
+    # Rest are overriden in subclass
+
     def global_includes(self) -> None:
         """Include the concat library, originally meant for only performing
         channel concatenation"""
         self.code_gen_dict["$GLOBALS$"] = ['#include "concat.hpp"']
+
+    # END: CODE GEN FUNCTIONS
 
     def get_channel_data(self) -> list[tuple[int, str, int]]:
         """Return a list of tuples that describe all signals: (index, channel_name, bitwidth)"""
@@ -76,6 +82,38 @@ class Mux_hls(DeMuxBase_hls):  # noqa
         }
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
+
+    # CODE GEN FUNCTIONS
+
+    def defines(self):
+        pass
+
+    def blackboxfunctions(self):
+        header = f"void {self.onnx_node.name}(\n"
+        body = ""
+        channel_data = self.get_channel_data()
+        for index, channel_name, bitwidth in channel_data:
+            # TODO: What about int instead of uint?
+            # TODO: Do we need to keep the in0_V, in1_V, ... name scheme?
+            header += f"hls::stream<ap_uint<{bitwidth}>> &in_{channel_name}"
+            header += ",\n"
+        header += "hls::stream<ap_uint<" + self.get_nodeattr("muxed_bitwidth") + ">> &out"
+        header += ") {\n"
+
+        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [header + body]
+
+    def pragmas(self):
+        pragmas = []
+        channel_data = self.get_channel_data()
+        for index, channel_name, bitwidth in channel_data:
+            pragmas.append(f"#pragma HLS INTERFACE axis port=in{channel_name}")
+        pragmas.append("#pragma HLS INTERFACE axis port=out")
+        self.code_gen_dict["$PRAGMAS$"] = pragmas
+
+    def docompute(self):
+        pass
+
+    # END: CODE GEN FUNCTIONS
 
 
 class Demux_hls(DeMuxBase_hls):  # noqa
