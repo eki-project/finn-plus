@@ -89,18 +89,16 @@ class Mux_hls(DeMuxBase_hls):  # noqa
         pass
 
     def blackboxfunctions(self):
-        header = f"void {self.onnx_node.name}(\n"
-        body = ""
         channel_data = self.get_channel_data()
+        header = f"void {self.onnx_node.name}(\n"
         for index, channel_name, bitwidth in channel_data:
             # TODO: What about int instead of uint?
             # TODO: Do we need to keep the in0_V, in1_V, ... name scheme?
             header += f"hls::stream<ap_uint<{bitwidth}>> &in_{channel_name}"
             header += ",\n"
         header += "hls::stream<ap_uint<" + self.get_nodeattr("muxed_bitwidth") + ">> &out"
-        header += ") {\n"
-
-        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [header + body]
+        header += ")\n"
+        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [header]
 
     def pragmas(self):
         pragmas = []
@@ -108,10 +106,20 @@ class Mux_hls(DeMuxBase_hls):  # noqa
         for index, channel_name, bitwidth in channel_data:
             pragmas.append(f"#pragma HLS INTERFACE axis port=in{channel_name}")
         pragmas.append("#pragma HLS INTERFACE axis port=out")
+        pragmas.append("#pragma HLS INTERFACE ap_ctrl_none port=return")
         self.code_gen_dict["$PRAGMAS$"] = pragmas
 
     def docompute(self):
-        pass
+        channel_data = self.get_channel_data()
+        body = "AnnotatedMultiplex::StreamingNetworkMultiplex<MultiplexStrategy::ROUND_ROBIN,"
+        body += str(self.get_nodeattr("muxed_bitwidth"))
+        body += ", "
+        # TODO: ap_int
+        body += ", ".join([f"ap_uint<{bitwidth}>" for _, _, bitwidth in channel_data])
+        body += ">(out, "
+        body += ", ".join([f"in_{channel_name}" for _, channel_name, _ in channel_data])
+        body += ");"
+        self.code_gen_dict["$DOCOMPUTE$"] = [body]
 
     # END: CODE GEN FUNCTIONS
 
