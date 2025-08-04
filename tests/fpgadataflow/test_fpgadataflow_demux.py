@@ -6,6 +6,7 @@ from onnx.onnx_ml_pb2 import NodeProto
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -24,6 +25,12 @@ def make_single_node_model(idt, odt, nodetype="AnnotatedMux") -> ModelWrapper:
         backend="fpgadataflow",
         inputDataType=idt.name,
         outputDataType=odt.name,
+        streamNames=["in0", "in1", "in2"],
+        streamTypes=["UINT4", "UINT8", "INT3"],
+        streamNormalShapes=["1,2,5", "1,3,10", "1,20"],
+        streamFoldedShapes=["1,2,5", "1,3,10", "1,20"],
+        streamWidths=["128", "200", "412"],
+        muxed_bitwidth=512,
     )
     graph = helper.make_graph(nodes=[node], name="graph", inputs=[inp], outputs=[outp])
     model = qonnx_make_model(graph, producer_name="model")
@@ -36,9 +43,12 @@ def make_single_node_model(idt, odt, nodetype="AnnotatedMux") -> ModelWrapper:
 def test_fpgadataflow_arbiter_mux() -> None:
     idt = DataType["UINT4"]
     odt = DataType["UINT4"]
+    fpgapart = "xcu280-fsvh2892-2l-e"
     model = make_single_node_model(idt, odt, "AnnotatedMux_hls")
-    model = model.transform(SpecializeLayers("xc7z020clg400-1280"))
-    model = model.transform(PrepareIP("xc7z020clg400-1280", 2.5))
+    model = model.transform(SpecializeLayers(fpgapart))
+    model = model.transform(GiveUniqueNodeNames())
+    model = model.transform(PrepareIP(fpgapart, 2.5))
+    model = model.transform(GiveUniqueNodeNames())
     model = model.transform(HLSSynthIP())
 
 

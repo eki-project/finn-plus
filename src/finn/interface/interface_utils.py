@@ -117,12 +117,12 @@ def resolve_deps_path(deps: Path | None, settings: dict) -> Path | None:
     if "FINN_DEPS" in os.environ.keys():
         p = Path(os.environ["FINN_DEPS"])
         if not p.is_absolute():
-            return Path(__file__).parent.parent / p
+            return Path(__file__).parent.parent.parent.parent / p
         return p
     if "FINN_DEPS" in settings.keys():
         p = Path(settings["FINN_DEPS"])
         if not p.is_absolute():
-            return Path(__file__).parent.parent / p
+            return Path(__file__).parent.parent.parent.parent / p
         return p
     return None
 
