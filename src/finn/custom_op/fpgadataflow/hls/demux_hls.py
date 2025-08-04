@@ -23,7 +23,7 @@ class MultiplexStrategy(Enum):
     LOAD_BALANCE = 3
 
 
-class DeMuxBase_hls(HLSBackend, HWCustomOp):  # noqa
+class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
     """Represents a custom op implementing a Muxing / Demuxing operation on several datastreams.
     The Mux timemultiplexes the incoming streams with a certain predefined strategy and attaches
     a header to the data. This header can be used to find out, which stream the data is from.
@@ -47,6 +47,7 @@ class DeMuxBase_hls(HLSBackend, HWCustomOp):  # noqa
             # Incoming/Outgoing bandwith
             "muxed_bitwidth": ("i", True, 0),
         }
+        my_attrs.update(HWCustomOp.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
@@ -61,7 +62,7 @@ class DeMuxBase_hls(HLSBackend, HWCustomOp):  # noqa
     def defines(self):
         pass
 
-    def blackboxfunctions(self):
+    def blackboxfunction(self):
         # TODO: Check: To make the channel_name and actual input/producer of the node match,
         # both must be in the same order
         channel_data = self.get_channel_data()
@@ -116,7 +117,43 @@ class DeMuxBase_hls(HLSBackend, HWCustomOp):  # noqa
         pass
 
 
-class Mux_hls(DeMuxBase_hls):  # noqa
+class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
+    def __init__(self, onnx_node, **kwargs):
+        super().__init__(onnx_node, **kwargs)
+
+    def get_folded_input_shape():
+        pass
+
+    def get_folded_output_shape():
+        pass
+
+    def get_normal_input_shape():
+        pass
+
+    def get_normal_output_shape():
+        pass
+
+    def get_instream_width():
+        pass
+
+    def get_outstream_width():
+        pass
+
+    def get_input_datatype():
+        pass
+
+    def get_output_datatype():
+        pass
+
+    def get_number_output_values():
+        pass
+
+    def infer_node_datatype():
+        pass
+
+    def execute_node():
+        pass
+
     def update_channel_data(self, model: ModelWrapper) -> None:
         channels = []
         for i, inode in enumerate(model.get_direct_predecessors(self)):
@@ -127,14 +164,50 @@ class Mux_hls(DeMuxBase_hls):  # noqa
             # What strategy the multiplexer should use to distribute the data
             "strategy": ("i", True, MultiplexStrategy.ROUND_ROBIN_FLEXIBLE),
         }
-        my_attrs.update(HLSBackend.get_nodeattr_types(self))
+        my_attrs.update(DeMuxBase_hls.get_nodeattr_types(self))
         return my_attrs
 
     def docompute(self) -> None:
         self._docompute("AnnotatedMultiplex::StreamingNetworkMultiplex")
 
 
-class Demux_hls(DeMuxBase_hls):  # noqa
+class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
+    def __init__(self, onnx_node, **kwargs):
+        super().__init__(onnx_node, **kwargs)
+
+    def get_folded_input_shape():
+        pass
+
+    def get_folded_output_shape():
+        pass
+
+    def get_normal_input_shape():
+        pass
+
+    def get_normal_output_shape():
+        pass
+
+    def get_instream_width():
+        pass
+
+    def get_outstream_width():
+        pass
+
+    def get_input_datatype():
+        pass
+
+    def get_output_datatype():
+        pass
+
+    def get_number_output_values():
+        pass
+
+    def infer_node_datatype():
+        pass
+
+    def execute_node():
+        pass
+
     def update_channel_data(self, model: ModelWrapper) -> None:
         channels = []
         for i, onode in enumerate(model.get_direct_successors(self)):

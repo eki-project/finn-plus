@@ -64,7 +64,6 @@ import finn.custom_op.fpgadataflow.hls.squeeze_hls
 
 # Import the submodule containing the specialization of the Unsqueeze operation
 import finn.custom_op.fpgadataflow.hls.unsqueeze_hls
-
 from finn.custom_op.fpgadataflow.hls.addstreams_hls import AddStreams_hls
 from finn.custom_op.fpgadataflow.hls.attention_heads_hls import (
     MergeMultiHeads_hls,
@@ -77,6 +76,7 @@ from finn.custom_op.fpgadataflow.hls.concat_hls import StreamingConcat_hls
 from finn.custom_op.fpgadataflow.hls.convolutioninputgenerator_hls import (
     ConvolutionInputGenerator_hls,
 )
+from finn.custom_op.fpgadataflow.hls.demux_hls import AnnotatedMux_hls
 from finn.custom_op.fpgadataflow.hls.downsampler_hls import DownSampler_hls
 from finn.custom_op.fpgadataflow.hls.duplicatestreams_hls import DuplicateStreams_hls
 from finn.custom_op.fpgadataflow.hls.fmpadding_hls import FMPadding_hls
@@ -129,3 +129,4 @@ custom_op["ScaledDotProductAttention_hls"] = ScaledDotProductAttention_hls
 custom_op["SplitMultiHeads_hls"] = SplitMultiHeads_hls
 custom_op["MergeMultiHeads_hls"] = MergeMultiHeads_hls
 custom_op["ReplicateStream_hls"] = ReplicateStream_hls
+custom_op["AnnotatedMux_hls"] = AnnotatedMux_hls
