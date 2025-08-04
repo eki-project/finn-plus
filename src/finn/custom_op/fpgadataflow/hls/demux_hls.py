@@ -34,6 +34,9 @@ class DeMuxBase_hls(HLSBackend, HWCustomOp):  # noqa
         super().__init__(onnx_node, **kwargs)
         self.code_gen_dict: dict[str, list[str]] = {}
 
+    def update_network_bitwidth(self, bits: int) -> None:
+        self.set_nodeattr("muxed_bitwidth", bits)
+
     def get_nodeattr_types(self) -> dict:
         my_attrs = {
             # A space seperated list of names for the incoming/outgoing streams
@@ -55,11 +58,50 @@ class DeMuxBase_hls(HLSBackend, HWCustomOp):  # noqa
         channel concatenation"""
         self.code_gen_dict["$GLOBALS$"] = ['#include "concat.hpp"']
 
+    def defines(self):
+        pass
+
+    def blackboxfunctions(self):
+        # TODO: Check: To make the channel_name and actual input/producer of the node match,
+        # both must be in the same order
+        channel_data = self.get_channel_data()
+        header = f"void {self.onnx_node.name}(\n"
+        for index, channel_name, bitwidth in channel_data:
+            # TODO: What about int instead of uint?
+            # TODO: Do we need to keep the in0_V, in1_V, ... name scheme?
+            header += f"hls::stream<ap_uint<{bitwidth}>> &{channel_name}"
+            header += ",\n"
+        header += "hls::stream<ap_uint<" + self.get_nodeattr("muxed_bitwidth") + ">> &network"
+        header += ")\n"
+        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [header]
+
+    def pragmas(self):
+        pragmas = []
+        channel_data = self.get_channel_data()
+        for index, channel_name, bitwidth in channel_data:
+            pragmas.append(f"#pragma HLS INTERFACE axis port={channel_name}")
+        pragmas.append("#pragma HLS INTERFACE axis port=network")
+        pragmas.append("#pragma HLS INTERFACE ap_ctrl_none port=return")
+        self.code_gen_dict["$PRAGMAS$"] = pragmas
+
+    def _docompute(self, function_name: str):
+        """Will be called by the respective subclasses"""
+        channel_data = self.get_channel_data()
+        body = f"{function_name}<MultiplexStrategy::ROUND_ROBIN,"
+        body += str(self.get_nodeattr("muxed_bitwidth"))
+        body += ", "
+        # TODO: ap_int
+        body += ", ".join([f"ap_uint<{bitwidth}>" for _, _, bitwidth in channel_data])
+        body += ">(network, "
+        body += ", ".join([f"{channel_name}" for _, channel_name, _ in channel_data])
+        body += ");"
+        self.code_gen_dict["$DOCOMPUTE$"] = [body]
+
     # END: CODE GEN FUNCTIONS
 
     def get_channel_data(self) -> list[tuple[int, str, int]]:
         """Return a list of tuples that describe all signals: (index, channel_name, bitwidth)"""
-        names = str(self.get_nodeattr("channels")).split(" ")
+        names = str(self.get_nodeattr("streams")).split(" ")
         bitwidths = self.get_nodeattr("bitwidths")
         if len(names) != len(bitwidths):
             raise FINNInternalError(
@@ -75,6 +117,11 @@ class DeMuxBase_hls(HLSBackend, HWCustomOp):  # noqa
 
 
 class Mux_hls(DeMuxBase_hls):  # noqa
+    def update_channel_data(self, model: ModelWrapper) -> None:
+        channels = []
+        for i, inode in enumerate(model.get_direct_predecessors(self)):
+            channels.append((i, inode.name, inode.get_output_datatype().bitwidth()))
+
     def get_nodeattr_types(self) -> dict:
         my_attrs = {
             # What strategy the multiplexer should use to distribute the data
@@ -83,46 +130,15 @@ class Mux_hls(DeMuxBase_hls):  # noqa
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    # CODE GEN FUNCTIONS
-
-    def defines(self):
-        pass
-
-    def blackboxfunctions(self):
-        channel_data = self.get_channel_data()
-        header = f"void {self.onnx_node.name}(\n"
-        for index, channel_name, bitwidth in channel_data:
-            # TODO: What about int instead of uint?
-            # TODO: Do we need to keep the in0_V, in1_V, ... name scheme?
-            header += f"hls::stream<ap_uint<{bitwidth}>> &in_{channel_name}"
-            header += ",\n"
-        header += "hls::stream<ap_uint<" + self.get_nodeattr("muxed_bitwidth") + ">> &out"
-        header += ")\n"
-        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [header]
-
-    def pragmas(self):
-        pragmas = []
-        channel_data = self.get_channel_data()
-        for index, channel_name, bitwidth in channel_data:
-            pragmas.append(f"#pragma HLS INTERFACE axis port=in{channel_name}")
-        pragmas.append("#pragma HLS INTERFACE axis port=out")
-        pragmas.append("#pragma HLS INTERFACE ap_ctrl_none port=return")
-        self.code_gen_dict["$PRAGMAS$"] = pragmas
-
-    def docompute(self):
-        channel_data = self.get_channel_data()
-        body = "AnnotatedMultiplex::StreamingNetworkMultiplex<MultiplexStrategy::ROUND_ROBIN,"
-        body += str(self.get_nodeattr("muxed_bitwidth"))
-        body += ", "
-        # TODO: ap_int
-        body += ", ".join([f"ap_uint<{bitwidth}>" for _, _, bitwidth in channel_data])
-        body += ">(out, "
-        body += ", ".join([f"in_{channel_name}" for _, channel_name, _ in channel_data])
-        body += ");"
-        self.code_gen_dict["$DOCOMPUTE$"] = [body]
-
-    # END: CODE GEN FUNCTIONS
+    def docompute(self) -> None:
+        self._docompute("AnnotatedMultiplex::StreamingNetworkMultiplex")
 
 
 class Demux_hls(DeMuxBase_hls):  # noqa
-    pass
+    def update_channel_data(self, model: ModelWrapper) -> None:
+        channels = []
+        for i, onode in enumerate(model.get_direct_successors(self)):
+            channels.append((i, onode.name, onode.get_output_datatype().bitwidth()))
+
+    def docompute(self) -> None:
+        self._docompute("AnnotatedDemultiplex::StreamingNetworkDemultiplex")
