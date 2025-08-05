@@ -14,7 +14,17 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 
 
-def make_single_node_model(idt, odt, nodetype="AnnotatedMux") -> ModelWrapper:
+def make_single_node_model(
+    idt,
+    odt,
+    nodetype,
+    streamNames,
+    streamTypes,
+    streamNormalShapes,
+    streamFoldedShapes,
+    streamWidths,
+    muxed_bitwidth,
+) -> ModelWrapper:
     inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, (1, 10))
     outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, (1, 10))
     node = helper.make_node(
@@ -25,12 +35,12 @@ def make_single_node_model(idt, odt, nodetype="AnnotatedMux") -> ModelWrapper:
         backend="fpgadataflow",
         inputDataType=idt.name,
         outputDataType=odt.name,
-        streamNames=["in0", "in1", "in2"],
-        streamTypes=["UINT4", "UINT8", "INT3"],
-        streamNormalShapes=["1,2,5", "1,3,10", "1,20"],
-        streamFoldedShapes=["1,2,5", "1,3,10", "1,20"],
-        streamWidths=["128", "200", "412"],
-        muxed_bitwidth=512,
+        streamNames=streamNames,
+        streamTypes=streamTypes,
+        streamNormalShapes=streamNormalShapes,
+        streamFoldedShapes=streamFoldedShapes,
+        streamWidths=streamWidths,
+        muxed_bitwidth=muxed_bitwidth,
     )
     graph = helper.make_graph(nodes=[node], name="graph", inputs=[inp], outputs=[outp])
     model = qonnx_make_model(graph, producer_name="model")
@@ -40,19 +50,41 @@ def make_single_node_model(idt, odt, nodetype="AnnotatedMux") -> ModelWrapper:
 
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
-def test_fpgadataflow_arbiter_mux() -> None:
+@pytest.mark.parametrize("fpgapart", ["xcu280-fsvh2892-2l-e"])
+@pytest.mark.parametrize("streamNames", [["in0", "in1", "in2"]])
+@pytest.mark.parametrize("streamTypes", [["UINT4", "UINT8", "INT3"]])
+@pytest.mark.parametrize("streamNormalShapes", [["1,2,5", "1,3,10", "1,20"]])
+@pytest.mark.parametrize("streamFoldedShapes", [["1,2,5", "1,3,10", "1,20"]])
+@pytest.mark.parametrize("streamWidths", [["128", "200", "412"]])
+@pytest.mark.parametrize("muxed_bitwidth", [512])
+@pytest.mark.parametrize("muxType", ["AnnotatedMux_hls", "AnnotatedDemux_hls"])
+def test_fpgadataflow_arbiter_de_mux_ipgen(
+    fpgapart: str,
+    streamNames: list[str],
+    streamTypes: list[str],
+    streamNormalShapes: list[str],
+    streamFoldedShapes: list[str],
+    streamWidths: list[str],
+    muxed_bitwidth: int,
+    muxType: str,
+) -> None:
     idt = DataType["UINT4"]
     odt = DataType["UINT4"]
-    fpgapart = "xcu280-fsvh2892-2l-e"
-    model = make_single_node_model(idt, odt, "AnnotatedMux_hls")
+    model = make_single_node_model(
+        idt,
+        odt,
+        muxType,
+        streamNames,
+        streamTypes,
+        streamNormalShapes,
+        streamFoldedShapes,
+        streamWidths,
+        muxed_bitwidth,
+    )
     model = model.transform(SpecializeLayers(fpgapart))
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(PrepareIP(fpgapart, 2.5))
     model = model.transform(GiveUniqueNodeNames())
+
+    # HLSSynth contains the assert to check for the existance of the generated IP
     model = model.transform(HLSSynthIP())
-
-
-@pytest.mark.fpgadataflow
-@pytest.mark.vivado
-def test_fpgadataflow_arbiter_demux() -> None:
-    raise AssertionError()

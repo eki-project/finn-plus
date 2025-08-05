@@ -5,26 +5,21 @@ from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNConfigurationError, FINNInternalError
 
 
-class MultiplexStrategy(Enum):
-    # Round robin strategy. Always advance to next. Good if high load on all channels
-    ROUND_ROBIN = 0
+class MultiplexStrategy(str, Enum):
+    """Useful for checking. The user can pass any string but if we cant
+    build an enum variant from it, it's
+    invalid and doesn't even have to be passed to HLS IPGen"""
 
-    # Round robin, but only advance if data was sent this cycle. If the chosen source has no
-    # available data, go in a circle until the first source with data available is found
-    ROUND_ROBIN_FLEXIBLE = 1
-
-    # Always try to use the source from the top of the list. If not available, try the next in order
-    PRIORITY_LIST = 2
-
-    # Record the last few transactions and observe, which stream sends the most data.
-    # Use this stream with the highest priority
-    LOAD_BALANCE = 3
+    ROUND_ROBIN = ("ROUND_ROBIN",)
+    ROUND_ROBIN_BLOCKING = ("ROUND_ROBIN_BLOCKING",)
+    LOAD_BALANCE = ("LOAD_BALANCE",)
+    PRIORITY_LIST = "PRIORITY_LIST"
 
 
-class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
+class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
     """Represents a custom op implementing a Muxing / Demuxing operation on several datastreams.
     The Mux timemultiplexes the incoming streams with a certain predefined strategy and attaches
     a header to the data. This header can be used to find out, which stream the data is from.
@@ -47,6 +42,8 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
             "streamWidths": ("strings", True, []),
             # Incoming/Outgoing bandwith
             "muxed_bitwidth": ("i", True, 0),
+            # Multilex strategy (if we are a Multiplexer)
+            "multiplexStrategy": ("s", False, "ROUND_ROBIN"),
         }
         my_attrs.update(HWCustomOp.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
@@ -86,10 +83,24 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
         pragmas.append("#pragma HLS INTERFACE ap_ctrl_none port=return")
         self.code_gen_dict["$PRAGMAS$"] = pragmas
 
-    def _docompute(self, function_name: str):
+    def _docompute(self, function_name: str, add_strategy_template_param: bool):
         """Will be called by the respective subclasses"""
+        strategy = None
+        strat_string = self.get_nodeattr("multiplexStrategy")
+        if add_strategy_template_param:
+            try:
+                strategy = MultiplexStrategy(strat_string)
+            except ValueError:
+                raise FINNConfigurationError(
+                    f"Cannot create multiplexer with strategy unknown "
+                    "strategy {strat_string}. Available strategies are: "
+                    f"{[s.value for s in MultiplexStrategy]}"
+                )
+
         channel_data = self.get_channel_data()
-        body = f"{function_name}<MultiplexStrategy::ROUND_ROBIN,"
+        body = f"{function_name}<"
+        if add_strategy_template_param:
+            body += strategy.value + ","
         body += str(self.get_nodeattr("muxed_bitwidth"))
         body += ", "
         # TODO: ap_int
@@ -155,7 +166,6 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
             f"while the largest input stream has a width of {max(streamWidths)}. "
             f"Consider addings a datawidth converter!"
         )
-
         return [(i, streamNames[i], streamWidths[i]) for i in range(len(streamNames))]
 
 
@@ -200,11 +210,6 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
     def execute_node():
         pass
 
-    def update_channel_data(self, model: ModelWrapper) -> None:
-        channels = []
-        for i, inode in enumerate(model.get_direct_predecessors(self)):
-            channels.append((i, inode.name, inode.get_output_datatype().bitwidth()))
-
     def get_nodeattr_types(self) -> dict:
         my_attrs = {
             # What strategy the multiplexer should use to distribute the data
@@ -214,42 +219,48 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
         return my_attrs
 
     def docompute(self) -> None:
-        self._docompute("AnnotatedMultiplex::StreamingNetworkMultiplex")
+        self._docompute(
+            "AnnotatedMultiplex::StreamingNetworkMultiplex", add_strategy_template_param=True
+        )
 
 
 class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
     def __init__(self, onnx_node, **kwargs):
         super().__init__(onnx_node, **kwargs)
 
-    def get_folded_input_shape():
-        pass
+    def get_folded_input_shape(self, ind):
+        return self.get_normal_input_shape()
 
-    def get_folded_output_shape():
-        pass
+    def get_folded_output_shape(self, ind=0):
+        return self._get_stream_folded_shape(ind)
 
-    def get_normal_input_shape():
-        pass
+    def get_normal_input_shape(self, ind):
+        return (1, self.get_outstream_width())
 
-    def get_normal_output_shape():
-        pass
+    def get_normal_output_shape(self, ind=0):
+        return self._get_stream_normal_shape(ind)
 
-    def get_instream_width():
-        pass
+    def get_instream_width(self):
+        return int(self.get_nodeattr("muxed_bitwidth"))
 
-    def get_outstream_width():
-        pass
+    def get_outstream_width(self):
+        return self.get_largest_stream_width()
+
+    def get_output_datatype(self, ind):
+        return self._get_stream_datatype(ind)
 
     def get_input_datatype():
-        pass
-
-    def get_output_datatype():
-        pass
+        # Needs to be unsigned, but has no real usage here since we only
+        # do low-level operations on this data without actual meaning for
+        # the datas contents
+        return DataType["UINT2"]
 
     def get_number_output_values():
-        pass
+        # TODO
+        return 1
 
-    def infer_node_datatype():
-        pass
+    def infer_node_datatype(self, model: ModelWrapper):
+        model.set_tensor_datatype(self.onnx_node.input[0], self.get_input_datatype())
 
     def execute_node():
         pass
@@ -260,4 +271,6 @@ class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
             channels.append((i, onode.name, onode.get_output_datatype().bitwidth()))
 
     def docompute(self) -> None:
-        self._docompute("AnnotatedDemultiplex::StreamingNetworkDemultiplex")
+        self._docompute(
+            "AnnotatedDemultiplex::StreamingNetworkDemultiplex", add_strategy_template_param=False
+        )

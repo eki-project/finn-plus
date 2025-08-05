@@ -51,7 +51,7 @@ FINN_DEPS = {
     ),
     "finn-hlslib": (
         "https://github.com/eki-project/finn-hlslib.git",
-        "98daf5f2c2411f7487f40b7df575a9da78409d3e",
+        "1a9ca3e135a3606252693fb53602ec09622ea99e",
         False,
     ),
     "attention-hlslib": (
