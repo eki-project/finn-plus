@@ -42,8 +42,6 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
             "streamWidths": ("strings", True, []),
             # Incoming/Outgoing bandwith
             "muxed_bitwidth": ("i", True, 0),
-            # Multilex strategy (if we are a Multiplexer)
-            "multiplexStrategy": ("s", False, "ROUND_ROBIN"),
         }
         my_attrs.update(HWCustomOp.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
@@ -86,21 +84,24 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
     def _docompute(self, function_name: str, add_strategy_template_param: bool):
         """Will be called by the respective subclasses"""
         strategy = None
-        strat_string = self.get_nodeattr("multiplexStrategy")
+        try:
+            strat_string = self.get_nodeattr("multiplexStrategy")
+        except AttributeError:
+            strat_string = ""
         if add_strategy_template_param:
             try:
                 strategy = MultiplexStrategy(strat_string)
             except ValueError:
-                raise FINNConfigurationError(
+                raise FINNConfigurationError from ValueError(
                     f"Cannot create multiplexer with strategy unknown "
-                    "strategy {strat_string}. Available strategies are: "
+                    f"strategy {strat_string}. Available strategies are: "
                     f"{[s.value for s in MultiplexStrategy]}"
                 )
 
         channel_data = self.get_channel_data()
         body = f"{function_name}<"
         if add_strategy_template_param:
-            body += strategy.value + ","
+            body += "MultiplexStrategy::" + strategy.value + ","
         body += str(self.get_nodeattr("muxed_bitwidth"))
         body += ", "
         # TODO: ap_int
@@ -213,7 +214,7 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
     def get_nodeattr_types(self) -> dict:
         my_attrs = {
             # What strategy the multiplexer should use to distribute the data
-            "strategy": ("i", True, MultiplexStrategy.ROUND_ROBIN_FLEXIBLE),
+            "multiplexStrategy": ("s", True, "ROUND_ROBIN"),
         }
         my_attrs.update(DeMuxBase_hls.get_nodeattr_types(self))
         return my_attrs
