@@ -1,14 +1,17 @@
 # ruff: noqa: N803
 from __future__ import annotations
+
 import pytest
 
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
-from qonnx.util.basic import qonnx_make_model
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
-from deps.qonnx.src.qonnx.util.basic import gen_finn_dt_tensor
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
@@ -77,14 +80,15 @@ def make_identity_model(
     inputs = []
     outputs = []
     for i in range(len(streamNames)):
+        normalShape = [int(x) for x in streamNormalShapes[i].split(",")]
         inputs.append(
             helper.make_tensor_value_info(
-                f"{input_name_prefix}_{streamNames[i]}", TensorProto.FLOAT, streamNormalShapes[i]
+                f"{input_name_prefix}_{streamNames[i]}", TensorProto.FLOAT, normalShape
             )
         )
         outputs.append(
             helper.make_tensor_value_info(
-                f"{output_name_prefix}_{streamNames[i]}", TensorProto.FLOAT, streamNormalShapes[i]
+                f"{output_name_prefix}_{streamNames[i]}", TensorProto.FLOAT, normalShape
             )
         )
     mux_node = helper.make_node(
@@ -115,10 +119,18 @@ def make_identity_model(
         muxed_bitwidth=muxed_bitwidth,
     )
     graph = helper.make_graph(
-        nodes=[mux_node, demux_node], name="graph", inputs=inputs, outputs=outputs
+        nodes=[mux_node, demux_node],
+        name="graph",
+        inputs=inputs,
+        outputs=outputs,  # value_info=[network]
     )
     model = qonnx_make_model(graph, producer_name="model")
-    return ModelWrapper(model)
+    model = ModelWrapper(model)
+    for i, inp in enumerate(inputs):
+        model.set_tensor_datatype(inp.name, DataType[streamTypes[i]])
+    for i, outp in enumerate(outputs):
+        model.set_tensor_datatype(outp.name, DataType[streamTypes[i]])
+    return model
 
 
 @pytest.mark.fpgadataflow
@@ -199,6 +211,13 @@ def test_fpgadataflow_demux_identity_model(
         input_name_prefix=in_prefix,
         output_name_prefix=out_prefix,
     )
+    assert len(model.graph.node) == 2, "Model has the wrong number of nodes for this test!"  #
+    assert model.graph.node[0].op_type == "AnnotatedMux_hls"
+    assert model.graph.node[1].op_type == "AnnotatedDemux_hls"
+    assert getCustomOp(model.graph.node[0]).get_nodeattr("streamNames") == streamNames
+    assert getCustomOp(model.graph.node[1]).get_nodeattr("streamNames") == streamNames
+    model = model.transform(InferShapes())
+    model = model.transform(InferDataTypes())
     model = model.transform(SpecializeLayers(fpgapart))
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(PrepareIP(fpgapart, 2.5))
@@ -207,24 +226,26 @@ def test_fpgadataflow_demux_identity_model(
     model = model.transform(SetExecMode("rtlsim"))
     model = model.transform(PrepareRTLSim())
 
-    # Generate random data
-    input_data = dict(zip([f"{in_prefix}_{name}" for name in streamNames], []))
-    for _ in range(samples):
-        for i, streamName in enumerate(streamNames):
-            input_data[streamName].append(
-                gen_finn_dt_tensor(DataType[streamTypes[i]], streamNormalShapes[i])
-            )
-
-    # Create expected output dict
+    input_data = {}
     output_data = {}
-    for streamName, datas in input_data.items():
-        output_data[streamName.replace("_" + in_prefix, "_" + out_prefix)] = datas
+    for iteration in range(samples):
+        # Generate random data
+        for i, streamName in enumerate(streamNames):
+            input_stream_name = in_prefix + "_" + streamName
+            output_stream_name = out_prefix + "_" + streamName
+            tensor_shape = [int(x) for x in streamNormalShapes[i].split(",")]
+            input_data[input_stream_name] = gen_finn_dt_tensor(
+                DataType[streamTypes[i]], tensor_shape
+            )
+            output_data[output_stream_name] = input_data[input_stream_name]
 
-    simulated_output = execute_onnx(model, input_data, return_full_exec_context=False)
+        # Execute simulation
+        print("Executing sample " + str(iteration))
+        simulated_output = execute_onnx(model, input_data, return_full_exec_context=False)
 
-    # Check outputs
-    for streamName in simulated_output.keys():
-        assert simulated_output[streamName] == output_data[streamName], (
-            f"Data mismatch on stream {streamName}. "
-            "Got {simulated_output[streamName]}, expected {output_data[streamName]}"
-        )
+        # Check outputs
+        for streamName in simulated_output.keys():
+            assert simulated_output[streamName] == output_data[streamName], (
+                f"[Iteration {iteration}]  Data mismatch on stream {streamName}. "
+                "Got {simulated_output[streamName]}, expected {output_data[streamName]}"
+            )
