@@ -45,7 +45,8 @@
 
 module mvu_vvu_axi #(
 	bit IS_MVU,
-	parameter COMPUTE_CORE,
+	int unsigned  VERSION,	// Allowed versions - 1: DSP48E1, 2: DSP48E2, 3: DSP58
+
 	int unsigned MW,
 	int unsigned MH,
 	int unsigned PE,
@@ -96,39 +97,30 @@ module mvu_vvu_axi #(
 //-------------------- Parameter sanity checks --------------------\\
 	initial begin
 		if (MW % SIMD != 0) begin
-			$error("Matrix width (%0d) is not a multiple of SIMD (%0d).", MW, SIMD);
+			$error("%m: Matrix width (%0d) is not a multiple of SIMD (%0d).", MW, SIMD);
 			$finish;
 		end
 		if (MH % PE != 0) begin
-			$error("Matrix height (%0d) is not a multiple of PE (%0d).", MH, PE);
+			$error("%m: Matrix height (%0d) is not a multiple of PE (%0d).", MH, PE);
 			$finish;
 		end
-		if (PUMPED_COMPUTE && (SIMD == 1)) begin
+
+		if(PUMPED_COMPUTE && (SIMD == 1)) begin
 			$error("Clock pumping an input of SIMD=1 is not meaningful.");
 			$finish;
 		end
-		if (WEIGHT_WIDTH > 8) begin
-			$error("Weight width of %0d-bits exceeds maximum of 8-bits", WEIGHT_WIDTH);
-			$finish;
-		end
-		if (ACTIVATION_WIDTH > 8) begin
-			if (!(SIGNED_ACTIVATIONS == 1 && ACTIVATION_WIDTH == 9 && COMPUTE_CORE == "mvu_vvu_8sx9_dsp58")) begin
-				$error("Activation width of %0d-bits exceeds maximum of 9-bits for signed numbers on DSP48", ACTIVATION_WIDTH);
-				$finish;
-			end
-		end
-		if (COMPUTE_CORE == "mvu_vvu_8sx9_dsp58") begin
-			if (SEGMENTLEN == 0) begin
+		if(VERSION == 3) begin
+			if(SEGMENTLEN == 0) begin
 				$warning("Segment length of %0d defaults to chain length of %0d", SEGMENTLEN, (SIMD+2)/3);
 			end
-			if (SEGMENTLEN > (SIMD+2)/3) begin
+			if(SEGMENTLEN > (SIMD+2)/3) begin
 				$error("Segment length of %0d exceeds chain length of %0d", SEGMENTLEN, (SIMD+2)/3);
 				$finish;
 			end
 		end
-		if (!IS_MVU) begin
-			if (COMPUTE_CORE != "mvu_vvu_8sx9_dsp58" && COMPUTE_CORE != "mvu_vvu_lut") begin
-				$error("VVU only supported on DSP58 or LUT-based implementation");
+		if(!IS_MVU) begin
+			if(VERSION != 3) begin
+				$error("VVU only supported on DSP58-based implementation");
 				$finish;
 			end
 		end
@@ -310,67 +302,49 @@ module mvu_vvu_axi #(
 
 		end : genPumpedCompute
 
-		case(COMPUTE_CORE)
-		"mvu_vvu_8sx9_dsp58": begin : core
+		// @todo	Push core selection decision entirely into mvu.sv.
+		// This currently duplicates the lane count computation from mvu.sv
+		// to intercept configurations that should map to the INT8 mode of DSP58.
+		localparam int unsigned  MIN_LANE_WIDTH = WEIGHT_WIDTH + ACTIVATION_WIDTH - 1;
+		// number of lanes: for only 1 lane, NARROW_WEIGHTS makes no difference
+		localparam int unsigned  A_WIDTH = 25 + 2*(VERSION > 1);     // Width of A datapath
+		localparam int unsigned  NUM_LANES = A_WIDTH == WEIGHT_WIDTH? 1 : 1 + (A_WIDTH - !NARROW_WEIGHTS - WEIGHT_WIDTH) / MIN_LANE_WIDTH;
+
+		if(!IS_MVU || ((VERSION > 2) && (NUM_LANES <= 3) && (WEIGHT_WIDTH <= 8) && (ACTIVATION_WIDTH <= 9))) begin : genINT8
+			initial $info("Sidestepping to INT8 mode of DSP58 for %0dx%0d.", WEIGHT_WIDTH, ACTIVATION_WIDTH);
 			mvu_vvu_8sx9_dsp58 #(
 				.IS_MVU(IS_MVU),
 				.PE(PE), .SIMD(DSP_SIMD),
 				.WEIGHT_WIDTH(WEIGHT_WIDTH), .ACTIVATION_WIDTH(ACTIVATION_WIDTH), .ACCU_WIDTH(ACCU_WIDTH),
-				.SIGNED_ACTIVATIONS(SIGNED_ACTIVATIONS), .SEGMENTLEN(SEGMENTLEN),
+				.SIGNED_ACTIVATIONS(SIGNED_ACTIVATIONS),
+				.SEGMENTLEN(SEGMENTLEN),
 				.FORCE_BEHAVIORAL(FORCE_BEHAVIORAL)
 			) core (
 				.clk(PUMPED_COMPUTE? ap_clk2x : ap_clk), .rst, .en('1),
 				.last(dsp_last), .zero(dsp_zero), .w(dsp_w), .a(dsp_a),
 				.vld(dsp_vld), .p(dsp_p)
 			);
-		end
-		"mvu_4sx4u_dsp48e1": begin : core
-			mvu_4sx4u #(
+		end : genINT8
+		else begin : genSoftVec
+			mvu #(
+				.VERSION(VERSION),
 				.PE(PE), .SIMD(DSP_SIMD),
 				.WEIGHT_WIDTH(WEIGHT_WIDTH), .ACTIVATION_WIDTH(ACTIVATION_WIDTH), .ACCU_WIDTH(ACCU_WIDTH),
 				.SIGNED_ACTIVATIONS(SIGNED_ACTIVATIONS), .NARROW_WEIGHTS(NARROW_WEIGHTS),
-				.VERSION(1), .FORCE_BEHAVIORAL(FORCE_BEHAVIORAL)
+				.FORCE_BEHAVIORAL(FORCE_BEHAVIORAL)
 			) core (
 				.clk(PUMPED_COMPUTE? ap_clk2x : ap_clk), .rst, .en('1),
 				.last(dsp_last), .zero(dsp_zero), .w(dsp_w), .a(dsp_a),
 				.vld(dsp_vld), .p(dsp_p)
 			);
-		end
-		"mvu_4sx4u_dsp48e2": begin : core
-			mvu_4sx4u #(
-				.PE(PE), .SIMD(DSP_SIMD),
-				.WEIGHT_WIDTH(WEIGHT_WIDTH), .ACTIVATION_WIDTH(ACTIVATION_WIDTH), .ACCU_WIDTH(ACCU_WIDTH),
-				.SIGNED_ACTIVATIONS(SIGNED_ACTIVATIONS), .NARROW_WEIGHTS(NARROW_WEIGHTS),
-				.VERSION(2), .FORCE_BEHAVIORAL(FORCE_BEHAVIORAL)
-			) core (
-				.clk(PUMPED_COMPUTE? ap_clk2x : ap_clk), .rst, .en('1),
-				.last(dsp_last), .zero(dsp_zero), .w(dsp_w), .a(dsp_a),
-				.vld(dsp_vld), .p(dsp_p)
-			);
-		end
-		"mvu_8sx8u_dsp48": begin : core
-			mvu_8sx8u_dsp48 #(
-				.PE(PE), .SIMD(DSP_SIMD),
-				.WEIGHT_WIDTH(WEIGHT_WIDTH), .ACTIVATION_WIDTH(ACTIVATION_WIDTH), .ACCU_WIDTH(ACCU_WIDTH),
-				.SIGNED_ACTIVATIONS(SIGNED_ACTIVATIONS), .FORCE_BEHAVIORAL(FORCE_BEHAVIORAL)
-			) core (
-				.clk(PUMPED_COMPUTE? ap_clk2x : ap_clk), .rst, .en('1),
-				.last(dsp_last), .zero(dsp_zero), .w(dsp_w), .a(dsp_a),
-				.vld(dsp_vld), .p(dsp_p)
-			);
-		end
-		default: initial begin
-			$error("Unrecognized COMPUTE_CORE '%s'", COMPUTE_CORE);
-			$finish;
-		end
-		endcase
+		end : genSoftVec
 
 	end : blkDsp
 
 	if(1) begin : blkOutput
 		localparam int unsigned  CORE_PIPELINE_DEPTH =
-			COMPUTE_CORE == "dotp_8sx9_dsp58"? 3 + (SEGMENTLEN == 0? 0 : ((SIMD+2)/3 -1)/SEGMENTLEN) :
-			/* else */                         3 + $clog2(SIMD+1) + (SIMD == 1);
+			VERSION == 3? 3 + (SEGMENTLEN == 0? 0 : ((SIMD+2)/3 -1)/SEGMENTLEN) :
+			/* else */    3 + $clog2(SIMD+1) + (SIMD == 1);
 
 		// This is conservative and could be divided by a guaranteed minimum output interval, e.g. MW/SIMD.
 		localparam int unsigned  MAX_IN_FLIGHT = CORE_PIPELINE_DEPTH;

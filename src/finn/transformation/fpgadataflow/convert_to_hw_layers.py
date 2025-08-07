@@ -127,56 +127,26 @@ class InferConvInpGen(Transformation):
                     )
                     graph.node.insert(node_ind, padding_node)
 
-                is_kernel_pointwise = k_h == 1 and k_w == 1
-                is_square_image = ConvInpGen_idim_h == ConvInpGen_idim_w
-                is_equal_stride = stride_h == stride_w
-
                 is_1D = (ifm_dim_h == 1) or (ifm_dim_w == 1)
-                if (stride_h > 1 or stride_w > 1) and is_kernel_pointwise:
-                    downsample_1D = is_1D
-                    is1D_unitx = ifm_dim_w == 1
-                    downsample_2D = (not downsample_1D) and is_square_image and is_equal_stride
-                    if not (downsample_1D or downsample_2D):
-                        log.warning(f"Couldn't infer Downsample from {n.name}, check config.")
-                        continue
-                    ConvInpGen_idim = max(ConvInpGen_idim_h, ConvInpGen_idim_w)
-                    stride = max(stride_h, stride_w)
-                    # create DownSampler node
-                    ConvInpGen_node = helper.make_node(
-                        "DownSampler",
-                        [ConvInpGen_input],
-                        [i2c_output],
-                        domain="finn.custom_op.fpgadataflow",
-                        backend="fpgadataflow",
-                        ImgDim=ConvInpGen_idim,
-                        NumChannels=ifm_ch,
-                        SIMD=ifm_ch,
-                        Stride=stride,
-                        inputDataType=dt.name,
-                        name="DownSampler_" + n.name,
-                        is1D=downsample_1D,
-                        is1D_unitx=is1D_unitx,
-                    )
-                else:
-                    ConvInpGen_node = helper.make_node(
-                        "ConvolutionInputGenerator",
-                        [ConvInpGen_input],
-                        [i2c_output],
-                        domain="finn.custom_op.fpgadataflow",
-                        backend="fpgadataflow",
-                        ConvKernelDim=[k_h, k_w],
-                        IFMChannels=ifm_ch,
-                        IFMDim=[ConvInpGen_idim_h, ConvInpGen_idim_w],
-                        OFMDim=[ofm_dim_h, ofm_dim_w],
-                        SIMD=ifm_ch,
-                        Stride=[stride_h, stride_w],
-                        Dilation=[dilation_h, dilation_w],
-                        inputDataType=dt.name,
-                        outputDataType=dt.name,
-                        depthwise=depthwise,
-                        is1D=is_1D,
-                        name="ConvolutionInputGenerator_" + n.name,
-                    )
+                ConvInpGen_node = helper.make_node(
+                    "ConvolutionInputGenerator",
+                    [ConvInpGen_input],
+                    [i2c_output],
+                    domain="finn.custom_op.fpgadataflow",
+                    backend="fpgadataflow",
+                    ConvKernelDim=[k_h, k_w],
+                    IFMChannels=ifm_ch,
+                    IFMDim=[ConvInpGen_idim_h, ConvInpGen_idim_w],
+                    OFMDim=[ofm_dim_h, ofm_dim_w],
+                    SIMD=ifm_ch,
+                    Stride=[stride_h, stride_w],
+                    Dilation=[dilation_h, dilation_w],
+                    inputDataType=dt.name,
+                    outputDataType=dt.name,
+                    depthwise=depthwise,
+                    is1D=is_1D,
+                    name="ConvolutionInputGenerator_" + n.name,
+                )
                 graph.node.insert(ConvInpGen_node_idx, ConvInpGen_node)
                 # remove old nodes
                 graph.node.remove(n)
@@ -402,66 +372,6 @@ class InferUpsample(Transformation):
                 # remove old nodes
                 graph.node.remove(n)
                 graph_modified = True
-        return (model, graph_modified)
-
-
-class InferStreamingMaxPool(Transformation):
-    """Convert MaxPoolNHWC layers to StreamingMaxPool HW layers."""
-
-    def apply(self, model):
-        graph = model.graph
-        node_ind = 0
-        graph_modified = False
-        for node in graph.node:
-            node_ind += 1
-            if node.op_type == "MaxPoolNHWC":
-                mp_input = node.input[0]
-                mp_output = node.output[0]
-                mp_in_shape = model.get_tensor_shape(mp_input)
-                dt = model.get_tensor_datatype(mp_input)
-                mp_inst = getCustomOp(node)
-                k_h, k_w = mp_inst.get_nodeattr("kernel_shape")
-                s_h, s_w = mp_inst.get_nodeattr("strides")
-                if k_h != s_h or k_w != s_w:
-                    warn_str = """Stride is not equal to kernel. Node cannot be converted to
-                        StreamingMaxPool layer."""
-                    log.warning(warn_str)
-                    continue
-                ifm_ch = mp_in_shape[-1]
-                ifm_dim_h = mp_in_shape[1]
-                ifm_dim_w = mp_in_shape[2]
-                pe = 1
-                ceil_mode = mp_inst.get_nodeattr("ceil_mode")
-                is_1d = (ifm_dim_h == 1 and k_h == 1) or (ifm_dim_w == 1 and k_w == 1)
-                is_divisable = (ifm_dim_h % k_h == 0) or (ifm_dim_w % k_w == 0)
-                is_bipolar = dt == DataType["BIPOLAR"]
-                pass_1d = is_1d and (not is_bipolar)
-                pass_2d = (not is_1d) and is_divisable
-                if pass_1d or pass_2d:
-                    # create equivalent StreamingMaxPool node
-                    new_node = helper.make_node(
-                        "StreamingMaxPool",
-                        [mp_input],
-                        [mp_output],
-                        domain="finn.custom_op.fpgadataflow",
-                        backend="fpgadataflow",
-                        PoolDim=(k_h, k_w),
-                        NumChannels=ifm_ch,
-                        ImgDim=(ifm_dim_h, ifm_dim_w),
-                        dataType=dt.name,
-                        PE=pe,
-                        CeilMode=ceil_mode,
-                        name="StreamingMaxPool_" + node.name,
-                    )
-                    graph.node.insert(node_ind, new_node)
-                    # remove old nodes
-                    graph.node.remove(node)
-                    graph_modified = True
-                else:
-                    log.warning(f"{node.name}: could not convert to HW")
-        if graph_modified:
-            model = model.transform(InferShapes())
-            model = model.transform(InferDataTypes())
         return (model, graph_modified)
 
 
@@ -1137,6 +1047,7 @@ class InferPool(Transformation):
                     AccumBits=accum_bits,
                     Size=pool_size_param,
                     BatchSize=1,
+                    cpp_interface="hls_vector",
                     name="Pool_" + node.name,
                 )
 
@@ -1270,6 +1181,8 @@ class InferConcatLayer(Transformation):
                     inputDataTypes=[model.get_tensor_datatype(x).name for x in node.input],
                     numInputVectors=inp_vec,
                     inFIFODepths=[2] * len(node.input),
+                    cpp_interface="hls_vector",
+                    hls_style="freerunning",
                 )
                 graph.node.insert(node_ind, new_node)
                 # remove old node
@@ -1324,14 +1237,17 @@ class InferSplitLayer(Transformation):
                 # ready for conversion
                 channels_per_stream = [model.get_tensor_shape(x)[-1] for x in node.output]
                 inp_vec = list(model.get_tensor_shape(node.input[0])[:-1])
+                # when creating the fpgadataflow node we remove the second parameter input
                 new_node = helper.make_node(
                     "StreamingSplit",
-                    node.input,
+                    [node.input[0]],
                     node.output,
                     domain="finn.custom_op.fpgadataflow",
                     backend="fpgadataflow",
                     name="StreamingSplit_" + node.name,
                     SIMD=1,
+                    cpp_interface="hls_vector",
+                    hls_style="freerunning",
                     ChannelsPerStream=channels_per_stream,
                     inputDataType=model.get_tensor_datatype(node.input[0]).name,
                     numInputVectors=inp_vec,
@@ -1595,23 +1511,26 @@ class InferQuantizedMatrixVectorActivation(Transformation):
             if n.op_type == "MatMul" and model.get_tensor_sparsity(n.input[1]) is None:
                 mm_input = n.input[0]
                 mm_weight = n.input[1]
-                # if mm_weight is not constant, skip node
-                if model.get_initializer(n.input[1]) is None:
-                    continue
                 mm_output = n.output[0]
                 mm_in_shape = model.get_tensor_shape(mm_input)
                 mm_out_shape = model.get_tensor_shape(mm_output)
                 idt = model.get_tensor_datatype(mm_input)
                 wdt = model.get_tensor_datatype(mm_weight)
+                W = model.get_initializer(mm_weight)
                 if idt.is_integer() and wdt.is_integer():
-                    mm_output = n.output[0]
-                    W = model.get_initializer(mm_weight)
                     # extract weight shape, note that ONNX and finn-hlslib
                     # make different assumptions about dim order here
                     # ONNX assumes W has (in, out) shape
                     # finn-hlslib assumes W has (out, in) shape
-                    mh = int(W.shape[1])
-                    mw = int(W.shape[0])
+                    if W is None:
+                        # dynamic
+                        mm_dyn_shape = model.get_tensor_shape(mm_weight)
+                        mh = int(mm_dyn_shape[-1])
+                        mw = int(mm_dyn_shape[-2])
+                    else:
+                        # static
+                        mh = int(W.shape[1])
+                        mw = int(W.shape[0])
                     # create node with no parallelization first
                     pe = 1
                     simd = 1
@@ -1679,6 +1598,8 @@ class InferQuantizedMatrixVectorActivation(Transformation):
                             noActivation=0,
                             numInputVectors=list(mm_in_shape[:-1]),
                             name="MVAU_" + n.name,
+                            dynamic_input=W is None,
+                            inFIFODepths=[2, 2] if W is None else [2],
                         )
                         graph.node.insert(node_ind, new_node)
                         # remove old nodes
@@ -1709,6 +1630,8 @@ class InferQuantizedMatrixVectorActivation(Transformation):
                             noActivation=1,
                             numInputVectors=list(mm_in_shape[:-1]),
                             name="MVAU_" + n.name,
+                            dynamic_input=W is None,
+                            inFIFODepths=[2, 2] if W is None else [2],
                         )
                         graph.node.insert(node_ind, new_node)
                         # remove old node

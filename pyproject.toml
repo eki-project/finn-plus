@@ -17,6 +17,7 @@ readme = "README.md"
 [tool.poetry]
 packages = [
     { include = "finn", from = "src" },
+    { include = "finn_xsi", to = "finn" },
     { include = "finn-rtllib", to = "finn" },
     { include = "custom_hls", to = "finn" },
     { include = "notebooks", to = "finn" },

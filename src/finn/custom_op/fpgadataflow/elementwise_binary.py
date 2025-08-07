@@ -285,7 +285,6 @@ class ElementwiseBinaryOperation(HWCustomOp):
         sim = self.get_rtlsim()  # noqa: Duplicate code prepare simulation
         # Reset the RTL simulation
         super().reset_rtlsim(sim)
-        super().toggle_clk(sim)
         # Run the RTL Simulation
         self.rtlsim_multi_io(sim, io_dict)
 

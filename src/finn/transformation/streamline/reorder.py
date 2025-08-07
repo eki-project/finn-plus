@@ -1,4 +1,5 @@
-# Copyright (c) 2020, Xilinx
+# Copyright (C) 2020-2022, Xilinx, Inc.
+# Copyright (C) 2022-2024, Advanced Micro Devices, Inc.
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -1021,7 +1022,6 @@ class MoveScalarLinearPastSplit(Transformation):
         node_ind = 0
         for n in graph.node:
             node_ind += 1
-            # if n.op_type in self.fork_ops and model.is_fork_node(n):
             if n.op_type in self.fork_ops:
                 producer = model.find_producer(n.input[0])
                 if producer is not None and producer.op_type in self.ops_to_move:
@@ -1074,7 +1074,6 @@ class MoveTransposePastSplit(Transformation):
         node_ind = 0
         for n in graph.node:
             node_ind += 1
-            # if n.op_type in self.fork_ops and model.is_fork_node(n):
             if n.op_type in self.fork_ops:
                 producer = model.find_producer(n.input[0])
                 if producer is not None and producer.op_type in self.ops_to_move:
@@ -1407,16 +1406,8 @@ class MoveIdenticalOpPastJoinOp(Transformation):
         for i in range(len(n.input)):
             n.input[i] = identical_ops_inputs[i]
 
-        # Output tensor of the join node must have the same shape as
-        # its input tensor (original shape is preserved)
+        # Infer shape of this tensor later
         new_join_output = model.make_new_valueinfo_name()
-        new_shape = model.get_tensor_shape(identical_ops_inputs[0])
-        new_layout = model.get_tensor_layout(identical_ops_inputs[0])
-
-        # Set new tensor shape
-        model.set_tensor_shape(new_join_output, new_shape)
-        if new_layout:
-            model.set_tensor_layout(new_join_output, new_layout)
 
         # Rewire join op outputs (reuse the first join input tensor)
         n.output[0] = new_join_output
@@ -1465,6 +1456,10 @@ class MoveIdenticalOpPastJoinOp(Transformation):
                 graph_modified = self.move_node(model, n, producers)
 
         if graph_modified:
+            # Run shape inference as shapes were cleared in move_node
+            model = model.transform(InferDataLayouts())
+            model = model.transform(InferShapes())
+            model = model.transform(InferDataTypes())
             model = model.transform(SortGraph(), make_deepcopy=False, cleanup=False)
 
         return (model, graph_modified)
@@ -1554,7 +1549,6 @@ class MoveTransposePastJoinConcat(MoveIdenticalOpPastJoinOp):
 
     def move_node(self, model, n, producers):
         trans_inputs = [prod.input[0] for prod in producers]
-        # concat_in0 = n.input[0]
         concat_out = n.output[0]
         # Rewire concat inputs
         for i in range(len(n.input)):
