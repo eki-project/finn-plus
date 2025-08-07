@@ -90,16 +90,26 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
         header += ")\n"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [header]
 
-    def pragmas(self):
+    def _pragmas(self, param_prefix: str):
+        network_prefix = None
+        if param_prefix == "in":
+            network_prefix = "out"
+        elif param_prefix == "out":
+            network_prefix = "in"
+        else:
+            raise FINNInternalError(
+                "Annotated(De)Mux_hls' blackboxfunction can only receive in or out as "
+                "param_prefixes, for Mux and Demux respectively!"
+            )
         pragmas = []
         channel_data = self.get_channel_data()
-        for index, channel_name, bitwidth in channel_data:
-            pragmas.append(f"#pragma HLS INTERFACE axis port={channel_name}")
-        pragmas.append("#pragma HLS INTERFACE axis port=network")
+        for i, (index, channel_name, bitwidth) in enumerate(channel_data):
+            pragmas.append(f"#pragma HLS INTERFACE axis port={param_prefix}{i}_V")
+        pragmas.append(f"#pragma HLS INTERFACE axis port={network_prefix}0_V")
         pragmas.append("#pragma HLS INTERFACE ap_ctrl_none port=return")
         self.code_gen_dict["$PRAGMAS$"] = pragmas
 
-    def _docompute(self, function_name: str, add_strategy_template_param: bool):
+    def _docompute(self, function_name: str, add_strategy_template_param: bool, param_prefix: str):
         """Will be called by the respective subclasses"""
         strategy = None
         try:
@@ -116,6 +126,16 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
                     f"{[s.value for s in MultiplexStrategy]}"
                 )
 
+        network_prefix = None
+        if param_prefix == "in":
+            network_prefix = "out"
+        elif param_prefix == "out":
+            network_prefix = "in"
+        else:
+            raise FINNInternalError(
+                "Annotated(De)Mux_hls' blackboxfunction can only receive in or out as "
+                "param_prefixes, for Mux and Demux respectively!"
+            )
         channel_data = self.get_channel_data()
         body = f"{function_name}<"
         if add_strategy_template_param:
@@ -124,8 +144,10 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
         body += ", "
         # TODO: ap_int
         body += ", ".join([f"ap_uint<{bitwidth}>" for _, _, bitwidth in channel_data])
-        body += ">(network, "
-        body += ", ".join([f"{channel_name}" for _, channel_name, _ in channel_data])
+        body += f">({network_prefix}0_V, "
+        body += ", ".join(
+            [f"{param_prefix}{i}_V" for i, (_, channel_name, _) in enumerate(channel_data)]
+        )
         body += ");"
         self.code_gen_dict["$DOCOMPUTE$"] = [body]
 
@@ -240,14 +262,14 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
     def get_input_datatype(self, ind) -> DataType:
         return self._get_stream_datatype(ind)
 
-    def get_output_datatype(self) -> DataType:
+    def get_output_datatype(self, _: int = 0) -> DataType:
         # Needs to be unsigned, but has no real usage here since we only
         # do low-level operations on this data without actual meaning for
         # the datas contents
-        return DataType["UINT2"]
+        return DataType["UINT1"]
 
     def get_number_output_values(self) -> int:
-        return self._get_largest_normal_shape_prod()
+        return 1  # self._get_largest_normal_shape_prod()
 
     def infer_node_datatype(self, model: ModelWrapper):
         model.set_tensor_datatype(self.onnx_node.output[0], self.get_output_datatype())
@@ -263,12 +285,17 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
         my_attrs.update(DeMuxBase_hls.get_nodeattr_types(self))
         return my_attrs
 
+    def pragmas(self) -> None:
+        return self._pragmas(param_prefix="in")
+
     def blackboxfunction(self) -> None:
         self._blackboxfunction(param_prefix="in")
 
     def docompute(self) -> None:
         self._docompute(
-            "AnnotatedMultiplex::StreamingNetworkMultiplex", add_strategy_template_param=True
+            "AnnotatedMultiplex::StreamingNetworkMultiplex",
+            add_strategy_template_param=True,
+            param_prefix="in",
         )
 
 
@@ -282,29 +309,29 @@ class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
     def get_folded_output_shape(self, ind=0):
         return self._get_stream_folded_shape(ind)
 
-    def get_normal_input_shape(self, ind):
+    def get_normal_input_shape(self, _: int = 0):
         return (1, self.get_instream_width())
 
     def get_normal_output_shape(self, ind=0):
         return self._get_stream_normal_shape(ind)
 
-    def get_instream_width(self):
+    def get_instream_width(self, _: int = 0):
         return int(self.get_nodeattr("muxed_bitwidth"))
 
-    def get_outstream_width(self):
+    def get_outstream_width(self, _: int = 0):
         return self.get_largest_stream_width()
 
     def get_output_datatype(self, ind):
         return self._get_stream_datatype(ind)
 
-    def get_input_datatype(self):
+    def get_input_datatype(self, _: int = 0):
         # Needs to be unsigned, but has no real usage here since we only
         # do low-level operations on this data without actual meaning for
         # the datas contents
-        return DataType["UINT2"]
+        return DataType["UINT1"]
 
     def get_number_output_values(self) -> int:
-        return self._get_largest_normal_shape_prod()
+        return 1  # self._get_largest_normal_shape_prod()
 
     def infer_node_datatype(self, model: ModelWrapper):
         model.set_tensor_datatype(self.onnx_node.input[0], self.get_input_datatype())
@@ -317,10 +344,15 @@ class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
         for i, onode in enumerate(model.get_direct_successors(self)):
             channels.append((i, onode.name, onode.get_output_datatype().bitwidth()))
 
+    def pragmas(self) -> None:
+        return self._pragmas(param_prefix="out")
+
     def blackboxfunction(self) -> None:
         self._blackboxfunction(param_prefix="out")
 
     def docompute(self) -> None:
         self._docompute(
-            "AnnotatedDemultiplex::StreamingNetworkDemultiplex", add_strategy_template_param=False
+            "AnnotatedDemultiplex::StreamingNetworkDemultiplex",
+            add_strategy_template_param=False,
+            param_prefix="out",
         )

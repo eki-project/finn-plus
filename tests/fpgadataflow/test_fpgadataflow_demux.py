@@ -20,6 +20,10 @@ from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 
 
+# TODO: Test to expect failure when having an input width larger than the available bitwidth
+# TODO: Test different strategies
+
+
 def make_single_node_model(
     nodetype: str,
     streamNames: list[str],
@@ -177,7 +181,7 @@ def test_fpgadataflow_de_mux_ipgen(
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 @pytest.mark.parametrize("fpgapart", ["xcu280-fsvh2892-2l-e"])
-@pytest.mark.parametrize("streamNames", [["in0", "in1", "in2"]])
+@pytest.mark.parametrize("streamNames", [["stream0", "stream1", "stream2"]])
 @pytest.mark.parametrize("streamTypes", [["UINT4", "UINT8", "INT3"]])
 @pytest.mark.parametrize("streamNormalShapes", [["1,2,5", "1,3,10", "1,20"]])
 @pytest.mark.parametrize("streamFoldedShapes", [["1,2,5", "1,3,10", "1,20"]])
