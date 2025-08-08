@@ -61,5 +61,7 @@ class FINNVitisLinkConfigError(FINNInternalError):
     """(Internal) An error appearing in a vitis link configuration when trying to
     generate a script or config. May happen in both single- and multifpga cases"""
 
+    """Errors regarding the dataflow, dataflow config, step resolution, etc."""
+
     def __init__(self, *args: object) -> None:
         super().__init__(*args)

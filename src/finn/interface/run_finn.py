@@ -98,10 +98,6 @@ def prepare_finn(
         error("pyXSI installation failed.")
         sys.exit(1)
 
-    # Add OHMYXILINX?
-    os.environ["OHMYXILINX"] = str((deps_path / "oh-my-xilinx").absolute())
-    os.environ["PATH"] = os.environ["PATH"] + ":" + os.environ["OHMYXILINX"]
-
     # Resolve the build directory
     resolved_build_dir = resolve_build_dir(
         flow_config, build_dir, settings, is_test_run=is_test_run
@@ -238,6 +234,13 @@ def build(
 @click.option("--dependency-path", "-d", default="")
 @click.option("--build-path", "-b", help="Specify a build temp path of your choice", default="")
 @click.option(
+    "--skip-dep-update",
+    "-s",
+    is_flag=True,
+    help="Whether to skip the dependency update. Can be changed in settings via"
+    "AUTOMATIC_DEPENDENCY_UPDATES: false",
+)
+@click.option(
     "--num-workers",
     "-n",
     help="Number of parallel workers for FINN to use. When -1, automatically use 75% of cores",
@@ -245,12 +248,20 @@ def build(
     show_default=True,
 )
 @click.argument("script")
-def run(dependency_path: str, build_path: str, num_workers: int, script: str) -> None:
+def run(
+    dependency_path: str, build_path: str, skip_dep_update: bool, num_workers: int, script: str
+) -> None:
     script_path = Path(script).expanduser()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     assert_path_valid(script_path)
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    prepare_finn(dep_path, script_path, build_dir, num_workers)
+    prepare_finn(
+        dep_path,
+        script_path,
+        build_dir,
+        num_workers,
+        skip_dep_update=(skip_dep_update or skip_update_by_default()),
+    )
     Console().rule(
         f"[bold cyan]Starting script "
         f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
@@ -258,6 +269,30 @@ def run(dependency_path: str, build_path: str, num_workers: int, script: str) ->
     subprocess.run(
         shlex.split(f"{sys.executable} {script_path.name}", posix=IS_POSIX), cwd=script_path.parent
     )
+
+
+@click.command(help="Run a given benchmark configuration.")
+@click.option("--bench_config", help="Name or path of experiment configuration file", required=True)
+@click.option("--dependency-path", "-d", default="")
+@click.option("--num-workers", "-n", default=-1, show_default=True)
+@click.option(
+    "--build-path",
+    "-b",
+    help="Specify a build temp path of your choice",
+    default="",
+)
+def bench(bench_config: str, dependency_path: str, num_workers: int, build_path: str) -> None:
+    console = Console()
+    build_dir = Path(build_path).expanduser() if build_path != "" else None
+    dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
+    prepare_finn(dep_path, Path(), build_dir, num_workers)
+    console.rule("RUNNING BENCHMARK")
+
+    # Late import because we need prepare_finn to setup remaining dependencies first
+    from finn.benchmarking.bench import start_bench_run
+
+    exit_code = start_bench_run(bench_config)
+    sys.exit(exit_code)
 
 
 @click.command(help="Run a given test. Uses /tmp/FINN_TMP as the temporary file location")
@@ -385,6 +420,7 @@ def main() -> None:
     main_group.add_command(config)
     main_group.add_command(deps)
     main_group.add_command(build)
+    main_group.add_command(bench)
     main_group.add_command(test)
     main_group.add_command(run)
     main_group()

@@ -203,9 +203,9 @@ default_build_dataflow_steps = [
     "step_apply_folding_config",
     "step_minimize_bit_width",
     "step_generate_estimate_reports",
+    "step_set_fifo_depths",
     "step_hw_codegen",
     "step_hw_ipgen",
-    "step_set_fifo_depths",
     "step_create_stitched_ip",
     "step_measure_rtlsim_performance",
     "step_out_of_context_synthesis",
@@ -241,16 +241,16 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     """
 
     #: Directory where the final build outputs will be written into
-    output_dir: str
+    output_dir: Optional[str] = None
 
     #: Target clock frequency (in nanoseconds) for Vivado synthesis.
     #: e.g. synth_clk_period_ns=5.0 will target a 200 MHz clock.
     #: If hls_clk_period_ns is not specified it will default to this value.
-    synth_clk_period_ns: float
+    synth_clk_period_ns: Optional[float] = None
 
     #: Which output(s) to generate from the build flow.  See documentation of
     #: DataflowOutputType for available options.
-    generate_outputs: List[DataflowOutputType]
+    generate_outputs: Optional[List[DataflowOutputType]] = None
 
     #: (Optional) Path to configuration JSON file in which user can specify
     #: a preferred implementation style (HLS or RTL) for each node.
@@ -351,6 +351,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: for each FIFO.
     auto_fifo_depths: Optional[bool] = True
 
+    # Enables experimental live FIFO sizing
+    live_fifo_sizing: Optional[bool] = False
+
     #: Whether FIFO nodes with depth larger than 32768 will be split.
     #: Allow to configure very large FIFOs in the folding_config_file.
     split_large_fifos: Optional[bool] = False
@@ -408,17 +411,21 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: debug signals in the generated hardware)
     enable_hw_debug: Optional[bool] = False
 
+    #: Whether the accelerator will be simulated and synthesized with an
+    #: instrumentation wrapper attached to accurately measure performance.
+    enable_instrumentation: Optional[bool] = False
+
     #: Whether pdb postmortem debuggig will be launched when the build fails
     enable_build_pdb_debug: Optional[bool] = False
 
-    #: When True, additional verbose information will be written to the log file.
-    #: Otherwise, these additional information will be suppressed.
+    #: When True, additional information (level = DEBUG) will be written to the log file.
+    #: Otherwise, this additional information will be suppressed (level = INFO).
     verbose: Optional[bool] = False
 
     #: Log level to be used on the command line for finn-plus internal logging.
-    #: This is different from the log level used for the build process,
+    #: This is different from the log level used for build_dataflow.log,
     #: which is controlled using the verbose flag.
-    console_log_level: Optional[LogLevel] = LogLevel.NONE
+    console_log_level: Optional[LogLevel] = LogLevel.ERROR
 
     #: If given, only run the steps in the list. If not, run default steps.
     #: See `default_build_dataflow_steps` for the default list of steps.
@@ -459,6 +466,18 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: If set to latest newest version will be used
     #: If set to commit hash specified version will be used
     cpp_driver_version: Optional[str] = "latest"
+
+    #: Specify validation dataset to be used for deployment of the PYNQ driver
+    validation_dataset: Optional[str] = None
+
+    #: Whether to simulate the switching activity of the design for Vivado power estimation
+    #: If set to False, use only a fixed set of static toggle rates and static probabilities
+    #: If set to True, use simulated activity to generate an additonal power report
+    vivado_power_simulate_activity: Optional[bool] = True
+
+    #: Whether to use "functional" or "timing" simulation for Vivado power estimation,
+    #: only relevant if vivado_power_simulate_activity is True.
+    vivado_power_simulation_type: Optional[str] = "functional"
 
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:

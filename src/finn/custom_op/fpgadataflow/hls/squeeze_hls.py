@@ -161,9 +161,7 @@ class Squeeze_hls(Squeeze, HLSBackend):  # noqa: Class name does not follow
         # Note: Valid formatting relies on correct placement of curly braces
         # and line breaks: Open/close all three braces on the same line of code
         # to avoid '\n' to be inserted into the string
-        shape = f"""{{{
-        ','.join((str(i) for i in self.get_folded_output_shape(ind=0)))
-        }}}"""
+        shape = f"""{{{','.join((str(i) for i in self.get_folded_output_shape(ind=0)))}}}"""
         # Generate function call for reading from the output stream into the
         # output file
         self.code_gen_dict["$DATAOUTSTREAM$"] = [

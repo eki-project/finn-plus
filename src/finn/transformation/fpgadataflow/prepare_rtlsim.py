@@ -69,4 +69,7 @@ class PrepareRTLSim(NodeLocalTransformation):
             except KeyError:
                 # exception if op_type is not supported
                 raise Exception("Custom op_type %s is currently not supported." % op_type)
+            except NotImplementedError:
+                # Some custom ops (Vivado StreamingFIFO) may gracefully skip rtlsim
+                pass
         return (node, False)
