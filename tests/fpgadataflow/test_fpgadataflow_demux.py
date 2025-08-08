@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
@@ -182,7 +183,7 @@ def test_fpgadataflow_de_mux_ipgen(
 @pytest.mark.vivado
 @pytest.mark.parametrize("fpgapart", ["xcu280-fsvh2892-2l-e"])
 @pytest.mark.parametrize("streamNames", [["stream0", "stream1", "stream2"]])
-@pytest.mark.parametrize("streamTypes", [["UINT4", "UINT8", "INT3"]])
+@pytest.mark.parametrize("streamTypes", [["UINT4", "UINT8", "INT10"]])
 @pytest.mark.parametrize("streamNormalShapes", [["1,2,5", "1,3,10", "1,20"]])
 @pytest.mark.parametrize("streamFoldedShapes", [["1,2,5", "1,3,10", "1,20"]])
 @pytest.mark.parametrize("streamWidths", [["128", "200", "412"]])
@@ -239,7 +240,7 @@ def test_fpgadataflow_demux_identity_model(
             output_stream_name = out_prefix + "_" + streamName
             tensor_shape = [int(x) for x in streamNormalShapes[i].split(",")]
             input_data[input_stream_name] = gen_finn_dt_tensor(
-                DataType[streamTypes[i]], tensor_shape
+                DataType[streamTypes[i]], tensor_shape, rmin=0, rmax=10
             )
             output_data[output_stream_name] = input_data[input_stream_name]
 
@@ -249,7 +250,7 @@ def test_fpgadataflow_demux_identity_model(
 
         # Check outputs
         for streamName in simulated_output.keys():
-            assert simulated_output[streamName] == output_data[streamName], (
+            assert np.array_equal(simulated_output[streamName], output_data[streamName]), (
                 f"[Iteration {iteration}]  Data mismatch on stream {streamName}. "
-                "Got {simulated_output[streamName]}, expected {output_data[streamName]}"
+                f"Got {simulated_output[streamName]}, expected {output_data[streamName]}"
             )
