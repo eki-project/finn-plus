@@ -1,3 +1,15 @@
+from __future__ import annotations
+
+import shutil
+from datetime import datetime
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import Callable
+
+import finn
+from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.util.basic import make_build_dir
+
 """
 FINNError is the base class for all errors.
 FINNUserError is a purely user-facing error that has nothing to do with FINNs internals
@@ -41,3 +53,49 @@ class FINNDataflowError(FINNInternalError):
 
     def __init__(self, *args: object) -> None:
         super().__init__(*args)
+
+
+# Alias for a build flow step function apply function
+StepFunction = Callable[[ModelWrapper, DataflowBuildConfig], ModelWrapper]
+
+
+def snapshot_on_exception(
+    snapshot_finn: bool = False,
+    snapshot_config: bool = True,
+    snapshot_model: bool = True,
+    snapshot_buildlog: bool = True,
+) -> Callable[[StepFunction], StepFunction]:
+    """Apply this decorator to any step function with the signature
+    ```
+    def step_...(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+            ...
+    ```
+    to, in case an exception is raised, snapshot the ONNX model directly after the crash, as
+    well as a snapshot of FINN itself, as well as the build config and the dataflow build log"""
+
+    def decorator(step: StepFunction) -> StepFunction:
+        def wrapped(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+            try:
+                return step(model, cfg)
+            except Exception as e:
+                date = datetime.today().strftime("%d_%m_%Y__%I_%M_%S")
+                path = Path(make_build_dir(f"crash_{date}_"))
+                if snapshot_model:
+                    model.save(str(path / "snapshot_model.onnx"))
+                if snapshot_config:
+                    yaml = str(cfg.to_yaml())
+                    with (path / "cfg.yaml").open("w+") as f:
+                        f.write(yaml)
+                if snapshot_finn:
+                    finn_root = Path(finn.__file__).parent
+                    shutil.copytree(finn_root, path / "finn")
+                if snapshot_buildlog and cfg.output_dir is not None:
+                    shutil.copy(
+                        Path(cfg.output_dir) / "build_dataflow.log", path / "build_dataflow.log"
+                    )
+                raise e
+
+        wrapped.__name__ = step.__name__
+        return wrapped
+
+    return decorator
