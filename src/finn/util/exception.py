@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -81,7 +82,22 @@ def snapshot_on_exception(
                 date = datetime.today().strftime("%d_%m_%Y__%I_%M_%S")
                 path = Path(make_build_dir(f"crash_{date}_"))
                 if snapshot_model:
-                    model.save(str(path / "snapshot_model.onnx"))
+                    # Get the frame where the exception was raised, get it's frame object,
+                    # and from it all locals, hopefully containing our ModelWrapper object
+                    error_locals = inspect.trace()[-1][0].f_locals
+                    modelwrappers = {
+                        k: v for k, v in error_locals.items() if isinstance(v, ModelWrapper)
+                    }
+                    if "model" in modelwrappers.keys():
+                        modelwrappers["model"].save(
+                            str(path / "transformation_model_snapshot.onnx")
+                        )
+                    elif len(modelwrappers.keys()) > 0:
+                        next(iter(modelwrappers.values())).save(
+                            str(path / "likely_transformation_model_snapshot.onnx")
+                        )
+                    else:
+                        model.save(str(path / "before_failed_transformation_model_snapshot.onnx"))
                 if snapshot_config:
                     yaml = str(cfg.to_yaml())
                     with (path / "cfg.yaml").open("w+") as f:
