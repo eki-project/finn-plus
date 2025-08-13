@@ -17,9 +17,9 @@ class MultiplexStrategy(str, Enum):
     build an enum variant from it, it's
     invalid and doesn't even have to be passed to HLS IPGen"""
 
-    ROUND_ROBIN = ("ROUND_ROBIN",)
-    ROUND_ROBIN_BLOCKING = ("ROUND_ROBIN_BLOCKING",)
-    LOAD_BALANCE = ("LOAD_BALANCE",)
+    ROUND_ROBIN = "ROUND_ROBIN"
+    ROUND_ROBIN_BLOCKING = "ROUND_ROBIN_BLOCKING"
+    LOAD_BALANCE = "LOAD_BALANCE"
     PRIORITY_LIST = "PRIORITY_LIST"
 
 
@@ -43,7 +43,7 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
             "streamTypes": ("strings", True, []),
             "streamNormalShapes": ("strings", True, []),
             "streamFoldedShapes": ("strings", True, []),
-            "streamWidths": ("strings", True, []),
+            "streamWidths": ("ints", True, []),
             # Incoming/Outgoing bandwith
             "muxed_bitwidth": ("i", True, 0),
         }
@@ -208,7 +208,7 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
         """Get the width of the given stream"""
         widths = list(map(int, self.get_nodeattr("streamWidths")))
         if index >= len(widths):
-            raise FINNConfigurationError(
+            raise FINNInternalError(
                 f"Cannot get stream width of stream index {index}, "
                 f"we only have {len(widths)} streams!"
             )
