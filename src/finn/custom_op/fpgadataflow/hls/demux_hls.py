@@ -318,8 +318,8 @@ class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
     def get_instream_width(self, _: int = 0):
         return int(self.get_nodeattr("muxed_bitwidth"))
 
-    def get_outstream_width(self, _: int = 0):
-        return self.get_largest_stream_width()
+    def get_outstream_width(self, i: int = 0):
+        return int(self.get_nodeattr("streamWidths")[i])
 
     def get_output_datatype(self, ind):
         return self._get_stream_datatype(ind)
