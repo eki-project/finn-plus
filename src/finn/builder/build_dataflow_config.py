@@ -339,6 +339,13 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: These can be useful for debugging if the build fails.
     save_intermediate_models: Optional[bool] = True
 
+    #: When set to true, decorates every step in the build flow with a function
+    #: that catches exceptions, snapshots the ONNX model, the config and the build log,
+    #: saves them into the location of FINN_BUILD_DIR, and re-raises the exception for
+    #: further error handling. By default this does _not_ save FINN itself; however
+    #: any step can still be manually decorated to do so (see finn/utils/exception.py)
+    enable_exception_snapshots: Optional[bool] = False
+
     #: Whether hardware debugging will be enabled (e.g. ILA cores inserted to
     #: debug signals in the generated hardware)
     enable_hw_debug: Optional[bool] = False

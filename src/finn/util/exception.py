@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import functools
 import inspect
+import os
 import shutil
+import traceback
 from datetime import datetime
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
 from typing import Callable
 
 import finn
@@ -65,22 +69,39 @@ def snapshot_on_exception(
     snapshot_config: bool = True,
     snapshot_model: bool = True,
     snapshot_buildlog: bool = True,
+    snapshot_finn_envvars: bool = True,
+    build_dir_prefix: str | None = None,
 ) -> Callable[[StepFunction], StepFunction]:
     """Apply this decorator to any step function with the signature
     ```
+    @snapshot_on_exception()
     def step_...(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
             ...
     ```
     to, in case an exception is raised, snapshot the ONNX model directly after the crash, as
-    well as a snapshot of FINN itself, as well as the build config and the dataflow build log"""
+    well as a snapshot of FINN itself, as well as the build config and the dataflow build log.
+
+    For the ONNX model, the function first tries to find a ModelWrapper object called model in the
+    scope where the exception was raised. If this is not found, the first object of type
+    ModelWrapper is used. If this is not available, the ModelWrapper of the step function is used.
+
+    Keep in mind that when an exception is raised while working on a SDP submodel, the submodel, not
+    the parent model, will be saved. The parent model can then be found in intermediate_models, if
+    enabled.
+    """
 
     def decorator(step: StepFunction) -> StepFunction:
+        @functools.wraps(step)
         def wrapped(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
             try:
                 return step(model, cfg)
             except Exception as e:
-                date = datetime.today().strftime("%d_%m_%Y__%I_%M_%S")
-                path = Path(make_build_dir(f"crash_{date}_"))
+                date = datetime.today().strftime("%d-%m-%Y__%I-%M-%S")
+                if build_dir_prefix is None:
+                    prefix = f"crash_{date}_"
+                else:
+                    prefix = f"{build_dir_prefix}_{date}_"
+                path = Path(make_build_dir(prefix))
                 if snapshot_model:
                     # Get the frame where the exception was raised, get it's frame object,
                     # and from it all locals, hopefully containing our ModelWrapper object
@@ -88,16 +109,24 @@ def snapshot_on_exception(
                     modelwrappers = {
                         k: v for k, v in error_locals.items() if isinstance(v, ModelWrapper)
                     }
+                    actual_model: ModelWrapper | None = None
                     if "model" in modelwrappers.keys():
-                        modelwrappers["model"].save(
-                            str(path / "transformation_model_snapshot.onnx")
-                        )
+                        actual_model = modelwrappers["model"]
+                        actual_model.save(str(path / "transformation_model_snapshot.onnx"))
                     elif len(modelwrappers.keys()) > 0:
-                        next(iter(modelwrappers.values())).save(
-                            str(path / "likely_transformation_model_snapshot.onnx")
-                        )
+                        actual_model = next(iter(modelwrappers.values()))
+                        actual_model.save(str(path / "likely_transformation_model_snapshot.onnx"))
                     else:
+                        actual_model = model
                         model.save(str(path / "before_failed_transformation_model_snapshot.onnx"))
+                    if actual_model is not None:
+                        for node in model.graph.node:
+                            if node.op_type == "StreamingDataflowPartition":
+                                submodel = Path(getCustomOp(node).get_nodeattr("model"))
+                                if submodel.exists():
+                                    submodel_dir = Path(path / "submodels")
+                                    submodel_dir.mkdir()
+                                    shutil.copy(submodel, submodel_dir)
                 if snapshot_config:
                     yaml = str(cfg.to_yaml())
                     with (path / "cfg.yaml").open("w+") as f:
@@ -109,9 +138,33 @@ def snapshot_on_exception(
                     shutil.copy(
                         Path(cfg.output_dir) / "build_dataflow.log", path / "build_dataflow.log"
                     )
+                    with (path / "build_dataflow.log").open("a") as f:
+                        f.write(traceback.format_exc())
+                if snapshot_finn_envvars:
+                    env: dict[str, str] = {}
+                    for key in [
+                        "FINN_BUILD_DIR",
+                        "FINN_XSI",
+                        "FINN_DEPS",
+                        "NUM_DEFAULT_WORKERS",
+                        "FINN_RTLLIB",
+                        "FINN_CUSTOM_HLS",
+                        "FINN_QNN_DATA",
+                        "FINN_NOTEBOOKS",
+                        "FINN_TESTS",
+                    ]:
+                        if key in os.environ.keys():
+                            env[key] = os.environ[key]
+                    with (path / "finn_env_vars").open("w+") as f:
+                        for k, v in env.items():
+                            f.write(f"{k}={v}\n")
                 raise e
 
-        wrapped.__name__ = step.__name__
+        # Mark the function as already decorated
+        # If automatic deocoration of all steps is enabled, this
+        # avoids making multiple snapshots for steps that are
+        # additionally manually marked
+        wrapped.snapshot_on_exception_enabled = True  # type: ignore
         return wrapped
 
     return decorator

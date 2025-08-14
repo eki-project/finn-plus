@@ -46,7 +46,13 @@ from rich.traceback import Traceback
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
-from finn.util.exception import FINNConfigurationError, FINNDataflowError, FINNError, FINNUserError
+from finn.util.exception import (
+    FINNConfigurationError,
+    FINNDataflowError,
+    FINNError,
+    FINNUserError,
+    snapshot_on_exception,
+)
 
 
 # adapted from https://stackoverflow.com/a/39215961
@@ -291,6 +297,15 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
 
             # Run the step
             step_start = time.time()
+            if cfg.enable_exception_snapshots and "snapshot_on_exception_enabled" not in dir(
+                transform_step
+            ):
+                transform_step = snapshot_on_exception(
+                    snapshot_finn=False,
+                    snapshot_config=True,
+                    snapshot_buildlog=True,
+                    build_dir_prefix=None,
+                )(transform_step)
             model = transform_step(model, cfg)
             step_end = time.time()
             time_per_step[step_name] = round(step_end - step_start)
