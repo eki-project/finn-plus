@@ -145,7 +145,18 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
             stop_ind = step_names.index(cfg.stop_step)
         steps_as_fxns = steps_as_fxns[start_ind : (stop_ind + 1)]
 
-    return steps_as_fxns
+    # Add the exception snapshot decorator if needed
+    return [
+        snapshot_on_exception(
+            snapshot_finn=False, snapshot_config=True, snapshot_buildlog=True, build_dir_prefix=None
+        )(transform_step)
+        if (
+            cfg.enable_exception_snapshots
+            and "snapshot_on_exception_enabled" not in dir(transform_step)
+        )
+        else transform_step
+        for transform_step in steps_as_fxns
+    ]
 
 
 def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: int = 0):
@@ -297,15 +308,6 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
 
             # Run the step
             step_start = time.time()
-            if cfg.enable_exception_snapshots and "snapshot_on_exception_enabled" not in dir(
-                transform_step
-            ):
-                transform_step = snapshot_on_exception(
-                    snapshot_finn=False,
-                    snapshot_config=True,
-                    snapshot_buildlog=True,
-                    build_dir_prefix=None,
-                )(transform_step)
             model = transform_step(model, cfg)
             step_end = time.time()
             time_per_step[step_name] = round(step_end - step_start)

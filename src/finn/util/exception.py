@@ -68,8 +68,10 @@ def snapshot_on_exception(
     snapshot_finn: bool = False,
     snapshot_config: bool = True,
     snapshot_model: bool = True,
+    include_every_modelwrapper: bool = True,
     snapshot_buildlog: bool = True,
     snapshot_finn_envvars: bool = True,
+    additional_envvars: list[str] | None = None,
     build_dir_prefix: str | None = None,
 ) -> Callable[[StepFunction], StepFunction]:
     """Apply this decorator to any step function with the signature
@@ -84,11 +86,19 @@ def snapshot_on_exception(
     For the ONNX model, the function first tries to find a ModelWrapper object called model in the
     scope where the exception was raised. If this is not found, the first object of type
     ModelWrapper is used. If this is not available, the ModelWrapper of the step function is used.
+    Furthermore, if include_every_modelwrapper is set to True, every ModelWrapper object
+    in the scope where the exception was raised will be saved as well.
 
     Keep in mind that when an exception is raised while working on a SDP submodel, the submodel, not
     the parent model, will be saved. The parent model can then be found in intermediate_models, if
     enabled.
+
+    additional_envvars can be set to include environment variables that don't natively belong to
+    FINN, but might help in debugging
+    certain steps (for example LD_LIBRARY_PATH), into the snapshot.
     """
+    if additional_envvars is None:
+        additional_envvars = []
 
     def decorator(step: StepFunction) -> StepFunction:
         @functools.wraps(step)
@@ -112,13 +122,20 @@ def snapshot_on_exception(
                     actual_model: ModelWrapper | None = None
                     if "model" in modelwrappers.keys():
                         actual_model = modelwrappers["model"]
-                        actual_model.save(str(path / "transformation_model_snapshot.onnx"))
+                        actual_model.save(str(path / "model_exception_scope.onnx"))
                     elif len(modelwrappers.keys()) > 0:
                         actual_model = next(iter(modelwrappers.values()))
-                        actual_model.save(str(path / "likely_transformation_model_snapshot.onnx"))
+                        actual_model.save(str(path / "first_modelwrapper_exception_scope.onnx"))
                     else:
                         actual_model = model
-                        model.save(str(path / "before_failed_transformation_model_snapshot.onnx"))
+                        model.save(str(path / "model_buildflow_step.onnx"))
+                    if include_every_modelwrapper:
+                        all_modelwrappers_path = path / "all_modelwrappers"
+                        all_modelwrappers_path.mkdir()
+                        for modelwrapper_name, modelwrapper in modelwrappers.items():
+                            modelwrapper.save(
+                                all_modelwrappers_path / (modelwrapper_name + ".onnx")
+                            )
                     if actual_model is not None:
                         for node in model.graph.node:
                             if node.op_type == "StreamingDataflowPartition":
@@ -142,19 +159,13 @@ def snapshot_on_exception(
                         f.write(traceback.format_exc())
                 if snapshot_finn_envvars:
                     env: dict[str, str] = {}
-                    for key in [
-                        "FINN_BUILD_DIR",
-                        "FINN_XSI",
-                        "FINN_DEPS",
-                        "NUM_DEFAULT_WORKERS",
-                        "FINN_RTLLIB",
-                        "FINN_CUSTOM_HLS",
-                        "FINN_QNN_DATA",
-                        "FINN_NOTEBOOKS",
-                        "FINN_TESTS",
-                    ]:
+                    non_finn_envvars: list[str] = [*additional_envvars, "NUM_DEFAULT_WORKERS"]
+                    for key in non_finn_envvars:
                         if key in os.environ.keys():
                             env[key] = os.environ[key]
+                        else:
+                            env[key] = f"Environment variable {key} was not found!"
+                    env.update({k: v for k, v in os.environ.items() if k.startswith("FINN_")})
                     with (path / "finn_env_vars").open("w+") as f:
                         for k, v in env.items():
                             f.write(f"{k}={v}\n")
