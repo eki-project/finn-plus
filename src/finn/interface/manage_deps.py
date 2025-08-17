@@ -269,6 +269,15 @@ def install_finnxsi() -> bool:
     finnxsi_path = os.environ["FINN_XSI"]
     finnxsi_so_path = os.path.join(finnxsi_path, "xsi.so")
 
+    # Set LD_LIBRARY_PATH
+    vivado_path = os.environ["XILINX_VIVADO"]
+    if "LD_LIBRARY_PATH" not in os.environ.keys():
+        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
+    else:
+        os.environ[
+            "LD_LIBRARY_PATH"
+        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
+
     # Run make
     res = sp.run(["make"], cwd=finnxsi_path, capture_output=True, text=True)
     if res.returncode != 0:
@@ -279,14 +288,7 @@ def install_finnxsi() -> bool:
     if not os.path.isfile(finnxsi_so_path):
         return False
 
-    # Set environment variables
+    # Set PATH/PYTHONPATH
     os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finnxsi_path}"
     # sys.path.append(str(finnxsi_path))
-    vivado_path = os.environ["XILINX_VIVADO"]
-    if "LD_LIBRARY_PATH" not in os.environ.keys():
-        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
-    else:
-        os.environ[
-            "LD_LIBRARY_PATH"
-        ] = f"{os.environ['LD_LIBRARY_PATH']}:/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
     return True
