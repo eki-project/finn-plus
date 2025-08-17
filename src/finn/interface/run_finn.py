@@ -108,9 +108,7 @@ def prepare_finn(
     os.environ["NUM_DEFAULT_WORKERS"] = str(workers)
 
     # Resolve paths to some not properly packaged components...
-    os.environ["FINN_XSI"] = _resolve_module_path("finn_xsi").replace(
-        "finn_xsi/finn_xsi", "finn_xsi"
-    )
+    os.environ["FINN_XSI"] = _resolve_module_path("finn_xsi")
     os.environ["FINN_RTLLIB"] = _resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = _resolve_module_path("custom_hls")
     os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
