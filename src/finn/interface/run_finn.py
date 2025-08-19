@@ -111,6 +111,7 @@ def prepare_finn(
     os.environ["FINN_XSI"] = _resolve_module_path("finn_xsi").replace(
         "finn_xsi/finn_xsi", "finn_xsi"
     )
+    print(os.environ["FINN_XSI"])
     os.environ["FINN_RTLLIB"] = _resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = _resolve_module_path("custom_hls")
     os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")

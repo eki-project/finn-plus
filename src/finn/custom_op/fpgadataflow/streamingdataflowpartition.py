@@ -28,6 +28,7 @@
 
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.base import CustomOp
+from qonnx.custom_op.registry import getCustomOp
 
 from finn.core.onnx_exec import execute_onnx
 
@@ -59,6 +60,24 @@ class StreamingDataflowPartition(CustomOp):
 
     def infer_node_datatype(self, model):
         pass
+
+    def get_folded_input_shape(self, ind=0):
+        model = ModelWrapper(self.get_nodeattr("model"))
+        input = model.graph.input[ind]
+        input_node = model.find_consumer(input.name)
+        if input_node is None:
+            raise ValueError(f"Input {input.name} not found in model")
+        input_node = getCustomOp(input_node)
+        return input_node.get_folded_input_shape(0)
+
+    def get_folded_output_shape(self, ind=0):
+        model = ModelWrapper(self.get_nodeattr("model"))
+        output = model.graph.output[ind]
+        output_node = model.find_producer(output.name)
+        if output_node is None:
+            raise ValueError(f"Output {output.name} not found in model")
+        output_node = getCustomOp(output_node)
+        return output_node.get_folded_output_shape(0)
 
     def execute_node(self, context, graph):
         model = ModelWrapper(self.get_nodeattr("model"))

@@ -28,13 +28,15 @@
 
 try:
     import finn_xsi.adapter as finnxsi
-except ModuleNotFoundError:
+except ModuleNotFoundError as e:
+    print(e)
     finnxsi = None
 
 import numpy as np
 import os
 from qonnx.custom_op.registry import getCustomOp
 from subprocess import CalledProcessError
+from typing import Any
 
 from finn.util.basic import (
     get_liveness_threshold_cycles,
@@ -212,13 +214,21 @@ def rtlsim_exec_cppxsi(
     assert not (
         ifnames is None
     ), "Couldn't find stitched-IP interface names, did you run IP stitching first?"
-    ifnames = eval(ifnames)
+    ifnames: dict[str, list[Any]] = eval(ifnames)
     if "aximm" in ifnames.keys() and ifnames["aximm"] != []:
         assert (
             False
         ), f"cppxsi sim doesn't know how to handle full AXI MM interfaces: {ifnames['aximm']}"
     instream_names = [x[0] for x in ifnames["s_axis"]]
+    for name in instream_names:
+        if type(name) is not str and type(name) is list:
+            name = name[0]
+
     outstream_names = [x[0] for x in ifnames["m_axis"]]
+    for name in outstream_names:
+        if type(name) is not str and type(name) is list:
+            name = name[0]
+
     instream_descrs = [
         (instream_names[i], instream_iters[i], instream_iters[i] + throttle_cycles)
         for i in range(len(instream_names))
@@ -260,6 +270,20 @@ def rtlsim_exec_cppxsi(
 
     vivado_incl_dir = get_vivado_root() + "/data/xsim/include"
     # launch g++ to compile the rtlsim executable
+    # build_cmd = [
+    #     "g++",
+    #     f"-I{finnxsi_dir}",
+    #     f"-I{vivado_incl_dir}",
+    #     f"-I{sim_base}",
+    #     "-std=c++17",
+    #     "-O3",
+    #     "-o",
+    #     "rtlsim_xsi",
+    #     f"{finnxsi_dir}/rtlsim_xsi.cpp",
+    #     f"{finnxsi_dir}/xsi_finn.cpp",
+    #     "-ldl",
+    #     "-lrt",
+    # ]
     build_cmd = [
         "g++",
         f"-I{finnxsi_dir}",
@@ -268,32 +292,39 @@ def rtlsim_exec_cppxsi(
         "-std=c++17",
         "-O3",
         "-o",
-        "rtlsim_xsi",
-        f"{finnxsi_dir}/rtlsim_xsi.cpp",
+        "fifosim",
+        f"{finnxsi_dir}/fifosim.cpp",
         f"{finnxsi_dir}/xsi_finn.cpp",
+        f"{finnxsi_dir}/axi_control/s_axi_control.cpp",
+        f"{finnxsi_dir}/clock/clock.cpp",
+        f"{finnxsi_dir}/axis_control/axis_control.cpp",
         "-ldl",
         "-lrt",
     ]
     # write compilation command to a file for easy re-running/debugging
-    with open(sim_base + "/compile_rtlsim.sh", "w") as f:
+    print(sim_base)
+    with open(sim_base + "/compile_fifosim.sh", "w") as f:
         f.write(" ".join(build_cmd))
     try:
-        launch_process_helper(build_cmd, cwd=sim_base, print_stdout=False)
+        env = {}
+        env.update(os.environ)
+        launch_process_helper(build_cmd, cwd=sim_base, print_stdout=False, proc_env=env)
     except CalledProcessError:
-        raise FINNError("Failed to compile rtlsim executable")
-    if not os.path.isfile(sim_base + "/rtlsim_xsi"):
-        raise FINNError("Failed to compile rtlsim executable")
+        raise FINNError(f"Failed to compile rtlsim executable in folder {sim_base}")
+    if not os.path.isfile(sim_base + "/fifosim"):
+        raise FINNError(f"Failed to compile rtlsim executable in folder {sim_base}")
 
     # launch the rtlsim executable
     # important to specify LD_LIBRARY_PATH here for XSI to work correctly
     runsim_env = os.environ.copy()
     runsim_env["LD_LIBRARY_PATH"] = get_vivado_root() + "/lib/lnx64.o"
-    runsim_cmd = ["bash", "run_rtlsim.sh"]
-    with open(sim_base + "/run_rtlsim.sh", "w") as f:
-        f.write(
-            f"LD_LIBRARY_PATH={runsim_env['LD_LIBRARY_PATH']} ./rtlsim_xsi > rtlsim_xsi_log.txt"
-        )
-    launch_process_helper(runsim_cmd, cwd=sim_base)
+    runsim_cmd = ["bash", "run_fifosim.sh"]
+    with open(sim_base + "/run_fifosim.sh", "w") as f:
+        f.write(f"LD_LIBRARY_PATH={runsim_env['LD_LIBRARY_PATH']}:$LD_LIBRARY_PATH ./fifosim")
+    env = {}
+    env.update(os.environ)
+    exit()
+    launch_process_helper(runsim_cmd, cwd=sim_base, proc_env=env)
 
     # parse results file and return dict
     results_filename = sim_base + "/results.txt"

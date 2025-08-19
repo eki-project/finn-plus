@@ -7,6 +7,7 @@
  * @brief	Driver harness demo running a FINN IP core.
  * @author	Yaman Umuroğlu <yaman.umuroglu@amd.com>
  * @author	Thomas B. Preußer <thomas.preusser@amd.com>
+ * @author  Linus Jungemann <linus.jungemann@uni-paderborn.de>
  ***************************************************************************/
 
 #include <string>
@@ -18,256 +19,289 @@
 #include <tuple>
 #include <functional>
 
-#include "xsi_finn.hpp"
+#include "axi_control/s_axi_control.h"
+#include "axis_control/axis_control.h"
+#include "clock/clock.h"
 #include "rtlsim_config.hpp"
+#include "xsi_finn.hpp"
+
+void clearPorts(xsi::Design &top) {
+  // Clear all input ports
+  for (xsi::Port &p : top.ports()) {
+    if (p.isInput()) {
+      p.clear().write_back();
+    }
+  }
+}
+
+void reset(xsi::Design &top) {
+  xsi::Port *const rst_n = top.getPort("ap_rst_n");
+  Clock &clk = Clock::initClock(top);
+  if (!rst_n) {
+    std::cerr << "No reset port found in design." << std::endl;
+    return;
+  }
+  // Reset all Inputs, Wait for Reset Period
+  rst_n->set(0).write_back();
+  if (rst_n) {
+    for (unsigned i = 0; i < 16; i++) {
+      clk.toggle_clk();
+    }
+    rst_n->set(1).write_back();
+  }
+}
+
+// Helper function to process input streams
+void processInputStream(S_AXIS_Control &stream, size_t iters,
+                        size_t &inputStreamsRemaining, size_t maxInferences,
+                        std::vector<std::reference_wrapper<xsi::Port>> &deferredWrites) {
+  const bool isValid = stream.is_valid();
+
+  // Skip if valid but not ready
+  if (isValid && !stream.is_ready()) {
+    return;
+  }
+
+  // Track successful transactions
+  if (isValid) {
+    stream.job_txns++;
+    if (++stream.total_txns == stream.job_size * maxInferences) {
+      inputStreamsRemaining--;
+    }
+  }
+
+  const bool shouldProcessJob =
+      (stream.job_txns < stream.job_size) || (iters >= stream.await_iter);
+  const bool hasMoreTransactions =
+      stream.total_txns < stream.job_size * maxInferences;
+
+  // Handle throttling and job completion
+  if (shouldProcessJob && hasMoreTransactions) {
+    if (!isValid) {
+      deferredWrites.emplace_back(stream.set_valid(true));
+    }
+
+    // Reset job when completed
+    if (stream.job_txns == stream.job_size) {
+      stream.job_txns = 0;
+      stream.await_iter = iters + stream.job_ticks;
+    }
+  } else if (isValid) {
+    deferredWrites.emplace_back(stream.set_valid(false));
+  }
+}
+
+// Helper function to process output streams
+bool processOutputStream(M_AXIS_Control &stream, size_t iters,
+                         size_t &outputStreamsRemaining, size_t &muteOutputs,
+                         size_t maxInferences,
+                         std::vector<std::reference_wrapper<xsi::Port>> &deferredWrites) {
+  if (!stream.is_ready() || !stream.is_valid()) {
+    return false;
+  }
+
+  const size_t totalTransactions = ++stream.total_txns;
+
+  // Track first completion
+  if (totalTransactions == stream.job_size) {
+    stream.first_complete = iters;
+    muteOutputs--;
+  }
+
+  // Track job completion and intervals
+  if (++stream.job_txns == stream.job_size) {
+    stream.interval = iters - stream.last_complete;
+    stream.last_complete = iters;
+    stream.job_txns = 0;
+  }
+
+  // Handle final completion or spurious outputs
+  if (totalTransactions >= stream.job_size * maxInferences) {
+    if (totalTransactions == stream.job_size * maxInferences) {
+      outputStreamsRemaining--;
+    } else {
+      deferredWrites.emplace_back(stream.set_ready(false));
+    }
+  }
+
+  return true;
+}
 
 int main(int argc, char *argv[]) {
 
-	// Load Kernel and Design
-	xsi::Kernel  kernel(kernel_libname);
-	xsi::Design  top(kernel, design_libname, xsim_log_filename, trace_filename);
-	using  Port = xsi::Port;
-	if(trace_filename) {
-		// TODO make tracing more finer-grain if possible?
-		top.trace_all();
-	}
+  // Load Kernel and Design
+  xsi::Kernel kernel(kernel_libname);
+  xsi::Design top(kernel, design_libname, xsim_log_filename, trace_filename);
+  using Port = xsi::Port;
+  if (trace_filename) {
+    // TODO make tracing more finer-grain if possible?
+    top.trace_all();
+  }
 
-	// Ultimate Simulation Summary
-	std::string  synopsis;
+  // Ultimate Simulation Summary
+  std::string synopsis;
 
-	{ // RTL Simulation
+  // Simulation Report Statistics
+  size_t iters = 0;
+  size_t timeout = 0;
+  size_t itodo = istream_descs.size();
+  size_t otodo = ostream_descs.size();
+  size_t omute = ostream_descs.size();
 
-		// Simulation Report Statistics
-		size_t  iters   = 0;
-		size_t  timeout = 0;
-		size_t  itodo = istream_descs.size();
-		size_t  otodo = ostream_descs.size();
-		size_t  omute = ostream_descs.size();
+  // Find I/O Streams and initialize their Status
+  std::vector<S_AXIS_Control> istreams;
+  for (auto &&elem : istream_descs) {
+    istreams.emplace_back(top, elem.job_size, elem.job_ticks, elem.name);
+  }
+  std::vector<M_AXIS_Control> ostreams;
+  for (auto &&elem : ostream_descs) {
+    ostreams.emplace_back(top, elem.job_size, elem.name);
+  }
 
-		// Find I/O Streams and initialize their Status
-		struct stream_status {
-			char const *name;
-			Port &port_vld;
-			Port &port_rdy;
+  // Find Global Control & Run Startup Sequence
+  Clock &clk = Clock::initClock(top);
+  clearPorts(top);
+  reset(top);
 
-			// Job Size and Transaction Statistics
-			size_t  job_size;
-			size_t  job_txns;  // [0:job_size]
-			size_t  total_txns;
-			size_t  first_complete; // First completion timestamp
+  // Start Stream Feed and Capture
+  std::cout << "Starting data feed with idle-output timeout of " << max_iters
+            << " cycles ...\n"
+            << std::endl;
 
-			union {
-				// Input Stream
-				struct {
-					size_t  job_ticks;      // throttle if job_size < job_ticks
-					size_t  await_iter;     // iteration allowing start of next job
-				};
-				// Output Stream
-				struct {
-					size_t  last_complete;
-					size_t  interval;
-				};
-			};
+  // Make all Inputs valid & all Outputs ready
+  for (auto &&s : istreams) {
+    s.valid();
+  }
+  for (auto &&s : ostreams) {
+    s.ready();
+  }
 
-		public:
-			stream_status(
-				char const *name, Port &port_vld, Port &port_rdy,
-				size_t  job_size, size_t  job_ticks
-			) : name(name), port_vld(port_vld), port_rdy(port_rdy), job_size(job_size),
-				job_txns(0), total_txns(0),
-				first_complete(0), job_ticks(job_ticks), await_iter(job_ticks) {}
-		};
-		std::vector<stream_status>  istreams;
-		std::vector<stream_status>  ostreams;
-		for(auto  t : { std::tie(istream_descs, istreams), std::tie(ostream_descs, ostreams) }) {
-			for(stream_desc const &desc : std::get<0>(t)) {
-				std::string const  name(desc.name);
-				Port *const  vld = top.getPort(name + "_tvalid");
-				Port *const  rdy = top.getPort(name + "_tready");
-				if(!vld || !rdy) {
-					std::cerr << "Unable to find controls for " << desc.name << std::endl;
-					return  1;
-				}
+  // Enter Simulation Loop and track Progress
+  auto const begin = std::chrono::steady_clock::now();
+  std::vector<std::reference_wrapper<Port>> to_write;
+  while (true) {
 
-				std::get<1>(t).emplace_back(desc.name, *vld, *rdy, desc.job_size, desc.job_ticks);
-			}
-		}
+    //-------------------------------------------------------------------
+    // Clock down - then read signal updates from design
+    clk.cycle(0);
 
-		// Find Global Control & Run Startup Sequence
-		std::function<void(bool)>  cycle;
-		{
-			Port *const  clk   = top.getPort("ap_clk");
-			Port *const  clk2x = top.getPort("ap_clk2x");
-			Port *const  rst_n = top.getPort("ap_rst_n");
-			if(!clk) {
-				std::cerr << "No clock found on the design." << std::endl;
-				return  1;
-			}
-			cycle = clk2x?
-				std::function<void(bool)>([&top, clk, clk2x](bool const  up) mutable {
-					clk->set(up).write_back();
-					clk2x->set(1).write_back();
-					top.run(5);
-					clk2x->set(0).write_back();
-					top.run(5);
-				}) :
-				std::function<void(bool)>([&top, clk](bool const  up) mutable {
-					clk->set(up).write_back();
-					top.run(5);
-				});
+	//-------------------------------------------------------------------
+    // Process input streams
 
-			// Reset all Inputs, Wait for Reset Period
-			for(Port &p : top.ports()) { if(p.isInput())  p.clear().write_back(); };
-			if(rst_n) {
-				for(unsigned  i = 0; i < 16; i++) { cycle(0); cycle(1); }
-				rst_n->set(1).write_back();
-			}
-		}
+    for (auto &stream : istreams) {
+      processInputStream(stream, iters, itodo, n_inferences, to_write);
+    }
 
-		// Start Stream Feed and Capture
-		std::cout << "Starting data feed with idle-output timeout of " << max_iters << " cycles ...\n" << std::endl;
+    //-------------------------------------------------------------------
+    // Process output streams
 
-		// Make all Inputs valid & all Outputs ready
-		for(auto &s : istreams)  s.port_vld.set(1).write_back();
-		for(auto &s : ostreams)  s.port_rdy.set(1).write_back();
+    bool hasActiveOutput = false;
+    for (auto &stream : ostreams) {
+      if (processOutputStream(stream, iters, otodo, omute, n_inferences, to_write)) {
+        hasActiveOutput = true;
+      }
+    }
+    timeout = hasActiveOutput ? 0 : timeout + 1;
 
-		// Enter Simulation Loop and track Progress
-		auto const  begin = std::chrono::steady_clock::now();
-		std::vector<std::reference_wrapper<Port>>  to_write;
-		while(true) {
+    //-------------------------------------------------------------------
+    // Clock up - then write signal updates back to design
+    clk.cycle(1);
 
-			//-------------------------------------------------------------------
-			// Clock down - then read signal updates from design
-			cycle(0);
+    // Write back Ports with registered updates
+    for (Port &p : to_write)
+      p.write_back();
+    to_write.clear();
 
-			// check for transactions on input streams
-			for(auto &s : istreams) {
-				bool const  vld = s.port_vld[0];
-				bool const  rdy = s.port_rdy.read()[0];
-				if(vld && !rdy)  continue;
+    // Show a progress message once in a while
+    if (++iters % 10000 == 0) {
+      std::cout << '@' << iters << " ticks / "
+                << std::chrono::duration_cast<std::chrono::seconds>(
+                       std::chrono::steady_clock::now() - begin)
+                       .count()
+                << "s:";
+      for (auto const &s : istreams) {
+        std::cout << '\t' << s.name << '='
+                  << ((100 * s.total_txns) / (n_inferences * s.job_size))
+                  << '%';
+      }
+      for (auto const &s : ostreams) {
+        std::cout << '\t' << s.name << '='
+                  << ((100 * s.total_txns) / (n_inferences * s.job_size))
+                  << '%';
+      }
+      std::cout << "\tMute Outputs: " << omute << std::endl;
+    }
 
-				// Track successgul Transactions
-				if(vld) {
-					s.job_txns++;
-					if(++s.total_txns == s.job_size * n_inferences)  itodo--;
-				}
+    // Check for exit
+    if ((timeout > max_iters) || (!itodo && !otodo))
+      break;
+  }
 
-				// Proceed according to Throttling Rate
-				if((s.job_txns < s.job_size) || !(iters < s.await_iter)) {
-					if(s.total_txns < s.job_size * n_inferences) {
-						if(!vld)  to_write.emplace_back(s.port_vld.set(1));
-						if(s.job_txns == s.job_size) {
-							s.job_txns = 0;
-							s.await_iter = iters + s.job_ticks;
-						}
-						continue;
-					}
-				}
-				if(vld)  to_write.emplace_back(s.port_vld.set(0));
-			}
+  size_t total_in_txns = 0;
+  for (auto const &s : istreams)
+    total_in_txns += s.total_txns;
 
-			{ // check for transactions on the output streams
-				bool  dead = true;
-				for(auto &s : ostreams) {
-					if(s.port_rdy[0] && s.port_vld.read()[0]) {
-						size_t const  txns = ++s.total_txns;
-						if(txns == s.job_size) {
-							s.first_complete = iters;
-							omute--;
-						}
-						if(++s.job_txns == s.job_size) {
-							s.interval      = iters - s.last_complete;
-							s.last_complete = iters;
-							s.job_txns = 0;
-						}
-						if(txns >= s.job_size * n_inferences) {
-							if(txns == s.job_size * n_inferences)  otodo--;
-							else {
-								std::cerr << "Spurious output on " << s.name << std::endl;
-								to_write.emplace_back(s.port_rdy.set(0));
-							}
-						}
-						dead = false;
-					}
-				}
-				timeout = dead? timeout + 1 : 0;
-			}
+  size_t total_out_txns = 0;
+  size_t firstout_latency = 0;
+  size_t max_interval = 0;
+  for (auto const &s : ostreams) {
+    total_out_txns += s.total_txns;
+    firstout_latency = std::max(firstout_latency, s.first_complete);
+    max_interval = std::max(max_interval, s.interval);
+  }
 
-			//-------------------------------------------------------------------
-			// Clock up - then write signal updates back to design
-			cycle(1);
+  std::ostringstream bld;
+  bld << "N_IN_TXNS\t" << total_in_txns
+      << "\n"
+         "N_OUT_TXNS\t"
+      << total_out_txns
+      << "\n"
+         "cycles\t"
+      << iters
+      << "\n"
+         "N\t"
+      << n_inferences
+      << "\n"
+         "latency_cycles\t"
+      << firstout_latency
+      << "\n"
+         "interval_cycles\t"
+      << max_interval
+      << "\n"
+         "TIMEOUT\t"
+      << (timeout > max_iters ? "1" : "0")
+      << "\n"
+         "UNFINISHED_INS\t"
+      << itodo
+      << "\n"
+         "UNFINISHED_OUTS\t"
+      << otodo
+      << "\n"
+         "RUNTIME_S\t"
+      << std::chrono::duration_cast<std::chrono::seconds>(
+             std::chrono::steady_clock::now() - begin)
+             .count();
+  synopsis = bld.str();
 
-			// Write back Ports with registered updates
-			for(Port &p : to_write)  p.write_back();
-			to_write.clear();
+  // Dump Simulation Statistics to stdout and results.txt
+  std::cout << '\n' << synopsis << std::endl;
 
-			// Show a progress message once in a while
-			if(++iters % 10000 == 0) {
-				std::cout
-					<< '@' << iters << " ticks / "
-					<< std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - begin).count() << "s:";
-				for(auto const &s : istreams) {
-					std::cout << '\t' << s.name << '=' << ((100 * s.total_txns) / (n_inferences * s.job_size)) << '%';
-				}
-				for(auto const &s : ostreams) {
-					std::cout << '\t' << s.name << '=' << ((100 * s.total_txns) / (n_inferences * s.job_size)) << '%';
-				}
-				std::cout << "\tMute Outputs: " << omute << std::endl;
-			}
+  // Log error info to file
+  std::ofstream error_file("fifosim.err", std::ios::out | std::ios::trunc);
+  error_file << top.get_error_info();
 
-			// Check for exit
-			if((timeout > max_iters) || (!itodo && !otodo))  break;
-		}
+  // Synopsis and `max_count` readings to results file
+  std::ofstream results_file("results.txt", std::ios::out | std::ios::trunc);
+  results_file << synopsis << std::endl;
+  for (Port &p : top.ports()) {
+    if (p.isOutput()) {
+      char const *const name = p.name();
+      if (std::strncmp(name, "maxcount", 8) == 0) {
+        p.read();
+        results_file << name << '\t' << p.as_unsigned() << std::endl;
+      }
+    }
+  }
 
-		size_t  total_in_txns = 0;
-		for(auto const &s : istreams)  total_in_txns += s.total_txns;
-
-		size_t  total_out_txns = 0;
-		size_t  firstout_latency = 0;
-		size_t  max_interval = 0;
-		for(auto const &s : ostreams) {
-			total_out_txns  += s.total_txns;
-			firstout_latency = std::max(firstout_latency, s.first_complete);
-			max_interval     = std::max(max_interval,     s.interval);
-		}
-
-		std::ostringstream  bld;
-		bld <<
-			"N_IN_TXNS\t" << total_in_txns << "\n"
-			"N_OUT_TXNS\t" << total_out_txns << "\n"
-			"cycles\t" << iters << "\n"
-			"N\t" << n_inferences << "\n"
-			"latency_cycles\t" << firstout_latency << "\n"
-			"interval_cycles\t" << max_interval << "\n"
-			"TIMEOUT\t" << (timeout > max_iters? "1" : "0") << "\n"
-			"UNFINISHED_INS\t" << itodo << "\n"
-			"UNFINISHED_OUTS\t" << otodo << "\n"
-			"RUNTIME_S\t" << std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - begin).count();
-		synopsis = bld.str();
-
-	} // done simulation
-
-	// Dump Simulation Statistics to stdout and results.txt
-	std::cout << '\n' << synopsis << std::endl;
-
-	{ // Log error info to file
-		std::ofstream  error_file("fifosim.err", std::ios::out | std::ios::trunc);
-		error_file << top.get_error_info();
-	}
-
-	{ // Synopsis and `max_count` readings to results file
-		std::ofstream  results_file("results.txt", std::ios::out | std::ios::trunc);
-		results_file << synopsis << std::endl;
-		for(Port &p : top.ports()) {
-			if(p.isOutput()) {
-				char const *const  name = p.name();
-				if(std::strncmp(name, "maxcount", 8) == 0) {
-					p.read();
-					results_file << name << '\t' << p.as_unsigned() << std::endl;
-				}
-			}
-		}
-	}
-
-	return 0;
+  return 0;
 }

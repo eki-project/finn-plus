@@ -87,6 +87,13 @@ def compile_sim_obj(top_module_name, source_list, sim_out_dir, debug=False):
         "-prj",
         "rtlsim.prj",
         "-dll",
+        "--O3",
+        "-timeprecision_vhdl",
+        "1ns",
+        "-timescale",
+        "1ns/1ns",
+        "-override_timeunit",
+        "-override_timeprecision",
         "-s",
         top_module_name,
     ]
