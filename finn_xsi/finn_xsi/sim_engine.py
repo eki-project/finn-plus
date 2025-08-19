@@ -8,8 +8,11 @@
 # @author	Thomas B. Preußer <thomas.preusser@amd.com>
 # @author	Yaman Umuroglu <yaman.umuroglu@amd.com>
 #############################################################################
-
-import xsi
+import sys
+try:
+    import xsi
+except ModuleNotFoundError:
+    assert False, f"xsi not found, Python sys.path: {sys.path}"
 
 
 class SimEngine:
