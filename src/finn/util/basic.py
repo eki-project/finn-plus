@@ -183,6 +183,8 @@ def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
         else:
             cmd = args
         log.error(f"Launched process returned non-zero exit code ({process.returncode}): {cmd}")
+        # DEBUG:
+        assert False, f"LD_LIBRARY_PATH: {os.environ['LD_LIBRARY_PATH']}, PYTHONPATH: {os.environ['PYTHONPATH']}"
 
     # Raise CalledProcessError for non-zero return code
     process.check_returncode()

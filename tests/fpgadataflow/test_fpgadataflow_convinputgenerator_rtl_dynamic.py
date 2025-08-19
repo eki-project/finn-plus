@@ -31,6 +31,7 @@ import pytest
 try:
     import finn_xsi.adapter as finnxsi
 except ModuleNotFoundError:
+    assert False, f"LD_LIBRARY_PATH: {os.environ['LD_LIBRARY_PATH']}, PYTHONPATH: {os.environ['PYTHONPATH']}"
     finnxsi = None
 
 import copy
