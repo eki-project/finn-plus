@@ -27,7 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import pytest
-
+import os
 try:
     import finn_xsi.adapter as finnxsi
 except ModuleNotFoundError:
@@ -37,7 +37,7 @@ except ModuleNotFoundError:
 import copy
 import numpy as np
 import onnx.parser as oprs
-import os
+
 from bitstring import BitArray
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
