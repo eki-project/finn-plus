@@ -150,12 +150,17 @@ class VVAU_rtl(VVAU, RTLBackend):
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "mvu/")
         sourcefiles = [
-            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v"),
-            rtllib_dir + "mvu_vvu_axi.sv",
-            rtllib_dir + "replay_buffer.sv",
-            rtllib_dir + "mvu.sv",
-            rtllib_dir + "mvu_vvu_8sx9_dsp58.sv",
+            "mvu_pkg.sv",
+            "mvu_vvu_axi.sv",
+            "replay_buffer.sv",
+            "mvu.sv",
+            "mvu_vvu_8sx9_dsp58.sv",
+            "add_multi.sv",
         ]
+        sourcefiles = [
+            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v")
+        ] + [rtllib_dir + _ for _ in sourcefiles]
+
         for f in sourcefiles:
             cmd.append("add_files -norecurse %s" % (f))
 
@@ -296,12 +301,17 @@ class VVAU_rtl(VVAU, RTLBackend):
             rtllib_dir = ""
 
         verilog_files = [
-            code_gen_dir + self.get_nodeattr("gen_top_module") + "_wrapper_sim.v",
-            rtllib_dir + "mvu_vvu_axi.sv",
-            rtllib_dir + "replay_buffer.sv",
-            rtllib_dir + "mvu.sv",
-            rtllib_dir + "mvu_vvu_8sx9_dsp58.sv",
+            "mvu_pkg.sv",
+            "mvu_vvu_axi.sv",
+            "replay_buffer.sv",
+            "mvu.sv",
+            "mvu_vvu_8sx9_dsp58.sv",
+            "add_multi.sv",
         ]
+        verilog_files = [
+            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v")
+        ] + [rtllib_dir + _ for _ in verilog_files]
+
         return verilog_files
 
     def get_verilog_paths(self):

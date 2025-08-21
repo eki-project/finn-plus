@@ -61,7 +61,9 @@ module thresholding_axi #(
 	bit  DEEP_PIPELINE = 0,
 
 	localparam int unsigned  CF = C/PE,	// Channel Fold
-	localparam int unsigned  ADDR_BITS = $clog2(SETS) + $clog2(CF) + $clog2(PE) + $clog2(N) + 2,
+	localparam int unsigned  IP_ADDR_WIDTH = $clog2(CF) + $clog2(PE) + $clog2(N),
+	localparam int unsigned  ADDR_FOLD = 1 + (WT-1)/32,
+	localparam int unsigned  ADDR_WIDTH = IP_ADDR_WIDTH + $clog2(ADDR_FOLD) + 2,
 	localparam int unsigned  S_BITS = SETS > 2? $clog2(SETS) : 1,
 	localparam int unsigned  O_BITS = BIAS >= 0?
 		/* unsigned */ $clog2(N+BIAS+1) :
@@ -73,9 +75,9 @@ module thresholding_axi #(
 
 	//- AXI Lite ------------------------
 	// Writing
-	input	logic                  s_axilite_AWVALID,
-	output	logic                  s_axilite_AWREADY,
-	input	logic [ADDR_BITS-1:0]  s_axilite_AWADDR,	// lowest 2 bits (byte selectors) are ignored
+	input	logic                   s_axilite_AWVALID,
+	output	logic                   s_axilite_AWREADY,
+	input	logic [ADDR_WIDTH-1:0]  s_axilite_AWADDR,	// lowest 2 bits (byte selectors) are ignored
 
 	input	logic         s_axilite_WVALID,
 	output	logic         s_axilite_WREADY,
@@ -87,9 +89,9 @@ module thresholding_axi #(
 	output	logic [1:0]  s_axilite_BRESP,
 
 	// Reading
-	input	logic                  s_axilite_ARVALID,
-	output	logic                  s_axilite_ARREADY,
-	input	logic [ADDR_BITS-1:0]  s_axilite_ARADDR,
+	input	logic                   s_axilite_ARVALID,
+	output	logic                   s_axilite_ARREADY,
+	input	logic [ADDR_WIDTH-1:0]  s_axilite_ARADDR,
 
 	output	logic         s_axilite_RVALID,
 	input	logic         s_axilite_RREADY,
@@ -117,14 +119,13 @@ module thresholding_axi #(
 	// AXI-lite Configuration Interface
 	uwire  cfg_en;
 	uwire  cfg_we;
-	uwire [ADDR_BITS-3:0]  cfg_a;
-	uwire [WT       -1:0]  cfg_d;
+	uwire [IP_ADDR_WIDTH-1:0]  cfg_a;
+	uwire [WT-1:0]  cfg_d;
 	uwire  cfg_rack;
-	uwire [WT       -1:0]  cfg_q;
+	uwire [WT-1:0]  cfg_q;
 
 	if(USE_AXILITE) begin
-		uwire [ADDR_BITS-1:0]  cfg_a0;
-		axilite #(.ADDR_WIDTH(ADDR_BITS), .DATA_WIDTH(32), .IP_DATA_WIDTH(WT)) axi (
+		axilite #(.ADDR_WIDTH(ADDR_WIDTH), .DATA_WIDTH(32), .IP_DATA_WIDTH(WT)) axi (
 			.aclk(ap_clk), .aresetn(ap_rst_n),
 
 			.awready(s_axilite_AWREADY), .awvalid(s_axilite_AWVALID), .awaddr(s_axilite_AWADDR), .awprot('x),
@@ -134,15 +135,9 @@ module thresholding_axi #(
 			.arready(s_axilite_ARREADY), .arvalid(s_axilite_ARVALID), .araddr(s_axilite_ARADDR), .arprot('x),
 			.rready(s_axilite_RREADY),   .rvalid(s_axilite_RVALID),   .rresp(s_axilite_RRESP),   .rdata(s_axilite_RDATA),
 
-			.ip_en(cfg_en), .ip_wen(cfg_we), .ip_addr(cfg_a0), .ip_wdata(cfg_d),
+			.ip_en(cfg_en), .ip_wen(cfg_we), .ip_addr(cfg_a), .ip_wdata(cfg_d),
 			.ip_rack(cfg_rack), .ip_rdata(cfg_q)
 		);
-		assign	cfg_a = cfg_a0[ADDR_BITS-3:0];
-		always_ff @(posedge ap_clk) begin
-			assert(!ap_rst_n || !cfg_en || (cfg_a0[ADDR_BITS-2+:2] === 3'h0)) else begin
-				$error("%m: Spurious high address bits.");
-			end
-		end
 	end
 	else begin
 		assign	cfg_en =  0;
