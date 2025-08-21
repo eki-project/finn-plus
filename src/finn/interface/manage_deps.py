@@ -76,6 +76,11 @@ FINN_BOARDFILES = {
         "98e0d3efc901f0b974006bc4370c2a7ad8856c79",
         Path("boards/Xilinx/kv260_som"),
     ),
+    "aupzu3-8gb-bdf": (
+        "https://github.com/RealDigitalOrg/aup-zu3-bsp.git",
+        "b595ecdf37c7204129517de1773b0895bcdcc2ed",
+        Path("boards/Xilinx/aupzu3-8gb-bdf"),
+    ),
 }
 
 # URL, do_unzip, where to download to

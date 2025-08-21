@@ -163,10 +163,10 @@ module thresholding #(
 			uwire [$clog2(PE)-1:0]  cfg_pe = cfg_a[$clog2(N)+:$clog2(PE)];
 			always_comb begin
 				foreach(cfg_sel[pe]) begin
-					cfg_sel[pe] = USE_CONFIG && cfg_en && (cfg_pe == pe);
+					cfg_sel[pe] = (cfg_pe == pe);
 				end
-				cfg_oob = (cfg_pe >= PE) && !cfg_we;
-				if(cfg_oob)  cfg_sel[0] = 1;
+				cfg_oob = (cfg_pe >= PE);
+				if(cfg_oob)  cfg_sel[0] = !cfg_we;
 			end
 		end
 		uwire [M-1:0]  cfg_ofs;	// Zero-extend for N = 2^k

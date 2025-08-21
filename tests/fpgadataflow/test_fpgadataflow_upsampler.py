@@ -36,6 +36,7 @@ import torch
 from brevitas.export import export_qonnx
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
@@ -102,29 +103,29 @@ class PyTorchTestModel(nn.Module):
 # param datatype
 @pytest.mark.parametrize("dt", [DataType["INT8"]])
 # spatial dim input feature map
-@pytest.mark.parametrize("IFMDim", [3, 5])
+@pytest.mark.parametrize("IFMDim", [[3, 3], [3, 5], [3, 1]])
 # upscaling factor
 @pytest.mark.parametrize("scaling", [("size", 15), ("size", 30), ("scale", 2), ("scale", 3)])
 # Number of input/output channels
 @pytest.mark.parametrize("NumChannels", [4])
 # execution mode
 @pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim"])
-# whether to use 1D or 2D square testcases
-@pytest.mark.parametrize("is_1d", [False, True])
+# parallelization level
+@pytest.mark.parametrize("SIMD", [1, 2, 4])
 # Onnx opset version
 @pytest.mark.parametrize("onnx_opset", [11, 13])
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 @pytest.mark.slow
-def test_fpgadataflow_upsampler(dt, IFMDim, scaling, NumChannels, exec_mode, is_1d, onnx_opset):
+def test_fpgadataflow_upsampler(dt, IFMDim, scaling, NumChannels, exec_mode, SIMD, onnx_opset):
     tmpdir = make_build_dir("upsample_export_")
     atol = 1e-3
     scaling_method, value = scaling
-    if is_1d:
-        input_shape = (1, NumChannels, IFMDim, 1)
+    idim0, idim1 = IFMDim
+    input_shape = (1, NumChannels, idim0, idim1)
+    if idim1 == 1:
         factor = (value, 1)
     else:
-        input_shape = (1, NumChannels, IFMDim, IFMDim)
         factor = (value, value)
 
     if scaling_method == "scale":
@@ -177,6 +178,8 @@ def test_fpgadataflow_upsampler(dt, IFMDim, scaling, NumChannels, exec_mode, is_
     for n in model.get_finn_nodes():
         node_check = n.op_type == "UpsampleNearestNeighbour"
         assert node_check, "All nodes should be UpsampleNearestNeighbour nodes."
+        inst = getCustomOp(n)
+        inst.set_nodeattr("SIMD", SIMD)
 
     test_in_transposed = test_in.numpy().transpose(_to_chan_last_args)
     input_dict = {model.graph.input[0].name: test_in_transposed}
