@@ -79,7 +79,7 @@ FINN_BOARDFILES = {
     "aupzu3-8gb-bdf": (
         "https://github.com/RealDigitalOrg/aup-zu3-bsp.git",
         "b595ecdf37c7204129517de1773b0895bcdcc2ed",
-        Path("boards/Xilinx/aupzu3-8gb-bdf"),
+        Path("board-files/aup-zu3-8gb"),
     ),
 }
 
