@@ -3,7 +3,7 @@ from onnx import helper as oh
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
+from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames, SortGraph
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from typing import TYPE_CHECKING, Any
@@ -118,9 +118,9 @@ class InsertDeMuxAfterNodes(Transformation):
 
             # Datatypes
             prodtype: DataType | None = prodop.get_output_datatype()
+            constype: DataType | None = consop.get_input_datatype()
             if prodtype is None:
                 raise FINNInternalError(f"Cannot determine output datatype of node {prod.name}!")
-            constype: DataType | None = consop.get_input_datatype()
             if constype is None:
                 raise FINNInternalError(f"Cannot determine input datatype of node {cons.name}!")
             if prodtype != constype:
@@ -296,12 +296,10 @@ class InsertDeMuxAfterNodes(Transformation):
         model.set_tensor_datatype(connection_vi.name, mux_op.get_output_datatype())
 
         # Insert nodes after last producer
-        node_index = 0
-        for i, node in enumerate(model.graph.node):
-            if node.name == self.producer_nodes[-1].name:
-                node_index = i
+        node_index = model.get_node_index(self.producer_nodes[-1])
         model.graph.node.insert(node_index + 1, mux_node)
         model.graph.node.insert(node_index + 2, demux_node)
+        model = model.transform(SortGraph())
         model = model.transform(InferShapes())
         model = model.transform(InferDataTypes())
         model = model.transform(GiveUniqueNodeNames())
