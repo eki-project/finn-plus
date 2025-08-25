@@ -176,7 +176,8 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
                     f"strategy {strat_string}. Available strategies are: "
                     f"{[s.value for s in MultiplexStrategy]}"
                 )
-        assert strategy is not None
+        if add_strategy_template_param:
+            assert strategy is not None
 
         network_prefix = None
         if param_prefix == "in":
@@ -310,16 +311,16 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
         self.simulation_output_numbers = sim_output_numbers
         self.output_number_index = 0
 
-    def get_folded_input_shape(self, ind: int) -> list[int] | tuple:  # noqa: D102
+    def get_folded_input_shape(self, ind: int = 0) -> list[int] | tuple:  # noqa: D102
         return self._get_stream_folded_shape(ind)
 
-    def get_folded_output_shape(self, _: int = 0) -> list[int] | tuple:  # noqa: D102
+    def get_folded_output_shape(self, ind: int = 0) -> list[int] | tuple:  # noqa: D102, ARG002
         return self.get_normal_output_shape()
 
-    def get_normal_input_shape(self, ind: int) -> list[int] | tuple:  # noqa: D102
+    def get_normal_input_shape(self, ind: int = 0) -> list[int] | tuple:  # noqa: D102
         return self._get_stream_normal_shape(ind)
 
-    def get_normal_output_shape(self, _: int = 0) -> list[int] | tuple:
+    def get_normal_output_shape(self, ind: int = 0) -> list[int] | tuple:  # noqa: ARG002
         """Return the normal output shape. For the mux this is (1, muxed_bitwidth).
 
         >>> import onnx.helper as oh
@@ -332,19 +333,19 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
     def get_instream_width(self, ind: int = 0) -> int:  # noqa: D102
         return self._get_stream_width(ind)
 
-    def get_outstream_width(self, _: int = 0) -> int:  # noqa: D102
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: D102, ARG002
         muxed = self.get_nodeattr("muxed_bitwidth")
         if muxed is None:
             raise FINNInternalError(
                 "Tried accessing required attribute muxed_bitwidth of an "
                 "AnnotatedMux node, but such an attribute does not exist!"
             )
-        return int(cast(int, muxed))
+        return int(cast(int, muxed))  # noqa: TC006
 
     def get_input_datatype(self, ind: int) -> BaseDataType:  # noqa: D102
         return self._get_stream_datatype(ind)
 
-    def get_output_datatype(self, _: int = 0) -> BaseDataType:  # noqa: D102
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: D102, ARG002
         # TODO
         # Needs to be unsigned, but has no real usage here since we only
         # do low-level operations on this data without actual meaning for
@@ -419,13 +420,13 @@ class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
         self.simulation_output_numbers = sim_output_numbers
         self.output_number_index = 0
 
-    def get_folded_input_shape(self, _: int) -> tuple:  # noqa: D102
+    def get_folded_input_shape(self, ind: int = 0) -> tuple:  # noqa: D102, ARG002
         return self.get_normal_input_shape()
 
     def get_folded_output_shape(self, ind: int = 0) -> tuple:  # noqa: D102
         return self._get_stream_folded_shape(ind)
 
-    def get_normal_input_shape(self, _: int = 0) -> tuple:
+    def get_normal_input_shape(self, ind: int = 0) -> tuple:  # noqa: ARG002
         """Return the normal input shape. For the demux this is (1, muxed_bitwidth).
 
         >>> import onnx.helper as oh
@@ -438,22 +439,22 @@ class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
     def get_normal_output_shape(self, ind: int = 0) -> tuple:  # noqa: D102
         return self._get_stream_normal_shape(ind)
 
-    def get_instream_width(self, _: int = 0) -> int:  # noqa: D102
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: D102, ARG002
         bitwidth = self.get_nodeattr("muxed_bitwidth")
         if bitwidth is None:
             raise FINNInternalError(
                 "AnnotatedDemux_hls operator does not have it's muxed_bitwidth "
                 "attributes set, which is required!"
             )
-        return int(cast(int, bitwidth))
+        return int(cast(int, bitwidth))  # noqa: TC006
 
-    def get_outstream_width(self, i: int = 0) -> int:  # noqa: D102
-        return int(self.get_nodeattr("streamWidths")[i])
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: D102
+        return int(self.get_nodeattr("streamWidths")[ind])
 
     def get_output_datatype(self, ind: int) -> BaseDataType:  # noqa: D102
         return self._get_stream_datatype(ind)
 
-    def get_input_datatype(self, _: int = 0) -> BaseDataType:  # noqa: D102
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: D102, ARG002
         # TODO
         # Needs to be unsigned, but has no real usage here since we only
         # do low-level operations on this data without actual meaning for
