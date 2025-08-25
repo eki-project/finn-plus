@@ -447,8 +447,8 @@ class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
             )
         return int(cast(int, bitwidth))
 
-    def get_outstream_width(self, _: int = 0) -> int:  # noqa: D102
-        return self.get_largest_stream_width()
+    def get_outstream_width(self, i: int = 0) -> int:  # noqa: D102
+        return int(self.get_nodeattr("streamWidths")[i])
 
     def get_output_datatype(self, ind: int) -> BaseDataType:  # noqa: D102
         return self._get_stream_datatype(ind)
