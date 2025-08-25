@@ -1,3 +1,5 @@
+"""Contains transformations to insert Mux-Demux pairs into a folded and FIFO-sized graph."""
+
 from onnx import NodeProto, TensorProto
 from onnx import helper as oh
 from qonnx.core.modelwrapper import ModelWrapper
@@ -25,8 +27,11 @@ if TYPE_CHECKING:
 
 
 class InsertDeMuxAfterNodes(Transformation):
-    """Insert (de)mux nodes after the given node names. Can automatically insert DWCs in case of
-    mismatching stream widths between the nodes
+    """Insert Mux-Demux pairs after the given producer nodes.
+
+    After every given producer a cut is being made. All producers lead to a single AnnotatedMux_hls
+    operator, with only one output. Following is the matching AnnotatedDemux_hls operator.
+    Can automatically insert DWCs in case of mismatching stream widths between the nodes.
     Start with
     ```
     A -> C
@@ -48,6 +53,17 @@ class InsertDeMuxAfterNodes(Transformation):
         automatically_insert_dwc: bool = True,
         fpgapart: str = "",
     ) -> None:
+        """Create an insertion transformation for Mux-Demux pairs.
+
+        Args:
+            producer_names: Names of the nodes after which to insert the mux op.
+            network_bitwidth: The width of the single connection between Mux and Demux.
+            multiplex_strategy: Which strategy the Mux should use.
+            automatically_insert_dwc: If True, the transformation automatically inserts DWCs,
+                                        if the producer and consumer bitwidths don't match.
+            fpgapart: The FPGA-part given in the build config.
+
+        """
         super().__init__()
         self.prods = producer_names
         self.network_bitwidth = network_bitwidth
@@ -62,8 +78,12 @@ class InsertDeMuxAfterNodes(Transformation):
         self.fpgapart = fpgapart
 
     def get_common_valueinfotensor(self, producer: NodeProto, consumer: NodeProto) -> list[str]:
-        """Return a list of valueinfo tensors that are in the output of the producer and the input
-        of the consumer"""
+        """Return a list of valueinfo tensors common to producer outputs and consumer inputs.
+
+        Returns:
+            A list of names of tensors appearing both in the producer outputs and consumer inputs.
+
+        """
         return list(set(producer.output).intersection(set(consumer.input)))
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:

@@ -1,21 +1,33 @@
+"""Contains DeMuxBase_hls, AnnotatedMux_hls and AnnotatedDemux_hls.
+
+AnnotatedMux and AnnotatedDemux can be inserted one after another into the graph
+to bundle several channels in parallel into a single channel. To do so, their configuration
+has to be in sync (muxed_bitwidth, MultiplexingStrategy, etc.)
+"""
+
 from __future__ import annotations
 
 from enum import Enum
-from math import prod
-from onnx.onnx_ml_pb2 import NodeProto
 from qonnx.core.datatype import DataType
-from qonnx.core.modelwrapper import ModelWrapper
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.exception import FINNConfigurationError, FINNInternalError
 
+if TYPE_CHECKING:
+    from onnx.onnx_ml_pb2 import NodeProto
+    from qonnx.core.datatype import BaseDataType
+    from qonnx.core.modelwrapper import ModelWrapper
+
 
 class MultiplexStrategy(str, Enum):
-    """Useful for checking. The user can pass any string but if we cant
+    """Lists all Multiplex strategies that the HLS operator can utilize.
+
+    Useful for checking. The user can pass any string but if we cant
     build an enum variant from it, it's
-    invalid and doesn't even have to be passed to HLS IPGen"""
+    invalid and doesn't even have to be passed to HLS IPGen
+    """
 
     ROUND_ROBIN = "ROUND_ROBIN"
     ROUND_ROBIN_BLOCKING = "ROUND_ROBIN_BLOCKING"
@@ -23,21 +35,22 @@ class MultiplexStrategy(str, Enum):
     PRIORITY_LIST = "PRIORITY_LIST"
 
 
-class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
-    """Represents a custom op implementing a Muxing / Demuxing operation on several datastreams.
+class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
+    """Common parent class for both the Mux and Demux HLS operators.
+
+    Represents a custom op implementing a Muxing / Demuxing operation on several datastreams.
     The Mux timemultiplexes the incoming streams with a certain predefined strategy and attaches
     a header to the data. This header can be used to find out, which stream the data is from.
     The Demux does just that and distributes the data accordingly.
     """
 
     def __init__(self, onnx_node: NodeProto, **kwargs: dict) -> None:
+        """Initialize the code_gen_dict to be empty."""
         super().__init__(onnx_node, **kwargs)
         self.code_gen_dict: dict[str, list[str]] = {}
 
-    def update_network_bitwidth(self, bits: int) -> None:
-        self.set_nodeattr("muxed_bitwidth", bits)
-
     def get_nodeattr_types(self) -> dict:
+        """Overwritten method to define the node attributes this operator contains."""
         my_attrs = {
             "streamNames": ("strings", True, []),
             "streamTypes": ("strings", True, []),
@@ -53,21 +66,29 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
 
     # CODE GEN FUNCTIONS
     # Rest are overriden in subclass
-
     def global_includes(self) -> None:
-        """Include the concat library, originally meant for only performing
-        channel concatenation"""
+        """Include the annotated_mux HLS header."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "annotated_mux.hpp"']
 
-    def defines(self, var):
-        self.code_gen_dict["$DEFINES$"] = ""
+    def defines(self, _: str) -> None:
+        """Set defines."""
+        self.code_gen_dict["$DEFINES$"] = []
 
-    def _blackboxfunction(self, param_prefix: str):
+    def _blackboxfunction(self, param_prefix: str) -> None:
+        """Define header of the blackboxfunction.
+
+        Args:
+            param_prefix: Can be "in" or "out", and is used to set
+                            the types of the function arguments
+        Raises:
+            FINNInternalError: Raised if param_prefix is neither in nor out
+
+        """
         # TODO: Check: To make the channel_name and actual input/producer of the node match,
         # both must be in the same order
         channel_data = self.get_channel_data()
         header = f"void {self.onnx_node.name}(\n"
-        for i, (index, channel_name, bitwidth) in enumerate(channel_data):
+        for i, (_, _, bitwidth) in enumerate(channel_data):
             # TODO: What about int instead of uint?
             # TODO: Do we need to keep the in0_V, in1_V, ... name scheme?
             header += f"hls::stream<ap_uint<{bitwidth}>> &{param_prefix}{i}_V"
@@ -90,7 +111,17 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
         header += ")\n"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [header]
 
-    def _pragmas(self, param_prefix: str):
+    def _pragmas(self, param_prefix: str) -> None:
+        """Set pragmas for the blackboxfunction. This mainly refers to the HLS INTERFACE pragma.
+
+        Args:
+            param_prefix: Set to in/out to match the arguments of the function declared in
+                            _blackboxfunction(...)
+
+        Raises:
+            FINNInternalError: Raised if param_prefix is neither in nor out
+
+        """
         network_prefix = None
         if param_prefix == "in":
             network_prefix = "out"
@@ -103,15 +134,35 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
             )
         pragmas = []
         channel_data = self.get_channel_data()
-        for i, (index, channel_name, bitwidth) in enumerate(channel_data):
+        for i in range(len(channel_data)):
             pragmas.append(f"#pragma HLS INTERFACE axis port={param_prefix}{i}_V")
         pragmas.append(f"#pragma HLS INTERFACE axis port={network_prefix}0_V")
         pragmas.append("#pragma HLS INTERFACE ap_ctrl_none port=return")
         self.code_gen_dict["$PRAGMAS$"] = pragmas
 
-    def _docompute(self, function_name: str, add_strategy_template_param: bool, param_prefix: str):
-        """Will be called by the respective subclasses"""
-        strategy = None
+    def _docompute(
+        self, function_name: str, add_strategy_template_param: bool, param_prefix: str
+    ) -> None:
+        """Set the DOCOMPUTE of the code gen dict to the correct string.
+
+        Args:
+            function_name: The function to be called as compute. Must be one of the Mux/Demux
+                            functions from annotated_mux.hls
+            add_strategy_template_param: Whether to add the chosen multiplex strategy as a template
+                                            parameter to the function call. Usually True for the Mux
+                                            which needs to know the strategy, and False for the
+                                            Demux, which only needs to read the header of the
+                                            incoming data.
+            param_prefix: Can be in/out. Similarly to _blackboxfunction and _pragmas determines
+                            the function calls argument types.
+
+        Raises:
+            FINNInternalError: Raised if param_prefix is neither in nor out
+            FINNConfigurationError: Raised if the MultiplexStrategy read from the node
+                                    attributes does not exist.
+
+        """
+        strategy: MultiplexStrategy | None = None
         try:
             strat_string = self.get_nodeattr("multiplexStrategy")
         except AttributeError:
@@ -125,6 +176,7 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
                     f"strategy {strat_string}. Available strategies are: "
                     f"{[s.value for s in MultiplexStrategy]}"
                 )
+        assert strategy is not None
 
         network_prefix = None
         if param_prefix == "in":
@@ -154,11 +206,11 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
     # END: CODE GEN FUNCTIONS
 
     def get_largest_stream_width(self) -> int:
-        """Return the largest bitwidth of any incoming/outgoing streams"""
+        """Return the largest bitwidth of any incoming/outgoing streams."""
         return max(map(int, self.get_nodeattr("streamWidths")))
 
     def _get_stream_normal_shape(self, index: int) -> tuple:
-        """Return the normal shape of one of the communicating streams"""
+        """Return the normal shape of one of the communicating streams."""
         normal_shapes = [
             self._parse_shape_string(shape) for shape in self.get_nodeattr("streamNormalShapes")
         ]
@@ -170,7 +222,7 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
         return tuple(normal_shapes[index])
 
     def _get_stream_folded_shape(self, index: int) -> tuple:
-        """Return the folded shape of one of the communicating streams"""
+        """Return the folded shape of one of the communicating streams."""
         folded_shapes = [
             self._parse_shape_string(shape) for shape in self.get_nodeattr("streamFoldedShapes")
         ]
@@ -181,8 +233,8 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
             )
         return tuple(folded_shapes[index])
 
-    def _get_stream_datatype(self, index: int) -> DataType:
-        """Get the qonnx datatype of the given stream"""
+    def _get_stream_datatype(self, index: int) -> BaseDataType:
+        """Get the qonnx datatype of the given stream."""
         dtypes = self.get_nodeattr("streamTypes")
         if index >= len(dtypes):
             raise FINNInternalError(
@@ -192,20 +244,11 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
         return DataType[dtypes[index]]
 
     def _parse_shape_string(self, shape: str) -> list[int]:
-        """Convert the node attribute string "1,2,5" into the shape [1, 2, 5] as an integer list"""
+        """Convert the node attribute string "1,2,5" into the shape [1, 2, 5] as an integer list."""
         return [int(shape_split) for shape_split in shape.split(",")]
 
-    def _get_largest_normal_shape_prod(self) -> list[int]:
-        """Search the shape that has the biggest product of all its elements,
-        and return the product. (1, 10, 5, 20) => 1*10*5*20 = 1000"""
-        prods = [
-            prod(self._parse_shape_string(shape))
-            for shape in self.get_nodeattr("streamNormalShapes")
-        ]
-        return max(prods)
-
     def _get_stream_width(self, index: int) -> int:
-        """Get the width of the given stream"""
+        """Get the width of the given stream."""
         widths = list(map(int, self.get_nodeattr("streamWidths")))
         if index >= len(widths):
             raise FINNInternalError(
@@ -215,13 +258,26 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
         return widths[index]
 
     def get_channel_data(self) -> list[tuple[int, str, int]]:
-        """Return a list of tuples that describe all signals: (index, channel_name, bitwidth)"""
+        """Return a list of tuples that describe all signals.
+
+        Runs some asserts and sanity checks on the attribute data that describes the
+        connected streams. If no issues are found, collects the metadata into tuples.
+
+        Returns:
+            (index, channel_name, bitwidth): This tuple is returned for all streams.
+
+        Raises:
+            AssertionError: If any sanity check fails.
+
+        """
         streamNames = self.get_nodeattr("streamNames")
         streamWidths = [int(w) for w in self.get_nodeattr("streamWidths")]
         streamTypes = self.get_nodeattr("streamTypes")
         streamNormalShapes = [shape.split(",") for shape in self.get_nodeattr("streamNormalShapes")]
         streamFoldedShapes = [shape.split(",") for shape in self.get_nodeattr("streamFoldedShapes")]
-        muxedBitwidth = int(self.get_nodeattr("muxed_bitwidth"))
+        muxed = self.get_nodeattr("muxed_bitwidth")
+        assert muxed is not None
+        muxedBitwidth = int(cast(int, self.get_nodeattr("muxed_bitwidth")))
         assert len(streamNames) == len(streamWidths)
         assert len(streamWidths) == len(streamTypes)
         assert len(streamTypes) == len(streamNormalShapes)
@@ -238,46 +294,93 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa:
 
 
 class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
-    def __init__(self, onnx_node: NodeProto, **kwargs: Any) -> None:
-        super().__init__(onnx_node, **kwargs)
+    """A (time)-multiplex HLS operator.
 
-    def get_folded_input_shape(self, ind: int) -> list[int] | tuple:
+    Simulation: In case of simulations, set sim_output_numbers to the number of stream transactions
+    that each sample in the simulation will take. If we get 2 samples from StreamA, which both
+    require 2 network transactions, and 1 sample that requires 3, this value should be set
+    to [2, 2, 3]. If this is set, get_number_output_values() will automatically cycle to the next
+    number after being read.
+    """
+
+    def __init__(  # noqa: D107
+        self, onnx_node: NodeProto, sim_output_numbers: list[int] | None = None, **kwargs: Any
+    ) -> None:
+        super().__init__(onnx_node, **kwargs)
+        self.simulation_output_numbers = sim_output_numbers
+        self.output_number_index = 0
+
+    def get_folded_input_shape(self, ind: int) -> list[int] | tuple:  # noqa: D102
         return self._get_stream_folded_shape(ind)
 
-    def get_folded_output_shape(self, _: int = 0) -> list[int] | tuple:
+    def get_folded_output_shape(self, _: int = 0) -> list[int] | tuple:  # noqa: D102
         return self.get_normal_output_shape()
 
-    def get_normal_input_shape(self, ind: int) -> list[int] | tuple:
+    def get_normal_input_shape(self, ind: int) -> list[int] | tuple:  # noqa: D102
         return self._get_stream_normal_shape(ind)
 
     def get_normal_output_shape(self, _: int = 0) -> list[int] | tuple:
+        """Return the normal output shape. For the mux this is (1, muxed_bitwidth).
+
+        >>> import onnx.helper as oh
+        >>> mux = AnnotatedMux_hls(oh.make_node("AnnotatedMux", [], [], muxed_bitwidth=120))
+        >>> mux.get_normal_output_shape()
+        (1, 120)
+        """
         return (1, self.get_outstream_width())
 
-    def get_instream_width(self, ind: int = 0) -> int:
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: D102
         return self._get_stream_width(ind)
 
-    def get_outstream_width(self, _: int = 0) -> int:
-        return int(self.get_nodeattr("muxed_bitwidth"))
+    def get_outstream_width(self, _: int = 0) -> int:  # noqa: D102
+        muxed = self.get_nodeattr("muxed_bitwidth")
+        if muxed is None:
+            raise FINNInternalError(
+                "Tried accessing required attribute muxed_bitwidth of an "
+                "AnnotatedMux node, but such an attribute does not exist!"
+            )
+        return int(cast(int, muxed))
 
-    def get_input_datatype(self, ind) -> DataType:
+    def get_input_datatype(self, ind: int) -> BaseDataType:  # noqa: D102
         return self._get_stream_datatype(ind)
 
-    def get_output_datatype(self, _: int = 0) -> DataType:
+    def get_output_datatype(self, _: int = 0) -> BaseDataType:  # noqa: D102
+        # TODO
         # Needs to be unsigned, but has no real usage here since we only
         # do low-level operations on this data without actual meaning for
         # the datas contents
         return DataType["UINT1"]
 
     def get_number_output_values(self) -> int:
-        return 1  # self._get_largest_normal_shape_prod()
+        """Return number of stream transactions required for one feature map.
 
-    def infer_node_datatype(self, model: ModelWrapper):
+        For this operator, this is not known at compile time.
+        If self.simulation_output_numbers is given, this value changes from call to call!
+        >>> import onnx.helper as oh
+        >>> mux = AnnotatedMux_hls(oh.make_node("", [], []), [2, 3, 4])
+        >>> mux.get_number_output_values()
+        2
+        >>> mux.get_number_output_values()
+        3
+        """
+        if self.simulation_output_numbers is None:
+            return 1
+        if self.output_number_index >= len(self.simulation_output_numbers):
+            raise FINNInternalError(
+                f"Cannot read the {self.output_number_index}th "
+                f"simulation output number, there are "
+                f"only {len(self.simulation_output_numbers)} values!"
+            )
+        self.output_number_index += 1
+        return self.simulation_output_numbers[self.output_number_index - 1]
+
+    def infer_node_datatype(self, model: ModelWrapper) -> None:  # noqa: D102
         model.set_tensor_datatype(self.onnx_node.output[0], self.get_output_datatype())
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: Any, graph: Any) -> None:  # noqa: D102
         HLSBackend.execute_node(self, context, graph)
 
-    def get_nodeattr_types(self) -> dict:
+    def get_nodeattr_types(self) -> dict:  # noqa: D102
         my_attrs = {
             # What strategy the multiplexer should use to distribute the data
             "multiplexStrategy": ("s", True, "ROUND_ROBIN"),
@@ -285,13 +388,13 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
         my_attrs.update(DeMuxBase_hls.get_nodeattr_types(self))
         return my_attrs
 
-    def pragmas(self) -> None:
+    def pragmas(self) -> None:  # noqa: D102
         return self._pragmas(param_prefix="in")
 
-    def blackboxfunction(self) -> None:
+    def blackboxfunction(self) -> None:  # noqa: D102
         self._blackboxfunction(param_prefix="in")
 
-    def docompute(self) -> None:
+    def docompute(self) -> None:  # noqa: D102
         self._docompute(
             "AnnotatedMultiplex::StreamingNetworkMultiplex",
             add_strategy_template_param=True,
@@ -300,57 +403,99 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
 
 
 class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
-    def __init__(self, onnx_node: NodeProto, **kwargs: Any) -> None:
-        super().__init__(onnx_node, **kwargs)
+    """Demux HLS operator. Usage requires a preceeding Mux HLS Operator.
 
-    def get_folded_input_shape(self, ind):
+    Simulation: In case of simulations, set sim_output_numbers to the number of stream transactions
+    that each sample in the simulation will take. If we get 2 samples from StreamA, which both
+    require 2 network transactions, and 1 sample that requires 3, this value should be set
+    to [2, 2, 3]. If this is set, get_number_output_values() will automatically cycle to the next
+    number after being read
+    """
+
+    def __init__(  # noqa: D107
+        self, onnx_node: NodeProto, sim_output_numbers: list[int] | None = None, **kwargs: Any
+    ) -> None:
+        super().__init__(onnx_node, **kwargs)
+        self.simulation_output_numbers = sim_output_numbers
+        self.output_number_index = 0
+
+    def get_folded_input_shape(self, _: int) -> tuple:  # noqa: D102
         return self.get_normal_input_shape()
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple:  # noqa: D102
         return self._get_stream_folded_shape(ind)
 
-    def get_normal_input_shape(self, _: int = 0):
+    def get_normal_input_shape(self, _: int = 0) -> tuple:
+        """Return the normal input shape. For the demux this is (1, muxed_bitwidth).
+
+        >>> import onnx.helper as oh
+        >>> mux = AnnotatedDemux_hls(oh.make_node("AnnotatedDemux", [], [], muxed_bitwidth=120))
+        >>> mux.get_normal_input_shape()
+        (1, 120)
+        """
         return (1, self.get_instream_width())
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> tuple:  # noqa: D102
         return self._get_stream_normal_shape(ind)
 
-    def get_instream_width(self, _: int = 0):
-        return int(self.get_nodeattr("muxed_bitwidth"))
+    def get_instream_width(self, _: int = 0) -> int:  # noqa: D102
+        bitwidth = self.get_nodeattr("muxed_bitwidth")
+        if bitwidth is None:
+            raise FINNInternalError(
+                "AnnotatedDemux_hls operator does not have it's muxed_bitwidth "
+                "attributes set, which is required!"
+            )
+        return int(cast(int, bitwidth))
 
-    def get_outstream_width(self, i: int = 0):
+    def get_outstream_width(self, i: int = 0) -> int:  # noqa: D102
         return int(self.get_nodeattr("streamWidths")[i])
 
-    def get_output_datatype(self, ind):
+    def get_output_datatype(self, ind: int) -> BaseDataType:  # noqa: D102
         return self._get_stream_datatype(ind)
 
-    def get_input_datatype(self, _: int = 0):
+    def get_input_datatype(self, _: int = 0) -> BaseDataType:  # noqa: D102
+        # TODO
         # Needs to be unsigned, but has no real usage here since we only
         # do low-level operations on this data without actual meaning for
         # the datas contents
         return DataType["UINT1"]
 
     def get_number_output_values(self) -> int:
-        return 1  # self._get_largest_normal_shape_prod()
+        """Return number of stream transactions required for one feature map.
 
-    def infer_node_datatype(self, model: ModelWrapper):
+        For this operator, this is not known at compile time.
+        If self.simulation_output_numbers is given, this value changes from call to call!
+        >>> import onnx.helper as oh
+        >>> mux = AnnotatedMux_hls(oh.make_node("", [], []), [2, 3, 4])
+        >>> mux.get_number_output_values()
+        2
+        >>> mux.get_number_output_values()
+        3
+        """
+        if self.simulation_output_numbers is None:
+            return 1  # self._get_largest_normal_shape_prod()
+        if self.output_number_index >= len(self.simulation_output_numbers):
+            raise FINNInternalError(
+                f"Cannot read the {self.output_number_index}th "
+                f"simulation output number, there are "
+                f"only {len(self.simulation_output_numbers)} values!"
+            )
+        self.output_number_index += 1
+        return self.simulation_output_numbers[self.output_number_index - 1]
+
+    def infer_node_datatype(self, model: ModelWrapper) -> None:  # noqa: D102
         model.set_tensor_datatype(self.onnx_node.input[0], self.get_input_datatype())
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: Any, graph: Any) -> None:  # noqa: D102
         HLSBackend.execute_node(self, context, graph)
 
-    def update_channel_data(self, model: ModelWrapper) -> None:
-        channels = []
-        for i, onode in enumerate(model.get_direct_successors(self)):
-            channels.append((i, onode.name, onode.get_output_datatype().bitwidth()))
-
-    def pragmas(self) -> None:
+    def pragmas(self) -> None:  # noqa: D102
         return self._pragmas(param_prefix="out")
 
-    def blackboxfunction(self) -> None:
+    def blackboxfunction(self) -> None:  # noqa: D102
         self._blackboxfunction(param_prefix="out")
 
-    def docompute(self) -> None:
+    def docompute(self) -> None:  # noqa: D102
         self._docompute(
             "AnnotatedDemultiplex::StreamingNetworkDemultiplex",
             add_strategy_template_param=False,
