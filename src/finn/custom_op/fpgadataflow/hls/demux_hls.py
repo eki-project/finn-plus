@@ -59,10 +59,93 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
             "streamWidths": ("ints", True, []),
             # Incoming/Outgoing bandwith
             "muxed_bitwidth": ("i", True, 0),
+            # For simulation
+            "simulation_number_outputs": ("ints", False, []),
+            "simulation_number_outputs_index": ("i", False, 0),
         }
         my_attrs.update(HWCustomOp.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
+
+    def set_sim_output_numbers(self, values: list[int], reset_index: bool = True) -> None:
+        """Set the simulation_number_outputs field (and it's index).
+
+        Args:
+            values: Values to write into the field. Overwrites old values.
+            reset_index: If `True` (default), also reset the index of the current value.
+        """
+        if any(type(val) is not int for val in values):
+            raise FINNInternalError(
+                f"Could not set simulation_number_outputs for node "
+                f"{self.onnx_node.name}, since not all values are "
+                f"integers: {values}"
+            )
+        self.set_nodeattr("simulation_number_outputs", values)
+        if reset_index:
+            self.set_nodeattr("simulation_number_outputs_index", 0)
+
+    def has_sim_output_numbers(self) -> bool:
+        """Return whether this operator has simulation specific output number values."""
+        try:
+            nums = self.get_nodeattr("simulation_number_outputs")
+            index = self.get_nodeattr("simulation_number_outputs_index")
+        except Exception:
+            return False
+        return not (nums in [None, []] or index is None)
+
+    def get_number_output_values(self) -> int:
+        """Get the number of outputs required for a full sample.
+
+        This method works differently for this operator. Because we only know which channel sends
+        when at runtime, for simulation we need to give this information explictly so that
+        the simulation runs as expected. Use `set_sim_output_numbers(...)` to pass these numbers.
+        When `get_number_output_values()` is called in simulation, and numbers were provided, it
+        automatically cycles through them. If none are given, the fallback value 1 is returned.
+
+        >>> import onnx.helper as oh
+        >>> mux = AnnotatedMux_hls(oh.make_node("", [], []))
+        >>> issubclass(AnnotatedMux_hls, DeMuxBase_hls)
+        True
+        >>> isinstance(mux, DeMuxBase_hls)
+        True
+        >>> mux.set_sim_output_numbers([2,3,4])
+        >>> mux.get_number_output_values()
+        2
+        >>> mux.get_number_output_values()
+        3
+
+        Returns:
+            int: The number of stream transactions needed for the current sample.
+
+        Raises:
+            FINNInternalError: Raised if the method is called more often than numbers were given.
+        """
+        if self.has_sim_output_numbers:
+            index = 0
+            try:
+                index = self.get_nodeattr("simulation_number_outputs_index")
+            except Exception as e:
+                raise FINNInternalError(
+                    f"Node {self.onnx_node.name}: Current sim output number "
+                    "cannot be retrieved: Index nodeattr missing!"
+                ) from e
+            assert type(index) is int
+            try:
+                values = self.get_nodeattr("simulation_number_outputs")
+            except Exception as e:
+                raise FINNInternalError(
+                    f"Node {self.onnx_node.name}: Cannot retrieve sim output "
+                    "number, since no numbers were given!"
+                ) from e
+            if index >= len(values):
+                raise FINNInternalError(
+                    f"Node {self.onnx_node.name}: Cannot retrieve simulation "
+                    f"output number at index {index}, since only "
+                    f"{len(values)} numbers were given!"
+                )
+            self.set_nodeattr("simulation_number_outputs_index", index + 1)
+            return values[index]
+        return 1
 
     # CODE GEN FUNCTIONS
     # Rest are overriden in subclass
@@ -304,12 +387,8 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
     number after being read.
     """
 
-    def __init__(  # noqa: D107
-        self, onnx_node: NodeProto, sim_output_numbers: list[int] | None = None, **kwargs: Any
-    ) -> None:
+    def __init__(self, onnx_node: NodeProto, **kwargs: Any) -> None:  # noqa: D107
         super().__init__(onnx_node, **kwargs)
-        self.simulation_output_numbers = sim_output_numbers
-        self.output_number_index = 0
 
     def get_folded_input_shape(self, ind: int = 0) -> list[int] | tuple:  # noqa: D102
         return self._get_stream_folded_shape(ind)
@@ -352,29 +431,6 @@ class AnnotatedMux_hls(DeMuxBase_hls):  # noqa
         # the datas contents
         return DataType["UINT1"]
 
-    def get_number_output_values(self) -> int:
-        """Return number of stream transactions required for one feature map.
-
-        For this operator, this is not known at compile time.
-        If self.simulation_output_numbers is given, this value changes from call to call!
-        >>> import onnx.helper as oh
-        >>> mux = AnnotatedMux_hls(oh.make_node("", [], []), [2, 3, 4])
-        >>> mux.get_number_output_values()
-        2
-        >>> mux.get_number_output_values()
-        3
-        """
-        if self.simulation_output_numbers is None:
-            return 1
-        if self.output_number_index >= len(self.simulation_output_numbers):
-            raise FINNInternalError(
-                f"Cannot read the {self.output_number_index}th "
-                f"simulation output number, there are "
-                f"only {len(self.simulation_output_numbers)} values!"
-            )
-        self.output_number_index += 1
-        return self.simulation_output_numbers[self.output_number_index - 1]
-
     def infer_node_datatype(self, model: ModelWrapper) -> None:  # noqa: D102
         model.set_tensor_datatype(self.onnx_node.output[0], self.get_output_datatype())
 
@@ -413,12 +469,8 @@ class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
     number after being read
     """
 
-    def __init__(  # noqa: D107
-        self, onnx_node: NodeProto, sim_output_numbers: list[int] | None = None, **kwargs: Any
-    ) -> None:
+    def __init__(self, onnx_node: NodeProto, **kwargs: Any) -> None:  # noqa: D107
         super().__init__(onnx_node, **kwargs)
-        self.simulation_output_numbers = sim_output_numbers
-        self.output_number_index = 0
 
     def get_folded_input_shape(self, ind: int = 0) -> tuple:  # noqa: D102, ARG002
         return self.get_normal_input_shape()
@@ -460,29 +512,6 @@ class AnnotatedDemux_hls(DeMuxBase_hls):  # noqa
         # do low-level operations on this data without actual meaning for
         # the datas contents
         return DataType["UINT1"]
-
-    def get_number_output_values(self) -> int:
-        """Return number of stream transactions required for one feature map.
-
-        For this operator, this is not known at compile time.
-        If self.simulation_output_numbers is given, this value changes from call to call!
-        >>> import onnx.helper as oh
-        >>> mux = AnnotatedMux_hls(oh.make_node("", [], []), [2, 3, 4])
-        >>> mux.get_number_output_values()
-        2
-        >>> mux.get_number_output_values()
-        3
-        """
-        if self.simulation_output_numbers is None:
-            return 1  # self._get_largest_normal_shape_prod()
-        if self.output_number_index >= len(self.simulation_output_numbers):
-            raise FINNInternalError(
-                f"Cannot read the {self.output_number_index}th "
-                f"simulation output number, there are "
-                f"only {len(self.simulation_output_numbers)} values!"
-            )
-        self.output_number_index += 1
-        return self.simulation_output_numbers[self.output_number_index - 1]
 
     def infer_node_datatype(self, model: ModelWrapper) -> None:  # noqa: D102
         model.set_tensor_datatype(self.onnx_node.input[0], self.get_input_datatype())
