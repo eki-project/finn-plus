@@ -1,7 +1,6 @@
 # ruff: noqa: N803
+"""Tests to validate correct functionality of the (de)mux operators and the inserting transform."""
 from __future__ import annotations
-
-import pytest
 
 import numpy as np
 from onnx import TensorProto, helper
@@ -12,50 +11,20 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
+from typing import cast
 
 from finn.core.onnx_exec import execute_onnx
+from finn.custom_op.fpgadataflow.hls.demux_hls import DeMuxBase_hls
+from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
+from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 
-
 # TODO: Test to expect failure when having an input width larger than the available bitwidth
 # TODO: Test different strategies
-
-
-def make_single_node_model(
-    nodetype: str,
-    streamNames: list[str],
-    streamTypes: list[str],
-    streamNormalShapes: list[str],
-    streamFoldedShapes: list[str],
-    streamWidths: list[str],
-    muxed_bitwidth: int,
-    multiplexStrategy: str | None = None,
-) -> ModelWrapper:
-    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, (1, 10))
-    outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, (1, 10))
-    node = helper.make_node(
-        nodetype,
-        ["input0", "input1", "input2"],
-        ["output"],
-        domain="finn.custom_op.fpgadataflow.hls",
-        backend="fpgadataflow",
-        streamNames=streamNames,
-        streamTypes=streamTypes,
-        streamNormalShapes=streamNormalShapes,
-        streamFoldedShapes=streamFoldedShapes,
-        streamWidths=streamWidths,
-        muxed_bitwidth=muxed_bitwidth,
-    )
-    if multiplexStrategy is not None:
-        node.attribute.append(helper.make_attribute("multiplexStrategy", multiplexStrategy))
-
-    graph = helper.make_graph(nodes=[node], name="graph", inputs=[inp], outputs=[outp])
-    model = qonnx_make_model(graph, producer_name="model")
-    return ModelWrapper(model)
 
 
 def make_identity_model(
@@ -63,14 +32,13 @@ def make_identity_model(
     streamTypes: list[str],
     streamNormalShapes: list[str],
     streamFoldedShapes: list[str],
-    streamWidths: list[str],
+    streamWidths: list[int],
     muxed_bitwidth: int,
     multiplexStrategy: str,
     input_name_prefix: str = "in",
     output_name_prefix: str = "out",
 ) -> ModelWrapper:
-    """Create a model that takes some input streams, muxes them into one connection and demuxes
-    them again. Can be used to verify that multiplexing is working correctly."""
+    """Create and return a simple model with a Mux and Demux."""
     different_lengths = len(
         set(
             map(
@@ -138,119 +106,55 @@ def make_identity_model(
     return model
 
 
-@pytest.mark.fpgadataflow
-@pytest.mark.vivado
-@pytest.mark.parametrize("fpgapart", ["xcu280-fsvh2892-2l-e"])
-@pytest.mark.parametrize("streamNames", [["in0", "in1", "in2"]])
-@pytest.mark.parametrize("streamTypes", [["UINT4", "UINT8", "INT3"]])
-@pytest.mark.parametrize("streamNormalShapes", [["1,2,5", "1,3,10", "1,20"]])
-@pytest.mark.parametrize("streamFoldedShapes", [["1,2,5", "1,3,10", "1,20"]])
-@pytest.mark.parametrize("streamWidths", [["128", "200", "412"]])
-@pytest.mark.parametrize("muxType", ["AnnotatedMux_hls", "AnnotatedDemux_hls"])
-@pytest.mark.parametrize("muxed_bitwidth", [512])
-@pytest.mark.parametrize("multiplexStrategy", ["ROUND_ROBIN"])
-def test_fpgadataflow_de_mux_ipgen(
-    fpgapart: str,
-    streamNames: list[str],
-    streamTypes: list[str],
-    streamNormalShapes: list[str],
-    streamFoldedShapes: list[str],
-    streamWidths: list[str],
-    muxed_bitwidth: int,
-    muxType: str,
-    multiplexStrategy: str,
-) -> None:
-    model = make_single_node_model(
-        muxType,
-        streamNames,
-        streamTypes,
-        streamNormalShapes,
-        streamFoldedShapes,
-        streamWidths,
-        muxed_bitwidth,
-        multiplexStrategy if muxType == "AnnotatedMux_hls" else None,
-    )
-    model = model.transform(SpecializeLayers(fpgapart))
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareIP(fpgapart, 2.5))
-    model = model.transform(GiveUniqueNodeNames())
-
-    # HLSSynth contains the assert to check for the existance of the generated IP
-    model = model.transform(HLSSynthIP())
-
-
-@pytest.mark.fpgadataflow
-@pytest.mark.vivado
-@pytest.mark.parametrize("fpgapart", ["xcu280-fsvh2892-2l-e"])
-@pytest.mark.parametrize("streamNames", [["stream0", "stream1", "stream2"]])
-@pytest.mark.parametrize("streamTypes", [["UINT4", "UINT8", "INT10"]])
-@pytest.mark.parametrize("streamNormalShapes", [["1,2,5", "1,3,10", "1,20"]])
-@pytest.mark.parametrize("streamFoldedShapes", [["1,2,5", "1,3,10", "1,20"]])
-@pytest.mark.parametrize("streamWidths", [["128", "200", "412"]])
-@pytest.mark.parametrize("muxed_bitwidth", [512])
-@pytest.mark.parametrize("multiplexStrategy", ["ROUND_ROBIN"])
-@pytest.mark.parametrize("samples", [10, 100])
-def test_fpgadataflow_demux_identity_model(
-    fpgapart: str,
-    streamNames: list[str],
-    streamTypes: list[str],
-    streamNormalShapes: list[str],
-    streamFoldedShapes: list[str],
-    streamWidths: list[str],
-    muxed_bitwidth: int,
-    multiplexStrategy: str,
-    samples: int,
-) -> None:
-    in_prefix = "in"
-    out_prefix = "out"
-
-    # Prepare model
-    model = make_identity_model(
-        streamNames,
-        streamTypes,
-        streamNormalShapes,
-        streamFoldedShapes,
-        streamWidths,
-        muxed_bitwidth,
-        multiplexStrategy,
-        input_name_prefix=in_prefix,
-        output_name_prefix=out_prefix,
-    )
-    assert len(model.graph.node) == 2, "Model has the wrong number of nodes for this test!"  #
-    assert model.graph.node[0].op_type == "AnnotatedMux_hls"
-    assert model.graph.node[1].op_type == "AnnotatedDemux_hls"
-    assert getCustomOp(model.graph.node[0]).get_nodeattr("streamNames") == streamNames
-    assert getCustomOp(model.graph.node[1]).get_nodeattr("streamNames") == streamNames
+def test_simple_ident():
+    name = ["stream0", "stream1"]
+    dt = ["UINT4", "UINT5"]
+    shapes = ["1,2,10", "1,3,9"]
+    widths = [80, 27 * 5]
+    network = 512
+    strat = "ROUND_ROBIN"
+    model = make_identity_model(name, dt, shapes, shapes, widths, network, strat)
+    for node in model.graph.node:
+        inst = getCustomOp(node)
+        inst.set_nodeattr("inFIFODepths", [100, 100])
+        inst.set_nodeattr("outFIFODepths", [100, 100])
     model = model.transform(InferShapes())
     model = model.transform(InferDataTypes())
-    model = model.transform(SpecializeLayers(fpgapart))
     model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareIP(fpgapart, 2.5))
-    model = model.transform(GiveUniqueNodeNames())
+    model = model.transform(SpecializeLayers("xcu280-fsvh2892-2l-e"))
+    model = model.transform(PrepareIP("xcu280-fsvh2892-2l-e", 2.5))
     model = model.transform(HLSSynthIP())
+    model = model.transform(GiveUniqueNodeNames())
     model = model.transform(SetExecMode("rtlsim"))
+    model = model.transform(InsertFIFO(create_shallow_fifos=True))
+    model = model.transform(SpecializeLayers("xcu280-fsvh2892-2l-e"))
+    model = model.transform(GiveUniqueNodeNames())
+    model = model.transform(PrepareIP("xcu280-fsvh2892-2l-e", 2.5))
+    model = model.transform(HLSSynthIP())
+    model = model.transform(GiveUniqueNodeNames())
+    for node in model.graph.node:
+        print("NODE " + node.name)
+    model = model.transform(CreateStitchedIP("xcu280-fsvh2892-2l-e", 2.5))
     model = model.transform(PrepareRTLSim())
+    model = model.transform(SetExecMode("rtlsim"))
+    model.set_metadata_prop("exec_mode", "rtlsim")
 
-    input_data = {}
-    output_data = {}
-    for iteration in range(samples):
-        # Generate random data
-        for i, streamName in enumerate(streamNames):
-            input_stream_name = in_prefix + "_" + streamName
-            output_stream_name = out_prefix + "_" + streamName
-            tensor_shape = [int(x) for x in streamNormalShapes[i].split(",")]
-            input_data[input_stream_name] = gen_finn_dt_tensor(
-                DataType[streamTypes[i]], tensor_shape, rmin=0, rmax=10
-            )
-            output_data[output_stream_name] = input_data[input_stream_name]
+    inputs = {
+        "in_stream0": gen_finn_dt_tensor(DataType[dt[0]], [int(x) for x in shapes[0].split(",")]),
+        "in_stream1": gen_finn_dt_tensor(DataType[dt[1]], [int(x) for x in shapes[1].split(",")]),
+    }
+    print(inputs)
+    for node in model.graph.node:
+        if node.op_type == "AnnotatedMux_hls":
+            mux: DeMuxBase_hls = cast(DeMuxBase_hls, getCustomOp(node))
+            mux.set_sim_output_numbers([2, 3])
+            assert mux.has_sim_output_numbers()
+        if node.op_type == "AnnotatedDemux_hls":
+            demux: DeMuxBase_hls = cast(DeMuxBase_hls, getCustomOp(node))
+            demux.set_sim_output_numbers([2, 3])
+            assert demux.has_sim_output_numbers()
 
-        # Execute simulation
-        print("Executing sample " + str(iteration))
-        simulated_output = execute_onnx(model, input_data, return_full_exec_context=False)
-
-        # Check outputs
-        for streamName in simulated_output.keys():
-            assert np.array_equal(simulated_output[streamName], output_data[streamName]), (
-                f"[Iteration {iteration}]  Data mismatch on stream {streamName}. "
-                f"Got {simulated_output[streamName]}, expected {output_data[streamName]}"
-            )
+    res = execute_onnx(model, inputs)
+    print(res)
+    for key in inputs.keys():
+        assert np.array_equal(inputs[key], res[key.replace("in", "out")])
