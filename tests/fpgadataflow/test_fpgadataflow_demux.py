@@ -13,10 +13,9 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
-from typing import cast
+from typing import TYPE_CHECKING, Any, cast
 
 from finn.core.onnx_exec import execute_onnx
-from finn.custom_op.fpgadataflow.hls.demux_hls import DeMuxBase_hls
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
@@ -24,6 +23,9 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hls.demux_hls import DeMuxBase_hls
 
 # TODO: Test to expect failure when having an input width larger than the available bitwidth
 # TODO: Test different strategies
@@ -108,25 +110,39 @@ def make_identity_model(
     return model
 
 
-@pytest.mark.parametrize("names", [["stream0", "stream1"]])
-@pytest.mark.parametrize("dts", [["UINT4", "UINT5"]])
-@pytest.mark.parametrize("shapes", [["1,2,10", "1,3,9"]])
-@pytest.mark.parametrize("widths", [[80, 27 * 5]])
+@pytest.mark.parametrize(
+    "stream_config",
+    [
+        (["stream0", "stream1"], ["UINT4", "UINT5"], ["1,2,10", "1,3,9"], [80, 27 * 5]),
+        (["stream0", "stream1"], ["BIPOLAR", "BIPOLAR"], ["1,2,10", "1,3,9"], [20, 27]),
+        (
+            ["stream0", "stream1", "stream2"],
+            ["UINT3", "UINT6", "INT2"],
+            ["1,3,2,10", "1,3,3,9", "1,10,1,3"],
+            [180, 81 * 6, 60],
+        ),
+        (["stream0"], ["UINT3"], ["1,7,2"], [35]),
+    ],
+)
 @pytest.mark.parametrize("network", [512])
 @pytest.mark.parametrize("strategy", ["ROUND_ROBIN"])
 @pytest.mark.parametrize("fpgapart", ["xcu280-fsvh2892-2l-e"])
 @pytest.mark.parametrize("clk", [2.5])
-def test_manual_demux_model(
-    names: list[str],
-    dts: list[str],
-    shapes: list[str],
-    widths: list[int],
+@pytest.mark.parametrize("samples_per_stream", [1, 10])
+def test_manual_demux_model(  # noqa: C901
+    stream_config: tuple[list[str], list[str], list[str], list[str]],
     network: int,
     strategy: str,
     fpgapart: str,
     clk: float,
+    samples_per_stream: int,
 ) -> None:
     """Test a simple manually constructed model. Contains only a mux followed by a demux."""
+    names, dts, shapes, widths = stream_config
+
+    def get_shape(index: int) -> list[int]:
+        return [int(x) for x in shapes[index].split(",")]
+
     lengths: set[int] = {len(x) for x in [names, dts, shapes, widths]}
     assert len(lengths) == 1, "Arguments to test don't have the same length!"
     in_prefix = "in"
@@ -139,8 +155,8 @@ def test_manual_demux_model(
     # Set FIFO sizes manually
     for node in model.graph.node:
         inst = getCustomOp(node)
-        inst.set_nodeattr("inFIFODepths", [100, 100])
-        inst.set_nodeattr("outFIFODepths", [100, 100])
+        inst.set_nodeattr("inFIFODepths", [100] * len(names))
+        inst.set_nodeattr("outFIFODepths", [100] * len(names))
 
     # Infer shapes and DTs
     model = model.transform(InferShapes())
@@ -168,26 +184,48 @@ def test_manual_demux_model(
     model.set_metadata_prop("exec_mode", "rtlsim")
 
     # Prepare model inputs
-    inputs = {}
-    expected = {}
+    inputs: dict[str, list[Any]] = {}
+    expected: dict[str, list[Any]] = {}
+    output_numbers = []
     for i, name in enumerate(names):
-        shape: list[int] = [int(x) for x in shapes[i].split(",")]
-        dt: BaseDataType = DataType[dts[i]]
-        tensor = gen_finn_dt_tensor(dt, shape)
-        inputs[f"{in_prefix}_{name}"] = tensor
-        expected[f"{out_prefix}_{name}"] = tensor
+        in_name = f"{in_prefix}_{name}"
+        out_name = f"{out_prefix}_{name}"
+        inputs[in_name] = []
+        expected[out_name] = []
+        for _ in range(samples_per_stream):
+            shape: list[int] = get_shape(i)
+            dt: BaseDataType = DataType[dts[i]]
+            tensor = gen_finn_dt_tensor(dt, shape)
+            inputs[in_name].append(tensor)
+            expected[out_name].append(tensor)
+
+        # Save what number of outputs this stream will generate
+        # In shape (1,2,10) we want the 2
+        output_numbers.append(inputs[in_name][0].shape[-2])
 
     # Set simulation output numbers (required for this operator)
     for node in model.graph.node:
         if node.op_type == "AnnotatedMux_hls":
             mux: DeMuxBase_hls = cast("DeMuxBase_hls", getCustomOp(node))
-            mux.set_sim_output_numbers([2, 3])
+            mux.set_sim_output_numbers(output_numbers)
             assert mux.has_sim_output_numbers()
         if node.op_type == "AnnotatedDemux_hls":
             demux: DeMuxBase_hls = cast("DeMuxBase_hls", getCustomOp(node))
-            demux.set_sim_output_numbers([2, 3])
+            demux.set_sim_output_numbers(output_numbers)
             assert demux.has_sim_output_numbers()
 
-    res = execute_onnx(model, inputs)
-    for key in expected.keys():
-        assert np.array_equal(expected[key], res[key])
+    # Run the actual simluation
+    for j in range(samples_per_stream):
+        model_inputs = {k: v[j] for k, v in inputs.items()}
+        res = execute_onnx(model, model_inputs)
+        for key in expected.keys():
+            assert np.array_equal(expected[key][j], res[key])
+
+    # Test unbalanced inputs
+    for _ in range(samples_per_stream):
+        in_tensor: Any = gen_finn_dt_tensor(DataType[dts[0]], get_shape(0))
+        res = execute_onnx(model, {f"{in_prefix}_{names[0]}": in_tensor})
+        assert np.array_equal(res[f"{out_prefix}_{names[0]}"], in_tensor)
+        for i in range(1, len(names)):
+            out_name = f"{out_prefix}_{names[i]}"
+            assert np.array_equal(res[out_name], np.zeros(get_shape(i)))
