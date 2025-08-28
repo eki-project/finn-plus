@@ -45,12 +45,21 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
     """
 
     def __init__(self, onnx_node: NodeProto, **kwargs: dict) -> None:
-        """Initialize the code_gen_dict to be empty."""
+        """Construct a new (de)mux op."""
         super().__init__(onnx_node, **kwargs)
         self.code_gen_dict: dict[str, list[str]] = {}
 
     def get_nodeattr_types(self) -> dict:
-        """Overwritten method to define the node attributes this operator contains."""
+        """Return all node attributes, including the ones needed specifically by the (de)mux ops.
+
+        This includes:
+            - streamNames: Names of the connected streams
+            - streamTypes: The datatype on the streams, given as a string
+            - streamNormalShapes: The shapes of the streams as comma seperated ints
+            - streamFoldedShapes: As above but for the folded shapes
+            - muxed_bitwidth: Width of the stream between Mux and Demux
+            - simulation_number_outputs(_index): Explained in `get_number_output_values()`
+        """
         my_attrs = {
             "streamNames": ("strings", True, []),
             "streamTypes": ("strings", True, []),
@@ -275,7 +284,7 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
         channel_data = self.get_channel_data()
         body = f"{function_name}<"
         if add_strategy_template_param:
-            body += "MultiplexStrategy::" + strategy.value + ","
+            body += "MultiplexStrategy::" + strategy.value + ", "
         body += str(self.get_nodeattr("muxed_bitwidth"))
         body += ", "
         # TODO: ap_int
@@ -346,6 +355,10 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
 
         Runs some asserts and sanity checks on the attribute data that describes the
         connected streams. If no issues are found, collects the metadata into tuples.
+        >>> import onnx.helper as oh
+        >>> mux = AnnotatedMux_hls(oh.make_node("", [], [], multiplexStrategy="ROUND_ROBIN", streamNames=["s0"], streamTypes=["UINT2"], streamNormalShapes=["1,2,10"], streamFoldedShapes=["1,2,10"], streamWidths=[40], muxed_bitwidth=512))
+        >>> mux.get_channel_data()[0]
+        (0, 's0', 40)
 
         Returns:
             (index, channel_name, bitwidth): This tuple is returned for all streams.
@@ -353,7 +366,7 @@ class DeMuxBase_hls(HWCustomOp, HLSBackend):  # noqa
         Raises:
             AssertionError: If any sanity check fails.
 
-        """
+        """  # noqa: E501
         streamNames = self.get_nodeattr("streamNames")
         streamWidths = [int(w) for w in self.get_nodeattr("streamWidths")]
         streamTypes = self.get_nodeattr("streamTypes")
