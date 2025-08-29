@@ -73,8 +73,7 @@ def parse_dataflow_build_config(content: str) -> Dict[str, Any]:
             if is_enum:
                 docstring: Optional[str] = ast.get_docstring(node)
                 enum_values: List[Dict[str, str]] = get_enum_values(node)
-                enums[node.name] = {
-                    "docstring": docstring, "values": enum_values}
+                enums[node.name] = {"docstring": docstring, "values": enum_values}
             elif node.name == "DataflowBuildConfig":
                 dataflow_config = node
 
@@ -92,8 +91,7 @@ def parse_dataflow_build_config(content: str) -> Dict[str, Any]:
 
             # Get type annotation
             type_annotation: str = (
-                ast.unparse(node.annotation) if hasattr(
-                    ast, "unparse") else str(node.annotation)
+                ast.unparse(node.annotation) if hasattr(ast, "unparse") else str(node.annotation)
             )
 
             # Get default value
@@ -105,18 +103,15 @@ def parse_dataflow_build_config(content: str) -> Dict[str, Any]:
                     default_value = node.value.id
                 elif isinstance(node.value, ast.Attribute):
                     default_value = (
-                        ast.unparse(node.value) if hasattr(
-                            ast, "unparse") else str(node.value)
+                        ast.unparse(node.value) if hasattr(ast, "unparse") else str(node.value)
                     )
                 else:
                     default_value = (
-                        ast.unparse(node.value) if hasattr(
-                            ast, "unparse") else str(node.value)
+                        ast.unparse(node.value) if hasattr(ast, "unparse") else str(node.value)
                     )
 
             # Get field comment (documentation)
-            comment: Optional[str] = extract_field_comment(
-                source_lines, node.lineno)
+            comment: Optional[str] = extract_field_comment(source_lines, node.lineno)
 
             fields.append(
                 {
@@ -136,8 +131,9 @@ def create_enum_links(text: str, enum_names: List[str]) -> str:
     for enum_name in enum_names:
         # Replace enum name with link using backticks for code styling
         import re
-        pattern = r'\b' + re.escape(enum_name) + r'\b'
-        replacement = f'[`{enum_name}`](#🏷️-{enum_name.lower()})'
+
+        pattern = r"\b" + re.escape(enum_name) + r"\b"
+        replacement = f"[`{enum_name}`](#🏷️-{enum_name.lower()})"
         linked_text = re.sub(pattern, replacement, linked_text)
     return linked_text
 
@@ -149,13 +145,13 @@ def format_code_with_links(text: str, enum_names: List[str]) -> str:
     # Find all enum names and their positions
     enum_positions = []
     for enum_name in enum_names:
-        pattern = r'\b' + re.escape(enum_name) + r'\b'
+        pattern = r"\b" + re.escape(enum_name) + r"\b"
         for match in re.finditer(pattern, text):
             enum_positions.append((match.start(), match.end(), enum_name))
 
     if not enum_positions:
         # No enums found, wrap everything in code
-        return f'`{text}`'
+        return f"`{text}`"
 
     # Sort by position
     enum_positions.sort()
@@ -169,17 +165,17 @@ def format_code_with_links(text: str, enum_names: List[str]) -> str:
         if start > last_end:
             before_text = text[last_end:start]
             if before_text:
-                result += f'`{before_text}`'
+                result += f"`{before_text}`"
 
         # Add the enum link
-        result += f'[`{enum_name}`](#%EF%B8%8F-{enum_name.lower()})'
+        result += f"[`{enum_name}`](#%EF%B8%8F-{enum_name.lower()})"
         last_end = end
 
     # Add any remaining text after the last enum
     if last_end < len(text):
         after_text = text[last_end:]
         if after_text:
-            result += f'`{after_text}`'
+            result += f"`{after_text}`"
 
     return result
 
@@ -229,7 +225,9 @@ def generate_markdown_documentation(config_data: Dict[str, Any], output_file: st
             field_type = field["type"].replace("|", "\\|")
             default = field["default"] if field["default"] is not None else "None"
             default = str(default).replace("|", "\\|")
-            description = field["description"] if field["description"] else "*No description available*"
+            description = (
+                field["description"] if field["description"] else "*No description available*"
+            )
             description = description.replace("|", "\\|")
 
             # Create enum links in type and default value with proper code formatting
@@ -296,8 +294,7 @@ def main() -> int:
         generate_markdown_documentation(config_data, args.output)
 
         # Report statistics
-        fields_with_desc: int = sum(
-            1 for field in config_data["fields"] if field["description"])
+        fields_with_desc: int = sum(1 for field in config_data["fields"] if field["description"])
 
         # Check for undocumented fields and handle strict mode
         undocumented_fields: List[str] = [
@@ -309,8 +306,7 @@ def main() -> int:
         print("=" * 60)
         print(f"📄 Output file: {args.output}")
         print(f"📊 Configuration fields: {len(config_data['fields'])}")
-        print(
-            f"📝 Fields with descriptions: {fields_with_desc}/{len(config_data['fields'])}")
+        print(f"📝 Fields with descriptions: {fields_with_desc}/{len(config_data['fields'])}")
         print(f"🏷️  Enumerations: {len(config_data['enums'])}")
 
         if undocumented_fields:
@@ -318,8 +314,7 @@ def main() -> int:
             print(f"⚠️  Fields missing descriptions: {missing_desc}")
 
             if args.strict:
-                print(
-                    f"\n❌ STRICT MODE: Found {missing_desc} undocumented field(s):")
+                print(f"\n❌ STRICT MODE: Found {missing_desc} undocumented field(s):")
                 for field_name in undocumented_fields:
                     print(f"  - {field_name}")
                 print("\nGeneration failed due to undocumented fields.")
