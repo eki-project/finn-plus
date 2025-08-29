@@ -135,17 +135,6 @@ def generate_markdown_documentation(config_data: Dict[str, Any], output_file: st
         if config_data["class_docstring"]:
             f.write(f"{config_data['class_docstring']}\n\n")
 
-        # Write summary statistics
-        f.write("## Summary\n\n")
-        f.write(f"- **Total Configuration Fields:** {len(config_data['fields'])}\n")
-        f.write(f"- **Total Enumerations:** {len(config_data['enums'])}\n")
-
-        # Count fields with and without descriptions
-        fields_with_desc: int = sum(1 for field in config_data["fields"] if field["description"])
-        f.write(
-            f"- **Fields with Documentation:** {fields_with_desc}/{len(config_data['fields'])}\n\n"
-        )
-
         # Write table of contents
         f.write("## Table of Contents\n\n")
         f.write("1. [Enumerations](#enumerations)\n")
@@ -171,19 +160,42 @@ def generate_markdown_documentation(config_data: Dict[str, Any], output_file: st
                     f.write("\n")
 
         # Write configuration fields
-        f.write("## Configuration Fields\n\n")
-        f.write("| Field Name | Type | Default Value | Description |\n")
-        f.write("|------------|------|---------------|-------------|\n")
+        # f.write("## Configuration Fields\n\n")
+        # f.write("| Field Name | Type | Default Value | Description |\n")
+        # f.write("|------------|------|---------------|-------------|\n")
 
+        # for field in config_data["fields"]:
+        #     name: str = field["name"]
+        #     field_type: str = field["type"].replace("|", "\\|")  # Escape pipes for markdown
+        #     default: str = field["default"] if field["default"] is not None else "None"
+        #     default = str(default).replace("|", "\\|")  # Escape pipes for markdown
+        #     description: str = field["description"] if field["description"] else ""
+        #     description = description.replace("|", "\\|")  # Escape pipes for markdown
+
+        #     f.write(f"| `{name}` | `{field_type}` | `{default}` | {description} |\n")
+
+        # f.write("\n")
+        
+        f.write("## Configuration Fields\n\n")
+        
         for field in config_data["fields"]:
             name: str = field["name"]
             field_type: str = field["type"].replace("|", "\\|")  # Escape pipes for markdown
             default: str = field["default"] if field["default"] is not None else "None"
             default = str(default).replace("|", "\\|")  # Escape pipes for markdown
-            description: str = field["description"] if field["description"] else ""
+            description: str = field["description"] if field["description"] else "*No description available*"
             description = description.replace("|", "\\|")  # Escape pipes for markdown
 
-            f.write(f"| `{name}` | `{field_type}` | `{default}` | {description} |\n")
+            # Create a section for each field
+            f.write(f"### `{name}`\n\n")
+            
+            # Create a transposed table for this field
+            f.write("| Property | Value |\n")
+            f.write("|----------|-------|\n")
+            f.write(f"| Type | `{field_type}` |\n")
+            f.write(f"| Default Value | `{default}` |\n")
+            f.write(f"| Description | {description} |\n")
+            f.write("\n")
 
         f.write("\n")
 
