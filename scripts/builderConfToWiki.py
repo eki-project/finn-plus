@@ -130,6 +130,69 @@ def parse_dataflow_build_config(content: str) -> Dict[str, Any]:
     return {"class_docstring": class_docstring, "fields": fields, "enums": enums}
 
 
+def create_enum_links(text: str, enum_names: List[str]) -> str:
+    """Replace enum names in text with markdown links to their documentation sections."""
+    linked_text = text
+    for enum_name in enum_names:
+        # Replace enum name with link using backticks for code styling
+        import re
+        pattern = r'\b' + re.escape(enum_name) + r'\b'
+        replacement = f'[`{enum_name}`](#{enum_name.lower()})'
+        linked_text = re.sub(pattern, replacement, linked_text)
+    return linked_text
+
+
+def format_code_with_links(text: str, enum_names: List[str]) -> str:
+    """Format text as code while preserving enum links."""
+    import re
+
+    # Find all enum names and their positions
+    enum_positions = []
+    for enum_name in enum_names:
+        pattern = r'\b' + re.escape(enum_name) + r'\b'
+        for match in re.finditer(pattern, text):
+            enum_positions.append((match.start(), match.end(), enum_name))
+
+    if not enum_positions:
+        # No enums found, wrap everything in code
+        return f'`{text}`'
+
+    # Sort by position
+    enum_positions.sort()
+
+    # Build the result with code formatting for non-enum parts
+    result = ""
+    last_end = 0
+
+    for start, end, enum_name in enum_positions:
+        # Add code-formatted text before this enum
+        if start > last_end:
+            before_text = text[last_end:start]
+            if before_text:
+                result += f'`{before_text}`'
+
+        # Add the enum link
+        result += f'[`{enum_name}`](#{enum_name.lower()})'
+        last_end = end
+
+    # Add any remaining text after the last enum
+    if last_end < len(text):
+        after_text = text[last_end:]
+        if after_text:
+            result += f'`{after_text}`'
+
+    return result
+    """Replace enum names in text with markdown links to their documentation sections."""
+    linked_text = text
+    for enum_name in enum_names:
+        # Replace enum name with link using HTML code tags to preserve code styling
+        import re
+        pattern = r'\b' + re.escape(enum_name) + r'\b'
+        replacement = f'[`{enum_name}`](#{enum_name.lower()})'
+        linked_text = re.sub(pattern, replacement, linked_text)
+    return linked_text
+
+
 def generate_markdown_documentation(config_data: Dict[str, Any], output_file: str) -> None:
     """Generate markdown documentation from parsed config data."""
 
@@ -140,57 +203,74 @@ def generate_markdown_documentation(config_data: Dict[str, Any], output_file: st
         if config_data["class_docstring"]:
             f.write(f"{config_data['class_docstring']}\n\n")
 
+        # Sort enums and fields by name for consistent ordering
+        sorted_enum_names = sorted(config_data["enums"].keys())
+        sorted_fields = sorted(config_data["fields"], key=lambda x: x["name"])
+
+        # Create list of enum names for linking
+        enum_names = list(config_data["enums"].keys())
+
         # Write table of contents
         f.write("## Table of Contents\n\n")
         f.write("1. [Enumerations](#enumerations)\n")
-        for enum_name in config_data["enums"].keys():
+        for enum_name in sorted_enum_names:
             f.write(f"   - [{enum_name}](#{enum_name.lower()})\n")
         f.write("2. [Configuration Fields](#configuration-fields)\n")
-        for field in config_data["fields"]:
+        for field in sorted_fields:
             f.write(f"   - [`{field['name']}`](#{field['name'].lower()})\n")
         f.write("\n")
 
         # Write enum documentation
         if config_data["enums"]:
             f.write("## Enumerations\n\n")
-            for enum_name, enum_data in config_data["enums"].items():
-                f.write(f"### {enum_name}\n\n")
+            for enum_name in sorted_enum_names:
+                enum_data = config_data["enums"][enum_name]
+                f.write(f"### 🏷️ {enum_name}\n\n")
+
                 if enum_data["docstring"]:
-                    f.write(f"{enum_data['docstring']}\n\n")
+                    f.write(f"> {enum_data['docstring']}\n\n")
 
                 if enum_data["values"]:
-                    f.write("| Name | Value |\n")
-                    f.write("|------|-------|\n")
+                    f.write("| Option | Value |\n")
+                    f.write("|--------|-------|\n")
                     for value_data in enum_data["values"]:
-                        name: str = value_data["name"]
-                        value: str = value_data["value"].replace(
-                            "|", "\\|")  # Escape pipes
+                        name = value_data["name"]
+                        value = value_data["value"].replace("|", "\\|")
+                        # Description column for future use
                         f.write(f"| `{name}` | {value} |\n")
                     f.write("\n")
 
+        # Write configuration fields - Enhanced formatting
         f.write("## Configuration Fields\n\n")
 
-        for field in config_data["fields"]:
-            name: str = field["name"]
-            field_type: str = field["type"].replace(
-                "|", "\\|")  # Escape pipes for markdown
-            default: str = field["default"] if field["default"] is not None else "None"
-            default = str(default).replace(
-                "|", "\\|")  # Escape pipes for markdown
-            description: str = field["description"] if field["description"] else "*No description available*"
-            description = description.replace(
-                "|", "\\|")  # Escape pipes for markdown
+        for field in sorted_fields:
+            name = field["name"]
+            field_type = field["type"].replace("|", "\\|")
+            default = field["default"] if field["default"] is not None else "None"
+            default = str(default).replace("|", "\\|")
+            description = field["description"] if field["description"] else "*No description available*"
+            description = description.replace("|", "\\|")
 
-            # Create a section for each field
-            f.write(f"### `{name}`\n\n")
+            # Create enum links in type and default value with proper code formatting
+            field_type_linked = format_code_with_links(field_type, enum_names)
+            default_linked = format_code_with_links(default, enum_names)
+            description_linked = create_enum_links(description, enum_names)
 
-            # Create a transposed table for this field
+            # Add status icon based on documentation
+            status_icon = "📝" if field["description"] else "❓"
+
+            f.write(f"### {status_icon} `{name}`\n\n")
+
+            # Enhanced table with better formatting
             f.write("| Property | Value |\n")
             f.write("|----------|-------|\n")
-            f.write(f"| Type | `{field_type}` |\n")
-            f.write(f"| Default Value | `{default}` |\n")
-            f.write(f"| Description | {description} |\n")
+            f.write(f"| **Type** | {field_type_linked} |\n")
+            f.write(f"| **Default** | {default_linked} |\n")
+            f.write(f"| **Description** | {description_linked} |\n")
             f.write("\n")
+
+            # Add a subtle separator between fields
+            f.write("---\n\n")
 
         f.write("\n")
 
