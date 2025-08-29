@@ -137,7 +137,7 @@ def create_enum_links(text: str, enum_names: List[str]) -> str:
         # Replace enum name with link using backticks for code styling
         import re
         pattern = r'\b' + re.escape(enum_name) + r'\b'
-        replacement = f'[`{enum_name}`](#{enum_name.lower()})'
+        replacement = f'[`{enum_name}`](#🏷️-{enum_name.lower()})'
         linked_text = re.sub(pattern, replacement, linked_text)
     return linked_text
 
@@ -172,7 +172,7 @@ def format_code_with_links(text: str, enum_names: List[str]) -> str:
                 result += f'`{before_text}`'
 
         # Add the enum link
-        result += f'[`{enum_name}`](#{enum_name.lower()})'
+        result += f'[`{enum_name}`](#%EF%B8%8F-{enum_name.lower()})'
         last_end = end
 
     # Add any remaining text after the last enum
@@ -182,15 +182,6 @@ def format_code_with_links(text: str, enum_names: List[str]) -> str:
             result += f'`{after_text}`'
 
     return result
-    """Replace enum names in text with markdown links to their documentation sections."""
-    linked_text = text
-    for enum_name in enum_names:
-        # Replace enum name with link using HTML code tags to preserve code styling
-        import re
-        pattern = r'\b' + re.escape(enum_name) + r'\b'
-        replacement = f'[`{enum_name}`](#{enum_name.lower()})'
-        linked_text = re.sub(pattern, replacement, linked_text)
-    return linked_text
 
 
 def generate_markdown_documentation(config_data: Dict[str, Any], output_file: str) -> None:
@@ -209,16 +200,6 @@ def generate_markdown_documentation(config_data: Dict[str, Any], output_file: st
 
         # Create list of enum names for linking
         enum_names = list(config_data["enums"].keys())
-
-        # Write table of contents
-        f.write("## Table of Contents\n\n")
-        f.write("1. [Enumerations](#enumerations)\n")
-        for enum_name in sorted_enum_names:
-            f.write(f"   - [{enum_name}](#{enum_name.lower()})\n")
-        f.write("2. [Configuration Fields](#configuration-fields)\n")
-        for field in sorted_fields:
-            f.write(f"   - [`{field['name']}`](#{field['name'].lower()})\n")
-        f.write("\n")
 
         # Write enum documentation
         if config_data["enums"]:
