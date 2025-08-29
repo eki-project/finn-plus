@@ -119,14 +119,6 @@ jobs:
         # Copy the generated documentation to wiki
         cp scripts/DataflowBuildConfig_Documentation.md wiki/DataflowBuildConfig-Documentation.md
 
-        # Create/update the wiki index if it doesn't exist
-        if [ ! -f wiki/Home.md ]; then
-          echo "# FINN Documentation" > wiki/Home.md
-          echo "" >> wiki/Home.md
-          echo "## Configuration Documentation" >> wiki/Home.md
-          echo "- [DataflowBuildConfig Documentation](DataflowBuildConfig-Documentation)" >> wiki/Home.md
-        fi
-
         # Navigate to wiki directory
         cd wiki
 
