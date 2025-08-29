@@ -86,7 +86,7 @@ jobs:
   publish-to-wiki:
     name: Publish Documentation to Wiki
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'pull_request'
 
     steps:
     - name: Checkout repository
