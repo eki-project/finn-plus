@@ -17,7 +17,11 @@ jobs:
     name: Validate Documentation Completeness
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-
+    # Add permissions to allow PR comments
+    permissions:
+      contents: read
+      pull-requests: write
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
