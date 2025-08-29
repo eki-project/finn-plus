@@ -184,8 +184,6 @@ def generate_markdown_documentation(config_data: Dict[str, Any], output_file: st
     """Generate markdown documentation from parsed config data."""
 
     with open(output_file, "w") as f:
-        f.write("# DataflowBuildConfig Documentation\n\n")
-
         # Write class description
         if config_data["class_docstring"]:
             f.write(f"{config_data['class_docstring']}\n\n")

@@ -137,7 +137,6 @@ jobs:
 
         # Add timestamp to documentation
         echo "" >> DataflowBuildConfig-Documentation.md
-        echo "---" >> DataflowBuildConfig-Documentation.md
         echo "*Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC') by GitHub Actions*" >> DataflowBuildConfig-Documentation.md
         echo "*Generated from commit: ${{ github.sha }}*" >> DataflowBuildConfig-Documentation.md
 
