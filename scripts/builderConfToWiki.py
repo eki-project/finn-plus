@@ -73,7 +73,8 @@ def parse_dataflow_build_config(content: str) -> Dict[str, Any]:
             if is_enum:
                 docstring: Optional[str] = ast.get_docstring(node)
                 enum_values: List[Dict[str, str]] = get_enum_values(node)
-                enums[node.name] = {"docstring": docstring, "values": enum_values}
+                enums[node.name] = {
+                    "docstring": docstring, "values": enum_values}
             elif node.name == "DataflowBuildConfig":
                 dataflow_config = node
 
@@ -91,7 +92,8 @@ def parse_dataflow_build_config(content: str) -> Dict[str, Any]:
 
             # Get type annotation
             type_annotation: str = (
-                ast.unparse(node.annotation) if hasattr(ast, "unparse") else str(node.annotation)
+                ast.unparse(node.annotation) if hasattr(
+                    ast, "unparse") else str(node.annotation)
             )
 
             # Get default value
@@ -103,15 +105,18 @@ def parse_dataflow_build_config(content: str) -> Dict[str, Any]:
                     default_value = node.value.id
                 elif isinstance(node.value, ast.Attribute):
                     default_value = (
-                        ast.unparse(node.value) if hasattr(ast, "unparse") else str(node.value)
+                        ast.unparse(node.value) if hasattr(
+                            ast, "unparse") else str(node.value)
                     )
                 else:
                     default_value = (
-                        ast.unparse(node.value) if hasattr(ast, "unparse") else str(node.value)
+                        ast.unparse(node.value) if hasattr(
+                            ast, "unparse") else str(node.value)
                     )
 
             # Get field comment (documentation)
-            comment: Optional[str] = extract_field_comment(source_lines, node.lineno)
+            comment: Optional[str] = extract_field_comment(
+                source_lines, node.lineno)
 
             fields.append(
                 {
@@ -140,7 +145,10 @@ def generate_markdown_documentation(config_data: Dict[str, Any], output_file: st
         f.write("1. [Enumerations](#enumerations)\n")
         for enum_name in config_data["enums"].keys():
             f.write(f"   - [{enum_name}](#{enum_name.lower()})\n")
-        f.write("2. [Configuration Fields](#configuration-fields)\n\n")
+        f.write("2. [Configuration Fields](#configuration-fields)\n")
+        for field in config_data["fields"]:
+            f.write(f"   - [`{field['name']}`](#{field['name'].lower()})\n")
+        f.write("\n")
 
         # Write enum documentation
         if config_data["enums"]:
@@ -155,40 +163,27 @@ def generate_markdown_documentation(config_data: Dict[str, Any], output_file: st
                     f.write("|------|-------|\n")
                     for value_data in enum_data["values"]:
                         name: str = value_data["name"]
-                        value: str = value_data["value"].replace("|", "\\|")  # Escape pipes
+                        value: str = value_data["value"].replace(
+                            "|", "\\|")  # Escape pipes
                         f.write(f"| `{name}` | {value} |\n")
                     f.write("\n")
 
-        # Write configuration fields
-        # f.write("## Configuration Fields\n\n")
-        # f.write("| Field Name | Type | Default Value | Description |\n")
-        # f.write("|------------|------|---------------|-------------|\n")
-
-        # for field in config_data["fields"]:
-        #     name: str = field["name"]
-        #     field_type: str = field["type"].replace("|", "\\|")  # Escape pipes for markdown
-        #     default: str = field["default"] if field["default"] is not None else "None"
-        #     default = str(default).replace("|", "\\|")  # Escape pipes for markdown
-        #     description: str = field["description"] if field["description"] else ""
-        #     description = description.replace("|", "\\|")  # Escape pipes for markdown
-
-        #     f.write(f"| `{name}` | `{field_type}` | `{default}` | {description} |\n")
-
-        # f.write("\n")
-        
         f.write("## Configuration Fields\n\n")
-        
+
         for field in config_data["fields"]:
             name: str = field["name"]
-            field_type: str = field["type"].replace("|", "\\|")  # Escape pipes for markdown
+            field_type: str = field["type"].replace(
+                "|", "\\|")  # Escape pipes for markdown
             default: str = field["default"] if field["default"] is not None else "None"
-            default = str(default).replace("|", "\\|")  # Escape pipes for markdown
+            default = str(default).replace(
+                "|", "\\|")  # Escape pipes for markdown
             description: str = field["description"] if field["description"] else "*No description available*"
-            description = description.replace("|", "\\|")  # Escape pipes for markdown
+            description = description.replace(
+                "|", "\\|")  # Escape pipes for markdown
 
             # Create a section for each field
             f.write(f"### `{name}`\n\n")
-            
+
             # Create a transposed table for this field
             f.write("| Property | Value |\n")
             f.write("|----------|-------|\n")
@@ -240,7 +235,8 @@ def main() -> int:
         generate_markdown_documentation(config_data, args.output)
 
         # Report statistics
-        fields_with_desc: int = sum(1 for field in config_data["fields"] if field["description"])
+        fields_with_desc: int = sum(
+            1 for field in config_data["fields"] if field["description"])
 
         # Check for undocumented fields and handle strict mode
         undocumented_fields: List[str] = [
@@ -252,7 +248,8 @@ def main() -> int:
         print("=" * 60)
         print(f"📄 Output file: {args.output}")
         print(f"📊 Configuration fields: {len(config_data['fields'])}")
-        print(f"📝 Fields with descriptions: {fields_with_desc}/{len(config_data['fields'])}")
+        print(
+            f"📝 Fields with descriptions: {fields_with_desc}/{len(config_data['fields'])}")
         print(f"🏷️  Enumerations: {len(config_data['enums'])}")
 
         if undocumented_fields:
@@ -260,7 +257,8 @@ def main() -> int:
             print(f"⚠️  Fields missing descriptions: {missing_desc}")
 
             if args.strict:
-                print(f"\n❌ STRICT MODE: Found {missing_desc} undocumented field(s):")
+                print(
+                    f"\n❌ STRICT MODE: Found {missing_desc} undocumented field(s):")
                 for field_name in undocumented_fields:
                     print(f"  - {field_name}")
                 print("\nGeneration failed due to undocumented fields.")
