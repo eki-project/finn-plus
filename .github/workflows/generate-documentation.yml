@@ -21,7 +21,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -43,7 +43,7 @@ jobs:
           echo "❌ Documentation generation failed - undocumented fields found"
           echo "success=false" >> $GITHUB_OUTPUT
           echo "$output"
-          
+
           # Extract undocumented field names from the output
           undocumented_fields=$(echo "$output" | grep "^  - " | sed 's/^  - //' | tr '\n' ',' | sed 's/,$//')
           echo "undocumented_fields=$undocumented_fields" >> $GITHUB_OUTPUT
@@ -66,7 +66,7 @@ jobs:
           const undocumentedFields = '${{ steps.generate-docs.outputs.undocumented_fields }}';
           let body = '❌ **Documentation Check Failed**\n\n';
           body += 'Some DataflowBuildConfig fields are missing documentation. Please add documentation comments (starting with `#:`) for all configuration fields before merging.\n\n';
-          
+
           if (undocumentedFields) {
             const fields = undocumentedFields.split(',').filter(f => f.trim());
             body += '### Missing Documentation for Fields:\n';
