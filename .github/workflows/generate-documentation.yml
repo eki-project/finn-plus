@@ -86,7 +86,10 @@ jobs:
   publish-to-wiki:
     name: Publish Documentation to Wiki
     runs-on: ubuntu-latest
+    #if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout repository
@@ -109,7 +112,7 @@ jobs:
       with:
         repository: ${{ github.repository }}.wiki
         path: wiki
-        token: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.WIKI_ACCESS_TOKEN }}
       continue-on-error: true
 
     - name: Update wiki with generated documentation
