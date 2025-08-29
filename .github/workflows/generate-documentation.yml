@@ -36,12 +36,17 @@ jobs:
       run: |
         cd scripts
         echo "Generating documentation in strict mode..."
-        if python builderConfToWiki.py --strict --output DataflowBuildConfig_Documentation.md; then
+        if output=$(python builderConfToWiki.py --strict --output DataflowBuildConfig_Documentation.md 2>&1); then
           echo "✅ Documentation generation successful - all fields are documented"
           echo "success=true" >> $GITHUB_OUTPUT
         else
           echo "❌ Documentation generation failed - undocumented fields found"
           echo "success=false" >> $GITHUB_OUTPUT
+          echo "$output"
+          
+          # Extract undocumented field names from the output
+          undocumented_fields=$(echo "$output" | grep "^  - " | sed 's/^  - //' | tr '\n' ',' | sed 's/,$//')
+          echo "undocumented_fields=$undocumented_fields" >> $GITHUB_OUTPUT
           exit 1
         fi
 
@@ -58,11 +63,24 @@ jobs:
       if: failure()
       with:
         script: |
+          const undocumentedFields = '${{ steps.generate-docs.outputs.undocumented_fields }}';
+          let body = '❌ **Documentation Check Failed**\n\n';
+          body += 'Some DataflowBuildConfig fields are missing documentation. Please add documentation comments (starting with `#:`) for all configuration fields before merging.\n\n';
+          
+          if (undocumentedFields) {
+            const fields = undocumentedFields.split(',').filter(f => f.trim());
+            body += '### Missing Documentation for Fields:\n';
+            fields.forEach(field => {
+              body += `- \`${field.trim()}\`\n`;
+            });
+            body += '\n';
+          }
+
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: '❌ **Documentation Check Failed**\n\nSome DataflowBuildConfig fields are missing documentation. Please add documentation comments (starting with `#:`) for all configuration fields before merging.\n\nCheck the workflow logs for details about which fields need documentation.'
+            body: body
           })
 
   publish-to-wiki:
