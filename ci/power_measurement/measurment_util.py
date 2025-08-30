@@ -2,14 +2,11 @@
 # Originally authored by Lucas Reuter
 # Modified by Felix Jentzsch
 
-import importlib.util
+
 import IPython
-import json
-import multiprocessing
 import os
 import pandas as pd
 import plotly.graph_objects as go
-import sys
 import time
 import vxi11
 from cffi import FFI
@@ -34,7 +31,7 @@ class PAF:
     _rails = {}
     _sensors = {}
     _lib = None
-    supported_boards = ("zcu102", "rfsoc2x2")
+    supported_boards = ("rfsoc2x2", "rfsoc4x2")
 
     def __init__(self, board):
         """Initialize the PAF.
@@ -272,7 +269,6 @@ class Recorder:
         omit_voltage=False,
         omit_current=False,
         omit_group_elements=False,
-        output_dir=".",
     ):
         """Initialize the recorder with desired settings.
 
@@ -311,7 +307,6 @@ class Recorder:
             target=self._thread_record_data, args=[self._rails, self._sensors, self._power_supply]
         )
         self._running = False
-        self._output_dir = output_dir
 
     def _prepare_rail_group(self, group):
         """Helper to create column names for grouped rails.
@@ -493,7 +488,7 @@ class Recorder:
             target=self._thread_record_data, args=[self._rails, self._sensors, self._power_supply]
         )
 
-    def save_dfs_to_xlsx(self, title):
+    def save_dfs_to_xlsx(self, output_dir, title):
         """Saves the recorder dataframes as .xlsx.
 
         Parameters
@@ -501,8 +496,8 @@ class Recorder:
         title : string
             Name of the xlsx file to export to.
         """
-        os.makedirs(self._output_dir, exist_ok=True)  # ensure output directory exists
-        with pd.ExcelWriter(os.path.join(self._output_dir, f"{title}.xlsx")) as writer:
+        os.makedirs(output_dir, exist_ok=True)  # ensure output directory exists
+        with pd.ExcelWriter(os.path.join(output_dir, f"{title}.xlsx")) as writer:
             self._df_rails.to_excel(writer, sheet_name="rails")
             self._df_sensors.to_excel(writer, sheet_name="sensors")
 
@@ -522,6 +517,7 @@ class Recorder:
         while not self._stopped.is_set():
             if self._num_datapoints > 0:
                 for self._index in range(self._num_datapoints):
+                    print(f"index: {self._index}")
                     self._record_data(rails, sensors, power_supply)
                     time.sleep(self._interval)
 
@@ -664,7 +660,7 @@ class PowerSupply:
             self._instrument.write(f":OUTP {channel}, ON")  # turn channel on again
         else:
             print(
-                "[MM] ERROR: Trying to set something other than CH1 to 12.2V @ 10A is not supported!!!"
+                "[MU] ERROR: Trying to set something other than CH1 to 12.2V @ 10A is not supported!!!"
             )  # TODO change this if other settings should be supported
 
     def measure_voltage(self, channel):
@@ -759,319 +755,3 @@ class LiveVisualization:
         """Resets the plots to be empty."""
         for plot in self._fig_widget.data:
             plot.y = []
-
-
-class Experiment:
-    """Experiment represents one experiment that is to be conducted.
-
-    This encapsulates the automated configuration of the PAF and required recorder. An Experiment offers
-    ways to call custom experimentation code with custom imports, even from local files. This relies on
-    a proper configuration to be provided to the Experiment object.
-    """
-
-    def __init__(self, config=None, **kwargs):
-        """Initalize the experiment with its desired configuration.
-
-        Parameters
-        ----------
-        config : dict
-            A configuration dictionary containing the required parameters for the experiment initialization.
-        title : string, optional
-            Title of the experiment
-        functions : list
-            A list of functions that are to be called during the experiment. Each entry of the list specifies
-            a single function call from the experiment as follows. A function call is a dictionary containing the following
-            keys and values.
-            "name" : "The name of the function to call as a string" (e.g. "some_function")
-            "args" : A list of arguments to pass to the function
-            "kwargs" : A dictionary containing keyword parameters.
-        power_supply_ip : string, optional
-            A string containing the IP of the powersupply.
-        warmup : float, optional
-            Time in seconds waited before the functions defined in 'functions' are called. Recording will already commence.
-        end_after : float, optional
-            Time in seconds after which the experiment will be stopped forcefully. WARNING: Not working properly when conducting
-            multiple experiments in sequence.
-        iterations : int, optional
-            Number of times the experiment shall be executed. Default is 1
-        driver : string
-            Path to the PYNQ driver.
-        rails : list
-            List containing the names of the rails to be recorded as strings.
-        sensors : list
-            List containing the names of the sensors to be recorded as strings.
-        bitstream : string
-            Path to the bitstream.
-        import_paths : list
-            List of strings containing path to local imports which might be needed to run the experiment.
-        experiment_path : string
-            Path to the .py file which contains the definitions for the functions called from 'functions'
-        board : string
-            Name of the board model. This is needed to choose the appropriate shared object to obtain data from the board.
-        record_warmup : bool
-            Flag indicating if the warmup period should be recorded or not. Default is False
-        """
-
-        if config is not None:
-            self._config = config
-
-            self._title = config.get("title", "")
-            self._functions = config.get("functions", [])
-            self._power_supply_ip = config.get("PAF").get("power_supply_ip", None)
-            self._warmup = config.get("warmup", 0)  # warmup is default 0s
-            self._end_after = config.get(
-                "end_after", None
-            )  # end experiment after set seconds, None indicates no timeout
-            self._iterations = config.get("iterations", 1)  # number of iterations is default 1
-            self._driver = config.get("FINN").get("driver", None)
-            self._rails = config.get("PAF").get("rails", [])
-            self._sensors = config.get("PAF").get("sensors", [])
-            self._bitstream_path = config.get("FINN").get("bitstream", None)
-            self._import_paths = config.get("import_paths", [])
-            self._experiment_path = config.get("experiment_path", "")
-            self._report_path = config.get("report_path", ".")
-            self._board = config.get("PAF").get("board", None)
-            self._record_warmup = config.get("PAF").get("record_warmup", False)
-
-            self._recorder = None
-            self._experiment_module = None
-        else:
-            # TODO: remove kwargs in favor of json config
-            self._title = kwargs.get("title", "")
-            self._functions = kwargs.get("functions", [])
-            self._power_supply_ip = kwargs.get("power_supply_ip", None)
-            self._warmup = kwargs.get("warmup", 0)
-            self._end_after = kwargs.get("end_after", None)
-            self._iterations = kwargs.get("iterations", 1)
-            self._driver = kwargs.get("driver", None)
-            self._rails = kwargs.get("rails", [])
-            self._sensors = kwargs.get("sensors", [])
-            self._bitstream_path = kwargs.get("bitstream", None)
-            self._import_paths = kwargs.get("import_paths", [])
-            self._experiment_path = kwargs.get("experiment_path", "")
-            self._board = kwargs.get("board", None)
-            self._record_warmup = kwargs.get("record_warmup", False)
-
-            self._recorder = None
-            self._experiment_module = None
-
-            self._config = self._create_config()
-
-        self._paf = PAF(self._config.get("PAF").get("board", None))
-
-    def _create_config(self):
-        """Helper method to generate a json config based on the current configuration variables."""
-
-        config_dict = {}
-
-        # construct FINN section of config
-        config_dict["FINN"] = {}
-        config_dict["FINN"]["driver"] = self._driver
-        config_dict["FINN"]["bitstream"] = self._bitstream_path
-
-        # construct PAF section of config
-        config_dict["PAF"] = {}
-        config_dict["PAF"]["rails"] = self._rails
-        config_dict["PAF"]["sensors"] = self._sensors
-        config_dict["PAF"]["power_supply_ip"] = self._power_supply_ip
-        config_dict["PAF"]["board"] = self._board
-        config_dict["PAF"]["record_warmup"] = self._record_warmup
-
-        # construct general section of config
-        config_dict["title"] = self._title
-        config_dict["import_paths"] = self._import_paths
-        config_dict["functions"] = self._functions
-        config_dict["experiment_path"] = self._experiment_path
-
-        return config_dict
-
-    # TODO add flag to add wrapper which makes config suitable to be loaded from CLI
-    def export_config(self, name):
-        """Export the current experiment configuration as a json file.
-
-            This file can be used to either load the configuration at a later point or to serve
-            as a starting point to configure an ExperimentFlow.
-
-        Parameters
-        ----------
-        name : string
-            Name of the json configuration file
-        """
-
-        with open(f"{name}.json", "w") as json_file:
-            json.dump(self._config, json_file, indent=4)
-
-    def _setup_experiment(self):
-        """Helper method to setup the experiments environment.
-
-        This includes adding custom paths to the PATH environment variable, adding the FINN driver, and importing
-        the experiment as a module that can be interfaced with. The setup also includes the creation of a Recorder
-        to aquire measurements.
-        """
-        print(f"[MM] SETTING UP EXPERIMENT: {self._title}")
-
-        # add all paths for  experiment
-        # check if path is already in sys.path
-        # if so do not add it again and remove from _import_paths
-        # to avoid unwanted deletion of this path in _disassemble_experiment()
-        for path in self._import_paths:
-            if path not in sys.path:
-                sys.path.insert(0, path)
-            else:
-                print(
-                    f"[MM] Path: {path} already part of sys.path. Removing from experiment import paths"
-                )
-                self._import_paths.remove(path)
-
-        # add driver path aswell
-        if self._driver not in sys.path:
-            print("[MM] Adding driver to path")
-            sys.path.insert(0, self._driver)
-        else:
-            print("[MM] Driver already part of path")
-
-        # setup experiment module
-        spec = importlib.util.spec_from_file_location("experiment", self._config["experiment_path"])
-        self._experiment_module = importlib.util.module_from_spec(spec)
-        sys.modules["experiment"] = self._experiment_module
-        spec.loader.exec_module(self._experiment_module)
-
-        print(f"[MM] MONITORING RAILS: {self._rails}")
-        print(f"[MM] MONITORING SENSORS: {self._sensors}")
-        if self._power_supply_ip is not None:
-            print(f"[MM] POWER SUPPLY IP: {self._power_supply_ip}")
-        self._recorder = Recorder(
-            self._rails,
-            self._sensors,
-            self._power_supply_ip,
-            omit_current=True,
-            omit_voltage=True,
-            output_dir=self._report_path,
-        )
-
-    def start_experiment(self):
-        """Main method to start an experiment.
-
-        Before an experiment is executed it is initialized and then run with the specified configuration.
-        """
-        self._setup_experiment()
-        print(f"[MM] STARTING EXPERIMENT: {self._title}")
-
-        for i in range(1, self._iterations + 1):
-            if self._record_warmup:
-                self._recorder.start()
-
-            for function in self._config["functions"]:
-                name = function["name"]
-                args = function.get("args", None)
-                kwargs = function.get("kwargs", None)
-                kwargs["bitfile"] = self._config["FINN"]["bitstream"]
-
-                print(
-                    f"[MM] STARTING ITERATION {i} OF FUNCTION {name} WITH ARGS= {args}, KWARGS= {kwargs}"
-                )
-                func = getattr(self._experiment_module, name)
-
-                if self._end_after is None:
-                    # func(*args, **kwargs)
-                    # execute asynchronously to implement proper warmup
-                    sys.stdout.flush()
-                    p = multiprocessing.Process(target=func, args=args, kwargs=kwargs)
-                    p.start()
-                else:
-                    # TODO: fix for fixed warmup, what if multiple functions are defined?
-                    print("[MM] ERROR, DO NOT USE THIS FEATURE")
-                    p = multiprocessing.Process(target=func, args=args, kwargs=kwargs)
-                    p.start()
-                    print(f"[MM] Experiment will be stopped after end_afer = {self._end_after}s")
-                    time.sleep(self._end_after)
-                    p.terminate()  # FIXME pynq cannot allocate memory after killing process
-                    # os.kill(p.pid, signal.SIGTERM)
-
-                time.sleep(self._warmup)
-
-                if not self._record_warmup and not self._recorder.is_running():
-                    print(f"[MM] STARTING RECORDING AFTER {self._warmup} s OF WARMUP", flush=True)
-                    self._recorder.start()
-
-                # wait on DUT to finish
-                p.join()
-
-            # stop & reset recorder and save results
-            self._recorder.stop()
-            self._recorder.save_dfs_to_xlsx(f"{self._title}_run_{i}")
-            self._recorder.reset()
-
-        self._disassemble_experiment()
-
-    def _disassemble_experiment(self):
-        """Helper method to deinitialize an experiment.
-
-        This includes restoring the state of PATH before the experiment
-        has been intialized
-        """
-
-        for import_path in self._import_paths:
-            if import_path in sys.path:
-                sys.path.remove(import_path)
-        del self._experiment_module
-        del sys.modules["experiment"]
-
-
-# Utilize Experiment Class to implement a series of experiments
-class ExperimentFlow:
-    """Mutliple Experiments performed in succession are modeled by an ExperimentFlow.
-
-    An ExperimentFlow serves as the point of entry when performing multiple experiments, or when
-    calling the paframework from an CLI.
-    """
-
-    def __init__(self, json_path):
-        """Initializes the ExperimentFlow
-
-        Parameters
-        ----------
-        json_path : string
-            String containing the path to the configuration.
-        """
-        self._experiments = []
-        self._config = None
-        with open(json_path, "r") as fp_json:
-            self._config = json.load(fp_json)
-        self._setup_experiments()
-
-    def _setup_experiments(self):
-        """Helper method to setup the experiments described in the configuration."""
-
-        for ex_config in self._config["experiments"]:
-            self._append_global(ex_config)
-            self._experiments.append(Experiment(ex_config))
-
-    def start_experiments(self):
-        """Main method to commence experimentation.
-
-        Each experiement specified in the configuratin gets executed after another.
-        """
-        for experiment in self._experiments:
-            experiment.start_experiment()
-
-    # Checks for a given experiment config if the globally defined sections are present or not.
-    # If experiment already defines global section leave as is, otherwise append global section to experiment.
-    def _append_global(self, experiment_config):
-        """Helper method to check if sections from the global configuration need to be appended
-        to an experiment configuration.
-        """
-
-        for gk in self._config["global"].keys():
-            if gk not in experiment_config.keys():
-                experiment_config[gk] = self._config["global"][gk]
-
-
-if __name__ == "__main__":
-    if len(sys.argv) == 2:
-        json_path = os.path.abspath(sys.argv[1])
-        ex_flow = ExperimentFlow(json_path)
-        ex_flow.start_experiments()
-    else:
-        print("[MM] ERROR: Provide path to experiment json config as argument")
-        sys.exit(1)

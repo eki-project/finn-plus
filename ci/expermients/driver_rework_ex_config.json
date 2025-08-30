@@ -1,0 +1,40 @@
+{
+    "global": {
+      "driver": "driver/driver.py",
+      "bitfile_name": "bitfile/finn-accel.bit",
+      "report_path": "report",
+
+      "PAF": {
+        "rails": [
+          "0V85",
+          "3V3"
+        ],
+        "sensors": [],
+        "board": "rfsoc4x2"
+      }
+    },
+    "experiments": [
+      {
+        "name": "experiment 1",
+        "warmup": 1,
+        "num_runs": 1,
+        "functions": [
+          {
+            "function_name": "idle",
+            "kwargs" : {"time" : 1}
+          }
+        ]
+      },
+      {
+        "name": "experiment 2",
+        "warmup": 1,
+        "num_runs": 1,
+        "functions": [
+          {
+            "function_name": "idle",
+            "kwargs" : {"time" : 2}
+          }
+        ]
+      }
+    ]
+  }

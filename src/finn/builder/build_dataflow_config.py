@@ -409,6 +409,8 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: only relevant if vivado_power_simulate_activity is True.
     vivado_power_simulation_type: Optional[str] = "functional"
 
+    experiments_config_path: Optional[str] = None
+
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:
             # use same clk for synth and hls if not explicitly specified

@@ -48,8 +48,6 @@ from finn.util.data_packing import get_driver_shapes, to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
-from . import template_driver
-
 
 def update_bitfile_path_after_copy(bitfile_path: str, json_path: str) -> None:
     """
@@ -453,36 +451,35 @@ class MakeCPPDriver(Transformation):
         return (model, False)
 
 
-class MakePYNQDriverIODMA(Transformation):
-    """Create PYNQ Python code to correctly interface the generated
-    accelerator, including data packing/unpacking. Should be called
-    after conversion to HLS layers, folding and the creation of
-    dataflow partitions for correct operation.
-
-    platform: one of ["zynq-iodma", "alveo"]
-
-    Outcome if successful: sets the pynq_driver_dir attribute in the ONNX
-    ModelProto's metadata_props field, with the created driver dir as the
-    value. If any layers use runtime-writable parameters, those will be gathered
-    under the runtime_weights/ subfolder of the pynq_driver_dir.
-    """
-
-    def __init__(self, platform, validation_datset=None):
+class MakePYNQDriver(Transformation):
+    def __init__(
+        self,
+        platform,
+        driver_type,
+        clk_period_ns=None,
+        validation_datset=None,
+        experiment_info=None,
+    ):
         super().__init__()
         self.platform = platform
+        self.driver_type = driver_type
+        self.clk_period_ns = clk_period_ns
         self.validation_datset = validation_datset
+        self.experiment_info = experiment_info
 
-    def apply(self, model):
+    def _generate_driver_files(self, model):
         # create a temporary folder for the generated driver
         pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
 
         # create the base FINN driver -- same for all accels
         driver_base_template = os.path.join(
-            os.environ["FINN_QNN_DATA"], "templates/driver/driver_base.py"
+            os.environ["FINN_QNN_DATA"], "templates/driver/driver.py"
         )
-        driver_base_py = pynq_driver_dir + "/driver_base.py"
+        driver_base_py = pynq_driver_dir + "/driver.py"
         shutil.copy(driver_base_template, driver_base_py)
+
+        # TODO: Mabye do this differently
         # driver depends on qonnx and finn packages
         # extract individual source files and copy to driver folder
         qonnx_target_path = pynq_driver_dir + "/qonnx"
@@ -518,8 +515,13 @@ class MakePYNQDriverIODMA(Transformation):
         for src_file, target_file in files_to_copy:
             shutil.copy(src_file, target_file)
 
-        driver_shapes: Dict = get_driver_shapes(model)
+    def _generate_weight_files(self, model):
+        pynq_driver_dir = model.get_metadata_prop("pynq_driver_dir")
 
+        external_weights = False
+        runtime_weights = False
+
+        # TODO: Check weights generation
         # generate external weights npy files
         weights_dir = pynq_driver_dir + "/runtime_weights"
 
@@ -547,6 +549,7 @@ class MakePYNQDriverIODMA(Transformation):
                 iodma_node = getCustomOp(df_model.graph.node[0])
                 # input weights dma?
                 if iodma_node.get_nodeattr("burstMode") == "wrap":
+                    external_weights = True
                     init_tensor = df_model.get_initializer(iodma_node.onnx_node.input[0])
                     ext_weight_dma_cnt += 1
                     w_dtype = df_model.get_tensor_datatype(iodma_node.onnx_node.input[0])
@@ -554,47 +557,8 @@ class MakePYNQDriverIODMA(Transformation):
                     np.save(weights_dir + "/" + idma_name + ".npy", init_external_tensor)
                 idma_idx += 1
 
-        # fill in the driver template
-        driver_py = pynq_driver_dir + "/driver.py"
-        driver = template_driver.pynq_driver_template
-
-        driver = driver.replace("$PLATFORM$", self.platform)
-        driver = driver.replace("$INPUT_FINN_DATATYPE$", str(driver_shapes["idt"]).replace('"', ""))
-        driver = driver.replace("$INPUT_SHAPE_NORMAL$", str(driver_shapes["ishape_normal"]))
-        driver = driver.replace("$INPUT_SHAPE_FOLDED$", str(driver_shapes["ishape_folded"]))
-        driver = driver.replace("$INPUT_SHAPE_PACKED$", str(driver_shapes["ishape_packed"]))
-        driver = driver.replace(
-            "$OUTPUT_FINN_DATATYPE$", str(driver_shapes["odt"]).replace('"', "")
-        )
-        driver = driver.replace("$OUTPUT_SHAPE_NORMAL$", str(driver_shapes["oshape_normal"]))
-        driver = driver.replace("$OUTPUT_SHAPE_FOLDED$", str(driver_shapes["oshape_folded"]))
-        driver = driver.replace("$OUTPUT_SHAPE_PACKED$", str(driver_shapes["oshape_packed"]))
-        driver = driver.replace("$INPUT_DMA_NAME$", "%s" % str(driver_shapes["idma_names"]))
-        driver = driver.replace("$OUTPUT_DMA_NAME$", "%s" % str(driver_shapes["odma_names"]))
-        driver = driver.replace("$NUM_INPUTS$", str(len(driver_shapes["idma_names"])))
-        driver = driver.replace("$NUM_OUTPUTS$", str(len(driver_shapes["odma_names"])))
-        driver = driver.replace("$EXT_WEIGHT_NUM$", str(ext_weight_dma_cnt))
-
-        with open(driver_py, "w") as f:
-            f.write(driver)
-
-        # add validate.py to run full top-1 test (only for suitable networks)
-        validate_py = pynq_driver_dir + "/validate.py"
-        validate_template = os.path.join(
-            os.environ["FINN_QNN_DATA"], "templates/driver/validate.py"
-        )
-        shutil.copy(validate_template, validate_py)
-
-        # generate settings.json for generated driver
-        if self.validation_datset is not None:
-            settings = {
-                "validation_dataset": self.validation_datset,
-            }
-            settingsfile = pynq_driver_dir + "/settings.json"
-            with open(settingsfile, "w") as f:
-                json.dump(settings, f, indent=2)
-
         # generate weight files for runtime-writable layers
+        # TODO verify
         for sdp_ind, sdp_node in enumerate(model.graph.node):
             assert sdp_node.op_type == "StreamingDataflowPartition"
             # get dataflow model
@@ -607,6 +571,7 @@ class MakePYNQDriverIODMA(Transformation):
                     node_inst = getCustomOp(node)
                     is_rt_weights = node_inst.get_nodeattr("runtime_writeable_weights")
                     if is_rt_weights == 1:
+                        runtime_weights = True
                         fcl_w = dataflow_model.get_initializer(node.input[1])
                         w_filename = weights_dir + "/%d_%d_%s.dat" % (
                             sdp_ind,
@@ -623,67 +588,75 @@ class MakePYNQDriverIODMA(Transformation):
                 else:
                     continue
 
-        return (model, False)
+        if (not external_weights) and (not runtime_weights):
+            os.removedirs(weights_dir)
 
+        return external_weights, runtime_weights
 
-class MakePYNQDriverInstrumentation(Transformation):
-    def __init__(self, platform, clk_period_ns, live_fifo_sizing):
-        super().__init__()
-        self.platform = platform
-        self.clk_period_ns = clk_period_ns
-        self.live_fifo_sizing = live_fifo_sizing
+    def _write_fifo_widths(self, model):
+        # export FIFO widths to the settings file as well
+        # at this stage, the FIFOs are already wrapped in StreamingDataflowPartitions
+        settings = {}
+        fifo_widths = {}
+        for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
+            sdp_node_inst = getCustomOp(sdp_node)
+            # JSON doesn't support int keys
+            sdp_id = str(sdp_node_inst.get_nodeattr("partition_id"))
+            dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
+            kernel_model = ModelWrapper(dataflow_model_filename)
+            for node in kernel_model.graph.node:
+                if node.op_type.startswith("StreamingFIFO"):
+                    node_inst = getCustomOp(node)
+                    fifo_widths[sdp_id] = node_inst.get_instream_width()
+        settings["fifo_widths"] = fifo_widths
+        # export original folding config to settings file,
+        # so that the driver can generate a final cfg with live fifo sizes applied
+        folding_path = model.get_metadata_prop("folding_config_before_lfs")
+        if folding_path:
+            with open(folding_path, "r") as f:
+                folding_cfg = json.load(f)
+            settings["folding_config_before_lfs"] = folding_cfg
 
-    def apply(self, model: ModelWrapper):
-        # TODO: support runtime-writable and external weights
-        # TODO: support Alveo and Versal platforms
+        return settings
 
-        # create a temporary folder for the generated driver
-        pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
-        model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
+    def apply(self, model):
+        # TODO: support runtime-writable and external weights (instr)
+        # TODO: support Alveo and Versal platforms (instr)
 
-        # create (copy) the static instrumentation driver
-        driver_template = (
-            os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_instrumentation.py"
-        )
-        if self.live_fifo_sizing:
-            driver_py = pynq_driver_dir + "/driver_instrumentation.py"
-        else:
-            driver_py = pynq_driver_dir + "/driver.py"
-        shutil.copy(driver_template, driver_py)
+        self._generate_driver_files(model)
 
-        # add-on driver for live fifosizing
-        if self.live_fifo_sizing:
-            driver_template = os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_fifosizing.py"
-            driver_py = pynq_driver_dir + "/driver.py"
-            shutil.copy(driver_template, driver_py)
+        driver_information = {}
 
-        # write default settings to driver config file
+        experiment_information = {}
+        if self.experiment_info is not None:
+            with open(self.experiment_info, "r") as f:
+                experiment_information = json.load(f)
+
+        driver_information["driver_type"] = self.driver_type
+        if self.driver_type == "FINNDMAOverlay":
+            external_weights, runtime_weights = self._generate_weight_files(model)
+            driver_shapes: Dict = get_driver_shapes(model)
+            driver_information["io_shape_dict"] = driver_shapes
+            driver_information["io_shape_dict"]["num_inputs"] = len(driver_shapes["idma_names"])
+            driver_information["io_shape_dict"]["num_outputs"] = len(driver_shapes["odma_names"])
+            driver_information["external_weights"] = external_weights
+            driver_information["runtime_weights"] = runtime_weights
+            driver_information["platform"] = self.platform
+
+        if self.clk_period_ns is not None:
+            driver_information["fclk_mhz"] = (1.0 / self.clk_period_ns) * 1e3
+
+        if self.driver_type == "FINNLiveFIFOOverlay":
+            driver_information.update(self._write_fifo_widths(model))
+
+        if self.validation_datset is not None:
+            driver_information["validation_dataset"] = self.validation_datset
+
         settings = {
-            "fclk_mhz": (1.0 / self.clk_period_ns) * 1e3,
+            "driver_information": driver_information,
+            "experiment_information": experiment_information,
         }
-        if self.live_fifo_sizing:
-            # export FIFO widths to the settings file as well
-            # at this stage, the FIFOs are already wrapped in StreamingDataflowPartitions
-            fifo_widths = {}
-            for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
-                sdp_node_inst = getCustomOp(sdp_node)
-                # JSON doesn't support int keys
-                sdp_id = str(sdp_node_inst.get_nodeattr("partition_id"))
-                dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
-                kernel_model = ModelWrapper(dataflow_model_filename)
-                for node in kernel_model.graph.node:
-                    if node.op_type.startswith("StreamingFIFO"):
-                        node_inst = getCustomOp(node)
-                        fifo_widths[sdp_id] = node_inst.get_instream_width()
-            settings["fifo_widths"] = fifo_widths
-            # export original folding config to settings file,
-            # so that the driver can generate a final cfg with live fifo sizes applied
-            folding_path = model.get_metadata_prop("folding_config_before_lfs")
-            if folding_path:
-                with open(folding_path, "r") as f:
-                    folding_cfg = json.load(f)
-                settings["folding_config_before_lfs"] = folding_cfg
-
+        pynq_driver_dir = model.get_metadata_prop("pynq_driver_dir")
         settingsfile = pynq_driver_dir + "/settings.json"
         with open(settingsfile, "w") as f:
             json.dump(settings, f, indent=2)

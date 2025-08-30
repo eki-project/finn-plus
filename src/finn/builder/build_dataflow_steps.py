@@ -84,8 +84,7 @@ from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
 from finn.transformation.fpgadataflow.make_driver import (
     MakeCPPDriver,
-    MakePYNQDriverInstrumentation,
-    MakePYNQDriverIODMA,
+    MakePYNQDriver,
     update_bitfile_path_after_copy,
 )
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
@@ -854,17 +853,27 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     driver_dir = os.path.join(cfg.output_dir, "driver")
     if DataflowOutputType.PYNQ_DRIVER in cfg.generate_outputs:
-        # generate PYNQ driver
+        # determine drivertype
         if cfg.enable_instrumentation:
-            model = model.transform(
-                MakePYNQDriverInstrumentation(
-                    cfg._resolve_driver_platform(), cfg.synth_clk_period_ns, cfg.live_fifo_sizing
-                )
-            )
+            if cfg.live_fifo_sizing:
+                driver_type = "FINNLiveFIFOOverlay"
+            else:
+                driver_type = "FINNInstrumentationOverlay"
         else:
-            model = model.transform(
-                MakePYNQDriverIODMA(cfg._resolve_driver_platform(), cfg.validation_dataset)
+            driver_type = "FINNDMAOverlay"
+
+        experiment_info = cfg.experiments_config_path
+
+        model = model.transform(
+            MakePYNQDriver(
+                cfg._resolve_driver_platform(),
+                driver_type,
+                clk_period_ns=cfg.synth_clk_period_ns,
+                validation_datset=cfg.validation_dataset,
+                experiment_info=experiment_info,
             )
+        )
+
         shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
         log.info("PYNQ Python driver written into " + driver_dir)
     elif DataflowOutputType.CPP_DRIVER in cfg.generate_outputs:
