@@ -1,0 +1,75 @@
+{
+    "status": "failed",
+    "estimate": {
+        "resources": {
+            "LUT": 175590.0,
+            "DSP": 4.0,
+            "BRAM_18K": 3866.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 57683577,
+            "max_cycles": 903168,
+            "max_cycles_node_name": "MVAU_hls_3",
+            "estimated_throughput_fps": 221.44274376417235,
+            "estimated_latency_ns": 288417885
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 169681.0,
+            "FF": 130798.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 474.0,
+            "URAM": 0.0
+        }
+    },
+    "rtlsim": {
+        "performance": {
+            "N": 3,
+            "TIMEOUT": 0,
+            "latency_cycles": 2548312,
+            "cycles": 4357342,
+            "fclk[mhz]": 200.0,
+            "throughput[images-s]": 137.69862452843958,
+            "stable_throughput[images-s]": 331.66945821794
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 232
+    },
+    "synth(ooc)": {
+        "resources": {
+            "LUT": 213674.0,
+            "LUTRAM": 40228.0,
+            "FF": 193967.0,
+            "DSP": 0.0,
+            "BRAM": 2156.0,
+            "BRAM_18K": 664.0,
+            "BRAM_36K": 1824.0,
+            "URAM": 0.0
+        },
+        "timing": {
+            "WNS": -1.166,
+            "fmax_mhz": 162.17969510217318
+        }
+    },
+    "time": {
+        "step_resnet50_tidy": 27,
+        "step_resnet50_streamline": 287,
+        "step_resnet50_convert_to_hw": 12,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 1,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 22,
+        "step_generate_estimate_reports": 0,
+        "step_set_fifo_depths": 579,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 58,
+        "step_create_stitched_ip": 2158,
+        "step_measure_rtlsim_performance": 12693,
+        "step_out_of_context_synthesis": 3158,
+        "total_build_time": 18995
+    }
+}
