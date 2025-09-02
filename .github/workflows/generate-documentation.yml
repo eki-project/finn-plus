@@ -5,12 +5,12 @@ on:
     branches: [main, dev]
     paths:
       - 'src/finn/builder/build_dataflow_config.py'
-      - 'scripts/builderConfToWiki.py'
+      - 'scripts/builder_conf_to_wiki.py'
   push:
     branches: [dev]
     paths:
       - 'src/finn/builder/build_dataflow_config.py'
-      - 'scripts/builderConfToWiki.py'
+      - 'scripts/builder_conf_to_wiki.py'
 
 jobs:
   validate-documentation:
@@ -36,7 +36,7 @@ jobs:
       run: |
         cd scripts
         echo "Generating documentation in strict mode..."
-        if output=$(python builderConfToWiki.py --strict --output DataflowBuildConfig_Documentation.md 2>&1); then
+        if output=$(python builder_conf_to_wiki.py --strict --output DataflowBuildConfig_Documentation.md 2>&1); then
           echo "✅ Documentation generation successful - all fields are documented"
           echo "success=true" >> $GITHUB_OUTPUT
         else
@@ -103,7 +103,7 @@ jobs:
       run: |
         cd scripts
         echo "Generating DataflowBuildConfig documentation..."
-        python builderConfToWiki.py --output DataflowBuildConfig_Documentation.md
+        python builder_conf_to_wiki.py --output DataflowBuildConfig_Documentation.md
         echo "Documentation generated successfully"
 
     - name: Checkout wiki
