@@ -158,18 +158,9 @@ def test_manual_demux_model(  # noqa: C901
         inst.set_nodeattr("inFIFODepths", [100] * len(names))
         inst.set_nodeattr("outFIFODepths", [100] * len(names))
 
-    # Infer shapes and DTs
     model = model.transform(InferShapes())
     model = model.transform(InferDataTypes())
     model = model.transform(GiveUniqueNodeNames())
-
-    # Synth the mux and demux nodes
-    model = model.transform(SpecializeLayers(fpgapart))
-    model = model.transform(PrepareIP(fpgapart, clk))
-    model = model.transform(HLSSynthIP())
-    model = model.transform(GiveUniqueNodeNames())
-
-    # Insert FIFOs and synthesize them
     model = model.transform(InsertFIFO(create_shallow_fifos=True))
     model = model.transform(SpecializeLayers(fpgapart))
     model = model.transform(GiveUniqueNodeNames())
@@ -182,6 +173,7 @@ def test_manual_demux_model(  # noqa: C901
     model = model.transform(PrepareRTLSim())
     model = model.transform(SetExecMode("rtlsim"))
     model.set_metadata_prop("exec_mode", "rtlsim")
+    # model.set_metadata_prop("rtlsim_trace", "tracefile.wdb")
 
     # Prepare model inputs
     inputs: dict[str, list[Any]] = {}
