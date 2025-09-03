@@ -53,6 +53,9 @@ tags
 poetry.lock
 *.code-workspace
 .env
+settings.yaml
+settings.yml
+deps/
 
 # Package files
 *.egg
