@@ -1,0 +1,6 @@
+outs:
+- md5: adb3267d24262fb50bd54d42c0819543.dir
+  size: 3797108
+  nfiles: 17
+  hash: md5
+  path: reports
