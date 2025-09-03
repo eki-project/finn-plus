@@ -31,6 +31,60 @@ def locate_glbl() -> Optional[str]:
             return glbl_path
     return None
 
+def compile_fifo_sim_obj(top_module_name, source_list, header_list, sim_out_dir):
+    with open(sim_out_dir + "/fifosim_wrapper_vlog.prj", "w") as f:
+
+        # extract (unique, by using a set) verilog headers for inclusion
+        verilog_headers = {os.path.dirname(x) for x in header_list if x.endswith(".vh")}
+        verilog_header_incl_str = " ".join(["--include " + x for x in verilog_headers])
+
+        
+        if source_list.endswith(".v"):
+            f.write(f"verilog xil_defaultlib {verilog_header_incl_str} {source_list}\n")
+        else:
+            raise Exception(f"Unknown extension for fifo .prj file sources: {source_list}")
+        
+        f.write("nosort")
+    
+    xelab_libs = [
+        "axi_protocol_checker_v1_1_12",
+        "axi_protocol_checker_v1_1_13",
+        "axis_protocol_checker_v1_1_11",
+        "axis_protocol_checker_v1_1_12",
+        "xil_defaultlib",
+        "unisims_ver",
+        "xpm",
+        "floating_point_v7_1_16",
+        "floating_point_v7_0_21",
+        "floating_point_v7_1_18",
+        "floating_point_v7_1_15",
+        "floating_point_v7_1_19",
+        "secureip"
+    ]
+    
+    cmd_xvlog = "xvlog --incr --relax -prj fifosim_wrapper_vlog.prj".split()
+    cmd_xelab = "xelab --incr -dll --debug typical --relax --mt 8".split()
+    
+    for lib in xelab_libs:
+        cmd_xelab.append("-L")
+        cmd_xelab.append(lib)
+    cmd_xelab.append("--snapshot")
+    cmd_xelab.append("fifosim_wrapper_func_synth")
+    cmd_xelab.append("xil_defaultlib.fifosim_wrapper")
+    cmd_xelab.append("xil_defaultlib.glbl")
+    
+    launch_process_helper(cmd_xvlog, cwd=sim_out_dir)
+    launch_process_helper(cmd_xelab, cwd=sim_out_dir)
+    
+    out_so_relative_path = "xsim.dir/%s/xsimk.so" % top_module_name
+    out_so_full_path = sim_out_dir + "/" + out_so_relative_path
+
+    if not os.path.isfile(out_so_full_path):
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), out_so_full_path)
+
+    return (sim_out_dir, out_so_relative_path)
+    
+    
 
 def compile_sim_obj(top_module_name, source_list, sim_out_dir, debug=False):
     # create a .prj file with the source files

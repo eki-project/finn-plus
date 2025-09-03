@@ -150,6 +150,7 @@ void S_AXI_Control::write_register(uint32_t addr, uint32_t data) {
 
     // Wait for AWREADY
     while (!chk_bool(prefix + "awready")) {
+        std::cout << "Ready not set\n";
         clk.toggle_clk();
     }
 

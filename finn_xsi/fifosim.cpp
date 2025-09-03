@@ -36,10 +36,13 @@ void reset(xsi::Design &top) {
   // Reset all Inputs, Wait for Reset Period
   rst_n->set(0).write_back();
   if (rst_n) {
-    for (unsigned i = 0; i < 16; i++) {
+    for (unsigned i = 0; i < 32; i++) {
       clk.toggle_clk();
     }
     rst_n->set(1).write_back();
+    for (unsigned i = 0; i < 16; i++) {
+      clk.toggle_clk();
+    }
   }
 }
 
@@ -51,6 +54,7 @@ std::unordered_map<std::string, int> fifo_register_map = {
 
 void configure_fifo(S_AXI_Control &fifo, const int mode, uint32_t depth) {
   fifo.write_register(fifo_register_map["mode"], mode);
+  std::cout << "Mode written" << std::endl;
   fifo.write_register(fifo_register_map["depth"], depth);
 }
 
@@ -165,13 +169,13 @@ bool runForFeaturemaps(size_t featuremaps, Clock &clk,
 
     ++iters;
 
-    if(iters % 25000 == 0){
+    //if(iters % 25000 == 0){
       std::cout << "Iteration: " << iters
               << ", Completed Maps: " << completedMaps
               << ", Inflight Timestamps Size: " << inflightTimestamps.size()
               << ", in " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count() << "ms"
               << std::endl;
-    }
+    //}
 
     if (completedMaps == featuremaps) {
       break;
@@ -239,9 +243,12 @@ determineStartDepth(xsi::Design &top, Clock &clk,
     std::cout << "Starting testing start_depth: " << start_depth << std::endl;
 
     reset(top);
+    std::cout << "After reset" << std::endl;
     for (auto &fifo : fifos) {
       configure_fifo(fifo, 1, start_depth);
     }
+
+    std::cout << "Configuring FIFOs done." << std::endl;
 
     if (auto ret = runToStableState(clk, istreams, ostreams, inflightTimestamps,
                                     iters);
@@ -329,14 +336,15 @@ int main(int argc, char *argv[]) {
   using Port = xsi::Port;
   if (trace_filename) {
     // TODO make tracing more finer-grain if possible?
+    std::cout << "Tracing enabled for design!!!!!!!!" << std::endl;
     top.trace_all();
   }
 
-  for(auto&& port : top.ports()) {
-    std::cout << "Port Name: " << port.name()
-              << ", Direction: " << (port.dir())
-              << std::endl;
-  }
+  // for(auto&& port : top.ports()) {
+  //   std::cout << "Port Name: " << port.name()
+  //             << ", Direction: " << (port.dir())
+  //             << std::endl;
+  // }
 
   // Simulation Report Statistics
   size_t iters = 0;
@@ -354,6 +362,7 @@ int main(int argc, char *argv[]) {
   }
 
   // Find Global Control & Run Startup Sequence
+  top.run(1000);
   Clock &clk = Clock::initClock(top);
   clearPorts(top);
   reset(top);
@@ -378,7 +387,9 @@ int main(int argc, char *argv[]) {
 
   std::vector<S_AXI_Control> fifos;
 
-  for (size_t i = 0; i < 98; ++i){
+
+  // For now the number of FIFOs has to be set by hand
+  for (size_t i = 0; i < 3; ++i){
     fifos.emplace_back(top, "s_axi_control_0_" + std::to_string(i) + "_");
   }
 
