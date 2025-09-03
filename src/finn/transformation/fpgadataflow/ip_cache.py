@@ -226,7 +226,7 @@ class IPCache:
 
     def _dump_nodeattrs(self, op: HWCustomOp, path: Path) -> None:
         """Dump the custom ops node attributes at the given path as a JSON."""
-        required = ["ip_vlnv", "ipgen_path", "ip_path"]
+        required = ["ip_vlnv"]
         d = {}
         for name in op.get_nodeattr_types().keys():
             if name in required:
@@ -256,7 +256,7 @@ class IPCache:
         # Check if the cached IP really exists
         if not ip_dir.exists():
             raise FINNInternalError(
-                f"Cannot use hashed key {hashed_key}: " f"Cache dir {ip_dir} does not exist!"
+                f"Cannot use hashed key {hashed_key}: Cache dir {ip_dir} does not exist!"
             )
 
         # Read node attributes from saved directory
@@ -266,22 +266,16 @@ class IPCache:
         # If needed make copy of the cached dir
         if make_copy:
             copied_dir = Path(make_build_dir(prefix=f"cached_code_gen_ipgen_{op.onnx_node.name}"))
-            shutil.copytree(ip_dir, copied_dir)
+            shutil.copytree(ip_dir, copied_dir, dirs_exist_ok=True)
             ip_dir = copied_dir
 
         # Set node attributes correctly to point to cached directory
-        transfer_from_cached = ["ip_vlnv", "ipgen_path"]
-        for nodeattr in transfer_from_cached:
-            if nodeattr not in saved_nodeattrs.keys():
-                raise FINNInternalError(
-                    f"Tried using cached IP for {op.onnx_node.name} but "
-                    f"nodeattrs.json at {ip_dir} did not contain required "
-                    f"node attribute {nodeattr}!"
-                )
-            op.set_nodeattr(nodeattr, saved_nodeattrs[nodeattr])
-
-        # Set IP path to already synthesized IP
-        op.set_nodeattr("ip_path", str(ip_dir / "sol1" / "impl" / "ip"))
+        op.set_nodeattr("code_gen_dir_ipgen", str(ip_dir))
+        op.set_nodeattr("ip_vlnv", saved_nodeattrs["ip_vlnv"])
+        op.set_nodeattr(
+            "ip_path", str(ip_dir / f"project_{op.onnx_node.name}" / "sol1" / "impl" / "ip")
+        )
+        op.set_nodeattr("ipgen_path", str(ip_dir / f"project_{op.onnx_node.name}"))
 
     def apply_cache(self, model: ModelWrapper) -> ModelWrapper:
         """First apply all cached IPs, then run synthesis and cache the ones not yet cached."""
@@ -296,8 +290,6 @@ class IPCache:
             hashed_key = self._get_hash_hex(key)
             cache_dir = self._cache_dir_path(hashed_key)
             if cache_dir.exists():
-                log.info(f"Node {node.name} is already cached! (hashed key: {hashed_key[:10]}...)")
-                log.info("Applying cached IP...")
                 self._prepare_from_cached_ip(op, hashed_key, make_copy=True)
 
         # Second Pass: Run synthesis and cache not yet cached nodes
@@ -315,7 +307,7 @@ class IPCache:
                         f"PrepareIP and/or HLSSynth for {node.name} "
                         f"were not successful: code_gen_dir_ipgen not found!"
                     )
-                shutil.copytree(code_gen_dir, target_dir)
+                shutil.copytree(code_gen_dir, target_dir, dirs_exist_ok=True)
                 self._create_key_file(key, target_dir / "key.txt")
                 self._dump_nodeattrs(op, target_dir / "nodeattrs.json")
                 log.info(f"Cached node {node.name}. Cached at: {target_dir} from {code_gen_dir}!")
