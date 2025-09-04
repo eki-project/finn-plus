@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Callable, Final, cast
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
+from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.util.basic import make_build_dir
 from finn.util.deps import get_cache_path, get_deps_path
 from finn.util.exception import FINNConfigurationError, FINNInternalError
@@ -37,7 +38,7 @@ However if "ignore" is used, every attribute _except_ those listed are used.
 """
 
 
-def cache_ip(attributes: list[str] | None = None) -> HWCustomOp:
+def cache_ip(attributes: list[str] | None = None) -> Callable[[type], type]:
     """Decorate the given custom operator to be cacheable.
 
     Args:
@@ -52,6 +53,9 @@ def cache_ip(attributes: list[str] | None = None) -> HWCustomOp:
         ), f"Can only cache HWCustomOp instances, but {op_cls.__name__} is not a HWCustomOP!"
         if op_cls not in CACHE_IP_DEFINITIONS.keys():
             CACHE_IP_DEFINITIONS[op_cls] = {}
+        else:
+            # Already marked
+            return op_cls
         if attributes is not None:
             CACHE_IP_DEFINITIONS[op_cls]["use"] = attributes
         else:
@@ -71,7 +75,6 @@ def cache_ip(attributes: list[str] | None = None) -> HWCustomOp:
                 "code_gen_dir_cppsim",
             ]
             CACHE_IP_DEFINITIONS[op_cls]["ignore"] = ignore_fields
-        print(f"Added custom op {op_cls.__name__} to the cacheable IP registry!")
         return op_cls
 
     return wrapper
@@ -194,8 +197,8 @@ class IPCache:
         # TODO: Practical, because we can include the unhashed key in the directory for debugging
         global CACHE_IP_DEFINITIONS
         if type(op) not in CACHE_IP_DEFINITIONS.keys():
-            raise FINNInternalError(
-                "Tried getting the hash for a non-cacheable custom operator. "
+            log.error(
+                "Tried getting the key for a non-cacheable custom operator. "
                 "Did you perhaps forget to register the op for caching via "
                 "@cache_ip(...)?"
             )
@@ -330,23 +333,45 @@ class IPCache:
                 log.info(f"Cached node {node.name}. Cached at: {target_dir} from {code_gen_dir}!")
 
 
-class CachedHLSSynthIP(Transformation):
-    """HLSSynth but cached."""
+class CachedIPGen(Transformation):
+    """(PrepareIP and) HLSSynth but cached."""
 
-    # TODO: Remove / reorder steps hw_ipgen and hw_codegen
-    def __init__(self, hash_function: str) -> None:
-        """HLSSynth but cached."""
+    def __init__(
+        self,
+        hash_function: str,
+        include_prepare_ip: bool,
+        fpgapart: str | None = None,
+        clk: float | None = None,
+    ) -> None:
+        """(PrepareIP and) HLSSynth but cached.
+
+        Args:
+            hash_function: Hashfunction to use.
+            include_prepare_ip: If True, also run PrepareIP before synthesis.
+            fpgapart: Required if PrepareIP is being run.
+            clk: Required if PrepareIP is being run.
+        """
         super().__init__()
         self.hashfunc = hash_function
+        self.prepareip = include_prepare_ip
+        self.part = fpgapart
+        self.clk = clk
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        """Apply cached HLS Synthesis."""
+        """Apply cached HLS Synthesis (and PrepareIP)."""
         cache = IPCache(cache_dir=get_cache_path(), hashfunc=self.hashfunc)
         log.info(
             f"Applying cache to {cache.get_num_cached_ips(model)} "
             f"/ {len(model.graph.node)} nodes!"
         )
         model = cache.apply(model)
+        if self.prepareip:
+            if self.part is None or self.clk is None:
+                raise FINNInternalError(
+                    "Cannot run PrepareIP in CachedIPGen without " "fpgapart and clk being passed!"
+                )
+            log.info("Running PrepareIP for uncached IPs...")
+            model = model.transform(PrepareIP(self.part, self.clk))
         log.info("Running synthesis for uncached IPs...")
         model = model.transform(HLSSynthIP())
         log.info("Updating cache with newly generated IPs...")

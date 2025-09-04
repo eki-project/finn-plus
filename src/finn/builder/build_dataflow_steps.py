@@ -82,7 +82,7 @@ from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
-from finn.transformation.fpgadataflow.ip_cache import CachedHLSSynthIP
+from finn.transformation.fpgadataflow.ip_cache import CachedIPGen
 from finn.transformation.fpgadataflow.make_driver import (
     MakeCPPDriver,
     MakePYNQDriverInstrumentation,
@@ -516,6 +516,39 @@ def step_minimize_bit_width(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
+def _make_hls_estimate_report(model: ModelWrapper, cfg: DataflowBuildConfig) -> None:
+    report_dir = cfg.output_dir + "/report"
+    os.makedirs(report_dir, exist_ok=True)
+    estimate_layer_resources_hls = model.analysis(hls_synth_res_estimation)
+    estimate_layer_resources_hls["total"] = aggregate_dict_keys(estimate_layer_resources_hls)
+    with open(report_dir + "/estimate_layer_resources_hls.json", "w") as f:
+        json.dump(estimate_layer_resources_hls, f, indent=2)
+
+
+def step_ip_generation(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Unified step, that does what step_hw_codegen and step_hw_ipgen did before. (With cache!)."""
+    if cfg.use_ip_caching:
+        model = model.transform(
+            CachedIPGen(
+                cfg.ip_cache_hashfunction,
+                include_prepare_ip=True,
+                fpgapart=cfg._resolve_fpga_part(),
+                clk=cfg._resolve_hls_clk_period(),
+            )
+        )
+    else:
+        model = model.transform(PrepareIP(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period()))
+        model = model.transform(HLSSynthIP())
+    model = model.transform(ReplaceVerilogRelPaths())
+    _make_hls_estimate_report(model, cfg)
+
+    if VerificationStepType.NODE_BY_NODE_RTLSIM in cfg._resolve_verification_steps():
+        model = model.transform(PrepareRTLSim())
+        model = model.transform(SetExecMode("rtlsim"))
+        verify_step(model, cfg, "node_by_node_rtlsim", need_parent=True)
+    return model
+
+
 def step_hw_codegen(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Generate Vitis HLS code to prepare HLSBackend nodes for IP generation.
     And fills RTL templates for RTLBackend nodes."""
@@ -531,19 +564,13 @@ def step_hw_ipgen(model: ModelWrapper, cfg: DataflowBuildConfig):
     # TODO: Move out of step_hw_ipgen, reorder steps
     if cfg.use_ip_caching:
         log.info("Using IP cache to fetch generated IPs...")
-        model = model.transform(CachedHLSSynthIP(cfg.ip_cache_hashfunction))
+        model = model.transform(CachedIPGen(cfg.ip_cache_hashfunction, include_prepare_ip=False))
     else:
         log.info("Generating all IPs from scratch...")
         model = model.transform(HLSSynthIP())
 
     model = model.transform(ReplaceVerilogRelPaths())
-    report_dir = cfg.output_dir + "/report"
-    os.makedirs(report_dir, exist_ok=True)
-    estimate_layer_resources_hls = model.analysis(hls_synth_res_estimation)
-    estimate_layer_resources_hls["total"] = aggregate_dict_keys(estimate_layer_resources_hls)
-    with open(report_dir + "/estimate_layer_resources_hls.json", "w") as f:
-        json.dump(estimate_layer_resources_hls, f, indent=2)
-
+    _make_hls_estimate_report(model, cfg)
     if VerificationStepType.NODE_BY_NODE_RTLSIM in cfg._resolve_verification_steps():
         model = model.transform(PrepareRTLSim())
         model = model.transform(SetExecMode("rtlsim"))
@@ -1044,6 +1071,7 @@ build_dataflow_step_lookup = {
     "step_apply_folding_config": step_apply_folding_config,
     "step_minimize_bit_width": step_minimize_bit_width,
     "step_generate_estimate_reports": step_generate_estimate_reports,
+    "step_ip_generation": step_ip_generation,
     "step_hw_codegen": step_hw_codegen,
     "step_hw_ipgen": step_hw_ipgen,
     "step_set_fifo_depths": step_set_fifo_depths,
