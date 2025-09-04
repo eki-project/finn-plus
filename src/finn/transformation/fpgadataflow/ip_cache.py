@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from typing import TYPE_CHECKING, Callable, Final
+from typing import TYPE_CHECKING, Callable, Final, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
@@ -22,6 +22,7 @@ from finn.util.exception import FINNConfigurationError, FINNInternalError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
+    from onnx import NodeProto
     from qonnx.core.modelwrapper import ModelWrapper
 
 
@@ -46,9 +47,9 @@ def cache_ip(attributes: list[str] | None = None) -> HWCustomOp:
     global CACHE_IP_DEFINITIONS
 
     def wrapper(op_cls: type) -> type:
-        assert issubclass(op_cls, HWCustomOp), (
-            f"Can only cache HWCustomOp instances, " f"but {op_cls.__name__} is not a HWCustomOP!"
-        )
+        assert issubclass(
+            op_cls, HWCustomOp
+        ), f"Can only cache HWCustomOp instances, but {op_cls.__name__} is not a HWCustomOP!"
         if op_cls not in CACHE_IP_DEFINITIONS.keys():
             CACHE_IP_DEFINITIONS[op_cls] = {}
         if attributes is not None:
@@ -77,7 +78,16 @@ def cache_ip(attributes: list[str] | None = None) -> HWCustomOp:
 
 
 class IPCache:
-    """Manage IP caching."""
+    """Manage IP caching.
+
+    Application: To apply this in a normal flow, execute somewhat like this:
+    ```
+    cache = IPCache(...)
+    model = cache.apply(model)              # Apply already cached IPs
+    model = model.transform(HLSSynthIP())   # Generate IPs that weren't available
+    cache.update(model)                     # Cache the newly generated IPs too
+    ```
+    """
 
     # TODO: Update hash functions
     allowed_hashfuncs: Final[list[str]] = ["sha256"]
@@ -92,7 +102,7 @@ class IPCache:
         self.cache_dir = cache_dir
         if not self.cache_dir.exists():
             self.cache_dir.mkdir()
-        log.info(f"[IPCache] Cache directory: {self.cache_dir}")
+        log.info(f"Opened cache handler. Cache directory: {self.cache_dir}")
         if hashfunc not in dir(hashlib):
             raise FINNConfigurationError(f"There is no hash function with the name {hashfunc}!")
         if hashfunc not in self.allowed_hashfuncs:
@@ -112,7 +122,7 @@ class IPCache:
             capture_output=True,
             cwd=Path(__file__).parent,
         ).stdout.strip()
-        log.info(f"[IPCache] FINN Commit reads: {self.finn_commit}")
+        log.info(f"FINN Commit reads: {self.finn_commit}")
 
         # FINN HLSLIB Commit
         self.hlslib_commit = subprocess.run(
@@ -121,74 +131,41 @@ class IPCache:
             capture_output=True,
             cwd=get_deps_path() / "finn-hlslib",
         ).stdout.strip()
-        log.info(f"[IPCache] HLSLIB Commit reads: {self.hlslib_commit}")
+        log.info(f"HLSLIB Commit reads: {self.hlslib_commit}")
 
-    def _get_key(self, op: HWCustomOp, model: ModelWrapper) -> str:
-        """Return the key that can be hashed, for the given custom op.
-
-        Returns:
-            str: The human-readable key. Can be used to generate the caching
-                    hash and the metadata file packed with the cached data.
-        """
-        global CACHE_IP_DEFINITIONS
-
-        # TODO: Maybe exchange simple string concat for something more elegant at some point.
-        # TODO: Practical, because we can include the unhashed key in the directory for debugging
-        # Always use the current FINN and HLSLIB commits so that the correct versions are used
-        key = f"FINN: {self.finn_commit}\nHLSLIB: {self.hlslib_commit}\n"
-
-        # Two custom ops might need the same attributes, so add the type
-        key += "type:" + str(type(op)) + "\n"
-
-        # Add all node attributes required
+    def _get_key_part_attributes(self, op: HWCustomOp) -> str:
+        """Return the part of the key that contains attributes and their values."""
+        key_part = ""
         typ = type(op)
-        if typ not in CACHE_IP_DEFINITIONS.keys():
-            raise FINNInternalError(
-                "Tried getting the hash for a non-cacheable custom operator. "
-                "Did you perhaps forget to register the op for caching via "
-                "@cache_ip(...)?"
-            )
-
-        # If both "use" and "ignore" are given, only use "use"
+        attrs: list[str] = []
         if "use" in CACHE_IP_DEFINITIONS[typ].keys():
-            keys = CACHE_IP_DEFINITIONS[typ]["use"]
-            for attr in keys:
-                data = None
-                try:
-                    data = op.get_nodeattr(attr)
-                except Exception:
-                    continue
-                try:
-                    data = str(data)
-                except Exception as e:
-                    raise FINNInternalError(
-                        f"Unable to create string-representation for node "
-                        f"attribute {attr} of custom op {op.onnx_node.name} of "
-                        f"type {type(op)}."
-                    ) from e
-                # Finally add to key
-                key += f"{attr}:{data}\n"
-
+            attrs = CACHE_IP_DEFINITIONS[typ]["use"]
         elif "ignore" in CACHE_IP_DEFINITIONS[typ].keys():
-            for name in op.get_nodeattr_types().keys():
-                if name not in CACHE_IP_DEFINITIONS[typ]["ignore"]:
-                    data = None
-                    try:
-                        data = op.get_nodeattr(name)
-                    except Exception:
-                        continue
-                    try:
-                        data = str(data)
-                    except Exception as e:
-                        raise FINNInternalError(
-                            f"Unable to create string-representation for node "
-                            f"attribute {name} of custom "
-                            f"op {op.onnx_node.name} of "
-                            f"type {type(op)}."
-                        ) from e
-                key += f"{name}:{data}\n"
+            attrs = [
+                k
+                for k in op.get_nodeattr_types().keys()
+                if k not in CACHE_IP_DEFINITIONS[typ]["ignore"]
+            ]
+        else:
+            raise FINNInternalError("This codepath should not be reachable!")
+        for attr in attrs:
+            data = None
+            try:
+                data = op.get_nodeattr(attr)
+            except Exception:
+                continue
+            try:
+                data = str(data)
+            except Exception as e:
+                raise FINNInternalError(
+                    f"Unable to create string-representation for node "
+                    f"attribute {attr} of custom op {op.onnx_node.name} of "
+                    f"type {type(op)}."
+                ) from e
+            key_part += f"{attr}:{data}\n"
+        return key_part
 
-        # Add parameters if existing
+    def _get_key_part_parameter(self, op: HWCustomOp, model: ModelWrapper) -> str:
         # TODO: Extend to all custom ops that require this
         if isinstance(op, MVAU):
             mem_mode = None
@@ -203,15 +180,44 @@ class IPCache:
                 # TODO: Add shape!
                 weight = np.ascontiguousarray(model.get_initializer(op.onnx_node.input[1]))
                 array_hash = self.hasher(weight.tobytes()).hexdigest()
-                key += f"weights_hash:{array_hash}\n"
+                return f"weights_hash:{array_hash}\n"
+        return ""
 
-        # TODO: Other ops that require parameters
+    def get_key(self, op: HWCustomOp, model: ModelWrapper) -> str:
+        """Return the key that can be hashed, for the given custom op.
+
+        Returns:
+            str: The human-readable key. Can be used to generate the caching
+                    hash and the metadata file packed with the cached data.
+        """
+        # TODO: Maybe exchange simple string concat for something more elegant at some point.
+        # TODO: Practical, because we can include the unhashed key in the directory for debugging
+        global CACHE_IP_DEFINITIONS
+        if type(op) not in CACHE_IP_DEFINITIONS.keys():
+            raise FINNInternalError(
+                "Tried getting the hash for a non-cacheable custom operator. "
+                "Did you perhaps forget to register the op for caching via "
+                "@cache_ip(...)?"
+            )
+
+        # Always use the current FINN and HLSLIB commits so that the correct versions are used
+        key = f"FINN: {self.finn_commit}\nHLSLIB: {self.hlslib_commit}\n"
+
+        # Two custom ops might need the same attributes, so add the type
+        key += "type:" + str(type(op)) + "\n"
+
+        # Add all node attributes required
+        key += self._get_key_part_attributes(op) + "\n"
+
+        # Add parameters if existing
+        key += self._get_key_part_parameter(op, model)
+
         return key
 
-    def _get_hash_hex(self, key: str) -> str:
+    def get_hash_hex(self, key: str) -> str:
         """Return the hex repr of the hash of the given key.
 
-        The key can be created using _get_key(...)
+        The key can be created using get_key(...)
         """
         return self.hasher(key.encode("UTF-8")).hexdigest()
 
@@ -278,41 +284,50 @@ class IPCache:
         )
         op.set_nodeattr("ipgen_path", str(ip_dir / f"project_{op.onnx_node.name}"))
 
-    def apply_cache(self, model: ModelWrapper) -> ModelWrapper:
-        """First apply all cached IPs, then run synthesis and cache the ones not yet cached."""
+    def _get_node_data(
+        self, node: NodeProto, model: ModelWrapper
+    ) -> tuple[HWCustomOp, str, str, Path]:
+        """Return the op, key, hashed key, cache dir path for a given node."""
+        op = getCustomOp(node)
+        key = self.get_key(op, model)
+        hashed_key = self.get_hash_hex(key)
+        return op, key, hashed_key, self._cache_dir_path(hashed_key)
 
-        # TODO: Include PrepareIP for RTL nodes (not only synthesis)!
-
-        # First Pass: Apply all cached IPs
-        log.info("[IPCache] First pass: Applying cached IPs...")
+    def get_num_cached_ips(self, model: ModelWrapper) -> int:
+        """Return the number of cached IPs in the model."""
+        count = 0
         for node in model.graph.node:
-            op = getCustomOp(node)
-            key = self._get_key(op, model)
-            hashed_key = self._get_hash_hex(key)
-            cache_dir = self._cache_dir_path(hashed_key)
+            _, _, _, cache_dir = self._get_node_data(node, model)
+            if cache_dir.exists():
+                count += 1
+        return count
+
+    def apply(self, model: ModelWrapper) -> ModelWrapper:
+        """Apply all IPs that were cached to the model and return it."""
+        for node in model.graph.node:
+            op, key, hashed_key, cache_dir = self._get_node_data(node, model)
             if cache_dir.exists():
                 self._prepare_from_cached_ip(op, hashed_key, make_copy=True)
+        return model
 
-        # Second Pass: Run synthesis and cache not yet cached nodes
-        log.info("[IPCache] Second pass: Synthesizing and caching new IPs...")
-        model = model.transform(HLSSynthIP())
+    def update(self, model: ModelWrapper) -> None:
+        """Check a model for generated IPs that were not yet cached, and cache them.
+
+        Requires HLSSynthIP() to be run before.
+        """
         for node in model.graph.node:
-            op = getCustomOp(node)
-            key = self._get_key(op, model)
-            hashed_key = self._get_hash_hex(key)
-            target_dir = self._cache_dir_path(hashed_key)
+            op, key, hashed_key, target_dir = self._get_node_data(node, model)
             if not target_dir.exists():
-                code_gen_dir = Path(op.get_nodeattr("code_gen_dir_ipgen"))
+                code_gen_dir = Path(cast(str, op.get_nodeattr("code_gen_dir_ipgen")))
                 if not code_gen_dir.exists():
-                    raise FINNInternalError(
-                        f"PrepareIP and/or HLSSynth for {node.name} "
-                        f"were not successful: code_gen_dir_ipgen not found!"
+                    log.warning(
+                        f"Could not cache {node.name}: code_gen_dir_ipgen not set. "
+                        f"Did HLSSynthIP() fail/was not run?"
                     )
                 shutil.copytree(code_gen_dir, target_dir, dirs_exist_ok=True)
                 self._create_key_file(key, target_dir / "key.txt")
                 self._dump_nodeattrs(op, target_dir / "nodeattrs.json")
                 log.info(f"Cached node {node.name}. Cached at: {target_dir} from {code_gen_dir}!")
-        return model
 
 
 class CachedHLSSynthIP(Transformation):
@@ -327,5 +342,13 @@ class CachedHLSSynthIP(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply cached HLS Synthesis."""
         cache = IPCache(cache_dir=get_cache_path(), hashfunc=self.hashfunc)
-        model = cache.apply_cache(model)
+        log.info(
+            f"Applying cache to {cache.get_num_cached_ips(model)} "
+            f"/ {len(model.graph.node)} nodes!"
+        )
+        model = cache.apply(model)
+        log.info("Running synthesis for uncached IPs...")
+        model = model.transform(HLSSynthIP())
+        log.info("Updating cache with newly generated IPs...")
+        cache.update(model)
         return model, False
