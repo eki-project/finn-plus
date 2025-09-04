@@ -11,17 +11,14 @@ import subprocess
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from typing import TYPE_CHECKING, Callable, Final, cast
+from typing import TYPE_CHECKING, Any, Callable, Final, cast
 
 from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
-from finn.custom_op.fpgadataflow.attention_heads import MergeMultiHeads, SplitMultiHeads
 from finn.custom_op.fpgadataflow.channelwise_op import ChannelwiseOp
-from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.lookup import Lookup
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
-from finn.custom_op.fpgadataflow.pool import Pool
 from finn.custom_op.fpgadataflow.thresholding import Thresholding
 from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -178,8 +175,18 @@ class IPCache:
         return key_part
 
     def _get_key_part_parameter(self, op: HWCustomOp, model: ModelWrapper) -> str:
-        # TODO: Extend to all custom ops that require this
-        if isinstance(op, MVAU):
+        """Get the key part defined by the op parameters.
+
+        If, for example, weights, are embedded into the operators, they need to
+        be part of the hashed key as well.
+        """
+
+        def ndarray_to_bytes(tensor: Any) -> bytes:
+            cont = np.ascontiguousarray(tensor)
+            assert type(tensor) is np.ndarray
+            return cont.tobytes() + str(tensor.shape).encode("UTF-8")
+
+        if isinstance(op, (MVAU, VVAU)):
             mem_mode = None
             try:
                 mem_mode = op.get_nodeattr("mem_mode")
@@ -189,31 +196,44 @@ class IPCache:
                     f"type MVAU but has no mem_mode set!"
                 ) from e
             if mem_mode in ["internal_embedded", "internal_decoupled"]:
-                tensor = model.get_initializer(op.onnx_node.input[1])
-                weight = np.ascontiguousarray(tensor)
-                array_hash = self.hasher(weight.tobytes())
-                # TODO: Fix typing error for next line
-                array_hash.update(str(tensor.shape).encode("UTF-8"))
-                array_hash = array_hash.hexdigest()
-                return f"weights_hash:{array_hash}\n"
-        elif isinstance(
-            op,
-            (
-                ScaledDotProductAttention,
-                SplitMultiHeads,
-                MergeMultiHeads,
-                ChannelwiseOp,
-                ConvolutionInputGenerator,
-                ElementwiseBinaryOperation,
-                Lookup,
-                Pool,
-                Thresholding,
-                VVAU,
-            ),
-        ):
-            raise NotImplementedError(
-                "Need to implement which parameters need to be " "cached for this component!"
-            )
+                weightbytes = ndarray_to_bytes(model.get_initializer(op.onnx_node.input[1]))
+                threshbytes = ndarray_to_bytes(model.get_initializer(op.onnx_node.input[2]))
+                array_hash = self.hasher(weightbytes + threshbytes).hexdigest()
+                return f"param_hash:{array_hash}\n"
+        elif isinstance(op, (Thresholding, ChannelwiseOp, Lookup)):
+            parambytes = ndarray_to_bytes(model.get_initializer(op.onnx_node.input[1]))
+            array_hash = self.hasher(parambytes).hexdigest()
+            return f"param_hash:{array_hash}\n"
+        elif isinstance(op, (ElementwiseBinaryOperation,)):
+            parambytes0 = ndarray_to_bytes(model.get_initializer(op.onnx_node.input[0]))
+            parambytes1 = ndarray_to_bytes(model.get_initializer(op.onnx_node.input[1]))
+            array_hash = self.hasher(parambytes0 + parambytes1).hexdigest()
+            return f"param_hash:{array_hash}\n"
+        elif isinstance(op, ScaledDotProductAttention):
+            key_part = ""
+            if op.get_nodeattr("ActQKMatMul") == "thresholds":
+                thresholds = model.get_initializer(
+                    op.get_input_name_by_name("thresholds_qk_matmul")
+                )
+                hashed = self.hasher(ndarray_to_bytes(thresholds)).hexdigest()
+                key_part += f"thresholds_qk_matmul:{hashed}\n"
+            if op.get_nodeattr("ActASoftmax") == "thresholds":
+                thresholds = model.get_initializer(
+                    op.get_input_name_by_name("thresholds_a_softmax")
+                )
+                hashed = self.hasher(ndarray_to_bytes(thresholds)).hexdigest()
+                key_part += f"thresholds_a_softmax:{hashed}\n"
+            if op.get_nodeattr("ActAVMatMul") == "thresholds":
+                thresholds = model.get_initializer(
+                    op.get_input_name_by_name("thresholds_av_matmul")
+                )
+                hashed = self.hasher(ndarray_to_bytes(thresholds)).hexdigest()
+                key_part += f"thresholds_av_matmul:{hashed}\n"
+            if op.get_nodeattr("mask_mode") == "const":
+                mask = model.get_initializer(op.get_input_name_by_name("M"))
+                hashed = self.hasher(ndarray_to_bytes(mask)).hexdigest()
+                key_part += f"M:{hashed}\n"
+            return key_part
         return ""
 
     def get_key(self, op: HWCustomOp, model: ModelWrapper) -> str:
