@@ -10,13 +10,14 @@ import shutil
 import subprocess
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.base import Transformation
 from typing import TYPE_CHECKING, Callable, Final
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.util.basic import make_build_dir
-from finn.util.deps import get_deps_path
+from finn.util.deps import get_cache_path, get_deps_path
 from finn.util.exception import FINNConfigurationError, FINNInternalError
 from finn.util.logging import log
 
@@ -312,3 +313,19 @@ class IPCache:
                 self._dump_nodeattrs(op, target_dir / "nodeattrs.json")
                 log.info(f"Cached node {node.name}. Cached at: {target_dir} from {code_gen_dir}!")
         return model
+
+
+class CachedHLSSynthIP(Transformation):
+    """HLSSynth but cached."""
+
+    # TODO: Remove / reorder steps hw_ipgen and hw_codegen
+    def __init__(self, hash_function: str) -> None:
+        """HLSSynth but cached."""
+        super().__init__()
+        self.hashfunc = hash_function
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Apply cached HLS Synthesis."""
+        cache = IPCache(cache_dir=get_cache_path(), hashfunc=self.hashfunc)
+        model = cache.apply_cache(model)
+        return model, False

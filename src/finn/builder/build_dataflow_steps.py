@@ -82,6 +82,7 @@ from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
+from finn.transformation.fpgadataflow.ip_cache import CachedHLSSynthIP
 from finn.transformation.fpgadataflow.make_driver import (
     MakeCPPDriver,
     MakePYNQDriverInstrumentation,
@@ -527,7 +528,14 @@ def step_hw_ipgen(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Run Vitis HLS synthesis on generated code for HLSBackend nodes,
     in order to generate IP blocks. For RTL nodes this step does not do anything."""
 
-    model = model.transform(HLSSynthIP())
+    # TODO: Move out of step_hw_ipgen, reorder steps
+    if cfg.use_ip_caching:
+        log.info("Using IP cache to fetch generated IPs...")
+        model = model.transform(CachedHLSSynthIP(cfg.ip_cache_hashfunction))
+    else:
+        log.info("Generating all IPs from scratch...")
+        model = model.transform(HLSSynthIP())
+
     model = model.transform(ReplaceVerilogRelPaths())
     report_dir = cfg.output_dir + "/report"
     os.makedirs(report_dir, exist_ok=True)

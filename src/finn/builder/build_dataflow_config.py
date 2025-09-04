@@ -311,6 +311,15 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: If not specified it will default to synth_clk_period_ns
     hls_clk_period_ns: Optional[float] = None
 
+    #: If True, use an IP Cache to avoid unnecessary waiting
+    #: times to run HLSSynthIP() repeatedly for the same
+    #: model / configuration
+    use_ip_caching: Optional[bool] = True
+
+    #: Hash function to be used when caching the IP cores. Only
+    #: relevant if use_ip_caching = True
+    ip_cache_hashfunction: str = "sha256"
+
     #: Call CapConvolutionFIFODepths in InsertAndSetFIFODepths transform
     #: to make convolution FIFOs smaller where appropriate
     default_swg_exception: Optional[bool] = False
