@@ -32,6 +32,7 @@ from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 # The base class of all generic custom operations before specializing to either
 # HLS or RTL backend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.transformation.fpgadataflow.ip_cache import cache_ip
 
 # Dictionary of HLSBackend implementations
 custom_op = dict()
@@ -131,3 +132,8 @@ custom_op["ScaledDotProductAttention_hls"] = ScaledDotProductAttention_hls
 custom_op["SplitMultiHeads_hls"] = SplitMultiHeads_hls
 custom_op["MergeMultiHeads_hls"] = MergeMultiHeads_hls
 custom_op["ReplicateStream_hls"] = ReplicateStream_hls
+
+# Apply cache to all ops
+for key in custom_op.keys():
+    if issubclass(custom_op[key], HWCustomOp):
+        custom_op[key] = cache_ip(attributes=None)(custom_op[key])

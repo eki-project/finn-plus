@@ -13,8 +13,17 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from typing import TYPE_CHECKING, Callable, Final, cast
 
+from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
+from finn.custom_op.fpgadataflow.attention_heads import MergeMultiHeads, SplitMultiHeads
+from finn.custom_op.fpgadataflow.channelwise_op import ChannelwiseOp
+from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
+from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.lookup import Lookup
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
+from finn.custom_op.fpgadataflow.pool import Pool
+from finn.custom_op.fpgadataflow.thresholding import Thresholding
+from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.util.basic import make_build_dir
@@ -180,10 +189,31 @@ class IPCache:
                     f"type MVAU but has no mem_mode set!"
                 ) from e
             if mem_mode in ["internal_embedded", "internal_decoupled"]:
-                # TODO: Add shape!
-                weight = np.ascontiguousarray(model.get_initializer(op.onnx_node.input[1]))
-                array_hash = self.hasher(weight.tobytes()).hexdigest()
+                tensor = model.get_initializer(op.onnx_node.input[1])
+                weight = np.ascontiguousarray(tensor)
+                array_hash = self.hasher(weight.tobytes())
+                # TODO: Fix typing error for next line
+                array_hash.update(str(tensor.shape).encode("UTF-8"))
+                array_hash = array_hash.hexdigest()
                 return f"weights_hash:{array_hash}\n"
+        elif isinstance(
+            op,
+            (
+                ScaledDotProductAttention,
+                SplitMultiHeads,
+                MergeMultiHeads,
+                ChannelwiseOp,
+                ConvolutionInputGenerator,
+                ElementwiseBinaryOperation,
+                Lookup,
+                Pool,
+                Thresholding,
+                VVAU,
+            ),
+        ):
+            raise NotImplementedError(
+                "Need to implement which parameters need to be " "cached for this component!"
+            )
         return ""
 
     def get_key(self, op: HWCustomOp, model: ModelWrapper) -> str:
