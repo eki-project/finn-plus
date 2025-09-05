@@ -148,12 +148,12 @@ def rtlsim_exec_cppxsi(
     # ensure stitched ip project already exists
     assert os.path.isfile(
         model.get_metadata_prop("wrapper_filename")
-    ), """The
-    file name from metadata property "wrapper_filename" doesn't exist."""
+    ), f"""The
+    file {model.get_metadata_prop("wrapper_filename")} from metadata property "wrapper_filename" doesn't exist."""
     assert os.path.isdir(
         model.get_metadata_prop("vivado_stitch_proj")
-    ), """The
-    directory from metadata property "vivado_stitch_proj" doesn't exist"""
+    ), f"""The
+    directory {model.get_metadata_prop("vivado_stitch_proj")} from metadata property "vivado_stitch_proj" doesn't exist"""
     trace_file = model.get_metadata_prop("rtlsim_trace")
     if not dummy_data_mode:
         # ignore last value which would be batchsize
@@ -172,7 +172,10 @@ def rtlsim_exec_cppxsi(
         single_src_dir = make_build_dir("rtlsim_" + top_module_name + "_")
         debug = not (trace_file is None or trace_file == "")
         rtlsim_so = finnxsi.compile_fifo_sim_obj(
-            top_module_name, model.get_metadata_prop("wrapper_filename"), all_verilog_srcs, single_src_dir
+            top_module_name,
+            model.get_metadata_prop("wrapper_filename"),
+            all_verilog_srcs,
+            single_src_dir,
         )
         # save generated lib filename in attribute
         model.set_metadata_prop("rtlsim_so", rtlsim_so[0] + "/" + rtlsim_so[1])

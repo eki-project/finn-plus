@@ -20,6 +20,7 @@ public:
     // // Core register access functions
     void write_register(uint32_t addr, uint32_t data);
     uint32_t read_register(uint32_t addr);
+    void prepareReset();
 
 private:
     // AXI interface prefix

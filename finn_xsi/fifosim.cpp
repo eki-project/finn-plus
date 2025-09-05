@@ -362,7 +362,6 @@ int main(int argc, char *argv[]) {
   }
 
   // Find Global Control & Run Startup Sequence
-  top.run(1000);
   Clock &clk = Clock::initClock(top);
   clearPorts(top);
   reset(top);
@@ -387,11 +386,25 @@ int main(int argc, char *argv[]) {
 
   std::vector<S_AXI_Control> fifos;
 
-
   // For now the number of FIFOs has to be set by hand
-  for (size_t i = 0; i < 3; ++i){
+  for (size_t i = 0; i < 98; ++i){
     fifos.emplace_back(top, "s_axi_control_0_" + std::to_string(i) + "_");
   }
+
+  for (auto &&fifo : fifos) {
+    fifo.prepareReset();
+  }
+
+  //Print state of all ports for debugging
+  for (xsi::Port &p : top.ports()) {
+    std::cout << "Port Name: " << p.name()
+              << ", Direction: " << (p.dir())
+              << ", Value: " << p.read().as_unsigned()
+              << std::endl;
+  }
+
+
+  reset(top);
 
   auto [start_depth, interval] = determineStartDepth(
       top, clk, istreams, ostreams, inflightTimestamps, iters, fifos);

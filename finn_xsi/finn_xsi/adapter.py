@@ -31,21 +31,23 @@ def locate_glbl() -> Optional[str]:
             return glbl_path
     return None
 
+
 def compile_fifo_sim_obj(top_module_name, source_list, header_list, sim_out_dir):
     with open(sim_out_dir + "/fifosim_wrapper_vlog.prj", "w") as f:
-
+        glbl = locate_glbl()
+        if glbl is not None:
+            f.write(f"verilog work {glbl}\n")
         # extract (unique, by using a set) verilog headers for inclusion
         verilog_headers = {os.path.dirname(x) for x in header_list if x.endswith(".vh")}
         verilog_header_incl_str = " ".join(["--include " + x for x in verilog_headers])
 
-        
         if source_list.endswith(".v"):
-            f.write(f"verilog xil_defaultlib {verilog_header_incl_str} {source_list}\n")
+            f.write(f"verilog work {verilog_header_incl_str} {source_list}\n")
         else:
             raise Exception(f"Unknown extension for fifo .prj file sources: {source_list}")
-        
+
         f.write("nosort")
-    
+
     xelab_libs = [
         "axi_protocol_checker_v1_1_12",
         "axi_protocol_checker_v1_1_13",
@@ -59,23 +61,23 @@ def compile_fifo_sim_obj(top_module_name, source_list, header_list, sim_out_dir)
         "floating_point_v7_1_18",
         "floating_point_v7_1_15",
         "floating_point_v7_1_19",
-        "secureip"
+        "secureip",
     ]
-    
+
     cmd_xvlog = "xvlog --incr --relax -prj fifosim_wrapper_vlog.prj".split()
-    cmd_xelab = "xelab --incr -dll --debug typical --relax --mt 8".split()
-    
+    cmd_xelab = "xelab --incr -dll --debug typical --relax --mt auto".split()
+
     for lib in xelab_libs:
         cmd_xelab.append("-L")
         cmd_xelab.append(lib)
     cmd_xelab.append("--snapshot")
     cmd_xelab.append("fifosim_wrapper_func_synth")
-    cmd_xelab.append("xil_defaultlib.fifosim_wrapper")
-    cmd_xelab.append("xil_defaultlib.glbl")
-    
+    cmd_xelab.append("work.fifosim_wrapper")
+    cmd_xelab.append("work.glbl")
+
     launch_process_helper(cmd_xvlog, cwd=sim_out_dir)
     launch_process_helper(cmd_xelab, cwd=sim_out_dir)
-    
+
     out_so_relative_path = "xsim.dir/%s/xsimk.so" % top_module_name
     out_so_full_path = sim_out_dir + "/" + out_so_relative_path
 
@@ -83,8 +85,7 @@ def compile_fifo_sim_obj(top_module_name, source_list, header_list, sim_out_dir)
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), out_so_full_path)
 
     return (sim_out_dir, out_so_relative_path)
-    
-    
+
 
 def compile_sim_obj(top_module_name, source_list, sim_out_dir, debug=False):
     # create a .prj file with the source files

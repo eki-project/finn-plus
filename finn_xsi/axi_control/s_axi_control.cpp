@@ -133,9 +133,15 @@ bool S_AXI_Control::chk_bool(const std::string& signal) {
     return port->read().as_bool();
 }
 
-void S_AXI_Control::write_register(uint32_t addr, uint32_t data) {
+void S_AXI_Control::prepareReset() {
     // Assert BREADY to receive response
     set_bool(prefix + "bready");
+    // Assert RREADY to receive data
+    set_bool(prefix + "rready");
+    clk.toggle_clk(); // Ensure the write is registered
+}
+
+void S_AXI_Control::write_register(uint32_t addr, uint32_t data) {
     // Set address
     write_addr(prefix + "awaddr", addr);
     // Set data and strobe (full 32-bit word)
@@ -177,15 +183,11 @@ void S_AXI_Control::write_register(uint32_t addr, uint32_t data) {
         std::cerr << "AXI write error: BRESP = " << bresp << std::endl;
     }
 
-    // Deassert BREADY
-    clear_bool(prefix + "bready");
-
     clk.toggle_clk();
 }
 
 uint32_t S_AXI_Control::read_register(uint32_t addr) {
-    // Assert RREADY to receive data
-    set_bool(prefix + "rready");
+
     // Set address
     write_addr(prefix + "araddr", addr);
 
@@ -214,8 +216,6 @@ uint32_t S_AXI_Control::read_register(uint32_t addr) {
         std::cerr << "AXI read error: RRESP = " << rresp << std::endl;
     }
 
-    // Deassert RREADY
-    clear_bool(prefix + "rready");
     clk.toggle_clk();
 
     return data;
