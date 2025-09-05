@@ -660,11 +660,11 @@ class MultiVitisLink(Transformation):
                             f"name in the Aurora kernels that SDP {sdp.name} "
                             f"sends to! ({sending_to})"
                         )
-                    if len(set(receiving_from)) != len(sending_to):
+                    if len(set(receiving_from)) != len(receiving_from):
                         raise FINNMultiFPGAError(
                             f"There are multiple Aurora kernels of the same "
                             f"name in the Aurora kernels that SDP {sdp.name} "
-                            f"sends to! ({sending_to})"
+                            f"receives from!"
                         )
 
                     # Add aurora kernels
