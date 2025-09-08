@@ -321,6 +321,17 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: relevant if use_ip_caching = True
     ip_cache_hashfunction: str = "sha256"
 
+    #: If use_ip_caching is enabled, this flag determines whether
+    #: the value of _resolve_hls_clk_period() is used as part of
+    #: the cached key. Can be turned off for more cache hits, but
+    #: then delivers an IP with an outdated constraints file. This
+    #: might affect OOC Synthesis and other parts of the design, use
+    #: at your own risk.
+    cache_hls_clk_period: bool = True
+
+    #: The same as `cache_hls_clk_period`, but for the passed FPGA part.
+    cache_fpgapart: bool = True
+
     #: Call CapConvolutionFIFODepths in InsertAndSetFIFODepths transform
     #: to make convolution FIFOs smaller where appropriate
     default_swg_exception: Optional[bool] = False

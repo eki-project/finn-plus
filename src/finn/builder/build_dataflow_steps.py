@@ -115,7 +115,7 @@ from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNConfigurationError, FINNUserError
 from finn.util.logging import log
 from finn.util.test import execute_parent
 
@@ -528,12 +528,22 @@ def _make_hls_estimate_report(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
 def step_ip_generation(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Unified step, that does what step_hw_codegen and step_hw_ipgen did before. (With cache!)."""
     if cfg.use_ip_caching:
+        clk = cfg._resolve_hls_clk_period()
+        if clk is None:
+            # TODO: Change into a logging error instead of an exception?
+            raise FINNConfigurationError(
+                "Please specify synth_clk_period_ns in your build "
+                "config (and optionally hls_clk_period_ns) before "
+                "generating IPs!"
+            )
         model = model.transform(
             CachedIPGen(
                 cfg.ip_cache_hashfunction,
                 include_prepare_ip=True,
+                cache_clock=cfg.cache_hls_clk_period,
                 fpgapart=cfg._resolve_fpga_part(),
-                clk=cfg._resolve_hls_clk_period(),
+                clk=clk,
+                cache_fpgapart=cfg.cache_fpgapart,
             )
         )
     else:
@@ -561,10 +571,30 @@ def step_hw_ipgen(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Run Vitis HLS synthesis on generated code for HLSBackend nodes,
     in order to generate IP blocks. For RTL nodes this step does not do anything."""
 
-    # TODO: Move out of step_hw_ipgen, reorder steps
     if cfg.use_ip_caching:
         log.info("Using IP cache to fetch generated IPs...")
-        model = model.transform(CachedIPGen(cfg.ip_cache_hashfunction, include_prepare_ip=False))
+        clk = cfg._resolve_hls_clk_period()
+        if clk is None and cfg.cache_hls_clk_period:
+            log.critical(
+                "No HLS/general synthesis clock period was specified, but required for "
+                "caching (cfg.cache_hls_clk_period). Skipping caching for safety. "
+                "Executing just HLSSynthIP()..."
+            )
+            model = model.transform(HLSSynthIP())
+        else:
+            # If clk is None but we don't use it anways, give it some placeholder value
+            if clk is None:
+                clk = 0
+            model = model.transform(
+                CachedIPGen(
+                    cfg.ip_cache_hashfunction,
+                    cache_clock=cfg.cache_hls_clk_period,
+                    include_prepare_ip=False,
+                    fpgapart=cfg._resolve_fpga_part(),
+                    clk=clk,
+                    cache_fpgapart=cfg.cache_fpgapart,
+                )
+            )
     else:
         log.info("Generating all IPs from scratch...")
         model = model.transform(HLSSynthIP())

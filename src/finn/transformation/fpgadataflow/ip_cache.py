@@ -26,6 +26,7 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.util.basic import make_build_dir
 from finn.util.deps import get_cache_path, get_deps_path
 from finn.util.exception import FINNConfigurationError, FINNInternalError
+from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
 if TYPE_CHECKING:
@@ -101,7 +102,15 @@ class IPCache:
     # TODO: Update hash functions
     allowed_hashfuncs: Final[list[str]] = ["sha256"]
 
-    def __init__(self, cache_dir: Path, hashfunc: str) -> None:
+    def __init__(
+        self,
+        cache_dir: Path,
+        hashfunc: str,
+        hls_clk_period: float,
+        cache_hls_clk: bool,
+        fpgapart: str,
+        cache_fpgapart: bool,
+    ) -> None:
         """Construct a new IPCache object.
 
         Args:
@@ -109,6 +118,8 @@ class IPCache:
             hashfunc: The name of the hash function to be used.
         """
         self.cache_dir = cache_dir
+        self.cache_hls_clk = cache_hls_clk
+        self.cache_fpgapart = cache_fpgapart
         if not self.cache_dir.exists():
             self.cache_dir.mkdir()
         log.info(f"Opened cache handler. Cache directory: {self.cache_dir}")
@@ -141,6 +152,10 @@ class IPCache:
             cwd=get_deps_path() / "finn-hlslib",
         ).stdout.strip()
         log.info(f"HLSLIB Commit reads: {self.hlslib_commit}")
+
+        # HLS Clk and device
+        self.clk = hls_clk_period
+        self.fpgapart = fpgapart
 
     def _get_key_part_attributes(self, op: HWCustomOp) -> str:
         """Return the part of the key that contains attributes and their values."""
@@ -248,7 +263,7 @@ class IPCache:
         global CACHE_IP_DEFINITIONS
         if type(op) not in CACHE_IP_DEFINITIONS.keys():
             log.error(
-                "Tried getting the key for a non-cacheable custom operator. "
+                f"Tried getting the key for a non-cacheable custom operator ({type(op).__name__}). "
                 "Did you perhaps forget to register the op for caching via "
                 "@cache_ip(...)?"
             )
@@ -257,7 +272,13 @@ class IPCache:
         key = f"FINN: {self.finn_commit}\nHLSLIB: {self.hlslib_commit}\n"
 
         # Two custom ops might need the same attributes, so add the type
-        key += "type:" + str(type(op)) + "\n"
+        key += "type:" + type(op).__name__ + "\n"
+
+        # Hash synth clk period and part
+        if self.cache_hls_clk:
+            key += f"hls_clk_period_ns:{self.clk}\n"
+        if self.cache_fpgapart:
+            key += f"fpgapart:{self.fpgapart}\n"
 
         # Add all node attributes required
         key += self._get_key_part_attributes(op) + "\n"
@@ -368,9 +389,34 @@ class IPCache:
 
         Requires HLSSynthIP() to be run before.
         """
+
+        def attribute_path_exists(name: str, op: HWCustomOp) -> bool:
+            try:
+                data = op.get_nodeattr(name)
+                if data is None or data == "":
+                    return False
+                return Path(cast(str, data)).exists()
+            except Exception:
+                return False
+
         for node in model.graph.node:
             op, key, hashed_key, target_dir = self._get_node_data(node, model)
             if not target_dir.exists():
+                # Check to make sure we only cache synthesized IPs
+                if is_hls_node(node) or is_rtl_node(node):
+                    is_done = (
+                        attribute_path_exists("code_gen_dir_ipgen", op)
+                        and attribute_path_exists("ip_path", op)
+                        and attribute_path_exists("ipgen_path", op)
+                    )
+                    if not is_done:
+                        log.warning(
+                            f"Node {node.name} is hasn't been synthesized yet. "
+                            f"Cannot cache. Skipping."
+                        )
+                        continue
+                else:
+                    log.warning(f"Cannot cache node {node.name}. Node is not a HW node!")
                 code_gen_dir = Path(cast(str, op.get_nodeattr("code_gen_dir_ipgen")))
                 if not code_gen_dir.exists():
                     log.warning(
@@ -380,7 +426,17 @@ class IPCache:
                 shutil.copytree(code_gen_dir, target_dir, dirs_exist_ok=True)
                 self._create_key_file(key, target_dir / "key.txt")
                 self._dump_nodeattrs(op, target_dir / "nodeattrs.json")
-                log.info(f"Cached node {node.name}. Cached at: {target_dir} from {code_gen_dir}!")
+                typ = ""
+                if is_hls_node(node):
+                    typ = "HLS"
+                elif is_rtl_node(node):
+                    typ = "RTL"
+                else:
+                    typ = "unknown type"
+                log.info(
+                    f"Cached {typ} node {node.name}. "
+                    f"Cached at: {target_dir} from {code_gen_dir}!"
+                )
 
 
 class CachedIPGen(Transformation):
@@ -390,8 +446,10 @@ class CachedIPGen(Transformation):
         self,
         hash_function: str,
         include_prepare_ip: bool,
-        fpgapart: str | None = None,
-        clk: float | None = None,
+        cache_clock: bool,
+        clk: float,
+        cache_fpgapart: bool,
+        fpgapart: str,
     ) -> None:
         """(PrepareIP and) HLSSynth but cached.
 
@@ -405,11 +463,20 @@ class CachedIPGen(Transformation):
         self.hashfunc = hash_function
         self.prepareip = include_prepare_ip
         self.part = fpgapart
+        self.cache_part = cache_fpgapart
         self.clk = clk
+        self.cache_clock = cache_clock
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply cached HLS Synthesis (and PrepareIP)."""
-        cache = IPCache(cache_dir=get_cache_path(), hashfunc=self.hashfunc)
+        cache = IPCache(
+            cache_dir=get_cache_path(),
+            hashfunc=self.hashfunc,
+            hls_clk_period=self.clk,
+            cache_hls_clk=self.cache_clock,
+            fpgapart=self.part,
+            cache_fpgapart=self.cache_part,
+        )
         log.info(
             f"Applying cache to {cache.get_num_cached_ips(model)} "
             f"/ {len(model.graph.node)} nodes!"
@@ -422,6 +489,7 @@ class CachedIPGen(Transformation):
                 )
             log.info("Running PrepareIP for uncached IPs...")
             model = model.transform(PrepareIP(self.part, self.clk))
+            cache.update(model)
         log.info("Running synthesis for uncached IPs...")
         model = model.transform(HLSSynthIP())
         log.info("Updating cache with newly generated IPs...")
