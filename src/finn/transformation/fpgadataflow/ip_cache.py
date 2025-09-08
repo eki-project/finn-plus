@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import numpy as np
+import os
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -32,6 +34,44 @@ from finn.util.logging import log
 if TYPE_CHECKING:
     from onnx import NodeProto
     from qonnx.core.modelwrapper import ModelWrapper
+
+
+# UTILITY FUNCTIONS
+def _attribute_path_exists(name: str, op: HWCustomOp) -> bool:
+    """Check that the node attribute path exists.
+    If the node attribute cannot be loaded, return False."""  # noqa
+    try:
+        data = op.get_nodeattr(name)
+        if data is None or data == "":
+            return False
+        return Path(cast(str, data)).exists()
+    except Exception:
+        return False
+
+
+def _check_path_lengths(
+    pc_name_max: int, pc_path_max: int, hashed_key: str, target_dir: Path
+) -> bool:
+    """Check if we follow the path length limits. If not return False, otherwise True."""
+    if len(hashed_key) > pc_name_max:
+        log.error(
+            f"Cannot cache an IP: The hash hex representation "
+            f"is too long to be allowed as a filename on your "
+            f"system (best effort detected limit: "
+            f"{pc_name_max}). Skipping caching."
+        )
+        return False
+    path_bytes = len(str(target_dir.absolute()).encode("UTF-8"))
+    if path_bytes > pc_path_max:
+        log.error(
+            f"Cannot cache an IP: the generated path length of "
+            f"the cache location is not allowed on your system! "
+            f"The best effort detected limit is: "
+            f"{pc_path_max} bytes, the path length is "
+            f"{path_bytes} bytes. Skipping caching."
+        )
+        return False
+    return True
 
 
 CACHE_IP_DEFINITIONS: dict[type, dict[str, list[str]]] = {}
@@ -100,7 +140,7 @@ class IPCache:
     """
 
     # TODO: Update hash functions
-    allowed_hashfuncs: Final[list[str]] = ["sha256"]
+    allowed_hashfuncs: Final[list[str]] = ["sha256", "sha512", "blake2s", "blake2b"]
 
     def __init__(
         self,
@@ -120,6 +160,17 @@ class IPCache:
         self.cache_dir = cache_dir
         self.cache_hls_clk = cache_hls_clk
         self.cache_fpgapart = cache_fpgapart
+
+        # Used to check validity of cache directory names
+        if sys.platform != "win32":
+            self.max_hash_len = os.pathconf("/", "PC_NAME_MAX")
+            self.max_path_len = os.pathconf("/", "PC_PATH_MAX")
+        else:
+            # TODO: Implement filesystem checks
+            # 256 seems to be the default max path length under windows
+            self.max_hash_len = 256
+            self.max_path_len = 256
+
         if not self.cache_dir.exists():
             self.cache_dir.mkdir()
         log.info(f"Opened cache handler. Cache directory: {self.cache_dir}")
@@ -367,6 +418,15 @@ class IPCache:
         hashed_key = self.get_hash_hex(key)
         return op, key, hashed_key, self._cache_dir_path(hashed_key)
 
+    def _is_op_synthesized(self, op: HWCustomOp) -> bool:
+        """Return whether the given op is synthesized. This is derived from the existence and
+        validity of the paths in code_gen_dir_ipgen, ipgen_path and ip_path."""  # noqa
+        return (
+            _attribute_path_exists("code_gen_dir_ipgen", op)
+            and _attribute_path_exists("ip_path", op)
+            and _attribute_path_exists("ipgen_path", op)
+        )
+
     def get_num_cached_ips(self, model: ModelWrapper) -> int:
         """Return the number of cached IPs in the model."""
         count = 0
@@ -389,31 +449,17 @@ class IPCache:
 
         Requires HLSSynthIP() to be run before.
         """
-
-        def attribute_path_exists(name: str, op: HWCustomOp) -> bool:
-            try:
-                data = op.get_nodeattr(name)
-                if data is None or data == "":
-                    return False
-                return Path(cast(str, data)).exists()
-            except Exception:
-                return False
-
         for node in model.graph.node:
             op, key, hashed_key, target_dir = self._get_node_data(node, model)
+            if not _check_path_lengths(
+                self.max_hash_len, self.max_path_len, hashed_key, target_dir
+            ):
+                return
             if not target_dir.exists():
                 # Check to make sure we only cache synthesized IPs
                 if is_hls_node(node) or is_rtl_node(node):
-                    is_done = (
-                        attribute_path_exists("code_gen_dir_ipgen", op)
-                        and attribute_path_exists("ip_path", op)
-                        and attribute_path_exists("ipgen_path", op)
-                    )
-                    if not is_done:
-                        log.warning(
-                            f"Node {node.name} is hasn't been synthesized yet. "
-                            f"Cannot cache. Skipping."
-                        )
+                    if not self._is_op_synthesized(op):
+                        log.warning(f"{node.name} hasn't been synthesized yet and can't be cached.")
                         continue
                 else:
                     log.warning(f"Cannot cache node {node.name}. Node is not a HW node!")
@@ -426,16 +472,8 @@ class IPCache:
                 shutil.copytree(code_gen_dir, target_dir, dirs_exist_ok=True)
                 self._create_key_file(key, target_dir / "key.txt")
                 self._dump_nodeattrs(op, target_dir / "nodeattrs.json")
-                typ = ""
-                if is_hls_node(node):
-                    typ = "HLS"
-                elif is_rtl_node(node):
-                    typ = "RTL"
-                else:
-                    typ = "unknown type"
                 log.info(
-                    f"Cached {typ} node {node.name}. "
-                    f"Cached at: {target_dir} from {code_gen_dir}!"
+                    f"Cached node {node.name}. " f"Cached at: {target_dir} from {code_gen_dir}!"
                 )
 
 
