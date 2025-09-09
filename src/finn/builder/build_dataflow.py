@@ -263,20 +263,11 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         if cfg.verbose:
             log.info("Caching enabled for operators: ")
             for k, v in CACHE_IP_DEFINITIONS.items():
-                s = f"[{k.__name__}]:\n\tuse: "
+                log.info(f"Operator: {k}:")
                 if "use" in v.keys():
-                    s += ", ".join(v["use"])
-                else:
-                    s += "*"
-                s += "\n\tignore: "
+                    log.info("\tuse: " + ", ".join(v["use"]))
                 if "ignore" in v.keys():
-                    if "use" not in v.keys():
-                        s += "defaults"
-                    else:
-                        s += ", ".join(v["ignore"])
-                else:
-                    s += ""
-                log.info(s)
+                    log.info("\nignore: " + ", ".join(v["use"]))
 
     # Setup done, start build flow
     try:

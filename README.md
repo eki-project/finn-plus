@@ -24,6 +24,7 @@ The framework is fully open-source in order to give a higher degree of flexibili
     - Optimized C++ driver
 - Quality-of-live improvements
     - Better logging and error handling
+    - IP Caching for faster build flow times
     - Type hinting/checking
     - Alternative YAML-based build configuration
     - Containerless setup

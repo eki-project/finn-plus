@@ -1,4 +1,6 @@
 """Test that the IP cache is working correctly. (No false positives, no collisions, speed, etc.)."""
+from __future__ import annotations
+
 import pytest
 
 import numpy as np
@@ -7,43 +9,58 @@ import time
 from copy import deepcopy
 from pathlib import Path
 from qonnx.core.datatype import DataType
-from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.util.basic import gen_finn_dt_tensor
-from typing import cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from finn.custom_op.fpgadataflow.hls.matrixvectoractivation_hls import MVAU_hls
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.rtl.matrixvectoractivation_rtl import MVAU_rtl
+from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.transformation.fpgadataflow.ip_cache import CachedIPGen, IPCache
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import alveo_part_map
 from finn.util.deps import get_cache_path
 from tests.fpgadataflow.test_fpgadataflow_mvau import make_single_fclayer_modelwrapper
 
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
-def mvau_hls_create_model(fpgapart: str) -> tuple[ModelWrapper, np.ndarray, np.ndarray]:
-    """Create and sanity check a model for testing MVAU_hls caching.
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+
+def mvau_create_model(
+    fpgapart: str, mode: Literal["hls", "rtl"]
+) -> tuple[ModelWrapper, np.ndarray, np.ndarray]:
+    """Create and sanity check a model for testing MVAU caching.
 
     Returns:
         ModelWrapper, NDArray, NDArray: Model, weights, thresholds.
     """
     # TODO: Fix gen_finn_dt_tensor issue in our QONNX (same values
     # for subsequent calls of the function)
-    W = gen_finn_dt_tensor(DataType["UINT4"], (10, 10), seed=1)
-    T = gen_finn_dt_tensor(DataType["UINT4"], (10, 10), seed=1)
+    W = gen_finn_dt_tensor(DataType["INT4"], (10, 10), seed=1)
+    T = gen_finn_dt_tensor(DataType["INT4"], (10, 10), seed=1)
 
     # Creating the model
     model = make_single_fclayer_modelwrapper(
-        W, 1, 1, DataType["UINT4"], DataType["UINT4"], DataType["UINT4"], T, DataType["UINT4"]
+        W, 1, 1, DataType["INT4"], DataType["INT4"], DataType["INT4"], T, DataType["INT4"]
     )
+
+    op: HWCustomOp = getCustomOp(model.graph.node[0])
+    op.set_nodeattr("preferred_impl_style", mode)
+    if mode == "rtl":
+        # Required to set MVAU implementation to rtl
+        op.set_nodeattr("noActivation", 1)
+        op.set_nodeattr("binaryXnorMode", 0)
+
     model = model.transform(SpecializeLayers(fpgapart))
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
 
     # Some sanity checks
-    # Not explicitly set. If the default behaviour changes, we need to fix this to be HLS
-    assert model.graph.node[0].op_type == "MVAU_hls"
+    assert model.graph.node[0].op_type == "MVAU_" + mode
     assert getCustomOp(model.graph.node[0]).get_nodeattr("mem_mode") in [
         "internal_decoupled",
         "internal_embedded",
@@ -51,15 +68,15 @@ def mvau_hls_create_model(fpgapart: str) -> tuple[ModelWrapper, np.ndarray, np.n
     return model, W, T
 
 
-def mvau_hls_specific_asserts(
+def mvau_specific_asserts(
     model: ModelWrapper,
     original_op: HWCustomOp,
     original_cache: IPCache,
     original_key: str,
     W: np.ndarray,
     T: np.ndarray,
-) -> None:  # noqa
-    """Run MVAU_hls specific asserts to validate caching."""
+) -> None:
+    """Run MVAU specific asserts to validate caching."""
     for attribute in [
         "resType",
         "MW",
@@ -106,7 +123,7 @@ def get_first_op(model: ModelWrapper) -> HWCustomOp:
     return getCustomOp(model.graph.node[0])
 
 
-@pytest.mark.parametrize("op_type", [MVAU_hls])
+@pytest.mark.parametrize("op_type", [MVAU_hls, MVAU_rtl])
 @pytest.mark.parametrize("hashfunc", ["sha256"])
 @pytest.mark.parametrize("fpgapart", [alveo_part_map["U280"]])
 @pytest.mark.parametrize("hls_clk", [2.5])
@@ -124,7 +141,9 @@ def test_ip_hash_key(op_type: type, hashfunc: str, fpgapart: str, hls_clk: float
     # Create the model
     model: ModelWrapper
     if op_type is MVAU_hls:
-        model, W, T = mvau_hls_create_model(fpgapart)
+        model, W, T = mvau_create_model(fpgapart, mode="hls")
+    elif op_type is MVAU_rtl:
+        model, W, T = mvau_create_model(fpgapart, mode="rtl")
     else:
         raise AssertionError(f"Cache test for op {op_type.__name__} not yet implemented!")
 
@@ -154,13 +173,13 @@ def test_ip_hash_key(op_type: type, hashfunc: str, fpgapart: str, hls_clk: float
     original_key = cache.get_key(original_op, model)
 
     # Check that the hash changes with the attributes
-    if op_type is MVAU_hls:
-        mvau_hls_specific_asserts(model, original_op, cache, original_key, W, T)
+    if op_type in [MVAU_hls, MVAU_rtl]:
+        mvau_specific_asserts(model, original_op, cache, original_key, W, T)
     else:
         raise AssertionError(f"{op_type.__name__} specific cache test asserts not yet implemented!")
 
     # Check that the IP was cached at the correct path
-    path = cache._cache_dir_path(cache.get_hash_hex(original_key))
+    path = cache.cache_dir / cache.get_hash_hex(original_key)
     assert path.exists()
     assert (path / "nodeattrs.json").exists()
     assert (path / "key.txt").exists()
@@ -177,7 +196,7 @@ def test_ip_hash_key(op_type: type, hashfunc: str, fpgapart: str, hls_clk: float
     # Check speed of the second call (should be much faster)
     start: float = time.time()
     unsynth_model = unsynth_model.transform(
-        CachedIPGen(hashfunc, True, True, hls_clk, True, fpgapart)
+        CachedIPGen(hashfunc, True, hls_clk, True, fpgapart, True)
     )
     ms_elapsed = time.time() - start
 
@@ -190,11 +209,17 @@ def test_ip_hash_key(op_type: type, hashfunc: str, fpgapart: str, hls_clk: float
 
     # Check that the cached and re-used IP does exist
     first_op = get_first_op(unsynth_model)
-    expected_ip_path = (
-        Path(cast(str, first_op.get_nodeattr("code_gen_dir_ipgen")))
-        / f"project_{first_op.onnx_node.name}"
-        / "sol1"
-        / "impl"
-        / "ip"
-    )
-    assert expected_ip_path.exists()
+    codegen_path = Path(cast(str, first_op.get_nodeattr("code_gen_dir_ipgen")))
+    if issubclass(op_type, HLSBackend):
+        expected_ip_path = (
+            codegen_path / f"project_{first_op.onnx_node.name}" / "sol1" / "impl" / "ip"
+        )
+        assert expected_ip_path.exists()
+    elif issubclass(op_type, RTLBackend):
+        for f in (cache.cache_dir / cache.get_hash_hex(cache.get_key(first_op, model))).iterdir():
+            assert (codegen_path / f).exists()
+    else:
+        raise AssertionError(
+            f"{op_type.__name__} doesnt have either an HLS or RTL backend. "
+            f"Only test subclasses that can actually be cached!"
+        )

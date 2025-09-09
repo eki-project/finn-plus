@@ -12,7 +12,6 @@ def get_deps_path() -> Path:
     return Path(os.environ["FINN_DEPS"])
 
 
-# TODO: Move to own file?
 def get_cache_path() -> Path:
     """Return the path to the cache."""
     if "FINN_IP_CACHE" not in os.environ.keys():
