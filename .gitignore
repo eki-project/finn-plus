@@ -53,6 +53,7 @@ tags
 poetry.lock
 *.code-workspace
 .env
+settings.yaml
 
 # Package files
 *.egg
@@ -100,6 +101,7 @@ MANIFEST
 
 # downloaded dep repos
 /deps/
+deps/
 
 # local test directories for benchmarking infrastructure
 bench_input

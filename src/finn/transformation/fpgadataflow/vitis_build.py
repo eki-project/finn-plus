@@ -231,7 +231,7 @@ class BuildAllXOs(Transformation):
                 )
 
             # Insert IODMAs
-            log.debug("Inserting IODMAs")
+            log.info("Inserting IODMAs into the first and last SDPs...")
             iodma_transforms = [
                 GiveUniqueNodeNames(),
                 SpecializeLayers(self.cfg.fpga_part),
@@ -375,10 +375,14 @@ class VitisLinkConfiguration:
     def add_xo(self, xo_files: Path | list[Path]) -> None:
         """Add an XO file. This will emit an error if the XO file is not found, but it will
         NOT raise an exception. Ignores duplicate calls"""
+        all_xos = []
         if type(xo_files) is Path:
             all_xos = [xo_files]
-        if type(xo_files) is list:
+        elif type(xo_files) is list:
             all_xos = xo_files
+        else:
+            all_xos = [Path(xo_files)]
+
         for xo_file in all_xos:
             if xo_file in self.xo:
                 log.warning(f"Ignoring duplicate addition of .xo: {xo_file.name}")
@@ -643,6 +647,7 @@ class MultiVitisLink(Transformation):
                             round(1000 / self.cfg.synth_clk_period_ns),
                         )
                     this_config = configs[this_device]
+                    this_config.add_xo(ModelWrapper(getCustomOp(sdp).get_nodeattr("model")).get_metadata_prop("vitis_xo"))
 
                     # Initialize SDP kernel
                     this_config.add_cu(sdp.name, sdp.name)
@@ -727,7 +732,6 @@ class MultiVitisLink(Transformation):
                     # Add performance optimization directives
                     if self.cfg.vitis_opt_strategy == VitisOptStrategy.PERFORMANCE_BEST:
                         this_config.add_vivado_line(
-                            "[vivado]\n"
                             "prop=run.impl_1.STEPS.OPT_DESIGN.ARGS.DIRECTIVE=ExploreWithRemap\n"
                             "prop=run.impl_1.STEPS.PLACE_DESIGN.ARGS.DIRECTIVE=Explore\n"
                             "prop=run.impl_1.STEPS.PHYS_OPT_DESIGN.IS_ENABLED=true\n"
@@ -754,7 +758,6 @@ class MultiVitisBuild(Transformation):
         self.cfg = cfg
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        model = model.transform(BuildAllXOs(self.cfg))
         model = model.transform(MultiVitisLink(self.cfg))
         return model, False
 

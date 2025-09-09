@@ -1,3 +1,6 @@
+# TODO: Fix and remove all noqa directives below
+# ruff: noqa: RET504, D100, ANN001, ANN201, D209, D202, D205, PTH123, PTH103, UP031, SLF001, D401
+
 # Copyright (C) 2020-2022 Xilinx, Inc.
 # Copyright (C) 2022-2025, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -110,7 +113,7 @@ from finn.transformation.fpgadataflow.set_fifo_depths import (
 from finn.transformation.fpgadataflow.set_folding import SetFolding
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
-from finn.transformation.fpgadataflow.vitis_build import MultiVitisBuild, VitisBuild
+from finn.transformation.fpgadataflow.vitis_build import BuildAllXOs, MultiVitisBuild, VitisBuild
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
@@ -118,7 +121,7 @@ from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth
-from finn.util.exception import FINNMultiFPGAConfigError
+from finn.util.exception import FINNConfigurationError, FINNMultiFPGAConfigError
 from finn.util.logging import log
 from finn.util.test import execute_parent
 
@@ -878,6 +881,16 @@ def step_out_of_context_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig)
     return model
 
 
+def step_build_xos(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Take a graph of SDPs and create the resulting .xo files. These are written into
+    the vitis_xo metadata prop of the submodel."""
+    for node in model.graph.node:
+        if node.op_type != "StreamingDataflowPartition":
+            raise FINNConfigurationError(f"Cannot build XO file: {node.name} is "
+                                         f"not a StreamingDataflowPartition!")
+    model = model.transform(BuildAllXOs(cfg))
+    return model
+
 def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Synthesize a bitfile for the using the specified shell flow, using either
     Vivado or Vitis, to target the specified board."""
@@ -945,9 +958,10 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_multifpga_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Minimal synthesis step for Multi-FPGA. To be merged with step_synthesize_bitfile."""
+    """Requires step_build_xos previously run. Minimal synthesis step for Multi-FPGA.
+    To be merged with step_synthesize_bitfile."""
     model = model.transform(MultiVitisBuild(cfg))
-    return model  # noqa
+    return model
 
 
 def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig):
