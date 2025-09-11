@@ -409,6 +409,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: only relevant if vivado_power_simulate_activity is True.
     vivado_power_simulation_type: Optional[str] = "functional"
 
+    #: If set, appends experiments_config to settings file during driver generation
     experiments_config_path: Optional[str] = None
 
     def _resolve_hls_clk_period(self):
