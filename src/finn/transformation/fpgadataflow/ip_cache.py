@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import numpy as np
@@ -116,6 +117,8 @@ def cache_ip(attributes: list[str] | None = None) -> Callable[[type], type]:
             # and can thus be ignored when hashing
             ignore_fields = [
                 "code_gen_dir_ipgen",
+                "gen_top_module",
+                "ip_vlnv",
                 "ipgen_path",
                 "ip_path",
                 "cycles_rtlsim",
@@ -267,7 +270,11 @@ class IPCache:
                 ) from e
             if mem_mode in ["internal_embedded", "internal_decoupled"]:
                 weightbytes = _ndarray_to_bytes(model.get_initializer(op.onnx_node.input[1]))
-                threshbytes = _ndarray_to_bytes(model.get_initializer(op.onnx_node.input[2]))
+                try:
+                    threshbytes = _ndarray_to_bytes(model.get_initializer(op.onnx_node.input[2]))
+                except IndexError:
+                    # No thresholds
+                    threshbytes = b""
                 array_hash = self.hasher(weightbytes + threshbytes).hexdigest()
                 return f"param_hash:{array_hash}\n"
         elif isinstance(op, (Thresholding, ChannelwiseOp, Lookup)):
@@ -368,7 +375,7 @@ class IPCache:
         """
         if additional_attributes is None:
             additional_attributes = []
-        required = {"ip_vlnv", *additional_attributes}
+        required = {"ip_vlnv", "gen_top_module", *additional_attributes}
         d = {}
         for name in op.get_nodeattr_types().keys():
             if name in required:
@@ -418,6 +425,10 @@ class IPCache:
             "ip_path", str(ip_dir / f"project_{op.onnx_node.name}" / "sol1" / "impl" / "ip")
         )
         op.set_nodeattr("ipgen_path", str(ip_dir / f"project_{op.onnx_node.name}"))
+
+        # If needed insert gen_top_module. If not saved or the attr doesnt exist ignore
+        with contextlib.suppress(Exception):
+            op.set_nodeattr("gen_top_module", saved_nodeattrs["gen_top_module"])
 
     def _get_node_data(
         self, node: NodeProto, model: ModelWrapper
@@ -473,7 +484,7 @@ class IPCache:
                     log.warning(
                         f"{node.name} hasn't been synthesized yet and can't be cached "
                         f"(one of code_gen_dir_ipgen, ip_path, ipgen_path is missing or "
-                        f"invalid!)."
+                        f"invalid!). Hash after synthesis will be: {hashed_key}"
                     )
                     continue
                 code_gen_dir = Path(cast(str, op.get_nodeattr("code_gen_dir_ipgen")))
@@ -541,6 +552,11 @@ class CachedIPGen(Transformation):
             log.info("Running PrepareIP for uncached IPs...")
             model = model.transform(PrepareIP(self.part, self.clk))
             cache.update(model)
+        log.info(
+            f"Applying cache to {cache.get_num_cached_ips(model)} "
+            f"/ {len(model.graph.node)} nodes!"
+        )
+        model = cache.apply(model)
         log.info("Running synthesis for uncached IPs...")
         model = model.transform(HLSSynthIP())
         log.info("Updating cache with newly generated IPs...")
