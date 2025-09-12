@@ -11,9 +11,11 @@ import shlex
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.util.basic import get_num_default_workers
 from typing import TYPE_CHECKING, Any, Callable, Final, cast
 
 from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
@@ -386,7 +388,10 @@ class IPCache:
         with path.open("w+") as f:
             json.dump(d, f)
 
-    def _prepare_from_cached_ip(self, op: HWCustomOp, hashed_key: str, make_copy: bool) -> None:
+    @staticmethod
+    def _prepare_from_cached_ip(
+        op: HWCustomOp, hashed_key: str, make_copy: bool, cache_dir: Path
+    ) -> None:
         """Prepare the given custom op for usage of the given cached IP.
 
         We have to set some node attributes normally set by HLSSynth and PrepareIP. This needs to
@@ -397,9 +402,10 @@ class IPCache:
             hashed_key: The hash hex repr of the key for this op. Used to find the cached IP.
             make_copy: If True, first makes a copy of the cached IP in the current FINN_BUILD_DIR
                         and sets the path towards this copy instead of the cached original.
+            cache_dir: FINN_IP_CACHE directory, as passed from the calling IPCache instance.
         """
         log.info(f"Preparing {op.onnx_node.name} from cached IP (hashed key: {hashed_key[:10]}...)")
-        ip_dir = self.cache_dir / hashed_key
+        ip_dir = cache_dir / hashed_key
         saved_nodeattrs = {}
 
         # Check if the cached IP really exists
@@ -459,10 +465,18 @@ class IPCache:
 
     def apply(self, model: ModelWrapper) -> ModelWrapper:
         """Apply all IPs that were cached to the model and return it."""
-        for node in model.graph.node:
-            op, key, hashed_key, cache_dir = self._get_node_data(node, model)
-            if cache_dir.exists():
-                self._prepare_from_cached_ip(op, hashed_key, make_copy=True)
+        with ThreadPoolExecutor(max_workers=get_num_default_workers()) as pool:
+            for node in model.graph.node:
+                op, key, hashed_key, op_cache_dir = self._get_node_data(node, model)
+                if op_cache_dir.exists():
+                    pool.submit(
+                        IPCache._prepare_from_cached_ip,
+                        op=op,
+                        hashed_key=hashed_key,
+                        make_copy=True,
+                        cache_dir=self.cache_dir,
+                    )
+            pool.shutdown(wait=True)
         return model
 
     def update(self, model: ModelWrapper) -> None:
@@ -470,6 +484,7 @@ class IPCache:
 
         Requires HLSSynthIP() to be run before.
         """
+        total_cached = 0
         for node in model.graph.node:
             op, key, hashed_key, target_dir = self._get_node_data(node, model)
             if not _check_path_lengths_okay(
@@ -497,6 +512,8 @@ class IPCache:
                 self._create_key_file(key, target_dir / "key.txt")
                 self._dump_nodeattrs(op, target_dir / "nodeattrs.json")
                 log.info(f"Cached node {node.name}. Cached at: {target_dir} from {code_gen_dir}!")
+                total_cached += 1
+        log.info(f"Cached a total of {total_cached} new ops.")
 
 
 class CachedIPGen(Transformation):
@@ -552,11 +569,6 @@ class CachedIPGen(Transformation):
             log.info("Running PrepareIP for uncached IPs...")
             model = model.transform(PrepareIP(self.part, self.clk))
             cache.update(model)
-        log.info(
-            f"Applying cache to {cache.get_num_cached_ips(model)} "
-            f"/ {len(model.graph.node)} nodes!"
-        )
-        model = cache.apply(model)
         log.info("Running synthesis for uncached IPs...")
         model = model.transform(HLSSynthIP())
         log.info("Updating cache with newly generated IPs...")
