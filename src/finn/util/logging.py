@@ -19,6 +19,7 @@ class RunStatus(str, Enum):
     FAIL = "fail"
     SUCCESS = "success"
     UNKNOWN = "unknown"
+    KEYBOARD_INTERRUPT = "keyboard_interrupt"
 
 
 class MessageType(str, Enum):
@@ -26,6 +27,7 @@ class MessageType(str, Enum):
 
     STATUS_UPDATE = "status_update"
     CURRENT_STEP_UPDATE = "current_step_update"
+    INTRODUCTION = "introduction"
 
 
 STATUS_SERVER_MESSAGE_LENGTH_BYTES = 8
@@ -77,6 +79,14 @@ class _StatusServer:
         msg = _StatusServer._message_template_json(
             MessageType.CURRENT_STEP_UPDATE, {"current_step": step}
         )
+        return self._send_message(msg)
+
+    def introduce(self, config_path: Path | None, model_path: Path, status: RunStatus) -> bool:
+        """Send an introduction with some metadata to the status server."""
+        d = {"model": str(model_path), "status": status, "hostname": socket.gethostname()}
+        if config_path is not None:
+            d["config"] = str(config_path)
+        msg = _StatusServer._message_template_json(MessageType.INTRODUCTION, d)
         return self._send_message(msg)
 
     def close_status_socket(self) -> None:

@@ -173,6 +173,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     See list of attributes below for more information on the build configuration.
     """
 
+    #: If this config was generated from a YAML or JSON this field can be used to keep track
+    #: of which file it was generated from
+    generated_from: Optional[Path] = None
+
     #: Directory where the final build outputs will be written into
     output_dir: Optional[str] = None
 

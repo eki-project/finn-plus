@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
+from rich import box
+from rich.align import Align
+from rich.console import Console
+from rich.layout import Layout
+from rich.live import Live
+from rich.table import Table
 from threading import RLock, Thread
 from typing import Any
 
-from finn.util.logging import STATUS_SERVER_MESSAGE_LENGTH_BYTES, RunStatus
+from finn.util.logging import STATUS_SERVER_MESSAGE_LENGTH_BYTES, MessageType, RunStatus
 
 # TODO: Logging with logging instead of print
 # TODO: Curses based interface
@@ -80,6 +87,7 @@ class ConnectionData:
         self._data: dict[int, dict[str, Any]] = {}
         self._lock: RLock = RLock()
         self._logger: ConnectionLogBuffer = logger
+        self._finished_runs: dict[int, dict[str, Any]] = {}
 
     def add_connection(self, index: int) -> None:
         """Add a new connection. If it already exists, do nothing."""
@@ -89,7 +97,14 @@ class ConnectionData:
         with self._lock:
             if index in self._data:
                 return
-            self._data[index] = {"status": RunStatus.UNKNOWN, "current_step": None}
+            self._data[index] = {
+                "status": RunStatus.UNKNOWN,
+                "current_step": None,
+                "config": None,
+                "model": None,
+                "last_update": datetime.datetime.now(),
+                "hostname": None,
+            }
 
     def assert_field(self, index: int, field: str, data: dict | None = None) -> bool:
         """Check if the given field is in the data of connection with given index.
@@ -112,16 +127,12 @@ class ConnectionData:
         with self._lock:
             if index not in self._data:
                 self._logger.log_status(
-                    f"Cannot update field {field} in " f"non existent index {index}!"
+                    f"Cannot update field {field} in non existent index {index}!"
                 )
                 return
             if type(field) is str:
-                if field in self._data[index]:
-                    self._data[index][field] = data
-                else:
-                    self._logger.log_status(
-                        f"Tried updating non existent " f"field {field} at index {index}."
-                    )
+                self._data[index]["last_update"] = datetime.datetime.now()
+                self._data[index][field] = data
             else:
                 current = self._data[index]
                 while len(field) > 1:
@@ -131,6 +142,7 @@ class ConnectionData:
                     except Exception:  # noqa
                         self._logger.log_status(f"Cannot access field {field} on index {index}!")
                         return
+                self._data[index]["last_update"] = datetime.datetime.now()
                 current[field[0]] = data
 
     def get_field(self, index: int, field: str | list[str]) -> Any | None:
@@ -138,7 +150,7 @@ class ConnectionData:
         with self._lock:
             if index not in self._data:
                 self._logger.log_status(
-                    f"Cannot update field {field} in " f"non existent index {index}!"
+                    f"Cannot update field {field} in non existent index {index}!"
                 )
                 return None
 
@@ -147,7 +159,7 @@ class ConnectionData:
                 if field in self._data[index]:
                     return self._data[index][field]
                 self._logger.log_status(
-                    f"Tried updating non existent " f"field {field} at index {index}."
+                    f"Tried updating non existent field {field} at index {index}."
                 )
                 return None
 
@@ -178,10 +190,70 @@ class ConnectionData:
             return list(self._data.keys())
 
     def close_connection(self, index: int) -> None:
-        """Remove data for a closed connection. If the index doesn't exist do nothing."""
+        """Remove data for a closed connection. If the index doesn't exist do nothing.
+
+        The last updated data is added to a table for inspection.
+        """
         with self._lock:
             if index in self._data:
+                self._finished_runs[index] = deepcopy(self._data[index])
                 del self._data[index]
+
+    def _make_rich_table(self, data_dict: dict, is_live: bool) -> Table:
+        """Create a rich table representation of the current status."""
+        status_color = {
+            RunStatus.UNKNOWN: "orange3",
+            RunStatus.SUCCESS: "green3",
+            RunStatus.FAIL: "red3",
+            RunStatus.RUNNING: "grey85",
+            RunStatus.KEYBOARD_INTERRUPT: "magenta3",
+        }
+        status_to_color = lambda status: (  # noqa
+            f"[{status_color[status]}]{status}[/{status_color[status]}]"
+            if status is not None
+            else "-"
+        )
+        table = Table()
+        status_header = "Status" if is_live else "Last known status"
+        table.add_column("ID", header_style="italic bold grey82", style="bold grey82")
+        table.add_column("Host", header_style="italic bold grey82", style="bold grey82")
+        table.add_column("Config", header_style="italic dark_cyan", style="dark_cyan")
+        table.add_column("Model", header_style="italic slate_blue3", style="slate_blue3")
+        table.add_column(status_header, header_style="italic")
+        table.add_column("Step", header_style="italic yellow3", style="yellow3")
+        table.add_column(
+            "Last updated", header_style="italic medium_purple3", style="medium_purple3"
+        )
+        truncate = lambda txt, width: "..." + str(txt)[-width:] if txt is not None else None  # noqa
+        none_to_str = lambda msg: msg if msg is not None else "-"  # noqa
+        with self._lock:
+            for index, data in data_dict.items():
+                table.add_row(
+                    str(index),
+                    none_to_str(data["hostname"]),
+                    none_to_str(truncate(data["config"], 45)),
+                    none_to_str(truncate(data["model"], 45)),
+                    status_to_color(data["status"]),
+                    none_to_str(data["current_step"]),
+                    data["last_update"].strftime("%d.%m.%Y  %H:%M"),
+                )
+        table.box = box.MINIMAL
+        return table
+
+    def make_live_table(self) -> Table:
+        """Return a rich table of currently running flows."""
+        with self._lock:
+            return self._make_rich_table(self._data, is_live=True)
+
+    def make_finished_run_table(self) -> Table:
+        """Return a rich table of past runs."""
+        with self._lock:
+            return self._make_rich_table(self._finished_runs, is_live=False)
+
+    def open_connections(self) -> int:
+        """Return number of open connections."""
+        with self._lock:
+            return len(self._data)
 
 
 LOG = ConnectionLogBuffer()
@@ -222,23 +294,37 @@ def handle_connection(index: int, client: socket.socket) -> None:
             return
         log(f"[{index}]: {message}")
         parsed = json.loads(message)
-        if not check_field(None, "message_type"):
-            continue
-        if not check_field(None, "data"):
-            continue
         msg_type = parsed["message_type"]
         message_data = parsed["data"]
 
         # Match on the specific message passed
         match msg_type:
-            case "current_step_update":
-                if not check_field(message_data, "current_step"):
+            case MessageType.CURRENT_STEP_UPDATE:
+                if "current_step" not in message_data:
                     continue
-                update_data("current_step", message_data["current_step"])
-            case "status_update":
-                if not check_field(message_data, "status"):
+                step = message_data["current_step"]
+                update_data("current_step", step)
+            case MessageType.STATUS_UPDATE:
+                if "status" not in message_data:
                     continue
+                status = message_data["status"]
                 update_data("status", RunStatus(message_data["status"]))
+            case MessageType.INTRODUCTION:
+                if (
+                    "model" not in message_data
+                    or "status" not in message_data
+                    or "hostname" not in message_data
+                ):
+                    continue
+                model = Path(message_data["model"])
+                status = message_data["status"]
+                hostname = message_data["hostname"]
+                update_data("model", model)
+                update_data("status", status)
+                update_data("hostname", hostname)
+                if "config" in message_data:
+                    config = Path(message_data["config"])
+                    update_data("config", config)
             case _:
                 log(f"Unknown message type: {msg_type}")
 
@@ -248,7 +334,7 @@ def user_interaction(mode: str, poll_pause: float) -> None:
     global DATA, LOG
     if mode == "tui":
         raise NotImplementedError("TUI mode not implemented yet.")
-    elif mode == "live":
+    elif mode == "log":
         last_data = {}
         while True:
             time.sleep(poll_pause)
@@ -258,26 +344,27 @@ def user_interaction(mode: str, poll_pause: float) -> None:
                     if data != "":
                         print(f"(buffered) {index}: {data}")
                 last_data = bufferdata
-    elif mode == "text":
-        while True:
-            cmd = input("> ")
-            cmd_initial = cmd.split(" ")[0]
-            match cmd_initial:
-                case "status":
-                    for index in DATA.get_indices():
-                        print(DATA.status(index))
-                case "help":
-                    print("Commands: status, help")
-                case _:
-                    print(
-                        f'Unknown command: {cmd_initial}. Enter "help" to get '
-                        f"an overivew of all available commands!"
-                    )
+    elif mode == "table":
+        console = Console()
 
-            # In curses version this can be done in parallel to accepting input
-            bufferdata = LOG.pop_all()
-            for index, data in bufferdata.items():
-                print(f"(buffered) {index}: {data}")
+        def create_layout() -> Layout:
+            live_table = DATA.make_live_table()
+            live_table.title = "Live FINN+ Runs"
+            live_table.caption = (
+                f"Time between polls: {poll_pause}s. Listening on "
+                f"{socket_target}. Open connections: {DATA.open_connections()}"
+            )
+            live_table.caption_style = "italic grey50"
+            finished_table = DATA.make_finished_run_table()
+            finished_table.title = "Finished FINN+ Runs"
+            layout = Layout()
+            layout.split_column(Align.center(live_table), Align.center(finished_table))
+            return layout
+
+        with Live(create_layout(), console=console, refresh_per_second=20, screen=True) as live:
+            while True:
+                time.sleep(poll_pause)
+                live.update(create_layout())
     else:
         raise NotImplementedError(f"Mode {mode} not implemented.")
 
@@ -292,11 +379,11 @@ if __name__ == "__main__":
         type=int,
         help="Number of connections that the server can handle concurrently",
     )
-    parser.add_argument("--mode", "-m", help="Mode. tui or text.", default="text")
+    parser.add_argument("--mode", "-m", help="log / table / tui", default="text")
     parser.add_argument(
         "--poll-pause",
         "-p",
-        default=0.5,
+        default=0.1,
         type=float,
         help="Number of seconds (float) to wait between polling the "
         "status of the local data fields.",

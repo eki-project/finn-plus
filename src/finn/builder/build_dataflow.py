@@ -47,7 +47,7 @@ from rich.traceback import Traceback
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
 from finn.util.exception import FINNConfigurationError, FINNDataflowError, FINNError, FINNUserError
-from finn.util.logging import status_server
+from finn.util.logging import RunStatus, status_server
 
 
 # adapted from https://stackoverflow.com/a/39215961
@@ -266,6 +266,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         success = status_server.initialize_status_socket(cfg.status_socket_location)
         if success:
             print("Connected successfully.")
+            status_server.introduce(cfg.generated_from, Path(model_filename), RunStatus.RUNNING)
         else:
             print("Could not connect. Proceeding without.")
 
@@ -317,8 +318,10 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
             step_num += 1
     except KeyboardInterrupt:
         print("KeyboardInterrupt detected. Aborting...")
+        status_server.update_status(RunStatus.KEYBOARD_INTERRUPT)
         return exit_buildflow(cfg, time_per_step, -1)
     except (Exception, FINNError) as e:
+        status_server.update_status(RunStatus.FAIL)
         # Re-raise exception if we are in a PyTest session so we don't miss it
         if "PYTEST_CURRENT_TEST" in os.environ:
             raise

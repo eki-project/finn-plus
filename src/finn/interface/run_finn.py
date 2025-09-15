@@ -214,6 +214,9 @@ def build(
     if dfbc.stop_step is None and stop != "":
         dfbc.stop_step = stop
 
+    # Keep track of where the config lies
+    dfbc.generated_from = config_path.absolute()
+
     # Set output directory to where the config lies, not where FINN lies
     if not Path(dfbc.output_dir).is_absolute():
         dfbc.output_dir = str((config_path.parent / dfbc.output_dir).absolute())
@@ -227,7 +230,7 @@ def build(
         f"{config_path.name}[/bold orange1][bold cyan] on model [/bold cyan]"
         f"[bold orange1]{model_path.name}[/bold orange1]"
     )
-    build_dataflow_cfg(str(model_path), dfbc)
+    build_dataflow_cfg(str(model_path.absolute()), dfbc)
 
 
 @click.command(help="Run a script in a FINN environment")
