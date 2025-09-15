@@ -47,6 +47,7 @@ from rich.traceback import Traceback
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
 from finn.util.exception import FINNConfigurationError, FINNDataflowError, FINNError, FINNUserError
+from finn.util.logging import status_server
 
 
 # adapted from https://stackoverflow.com/a/39215961
@@ -217,6 +218,10 @@ def setup_logging(cfg: DataflowBuildConfig):
 
 
 def exit_buildflow(cfg: DataflowBuildConfig, time_per_step: dict = None, exit_code: int = 0):
+    if status_server.connected():
+        print("Disconnecting from status server...")
+        status_server.close_status_socket()
+
     if exit_code:
         print("Build failed")
         status = "failed"
@@ -256,6 +261,14 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     print(f"Final outputs will be generated in {cfg.output_dir}")
     print(f"Build log is at {cfg.output_dir}/build_dataflow.log")
 
+    if cfg.status_socket_location is not None:
+        print(f"Trying to connect to status server at {cfg.status_socket_location}...")
+        success = status_server.initialize_status_socket(cfg.status_socket_location)
+        if success:
+            print("Connected successfully.")
+        else:
+            print("Could not connect. Proceeding without.")
+
     # Setup done, start build flow
     try:
         # If start_step is specified, override the input model
@@ -288,6 +301,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
         for transform_step in build_dataflow_steps:
             step_name = transform_step.__name__
             print(f"Running step: {step_name} [{step_num}/{len(build_dataflow_steps)}]")
+            status_server.update_step(step_name)
 
             # Run the step
             step_start = time.time()

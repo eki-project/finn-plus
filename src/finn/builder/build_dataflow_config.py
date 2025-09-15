@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
+from pathlib import Path
 from typing import Any, List, Optional
 
 from finn.util.basic import alveo_default_platform, part_map
@@ -358,6 +359,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: This is different from the log level used for build_dataflow.log,
     #: which is controlled using the verbose flag.
     console_log_level: Optional[LogLevel] = LogLevel.ERROR
+
+    #: If not None, this location is used to check for a socket.
+    #: If one is found, it is used to send status updates to. This can be used
+    #: to monitor large amounts of concurrently started FINN runs
+    status_socket_location: Optional[Path] = None
 
     #: If given, only run the steps in the list. If not, run default steps.
     #: See `default_build_dataflow_steps` for the default list of steps.
