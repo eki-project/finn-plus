@@ -492,9 +492,13 @@ compilation transformations?
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         if cpp_interface == "packed":
             for i, inp in enumerate(node.input):
+                iwidth = self.get_instream_width(i)
+                # width = 0 means the stream is not exposed
+                if iwidth == 0:
+                    continue
                 self.code_gen_dict["$STREAMDECLARATIONS$"].append(
                     'hls::stream<ap_uint<{}>> in{}_V ("in{}_V");'.format(
-                        self.get_instream_width(i), i, i
+                        iwidth, i, i
                     )
                 )
             for o, outp in enumerate(node.output):
@@ -505,6 +509,9 @@ compilation transformations?
                 )
         else:
             for i, inp in enumerate(node.input):
+                # width = 0 means the stream is not exposed
+                if self.get_instream_width(i) == 0:
+                    continue
                 dtype = self.get_input_datatype(i)
                 if dtype == DataType["BIPOLAR"]:
                     # use binary for bipolar storage
