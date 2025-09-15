@@ -13,8 +13,9 @@ import os
 try:
     import xsi
 except ModuleNotFoundError:
-    content = ",".join(os.listdir("/dev/shm/finn-plus-venv/lib/python3.10/site-packages/finn_xsi"))
-    assert False, f"xsi not found, Python sys.path: {sys.path}, PYTHONPATH: {os.environ.get('PYTHONPATH', '')}, content of /dev/shm/finn-plus-venv/lib/python3.10/site-packages/finn_xsi: {content}"
+    assert False, f"xsi not found, Python sys.path: {sys.path}, PYTHONPATH: {os.environ.get('PYTHONPATH', '')}"
+    #content = ",".join(os.listdir("/dev/shm/finn-plus-venv/lib/python3.10/site-packages/finn_xsi"))
+    #assert False, f"xsi not found, Python sys.path: {sys.path}, PYTHONPATH: {os.environ.get('PYTHONPATH', '')}, content of /dev/shm/finn-plus-venv/lib/python3.10/site-packages/finn_xsi: {content}"
 
 
 class SimEngine:
