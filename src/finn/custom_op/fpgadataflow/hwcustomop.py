@@ -26,10 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import os
+
 try:
     import finn_xsi.adapter as finnxsi
 except ModuleNotFoundError:
-    assert False, f"LD_LIBRARY_PATH: {os.environ['LD_LIBRARY_PATH']}, PYTHONPATH: {os.environ['PYTHONPATH']}"
+    assert (
+        False
+    ), f"LD_LIBRARY_PATH: {os.environ['LD_LIBRARY_PATH']}, PYTHONPATH: {os.environ['PYTHONPATH']}"
     finnxsi = None
 
 import numpy as np
@@ -302,7 +305,7 @@ class HWCustomOp(CustomOp):
         """Helper function to generate verilog code for memstream component.
         Currently utilized by MVAU, VVAU and HLS Thresholding layer."""
         ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls"]
-        if self.onnx_node.op_type in ops:
+        if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
             template_path = os.path.join(
                 os.environ["FINN_RTLLIB"] + "/memstream/hdl/memstream_wrapper_template.v"
             )

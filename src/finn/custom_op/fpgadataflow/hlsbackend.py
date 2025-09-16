@@ -26,10 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import os
+
 try:
     import finn_xsi.adapter as finnxsi
 except ModuleNotFoundError:
-    assert False, f"LD_LIBRARY_PATH: {os.environ['LD_LIBRARY_PATH']}, PYTHONPATH: {os.environ['PYTHONPATH']}"
+    assert (
+        False
+    ), f"LD_LIBRARY_PATH: {os.environ['LD_LIBRARY_PATH']}, PYTHONPATH: {os.environ['PYTHONPATH']}"
     finnxsi = None
 
 import numpy as np
@@ -492,58 +495,56 @@ compilation transformations?
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         if cpp_interface == "packed":
             for i, inp in enumerate(node.input):
-                iwidth = self.get_instream_width(i)
-                # width = 0 means the stream is not exposed
-                if iwidth == 0:
-                    continue
-                self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                    'hls::stream<ap_uint<{}>> in{}_V ("in{}_V");'.format(
-                        iwidth, i, i
+                if self.get_instream_width(i):
+                    self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                        'hls::stream<ap_uint<{}>> in{}_V ("in{}_V");'.format(
+                            self.get_instream_width(i), i, i
+                        )
                     )
-                )
             for o, outp in enumerate(node.output):
-                self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                    'hls::stream<ap_uint<{}>> out{}_V ("out{}_V");'.format(
-                        self.get_outstream_width(o), o, o
+                if self.get_outstream_width(o):
+                    self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                        'hls::stream<ap_uint<{}>> out{}_V ("out{}_V");'.format(
+                            self.get_outstream_width(o), o, o
+                        )
                     )
-                )
         else:
             for i, inp in enumerate(node.input):
-                # width = 0 means the stream is not exposed
-                if self.get_instream_width(i) == 0:
-                    continue
-                dtype = self.get_input_datatype(i)
-                if dtype == DataType["BIPOLAR"]:
-                    # use binary for bipolar storage
-                    dtype = DataType["BINARY"]
-                elem_input_hls_type = dtype.get_hls_datatype_str()
+                if self.get_instream_width(i):
+                    dtype = self.get_input_datatype(i)
+                    if dtype == DataType["BIPOLAR"]:
+                        # use binary for bipolar storage
+                        dtype = DataType["BINARY"]
+                    elem_input_hls_type = dtype.get_hls_datatype_str()
 
-                self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                    'hls::stream<hls::vector<{},{}>> in{}_V ("in{}_V");'.format(
-                        elem_input_hls_type, self.get_folded_input_shape(i)[-1], i, i
+                    self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                        'hls::stream<hls::vector<{},{}>> in{}_V ("in{}_V");'.format(
+                            elem_input_hls_type, self.get_folded_input_shape(i)[-1], i, i
+                        )
                     )
-                )
 
             for o, outp in enumerate(node.output):
-                dtype = self.get_output_datatype(o)
-                if dtype == DataType["BIPOLAR"]:
-                    # use binary for bipolar storage
-                    dtype = DataType["BINARY"]
-                elem_output_hls_type = dtype.get_hls_datatype_str()
+                if self.get_outstream_width(o):
+                    dtype = self.get_output_datatype(o)
+                    if dtype == DataType["BIPOLAR"]:
+                        # use binary for bipolar storage
+                        dtype = DataType["BINARY"]
+                    elem_output_hls_type = dtype.get_hls_datatype_str()
 
-                self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                    'hls::stream<hls::vector<{},{}>> out{}_V ("out{}_V");'.format(
-                        elem_output_hls_type, self.get_folded_output_shape(o)[-1], o, o
-                    )
-                )
-
-            if self.get_nodeattr("hls_style") == "freerunning":
-                for o, outp in enumerate(node.output):
                     self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                        'hls::stream<hls::vector<{},{}>> strm{} ("strm{}");'.format(
+                        'hls::stream<hls::vector<{},{}>> out{}_V ("out{}_V");'.format(
                             elem_output_hls_type, self.get_folded_output_shape(o)[-1], o, o
                         )
                     )
+
+            if self.get_nodeattr("hls_style") == "freerunning":
+                for o, outp in enumerate(node.output):
+                    if self.get_outstream_width(o):
+                        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                            'hls::stream<hls::vector<{},{}>> strm{} ("strm{}");'.format(
+                                elem_output_hls_type, self.get_folded_output_shape(o)[-1], o, o
+                            )
+                        )
 
     @abstractmethod
     def docompute(self):
