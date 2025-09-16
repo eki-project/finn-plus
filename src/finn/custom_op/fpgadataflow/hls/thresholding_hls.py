@@ -246,6 +246,18 @@ class Thresholding_hls(Thresholding, HLSBackend):
 
     def generate_params(self, model, path):
         code_gen_dir = path
+
+        # Check input and threshold datatypes
+        idt = self.get_input_datatype(0)
+        tdt = self.get_input_datatype(1)
+        if idt.is_integer() and not tdt.is_integer():
+            raise ValueError(
+                "Thresholds must be converted to integers for integer inputs "
+                "using RoundAndClipThresholds transform before code generation."
+            )
+        if not idt.is_integer() and tdt.is_integer():
+            raise ValueError("Floating-point inputs and integer thresholds are not supported.")
+
         thresholds = model.get_initializer(self.onnx_node.input[1])
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_embedded":
