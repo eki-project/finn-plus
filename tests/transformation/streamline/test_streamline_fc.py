@@ -90,7 +90,9 @@ def test_streamline_fc(size, wbits, abits):
     model = model.transform(RemoveUnusedTensors())
     assert len(model.graph.initializer) == 11
     assert len(model.graph.value_info) == 21
-    assert len(model.graph.quantization_annotation) == 20
+    # The first tensor (input to the Reshape) doesn't have a quantization annotation (why?),
+    # but it does have a layout annotation now, which is also stored as "quantization_annotation"
+    assert len(model.graph.quantization_annotation) == 21
     produced_ctx = oxe.execute_onnx(model, input_dict, True)
     produced = produced_ctx[model.graph.output[0].name]
     assert np.isclose(expected, produced, atol=1e-3).all()

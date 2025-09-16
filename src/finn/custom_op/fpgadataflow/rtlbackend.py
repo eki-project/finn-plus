@@ -99,7 +99,17 @@ class RTLBackend(ABC):
                 exp_ishape = tuple(self.get_normal_input_shape(i))
                 folded_ishape = self.get_folded_input_shape(i)
                 inp_val = context[inp]
-                assert str(inp_val.dtype) == "float32", "Input datatype is not float32"
+                # Make sure the input has the right container datatype
+                if inp_val.dtype != np.float32:
+                    # Issue a warning to make the user aware of this type-cast
+                    log.warning(
+                        f"{node.name}: Changing input container datatype from "
+                        f"{inp_val.dtype} to {np.float32}"
+                    )
+                    # Convert the input to floating point representation as the
+                    # container datatype
+                    inp_val = inp_val.astype(np.float32)
+
                 assert inp_val.shape == exp_ishape, "Input shape doesn't match expected shape."
                 export_idt = self.get_input_datatype(i)
 

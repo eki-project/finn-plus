@@ -7,7 +7,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model
 
 from finn.analysis.fpgadataflow.unsupported_layers import unsupported_layers
-from finn.builder.build_dataflow_steps import step_check_unsupported_nodes
+from finn.builder.build_dataflow_steps import step_create_dataflow_partition
 from finn.util.exception import FINNUserError
 
 
@@ -298,4 +298,4 @@ def test_large_model_step():
     model = ModelWrapper(model)
 
     with pytest.raises(FINNUserError):
-        step_check_unsupported_nodes(model, None)
+        step_create_dataflow_partition(model, None)

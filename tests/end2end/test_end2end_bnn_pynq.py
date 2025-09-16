@@ -461,7 +461,6 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize(argnames, argvalues, ids=idlist, scope="class")
 
 
-@pytest.mark.xfail(reason="Outstanding data layout issue")
 @pytest.mark.sanity_bnn
 @pytest.mark.bnn_pynq
 @pytest.mark.bnn_zcu104
@@ -762,6 +761,8 @@ class TestEnd2End:
         y = execute_parent(parent_chkpt, rtlsim_chkpt, input_tensor_npy)
         assert np.isclose(y, output_tensor_npy).all()
 
+    # TODO: Consider improving heuristic for N or stopping sim when steady state is reached
+    @pytest.mark.skip("Test disabled due to excessive runtime")
     @pytest.mark.slow
     @pytest.mark.vivado
     def test_throughput_rtlsim(self, topology, wbits, abits, board):

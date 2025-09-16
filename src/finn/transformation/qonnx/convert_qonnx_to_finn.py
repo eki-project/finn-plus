@@ -29,6 +29,7 @@
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.extract_conv_bias import ExtractBiasFromConv
 from qonnx.transformation.gemm_to_matmul import GemmToMatMul
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.quant_constant_folding import FoldTransposeIntoQuantInit
 from qonnx.transformation.remove import RemoveIdentityOps
@@ -80,6 +81,11 @@ class ConvertQONNXtoFINN(Transformation):
         # Fold weights
         model = model.transform(FoldQuantWeights())
         # Convert activations
+
+        # Perform layout inference so that QuantActBaseHandler can set data_layout
+        # attribute of MT for use in later layout inference and NCHW->NHWC conversion
+        # in the InferThresholding transformation.
+        model = model.transform(InferDataLayouts())
         model = model.transform(
             ConvertQuantActToMultiThreshold(
                 filter_function=self._filter_function,
@@ -87,6 +93,7 @@ class ConvertQONNXtoFINN(Transformation):
         )
         # Recompute datatypes
         model = model.transform(InferDataTypes())
+        model = model.transform(InferDataLayouts())
         # Convert AvgPool -> Mul -> Trunc structure to QuantAvgPool2d
         model = model.transform(AvgPoolAndTruncToQuantAvgPool())
         # Remove empty padding if it exists

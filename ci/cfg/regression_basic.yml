@@ -1,4 +1,5 @@
 [
+    # VGG-10 (1D CNN) (RadioML)
     {
         "dut": ["vgg10"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],

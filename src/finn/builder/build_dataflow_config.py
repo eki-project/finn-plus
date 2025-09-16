@@ -131,14 +131,13 @@ default_build_dataflow_steps = [
     "step_convert_to_hw",
     "step_create_dataflow_partition",
     "step_specialize_layers",
-    "step_check_unsupported_nodes",
     "step_target_fps_parallelization",
     "step_apply_folding_config",
     "step_minimize_bit_width",
     "step_generate_estimate_reports",
+    "step_set_fifo_depths",
     "step_hw_codegen",
     "step_hw_ipgen",
-    "step_set_fifo_depths",
     "step_create_stitched_ip",
     "step_measure_rtlsim_performance",
     "step_out_of_context_synthesis",
@@ -155,7 +154,6 @@ estimate_only_dataflow_steps = [
     "step_convert_to_hw",
     "step_create_dataflow_partition",
     "step_specialize_layers",
-    "step_check_unsupported_nodes",
     "step_target_fps_parallelization",
     "step_apply_folding_config",
     "step_minimize_bit_width",
@@ -285,7 +283,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: for each FIFO.
     auto_fifo_depths: Optional[bool] = True
 
-    # Enables experimental live FIFO sizing
+    #: Enables experimental live FIFO sizing on the FPGA.
     live_fifo_sizing: Optional[bool] = False
 
     #: Whether FIFO nodes with depth larger than 32768 will be split.

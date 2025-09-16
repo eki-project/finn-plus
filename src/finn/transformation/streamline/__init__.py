@@ -38,6 +38,7 @@ from qonnx.transformation.general import (
     GiveReadableTensorNames,
     GiveUniqueNodeNames,
 )
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.remove import RemoveIdentityOps
 
@@ -100,4 +101,6 @@ class Streamline(Transformation):
             model = model.transform(GiveUniqueNodeNames())
             model = model.transform(GiveReadableTensorNames())
             model = model.transform(InferDataTypes())
+            model = model.transform(InferDataLayouts())
+
         return (model, False)
