@@ -6,6 +6,7 @@ import argparse
 import datetime
 import json
 import socket
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -371,7 +372,15 @@ def user_interaction(mode: str, poll_pause: float) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("socket", help="Socket / address that FINN+ clients communicate with")
+    parser.add_argument(
+        "socket",
+        help=(
+            "Socket / address that FINN+ clients communicate with. "
+            "If using UNIX sockets, provide the path. "
+            'If given in the format "addr,port", an AF_INET '
+            "socket is used."
+        ),
+    )
     parser.add_argument(
         "--max-connections",
         "-c",
@@ -390,17 +399,35 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Remove socket if it already exists
-    socket_target = Path(args.socket)
-    if socket_target.exists():
-        socket_target.unlink()
+    # Determine socket target
+    sock_split: list[str] = args.socket.split(",")
+    socket_target: tuple[str, int] | str
+    if len(sock_split) == 1:
+        sock_type = socket.AF_UNIX
+        st = Path(sock_split[0])
+        if st.exists():
+            st.unlink()
+        socket_target = str(st)
+    elif len(sock_split) == 2:
+        sock_type = socket.AF_INET
+        socket_target = (sock_split[0], int(sock_split[1]))
+    else:
+        print(
+            'socket parameter may either be: "<path>" for '
+            'AF_UNIX sockets or "<addr>,<port>" for AF_INET sockets.'
+        )
+        sys.exit(1)
 
     print(f"Using socket {socket_target}")
     index = 0
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+    with socket.socket(sock_type, socket.SOCK_STREAM) as server:
         # Bind socket
-        server.bind(str(socket_target))
-        print(f"Socket bound. Listening. Max connections: {args.max_connections}")
+        server.bind(socket_target)
+        print(f"Socket type: {sock_type.name}")
+        print(
+            f"Socket bound and listening to {socket_target}. "
+            f"Max connections: {args.max_connections}"
+        )
         server.listen(args.max_connections)
 
         # Start thread for user interaction

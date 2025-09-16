@@ -366,8 +366,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: If not None, this location is used to check for a socket.
     #: If one is found, it is used to send status updates to. This can be used
-    #: to monitor large amounts of concurrently started FINN runs
-    status_socket_location: Optional[Path] = None
+    #: to monitor large amounts of concurrently started FINN runs.
+    # Can either be a path (UNIX socket) or an address port tuple (AF_INET)
+    status_socket_location: Optional[Path | tuple[str, int]] = None
 
     #: If given, only run the steps in the list. If not, run default steps.
     #: See `default_build_dataflow_steps` for the default list of steps.

@@ -4,10 +4,8 @@ import json
 import logging
 import socket
 from enum import Enum
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any
 
 log = logging.getLogger("finn_logger")
 
@@ -38,20 +36,28 @@ class _StatusServer:
     """Manages the connection to the status server."""
 
     def __init__(self) -> None:
-        """Create a new status serverconnection at the given path."""
+        """Create a new status serverconnection."""
         self._status_server: socket.socket | None = None
 
     def connected(self) -> bool:
         """Return whether we are connected to a status server."""
         return self._status_server is not None
 
-    def initialize_status_socket(self, socket_path: Path) -> bool:
-        """Initialize the socket to the given path. If successful return True, False otherwise."""
-        if not socket_path.exists():
-            return False
-        self._status_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._status_server.connect(str(socket_path))
-        return True
+    def initialize_status_socket(self, socket_target: Path | tuple[str, int]) -> bool:
+        """Initialize the socket to the given target. If successful return True, False otherwise."""
+        if type(socket_target) is Path:
+            if not socket_target.exists():
+                return False
+            self._status_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self._status_server.connect(str(socket_target))
+            return True
+        if type(socket_target) is tuple:
+            addr, port = socket_target
+            self._status_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._status_server.connect((addr, port))
+            return True
+        print(f"Unknown socket target type: {type(socket_target)}. Not connecting.")
+        return False
 
     def _send_message(self, msg: str) -> bool:
         """Send a message on the socket. If none is initialized, return False."""
