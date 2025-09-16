@@ -341,9 +341,7 @@ class HWCustomOp(CustomOp):
             pass
 
     def generate_hdl_dynload(self):
-        template_path = (
-            os.environ["FINN_ROOT"] + "/finn-rtllib/dynload/hdl/dynamic_load_wrapper_template.v"
-        )
+        template_path = os.environ["FINN_RTLLIB"] + "/dynload/hdl/dynamic_load_wrapper_template.v"
         mname = self.onnx_node.name
         pe = self.get_nodeattr("PE")
         simd = self.get_nodeattr("SIMD")
