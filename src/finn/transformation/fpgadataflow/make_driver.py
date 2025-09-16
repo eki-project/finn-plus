@@ -486,6 +486,8 @@ class MakePYNQDriver(Transformation):
         finn_target_path = pynq_driver_dir + "/finn"
         os.makedirs(qonnx_target_path + "/core", exist_ok=True)
         os.makedirs(qonnx_target_path + "/util", exist_ok=True)
+        os.makedirs(qonnx_target_path + "/custom_op", exist_ok=True)
+        os.makedirs(qonnx_target_path + "/transformation", exist_ok=True)
         os.makedirs(finn_target_path + "/util", exist_ok=True)
         qonnx_path = qonnx.__path__[0]
         finn_util_path = finn.util.__path__[0]
@@ -511,6 +513,31 @@ class MakePYNQDriver(Transformation):
                 finn_util_path + "/__init__.py",
                 finn_target_path + "/util/__init__.py",
             )
+        )
+        files_to_copy.append(
+            (qonnx_path + "/core/modelwrapper.py", qonnx_target_path + "/core/modelwrapper.py")
+        )
+        files_to_copy.append(
+            (qonnx_path + "/custom_op/registry.py", qonnx_target_path + "/custom_op/registry.py")
+        )
+        files_to_copy.append((qonnx_path + "/util/onnx.py", qonnx_target_path + "/util/onnx.py"))
+        files_to_copy.append(
+            (qonnx_path + "/core/data_layout.py", qonnx_target_path + "/core/data_layout.py")
+        )
+        files_to_copy.append(
+            (
+                qonnx_path + "/transformation/double_to_single_float.py",
+                qonnx_target_path + "/transformation/double_to_single_float.py",
+            )
+        )
+        files_to_copy.append(
+            (
+                qonnx_path + "/transformation/general.py",
+                qonnx_target_path + "/transformation/general.py",
+            )
+        )
+        files_to_copy.append(
+            (qonnx_path + "/transformation/base.py", qonnx_target_path + "/transformation/base.py")
         )
         for src_file, target_file in files_to_copy:
             shutil.copy(src_file, target_file)

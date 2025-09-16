@@ -42,6 +42,12 @@ class ExpiermentManager:
 
         # setup driver module
         spec = importlib.util.spec_from_file_location("driver", self._driver)
+
+        # Add the directory of the driver to sys.path
+        module_dir = os.path.dirname(spec.origin)
+        if module_dir not in sys.path:
+            sys.path.append(module_dir)
+
         self._driver_module = importlib.util.module_from_spec(spec)
         sys.modules["driver"] = self._driver_module
         spec.loader.exec_module(self._driver_module)
