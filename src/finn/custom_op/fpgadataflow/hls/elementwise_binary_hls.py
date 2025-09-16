@@ -656,8 +656,8 @@ class ElementwiseBinaryOperation_hls(
             )
             # instantiate a streamer and connect it to the IP
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-            axi_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/axi/hdl/")
-            ms_rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/memstream/hdl/")
+            axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
+            ms_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
             file_suffix = "_memstream_wrapper.v"
             # automatically find memstream verilog component in code generation directory
             for fname in os.listdir(code_gen_dir):

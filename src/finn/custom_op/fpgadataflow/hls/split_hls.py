@@ -29,11 +29,6 @@
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.split import StreamingSplit
 
-try:
-    import pyxsi_utils
-except ModuleNotFoundError:
-    pyxsi_utils = None
-
 
 class StreamingSplit_hls(StreamingSplit, HLSBackend):
     """Streaming split node with dynamically generated HLS.
