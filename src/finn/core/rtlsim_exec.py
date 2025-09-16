@@ -94,14 +94,18 @@ def prep_rtlsim_io_dict(model, execution_context):
         o_folded_shape = last_node.get_folded_output_shape()
         # override batch size from actual input
         o_shape = list(o_shape)
-        o_shape[0] = batchsize
+        if o_shape[0] != batchsize:
+            o_shape[0] = batchsize
+            num_out_values[if_name] = batchsize * last_node.get_number_output_values()
+        else:
+            num_out_values[if_name] = last_node.get_number_output_values()
         o_shape = tuple(o_shape)
         o_folded_shape = list(o_folded_shape)
-        o_folded_shape[0] = batchsize
+        if o_folded_shape[0] != batchsize:
+            o_folded_shape[0] = batchsize
         o_folded_shape = tuple(o_folded_shape)
         o_stream_w = last_node.get_outstream_width()
         o_tensor_info.append((o_stream_w, o_dt, o_folded_shape, o_shape))
-        num_out_values[if_name] = batchsize * last_node.get_number_output_values()
     if len(num_out_values.keys()) == 1:
         num_out_values = num_out_values[if_name]
     return io_dict, if_dict, num_out_values, o_tensor_info, batchsize

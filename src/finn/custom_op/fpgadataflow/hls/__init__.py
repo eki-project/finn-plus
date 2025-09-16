@@ -26,11 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-# The base class of all HWCustomOp specializations to HLS backend implementation
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-
-# The base class of all generic custom operations before specializing to either
-# HLS or RTL backend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # Dictionary of HLSBackend implementations
@@ -46,7 +42,7 @@ def register_custom_op(cls):
     # The class must also implement the HLSBackend
     assert issubclass(cls, HLSBackend), f"{cls} must subclass {HLSBackend}"
     # Insert the class into the custom_op dictionary by its name
-    custom_op[cls.__name__] = cls  # noqa: Some weird type annotation issue?
+    custom_op[cls.__name__] = cls
     # Pass through the class unmodified
     return cls
 

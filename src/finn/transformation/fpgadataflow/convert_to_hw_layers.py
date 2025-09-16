@@ -1809,21 +1809,6 @@ class InferElementwiseBinaryOperation(Transformation):
         # Filter True accepts this node
         return True
 
-    # Filter function to filter out any operation involving any floating-point
-    # tensor
-    @staticmethod
-    def reject_floats(model: ModelWrapper, node: NodeProto):
-        # Check for any input being floating-point
-        if any(model.get_tensor_datatype(x) == "FLOAT32" for x in node.input):
-            # Filter False rejects this node
-            return False
-        # Check for any output being floating-point
-        if any(model.get_tensor_datatype(x) == "FLOAT32" for x in node.output):
-            # Filter False rejects this node
-            return False
-        # Filter True accepts this node
-        return True
-
     # Initializes the transformation method with an optional filter function
     def __init__(self, _filter=None):
         # Initialize the base class Transformation object
@@ -1845,51 +1830,43 @@ class InferElementwiseBinaryOperation(Transformation):
             # If a custom operation with corresponding name is implemented in
             # the module, this operator is supported for conversion
             if f"Elementwise{node.op_type}" in dir(elementwise_binary):
-                # Transplant this operator into our FINN domain
-                node.domain = "finn.custom_op.fpgadataflow"
-                # Adapt the op-type prefixing it with Elementwise
-                # TODO: Consider dropping the prefix?
-                node.op_type = f"Elementwise{node.op_type}"
-                # Now we can get the CustomOp wrapper instance providing easier
-                # attribute access
-                inst: HWCustomOp = getCustomOp(node)
-                # Set the backend attribute to mark this an operation supported
-                # to be implemented on an FPGA by FINN
-                inst.set_nodeattr("backend", "fpgadataflow")
+                in0 = node.input[0]
+                in1 = node.input[1]
+                # if both inputs are constant, throw an error and
+                # ask user to run FoldConstants transform first
+                assert (
+                    model.get_initializer(in0) is None or model.get_initializer(in1) is None
+                ), """Both inputs are constant,
+                    please run FoldConstants from qonnx.transformation.fold_constants first."""
+                result = node.output[0]
+
                 # Need to "lift" potential scalar inputs to rank-1 tensors
-                lift_to_rank1(node.input[0], model)
-                lift_to_rank1(node.input[1], model)
+                lift_to_rank1(in0, model)
+                lift_to_rank1(in1, model)
 
-                # fmt: off
-                # Disable formatter. This is deliberately formatted to stay
-                # within 80 characters per line. Black, however, formats some
-                # lines going beyond this.
+                in0_shape = model.get_tensor_shape(in0)
+                in1_shape = model.get_tensor_shape(in1)
+                out_shape = model.get_tensor_shape(result)
 
-                # Insert data type attributes from "context" into the CustomOp
-                # node
-                # TODO: Find a way to handle this via data type inference?
-                inst.set_nodeattr(
-                    "lhs_dtype", str(model.get_tensor_datatype(node.input[0]))
-                )
-                inst.set_nodeattr(
-                    "rhs_dtype", str(model.get_tensor_datatype(node.input[1]))
-                )
-                inst.set_nodeattr(
-                    "out_dtype", str(model.get_tensor_datatype(node.output[0]))
-                )
-                # Insert shape attributes from "context" into the CustomOp node
-                # TODO: Find a way to handle this via shape inference?
-                inst.set_nodeattr(
-                    "lhs_shape", model.get_tensor_shape(node.input[0])
-                )
-                inst.set_nodeattr(
-                    "rhs_shape", model.get_tensor_shape(node.input[1])
-                )
-                inst.set_nodeattr(
-                    "out_shape", model.get_tensor_shape(node.output[0])
-                )
+                idt0 = model.get_tensor_datatype(in0)
+                idt1 = model.get_tensor_datatype(in1)
+                odt0 = model.get_tensor_datatype(result)
 
-                # fmt: on
+                new_node = helper.make_node(
+                    f"Elementwise{node.op_type}",
+                    [in0, in1],
+                    [result],
+                    domain="finn.custom_op.fpgadataflow",
+                    backend="fpgadataflow",
+                    lhs_shape=in0_shape,
+                    rhs_shape=in1_shape,
+                    out_shape=out_shape,
+                    lhs_dtype=str(idt0),
+                    rhs_dtype=str(idt1),
+                    out_dtype=str(odt0),
+                )
+                graph.node.insert(index + 1, new_node)
+                graph.node.remove(node)
 
                 # Consider the graph to be modified, triggering exhaustive
                 # re-application of this transformation

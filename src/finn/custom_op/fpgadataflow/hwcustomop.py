@@ -301,7 +301,7 @@ class HWCustomOp(CustomOp):
         """Helper function to generate verilog code for memstream component.
         Currently utilized by MVAU, VVAU and HLS Thresholding layer."""
         ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls"]
-        if self.onnx_node.op_type in ops:
+        if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
             template_path = os.path.join(
                 os.environ["FINN_RTLLIB"] + "/memstream/hdl/memstream_wrapper_template.v"
             )
