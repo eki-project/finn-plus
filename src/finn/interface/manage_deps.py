@@ -293,7 +293,7 @@ def install_finnxsi() -> bool:
     if not os.path.isfile(finnxsi_so_path):
         return False
 
-    # Set PATH/PYTHONPATH
+    # Set PATH/PYTHONPATH so the .so can be imported
     os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finnxsi_path}"
-    # sys.path.append(str(finnxsi_path))
+    sys.path.append(str(finnxsi_path))
     return True

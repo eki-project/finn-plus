@@ -289,14 +289,9 @@ def rtlsim_exec_cppxsi(
         raise FINNError("Failed to compile rtlsim executable")
 
     # launch the rtlsim executable
-    # important to specify LD_LIBRARY_PATH here for XSI to work correctly
-    runsim_env = os.environ.copy()
-    runsim_env["LD_LIBRARY_PATH"] = get_vivado_root() + "/lib/lnx64.o"
     runsim_cmd = ["bash", "run_rtlsim.sh"]
     with open(sim_base + "/run_rtlsim.sh", "w") as f:
-        f.write(
-            f"LD_LIBRARY_PATH={runsim_env['LD_LIBRARY_PATH']} ./rtlsim_xsi > rtlsim_xsi_log.txt"
-        )
+        f.write("./rtlsim_xsi > rtlsim_xsi_log.txt")
     launch_process_helper(runsim_cmd, cwd=sim_base)
 
     # parse results file and return dict
