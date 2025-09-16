@@ -1,10 +1,8 @@
 [
     {
         "dut": ["vgg10"],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
-    },
-    {
-        "dut": ["mobilenetv1"],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "enable_instrumentation": [False],
+        "experiments_config": ["../expermients/driver_rework_ex_config.json"],
     }
 ]
