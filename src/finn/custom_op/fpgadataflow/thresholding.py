@@ -125,20 +125,24 @@ class Thresholding(HWCustomOp):
         "Minimize threshold width ('accumulator width' here due to convention)"
         thresholds = model.get_initializer(self.onnx_node.input[1])
         threshold_tensor = self.get_hw_compatible_threshold_tensor(thresholds)
-        min_threshold = thresholds.min()
-        max_threshold = thresholds.max()
-        min_input = self.get_input_datatype(0).min()
-        max_input = self.get_input_datatype(0).max()
-        # get range required by threshold values
-        tdt_min = min(min_input, min_threshold)
-        tdt_max = max(max_input, max_threshold)
-        if tdt_min < 0:
-            if abs(tdt_min) > tdt_max:
-                tdt = DataType.get_smallest_possible(tdt_min)
-            else:
-                tdt = DataType.get_smallest_possible(-tdt_max - 1)
+        if self.get_input_datatype(0) == DataType["FLOAT32"]:
+            # special case: if input is float, we keep thresholds as float
+            tdt = DataType["FLOAT32"]
         else:
-            tdt = DataType.get_smallest_possible(tdt_max)
+            # determine threshold width depending on input width and threshold values
+            min_threshold = thresholds.min()
+            max_threshold = thresholds.max()
+            min_input = self.get_input_datatype(0).min()
+            max_input = self.get_input_datatype(0).max()
+            tdt_min = min(min_input, min_threshold)
+            tdt_max = max(max_input, max_threshold)
+            if tdt_min < 0:
+                if abs(tdt_min) > tdt_max:
+                    tdt = DataType.get_smallest_possible(tdt_min)
+                else:
+                    tdt = DataType.get_smallest_possible(-tdt_max - 1)
+            else:
+                tdt = DataType.get_smallest_possible(tdt_max)
         assert np.vectorize(tdt.allowed)(
             threshold_tensor
         ).all(), "Thresholds can't be expressed with type %s" % str(tdt)
