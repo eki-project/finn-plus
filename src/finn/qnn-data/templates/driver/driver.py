@@ -61,13 +61,13 @@ class FINNDMAOverlay(Overlay):
         self.idma = []
         self.odma = []
         self.odma_handle = []
-        if "input_dma_name" in io_shape_dict.keys():
-            for idma_name in io_shape_dict["input_dma_name"]:
+        if "idma_names" in io_shape_dict.keys():
+            for idma_name in io_shape_dict["idma_names"]:
                 self.idma.append(getattr(self, idma_name))
         else:
             self.idma = [self.idma0]
-        if "output_dma_name" in io_shape_dict.keys():
-            for odma_name in io_shape_dict["output_dma_name"]:
+        if "odma_names" in io_shape_dict.keys():
+            for odma_name in io_shape_dict["odma_names"]:
                 self.odma.append(getattr(self, odma_name))
                 if self.platform == "alveo":
                     self.odma_handle.append(None)

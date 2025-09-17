@@ -10,7 +10,7 @@
           "3V3"
         ],
         "sensors": [],
-        "board": "rfsoc4x2"
+        "board": "rfsoc2x2"
       }
     },
     "experiments": [
