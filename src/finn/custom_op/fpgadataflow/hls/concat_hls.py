@@ -92,9 +92,3 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
             pragmas.append("#pragma HLS aggregate variable=in%d_V compact=bit" % i)
         pragmas.append("#pragma HLS aggregate variable=out0_V compact=bit")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
-
-    def timeout_read_stream(self):
-        """Set reading output stream procedure for HLS functions defined for one clock cycle"""
-        self.code_gen_dict["$TIMEOUT_READ_STREAM$"] = [
-            "debug_out_{} << out0_{}.read();".format(self.hls_sname(), self.hls_sname())
-        ]
