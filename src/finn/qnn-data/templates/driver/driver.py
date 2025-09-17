@@ -61,6 +61,8 @@ class FINNDMAOverlay(Overlay):
         self.idma = []
         self.odma = []
         self.odma_handle = []
+        print(self.ip_dict)
+        print(self.ip_dict.keys())
         if "idma_names" in io_shape_dict.keys():
             for idma_name in io_shape_dict["idma_names"]:
                 self.idma.append(getattr(self, idma_name))
