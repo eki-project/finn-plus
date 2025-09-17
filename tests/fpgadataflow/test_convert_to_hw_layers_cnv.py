@@ -101,11 +101,12 @@ def test_convert_to_hw_layers_cnv_w1a1(fused_activation):
     # subsequently, the FC inference will generate passthrough MVAUs
     if not fused_activation:
         model = model.transform(to_hw.InferThresholdingLayer())
+        model = model.transform(absorb.AbsorbConsecutiveTransposes())
 
     model = model.transform(to_hw.InferBinaryMatrixVectorActivation())
     model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    model = model.transform(to_hw.InferConvInpGen())
     model = model.transform(to_hw.InferPool())
+    model = model.transform(to_hw.InferConvInpGen())
     model = model.transform(SpecializeLayers("xc7z020clg400-1"))
     for node in model.graph.node:
         if node.op_type == "MVAU_hls":
@@ -130,7 +131,7 @@ def test_convert_to_hw_layers_cnv_w1a1(fused_activation):
     else:
         assert len(finn_nodes) == 28
         thr_nodes = model.get_nodes_by_op_type("Thresholding_rtl")
-        assert len(thr_nodes) == 8
+        assert len(thr_nodes) == 9
     non_finn_nodes = model.get_non_finn_nodes()
     assert len(non_finn_nodes) == 5
     exp_non_finn_nodes = ["Transpose", "Transpose", "Reshape", "Mul", "Add"]
@@ -138,7 +139,7 @@ def test_convert_to_hw_layers_cnv_w1a1(fused_activation):
     fc_nodes = model.get_nodes_by_op_type("MVAU_hls")
     assert len(fc_nodes) == 9
     swg_nodes = model.get_nodes_by_op_type("ConvolutionInputGenerator_rtl")
-    assert len(swg_nodes) == 6
+    assert len(swg_nodes) == 8
     mp_nodes = model.get_nodes_by_op_type("Pool_hls")
     assert len(mp_nodes) == 2
     model = model.transform(PrepareCppSim())
