@@ -7,7 +7,7 @@ from dataset_loading import FileQueue, ImgQueue
 from PIL import Image
 
 # from pynq import PL
-from pynq import Overlay, allocate
+from pynq import PL, Overlay, allocate
 
 # from pynq.pl_server.device import Device
 from pynq.ps import Clocks
@@ -63,6 +63,7 @@ class FINNDMAOverlay(Overlay):
         self.odma_handle = []
         print(self.ip_dict)
         print(self.ip_dict.keys())
+        PL.reset()
         if "idma_names" in io_shape_dict.keys():
             for idma_name in io_shape_dict["idma_names"]:
                 self.idma.append(getattr(self, idma_name))

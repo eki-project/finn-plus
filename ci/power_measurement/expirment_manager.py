@@ -19,6 +19,7 @@ class ExpiermentManager:
         with open(config_path, "r") as fp_json:
             config = json.load(fp_json)
 
+        print(config)
         self._driver_info = config["driver_information"]
         self._experiment_info = config["experiment_information"]
 
