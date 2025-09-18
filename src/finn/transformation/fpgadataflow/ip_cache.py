@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import numpy as np
@@ -11,7 +10,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -21,9 +20,11 @@ from typing import TYPE_CHECKING, Any, Callable, Final, cast
 from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
 from finn.custom_op.fpgadataflow.channelwise_op import ChannelwiseOp
 from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation
+from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.lookup import Lookup
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
+from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.thresholding import Thresholding
 from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -389,6 +390,34 @@ class IPCache:
             json.dump(d, f)
 
     @staticmethod
+    def _replace_modulename(directory: Path, old: str, new: str) -> None:
+        """Recursively walk the directory and change all file/directory names, as well
+        as contents in the files from the old string to the new string.
+        """  # noqa
+        if not directory.is_dir():
+            raise FINNInternalError(f"Cannot replace module names in non-directory: {directory}")
+
+        # Walk all paths recursively
+        for obj in directory.rglob("*"):
+            obj: Path
+
+            # Replace file/directory names
+            if old in obj.name:
+                new_path = obj.with_name(obj.name.replace(old, new))
+                obj.rename(new_path)
+                obj = new_path
+
+            # Replace contents in files
+            if obj.is_file():
+                try:
+                    text = obj.read_text()
+                except UnicodeDecodeError:
+                    # We might accidentally read a binary file
+                    # In that case just move on
+                    continue
+                obj.write_text(text.replace(old, new))
+
+    @staticmethod
     def _prepare_from_cached_ip(
         op: HWCustomOp, hashed_key: str, make_copy: bool, cache_dir: Path
     ) -> None:
@@ -426,15 +455,26 @@ class IPCache:
 
         # Set node attributes correctly to point to cached directory
         op.set_nodeattr("code_gen_dir_ipgen", str(ip_dir))
-        op.set_nodeattr("ip_vlnv", saved_nodeattrs["ip_vlnv"])
-        op.set_nodeattr(
-            "ip_path", str(ip_dir / f"project_{op.onnx_node.name}" / "sol1" / "impl" / "ip")
-        )
-        op.set_nodeattr("ipgen_path", str(ip_dir / f"project_{op.onnx_node.name}"))
+        if issubclass(type(op), RTLBackend):
+            # Rename module in filenames and contents from the cached name to applied node name
+            old_module_name = saved_nodeattrs["gen_top_module"]
+            new_module_name = op.get_verilog_top_module_name()
+            if old_module_name != new_module_name:
+                log.debug(
+                    f"{op.onnx_node.name}: Replacing cached module name: {old_module_name} "
+                    f"with applied module name: {new_module_name}"
+                )
+                IPCache._replace_modulename(ip_dir, old_module_name, new_module_name)
+            op.set_nodeattr("ip_path", str(ip_dir))
+            op.set_nodeattr("ipgen_path", str(ip_dir))
+            op.set_nodeattr("gen_top_module", new_module_name)
 
-        # If needed insert gen_top_module. If not saved or the attr doesnt exist ignore
-        with contextlib.suppress(Exception):
-            op.set_nodeattr("gen_top_module", saved_nodeattrs["gen_top_module"])
+        elif issubclass(type(op), HLSBackend):
+            op.set_nodeattr("ip_vlnv", saved_nodeattrs["ip_vlnv"])
+            op.set_nodeattr(
+                "ip_path", str(ip_dir / f"project_{op.onnx_node.name}" / "sol1" / "impl" / "ip")
+            )
+            op.set_nodeattr("ipgen_path", str(ip_dir / f"project_{op.onnx_node.name}"))
 
     def _get_node_data(
         self, node: NodeProto, model: ModelWrapper
@@ -465,18 +505,25 @@ class IPCache:
 
     def apply(self, model: ModelWrapper) -> ModelWrapper:
         """Apply all IPs that were cached to the model and return it."""
+        futures: list[Future] = []
         with ThreadPoolExecutor(max_workers=get_num_default_workers()) as pool:
             for node in model.graph.node:
-                op, key, hashed_key, op_cache_dir = self._get_node_data(node, model)
+                op, _, hashed_key, op_cache_dir = self._get_node_data(node, model)
                 if op_cache_dir.exists():
-                    pool.submit(
-                        IPCache._prepare_from_cached_ip,
-                        op=op,
-                        hashed_key=hashed_key,
-                        make_copy=True,
-                        cache_dir=self.cache_dir,
+                    futures.append(
+                        pool.submit(
+                            IPCache._prepare_from_cached_ip,
+                            op=op,
+                            hashed_key=hashed_key,
+                            make_copy=True,
+                            cache_dir=self.cache_dir,
+                        )
                     )
             pool.shutdown(wait=True)
+
+            # Raise exceptions from threads if there were any
+            for future in futures:
+                _ = future.result()
         return model
 
     def update(self, model: ModelWrapper) -> None:
