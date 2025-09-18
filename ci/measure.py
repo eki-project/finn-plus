@@ -35,6 +35,7 @@ if __name__ == "__main__":
             os.makedirs(extract_dir, exist_ok=True)
             delete_dir_contents(extract_dir)
             shutil.unpack_archive(deploy_archive, extract_dir)
+            print(f"extract_dir: {extract_dir}")
 
             # Prefix stdout to make it easier to identify the run in the console output
             print(
