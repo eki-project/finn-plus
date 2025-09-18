@@ -22,10 +22,10 @@ class ExpiermentManager:
         print(config)
         print(f"CWD: {os.getcwd()}")
         print(f"working_dir: {working_dir}")
-        tmp = self._experiment_info["global"]["bitfile_name"]
-        print(f"bitfile_name : {tmp}")
         self._driver_info = config["driver_information"]
         self._experiment_info = config["experiment_information"]
+        tmp = self._experiment_info["global"]["bitfile_name"]
+        print(f"bitfile_name : {tmp}")
 
         self._experiment_info["global"]["driver"] = os.path.join(
             working_dir, self._experiment_info["global"]["driver"]
