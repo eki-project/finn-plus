@@ -318,13 +318,6 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
 
         # Print traceback for interal errors or if in debug mode
         if not issubclass(type(e), FINNUserError) or log.level == logging.DEBUG:
-            # Remove timestamps from logging and stdout/stderr, so that
-            # the traceback can be displayed properly
-            logfile = Path(cfg.output_dir) / "build_dataflow.log"
-            logging.basicConfig(
-                filename=logfile, level=log.level, filemode="a", format="%(message)s", force=True
-            )
-
             # Restoring stdout and stderr
             if type(sys.stdout) is PrintLogger:
                 sys.stdout = sys.stdout.console
@@ -332,6 +325,7 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
                 sys.stderr = sys.stderr.console
 
             # Print traceback both to console and logfile
+            logfile = Path(cfg.output_dir) / "build_dataflow.log"
             rprint(Traceback(show_locals=False))
             with logfile.open("a") as f:
                 rprint(Traceback(show_locals=False), file=f)
