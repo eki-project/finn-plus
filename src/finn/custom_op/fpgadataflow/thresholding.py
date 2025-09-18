@@ -125,20 +125,24 @@ class Thresholding(HWCustomOp):
         "Minimize threshold width ('accumulator width' here due to convention)"
         thresholds = model.get_initializer(self.onnx_node.input[1])
         threshold_tensor = self.get_hw_compatible_threshold_tensor(thresholds)
-        min_threshold = thresholds.min()
-        max_threshold = thresholds.max()
-        min_input = self.get_input_datatype(0).min()
-        max_input = self.get_input_datatype(0).max()
-        # get range required by threshold values
-        tdt_min = min(min_input, min_threshold)
-        tdt_max = max(max_input, max_threshold)
-        if tdt_min < 0:
-            if abs(tdt_min) > tdt_max:
-                tdt = DataType.get_smallest_possible(tdt_min)
-            else:
-                tdt = DataType.get_smallest_possible(-tdt_max - 1)
+        if self.get_input_datatype(0) == DataType["FLOAT32"]:
+            # special case: if input is float, we keep thresholds as float
+            tdt = DataType["FLOAT32"]
         else:
-            tdt = DataType.get_smallest_possible(tdt_max)
+            # determine threshold width depending on input width and threshold values
+            min_threshold = thresholds.min()
+            max_threshold = thresholds.max()
+            min_input = self.get_input_datatype(0).min()
+            max_input = self.get_input_datatype(0).max()
+            tdt_min = min(min_input, min_threshold)
+            tdt_max = max(max_input, max_threshold)
+            if tdt_min < 0:
+                if abs(tdt_min) > tdt_max:
+                    tdt = DataType.get_smallest_possible(tdt_min)
+                else:
+                    tdt = DataType.get_smallest_possible(-tdt_max - 1)
+            else:
+                tdt = DataType.get_smallest_possible(tdt_max)
         assert np.vectorize(tdt.allowed)(
             threshold_tensor
         ).all(), "Thresholds can't be expressed with type %s" % str(tdt)
@@ -193,10 +197,6 @@ class Thresholding(HWCustomOp):
         # same shape as input
         return self.get_normal_input_shape()
 
-    def get_number_output_values(self):
-        nf = np.prod(self.get_folded_output_shape()[:-1])
-        return nf
-
     def get_exp_cycles(self):
         # Channels/PE * batch size * fmdim * fmdim
         return np.prod(self.get_folded_output_shape()[:-1])
@@ -222,8 +222,6 @@ class Thresholding(HWCustomOp):
         if not self.get_input_datatype(0).signed():
             # ensure all thresholds are nonnegative
             assert (orig_thres_matrix >= 0).all()
-        # ensure all thresholds are integer
-        assert np.equal(np.mod(orig_thres_matrix, 1), 0).all(), "Need int threshold tensor"
         ret = orig_thres_matrix
         # ensure channels = mh , duplicating if necessary
         if ret.shape[0] == 1:
