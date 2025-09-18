@@ -38,7 +38,7 @@ from subprocess import CalledProcessError
 
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
 from finn.util.basic import launch_process_helper, make_build_dir
-from finn.util.exception import FINNError
+from finn.util.exception import FINNError, FINNUserError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
@@ -631,15 +631,19 @@ close $ofile
         with open(make_project_sh, "w") as f:
             f.write("#!/bin/bash \n")
             f.write("cd {}\n".format(vivado_stitch_proj_dir))
+            f.write("set -e\n")  # Exit with non-zero if vivado fails.
             f.write("vivado -mode batch -source make_project.tcl\n")
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", make_project_sh]
 
         try:
             launch_process_helper(bash_command, print_stdout=False)
-        except CalledProcessError:
-            # Check success manually by looking for wrapper HDL
-            pass
+        except CalledProcessError as e:
+            raise FINNUserError(
+                f"CreateStitchedIP: make_project.sh failed with a non-zero "
+                f"exit code. Check previous logs and logs in "
+                f"{vivado_stitch_proj_dir} to find out why it failed."
+            ) from e
 
         # wrapper may be created in different location depending on Vivado version
         if not os.path.isfile(wrapper_filename):
