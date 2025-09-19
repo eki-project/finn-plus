@@ -6,6 +6,7 @@ import os
 import sys
 import time
 from measurment_util import PAF, Recorder
+from pynq import PL
 
 
 class ExpiermentManager:
@@ -19,13 +20,8 @@ class ExpiermentManager:
         with open(config_path, "r") as fp_json:
             config = json.load(fp_json)
 
-        print(config)
-        print(f"CWD: {os.getcwd()}")
-        print(f"working_dir: {working_dir}")
         self._driver_info = config["driver_information"]
         self._experiment_info = config["experiment_information"]
-        tmp = self._experiment_info["global"]["bitfile_name"]
-        print(f"bitfile_name : {tmp}")
 
         self._experiment_info["global"]["driver"] = os.path.join(
             working_dir, self._experiment_info["global"]["driver"]
@@ -123,6 +119,8 @@ class Experiment:
                     params_dict[param.name] = param.default
                 else:
                     raise ValueError(f"Variable {param.name} has no (default) value!!")
+
+        PL.reset()  # See https://github.com/Xilinx/PYNQ/issues/1409
 
         if insert_kwargs:
             self._driver_inst = self._driver_class(**params_dict, **ex_config)

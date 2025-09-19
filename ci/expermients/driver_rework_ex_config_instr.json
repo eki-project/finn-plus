@@ -15,24 +15,24 @@
     },
     "experiments": [
       {
-        "name": "experiment 1",
+        "name": "idle_experiment",
         "warmup": 1,
         "num_runs": 1,
         "functions": [
           {
             "function_name": "idle",
-            "kwargs" : {"time" : 1}
+            "kwargs" : {"time" : 10}
           }
         ]
       },
       {
-        "name": "experiment 2",
+        "name": "experiment_instrumentation",
         "warmup": 1,
         "num_runs": 1,
         "functions": [
           {
-            "function_name": "idle",
-            "kwargs" : {"time" : 2}
+            "function_name": "run_throughput_test",
+            "kwargs" : {"runtime": 20}
           }
         ]
       }

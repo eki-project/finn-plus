@@ -7,7 +7,7 @@ from dataset_loading import FileQueue, ImgQueue
 from PIL import Image
 
 # from pynq import PL
-from pynq import PL, Overlay, allocate
+from pynq import Overlay, allocate
 
 # from pynq.pl_server.device import Device
 from pynq.ps import Clocks
@@ -61,9 +61,6 @@ class FINNDMAOverlay(Overlay):
         self.idma = []
         self.odma = []
         self.odma_handle = []
-        print(self.ip_dict)
-        print(self.ip_dict.keys())
-        PL.reset()
         if "idma_names" in io_shape_dict.keys():
             for idma_name in io_shape_dict["idma_names"]:
                 self.idma.append(getattr(self, idma_name))
@@ -628,6 +625,7 @@ class FINNDMAOverlay(Overlay):
         report = {
             "top-1_accuracy": acc,
         }
+        reportfile = os.path.join(reportfile, "report.json")
         with open(reportfile, "w") as f:
             json.dump(report, f, indent=2)
 
@@ -636,6 +634,14 @@ class FINNDMAOverlay(Overlay):
         print("Running idle for %d seconds.." % runtime)
         time.sleep(runtime)
         print("Done.")
+
+    def run_throughput_test(self, *args, **kwargs):
+        reportfile = kwargs.get("reportfile")
+        res = self.throughput_test()
+        print(res)
+        reportfile = os.path.join(reportfile, "report.json")
+        with open(reportfile, "w") as f:
+            json.dump(res, f, indent=2)
 
 
 class FINNInstrumentationOverlay(Overlay):
