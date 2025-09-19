@@ -31,6 +31,7 @@ import pytest
 import json
 import numpy as np
 import os
+import re
 import shutil
 import torch
 import torch.nn as nn
