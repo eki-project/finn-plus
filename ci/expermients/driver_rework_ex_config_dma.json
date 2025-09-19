@@ -42,7 +42,7 @@
         "num_runs": 1,
         "functions": [
           {
-            "function_name": "idle",
+            "function_name": "validate",
             "kwargs" : {
               "dataset_root" : "/home/xilinx/datasets",
               "dataset" : "mnist"
