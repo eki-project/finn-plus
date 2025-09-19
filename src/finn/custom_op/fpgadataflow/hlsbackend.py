@@ -135,6 +135,12 @@ class HLSBackend(ABC):
         f.close()
         self.code_gen_dict.clear()
 
+        if node.name in ["", None]:
+            log.error(
+                f"A {node.op_type} node has no name. This will likely cause IP generation "
+                f"to fail. Consider calling GiveUniqueNodeNames() beforehand."
+            )
+
         # generate tcl script for ip generation
         self.code_gen_dict["$PROJECTNAME$"] = ["project_{}".format(node.name)]
         self.code_gen_dict["$HWSRCDIR$"] = [code_gen_dir]
