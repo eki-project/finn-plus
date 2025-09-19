@@ -30,13 +30,14 @@ import numpy as np
 import os
 import subprocess
 from abc import ABC, abstractmethod
+from pathlib import Path
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow import templates
 from finn.util.basic import CppBuilder, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.deps import get_deps_path
-from finn.util.exception import FINNError
+from finn.util.exception import FINNError, FINNUserError
 from finn.util.hls import CallHLS
 from finn.util.logging import log
 
@@ -183,10 +184,21 @@ class HLSBackend(ABC):
 
         success = False
         while not success:
-            builder.build(code_gen_dir)
+            try:
+                builder.build(code_gen_dir)
+                ipp = Path(builder.ipgen_path)
+                assert ipp.is_dir()
+                assert ipp.exists()
+            except subprocess.CalledProcessError as e:
+                raise FINNUserError(
+                    f"HLS IP generation failed. Check {code_gen_dir} " f"for details."
+                ) from e
+            except AssertionError as e:
+                raise FINNUserError(
+                    f"Generated IP couldn't be found at "
+                    f"{builder.ipgen_path}. Check logs at {code_gen_dir}."
+                ) from e
             ipgen_path = builder.ipgen_path
-            if not os.path.isdir(ipgen_path):
-                raise FINNError(f"IPGen failed: {ipgen_path} not found")
             self.set_nodeattr("ipgen_path", ipgen_path)
             ip_path = ipgen_path + "/sol1/impl/ip"
             if not os.path.isdir(ip_path):

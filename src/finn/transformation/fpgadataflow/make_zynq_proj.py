@@ -54,7 +54,7 @@ from finn.util.basic import (
     pynq_part_map,
 )
 from finn.util.deps import get_deps_path
-from finn.util.exception import FINNError
+from finn.util.exception import FINNError, FINNUserError
 
 from . import templates
 
@@ -406,9 +406,10 @@ class MakeZYNQProject(Transformation):
         bash_command = ["bash", synth_project_sh]
         try:
             launch_process_helper(bash_command, print_stdout=False)
-        except CalledProcessError:
-            # Check success manually by looking for bitfile
-            pass
+        except CalledProcessError as e:
+            raise FINNUserError(
+                f"Synthesis failed. Check " f"{vivado_pynq_proj_dir} for details."
+            ) from e
 
         bitfile_name = vivado_pynq_proj_dir + "/finn_zynq_link.runs/impl_1/top_wrapper.bit"
         if not os.path.isfile(bitfile_name):

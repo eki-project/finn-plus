@@ -50,7 +50,8 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import launch_process_helper, make_build_dir
-from finn.util.exception import FINNError
+from finn.util.exception import FINNError, FINNUserError
+from finn.util.logging import log
 
 from . import templates
 
@@ -138,15 +139,19 @@ class CreateVitisXO(Transformation):
         working_dir = os.getcwd()
         with open(package_xo_sh, "w") as f:
             f.write("#!/bin/bash \n")
+            f.write("set -e\n")
             f.write("cd {}\n".format(vivado_proj_dir))
             f.write("vivado -mode batch -source gen_xo.tcl\n")
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", package_xo_sh]
         try:
             launch_process_helper(bash_command, print_stdout=False)
-        except CalledProcessError:
-            # Check success manually by looking for .xo file
-            pass
+        except CalledProcessError as e:
+            raise FINNUserError(
+                f"An error ocurred while generating the XO file for "
+                f"{self.ip_name}. Check {vivado_proj_dir} for further "
+                f"details."
+            ) from e
         if not os.path.isfile(xo_path):
             raise FINNError("Vitis .xo file not created, check logs under %s" % vivado_proj_dir)
 
@@ -310,6 +315,7 @@ class VitisLink(Transformation):
         working_dir = os.getcwd()
         with open(script, "w") as f:
             f.write("#!/bin/bash \n")
+            f.write("set -e\n")
             f.write("cd {}\n".format(link_dir))
             f.write(
                 "v++ -t hw --platform %s --link %s"
@@ -328,9 +334,8 @@ class VitisLink(Transformation):
 
         try:
             launch_process_helper(bash_command, print_stdout=False)
-        except CalledProcessError:
-            # Check success manually by looking for .xo file
-            pass
+        except CalledProcessError as e:
+            raise FINNUserError(f"Linking failed. Check {link_dir} for further details.") from e
         xclbin = link_dir + "/a.xclbin"
         if not os.path.isfile(xclbin):
             raise FINNError("Vitis .xclbin file not created, check logs under %s" % link_dir)
@@ -344,10 +349,14 @@ class VitisLink(Transformation):
         with open(gen_rep_xml_sh, "w") as f:
             f.write("#!/bin/bash \n")
             f.write("cd {}\n".format(link_dir))
+            f.write("set -e\n")
             f.write("vivado -mode batch -source %s\n" % (link_dir + "/gen_report_xml.tcl"))
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", gen_rep_xml_sh]
-        launch_process_helper(bash_command, print_stdout=False)
+        try:
+            launch_process_helper(bash_command, print_stdout=False)
+        except CalledProcessError:
+            log.error(f"Creation of XML reports failed. Check {link_dir} for details. Continuing..")
         # filename for the synth utilization report
         synth_report_filename = link_dir + "/synth_report.xml"
         model.set_metadata_prop("vivado_synth_rpt", synth_report_filename)
