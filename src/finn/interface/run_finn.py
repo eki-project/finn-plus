@@ -29,7 +29,7 @@ from finn.interface.interface_utils import (
     warning,
     write_yaml,
 )
-from finn.interface.manage_deps import install_pyxsi, update_dependencies
+from finn.interface.manage_deps import install_finnxsi, update_dependencies
 from finn.interface.manage_tests import run_test
 
 
@@ -90,14 +90,6 @@ def prepare_finn(
     # Check synthesis tools
     set_synthesis_tools_paths()
 
-    # Install pyXSI
-    pyxsi_status = install_pyxsi()
-    if pyxsi_status:
-        status("pyXSI installed successfully.")
-    else:
-        error("pyXSI installation failed.")
-        sys.exit(1)
-
     # Resolve the build directory
     resolved_build_dir = resolve_build_dir(
         flow_config, build_dir, settings, is_test_run=is_test_run
@@ -116,11 +108,20 @@ def prepare_finn(
     os.environ["NUM_DEFAULT_WORKERS"] = str(workers)
 
     # Resolve paths to some not properly packaged components...
+    os.environ["FINN_XSI"] = _resolve_module_path("finn_xsi")
     os.environ["FINN_RTLLIB"] = _resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = _resolve_module_path("custom_hls")
     os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
     os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = _resolve_module_path("tests")
+
+    # Install FINN XSI
+    finnxsi_status = install_finnxsi()
+    if finnxsi_status:
+        status("FINN XSI installed successfully.")
+    else:
+        error("FINN XSI installation failed.")
+        sys.exit(1)
 
 
 @click.group()

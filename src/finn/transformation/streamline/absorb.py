@@ -30,8 +30,6 @@ import numpy as np
 import qonnx.core.data_layout as DataLayout
 from onnx import helper as oh
 from qonnx.core.datatype import DataType
-
-# QONNX wrapper of ONNX model graphs
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
