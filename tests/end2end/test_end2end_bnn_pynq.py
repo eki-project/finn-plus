@@ -823,7 +823,9 @@ class TestEnd2End:
         if build_data["kind"] == "alveo" and topology == "tfc":
             model = model.transform(MakeCPPDriver(board_to_driver_platform, version="latest"))
         else:
-            model = model.transform(MakePYNQDriver(board_to_driver_platform))
+            model = model.transform(
+                MakePYNQDriver(board_to_driver_platform, driver_type="FINNDMAOverlay")
+            )
         model.save(get_checkpoint_name(board, topology, wbits, abits, "driver"))
 
     def test_deploy(self, topology, wbits, abits, board):
