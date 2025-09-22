@@ -90,6 +90,8 @@ class StreamingFIFO(HWCustomOp):
         is_depth_monitor = self.get_nodeattr("depth_monitor") == 1
         if is_rtl and is_depth_monitor:
             ret["ap_none"] = ["maxcount"]
+        if is_rtl:
+            ret["ap_none"].append("depth")
         return ret
 
     def get_normal_input_shape(self, ind=0):

@@ -14,8 +14,11 @@
 #include "axi_control/s_axi_control.h"
 #include "axis_control/axis_control.h"
 #include "clock/clock.h"
+#include <bitset>
 #include "rtlsim_config.hpp"
 #include "xsi_finn.hpp"
+
+using Port = xsi::Port;
 
 void clearPorts(xsi::Design &top) {
   // Clear all input ports
@@ -43,16 +46,6 @@ void reset(xsi::Design &top) {
   }
 }
 
-std::unordered_map<std::string, int> fifo_register_map = {
-    {"mode", 0x10},
-    {"depth", 0x18},
-    {"occupancy", 0x20},
-    {"max_occupancy", 0x28}};
-
-void configure_fifo(S_AXI_Control &fifo, const int mode, uint32_t depth) {
-  fifo.write_register(fifo_register_map["mode"], mode);
-  fifo.write_register(fifo_register_map["depth"], depth);
-}
 
 // Helper function to process input streams with deferred writes
 void processInputStream(
@@ -224,14 +217,20 @@ runToStableState(Clock &clk, std::vector<S_AXIS_Control> &istreams,
   return std::make_tuple(avgMinLatency, avgInterval);
 }
 
+template<typename T>
+std::string toBinaryString(T data) {
+  return std::bitset<sizeof(T)*8>(data).to_string();
+}
+
 std::tuple<size_t, size_t>
 determineStartDepth(xsi::Design &top, Clock &clk,
                     std::vector<S_AXIS_Control> &istreams,
                     std::vector<M_AXIS_Control> &ostreams,
                     std::deque<size_t> &inflightTimestamps, size_t &iters,
-                    std::vector<S_AXI_Control> &fifos) {
-  int start_depth = 3612672;
-  int last_start_depth = 3612672;
+                    std::vector<Port*> &fifo_depths) {
+  //int start_depth = 3612672;
+  int start_depth = 64;
+  int last_start_depth = start_depth;
   uint32_t last_interval = 0;
   uint32_t min_latency = 0;
 
@@ -239,9 +238,11 @@ determineStartDepth(xsi::Design &top, Clock &clk,
     std::cout << "Starting testing start_depth: " << start_depth << std::endl;
 
     reset(top);
-    for (auto &fifo : fifos) {
-      configure_fifo(fifo, 1, start_depth);
+    auto two_bin = toBinaryString(static_cast<uint32_t>(start_depth));
+    for (Port* p : fifo_depths) {
+      p->set_binstr(two_bin).write_back();
     }
+    clk.toggle_clk();
 
     if (auto ret = runToStableState(clk, istreams, ostreams, inflightTimestamps,
                                     iters);
@@ -272,25 +273,28 @@ determineStartDepth(xsi::Design &top, Clock &clk,
 
 std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
                                     Clock &clk, xsi::Design &top,
-                                    std::vector<S_AXI_Control> &fifos,
+                                    std::vector<Port*> &fifo_depths,
                                     std::vector<S_AXIS_Control> &istreams,
                                     std::vector<M_AXIS_Control> &ostreams,
                                     std::deque<size_t> &inflightTimestamps,
                                     size_t &iters) {
-  std::vector<bool> minimizedFifo(fifos.size(), false);
-  std::vector<size_t> fifo_sizes(fifos.size(), start_size);
+  std::vector<bool> minimizedFifo(fifo_depths.size(), false);
+  std::vector<size_t> fifo_sizes(fifo_depths.size(), start_size);
 
+  std::cout << "Total FIFO sizes: " << fifo_sizes.size() << std::endl;
   while (!std::all_of(minimizedFifo.begin(), minimizedFifo.end(),
                       [](bool v) { return v; })) {
-    for (size_t i = 0; i < fifos.size(); ++i) {
+    std::cout << "Sizing: ";
+    for (size_t i = 0; i < fifo_depths.size(); ++i) {
       if (!minimizedFifo[i]) {
+        std::cout << i << " " << std::flush;
         // Try to minimize this FIFO
         size_t oldFifoSize = fifo_sizes[i];
         fifo_sizes[i] = std::max(oldFifoSize / 2, size_t(1));
 
         reset(top);
-        for (auto &&fifo : fifos) {
-          configure_fifo(fifo, 1, fifo_sizes[i]);
+        for (Port* p : fifo_depths) {
+          p->set_binstr(toBinaryString<uint32_t>(fifo_sizes[i]));
         }
 
         if (auto ret = runToStableState(clk, istreams, ostreams,
@@ -316,6 +320,7 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
         }
       }
     }
+    std::cout << "\n";
   }
 
   return fifo_sizes;
@@ -376,17 +381,30 @@ int main(int argc, char *argv[]) {
                              "multiple input or output streams.");
   }
 
-  std::vector<S_AXI_Control> fifos;
-
-  for (size_t i = 0; i < 98; ++i){
-    fifos.emplace_back(top, "s_axi_control_0_" + std::to_string(i) + "_");
+  // TODO: dont use raw pointer
+  std::vector<Port*> fifo_depths;
+  for (size_t i = 0; i < 1000; ++i) {
+    Port* port;
+    if (i == 0) {
+      port = top.getPort("depth");
+    } else {
+      port = top.getPort("depth_" + std::to_string(i));
+    }
+    if (!port) {
+      // Found all fifos
+      std::cout << "Stopped finding FIFOs at index " << i << std::endl;
+      break;
+    }
+    fifo_depths.emplace_back(port);
   }
 
+  std::cout << "\nDetermining start depth..." << std::endl;
   auto [start_depth, interval] = determineStartDepth(
-      top, clk, istreams, ostreams, inflightTimestamps, iters, fifos);
+      top, clk, istreams, ostreams, inflightTimestamps, iters, fifo_depths);
 
+  std::cout << "\nSizing iteratively..." << std::endl;
   auto fifoSizes =
-      sizeIteratively(start_depth, interval, clk, top, fifos, istreams,
+      sizeIteratively(start_depth, interval, clk, top, fifo_depths, istreams,
                       ostreams, inflightTimestamps, iters);
 
   for (auto &&elem : fifoSizes) {

@@ -98,7 +98,7 @@ def compile_sim_obj(top_module_name, source_list, sim_out_dir, debug=False):
         top_module_name,
     ]
     # Add debug flag if debug is enabled
-    if debug:
+    if True:
         cmd_xelab.append("-debug")
         cmd_xelab.append("all")
     for lib in xelab_libs:
@@ -135,6 +135,7 @@ def load_sim_obj(sim_out_dir, out_so_relative_path, tracefile=None, simkernel_so
         simkernel_so = get_simkernel_so()
     oldcwd = os.getcwd()
     os.chdir(sim_out_dir)
+    tracefile="tracefile.wdb"
     sim = SimEngine(simkernel_so, out_so_relative_path, "finnxsi_rtlsim.log", tracefile)
     if tracefile:
         sim.top.trace_all()

@@ -40,6 +40,8 @@ input   ap_rst_n,
 output $COUNT_RANGE$ count,
 output $COUNT_RANGE$ maxcount,
 
+input [31:0] depth,
+
 //- AXI Stream - Input --------------
 output   in0_V_TREADY,
 input   in0_V_TVALID,
@@ -72,6 +74,7 @@ output  $OUT_RANGE$ out0_V_TDATA
 		.reset(!ap_rst_n),
 		.count(count),
 		.maxcount(maxcount),
+		.depth(depth),
 		.i_d(in0_V_TDATA),
 		.i_v(in0_V_TVALID),
 		.i_r(in0_V_TREADY),
