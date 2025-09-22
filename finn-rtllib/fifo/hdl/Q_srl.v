@@ -3,9 +3,6 @@
 `define Q_srl
 
 module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth);
-	parameter width = 16;      // Streamwidth
-    parameter countwidth = 32; // Width of count and maxcount signals
-
 	input     clock;
 	input     reset;
 
@@ -25,8 +22,6 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
 	output [width-1:0] o_d;	// - output stream data (concat data + eos)
 	output             o_v;	// - output stream valid
 	input              o_r;	// - output stream ready
-	assign o_d = 1'b0;
-
 	assign o_d = 0;
 
 	// Dummy values required by FINN
