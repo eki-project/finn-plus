@@ -65,10 +65,9 @@ output  $OUT_RANGE$ out0_V_TDATA
 		);
 	"q_srl":
 		Q_srl #(
-		.depth($DEPTH$),
+		.maxdepth($DEPTH$),
 		.width($WIDTH$)
-		)
-		impl
+		) impl
 		(
 		.clock(ap_clk),
 		.reset(!ap_rst_n),

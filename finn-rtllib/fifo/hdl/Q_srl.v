@@ -9,15 +9,21 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
 	input [31:0] depth;		// Max value that this FIFO can take
 	reg [31:0] current_depth;
 
+   parameter maxdepth = 16;   // - greatest #items in queue  (2 <= depth <= 256)
+   parameter width = 16;   // - width of data (i_d, o_d)
+
+   localparam countwidth = $clog2(maxdepth + 1);
+   localparam addrwidth = $clog2(maxdepth);
 
 	input  [width-1:0] i_d;	// - input  stream data (concat data + eos)
 	input              i_v;	// - input  stream valid
 	output             i_r;	// - input  stream ready
- 
+
 	output [width-1:0] o_d;	// - output stream data (concat data + eos)
 	output             o_v;	// - output stream valid
 	input              o_r;	// - output stream ready
 
+	assign o_d = 0;
 
 	// Dummy values required by FINN
 	output [countwidth-1:0] count;  // - output number of elems in queue
@@ -42,27 +48,13 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
 	assign can_read = have_capacity & i_v;
 	assign can_write = have_data & o_r;
 
+
+
+
 	// Comb signals
-	always @(*) begin
-		case (current_state)
-			idle_state: begin
-				i_r <= 0;
-				o_v <= 0;
-			end
-			consume_state: begin
-				i_r <= 1;
-				o_v <= 0;
-			end
-			produce_state: begin
-				i_r <= 0;
-				o_v <= 1;
-			end
-			produce_consume_state: begin
-				i_r <= 1;
-				o_v <= 1;
-			end
-		endcase
-	end
+    assign i_r = (current_state == consume_state) || (current_state == produce_consume_state);
+    assign o_v = (current_state == produce_state) || (current_state == produce_consume_state);
+
 
 	// Reset
 	always @(posedge clock) begin
@@ -76,9 +68,9 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
 			current_state <= next_state;
 			if (can_read & can_write) begin
 				next_state <= produce_consume_state;
-			else if (can_read & ~can_write) begin
+			end else if (can_read & ~can_write) begin
 				next_state <= consume_state;
-			else if (~can_read & can_write) begin
+			end else if (~can_read & can_write) begin
 				next_state <= produce_state;
 			end else begin
 				next_state <= idle_state;
@@ -87,7 +79,7 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
    			// Adapt occupancy. For Idle and Prod+Cons it stays the same
 			if (current_state == produce_state) begin
 				current_depth <= current_depth - 1;
-			else if (current_state == consume_state) begin
+			end else if (current_state == consume_state) begin
 				current_depth <= current_depth + 1;
 			end
 		end
