@@ -3,6 +3,9 @@
 `define Q_srl
 
 module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth);
+	parameter width = 16;      // Streamwidth
+    parameter countwidth = 32; // Width of count and maxcount signals
+
 	input     clock;
 	input     reset;
 
@@ -13,10 +16,11 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
 	input  [width-1:0] i_d;	// - input  stream data (concat data + eos)
 	input              i_v;	// - input  stream valid
 	output             i_r;	// - input  stream ready
- 
+
 	output [width-1:0] o_d;	// - output stream data (concat data + eos)
 	output             o_v;	// - output stream valid
 	input              o_r;	// - output stream ready
+	assign o_d = 1'b0;
 
 
 	// Dummy values required by FINN
@@ -76,9 +80,9 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
 			current_state <= next_state;
 			if (can_read & can_write) begin
 				next_state <= produce_consume_state;
-			else if (can_read & ~can_write) begin
+			end else if (can_read & ~can_write) begin
 				next_state <= consume_state;
-			else if (~can_read & can_write) begin
+			end else if (~can_read & can_write) begin
 				next_state <= produce_state;
 			end else begin
 				next_state <= idle_state;
@@ -87,7 +91,7 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
    			// Adapt occupancy. For Idle and Prod+Cons it stays the same
 			if (current_state == produce_state) begin
 				current_depth <= current_depth - 1;
-			else if (current_state == consume_state) begin
+			end else if (current_state == consume_state) begin
 				current_depth <= current_depth + 1;
 			end
 		end
