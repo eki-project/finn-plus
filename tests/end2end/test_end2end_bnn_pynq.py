@@ -73,7 +73,7 @@ from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDat
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
-from finn.transformation.fpgadataflow.make_driver import MakeCPPDriver, MakePYNQDriverIODMA
+from finn.transformation.fpgadataflow.make_driver import MakeCPPDriver, MakePYNQDriver
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
@@ -823,7 +823,7 @@ class TestEnd2End:
         if build_data["kind"] == "alveo" and topology == "tfc":
             model = model.transform(MakeCPPDriver(board_to_driver_platform, version="latest"))
         else:
-            model = model.transform(MakePYNQDriverIODMA(board_to_driver_platform))
+            model = model.transform(MakePYNQDriver(board_to_driver_platform))
         model.save(get_checkpoint_name(board, topology, wbits, abits, "driver"))
 
     def test_deploy(self, topology, wbits, abits, board):

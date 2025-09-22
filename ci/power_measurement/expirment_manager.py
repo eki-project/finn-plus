@@ -156,7 +156,7 @@ class Experiment:
             for function in self._functions:
                 name = function["function_name"]
                 kwargs = function.get("kwargs", {})
-                kwargs["reportfile"] = iteration_path
+                kwargs["report_dir"] = iteration_path
 
                 print(f"[EM] STARTING ITERATION {i} OF FUNCTION {name}, KWARGS= {kwargs}")
                 func = getattr(self._driver_inst, name)

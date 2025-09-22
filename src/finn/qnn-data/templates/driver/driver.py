@@ -495,7 +495,7 @@ class FINNDMAOverlay(Overlay):
         return res
 
     def validate(self, *args, **kwargs):
-        reportfile = kwargs.get("reportfile")
+        report_dir = kwargs.get("report_dir")
         dataset = kwargs.get("validation_dataset")
         dataset_root = kwargs.get("dataset_root")
         bsize = self.batch_size
@@ -632,7 +632,7 @@ class FINNDMAOverlay(Overlay):
         report = {
             "top-1_accuracy": acc,
         }
-        reportfile = os.path.join(reportfile, "report.json")
+        reportfile = os.path.join(report_dir, "report_dma_validate.json")
         with open(reportfile, "w") as f:
             json.dump(report, f, indent=2)
 
@@ -643,10 +643,10 @@ class FINNDMAOverlay(Overlay):
         print("Done.")
 
     def run_throughput_test(self, *args, **kwargs):
-        reportfile = kwargs.get("reportfile")
+        report_dir = kwargs.get("report_dir")
         res = self.throughput_test()
         print(res)
-        reportfile = os.path.join(reportfile, "report.json")
+        reportfile = os.path.join(report_dir, "report_throughput_test.json")
         with open(reportfile, "w") as f:
             json.dump(res, f, indent=2)
 
@@ -724,7 +724,7 @@ class FINNInstrumentationOverlay(Overlay):
 
     def experiment_instrumentation(self, *args, **kwargs):
         runtime = kwargs.get("runtime")
-        reportfile = kwargs.get("reportfile")
+        report_dir = kwargs.get("report_dir")
 
         # start accelerator
         print("Running accelerator for %d seconds.." % runtime)
@@ -758,6 +758,7 @@ class FINNInstrumentationOverlay(Overlay):
             "min_pipeline_depth": round(min_latency / interval, 2),
             "pipeline_depth": round(latency / interval, 2),
         }
+        reportfile = os.path.join(report_dir, "report_experiment_instrumentation.json")
         with open(reportfile, "w") as f:
             json.dump(report, f, indent=2)
 
@@ -994,7 +995,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         return (start_depth, iteration_runtime)
 
     def experiment_fifosizing(self, *args, **kwargs):
-        reportfile = kwargs.get("reportfile")
+        report_dir = kwargs.get("report_dir")
 
         # For live FIFO-sizing, we also expect the FIFO widths (in bits) exported by FINN, e.g.,
         # {'fifo_widths': {"0": 8, "1": 32, "2": 24}}
@@ -1004,7 +1005,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # into which we can insert the live FIFO sizes once we are done
         folding_config_lfs = kwargs.get("folding_config_before_lfs")
 
-        report_dir = os.path.dirname(reportfile)
+        reportfile = os.path.join(report_dir, "report_experiment_fifosizing.json")
         folding_config_lfs = None
 
         print("Determining start depth..")
