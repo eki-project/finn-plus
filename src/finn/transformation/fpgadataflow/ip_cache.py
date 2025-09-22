@@ -209,7 +209,13 @@ class IPCache:
             capture_output=True,
             cwd=Path(__file__).parent,
         ).stdout.strip()
-        log.info(f"FINN Commit reads: {self.finn_commit}")
+        self.finn_commit_time = subprocess.run(
+            shlex.split("git show --quiet --format=%ai"),
+            text=True,
+            capture_output=True,
+            cwd=Path(__file__).parent,
+        ).stdout.strip()
+        log.info(f"FINN Commit reads: {self.finn_commit} (authored at: {self.finn_commit_time})")
 
         # FINN HLSLIB Commit
         self.hlslib_commit = subprocess.run(
@@ -218,7 +224,16 @@ class IPCache:
             capture_output=True,
             cwd=get_deps_path() / "finn-hlslib",
         ).stdout.strip()
-        log.info(f"HLSLIB Commit reads: {self.hlslib_commit}")
+        self.hlslib_commit_time = subprocess.run(
+            shlex.split("git show --quiet --format=%ai"),
+            text=True,
+            capture_output=True,
+            cwd=get_deps_path() / "finn-hlslib",
+        ).stdout.strip()
+        log.info(
+            f"HLSLIB Commit reads: {self.hlslib_commit} "
+            f"(authored at: {self.hlslib_commit_time})"
+        )
 
         # HLS Clk and device
         self.clk = hls_clk_period
@@ -360,7 +375,11 @@ class IPCache:
     def _create_key_file(self, key: str, path: Path) -> None:
         """Write the given key data into a file at the given path."""
         with path.open("w+") as f:
-            f.write(f"Hashed using {self.hashfunc_name}. Key:\n------------------------\n")
+            f.write(f"Hashed using {self.hashfunc_name}.\n")
+            f.write(f"Final overall hashed key: {self.get_hash_hex(key)}")
+            f.write(f"FINN Commit Date: {self.finn_commit_time}\n")
+            f.write(f"FINN HLSLIB Commit Date: {self.hlslib_commit_time}\n")
+            f.write("Key:\n------------------------\n")
             f.write(key)
 
     def _dump_nodeattrs(
