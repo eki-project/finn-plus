@@ -227,7 +227,7 @@ determineStartDepth(xsi::Design &top, Clock &clk,
                     std::vector<S_AXIS_Control> &istreams,
                     std::vector<M_AXIS_Control> &ostreams,
                     std::deque<size_t> &inflightTimestamps, size_t &iters,
-                    std::vector<Port*> &fifo_depths) {
+                    std::vector<Port*> &fifo_ports) {
   //int start_depth = 3612672;
   int start_depth = 64;
   int last_start_depth = start_depth;
@@ -239,7 +239,7 @@ determineStartDepth(xsi::Design &top, Clock &clk,
 
     reset(top);
     auto two_bin = toBinaryString(static_cast<uint32_t>(start_depth));
-    for (Port* p : fifo_depths) {
+    for (auto& p : fifo_ports) {
       p->set_binstr(two_bin).write_back();
     }
     clk.toggle_clk();
@@ -293,7 +293,7 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
         fifo_sizes[i] = std::max(oldFifoSize / 2, size_t(1));
 
         reset(top);
-        for (Port* p : fifo_depths) {
+        for (auto& p : fifo_depths) {
           p->set_binstr(toBinaryString<uint32_t>(fifo_sizes[i]));
         }
 
@@ -331,7 +331,6 @@ int main(int argc, char *argv[]) {
   // Load Kernel and Design
   xsi::Kernel kernel(kernel_libname);
   xsi::Design top(kernel, design_libname, xsim_log_filename, trace_filename);
-  using Port = xsi::Port;
   if (trace_filename) {
     // TODO make tracing more finer-grain if possible?
     top.trace_all();
@@ -381,30 +380,21 @@ int main(int argc, char *argv[]) {
                              "multiple input or output streams.");
   }
 
-  // TODO: dont use raw pointer
-  std::vector<Port*> fifo_depths;
-  for (size_t i = 0; i < 1000; ++i) {
-    Port* port;
-    if (i == 0) {
-      port = top.getPort("depth");
-    } else {
-      port = top.getPort("depth_" + std::to_string(i));
+  std::vector<xsi::Port*> fifo_ports;
+  for (xsi::Port &p : top.ports()) {
+    if (std::string(p.name()).find("depth") != std::string::npos) {
+      std::cout << "Found FIFO depth port: " << p.name() << std::endl;
+      fifo_ports.emplace_back(&p);
     }
-    if (!port) {
-      // Found all fifos
-      std::cout << "Stopped finding FIFOs at index " << i << std::endl;
-      break;
-    }
-    fifo_depths.emplace_back(port);
   }
 
   std::cout << "\nDetermining start depth..." << std::endl;
   auto [start_depth, interval] = determineStartDepth(
-      top, clk, istreams, ostreams, inflightTimestamps, iters, fifo_depths);
+      top, clk, istreams, ostreams, inflightTimestamps, iters, fifo_ports);
 
   std::cout << "\nSizing iteratively..." << std::endl;
   auto fifoSizes =
-      sizeIteratively(start_depth, interval, clk, top, fifo_depths, istreams,
+      sizeIteratively(start_depth, interval, clk, top, fifo_ports, istreams,
                       ostreams, inflightTimestamps, iters);
 
   for (auto &&elem : fifoSizes) {
