@@ -174,8 +174,6 @@ class MakeCPPDriver(Transformation):
         run_command("git checkout FETCH_HEAD", cwd=cpp_driver_dir)
         # Initialize and update all git submodules
         run_command("git submodule update --init --recursive", cwd=cpp_driver_dir)
-        # Build required dependencies
-        run_command("./buildDependencies.sh", cwd=cpp_driver_dir)
 
         log.info("Generating template files...")
         # Check if multiple different input/output types are used.
