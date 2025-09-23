@@ -49,7 +49,9 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
             module_name = modules[i].strip()
             module_content = modules[i + 1].strip()
 
-            if module_content:  # Only create file if there's content
+            # Skip base/parent modules with minimal content (typically just package docstrings)
+            # These are usually modules like "finn.builder" that only contain brief descriptions
+            if module_content and len(module_content) > 100:  # Only process modules with substantial content
                 # Create safe filename
                 safe_filename = (
                     module_name.replace(".", "-")
@@ -72,11 +74,46 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
                     f.write("\n".join(file_content))
 
                 print(f"✅ Created {filename} ({len(module_content)} chars)")
+            else:
+                print(f"⏭️  Skipped {module_name} (base module, {len(module_content)} chars)")
 
-    # Add module links to index
-    for module_name, filename in sorted(module_files):
-        # Create a cleaner display name
-        index_content.append(f"- [{module_name}]({filename.replace('.md', '')})")
+    # Create hierarchical structure for the index
+    hierarchy = {}
+    for module_name, filename in module_files:
+        parts = module_name.split('.')
+        current = hierarchy
+        for part in parts:
+            if part not in current:
+                current[part] = {}
+            current = current[part]
+        current['_filename'] = filename
+        current['_module_name'] = module_name
+
+    def add_hierarchy_to_index(node, prefix="", level=0):
+        """Recursively add hierarchical structure to index."""
+        indent = "  " * level
+        for key in sorted(node.keys()):
+            if key.startswith('_'):
+                continue
+            
+            subnode = node[key]
+            if '_filename' in subnode:
+                # This is a leaf node with actual content
+                index_content.append(f"{indent}- [{subnode['_module_name']}]({subnode['_filename'].replace('.md', '')})")
+            else:
+                # This is a parent node, show as header
+                if level == 0:
+                    index_content.append(f"\n### {key.title()}")
+                elif level == 1:
+                    index_content.append(f"\n{indent}**{key.title()}**")
+                else:
+                    index_content.append(f"\n{indent}*{key.title()}*")
+                
+                # Recursively add children
+                add_hierarchy_to_index(subnode, prefix + key + ".", level + 1)
+
+    # Add the hierarchical structure
+    add_hierarchy_to_index(hierarchy)
 
     index_content.append("")
     index_content.append("---")
