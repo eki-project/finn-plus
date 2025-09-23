@@ -1,3 +1,5 @@
+"""Run FINN+."""
+# ruff: noqa: D103
 from __future__ import annotations
 
 import click
@@ -8,29 +10,20 @@ import subprocess
 import sys
 from pathlib import Path
 from rich.console import Console
+from rich.pretty import pprint
+from typing import Any, Callable
 
 from finn.interface import IS_POSIX
-from finn.interface.interface_globals import (
-    _resolve_settings_path,
-    get_settings,
-    set_settings,
-    settings_found,
-    skip_update_by_default,
-    write_settings,
-)
 from finn.interface.interface_utils import (
-    assert_path_valid,
+    NullablePath,
     error,
-    resolve_build_dir,
-    resolve_deps_path,
-    resolve_num_workers,
     set_synthesis_tools_paths,
     status,
     warning,
-    write_yaml,
 )
 from finn.interface.manage_deps import install_pyxsi, update_dependencies
 from finn.interface.manage_tests import run_test
+from finn.interface.settings import FINNSettings
 
 
 # Resolves the path to modules which are not part of the FINN package hierarchy
@@ -50,39 +43,100 @@ def _resolve_module_path(name: str) -> str:
     return ""
 
 
+def requires_dependencies(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter named --dependency-path (-d) that defaults to
+    None if the param is empty, and a path otherwise."""  # noqa
+    return click.option("--dependency-path", "-d", default="", type=NullablePath())(f)
+
+
+def requires_builddir(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter named --build-path (-b) that defaults to
+    None if the param is empty, and a path otherwise."""  # noqa
+    return click.option(
+        "--build-path",
+        "-b",
+        help="Specify a build temp path of your choice",
+        default="",
+        type=NullablePath(),
+    )(f)
+
+
+def requires_config(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter named config (type pathlib.Path)."""
+    return click.argument(
+        "config",
+        type=click.Path(
+            exists=True, file_okay=True, dir_okay=False, resolve_path=True, path_type=Path
+        ),
+    )(f)
+
+
+def requires_model(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter named model (type pathlib.Path)."""
+    return click.argument(
+        "model",
+        type=click.Path(
+            exists=True, file_okay=True, dir_okay=False, resolve_path=True, path_type=Path
+        ),
+    )(f)
+
+
+def with_num_workers_option(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter called --num-workers (-n). Defaults to -1."""
+    return click.option(
+        "--num-workers",
+        "-n",
+        help="Number of parallel workers for FINN to use. When -1, automatically use 75% of cores",
+        default=-1,
+        show_default=True,
+    )(f)
+
+
+def with_skip_depenency_update_option(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter called --skip-dep-update (-s). Defaults to False."""
+    return click.option(
+        "--skip-dep-update",
+        "-s",
+        is_flag=True,
+        help="Whether to skip the dependency update. Can be changed in settings via"
+        "AUTOMATIC_DEPENDENCY_UPDATES: false",
+    )(f)
+
+
 def prepare_finn(
+    settings: FINNSettings,
     deps: Path | None,
     flow_config: Path,
     build_dir: Path | None,
     num_workers: int,
     is_test_run: bool = False,
-    skip_dep_update: bool = False,
-) -> None:
-    """Prepare a FINN environment by:
-    0. Reading all settings and environment vars
-    1. Updating all dependencies
-    2. Setting all environment vars
-    """
-    # Resolve settings and dependencies, error if this doesnt work
-    if not settings_found():
-        warning("Settings file could not be found. Using defaults.")
-    else:
-        sp = _resolve_settings_path()
-        status(f"Using settings file at {sp}")
-    settings = get_settings(force_update=True)
-    deps_path = resolve_deps_path(deps, settings)
+    cmdparam_skip_dep_update: bool = False,
+) -> FINNSettings:
+    """Prepare a FINN environment with the given settings. The settings will be adapted
+    and modified with the necessary runtime data and returned."""  # noqa
+    status(f"Using settings file at {settings.get_path()}")
+
+    # Dependencies
+    deps_path = settings.resolve_deps_path(deps)
     if deps_path is None:
         error("Dependency location could not be resolved!")
         sys.exit(1)
     else:
         status(f"Using dependency path: {deps_path}")
-    os.environ["FINN_DEPS"] = str(deps_path.absolute())
+    settings["FINN_DEPS"] = deps_path.absolute()
+    os.environ["FINN_DEPS"] = str(settings["FINN_DEPS"])
 
+    # Skipping dependency updates
+    settings["AUTOMATIC_DEPENDENCY_UPDATES"] = not settings.resolve_skip_update(
+        cmdparam_skip_dep_update
+    )
+
+    # Pythonpath
     if "PYTHONPATH" not in os.environ.keys():
         os.environ["PYTHONPATH"] = ""
 
     # Update / Install all dependencies
-    if not skip_dep_update:
+    if settings["AUTOMATIC_DEPENDENCY_UPDATES"]:
         update_dependencies(deps_path)
     else:
         warning("Skipping dependency updates!")
@@ -99,20 +153,17 @@ def prepare_finn(
         sys.exit(1)
 
     # Resolve the build directory
-    resolved_build_dir = resolve_build_dir(
-        flow_config, build_dir, settings, is_test_run=is_test_run
-    )
-    if resolved_build_dir is None:
-        error("Could not resolve the build directory!")
-        sys.exit(1)
-    os.environ["FINN_BUILD_DIR"] = str(resolved_build_dir.absolute())
+    resolved_build_dir = settings.resolve_build_dir(build_dir, flow_config, is_test_run).absolute()
+    settings["FINN_BUILD_DIR"] = resolved_build_dir
+    os.environ["FINN_BUILD_DIR"] = str(resolved_build_dir)
     if not resolved_build_dir.exists():
         resolved_build_dir.mkdir(parents=True)
     status(f"Build directory set to: {resolved_build_dir}")
 
     # Resolve the number of workers
-    workers = resolve_num_workers(num_workers, settings)
+    workers = settings.resolve_num_workers(num_workers)
     status(f"Using {workers} workers.")
+    settings["NUM_DEFAULT_WORKERS"] = workers
     os.environ["NUM_DEFAULT_WORKERS"] = str(workers)
 
     # Resolve paths to some not properly packaged components...
@@ -121,6 +172,7 @@ def prepare_finn(
     os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
     os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = _resolve_module_path("tests")
+    return settings
 
 
 @click.group()
@@ -129,22 +181,12 @@ def main_group() -> None:
 
 
 @click.command(help="Build a hardware design")
-@click.option("--dependency-path", "-d", default="")
-@click.option("--build-path", "-b", help="Specify a build temp path of your choice", default="")
-@click.option(
-    "--num-workers",
-    "-n",
-    help="Number of parallel workers for FINN to use. When -1, automatically use 75% of cores",
-    default=-1,
-    show_default=True,
-)
-@click.option(
-    "--skip-dep-update",
-    "-s",
-    is_flag=True,
-    help="Whether to skip the dependency update. Can be changed in settings via"
-    "AUTOMATIC_DEPENDENCY_UPDATES: false",
-)
+@requires_dependencies
+@requires_builddir
+@requires_config
+@requires_model
+@with_num_workers_option
+@with_skip_depenency_update_option
 @click.option(
     "--start",
     default="",
@@ -157,31 +199,24 @@ def main_group() -> None:
     help="If no stop_step is given in the dataflow build config, "
     "this stops the flow at the given step.",
 )
-@click.argument("config")
-@click.argument("model")
 def build(
-    dependency_path: str,
-    build_path: str,
+    dependency_path: str | None,
+    build_path: str | None,
     num_workers: int,
     skip_dep_update: bool,
     start: str,
     stop: str,
-    config: str,
-    model: str,
+    config: Path,
+    model: Path,
 ) -> None:
-    config_path = Path(config).expanduser()
-    model_path = Path(model).expanduser()
-    build_dir = Path(build_path).expanduser() if build_path != "" else None
-    assert_path_valid(config_path)
-    assert_path_valid(model_path)
-    dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    status(f"Starting FINN build with config {config_path.name} and model {model_path.name}!")
+    status(f"Starting FINN build with config {config.name} and model {model.name}!")
     prepare_finn(
-        dep_path,
-        config_path,
-        build_dir,
+        FINNSettings(),
+        dependency_path,
+        config.expanduser(),
+        build_path,
         num_workers,
-        skip_dep_update=(skip_dep_update or skip_update_by_default()),
+        cmdparam_skip_dep_update=skip_dep_update,
     )
 
     # Can import from finn now, since all deps are installed
@@ -191,17 +226,16 @@ def build(
 
     status("Creating dataflow build config...")
     dfbc: DataflowBuildConfig | None = None
-    match config_path.suffix:
+    match config.suffix:
         case ".yaml" | ".yml":
-            with config_path.open() as f:
+            with config.open() as f:
                 dfbc = DataflowBuildConfig.from_yaml(f.read())
         case ".json":
-            with config_path.open() as f:
+            with config.open() as f:
                 dfbc = DataflowBuildConfig.from_json(f.read())
         case _:
             error(
-                f"Unknown config file type: {config_path.name}. "
-                "Valid formats are: .json, .yml, .yaml"
+                f"Unknown config file type: {config.name}. " "Valid formats are: .json, .yml, .yaml"
             )
             sys.exit(1)
     if dfbc is None:
@@ -216,76 +250,61 @@ def build(
 
     # Set output directory to where the config lies, not where FINN lies
     if not Path(dfbc.output_dir).is_absolute():
-        dfbc.output_dir = str((config_path.parent / dfbc.output_dir).absolute())
+        dfbc.output_dir = str((config.parent / dfbc.output_dir).absolute())
     status(f"Output directory is {dfbc.output_dir}")
 
     # Add path of config to sys.path so that custom steps can be found
-    sys.path.append(str(config_path.parent.absolute()))
+    sys.path.append(str(config.parent.absolute()))
 
     Console().rule(
         f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
-        f"{config_path.name}[/bold orange1][bold cyan] on model [/bold cyan]"
-        f"[bold orange1]{model_path.name}[/bold orange1]"
+        f"{config.name}[/bold orange1][bold cyan] on model [/bold cyan]"
+        f"[bold orange1]{model.name}[/bold orange1]"
     )
-    build_dataflow_cfg(str(model_path), dfbc)
+    build_dataflow_cfg(str(model), dfbc)
 
 
 @click.command(help="Run a script in a FINN environment")
-@click.option("--dependency-path", "-d", default="")
-@click.option("--build-path", "-b", help="Specify a build temp path of your choice", default="")
-@click.option(
-    "--skip-dep-update",
-    "-s",
-    is_flag=True,
-    help="Whether to skip the dependency update. Can be changed in settings via"
-    "AUTOMATIC_DEPENDENCY_UPDATES: false",
+@requires_dependencies
+@requires_builddir
+@with_num_workers_option
+@with_skip_depenency_update_option
+@click.argument(
+    "script",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, executable=True, path_type=Path),
 )
-@click.option(
-    "--num-workers",
-    "-n",
-    help="Number of parallel workers for FINN to use. When -1, automatically use 75% of cores",
-    default=-1,
-    show_default=True,
-)
-@click.argument("script")
 def run(
-    dependency_path: str, build_path: str, skip_dep_update: bool, num_workers: int, script: str
+    dependency_path: Path | None,
+    build_path: Path | None,
+    skip_dep_update: bool,
+    num_workers: int,
+    script: Path,
 ) -> None:
-    script_path = Path(script).expanduser()
-    build_dir = Path(build_path).expanduser() if build_path != "" else None
-    assert_path_valid(script_path)
-    dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
+    script = script.expanduser()
     prepare_finn(
-        dep_path,
-        script_path,
-        build_dir,
+        FINNSettings(),
+        dependency_path,
+        script,
+        build_path,
         num_workers,
-        skip_dep_update=(skip_dep_update or skip_update_by_default()),
+        cmdparam_skip_dep_update=skip_dep_update,
     )
     Console().rule(
-        f"[bold cyan]Starting script "
-        f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
+        f"[bold cyan]Starting script " f"[/bold cyan][bold orange1]{script.name}[/bold orange1]"
     )
     subprocess.run(
-        shlex.split(f"{sys.executable} {script_path.name}", posix=IS_POSIX), cwd=script_path.parent
+        shlex.split(f"{sys.executable} {script.name}", posix=IS_POSIX), cwd=script.parent
     )
 
 
 @click.command(help="Run a given benchmark configuration.")
 @click.option("--bench_config", help="Name or path of experiment configuration file", required=True)
-@click.option("--dependency-path", "-d", default="")
-@click.option("--num-workers", "-n", default=-1, show_default=True)
-@click.option(
-    "--build-path",
-    "-b",
-    help="Specify a build temp path of your choice",
-    default="",
-)
+@requires_dependencies
+@requires_builddir
+@with_num_workers_option
 def bench(bench_config: str, dependency_path: str, num_workers: int, build_path: str) -> None:
     console = Console()
-    build_dir = Path(build_path).expanduser() if build_path != "" else None
-    dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    prepare_finn(dep_path, Path(), build_dir, num_workers)
+    prepare_finn(FINNSettings(), dependency_path, Path(), build_path, num_workers)
     console.rule("RUNNING BENCHMARK")
 
     # Late import because we need prepare_finn to setup remaining dependencies first
@@ -296,29 +315,27 @@ def bench(bench_config: str, dependency_path: str, num_workers: int, build_path:
 
 
 @click.command(help="Run a given test. Uses /tmp/FINN_TMP as the temporary file location")
+@requires_dependencies
+@requires_builddir
+@with_num_workers_option
 @click.option(
     "--variant",
     "-v",
     help="Which test to execute (quick, quicktest_ci, full_ci)",
     default="quick",
     show_default=True,
+    type=click.Choice(["quick", "quicktest_ci", "full_ci"]),
 )
-@click.option("--dependency-path", "-d", default="")
-@click.option("--num-workers", "-n", default=-1, show_default=True)
 @click.option("--num-test-workers", "-t", default="auto", show_default=True)
-@click.option(
-    "--build-path",
-    "-b",
-    help="Specify a build temp path of your choice",
-    default="",
-)
 def test(
-    variant: str, dependency_path: str, num_workers: int, num_test_workers: str, build_path: str
+    variant: str,
+    dependency_path: Path | None,
+    num_workers: int,
+    num_test_workers: str,
+    build_path: Path | None,
 ) -> None:
     console = Console()
-    build_dir = Path(build_path).expanduser() if build_path != "" else None
-    dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    prepare_finn(dep_path, Path(), build_dir, num_workers, is_test_run=True)
+    prepare_finn(FINNSettings(), dependency_path, Path(), build_path, num_workers, is_test_run=True)
     status(f"Using {num_test_workers} test workers")
     console.rule("RUNNING TESTS")
     run_test(variant, num_test_workers)
@@ -331,15 +348,10 @@ def deps() -> None:
 
 @click.command(help="Update or install dependencies to the given path")
 @click.option(
-    "--path",
-    "-p",
-    help="Path to install to",
-    default="",
-    show_default=True,
+    "--path", "-p", help="Path to install to", default="", show_default=True, type=NullablePath()
 )
 def update(path: str) -> None:
-    dep_path = Path(path).expanduser() if path != "" else None
-    prepare_finn(dep_path, Path(), None, 1)
+    prepare_finn(FINNSettings(), path, Path(), None, 1)
 
 
 @click.group(help="Manage FINN settings")
@@ -348,20 +360,17 @@ def config() -> None:
     pass
 
 
-def _command_get_settings():
-    sp = _resolve_settings_path()
-    if sp is None:
-        error("Could not find a settings file. Stopping")
+def _command_get_settings() -> FINNSettings:
+    settings = FINNSettings()
+    if not settings.get_path().exists():
+        warning("Could not resolve settings file.")
         sys.exit(1)
-    status(f"Found settings at {sp}")
-    return get_settings(force_update=True)
+    return settings
 
 
 @click.command("list", help="List the settings files contents")
 def config_list() -> None:
-    console = Console()
-    for k, v in _command_get_settings().items():
-        console.print(f"[blue]{k}[/blue]: {v}")
+    pprint(_command_get_settings()._settings)  # noqa
 
 
 @click.command("get", help="Get a specific key from the settings")
@@ -378,17 +387,8 @@ def config_get(key: str) -> None:
 @click.argument("key")
 @click.argument("value")
 def config_set(key: str, value: str) -> None:
-    if not settings_found():
-        error(
-            "Settings file not found. To create a template one at the "
-            'default location run "finn config create"'
-        )
-        sys.exit(1)
-    else:
-        settings = get_settings(force_update=True)
-        settings[key] = value
-    set_settings(settings)
-    write_settings()
+    settings = FINNSettings(sync=True)
+    settings[key] = value
 
 
 @click.command(
@@ -399,16 +399,29 @@ def config_set(key: str, value: str) -> None:
 @click.argument("path", default="~/.finn/")
 def config_create(path: str) -> None:
     p = Path(path).expanduser()
-    if p.suffix != "":
+    if not p.exists():
+        error("The given path does not seem to exist!")
+        sys.exit(1)
+    if not p.is_file():
         error("Please specify a path to a directory, not a file!")
         sys.exit(1)
-    complete_path = p / "settings.yaml"
-    settings = get_settings(force_update=False)
-    msettings = {key: str(settings[key]) for key in settings.keys()}
-    if not write_yaml(msettings, complete_path):
-        error(f"Writing to {complete_path} failed!")
+    p = p / "settings.yaml"
+    settings = FINNSettings(sync=True, override_path=p)
+
+    # This should return good defaults for a template
+    settings = prepare_finn(
+        settings=settings,
+        deps=None,
+        flow_config=Path(),
+        build_dir=Path("FINN_TMP"),
+        num_workers=1,
+        is_test_run=False,
+        cmdparam_skip_dep_update=False,
+    )
+    if not p.exists():
+        error(f"Failed to create config template at {p}!")
         sys.exit(1)
-    status(f"File written to {complete_path}")
+    status(f"File written to {p}")
 
 
 def main() -> None:
