@@ -320,7 +320,7 @@ def is_versal(fpgapart):
     ]
 
 
-def get_dsp_block(fpgapart):
+def get_dsp_block(fpgapart): 
     if is_versal(fpgapart):
         return "DSP58"
     elif fpgapart[2] == "7":
