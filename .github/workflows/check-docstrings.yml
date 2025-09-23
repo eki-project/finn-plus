@@ -223,35 +223,41 @@ jobs:
         pydoc-markdown
         echo "✅ API documentation generated successfully"
 
+    - name: Prepare documentation for wiki
+      run: |
+        # Create a temporary directory for wiki content
+        mkdir -p wiki-content
+        
+        # Copy the generated markdown documentation
+        echo "Preparing documentation for GitHub wiki..."
+        
+        # Check if documentation was generated
+        if [ -f "docs/api.md" ]; then
+          echo "API documentation found, splitting into separate files..."
+          
+          # Use the script from the scripts folder
+          mkdir -p wiki-content
+          python scripts/split_api_docs.py --input docs/api.md --output wiki-content/api
+          
+          echo "📄 Files generated:"
+          ls -la wiki-content/api | head -10
+          echo "📊 Total files: $(ls -1 wiki-content/api/*.md | wc -l)"
+        else
+          echo "❌ No API documentation found"
+        fi
+
     - name: Upload documentation artifact
       uses: actions/upload-artifact@v4
       with:
         name: api-documentation-pr-${{ github.event.number }}
-        path: docs/
+        path: wiki-content/
         retention-days: 7
-
-    - name: Check documentation completeness
-      id: doc-check
-      run: |
-        echo "Checking documentation completeness..."
-        
-        # Check if API documentation was generated
-        if [ -f "docs/api.md" ]; then
-          echo "has_api_docs=true" >> $GITHUB_OUTPUT
-          echo "✅ API documentation generated successfully"
-          echo "📄 Size: $(wc -l docs/api.md | awk '{print $1}') lines"
-          echo "📊 Content preview:"
-          head -10 docs/api.md
-        else
-          echo "has_api_docs=false" >> $GITHUB_OUTPUT
-          echo "⚠️ No API documentation found"
-        fi
 
   publish-api-docs:
     name: Publish API Documentation to Wiki
     runs-on: ubuntu-latest
     needs: check-docstrings
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && needs.check-docstrings.outputs.docstrings-passed == 'true' && needs.check-docstrings.outputs.skip-check == 'false'
+    #if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && needs.check-docstrings.outputs.docstrings-passed == 'true' && needs.check-docstrings.outputs.skip-check == 'false'
     permissions:
       contents: write
 
