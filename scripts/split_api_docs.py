@@ -31,14 +31,14 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
     # Create main API index
     index_content = []
-    index_content.append("# FINN API Documentation")
+    index_content.append("# 📚 FINN API Documentation")
     index_content.append("")
-    index_content.append(
-        "This is the comprehensive API reference for the FINN framework, generated\
-        automatically from source code."
-    )
+    index_content.append("Welcome to the comprehensive API reference for the FINN framework.")
+    index_content.append("This documentation is generated automatically from source code.")
     index_content.append("")
-    index_content.append("## Modules")
+    index_content.append("## 📋 Module Overview")
+    index_content.append("")
+    index_content.append("The FINN framework is organized into the following main components:")
     index_content.append("")
 
     module_files = []
@@ -51,7 +51,9 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
             # Skip base/parent modules with minimal content (typically just package docstrings)
             # These are usually modules like "finn.builder" that only contain brief descriptions
-            if module_content and len(module_content) > 100:  # Only process modules with substantial content
+            if (
+                module_content and len(module_content) > 100
+            ):  # Only process modules with substantial content
                 # Create safe filename
                 safe_filename = (
                     module_name.replace(".", "-")
@@ -64,9 +66,21 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
                 # Create module file content
                 file_content = []
-                file_content.append(f"# {module_name}")
+                file_content.append(f"# 📦 {module_name}")
+                file_content.append("")
+                file_content.append("---")
                 file_content.append("")
                 file_content.append(module_content)
+                file_content.append("")
+                file_content.append("---")
+                file_content.append("")
+                file_content.append(
+                    "📚 **Navigation**: [← Back to API Documentation](API-Documentation)"
+                )
+                file_content.append("")
+                file_content.append(
+                    "*This page was generated automatically from source code documentation.*"
+                )
 
                 # Write module file
                 module_file = wiki_dir / filename
@@ -75,50 +89,71 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
                 print(f"✅ Created {filename} ({len(module_content)} chars)")
             else:
-                print(f"⏭️  Skipped {module_name} (base module, {len(module_content)} chars)")
+                # Create safe filename for display in skip message
+                safe_filename = (
+                    module_name.replace(".", "-")
+                    .replace("_", "-")
+                    .replace(" ", "-")
+                    .replace("\\", "")
+                )
+                print(f"⏭️  Skipped {safe_filename} (base module, {len(module_content)} chars)")
 
     # Create hierarchical structure for the index
     hierarchy = {}
     for module_name, filename in module_files:
-        parts = module_name.split('.')
+        parts = module_name.split(".")
         current = hierarchy
         for part in parts:
             if part not in current:
                 current[part] = {}
             current = current[part]
-        current['_filename'] = filename
-        current['_module_name'] = module_name
+        current["_filename"] = filename
+        current["_module_name"] = module_name
 
     def add_hierarchy_to_index(node, prefix="", level=0):
         """Recursively add hierarchical structure to index."""
-        indent = "  " * level
+        # Define emojis for different categories
+        category_emojis = {
+            "analysis": "🔍",
+            "benchmarking": "⚡",
+            "builder": "🏗️",
+            "core": "⚙️",
+            "custom_op": "🔧",
+            "interface": "🔌",
+            "transformation": "🔄",
+            "util": "🛠️",
+        }
+
+        indent = "  " * (level - 1)
         for key in sorted(node.keys()):
-            if key.startswith('_'):
+            if key.startswith("_"):
                 continue
-            
+
             subnode = node[key]
-            if '_filename' in subnode:
+            if "_filename" in subnode:
                 # This is a leaf node with actual content
-                index_content.append(f"{indent}- [{subnode['_module_name']}]({subnode['_filename'].replace('.md', '')})")
+                index_content.append(
+                    f"{indent}- [{subnode['_module_name']}]\
+                        ({subnode['_filename'].replace('.md', '')})"
+                )
             else:
                 # This is a parent node, show as header
                 if level == 0:
-                    index_content.append(f"\n### {key.title()}")
+                    pass
                 elif level == 1:
-                    index_content.append(f"\n{indent}**{key.title()}**")
+                    emoji = category_emojis.get(key.lower(), "📦")
+                    index_content.append("---")
+                    index_content.append(f"### {emoji} {key}")
+                elif level == 2:
+                    index_content.append(f"{indent}- {key}")
                 else:
-                    index_content.append(f"\n{indent}*{key.title()}*")
-                
+                    index_content.append(f"{indent}- {key}")
+
                 # Recursively add children
                 add_hierarchy_to_index(subnode, prefix + key + ".", level + 1)
 
     # Add the hierarchical structure
     add_hierarchy_to_index(hierarchy)
-
-    index_content.append("")
-    index_content.append("---")
-    index_content.append("")
-    index_content.append("*Documentation generated automatically from source code.*")
 
     # Write main index file
     with open(wiki_dir / "API-Documentation.md", "w") as f:
