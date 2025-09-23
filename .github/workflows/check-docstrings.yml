@@ -75,8 +75,8 @@ jobs:
         done
         echo "" >> docstring_report.md
 
-        # Run the docstring checker from scripts folder
-        if python scripts/check_docstrings.py $FILES; then
+        # Run the docstring checker from scripts folder and capture detailed output
+        if output=$(python scripts/check_docstrings.py $FILES 2>&1); then
           echo "success=true" >> $GITHUB_OUTPUT
           echo "✅ All checked Python files have proper docstrings!" >> docstring_report.md
         else
@@ -84,14 +84,63 @@ jobs:
           echo "" >> docstring_report.md
           echo "❌ **Docstring check failed!**" >> docstring_report.md
           echo "" >> docstring_report.md
+          
+          # Save the raw output to a temporary file for processing
+          echo "$output" > docstring_raw_output.txt
+          
+          # Process the output to create a more structured display
+          echo "### Missing Docstrings Details:" >> docstring_report.md
+          echo "" >> docstring_report.md
+          
+          # Extract and format the missing docstrings information
+          awk '
+          /^📄/ { 
+            print "#### " $0
+            next
+          }
+          /^  - Line/ { 
+            print "- " $0
+            next
+          }
+          /^Total missing docstrings:/ { 
+            print ""
+            print "**" $0 "**"
+            next
+          }
+          /^❌ Missing docstrings found:/ || /^$/ { 
+            next
+          }
+          { 
+            if (NR > 1) print $0
+          }
+          ' docstring_raw_output.txt >> docstring_report.md
+          
+          echo "" >> docstring_report.md
+          echo "### How to Fix:" >> docstring_report.md
+          echo "" >> docstring_report.md
           echo "Please add docstrings to the missing functions, classes, and modules listed above." >> docstring_report.md
           echo "" >> docstring_report.md
           echo "### Docstring Guidelines:" >> docstring_report.md
           echo "- All modules should have a module-level docstring" >> docstring_report.md
           echo "- All public functions and methods should have docstrings" >> docstring_report.md
+          echo "- All private functions should have docstrings" >> docstring_report.md
           echo "- All classes should have docstrings" >> docstring_report.md
           echo "- Use triple quotes (\`\"\"\"\`) for docstrings" >> docstring_report.md
           echo "- Follow [PEP 257](https://peps.python.org/pep-0257/) conventions" >> docstring_report.md
+          
+          # Also include raw output in a collapsible section for debugging
+          echo "" >> docstring_report.md
+          echo "<details>" >> docstring_report.md
+          echo "<summary>Raw output from docstring checker</summary>" >> docstring_report.md
+          echo "" >> docstring_report.md
+          echo '```' >> docstring_report.md
+          cat docstring_raw_output.txt >> docstring_report.md
+          echo '```' >> docstring_report.md
+          echo "</details>" >> docstring_report.md
+          
+          # Clean up temporary file
+          rm -f docstring_raw_output.txt
+          
           exit 1
         fi
 
