@@ -208,8 +208,8 @@ class bench:
         cfg.verbose = True
         cfg.console_log_level = "ERROR"
         cfg.enable_build_pdb_debug = False
+        cfg.enable_exception_snapshots = True
         # cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
-        cfg.force_python_rtlsim = False
         cfg.split_large_fifos = True
         cfg.save_intermediate_models = True  # Save the intermediate model graphs
         cfg.verify_save_full_context = True  # Output full context dump for verification steps
