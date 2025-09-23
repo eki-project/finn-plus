@@ -5,13 +5,13 @@ on:
     branches: [main, dev]
     paths:
       - '**/*.py'
-      - 'mkdocs.yml'
+      - 'pydoc-markdown.yml'
       - '.github/workflows/check-docstrings.yml'
   push:
     branches: [main, dev]
     paths:
       - '**/*.py'
-      - 'mkdocs.yml'
+      - 'pydoc-markdown.yml'
       - '.github/workflows/check-docstrings.yml'
 
 jobs:
@@ -215,25 +215,19 @@ jobs:
     - name: Install documentation dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install mkdocs mkdocs-material mkdocstrings[python] pymdown-extensions
-
-    - name: Validate MkDocs configuration
-      run: |
-        echo "Validating MkDocs configuration..."
-        mkdocs build --strict --verbose
-        echo "✅ MkDocs configuration is valid"
+        pip install pydoc-markdown
 
     - name: Generate API documentation
       run: |
-        echo "Building API documentation..."
-        mkdocs build --clean
-        echo "✅ API documentation built successfully"
+        echo "Building API documentation with pydoc-markdown..."
+        pydoc-markdown
+        echo "✅ API documentation generated successfully"
 
     - name: Upload documentation artifact
       uses: actions/upload-artifact@v4
       with:
         name: api-documentation-pr-${{ github.event.number }}
-        path: site/
+        path: docs/
         retention-days: 7
 
     - name: Check documentation completeness
@@ -241,19 +235,16 @@ jobs:
       run: |
         echo "Checking documentation completeness..."
         
-        # Count generated API pages
-        api_pages=$(find site -name "*.html" -path "*/api/*" | wc -l)
-        total_pages=$(find site -name "*.html" | wc -l)
-        
-        echo "api_pages=$api_pages" >> $GITHUB_OUTPUT
-        echo "total_pages=$total_pages" >> $GITHUB_OUTPUT
-        
-        if [ "$api_pages" -gt 0 ]; then
+        # Check if API documentation was generated
+        if [ -f "docs/api.md" ]; then
           echo "has_api_docs=true" >> $GITHUB_OUTPUT
-          echo "✅ Found $api_pages API documentation pages"
+          echo "✅ API documentation generated successfully"
+          echo "📄 Size: $(wc -l docs/api.md | awk '{print $1}') lines"
+          echo "📊 Content preview:"
+          head -10 docs/api.md
         else
           echo "has_api_docs=false" >> $GITHUB_OUTPUT
-          echo "⚠️ No API documentation pages found"
+          echo "⚠️ No API documentation found"
         fi
 
   publish-api-docs:
@@ -276,99 +267,36 @@ jobs:
     - name: Install documentation dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install mkdocs mkdocs-material mkdocstrings[python] pymdown-extensions
+        pip install pydoc-markdown
 
     - name: Build API documentation
       run: |
-        echo "Building comprehensive API documentation..."
-        mkdocs build --clean --verbose
-        echo "✅ API documentation built successfully"
+        echo "Building comprehensive API documentation with pydoc-markdown..."
+        pydoc-markdown --verbose
+        echo "✅ API documentation generated successfully"
 
     - name: Prepare documentation for wiki
       run: |
         # Create a temporary directory for wiki content
         mkdir -p wiki-content
         
-        # Extract markdown content from the built site
-        # We'll need to convert HTML back to markdown for the wiki
+        # Copy the generated markdown documentation
         echo "Preparing documentation for GitHub wiki..."
         
-        # Copy any existing markdown files that were generated
-        if [ -d "site" ]; then
-          echo "Documentation site built successfully"
-          ls -la site/
+        # Check if documentation was generated
+        if [ -f "docs/api.md" ]; then
+          echo "API documentation found, splitting into separate files..."
+          
+          # Use the script from the scripts folder
+          mkdir -p wiki-content
+          python scripts/split_api_docs.py --input docs/api.md --output wiki-content/api
+          
+          echo "📄 Files generated:"
+          ls -la wiki-content/api | head -10
+          echo "📊 Total files: $(ls -1 wiki-content/api/*.md | wc -l)"
+        else
+          echo "❌ No API documentation found"
         fi
-
-    - name: Generate wiki-compatible markdown
-      run: |
-        # Create a Python script to extract and convert the documentation
-        cat > extract_wiki_docs.py << 'EOF'
-        #!/usr/bin/env python3
-        """Extract API documentation for GitHub wiki."""
-        
-        import os
-        import re
-        from pathlib import Path
-        import shutil
-        
-        def convert_html_to_wiki_markdown():
-            """Convert MkDocs HTML output to GitHub wiki compatible markdown."""
-            site_dir = Path("site")
-            wiki_dir = Path("wiki-content")
-            wiki_dir.mkdir(exist_ok=True)
-            
-            # Create main API documentation page
-            api_content = []
-            api_content.append("# FINN API Documentation")
-            api_content.append("")
-            api_content.append("This is the comprehensive API reference for the FINN framework.")
-            api_content.append("")
-            api_content.append("## Modules")
-            api_content.append("")
-            
-            # Look for API pages in the site directory
-            api_pages = list(site_dir.rglob("**/api/**/*.html"))
-            
-            if api_pages:
-                # Process each API page
-                for page in api_pages:
-                    rel_path = page.relative_to(site_dir)
-                    module_name = str(rel_path).replace("/", ".").replace(".html", "").replace("api.", "")
-                    
-                    api_content.append(f"- [{module_name}]({module_name.replace('.', '-')})")
-                
-                # Write main API page
-                with open(wiki_dir / "API-Documentation.md", "w") as f:
-                    f.write("\n".join(api_content))
-                
-                print(f"Generated main API documentation page")
-                print(f"Found {len(api_pages)} API pages")
-            else:
-                # Fallback: create a simple API documentation page
-                api_content.append("*API documentation will be generated automatically from source code.*")
-                api_content.append("")
-                api_content.append("## Available Modules")
-                api_content.append("")
-                
-                # Scan source directory for Python modules
-                src_dir = Path("src")
-                if src_dir.exists():
-                    for py_file in src_dir.rglob("*.py"):
-                        if py_file.name != "__init__.py":
-                            rel_path = py_file.relative_to(src_dir)
-                            module_name = str(rel_path.with_suffix("")).replace("/", ".")
-                            api_content.append(f"- `{module_name}`")
-                
-                with open(wiki_dir / "API-Documentation.md", "w") as f:
-                    f.write("\n".join(api_content))
-                
-                print("Generated basic API documentation page (no HTML pages found)")
-        
-        if __name__ == "__main__":
-            convert_html_to_wiki_markdown()
-        EOF
-        
-        python extract_wiki_docs.py
 
     - name: Checkout wiki repository
       uses: actions/checkout@v4
@@ -386,12 +314,15 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        # Copy generated documentation
+        # Copy generated documentation files
         if [ -d "../wiki-content" ]; then
-          cp -r ../wiki-content/* .
+          echo "📋 Copying documentation files to wiki..."
+          cp -r ../wiki-content/api .
+          ls -la api/*.md | head -10  # Show first 10 files
+          echo "📄 Total markdown files: $(ls -1 api/*.md | wc -l)"
         fi
         
-        # Add branch and commit information to the API documentation
+        # Add branch and commit information to the main API documentation
         if [ -f "API-Documentation.md" ]; then
           echo "" >> API-Documentation.md
           echo "---" >> API-Documentation.md
@@ -426,8 +357,11 @@ jobs:
         echo ""
         echo "📊 Summary:"
         echo "- All docstrings are present ✅"
+        echo "- API documentation generated with pydoc-markdown ✅"
+        echo "- Documentation split into separate files per module ✅"
         echo "- Branch: ${{ github.ref_name }}"
         echo "- Commit: ${{ github.sha }}"
         echo "- Wiki URL: https://github.com/${{ github.repository }}/wiki"
         echo ""
         echo "The API documentation has been updated and is now available in the GitHub wiki."
+        echo "Each Python module has its own documentation page for easier navigation."
