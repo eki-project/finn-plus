@@ -257,7 +257,7 @@ jobs:
     name: Publish API Documentation to Wiki
     runs-on: ubuntu-latest
     needs: check-docstrings
-    #if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && needs.check-docstrings.outputs.docstrings-passed == 'true' && needs.check-docstrings.outputs.skip-check == 'false'
+    if: github.event_name == 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && needs.check-docstrings.outputs.docstrings-passed == 'true' && needs.check-docstrings.outputs.skip-check == 'false'
     permissions:
       contents: write
 
