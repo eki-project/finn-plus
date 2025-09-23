@@ -1,0 +1,126 @@
+site_name: FINN API Documentation
+site_description: Comprehensive API reference for the FINN framework
+site_url: https://github.com/eki-project/finn-plus/wiki
+
+# Repository information
+repo_name: eki-project/finn-plus
+repo_url: https://github.com/eki-project/finn-plus
+
+# Navigation structure
+nav:
+  - Home: index.md
+  - API Reference:
+    - Overview: api/index.md
+    - Builder:
+      - Configuration: api/builder/build_dataflow_config.md
+    - Utilities:
+      - Basic Utils: api/util/basic.md
+    - Core:
+      - Analysis: api/analysis/
+      - Transformation: api/transformation/
+      - Custom Operations: api/custom_op/
+
+# Theme configuration
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.annotate
+    - content.code.copy
+
+# Extensions
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - footnotes
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+# Plugins
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            # Documentation options
+            docstring_style: google
+            docstring_options:
+              ignore_init_summary: true
+            merge_init_into_class: true
+            show_signature_annotations: true
+            show_source: false
+            show_root_heading: true
+            show_root_toc_entry: true
+            show_root_full_path: false
+            show_object_full_path: false
+            show_category_heading: true
+            show_if_no_docstring: false
+            
+            # Filtering options
+            filters:
+              - "!^_"  # Hide private members by default
+              - "^__init__$"  # But show __init__ methods
+              - "^__"  # Show other special methods
+            
+            # Grouping and sorting
+            group_by_category: true
+            show_submodules: true
+            
+            # Rendering options
+            heading_level: 2
+            members_order: source
+            docstring_section_style: table
+            signature_crossrefs: true
+
+# Watch additional files during development
+watch:
+  - src/
+
+# Custom CSS (optional)
+extra_css:
+  - stylesheets/extra.css
+
+# Extra configuration
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/eki-project/finn-plus
+  version:
+    provider: mike
+
+# Files to include/exclude
+exclude_docs: |
+  drafts/
+  *.tmp
+  *.py[cod]
+  __pycache__/
