@@ -91,37 +91,37 @@ jobs:
           echo "" >> docstring_report.md
           echo "❌ **Docstring check failed!**" >> docstring_report.md
           echo "" >> docstring_report.md
-          
+
           # Save the raw output to a temporary file for processing
           echo "$output" > docstring_raw_output.txt
-          
+
           # Process the output to create a more structured display
           echo "### Missing Docstrings Details:" >> docstring_report.md
           echo "" >> docstring_report.md
-          
+
           # Extract and format the missing docstrings information
           awk '
-          /^📄/ { 
+          /^📄/ {
             print "#### " $0
             next
           }
-          /^  - Line/ { 
+          /^  - Line/ {
             print "- " $0
             next
           }
-          /^Total missing docstrings:/ { 
+          /^Total missing docstrings:/ {
             print ""
             print "**" $0 "**"
             next
           }
-          /^❌ Missing docstrings found:/ || /^$/ { 
+          /^❌ Missing docstrings found:/ || /^$/ {
             next
           }
-          { 
+          {
             if (NR > 1) print $0
           }
           ' docstring_raw_output.txt >> docstring_report.md
-          
+
           echo "" >> docstring_report.md
           echo "### How to Fix:" >> docstring_report.md
           echo "" >> docstring_report.md
@@ -134,7 +134,7 @@ jobs:
           echo "- All classes should have docstrings" >> docstring_report.md
           echo "- Use triple quotes (\`\"\"\"\`) for docstrings" >> docstring_report.md
           echo "- Follow [PEP 257](https://peps.python.org/pep-0257/) conventions" >> docstring_report.md
-          
+
           # Also include raw output in a collapsible section for debugging
           echo "" >> docstring_report.md
           echo "<details>" >> docstring_report.md
@@ -144,10 +144,10 @@ jobs:
           cat docstring_raw_output.txt >> docstring_report.md
           echo '```' >> docstring_report.md
           echo "</details>" >> docstring_report.md
-          
+
           # Clean up temporary file
           rm -f docstring_raw_output.txt
-          
+
           exit 1
         fi
 
@@ -227,18 +227,18 @@ jobs:
       run: |
         # Create a temporary directory for wiki content
         mkdir -p wiki-content
-        
+
         # Copy the generated markdown documentation
         echo "Preparing documentation for GitHub wiki..."
-        
+
         # Check if documentation was generated
         if [ -f "docs/api.md" ]; then
           echo "API documentation found, splitting into separate files..."
-          
+
           # Use the script from the scripts folder
           mkdir -p wiki-content
           python scripts/split_api_docs.py --input docs/api.md --output wiki-content/api
-          
+
           echo "📄 Files generated:"
           ls -la wiki-content/api | head -10
           echo "📊 Total files: $(ls -1 wiki-content/api/*.md | wc -l)"
@@ -285,18 +285,18 @@ jobs:
       run: |
         # Create a temporary directory for wiki content
         mkdir -p wiki-content
-        
+
         # Copy the generated markdown documentation
         echo "Preparing documentation for GitHub wiki..."
-        
+
         # Check if documentation was generated
         if [ -f "docs/api.md" ]; then
           echo "API documentation found, splitting into separate files..."
-          
+
           # Use the script from the scripts folder
           mkdir -p wiki-content
           python scripts/split_api_docs.py --input docs/api.md --output wiki-content/api
-          
+
           echo "📄 Files generated:"
           ls -la wiki-content/api | head -10
           echo "📊 Total files: $(ls -1 wiki-content/api/*.md | wc -l)"
@@ -315,11 +315,11 @@ jobs:
     - name: Update wiki with API documentation
       run: |
         cd wiki
-        
+
         # Configure git
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        
+
         # Copy generated documentation files
         if [ -d "../wiki-content" ]; then
           echo "📋 Copying documentation files to wiki..."
@@ -328,7 +328,7 @@ jobs:
           ls -la api/*.md | head -10  # Show first 10 files
           echo "📄 Total markdown files: $(ls -1 api/*.md | wc -l)"
         fi
-        
+
         # Add branch and commit information to the main API documentation
         if [ -f "API-Documentation.md" ]; then
           echo "" >> API-Documentation.md
@@ -338,10 +338,10 @@ jobs:
           echo "*Generated from branch: ${{ github.ref_name }}*" >> API-Documentation.md
           echo "*Commit: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})*" >> API-Documentation.md
         fi
-        
+
         # Add and commit changes
         git add .
-        
+
         # Check if there are changes to commit
         if git diff --staged --quiet; then
           echo "No changes to API documentation"

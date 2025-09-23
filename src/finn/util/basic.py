@@ -166,8 +166,7 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
     try:
         build_dir = Path(os.environ["FINN_BUILD_DIR"])
     except KeyError as keyerror:
-        raise Exception(
-            """Environment variable FINN_BUILD_DIR is missing!""") from keyerror
+        raise Exception("""Environment variable FINN_BUILD_DIR is missing!""") from keyerror
 
     if not build_dir.exists():
         raise Exception(
@@ -185,8 +184,7 @@ def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
     """Helper function to launch a process in a way that facilitates logging
     stdout/stderr with Python loggers.
     Returns (cmd_out, cmd_err) if successful, raises CalledProcessError otherwise."""
-    process = subprocess.run(args, capture_output=True,
-                             env=proc_env, cwd=cwd, text=True)
+    process = subprocess.run(args, capture_output=True, env=proc_env, cwd=cwd, text=True)
     cmd_out = process.stdout.strip()
     cmd_err = process.stderr.strip()
 
@@ -213,8 +211,7 @@ def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
             cmd = " ".join(args)
         else:
             cmd = args
-        log.error(
-            f"Launched process returned non-zero exit code ({process.returncode}): {cmd}")
+        log.error(f"Launched process returned non-zero exit code ({process.returncode}): {cmd}")
 
     # Raise CalledProcessError for non-zero return code
     process.check_returncode()
@@ -268,7 +265,7 @@ class CppBuilder:
 
         Instance variables initialized:
             include_paths (list): List of include directory paths
-            cpp_files (list): List of C++ source file paths  
+            cpp_files (list): List of C++ source file paths
             executable_path (str): Path where the compiled executable will be placed
             code_gen_dir (str): Directory for code generation
             compile_components (list): List of compilation command components
@@ -391,7 +388,7 @@ def get_dsp_block(fpgapart):
     Returns:
         str: DSP block type identifier. Returns:
              - "DSP58" for Versal family FPGAs
-             - "DSP48E1" for 7-series FPGAs  
+             - "DSP48E1" for 7-series FPGAs
              - "DSP48E2" for UltraScale/UltraScale+ FPGAs
     """
     if is_versal(fpgapart):
