@@ -30,56 +30,31 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
 	assign count = 1'b1;
 	assign maxcount = 1'b1;
 
-	reg [1:0] current_state;
-	reg [1:0] next_state;
-	parameter idle_state = 2'b00;
-	parameter consume_state = 2'b01;
-	parameter produce_state = 2'b10;
-	parameter produce_consume_state = 2'b11;
 
 	wire have_capacity;
 	assign have_capacity = current_depth < depth;
 	wire have_data;
 	assign have_data = current_depth > 0;
 
-	wire can_read;
-	wire can_write;
-	assign can_read = have_capacity & i_v;
-	assign can_write = have_data & o_r;
-
-
-
+	wire read;
+	wire write;
+	assign read = i_v & i_r;
+	assign write = o_v & o_r;
 
 	// Comb signals
-    assign i_r = (current_state == consume_state) || (current_state == produce_consume_state);
-    assign o_v = (current_state == produce_state) || (current_state == produce_consume_state);
+    assign i_r = have_capacity;
+    assign o_v = have_data;
 
 
 	// Reset
 	always @(posedge clock) begin
 		if (reset) begin
-			current_state <= idle_state;
-			next_state <= idle_state;
 			current_depth <= 0;
-		end
-		else begin
-			// Figure out next state
-			current_state <= next_state;
-			if (can_read & can_write) begin
-				next_state <= produce_consume_state;
-			end else if (can_read & ~can_write) begin
-				next_state <= consume_state;
-			end else if (~can_read & can_write) begin
-				next_state <= produce_state;
-			end else begin
-				next_state <= idle_state;
-			end
-
-   			// Adapt occupancy. For Idle and Prod+Cons it stays the same
-			if (current_state == produce_state) begin
-				current_depth <= current_depth - 1;
-			end else if (current_state == consume_state) begin
+		end else begin
+			if (read & ~write) begin
 				current_depth <= current_depth + 1;
+			end else if (~read & write) begin
+				current_depth <= current_depth - 1;
 			end
 		end
    end // always @ (posedge clock)
