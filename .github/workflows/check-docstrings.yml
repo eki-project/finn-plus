@@ -323,6 +323,7 @@ jobs:
         # Copy generated documentation files
         if [ -d "../wiki-content" ]; then
           echo "📋 Copying documentation files to wiki..."
+          rm -rf api
           cp -r ../wiki-content/api .
           ls -la api/*.md | head -10  # Show first 10 files
           echo "📄 Total markdown files: $(ls -1 api/*.md | wc -l)"
