@@ -1,0 +1,139 @@
+name: Check Python Docstrings
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - '**/*.py'
+  push:
+    branches: [main, dev]
+    paths:
+      - '**/*.py'
+
+jobs:
+  check-docstrings:
+    name: Check Python Docstrings
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for changed files detection
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Get changed Python files
+      id: changed-files
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # For PR, compare against the base branch
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          echo "Comparing $BASE_SHA..$HEAD_SHA"
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM "$BASE_SHA..$HEAD_SHA" | grep '\.py$' | tr '\n' ' ' || true)
+        else
+          # For push, compare against the previous commit
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep '\.py$' | tr '\n' ' ' || true)
+        fi
+        
+        echo "Changed Python files: $CHANGED_FILES"
+        echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+        
+        if [ -z "$CHANGED_FILES" ]; then
+          echo "No Python files changed, skipping docstring check"
+          echo "skip=true" >> $GITHUB_OUTPUT
+        else
+          echo "skip=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Check docstrings in changed files
+      id: check-docstrings
+      if: steps.changed-files.outputs.skip == 'false'
+      run: |
+        FILES="${{ steps.changed-files.outputs.files }}"
+        
+        if [ -z "$FILES" ]; then
+          echo "No Python files to check"
+          exit 0
+        fi
+        
+        echo "Checking docstrings in: $FILES"
+        
+        # Create a detailed report
+        echo "📋 **Docstring Check Report**" > docstring_report.md
+        echo "" >> docstring_report.md
+        echo "Checked files:" >> docstring_report.md
+        for file in $FILES; do
+          echo "- \`$file\`" >> docstring_report.md
+        done
+        echo "" >> docstring_report.md
+        
+        # Run the docstring checker from scripts folder
+        if python scripts/check_docstrings.py $FILES; then
+          echo "success=true" >> $GITHUB_OUTPUT
+          echo "✅ All checked Python files have proper docstrings!" >> docstring_report.md
+        else
+          echo "success=false" >> $GITHUB_OUTPUT
+          echo "" >> docstring_report.md
+          echo "❌ **Docstring check failed!**" >> docstring_report.md
+          echo "" >> docstring_report.md
+          echo "Please add docstrings to the missing functions, classes, and modules listed above." >> docstring_report.md
+          echo "" >> docstring_report.md
+          echo "### Docstring Guidelines:" >> docstring_report.md
+          echo "- All modules should have a module-level docstring" >> docstring_report.md
+          echo "- All public functions and methods should have docstrings" >> docstring_report.md
+          echo "- All classes should have docstrings" >> docstring_report.md
+          echo "- Use triple quotes (\`\"\"\"\`) for docstrings" >> docstring_report.md
+          echo "- Follow [PEP 257](https://peps.python.org/pep-0257/) conventions" >> docstring_report.md
+          exit 1
+        fi
+
+    - name: Upload docstring report as artifact
+      uses: actions/upload-artifact@v4
+      if: always() && steps.changed-files.outputs.skip == 'false'
+      with:
+        name: docstring-check-report-${{ github.run_number }}
+        path: docstring_report.md
+        retention-days: 7
+
+    - name: Add PR comment on failure
+      uses: actions/github-script@v6
+      if: failure() && github.event_name == 'pull_request' && steps.changed-files.outputs.skip == 'false'
+      with:
+        script: |
+          const fs = require('fs');
+          let body = '';
+          
+          try {
+            if (fs.existsSync('docstring_report.md')) {
+              body = fs.readFileSync('docstring_report.md', 'utf8');
+            } else {
+              body = '❌ **Docstring Check Failed**\n\nSome Python files are missing docstrings. Please add appropriate docstrings to all public functions, classes, and modules.';
+            }
+          } catch (error) {
+            body = '❌ **Docstring Check Failed**\n\nUnable to read detailed report. Please check the workflow logs for details.';
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          })
+
+    - name: Summary
+      if: always() && steps.changed-files.outputs.skip == 'false'
+      run: |
+        if [ "${{ steps.check-docstrings.outputs.success }}" = "true" ]; then
+          echo "✅ Docstring check passed for all changed Python files"
+        else
+          echo "❌ Docstring check failed - some files are missing docstrings"
+          echo "Please add docstrings to all public functions, classes, and modules"
+        fi
