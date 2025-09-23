@@ -49,7 +49,7 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
             
             if module_content:  # Only create file if there's content
                 # Create safe filename
-                safe_filename = module_name.replace(".", "-").replace("_", "-")
+                safe_filename = module_name.replace(".", "-").replace("_", "-").replace(" ", "-")
                 filename = f"{safe_filename}.md"
                 module_files.append((module_name, filename))
                 
