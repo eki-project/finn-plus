@@ -176,7 +176,6 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
                 "{}/input_0.npy".format(code_gen_dir), export_idt, nbits
             )
             super().reset_rtlsim(sim)
-            super().toggle_clk(sim)
             rtlsim_output = self.rtlsim(sim, rtlsim_inp)
             odt = export_idt
             target_bits = odt.bitwidth()

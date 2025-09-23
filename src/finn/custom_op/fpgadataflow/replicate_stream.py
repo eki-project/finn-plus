@@ -183,7 +183,6 @@ class ReplicateStream(HWCustomOp):
         sim = self.get_rtlsim()
         # Reset the RTL simulation
         super().reset_rtlsim(sim)
-        super().toggle_clk(sim)
         # Run the RTL Simulation
         self.rtlsim_multi_io(sim, io_dict)
 
@@ -286,11 +285,14 @@ class ReplicateStream(HWCustomOp):
     # could/should be called on any output stream of this operator
     def get_number_output_values(self):
         # Elements over all but the last dimension of the output folded along
-        # the embedding dimension. Need to count across the number of replicas,
-        # as RTL simulation actually counts individual outputs, not cycles with
-        # outputs, i.e., producing N replica outputs per cycle in parallel,
-        # count N outputs per cycle...
-        return np.prod(self.get_folded_output_shape()[:-1]) * self.num
+        # the embedding dimension.
+        # In case of multiple outputs, the new FINN XSI simulation back-end requires
+        # this to be specified on a per-output basis, in the form of a dict.
+        num_outputs_per_stream = np.prod(self.get_folded_output_shape()[:-1])
+        if self.num > 1:
+            return {f"out{i}": num_outputs_per_stream for i in range(self.num)}
+        else:
+            return num_outputs_per_stream
 
     # Derives the expected cycles for the stream replication operation given the
     # folding configuration

@@ -17,6 +17,7 @@ readme = "README.md"
 [tool.poetry]
 packages = [
     { include = "finn", from = "src" },
+    { include = "finn_xsi", from = "finn_xsi" },
     { include = "finn-rtllib", to = "finn" },
     { include = "custom_hls", to = "finn" },
     { include = "notebooks", to = "finn" },
@@ -68,7 +69,8 @@ markupsafe = "~3.0.2"
 matplotlib = "~3.10.3"
 pytest-dependency = "~0.6.0"
 pytest-parallel = "~0.1.1"
-netron = ">5.0.0"
+# Beyond version 8.5.0, subsequent Netron calls in a Jupyter notebook cause "Address already in use" errors
+netron = ">5.0.0,<=8.5.0"
 pandas = "~2.3.1"
 scikit-learn = "~1.7.0"
 tqdm = "~4.67.1"

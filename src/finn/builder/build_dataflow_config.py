@@ -283,7 +283,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: for each FIFO.
     auto_fifo_depths: Optional[bool] = True
 
-    # Enables experimental live FIFO sizing
+    #: Enables experimental live FIFO sizing on the FPGA.
     live_fifo_sizing: Optional[bool] = False
 
     #: Whether FIFO nodes with depth larger than 32768 will be split.

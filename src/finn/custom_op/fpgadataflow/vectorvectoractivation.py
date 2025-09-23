@@ -278,10 +278,6 @@ class VVAU(HWCustomOp):
         normal_output_shape = tuple([1, dim_h, dim_w, ch])
         return normal_output_shape
 
-    def get_number_output_values(self):
-        nf = np.prod(self.get_folded_output_shape()[:-1])
-        return nf
-
     def calc_wmem(self):
         """Calculates and returns WMEM."""
         ch = self.get_nodeattr("Channels")
@@ -839,7 +835,8 @@ class VVAU(HWCustomOp):
 
             # Instantiate a streamer and connect it to the IP
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-            swg_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
+            axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
+            ms_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
             file_suffix = "_memstream_wrapper.v"
             # automatically find memstream verilog component in code generation directory
             for fname in os.listdir(code_gen_dir):
@@ -848,9 +845,9 @@ class VVAU(HWCustomOp):
             strm_tmpl_name = strm_tmpl[:-2]
             sourcefiles = [
                 os.path.join(code_gen_dir, strm_tmpl),
-                swg_rtllib_dir + "axilite_if.v",
-                swg_rtllib_dir + "memstream_axi.sv",
-                swg_rtllib_dir + "memstream.sv",
+                axi_dir + "axilite.sv",
+                ms_rtllib_dir + "memstream_axi.sv",
+                ms_rtllib_dir + "memstream.sv",
             ]
             for f in sourcefiles:
                 cmd += ["add_files -copy_to %s -norecurse %s" % (source_target, f)]
