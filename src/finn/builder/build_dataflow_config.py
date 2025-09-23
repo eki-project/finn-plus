@@ -27,6 +27,25 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""
+Dataflow build configuration module for FINN.
+
+This module provides configuration classes and enums for building dataflow
+accelerators using the FINN framework. The main class DataflowBuildConfig
+contains all the configuration options needed to control the dataflow build
+process, including target hardware, optimization settings, verification options,
+and output generation preferences.
+
+The module also defines various enumerations for build options such as:
+- LogLevel: Logging verbosity levels
+- ShellFlowType: Different shell flows for FPGA integration
+- DataflowOutputType: Types of outputs that can be generated
+- VerificationStepType: Steps where verification can be performed
+
+This configuration system allows users to customize the entire FINN dataflow
+build process through a single, serializable configuration object.
+"""
+
 import numpy as np
 import os
 from dataclasses import dataclass
@@ -408,6 +427,13 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     vivado_power_simulation_type: Optional[str] = "functional"
 
     def _resolve_hls_clk_period(self):
+        """
+        Resolve the HLS clock period, falling back to synthesis clock period if not set.
+
+        Returns:
+            float: The HLS clock period in nanoseconds. If hls_clk_period_ns is not
+                  specified, returns synth_clk_period_ns as the default.
+        """
         if self.hls_clk_period_ns is None:
             # use same clk for synth and hls if not explicitly specified
             return self.synth_clk_period_ns
@@ -415,6 +441,16 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             return self.hls_clk_period_ns
 
     def _resolve_driver_platform(self):
+        """
+        Resolve the driver platform based on the shell flow type.
+
+        Returns:
+            str: The driver platform identifier. Returns "zynq-iodma" for Vivado Zynq
+                shell flows and "alveo" for Vitis Alveo shell flows.
+
+        Raises:
+            Exception: If the shell flow type is not recognized or supported.
+        """
         if self.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
             return "zynq-iodma"
         elif self.shell_flow_type == ShellFlowType.VITIS_ALVEO:
@@ -423,6 +459,20 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             raise Exception("Couldn't resolve driver platform for " + str(self.shell_flow_type))
 
     def _resolve_fpga_part(self):
+        """
+        Resolve the FPGA part identifier.
+
+        If fpga_part is explicitly specified in the configuration, it is returned as-is.
+        If not specified, attempts to look up the part from the board name using the
+        internal part_map dictionary.
+
+        Returns:
+            str: The FPGA part identifier (e.g., "xc7z020clg400-1").
+
+        Raises:
+            Exception: If the FPGA part cannot be resolved from the board name or
+                      if the board is not found in the part map.
+        """
         if self.fpga_part is None:
             # lookup from part map if not specified
             try:
@@ -435,6 +485,16 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             return self.fpga_part
 
     def _resolve_cycles_per_frame(self):
+        """
+        Calculate the number of clock cycles available per frame based on target FPS.
+
+        Uses the target_fps and synth_clk_period_ns to compute how many clock cycles
+        are available for processing each frame to achieve the target frame rate.
+
+        Returns:
+            int or None: The number of clock cycles per frame if target_fps is specified,
+                        None if target_fps is not set.
+        """
         if self.target_fps is None:
             return None
         else:
@@ -443,6 +503,20 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             return int(n_cycles_per_frame)
 
     def _resolve_vitis_platform(self):
+        """
+        Resolve the Vitis platform identifier for Alveo board builds.
+
+        If vitis_platform is explicitly specified, it is returned as-is. If not specified
+        but a board is given, attempts to look up the default Vitis platform for that
+        Alveo board from the internal alveo_default_platform mapping.
+
+        Returns:
+            str: The Vitis platform identifier (e.g., "xilinx_u250_xdma_201830_2").
+
+        Raises:
+            Exception: If neither vitis_platform nor board is specified, or if the
+                      platform cannot be resolved from the given information.
+        """
         if self.vitis_platform is not None:
             return self.vitis_platform
         elif (self.vitis_platform is None) and (self.board is not None):
@@ -453,12 +527,33 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             )
 
     def _resolve_verification_steps(self):
+        """
+        Resolve the list of verification steps to be performed during the build.
+
+        Returns:
+            List[VerificationStepType]: A list of verification steps to perform.
+                                       Returns an empty list if verify_steps is None.
+        """
         if self.verify_steps is None:
             return []
         else:
             return self.verify_steps
 
     def _resolve_verification_io_pair(self):
+        """
+        Load and validate the input/output numpy arrays for verification.
+
+        Loads the verification input and expected output arrays from the files
+        specified in verify_input_npy and verify_expected_output_npy. Validates
+        that both files exist before loading.
+
+        Returns:
+            tuple or None: A tuple containing (input_array, expected_output_array)
+                          if verification is enabled, None if verify_steps is None.
+
+        Raises:
+            AssertionError: If either the input or expected output files cannot be found.
+        """
         if self.verify_steps is None:
             return None
         else:
