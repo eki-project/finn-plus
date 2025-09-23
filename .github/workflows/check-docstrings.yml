@@ -42,10 +42,10 @@ jobs:
           # For push, compare against the previous commit
           CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep '\.py$' | tr '\n' ' ' || true)
         fi
-        
+
         echo "Changed Python files: $CHANGED_FILES"
         echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
-        
+
         if [ -z "$CHANGED_FILES" ]; then
           echo "No Python files changed, skipping docstring check"
           echo "skip=true" >> $GITHUB_OUTPUT
@@ -58,14 +58,14 @@ jobs:
       if: steps.changed-files.outputs.skip == 'false'
       run: |
         FILES="${{ steps.changed-files.outputs.files }}"
-        
+
         if [ -z "$FILES" ]; then
           echo "No Python files to check"
           exit 0
         fi
-        
+
         echo "Checking docstrings in: $FILES"
-        
+
         # Create a detailed report
         echo "📋 **Docstring Check Report**" > docstring_report.md
         echo "" >> docstring_report.md
@@ -74,7 +74,7 @@ jobs:
           echo "- \`$file\`" >> docstring_report.md
         done
         echo "" >> docstring_report.md
-        
+
         # Run the docstring checker from scripts folder
         if python scripts/check_docstrings.py $FILES; then
           echo "success=true" >> $GITHUB_OUTPUT
@@ -110,7 +110,7 @@ jobs:
         script: |
           const fs = require('fs');
           let body = '';
-          
+
           try {
             if (fs.existsSync('docstring_report.md')) {
               body = fs.readFileSync('docstring_report.md', 'utf8');
@@ -120,7 +120,7 @@ jobs:
           } catch (error) {
             body = '❌ **Docstring Check Failed**\n\nUnable to read detailed report. Please check the workflow logs for details.';
           }
-          
+
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,

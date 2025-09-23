@@ -13,9 +13,9 @@ Exit codes:
     1: Missing docstrings found or error occurred
 """
 import ast
-import sys
 import os
-from typing import List, Dict, Optional, Union
+import sys
+from typing import Dict, List, Optional, Union
 
 
 class DocstringChecker(ast.NodeVisitor):
@@ -52,7 +52,7 @@ class DocstringChecker(ast.NodeVisitor):
         Args:
             node: The function definition AST node to analyze
         """
-        self._check_docstring(node, 'function')
+        self._check_docstring(node, "function")
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
@@ -62,7 +62,7 @@ class DocstringChecker(ast.NodeVisitor):
         Args:
             node: The async function definition AST node to analyze
         """
-        self._check_docstring(node, 'async function')
+        self._check_docstring(node, "async function")
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
@@ -77,7 +77,7 @@ class DocstringChecker(ast.NodeVisitor):
         """
         old_class: Optional[str] = self.current_class
         self.current_class = node.name
-        self._check_docstring(node, 'class')
+        self._check_docstring(node, "class")
         self.generic_visit(node)
         self.current_class = old_class
 
@@ -89,15 +89,14 @@ class DocstringChecker(ast.NodeVisitor):
             node: The module AST node to analyze
         """
         if not ast.get_docstring(node):
-            self.missing_docstrings.append({
-                'type': 'module',
-                'name': os.path.basename(self.filename),
-                'line': 1
-            })
+            self.missing_docstrings.append(
+                {"type": "module", "name": os.path.basename(self.filename), "line": 1}
+            )
         self.generic_visit(node)
 
-    def _check_docstring(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef],
-                         node_type: str) -> None:
+    def _check_docstring(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef], node_type: str
+    ) -> None:
         """
         Check if a given AST node has a docstring and record if missing.
 
@@ -110,21 +109,17 @@ class DocstringChecker(ast.NodeVisitor):
             node_type: String describing the type of node ('function', 'async function', 'class')
         """
         # Only skip test functions
-        if hasattr(node, 'name'):
+        if hasattr(node, "name"):
             # Skip test functions
-            if node.name.startswith('test_'):
+            if node.name.startswith("test_"):
                 return
 
         if not ast.get_docstring(node):
-            name: str = getattr(node, 'name', 'unknown')
-            if self.current_class and node_type in ['function', 'async function']:
+            name: str = getattr(node, "name", "unknown")
+            if self.current_class and node_type in ["function", "async function"]:
                 name = f"{self.current_class}.{name}"
 
-            self.missing_docstrings.append({
-                'type': node_type,
-                'name': name,
-                'line': node.lineno
-            })
+            self.missing_docstrings.append({"type": node_type, "name": name, "line": node.lineno})
 
 
 def check_file_docstrings(filepath: str) -> List[Dict[str, Union[str, int]]]:
@@ -145,7 +140,7 @@ def check_file_docstrings(filepath: str) -> List[Dict[str, Union[str, int]]]:
         No exceptions are raised; errors are caught and logged to stdout
     """
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             content: str = f.read()
 
         # Skip empty files
@@ -192,8 +187,7 @@ def main() -> None:
             print(f"Warning: File {filepath} does not exist")
             continue
 
-        missing: List[Dict[str, Union[str, int]]
-                      ] = check_file_docstrings(filepath)
+        missing: List[Dict[str, Union[str, int]]] = check_file_docstrings(filepath)
         if missing:
             all_missing[filepath] = missing
             total_missing += len(missing)
@@ -205,8 +199,7 @@ def main() -> None:
         for filepath, missing_items in all_missing.items():
             print(f"📄 {filepath}:")
             for item in missing_items:
-                print(
-                    f"  - Line {item['line']}: {item['type']} '{item['name']}'")
+                print(f"  - Line {item['line']}: {item['type']} '{item['name']}'")
             print()
 
         print(f"Total missing docstrings: {total_missing}")
