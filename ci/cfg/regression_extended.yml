@@ -61,17 +61,17 @@
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
 
-    # ResNet-50
-    {
-        "dut": ["resnet50"],
-        "board": ["U250"],
-        "synth_clk_period_ns": [5],
-        # NOTE: At least without manual floorplanning, timing will not meet 200 MHz and drop down automatically!
-        "rtlsim_batch_size": [3],
-        # no deployment package because Alveo deployment is not yet supported by CI
-        "generate_outputs": [["estimate_reports", "rtlsim_performance", "stitched_ip", "out_of_context_synth", "bitfile"]],
-        "enable_instrumentation": [False]
-    },
+    # ResNet-50 (currently disabled due to simulation timeout issue and problematic U250/U280 compatibility)
+    # {
+    #     "dut": ["resnet50"],
+    #     "board": ["U250"],
+    #     "synth_clk_period_ns": [5],
+    #     # NOTE: At least without manual floorplanning, timing will not meet 200 MHz and drop down automatically!
+    #     "rtlsim_batch_size": [3],
+    #     # no deployment package because Alveo deployment is not yet supported by CI
+    #     "generate_outputs": [["estimate_reports", "rtlsim_performance", "stitched_ip", "out_of_context_synth", "bitfile"]],
+    #     "enable_instrumentation": [False]
+    # },
 
     # 4x GPT Transformer models
     {
