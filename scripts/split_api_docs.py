@@ -31,8 +31,6 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
     # Create main API index
     index_content = []
-    index_content.append("# 📚 FINN+ API Documentation")
-    index_content.append("")
     index_content.append("Welcome to the comprehensive API reference for the FINN+ framework.")
     index_content.append("This documentation is generated automatically from source code.")
     index_content.append("")
@@ -43,7 +41,7 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
     # Group modules by category
     categories = {}
-    
+
     # Process each module (skip first element which is content before first module)
     for i in range(1, len(modules), 2):
         if i + 1 < len(modules):
@@ -52,17 +50,22 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
             # Skip base/parent modules with minimal content (typically just package docstrings)
             # These are usually modules like "finn.builder" that only contain brief descriptions
-            if module_content and len(module_content) > 100:  # Only process modules with substantial content
+            if (
+                module_content and len(module_content) > 100
+            ):  # Only process modules with substantial content
                 # Extract category from module name (second part after 'finn.')
                 parts = module_name.split(".")
                 if len(parts) >= 2:
                     category = parts[1]  # e.g., 'analysis', 'builder', 'custom_op', etc.
-                    
+
                     if category not in categories:
                         categories[category] = []
-                    
+
                     # Special handling for finn.builder.build_dataflow_config
-                    if module_name == "finn.builder.build_dataflow_config" or module_name == "finn.builder.build\\_dataflow\\_config":
+                    if (
+                        module_name == "finn.builder.build_dataflow_config"
+                        or module_name == "finn.builder.build\\_dataflow\\_config"
+                    ):
                         replacement_content = """This module contains the DataflowBuildConfig class and related functionality for configuring FINN+ dataflow builds.
 
 📖 **For detailed documentation, please visit:**
@@ -70,10 +73,14 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
 """
                         categories[category].append((module_name, replacement_content))
-                        print(f"✅ Added {module_name} to category '{category}' (replaced with wiki link)")
+                        print(
+                            f"✅ Added {module_name} to category '{category}' (replaced with wiki link)"
+                        )
                     else:
                         categories[category].append((module_name, module_content))
-                        print(f"✅ Added {module_name} to category '{category}' ({len(module_content)} chars)")
+                        print(
+                            f"✅ Added {module_name} to category '{category}' ({len(module_content)} chars)"
+                        )
                 else:
                     print(f"⏭️  Skipped {module_name} (unable to determine category)")
             else:
@@ -83,16 +90,13 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
     category_files = []
     for category, module_list in categories.items():
         # Create safe filename for category
-        safe_filename = (
-            category.replace(" ", "-")
-            .replace("\\", "")
-        )
+        safe_filename = category.replace(" ", "-").replace("\\", "")
         filename = f"finn.{safe_filename}.md"
         category_files.append((category, filename))
 
         # Create category file content
         file_content = []
-        
+
         # Add all modules from this category
         for module_name, module_content in module_list:
             file_content.append(f"## {module_name}")
@@ -101,10 +105,12 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
             file_content.append("")
             file_content.append("---")
             file_content.append("")
-        
+
         file_content.append("📚 **Navigation**: [← Back to API Documentation](API-Documentation)")
         file_content.append("")
-        file_content.append("*This page was generated automatically from source code documentation.*")
+        file_content.append(
+            "*This page was generated automatically from source code documentation.*"
+        )
 
         # Write category file
         category_file = wiki_dir / filename
@@ -116,7 +122,7 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
     # Create simple structure for the index (no hierarchy, just categories)
     category_emojis = {
         "analysis": "🔍",
-        "benchmarking": "⚡", 
+        "benchmarking": "⚡",
         "builder": "🏗️",
         "core": "⚙️",
         "custom_op": "🔧",
@@ -129,16 +135,12 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
     # Add category links to the index
     for category in sorted(categories.keys()):
         emoji = category_emojis.get(category, "🔧")
-        safe_filename = (
-            category.replace(" ", "-")
-            .replace("\\", "")
-        )
+        safe_filename = category.replace(" ", "-").replace("\\", "")
         filename = f"finn.{safe_filename}"
         index_content.append(f"- {emoji} **[{category.title()}]({filename})**")
-    
 
     # Write main index file
-    with open(wiki_dir / "API-Documentation.md", "w") as f:
+    with open(wiki_dir / "FINN-API-Documentation.md", "w") as f:
         f.write("\n".join(index_content))
 
     print(f"✅ Created main API index with {len(categories)} categories")
