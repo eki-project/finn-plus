@@ -9,10 +9,12 @@ The framework is fully open-source in order to give a higher degree of flexibili
 
 **To get an overview of how FINN+ is used, take a look at the Getting Started section below!**
 
-**While our [Wiki](https://github.com/eki-project/finn-plus/wiki) is under construction, we refer to the original [FINN homepage](https://xilinx.github.io/finn/) for further information.**
+**You can find all important information on how to use FINN+ in our [Wiki](https://github.com/eki-project/finn-plus/wiki)!**
 
 ## FINN+ Extensions
+
 **FINN+** aims to incorporate all development from the upstream repository (dev branch) while extending **FINN** in all directions, including the following list of features that are either in progress or already completed:
+
 - Transformer/Attention support
 - Improved streamlining
 - Improved automatic folding and FIFO-sizing
@@ -32,35 +34,32 @@ Please refer to our [**Feature Tracker**](https://github.com/orgs/eki-project/pr
 While some items are already on-track to be merged into the upstream repository, we try to merge them into the **FINN+** dev branch as early as possible to increase development pace and drive our research forward.
 
 ## Getting Started
+
 This is a quick overview of how to get started, for additional information please refer to our [**Wiki**](https://github.com/eki-project/finn-plus/wiki)!
 
 ### Requirements
+
 The primary dependencies currently are:
+
 - Python >= 3.10 (< 3.12)
 - Vivado, Vitis, Vitis HLS (2022.2 or 2024.2)
 - Some basic system-level packages, refer to the [**dependency installation script**](https://github.com/eki-project/finn-plus/blob/main/installDependencies.sh)
 
 ### Installing via pip
+
 After preparing the dependencies mentioned above, simply run the following to start a build flow:
+
 ```
 # Make sure to create a fresh virtual environment for FINN+
 pip install finn-plus          # Install FINN+ and its Python dependencies via pip
 finn deps update               # Ensure FINN+ pulled all further dependencies (this might update packages in your venv!)
-finn build build_config.yaml   # Run a FINN+ build defined in a YAML file
+finn build build_config.yaml model.onnx   # Run a FINN+ build defined in a YAML file
 ```
 
-### Installing from the repository
-To install directly from the repository, you'll need Poetry (>= 2.0) for dependency management. After cloning the repo and setting up the system-level dependencies, run the following to start a build flow:
-```
-cd finn-plus
-poetry install                 # Install Python packages into a Poetry-managed virtual environment
-source <your-poetry-venv>      # Use "poetry env info" to find the path to your Poetry venv. For further information visit the Poetry documentation
-finn config create             # Create a default configuration in ~/.finn/settings.yaml. Optional but recommended
-finn deps update               # Ensure FINN+ pulled all further dependencies (this might update packages in your venv!)
-finn build build_config.yaml   # Run a FINN+ build defined in a YAML file
-```
+For more detailed instructions, like installation for development use, please refer to our [**Wiki**](https://github.com/eki-project/finn-plus/wiki)!
 
 ## About Us
+
 FINN+ is maintained by researchers from the [Computer Engineering Group](https://en.cs.uni-paderborn.de/ceg) (CEG) and [Paderborn Center for Parallel Computing](https://pc2.uni-paderborn.de/) (PC²) at Paderborn University, Germany as part of the [eki research project](https://www.eki-project.tech/).
 
 <p align="left">
