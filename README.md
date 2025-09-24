@@ -27,7 +27,7 @@ FINN+ incorporates all upstream FINN development while adding significant enhanc
 ### Backend Extensions
 
 - **Hardware Profiling** - Instrumentation for accurate performance measurement in simulation and hardware
-- **Alveo Support** - Enhanced build flow for Xilinx Alveo cards  
+- **Alveo Support** - Enhanced build flow for Xilinx Alveo cards
 - **Multi-FPGA** - Support for distributed inference across multiple FPGAs
 - **Optimized Drivers** - High-performance C++ drivers for better host-accelerator communication
 
