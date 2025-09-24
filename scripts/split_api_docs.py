@@ -96,10 +96,30 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
         # Create category file content
         file_content = []
+        
+        # Add title and description
+        file_content.append(f"# finn.{category} - API Reference")
+        file_content.append("")
+        file_content.append(f"This page contains the complete API reference for all modules in the `finn.{category}` package.")
+        file_content.append("")
+        
+        # Generate table of contents
+        file_content.append("## Table of Contents")
+        file_content.append("")
+        module_list.sort()  # Sort modules alphabetically
+        for module_name, _ in module_list:
+            # Create anchor link from module name
+            anchor = module_name.replace(".", "").replace("_", "").replace("\\", "").lower()
+            file_content.append(f"- [{module_name}](#{anchor})")
+        file_content.append("")
+        file_content.append("---")
+        file_content.append("")
 
         # Add all modules from this category
         for module_name, module_content in module_list:
-            file_content.append(f"## {module_name}")
+            # Create anchor for the module
+            anchor = module_name.replace(".", "").replace("_", "").replace("\\", "").lower()
+            file_content.append(f"## {module_name} {{#{anchor}}}")
             file_content.append("")
             file_content.append(module_content)
             file_content.append("")
