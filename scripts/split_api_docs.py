@@ -84,20 +84,14 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
     for category, module_list in categories.items():
         # Create safe filename for category
         safe_filename = (
-            category.replace(".", "-")
-            .replace("_", "-")
-            .replace(" ", "-")
+            category.replace(" ", "-")
             .replace("\\", "")
         )
-        filename = f"finn-{safe_filename}.md"
+        filename = f"finn.{safe_filename}.md"
         category_files.append((category, filename))
 
         # Create category file content
         file_content = []
-        file_content.append(f"# 📦 finn.{category}")
-        file_content.append("")
-        file_content.append("---")
-        file_content.append("")
         
         # Add all modules from this category
         for module_name, module_content in module_list:
@@ -135,7 +129,11 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
     # Add category links to the index
     for category in sorted(categories.keys()):
         emoji = category_emojis.get(category, "🔧")
-        filename = f"finn-{category.replace('_', '-')}"
+        safe_filename = (
+            category.replace(" ", "-")
+            .replace("\\", "")
+        )
+        filename = f"finn.{safe_filename}"
         index_content.append(f"- {emoji} **[{category.title()}]({filename})**")
     
 
