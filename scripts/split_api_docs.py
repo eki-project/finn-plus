@@ -89,7 +89,7 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
     # Create one file per category
     category_files = []
     for category, module_list in categories.items():
-         # Create safe filename for category
+        # Create safe filename for category
         safe_filename = category.replace(" ", "-").replace("\\", "")
         filename = f"finn.{safe_filename}.md"
         category_files.append((category, filename))
