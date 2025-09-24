@@ -7,43 +7,50 @@ It specifically targets quantized neural networks, with emphasis on generating d
 The resulting FPGA accelerators are highly efficient and can yield high throughput and low latency.
 The framework is fully open-source in order to give a higher degree of flexibility, and is intended to enable neural network research spanning several layers of the software/hardware abstraction stack.
 
-**To get an overview of how FINN+ is used, take a look at the Getting Started section below!**
+## Quick Links
 
-**You can find all important information on how to use FINN+ in our [Wiki](https://github.com/eki-project/finn-plus/wiki)!**
+- **[Getting Started](#getting-started)** - Start using FINN+ in minutes
+- **[Wiki Documentation](https://github.com/eki-project/finn-plus/wiki)** - Complete documentation and guides
+- **[Feature Tracker](https://github.com/orgs/eki-project/projects/1)** - Current development status
 
-## FINN+ Extensions
+## What's New in FINN+
 
-**FINN+** aims to incorporate all development from the upstream repository (dev branch) while extending **FINN** in all directions, including the following list of features that are either in progress or already completed:
+FINN+ incorporates all upstream FINN development while adding significant enhancements across multiple areas:
 
-- Transformer/Attention support
-- Improved streamlining
-- Improved automatic folding and FIFO-sizing
-- Empirical quality-of-result (QoR) estimation
-- Back-end extensions
-    - Instrumentation for accurate performance profiling in simulation and on hardware
-    - Improved Alveo build flow
-    - Multi-FPGA support
-    - Optimized C++ driver
-- Quality-of-live improvements
-    - Better logging and error handling
-    - Type hinting/checking
-    - Alternative YAML-based build configuration
-    - Containerless setup
+### Core Improvements
 
-Please refer to our [**Feature Tracker**](https://github.com/orgs/eki-project/projects/1) for the current status of individual features.
-While some items are already on-track to be merged into the upstream repository, we try to merge them into the **FINN+** dev branch as early as possible to increase development pace and drive our research forward.
+- **Transformer/Attention Support** - Native support for modern transformer architectures
+- **Enhanced Streamlining** - Improved optimization pipeline for better performance
+- **Smart FIFO Sizing (WIP)** - Automatic folding and FIFO-sizing with better algorithms
+- **QoR Estimation (WIP)** - Empirical quality-of-result estimation for design space exploration
+
+### Backend Extensions
+
+- **Hardware Profiling** - Instrumentation for accurate performance measurement in simulation and hardware
+- **Alveo Support** - Enhanced build flow for Xilinx Alveo cards  
+- **Multi-FPGA** - Support for distributed inference across multiple FPGAs
+- **Optimized Drivers** - High-performance C++ drivers for better host-accelerator communication
+
+### Developer Experience
+
+- **Better Diagnostics** - Improved logging and error handling throughout the framework
+- **Type Safety** - Comprehensive type hinting and checking for better code quality
+- **YAML Configuration** - Alternative YAML-based build configuration system
+- **Simplified Setup** - Containerless installation and setup process
+
+**Track Development**: Check our [Feature Tracker](https://github.com/orgs/eki-project/projects/1) for real-time status updates on all features. We merge improvements early to accelerate development and enable cutting-edge research.
 
 ## Getting Started
 
 This is a quick overview of how to get started, for additional information please refer to our [**Wiki**](https://github.com/eki-project/finn-plus/wiki)!
 
-### Requirements
+### Prerequisites
 
-The primary dependencies currently are:
+Before installing FINN+, ensure you have:
 
-- Python >= 3.10 (< 3.12)
-- Vivado, Vitis, Vitis HLS (2022.2 or 2024.2)
-- Some basic system-level packages, refer to the [**dependency installation script**](https://github.com/eki-project/finn-plus/blob/main/installDependencies.sh)
+- **Python**: Version 3.10 or 3.11 (Python 3.12+ not yet supported)
+- **Xilinx Tools**: Vivado, Vitis, and Vitis HLS (2022.2 or 2024.2)
+- **System Dependencies**: See our [dependency installation script](installDependencies.sh) for required packages
 
 ### Installing via pip
 
@@ -51,8 +58,8 @@ After preparing the dependencies mentioned above, simply run the following to st
 
 ```
 # Make sure to create a fresh virtual environment for FINN+
-pip install finn-plus          # Install FINN+ and its Python dependencies via pip
-finn deps update               # Ensure FINN+ pulled all further dependencies (this might update packages in your venv!)
+pip install finn-plus                     # Install FINN+ and its Python dependencies via pip
+finn deps update                          # Ensure FINN+ pulled all further dependencies (this might update packages in your venv!)
 finn build build_config.yaml model.onnx   # Run a FINN+ build defined in a YAML file
 ```
 
