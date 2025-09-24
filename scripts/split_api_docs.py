@@ -132,10 +132,8 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
             subnode = node[key]
             if "_filename" in subnode:
                 # This is a leaf node with actual content
-                index_content.append(
-                    f"{indent}- [{subnode['_module_name']}]\
-                        ({subnode['_filename'].replace('.md', '')})"
-                )
+                link_name = subnode["_filename"].replace(".md", "")
+                index_content.append(f"{indent}- [{subnode['_module_name']}]({link_name})")
             else:
                 # This is a parent node, show as header
                 if level == 0:
