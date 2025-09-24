@@ -330,13 +330,13 @@ jobs:
         fi
 
         # Add branch and commit information to the main API documentation
-        if [ -f "API-Documentation.md" ]; then
-          echo "" >> API-Documentation.md
-          echo "---" >> API-Documentation.md
-          echo "" >> API-Documentation.md
-          echo "*Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> API-Documentation.md
-          echo "*Generated from branch: ${{ github.ref_name }}*" >> API-Documentation.md
-          echo "*Commit: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})*" >> API-Documentation.md
+        if [ -f "api/API-Documentation.md" ]; then
+          echo "" >> api/API-Documentation.md
+          echo "---" >> api/API-Documentation.md
+          echo "" >> api/API-Documentation.md
+          echo "*Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> api/API-Documentation.md
+          echo "*Generated from branch: ${{ github.ref_name }}*" >> api/API-Documentation.md
+          echo "*Commit: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})*" >> api/API-Documentation.md
         fi
 
         # Add and commit changes

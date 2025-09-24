@@ -61,8 +61,19 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
                     if category not in categories:
                         categories[category] = []
                     
-                    categories[category].append((module_name, module_content))
-                    print(f"✅ Added {module_name} to category '{category}' ({len(module_content)} chars)")
+                    # Special handling for finn.builder.build_dataflow_config
+                    if module_name == "finn.builder.build_dataflow_config" or module_name == "finn.builder.build\\_dataflow\\_config":
+                        replacement_content = """This module contains the DataflowBuildConfig class and related functionality for configuring FINN+ dataflow builds.
+
+📖 **For detailed documentation, please visit:**
+**[DataflowBuildConfig Documentation](https://github.com/eki-project/finn-plus/wiki/DataflowBuildConfig-Documentation)**
+
+"""
+                        categories[category].append((module_name, replacement_content))
+                        print(f"✅ Added {module_name} to category '{category}' (replaced with wiki link)")
+                    else:
+                        categories[category].append((module_name, module_content))
+                        print(f"✅ Added {module_name} to category '{category}' ({len(module_content)} chars)")
                 else:
                     print(f"⏭️  Skipped {module_name} (unable to determine category)")
             else:
@@ -127,10 +138,6 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
         filename = f"finn-{category.replace('_', '-')}"
         index_content.append(f"- {emoji} **[{category.title()}]({filename})**")
     
-    index_content.append("")
-    index_content.append("---")
-    index_content.append("")
-    index_content.append("*This documentation is generated automatically from source code.*")
 
     # Write main index file
     with open(wiki_dir / "API-Documentation.md", "w") as f:
