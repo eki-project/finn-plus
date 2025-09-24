@@ -1,0 +1,374 @@
+name: Check Docstrings and Generate API Documentation
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - '**/*.py'
+      - 'pydoc-markdown.yml'
+      - '.github/workflows/check-docstrings.yml'
+  push:
+    branches: [main, dev]
+    paths:
+      - '**/*.py'
+      - 'pydoc-markdown.yml'
+      - '.github/workflows/check-docstrings.yml'
+
+jobs:
+  check-docstrings:
+    name: Check Python Docstrings
+    runs-on: ubuntu-latest
+    outputs:
+      docstrings-passed: ${{ steps.check-docstrings.outputs.success }}
+      skip-check: ${{ steps.changed-files.outputs.skip }}
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for changed files detection
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10.16'
+
+    - name: Get changed Python files
+      id: changed-files
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # For PR, compare against the base branch
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          echo "Comparing $BASE_SHA..$HEAD_SHA"
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM "$BASE_SHA..$HEAD_SHA" | grep '\.py$' | tr '\n' ' ' || true)
+        else
+          # For push, compare against the previous commit
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep '\.py$' | tr '\n' ' ' || true)
+        fi
+
+        echo "Changed Python files: $CHANGED_FILES"
+        echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+
+        if [ -z "$CHANGED_FILES" ]; then
+          echo "No Python files changed, skipping docstring check"
+          echo "skip=true" >> $GITHUB_OUTPUT
+        else
+          echo "skip=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Check docstrings in changed files
+      id: check-docstrings
+      if: steps.changed-files.outputs.skip == 'false'
+      run: |
+        FILES="${{ steps.changed-files.outputs.files }}"
+
+        if [ -z "$FILES" ]; then
+          echo "No Python files to check"
+          exit 0
+        fi
+
+        echo "Checking docstrings in: $FILES"
+
+        # Create a detailed report
+        echo "📋 **Docstring Check Report**" > docstring_report.md
+        echo "" >> docstring_report.md
+        echo "Checked files:" >> docstring_report.md
+        for file in $FILES; do
+          echo "- \`$file\`" >> docstring_report.md
+        done
+        echo "" >> docstring_report.md
+
+        # Run the docstring checker from scripts folder and capture detailed output
+        if output=$(python scripts/check_docstrings.py $FILES 2>&1); then
+          echo "success=true" >> $GITHUB_OUTPUT
+          echo "✅ All checked Python files have proper docstrings!" >> docstring_report.md
+        else
+          echo "success=false" >> $GITHUB_OUTPUT
+          echo "" >> docstring_report.md
+          echo "❌ **Docstring check failed!**" >> docstring_report.md
+          echo "" >> docstring_report.md
+
+          # Save the raw output to a temporary file for processing
+          echo "$output" > docstring_raw_output.txt
+
+          # Process the output to create a more structured display
+          echo "### Missing Docstrings Details:" >> docstring_report.md
+          echo "" >> docstring_report.md
+
+          # Extract and format the missing docstrings information
+          awk '
+          /^📄/ {
+            print "#### " $0
+            next
+          }
+          /^  - Line/ {
+            print "- " $0
+            next
+          }
+          /^Total missing docstrings:/ {
+            print ""
+            print "**" $0 "**"
+            next
+          }
+          /^❌ Missing docstrings found:/ || /^$/ {
+            next
+          }
+          {
+            if (NR > 1) print $0
+          }
+          ' docstring_raw_output.txt >> docstring_report.md
+
+          echo "" >> docstring_report.md
+          echo "### How to Fix:" >> docstring_report.md
+          echo "" >> docstring_report.md
+          echo "Please add docstrings to the missing functions, classes, and modules listed above." >> docstring_report.md
+          echo "" >> docstring_report.md
+          echo "### Docstring Guidelines:" >> docstring_report.md
+          echo "- All modules should have a module-level docstring" >> docstring_report.md
+          echo "- All public functions and methods should have docstrings" >> docstring_report.md
+          echo "- All private functions should have docstrings" >> docstring_report.md
+          echo "- All classes should have docstrings" >> docstring_report.md
+          echo "- Use triple quotes (\`\"\"\"\`) for docstrings" >> docstring_report.md
+          echo "- Follow [PEP 257](https://peps.python.org/pep-0257/) conventions" >> docstring_report.md
+
+          # Also include raw output in a collapsible section for debugging
+          echo "" >> docstring_report.md
+          echo "<details>" >> docstring_report.md
+          echo "<summary>Raw output from docstring checker</summary>" >> docstring_report.md
+          echo "" >> docstring_report.md
+          echo '```' >> docstring_report.md
+          cat docstring_raw_output.txt >> docstring_report.md
+          echo '```' >> docstring_report.md
+          echo "</details>" >> docstring_report.md
+
+          # Clean up temporary file
+          rm -f docstring_raw_output.txt
+
+          exit 1
+        fi
+
+    - name: Upload docstring report as artifact
+      uses: actions/upload-artifact@v4
+      if: always() && steps.changed-files.outputs.skip == 'false'
+      with:
+        name: docstring-check-report-${{ github.run_number }}
+        path: docstring_report.md
+        retention-days: 7
+
+    - name: Add PR comment on failure
+      uses: actions/github-script@v6
+      if: failure() && github.event_name == 'pull_request' && steps.changed-files.outputs.skip == 'false'
+      with:
+        script: |
+          const fs = require('fs');
+          let body = '';
+
+          try {
+            if (fs.existsSync('docstring_report.md')) {
+              body = fs.readFileSync('docstring_report.md', 'utf8');
+            } else {
+              body = '❌ **Docstring Check Failed**\n\nSome Python files are missing docstrings. Please add appropriate docstrings to all public functions, classes, and modules.';
+            }
+          } catch (error) {
+            body = '❌ **Docstring Check Failed**\n\nUnable to read detailed report. Please check the workflow logs for details.';
+          }
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          })
+
+    - name: Summary
+      if: always() && steps.changed-files.outputs.skip == 'false'
+      run: |
+        if [ "${{ steps.check-docstrings.outputs.success }}" = "true" ]; then
+          echo "✅ Docstring check passed for all changed Python files"
+        else
+          echo "❌ Docstring check failed - some files are missing docstrings"
+          echo "Please add docstrings to all public functions, classes, and modules"
+        fi
+
+  validate-api-docs:
+    name: Validate API Documentation
+    runs-on: ubuntu-latest
+    needs: check-docstrings
+    if: github.event_name == 'pull_request' && needs.check-docstrings.outputs.docstrings-passed == 'true' && needs.check-docstrings.outputs.skip-check == 'false'
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10.16'
+
+    - name: Install documentation dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pydoc-markdown
+
+    - name: Generate API documentation
+      run: |
+        echo "Building API documentation with pydoc-markdown..."
+        pydoc-markdown
+        echo "✅ API documentation generated successfully"
+
+    - name: Prepare documentation for wiki
+      run: |
+        # Create a temporary directory for wiki content
+        mkdir -p wiki-content
+
+        # Copy the generated markdown documentation
+        echo "Preparing documentation for GitHub wiki..."
+
+        # Check if documentation was generated
+        if [ -f "docs/api.md" ]; then
+          echo "API documentation found, splitting into separate files..."
+
+          # Use the script from the scripts folder
+          mkdir -p wiki-content
+          python scripts/split_api_docs.py --input docs/api.md --output wiki-content/api
+
+          echo "📄 Files generated:"
+          ls -la wiki-content/api | head -10
+          echo "📊 Total files: $(ls -1 wiki-content/api/*.md | wc -l)"
+        else
+          echo "❌ No API documentation found"
+        fi
+
+    - name: Upload documentation artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: api-documentation-pr-${{ github.event.number }}
+        path: wiki-content/
+        retention-days: 7
+
+  publish-api-docs:
+    name: Publish API Documentation to Wiki
+    runs-on: ubuntu-latest
+    needs: check-docstrings
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && needs.check-docstrings.outputs.docstrings-passed == 'true' && needs.check-docstrings.outputs.skip-check == 'false'
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10.16'
+
+    - name: Install documentation dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pydoc-markdown
+
+    - name: Build API documentation
+      run: |
+        echo "Building comprehensive API documentation with pydoc-markdown..."
+        pydoc-markdown --verbose
+        echo "✅ API documentation generated successfully"
+
+    - name: Prepare documentation for wiki
+      run: |
+        # Create a temporary directory for wiki content
+        mkdir -p wiki-content
+
+        # Copy the generated markdown documentation
+        echo "Preparing documentation for GitHub wiki..."
+
+        # Check if documentation was generated
+        if [ -f "docs/api.md" ]; then
+          echo "API documentation found, splitting into separate files..."
+
+          # Use the script from the scripts folder
+          mkdir -p wiki-content
+          python scripts/split_api_docs.py --input docs/api.md --output wiki-content/api
+
+          echo "📄 Files generated:"
+          ls -la wiki-content/api | head -10
+          echo "📊 Total files: $(ls -1 wiki-content/api/*.md | wc -l)"
+        else
+          echo "❌ No API documentation found"
+        fi
+
+    - name: Checkout wiki repository
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ github.repository }}.wiki
+        path: wiki
+        token: ${{ secrets.GITHUB_TOKEN }}
+      continue-on-error: true
+
+    - name: Update wiki with API documentation
+      run: |
+        cd wiki
+
+        # Configure git
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+        # Copy generated documentation files
+        if [ -d "../wiki-content" ]; then
+          echo "📋 Copying documentation files to wiki..."
+          rm -rf api
+          cp -r ../wiki-content/api .
+          ls -la api/*.md | head -10  # Show first 10 files
+          echo "📄 Total markdown files: $(ls -1 api/*.md | wc -l)"
+        fi
+
+        # Add branch and commit information to the main API documentation
+        if [ -f "api/FINN-API-Documentation.md" ]; then
+          echo "" >> api/FINN-API-Documentation.md
+          echo "---" >> api/FINN-API-Documentation.md
+          echo "" >> api/FINN-API-Documentation.md
+          echo "*Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*" >> api/FINN-API-Documentation.md
+          echo "*Generated from branch: ${{ github.ref_name }}*" >> api/FINN-API-Documentation.md
+          echo "*Commit: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})*" >> api/FINN-API-Documentation.md
+        fi
+
+        # Add and commit changes
+        git add .
+
+        # Check if there are changes to commit
+        if git diff --staged --quiet; then
+          echo "No changes to API documentation"
+        else
+          git commit -m "Update API documentation
+
+          - Generated from commit ${{ github.sha }}
+          - Branch: ${{ github.ref_name }}
+          - Updated on $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+          # Push to wiki
+          git push origin master || git push origin main
+          echo "✅ API documentation updated successfully"
+          echo "📖 Documentation available at: https://github.com/${{ github.repository }}/wiki"
+        fi
+
+    - name: Summary
+      run: |
+        echo "🎉 Combined docstring check and API documentation workflow completed!"
+        echo ""
+        echo "📊 Summary:"
+        echo "- All docstrings are present ✅"
+        echo "- API documentation generated with pydoc-markdown ✅"
+        echo "- Documentation split into separate files per module ✅"
+        echo "- Branch: ${{ github.ref_name }}"
+        echo "- Commit: ${{ github.sha }}"
+        echo "- Wiki URL: https://github.com/${{ github.repository }}/wiki"
+        echo ""
+        echo "The API documentation has been updated and is now available in the GitHub wiki."
+        echo "Each Python module has its own documentation page for easier navigation."

@@ -25,6 +25,23 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+"""
+Basic utility functions and classes for FINN.
+
+This module provides essential utility functions and classes used throughout
+the FINN framework, including:
+
+- FPGA board and part mappings (PYNQ boards, Alveo cards, etc.)
+- File system utilities and path operations
+- Build environment helpers (Vivado, Vitis, etc.)
+- C++ compilation utilities through the CppBuilder class
+- FPGA-specific functionality detection (Versal, DSP blocks, etc.)
+
+The module serves as a foundation for other FINN components that need
+basic system operations, hardware abstraction, and build tool integration.
+"""
+
 from __future__ import annotations
 
 import os
@@ -109,6 +126,16 @@ def get_rtlsim_trace_depth():
 
 
 def get_finn_root():
+    """
+    Deprecated function that should not be used anymore.
+
+    This function was previously used to get the FINN root directory,
+    but has been deprecated and should not be called in new code.
+
+    Raises:
+        Exception: Always raises an exception indicating the function
+                  should not be used.
+    """
     raise Exception("get_finn_root() should not be used anymore.")
 
 
@@ -197,6 +224,18 @@ def which(program):
     # source:
     # https://stackoverflow.com/questions/377017/test-if-executable-exists-in-python
     def is_exe(fpath):
+        """
+        Check if a file path points to an executable file.
+
+        Tests whether the given file path exists and has execute permissions.
+        This is a helper function used by the which() function.
+
+        Args:
+            fpath (str): File path to check for executability.
+
+        Returns:
+            bool: True if the file exists and is executable, False otherwise.
+        """
         return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
 
     fpath, fname = os.path.split(program)
@@ -217,6 +256,21 @@ class CppBuilder:
     in code_gen_dir which is passed to the function build() of this class."""
 
     def __init__(self):
+        """
+        Initialize a new CppBuilder instance.
+
+        Sets up empty lists and variables for building C++ compilation commands.
+        All instance variables are initialized to empty states and should be
+        populated using the various setter and append methods before calling build().
+
+        Instance variables initialized:
+            include_paths (list): List of include directory paths
+            cpp_files (list): List of C++ source file paths
+            executable_path (str): Path where the compiled executable will be placed
+            code_gen_dir (str): Directory for code generation
+            compile_components (list): List of compilation command components
+            compile_script (str): Generated compilation script content
+        """
         self.include_paths = []
         self.cpp_files = []
         self.executable_path = ""
@@ -321,6 +375,22 @@ def is_versal(fpgapart):
 
 
 def get_dsp_block(fpgapart):
+    """
+    Determine the DSP block type based on the FPGA part name.
+
+    Different FPGA families and generations use different DSP block types.
+    This function maps FPGA part names to their corresponding DSP block
+    architecture for proper resource utilization and optimization.
+
+    Args:
+        fpgapart (str): FPGA part name/identifier (e.g., "xczu7ev-ffvc1156-2-e")
+
+    Returns:
+        str: DSP block type identifier. Returns:
+             - "DSP58" for Versal family FPGAs
+             - "DSP48E1" for 7-series FPGAs
+             - "DSP48E2" for UltraScale/UltraScale+ FPGAs
+    """
     if is_versal(fpgapart):
         return "DSP58"
     elif fpgapart[2] == "7":
