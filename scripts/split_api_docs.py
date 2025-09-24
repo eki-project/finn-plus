@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-content"):
-    """Split docs/api.md into separate files for each module.
+    """Split docs/api.md into separate files for each category.
 
     Args:
         api_file_path: Path to the generated API documentation file
@@ -31,18 +31,19 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
     # Create main API index
     index_content = []
-    index_content.append("# 📚 FINN API Documentation")
+    index_content.append("# 📚 FINN+ API Documentation")
     index_content.append("")
-    index_content.append("Welcome to the comprehensive API reference for the FINN framework.")
+    index_content.append("Welcome to the comprehensive API reference for the FINN+ framework.")
     index_content.append("This documentation is generated automatically from source code.")
     index_content.append("")
     index_content.append("## 📋 Module Overview")
     index_content.append("")
-    index_content.append("The FINN framework is organized into the following main components:")
+    index_content.append("The FINN+ framework is organized into the following main components:")
     index_content.append("")
 
-    module_files = []
-
+    # Group modules by category
+    categories = {}
+    
     # Process each module (skip first element which is content before first module)
     for i in range(1, len(modules), 2):
         if i + 1 < len(modules):
@@ -51,113 +52,91 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
 
             # Skip base/parent modules with minimal content (typically just package docstrings)
             # These are usually modules like "finn.builder" that only contain brief descriptions
-            if (
-                module_content and len(module_content) > 100
-            ):  # Only process modules with substantial content
-                # Create safe filename
-                safe_filename = (
-                    module_name.replace(".", "-")
-                    .replace("_", "-")
-                    .replace(" ", "-")
-                    .replace("\\", "")
-                )
-                filename = f"{safe_filename}.md"
-                module_files.append((module_name, filename))
-
-                # Create module file content
-                file_content = []
-                file_content.append(f"# 📦 {module_name}")
-                file_content.append("")
-                file_content.append("---")
-                file_content.append("")
-                file_content.append(module_content)
-                file_content.append("")
-                file_content.append("---")
-                file_content.append("")
-                file_content.append(
-                    "📚 **Navigation**: [← Back to API Documentation](API-Documentation)"
-                )
-                file_content.append("")
-                file_content.append(
-                    "*This page was generated automatically from source code documentation.*"
-                )
-
-                # Write module file
-                module_file = wiki_dir / filename
-                with open(module_file, "w") as f:
-                    f.write("\n".join(file_content))
-
-                print(f"✅ Created {filename} ({len(module_content)} chars)")
-            else:
-                # Create safe filename for display in skip message
-                safe_filename = (
-                    module_name.replace(".", "-")
-                    .replace("_", "-")
-                    .replace(" ", "-")
-                    .replace("\\", "")
-                )
-                print(f"⏭️  Skipped {safe_filename} (base module, {len(module_content)} chars)")
-
-    # Create hierarchical structure for the index
-    hierarchy = {}
-    for module_name, filename in module_files:
-        parts = module_name.split(".")
-        current = hierarchy
-        for part in parts:
-            if part not in current:
-                current[part] = {}
-            current = current[part]
-        current["_filename"] = filename
-        current["_module_name"] = module_name
-
-    def add_hierarchy_to_index(node, prefix="", level=0):
-        """Recursively add hierarchical structure to index."""
-        # Define emojis for different categories
-        category_emojis = {
-            "analysis": "🔍",
-            "benchmarking": "⚡",
-            "builder": "🏗️",
-            "core": "⚙️",
-            "custom_op": "🔧",
-            "interface": "🔌",
-            "transformation": "🔄",
-            "util": "🛠️",
-        }
-
-        indent = "  " * (level - 1)
-        for key in sorted(node.keys()):
-            if key.startswith("_"):
-                continue
-
-            subnode = node[key]
-            if "_filename" in subnode:
-                # This is a leaf node with actual content
-                link_name = subnode["_filename"].replace(".md", "")
-                index_content.append(f"{indent}- [{subnode['_module_name']}]({link_name})")
-            else:
-                # This is a parent node, show as header
-                if level == 0:
-                    pass
-                elif level == 1:
-                    emoji = category_emojis.get(key.lower(), "📦")
-                    index_content.append("---")
-                    index_content.append(f"### {emoji} {key}")
-                elif level == 2:
-                    index_content.append(f"{indent}- {key}")
+            if module_content and len(module_content) > 100:  # Only process modules with substantial content
+                # Extract category from module name (second part after 'finn.')
+                parts = module_name.split(".")
+                if len(parts) >= 2:
+                    category = parts[1]  # e.g., 'analysis', 'builder', 'custom_op', etc.
+                    
+                    if category not in categories:
+                        categories[category] = []
+                    
+                    categories[category].append((module_name, module_content))
+                    print(f"✅ Added {module_name} to category '{category}' ({len(module_content)} chars)")
                 else:
-                    index_content.append(f"{indent}- {key}")
+                    print(f"⏭️  Skipped {module_name} (unable to determine category)")
+            else:
+                print(f"⏭️  Skipped {module_name} (base module, {len(module_content)} chars)")
 
-                # Recursively add children
-                add_hierarchy_to_index(subnode, prefix + key + ".", level + 1)
+    # Create one file per category
+    category_files = []
+    for category, module_list in categories.items():
+        # Create safe filename for category
+        safe_filename = (
+            category.replace(".", "-")
+            .replace("_", "-")
+            .replace(" ", "-")
+            .replace("\\", "")
+        )
+        filename = f"finn-{safe_filename}.md"
+        category_files.append((category, filename))
 
-    # Add the hierarchical structure
-    add_hierarchy_to_index(hierarchy)
+        # Create category file content
+        file_content = []
+        file_content.append(f"# 📦 finn.{category}")
+        file_content.append("")
+        file_content.append("---")
+        file_content.append("")
+        
+        # Add all modules from this category
+        for module_name, module_content in module_list:
+            file_content.append(f"## {module_name}")
+            file_content.append("")
+            file_content.append(module_content)
+            file_content.append("")
+            file_content.append("---")
+            file_content.append("")
+        
+        file_content.append("📚 **Navigation**: [← Back to API Documentation](API-Documentation)")
+        file_content.append("")
+        file_content.append("*This page was generated automatically from source code documentation.*")
+
+        # Write category file
+        category_file = wiki_dir / filename
+        with open(category_file, "w") as f:
+            f.write("\n".join(file_content))
+
+        print(f"✅ Created {filename} with {len(module_list)} modules")
+
+    # Create simple structure for the index (no hierarchy, just categories)
+    category_emojis = {
+        "analysis": "🔍",
+        "benchmarking": "⚡", 
+        "builder": "🏗️",
+        "core": "⚙️",
+        "custom_op": "🔧",
+        "interface": "🔌",
+        "qnn-data": "📊",
+        "transformation": "🔄",
+        "util": "🛠️",
+    }
+
+    # Add category links to the index
+    for category in sorted(categories.keys()):
+        emoji = category_emojis.get(category, "🔧")
+        filename = f"finn-{category.replace('_', '-')}"
+        index_content.append(f"- {emoji} **[{category.title()}]({filename})**")
+    
+    index_content.append("")
+    index_content.append("---")
+    index_content.append("")
+    index_content.append("*This documentation is generated automatically from source code.*")
 
     # Write main index file
     with open(wiki_dir / "API-Documentation.md", "w") as f:
         f.write("\n".join(index_content))
 
-    print(f"✅ Created main API index with {len(module_files)} modules")
+    print(f"✅ Created main API index with {len(categories)} categories")
     return True
 
 
