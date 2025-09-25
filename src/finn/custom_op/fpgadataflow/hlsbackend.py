@@ -136,8 +136,9 @@ class HLSBackend(ABC):
         self.code_gen_dict.clear()
 
         if node.name in ["", None]:
-            log.error(
-                f"A {node.op_type} node has no name. This will likely cause IP generation "
+            raise FINNUserError(
+                f"[HLS Code Generation] A {node.op_type} node has no name."
+                f"This will likely cause IP generation "
                 f"to fail. Consider calling GiveUniqueNodeNames() beforehand."
             )
 
@@ -183,28 +184,21 @@ class HLSBackend(ABC):
     def ipgen_singlenode_code(self):
         """Builds the bash script for IP generation using the CallHLS utility."""
         node = self.onnx_node
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        builder = CallHLS()
-        builder.append_tcl(code_gen_dir + "/hls_syn_{}.tcl".format(node.name))
-        builder.set_ipgen_path(code_gen_dir + "/project_{}".format(node.name))
-
+        code_gen_dir = Path(self.get_nodeattr("code_gen_dir_ipgen"))
+        builder = CallHLS(
+            tcl_script=code_gen_dir / f"hls_syn_{node.name}.tcl",
+            code_gen_dir=code_gen_dir,
+            ipgen_path=code_gen_dir / f"project_{node.name}",
+        )
         success = False
         while not success:
-            try:
-                builder.build(code_gen_dir)
-                ipp = Path(builder.ipgen_path)
-                assert ipp.is_dir()
-                assert ipp.exists()
-            except subprocess.CalledProcessError as e:
-                raise FINNUserError(
-                    f"HLS IP generation failed. Check {code_gen_dir} " f"for details."
-                ) from e
-            except AssertionError as e:
+            builder.build()
+            if not builder.ipgen_path.is_dir():
                 raise FINNUserError(
                     f"Generated IP couldn't be found at "
                     f"{builder.ipgen_path}. Check logs at {code_gen_dir}."
-                ) from e
-            ipgen_path = builder.ipgen_path
+                )
+            ipgen_path = str(builder.ipgen_path)
             self.set_nodeattr("ipgen_path", ipgen_path)
             ip_path = ipgen_path + "/sol1/impl/ip"
             if not os.path.isdir(ip_path):

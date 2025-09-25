@@ -25,41 +25,52 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+from __future__ import annotations
 
-import os
+from pathlib import Path
+from subprocess import CalledProcessError
 from finn.util.basic import launch_process_helper, which
+from finn.util.exception import FINNInternalError, FINNUserError
 
 
 class CallHLS:
     """Call vitis_hls to run HLS build tcl scripts."""
 
-    def __init__(self):
-        self.tcl_script = ""
-        self.ipgen_path = ""
-        self.code_gen_dir = ""
-        self.ipgen_script = ""
+    def __init__(
+        self, tcl_script: str | Path, code_gen_dir: str | Path, ipgen_path: str | Path
+    ) -> None:
+        """Create a new HLS builder.
 
-    def append_tcl(self, tcl_script):
-        """Sets the tcl script to be executed."""
-        self.tcl_script = tcl_script
+        Args:
+            tcl_script: Path to the Tcl script that will be executed to build.
+            code_gen_dir: Directory that contains the Tcl script (and sources).
+            ipgen_path: Path to the IP Generation project.
+        """
+        self.tcl_script = Path(tcl_script)
+        self.ipgen_path = Path(ipgen_path)
+        self.code_gen_dir = Path(code_gen_dir)
+        self.ipgen_script: Path | None = None
+        if self.tcl_script not in self.code_gen_dir.iterdir():
+            raise FINNInternalError(
+                f"code_gen_dir {code_gen_dir} does not"
+                f"seem to contain the Tcl script {tcl_script}"
+            )
 
-    def set_ipgen_path(self, path):
-        """Sets member variable ipgen_path to given path."""
-        self.ipgen_path = path
-
-    def build(self, code_gen_dir):
-        """Builds the bash script with given parameters and saves it in given folder.
-        To guarantee the generation in the correct folder the bash script contains a
-        cd command."""
-        assert which("vitis_hls") is not None, "vitis_hls not found in PATH"
-        self.code_gen_dir = code_gen_dir
-        self.ipgen_script = str(self.code_gen_dir) + "/ipgen.sh"
-        working_dir = os.getcwd()
-        f = open(self.ipgen_script, "w")
-        f.write("#!/bin/bash \n")
-        f.write("cd {}\n".format(code_gen_dir))
-        f.write("vitis_hls %s\n" % (self.tcl_script))
-        f.write("cd {}\n".format(working_dir))
-        f.close()
-        bash_command = ["bash", self.ipgen_script]
-        launch_process_helper(bash_command, print_stdout=False)
+    def build(self) -> None:
+        """Create and run a shell script to execute the Tcl script in code_gen_dir."""
+        if which("vitis_hls") is None:
+            raise FINNUserError("Cannot run IP generation, since vitis_hls was not found in PATH!")
+        self.ipgen_script = self.code_gen_dir / "ipgen.sh"
+        working_dir = Path.cwd()
+        with self.ipgen_script.open("w") as f:
+            f.write("#!/bin/bash \n")
+            f.write("set -e\n")
+            f.write(f"cd {self.code_gen_dir}\n")
+            f.write(f"vitis_hls {self.tcl_script}\n")
+            f.write(f"cd {working_dir}\n")
+        try:
+            launch_process_helper(["bash", str(self.ipgen_script)], print_stdout=False)
+        except CalledProcessError as e:
+            raise FINNUserError(
+                f"HLS IP Generation failed. " f"Logs and sources are in {self.code_gen_dir}"
+            ) from e

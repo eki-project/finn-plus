@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import subprocess
+from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
@@ -105,15 +106,17 @@ class GenerateInstrumentationIP(Transformation):
         with open(wrapper_output_dir + "/hls_syn.tcl", "w") as f:
             f.write(ipgentcl)
         # build bash script to launch HLS synth and call it
-        code_gen_dir = wrapper_output_dir
-        builder = CallHLS()
-        builder.append_tcl(code_gen_dir + "/hls_syn.tcl")
-        builder.set_ipgen_path(code_gen_dir + "/{}".format(prjname))
-        builder.build(code_gen_dir)
+        code_gen_dir = Path(wrapper_output_dir)
+        builder = CallHLS(
+            tcl_script=code_gen_dir / "hls_syn.tcl",
+            code_gen_dir=code_gen_dir,
+            ipgen_path=code_gen_dir / prjname,
+        )
+        builder.build()
         ipgen_path = builder.ipgen_path
-        assert os.path.isdir(ipgen_path), "HLS IPGen failed: %s not found" % (ipgen_path)
-        ip_path = ipgen_path + "/sol1/impl/ip"
-        assert os.path.isdir(ip_path), "HLS IPGen failed: %s not found. Check log under %s" % (
+        assert ipgen_path.is_dir(), "HLS IPGen failed: %s not found" % (ipgen_path)
+        ip_path = ipgen_path / "sol1" / "impl" / "ip"
+        assert ip_path.is_dir(), "HLS IPGen failed: %s not found. Check log under %s" % (
             ip_path,
             code_gen_dir,
         )
