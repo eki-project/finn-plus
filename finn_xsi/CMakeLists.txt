@@ -9,10 +9,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_FLAGS "-Wall -Wextra -O3")
 
 # Check if OpenMPI was found
-find_program(OMPI_INFO "ompi_info")
-set(MPI_AVAILABLE OFF)
-if(OMPI_INFO)
-    set(MPI_AVAILABLE ON)
+find_package(MPI)
+if (MPI_FOUND)
+    message("MPI found. Using parallel iterative sizing.")
+else()
+    message("MPI not found. Proceeding normally.")
 endif()
 
 # Clear cache to set a new starting fifo size
@@ -38,6 +39,9 @@ target_include_directories(FIFO_Simulation PUBLIC "${RTLSIM_WRAPPER_DIR}")
 
 # Add xsim includes
 target_include_directories(FIFO_Simulation PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include")
+
+# Link MPI if available
+target_link_libraries(FIFO_Simulation MPI::MPI_CXX)
 
 # Link libraries
 target_link_libraries(FIFO_Simulation -ldl)
