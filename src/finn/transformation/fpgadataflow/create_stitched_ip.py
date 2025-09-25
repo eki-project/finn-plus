@@ -441,6 +441,11 @@ class CreateStitchedIP(Transformation):
             tcl.append("wait_on_run [get_runs synth_1]")
             tcl.append("open_run synth_1 -name synth_1")
             tcl.append("opt_design")
+            tcl.append(
+                "opt_design -muxf_remap -carry_remap -control_set_merge -merge_equivalent_drivers "
+                "-mbufg_opt -dsp_register_opt -control_set_opt -remap -resynth_area -resynth_remap"
+            )
+            tcl.append("opt_design")
             bd_base = f"{vivado_stitch_proj_dir}/{prjname}.sim/sim_1/synth/func/xsim/"
             fifosim_wrapper_filename = f"{bd_base}/fifosim_wrapper_func_synth.v"
             tcl.append(f"write_verilog -mode funcsim -force -file {fifosim_wrapper_filename}")
