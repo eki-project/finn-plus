@@ -81,6 +81,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         # special case: a StreamingFIFO layer with impl_style=rtl
         # depth_monitor=1 is implemented using a Verilog infite
         # queue sim instead of Q_srl
+        return False
         is_rtl = self.get_nodeattr("impl_style") == "rtl"
         is_depth_monitor = self.get_nodeattr("depth_monitor") == 1
         return is_depth_monitor and is_rtl

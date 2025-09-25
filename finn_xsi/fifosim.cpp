@@ -258,6 +258,7 @@ determineStartDepth(xsi::Design &top, Clock &clk,
       last_interval = interval;
       min_latency = latency;
     }
+    break;
 
     last_start_depth = start_depth;
     start_depth *= 2; // Double the start depth
@@ -284,10 +285,13 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
   std::cout << "Total FIFO sizes: " << fifo_sizes.size() << std::endl;
   while (!std::all_of(minimizedFifo.begin(), minimizedFifo.end(),
                       [](bool v) { return v; })) {
-    std::cout << "Sizing: ";
+    std::cout << "Current FIFO sizes: ";
+    for (auto &&elem : fifo_sizes) {
+      std::cout << elem << " ";
+    }
+    std::cout << std::endl;
     for (size_t i = 0; i < fifo_depths.size(); ++i) {
       if (!minimizedFifo[i]) {
-        std::cout << i << " " << std::flush;
         // Try to minimize this FIFO
         size_t oldFifoSize = fifo_sizes[i];
         fifo_sizes[i] = std::max(oldFifoSize / 2, size_t(1));

@@ -78,22 +78,15 @@ def compile_sim_obj(top_module_name, source_list, sim_out_dir, debug=False):
         "floating_point_v7_1_18",
         "floating_point_v7_1_15",
         "floating_point_v7_1_19",
+        "work",
     ]
 
     cmd_xelab = [
         "xelab",
-        "work." + top_module_name,
+        "work." + "finn_design_wrapper",
         "-relax",
-        "-prj",
-        "rtlsim.prj",
         "-dll",
         "--O3",
-        "-timeprecision_vhdl",
-        "1ns",
-        "-timescale",
-        "1ns/1ns",
-        "-override_timeunit",
-        "-override_timeprecision",
         "-s",
         top_module_name,
     ]
@@ -108,6 +101,9 @@ def compile_sim_obj(top_module_name, source_list, sim_out_dir, debug=False):
     if locate_glbl() is not None:
         cmd_xelab.insert(1, "work.glbl")
 
+    cmd_xvlog = "xvlog --incr --relax -prj rtlsim.prj".split()
+
+    launch_process_helper(cmd_xvlog, cwd=sim_out_dir)
     launch_process_helper(cmd_xelab, cwd=sim_out_dir)
     out_so_relative_path = "xsim.dir/%s/xsimk.so" % top_module_name
     out_so_full_path = sim_out_dir + "/" + out_so_relative_path
@@ -135,7 +131,7 @@ def load_sim_obj(sim_out_dir, out_so_relative_path, tracefile=None, simkernel_so
         simkernel_so = get_simkernel_so()
     oldcwd = os.getcwd()
     os.chdir(sim_out_dir)
-    tracefile="tracefile.wdb"
+    tracefile = "tracefile.wdb"
     sim = SimEngine(simkernel_so, out_so_relative_path, "finnxsi_rtlsim.log", tracefile)
     if tracefile:
         sim.top.trace_all()
