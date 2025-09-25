@@ -85,13 +85,22 @@ class CreateStitchedIP(Transformation):
     The packaged block design IP can be found under the ip subdirectory.
     """
 
-    def __init__(self, fpgapart, clk_ns, ip_name="finn_design", vitis=False, signature=[]):
+    def __init__(
+        self,
+        fpgapart,
+        clk_ns,
+        ip_name="finn_design",
+        vitis=False,
+        signature=[],
+        functional_simulation=False,
+    ):
         super().__init__()
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
         self.ip_name = ip_name
         self.vitis = vitis
         self.signature = signature
+        self.functional_simulation = functional_simulation
         self.has_aximm = False
         self.has_m_axis = False
         self.m_axis_idx = 0
@@ -423,6 +432,19 @@ class CreateStitchedIP(Transformation):
         tcl.append("add_files -norecurse %s" % wrapper_filename)
         model.set_metadata_prop("wrapper_filename", wrapper_filename)
         tcl.append("set_property top %s_wrapper [current_fileset]" % block_name)
+        num_workers = get_num_default_workers()
+        assert num_workers >= 0, "Number of workers must be nonnegative."
+        if num_workers == 0:
+            num_workers = mp.cpu_count()
+        if self.functional_simulation:
+            tcl.append("launch_runs synth_1 -jobs %s" % str(num_workers))
+            tcl.append("wait_on_run [get_runs synth_1]")
+            tcl.append("open_run synth_1 -name synth_1")
+            tcl.append("opt_design")
+            bd_base = f"{vivado_stitch_proj_dir}/{prjname}.sim/sim_1/synth/func/xsim/"
+            fifosim_wrapper_filename = f"{bd_base}/fifosim_wrapper_func_synth.v"
+            tcl.append(f"write_verilog -mode funcsim -force -file {fifosim_wrapper_filename}")
+            model.set_metadata_prop("wrapper_filename", fifosim_wrapper_filename)
         # synthesize to DCP and export stub, DCP and constraints
         if self.vitis:
             tcl.append(
@@ -432,10 +454,7 @@ class CreateStitchedIP(Transformation):
                 "set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} "
                 "-value {-mode out_of_context} -objects [get_runs synth_1]"
             )
-            num_workers = get_num_default_workers()
-            assert num_workers >= 0, "Number of workers must be nonnegative."
-            if num_workers == 0:
-                num_workers = mp.cpu_count()
+
             tcl.append("launch_runs synth_1 -jobs %s" % str(num_workers))
             tcl.append("wait_on_run [get_runs synth_1]")
             tcl.append("open_run synth_1 -name synth_1")
@@ -641,12 +660,17 @@ close $ofile
             # Check success manually by looking for wrapper HDL
             pass
 
+        if self.functional_simulation:
+            with open(v_file_list, "a") as f:
+                f.write(f"{fifosim_wrapper_filename}\n")
+
         # wrapper may be created in different location depending on Vivado version
         if not os.path.isfile(wrapper_filename):
             # check in alternative location (.gen instead of .srcs)
             wrapper_filename_alt = wrapper_filename.replace(".srcs", ".gen")
             if os.path.isfile(wrapper_filename_alt):
-                model.set_metadata_prop("wrapper_filename", wrapper_filename_alt)
+                if not self.functional_simulation:
+                    model.set_metadata_prop("wrapper_filename", wrapper_filename_alt)
             else:
                 raise FINNError(
                     """CreateStitchedIP failed, no wrapper HDL found under %s or %s.

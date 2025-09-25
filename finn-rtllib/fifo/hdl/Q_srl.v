@@ -27,8 +27,8 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
 	// Dummy values required by FINN
 	output [countwidth-1:0] count;  // - output number of elems in queue
 	output [countwidth-1:0] maxcount;  // - maximum observed count since reset
-	assign count = 1'b1;
-	assign maxcount = 1'b1;
+	assign count = 0;
+	assign maxcount = 0;
 
 
 	wire have_capacity;
