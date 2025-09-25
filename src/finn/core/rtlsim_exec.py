@@ -34,6 +34,8 @@ except ModuleNotFoundError as e:
 
 import numpy as np
 import os
+import shlex
+from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from subprocess import CalledProcessError
 from typing import Any
@@ -42,10 +44,11 @@ from finn.util.basic import (
     get_liveness_threshold_cycles,
     get_vivado_root,
     launch_process_helper,
+    log,
     make_build_dir,
 )
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.exception import FINNError
+from finn.util.exception import FINNError, FINNUserError
 
 
 def prep_rtlsim_io_dict(model, execution_context):
@@ -268,51 +271,24 @@ def rtlsim_exec_cppxsi(
     with open(sim_base + "/rtlsim_config.hpp", "w") as f:
         f.write(fifsom_config_template)
 
-    vivado_incl_dir = get_vivado_root() + "/data/xsim/include"
-    # launch g++ to compile the rtlsim executable
-    # build_cmd = [
-    #     "g++",
-    #     f"-I{finnxsi_dir}",
-    #     f"-I{vivado_incl_dir}",
-    #     f"-I{sim_base}",
-    #     "-std=c++17",
-    #     "-O3",
-    #     "-o",
-    #     "rtlsim_xsi",
-    #     f"{finnxsi_dir}/rtlsim_xsi.cpp",
-    #     f"{finnxsi_dir}/xsi_finn.cpp",
-    #     "-ldl",
-    #     "-lrt",
-    # ]
-    build_cmd = [
-        "g++",
-        f"-I{finnxsi_dir}",
-        f"-I{vivado_incl_dir}",
-        f"-I{sim_base}",
-        "-std=c++17",
-        "-O3",
-        "-o",
-        "fifosim",
-        f"{finnxsi_dir}/fifosim.cpp",
-        f"{finnxsi_dir}/xsi_finn.cpp",
-        f"{finnxsi_dir}/axi_control/s_axi_control.cpp",
-        f"{finnxsi_dir}/clock/clock.cpp",
-        f"{finnxsi_dir}/axis_control/axis_control.cpp",
-        "-ldl",
-        "-lrt",
-    ]
-    # write compilation command to a file for easy re-running/debugging
-    print(sim_base)
-    with open(sim_base + "/compile_fifosim.sh", "w") as f:
-        f.write(" ".join(build_cmd))
+    # Building the whole simulation
+    build_cmd = shlex.split(f"cmake -DRTLSIM_WRAPPER_DIR={sim_base} -S . -B {sim_base}")
+    log.info(f"Running cmake on RTLSIM Wrapper in {sim_base}")
+    env = {}
+    env.update(os.environ)
     try:
-        env = {}
-        env.update(os.environ)
-        launch_process_helper(build_cmd, cwd=sim_base, print_stdout=False, proc_env=env)
-    except CalledProcessError:
-        raise FINNError(f"Failed to compile rtlsim executable in folder {sim_base}")
-    if not os.path.isfile(sim_base + "/fifosim"):
-        raise FINNError(f"Failed to compile rtlsim executable in folder {sim_base}")
+        launch_process_helper(build_cmd, cwd=finnxsi_dir, print_stdout=False, proc_env=env)
+    except CalledProcessError as e:
+        raise FINNError(f"Failed to run cmake in {sim_base}") from e
+
+    makefile = Path(sim_base) / "Makefile"
+    if not makefile.exists():
+        raise FINNUserError(f"Failed to create Makefile in {sim_base}!")
+    try:
+        launch_process_helper(["make"], proc_env=env, cwd=sim_base)
+    except CalledProcessError as e:
+        raise FINNUserError(f"Failed to create executable in {sim_base}!") from e
+    assert (Path(sim_base) / "FIFO_Simulation").exists()
 
     # launch the rtlsim executable
     # important to specify LD_LIBRARY_PATH here for XSI to work correctly
@@ -320,7 +296,9 @@ def rtlsim_exec_cppxsi(
     runsim_env["LD_LIBRARY_PATH"] = get_vivado_root() + "/lib/lnx64.o"
     runsim_cmd = ["bash", "run_fifosim.sh"]
     with open(sim_base + "/run_fifosim.sh", "w") as f:
-        f.write(f"LD_LIBRARY_PATH={runsim_env['LD_LIBRARY_PATH']}:$LD_LIBRARY_PATH ./fifosim")
+        f.write(
+            f"LD_LIBRARY_PATH={runsim_env['LD_LIBRARY_PATH']}:$LD_LIBRARY_PATH ./FIFO_Simulation"
+        )
     env = {}
     env.update(os.environ)
     exit()
