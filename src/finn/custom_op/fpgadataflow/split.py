@@ -135,10 +135,10 @@ class StreamingSplit(HWCustomOp):
         return out_width
 
     def get_number_output_values(self):
-        num_output_values = 0
-        for i in range(self.get_n_outputs()):
-            num_output_values += np.prod(self.get_folded_output_shape(i)[:-1])
-        return num_output_values
+        out_val = {}
+        for i in range(len(self.onnx_node.output)):
+            out_val["out%s" % i] = np.prod(self.get_folded_output_shape(i)[1:-1])
+        return out_val
 
     def get_exp_cycles(self):
         return np.prod(self.get_folded_input_shape()[:-1])
@@ -154,11 +154,3 @@ class StreamingSplit(HWCustomOp):
     def get_instream_width_padded(self, ind=0):
         in_width = self.get_instream_width()
         return roundup_to_integer_multiple(in_width, 8)
-
-    def get_verilog_top_module_intf_names(self):
-        intf_names = super().get_verilog_top_module_intf_names()
-        intf_names["s_axis"] = [("in0", self.get_instream_width_padded())]
-        intf_names["m_axis"] = []
-        for i in range(self.get_n_outputs()):
-            intf_names["m_axis"].append(("out_arr_%d" % i, self.get_instream_width_padded()))
-        return intf_names

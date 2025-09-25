@@ -63,6 +63,7 @@ $SAVEASCNPY$
 
 # template for single node execution with timeout (for single clock hls operations)
 docompute_template_timeout = """
+#define HLS_CONSTEXPR_ENABLE
 #define AP_INT_MAX_W $AP_INT_MAX_W$
 #include "cnpy.h"
 #include "npy2apintstream.hpp"
@@ -115,10 +116,8 @@ ipgen_template = """
 
 #include "bnn-library.h"
 
-// includes for network parameters
 $GLOBALS$
 
-// defines for network parameters
 $DEFINES$
 
 $BLACKBOXFUNCTION$

@@ -26,6 +26,11 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+try:
+    import finn_xsi.adapter as finnxsi
+except ModuleNotFoundError:
+    finnxsi = None
+
 import numpy as np
 import os
 import subprocess
@@ -41,11 +46,6 @@ from finn.util.exception import FINNError, FINNUserError
 from finn.util.hls import CallHLS
 from finn.util.logging import log
 
-try:
-    import pyxsi_utils
-except ModuleNotFoundError:
-    pyxsi_utils = None
-
 
 class HLSBackend(ABC):
     """HLSBackend class all custom ops that correspond to a finn-hlslib
@@ -60,6 +60,8 @@ class HLSBackend(ABC):
             "res_hls": ("s", False, ""),
             # temporary node attribute to keep track of interface style of hls ops
             "cpp_interface": ("s", False, "packed", {"packed", "hls_vector"}),
+            # temporary node attribute to keep track of execution style of hls ops
+            "hls_style": ("s", False, "ifm_aware", {"ifm_aware", "freerunning"}),
         }
 
     def get_all_verilog_paths(self):
@@ -103,8 +105,8 @@ class HLSBackend(ABC):
         single_src_dir = make_build_dir("rtlsim_" + self.onnx_node.name + "_")
         trace_file = self.get_nodeattr("rtlsim_trace")
         debug = not (trace_file is None or trace_file == "")
-        ret = pyxsi_utils.compile_sim_obj(
-            self.get_verilog_top_module_name(), verilog_files, single_src_dir, debug, logger=log
+        ret = finnxsi.compile_sim_obj(
+            self.get_verilog_top_module_name(), verilog_files, single_src_dir, debug
         )
         # save generated lib filename in attribute
         self.set_nodeattr("rtlsim_so", ret[0] + "/" + ret[1])
@@ -241,7 +243,7 @@ class HLSBackend(ABC):
         self.dataoutstrm()
         self.save_as_npy()
 
-        if self.get_nodeattr("cpp_interface") == "hls_vector":
+        if self.get_nodeattr("hls_style") == "freerunning":
             self.timeout_value()
             self.timeout_condition()
             self.timeout_read_stream()
@@ -496,13 +498,61 @@ compilation transformations?
         """Function to generate the commands for the stream declaration in c++,
         is member function of HLSBackend class but might need to be filled
         by node."""
+        node = self.onnx_node
+        cpp_interface = self.get_nodeattr("cpp_interface")
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
-        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            'hls::stream<ap_uint<{}>> in0_V ("in0_V");'.format(self.get_instream_width())
-        )
-        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            'hls::stream<ap_uint<{}>> out0_V ("out0_V");'.format(self.get_outstream_width())
-        )
+        if cpp_interface == "packed":
+            for i, inp in enumerate(node.input):
+                if self.get_instream_width(i):
+                    self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                        'hls::stream<ap_uint<{}>> in{}_V ("in{}_V");'.format(
+                            self.get_instream_width(i), i, i
+                        )
+                    )
+            for o, outp in enumerate(node.output):
+                if self.get_outstream_width(o):
+                    self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                        'hls::stream<ap_uint<{}>> out{}_V ("out{}_V");'.format(
+                            self.get_outstream_width(o), o, o
+                        )
+                    )
+        else:
+            for i, inp in enumerate(node.input):
+                if self.get_instream_width(i):
+                    dtype = self.get_input_datatype(i)
+                    if dtype == DataType["BIPOLAR"]:
+                        # use binary for bipolar storage
+                        dtype = DataType["BINARY"]
+                    elem_input_hls_type = dtype.get_hls_datatype_str()
+
+                    self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                        'hls::stream<hls::vector<{},{}>> in{}_V ("in{}_V");'.format(
+                            elem_input_hls_type, self.get_folded_input_shape(i)[-1], i, i
+                        )
+                    )
+
+            for o, outp in enumerate(node.output):
+                if self.get_outstream_width(o):
+                    dtype = self.get_output_datatype(o)
+                    if dtype == DataType["BIPOLAR"]:
+                        # use binary for bipolar storage
+                        dtype = DataType["BINARY"]
+                    elem_output_hls_type = dtype.get_hls_datatype_str()
+
+                    self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                        'hls::stream<hls::vector<{},{}>> out{}_V ("out{}_V");'.format(
+                            elem_output_hls_type, self.get_folded_output_shape(o)[-1], o, o
+                        )
+                    )
+
+            if self.get_nodeattr("hls_style") == "freerunning":
+                for o, outp in enumerate(node.output):
+                    if self.get_outstream_width(o):
+                        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                            'hls::stream<hls::vector<{},{}>> strm{} ("strm{}");'.format(
+                                elem_output_hls_type, self.get_folded_output_shape(o)[-1], o, o
+                            )
+                        )
 
     @abstractmethod
     def docompute(self):
@@ -550,12 +600,16 @@ compilation transformations?
                 )
             else:
                 folded_shape = self.get_folded_output_shape(o)
+                out_vector = (
+                    f"strm{o}" if self.get_nodeattr("hls_style") == "freerunning" else f"out{o}_V"
+                )
                 self.code_gen_dict["$DATAOUTSTREAM$"].append(
-                    'vectorstream2npy<%s, %s, %d>(strm, %s, "%s");'
+                    'vectorstream2npy<%s, %s, %d>(%s, %s, "%s");'
                     % (
                         elem_hls_type,
                         npy_type,
                         folded_shape[-1],
+                        out_vector,
                         oshape_cpp_str,
                         npy_out,
                     )
@@ -598,4 +652,4 @@ compilation transformations?
 
     def timeout_read_stream(self):
         """Set reading output stream procedure for HLS functions defined for one clock cycle"""
-        self.code_gen_dict["$TIMEOUT_READ_STREAM$"] = ["strm << out0_V.read();"]
+        self.code_gen_dict["$TIMEOUT_READ_STREAM$"] = ["strm0 << out0_V.read();"]

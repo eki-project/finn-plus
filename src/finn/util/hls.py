@@ -27,8 +27,11 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from subprocess import CalledProcessError
+
 from finn.util.basic import launch_process_helper, which
 from finn.util.exception import FINNInternalError, FINNUserError
 
@@ -58,19 +61,33 @@ class CallHLS:
 
     def build(self) -> None:
         """Create and run a shell script to execute the Tcl script in code_gen_dir."""
-        if which("vitis_hls") is None:
-            raise FINNUserError("Cannot run IP generation, since vitis_hls was not found in PATH!")
+        vivado_path = os.environ.get("XILINX_VIVADO")
+        if vivado_path is None:
+            raise FINNUserError("XILINX_VIVADO was not set but is required.")
+        # xsi kernel lib name depends on Vivado version (renamed in 2024.2)
+        match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path)
+        if match is None:
+            raise FINNUserError(f"Could not find a version number in XILINX_VIVADO: {vivado_path}")
+        year, minor = int(match.group(1)), int(match.group(2))
+        if (year, minor) > (2024, 2):
+            if which("vitis-run") is None:
+                raise FINNUserError("vitis-run not found in PATH")
+            vitis_cmd = f"vitis-run --mode hls --tcl {self.tcl_script}\n"
+        else:
+            if which("vitis_hls") is None:
+                raise FINNUserError("vitis_hls was not found in PATH!")
+            vitis_cmd = f"vitis_hls {self.tcl_script}\n"
         self.ipgen_script = self.code_gen_dir / "ipgen.sh"
         working_dir = Path.cwd()
         with self.ipgen_script.open("w") as f:
             f.write("#!/bin/bash \n")
             f.write("set -e\n")
             f.write(f"cd {self.code_gen_dir}\n")
-            f.write(f"vitis_hls {self.tcl_script}\n")
+            f.write(vitis_cmd)
             f.write(f"cd {working_dir}\n")
         try:
             launch_process_helper(["bash", str(self.ipgen_script)], print_stdout=False)
         except CalledProcessError as e:
             raise FINNUserError(
-                f"HLS IP Generation failed. " f"Logs and sources are in {self.code_gen_dir}"
+                f"HLS IP Generation failed. Logs and sources are in {self.code_gen_dir}"
             ) from e

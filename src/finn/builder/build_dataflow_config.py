@@ -174,7 +174,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     """
 
     #: Directory where the final build outputs will be written into
-    output_dir: str | None = None
+    output_dir: str = "build"
 
     #: Target clock frequency (in nanoseconds) for Vivado synthesis.
     #: e.g. synth_clk_period_ns=5.0 will target a 200 MHz clock.
