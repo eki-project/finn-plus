@@ -348,11 +348,11 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
 }
 
 int main() {
+    int rank = 0;
 #ifdef MPI_FOUND
     MPI_Init(NULL, NULL);
     int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     if (rank == 0) {
         std::cout << "Running on " << world_size << " ranks." << std::endl;
@@ -367,9 +367,7 @@ int main() {
         top.trace_all();
     }
 
-#ifdef MPI_FOUND
     if (rank == 0)
-#endif
     {
         for (auto &&port : top.ports()) {
             std::cout << "Port Name: " << port.name()
@@ -399,9 +397,7 @@ int main() {
     reset(top);
 
     // Start Stream Feed and Capture
-#ifdef MPI_FOUND
     if (rank == 0)
-#endif
     {
         std::cout << "Starting data feed with idle-output timeout of "
                   << max_iters << " cycles ...\n"
@@ -416,9 +412,7 @@ int main() {
         s.ready();
     }
 
-#ifdef MPI_FOUND
     if (rank == 0)
-#endif
     {
         if (istreams.size() > 1 || ostreams.size() > 1) {
             throw std::runtime_error(
@@ -436,9 +430,7 @@ int main() {
 
     size_t start_depth;
     size_t interval;
-#ifdef MPI_FOUND
     if (rank == 0)
-#endif
     {
         std::cout << "\nDetermining start depth..." << std::endl;
         auto [_start_depth, _interval] =
@@ -453,9 +445,7 @@ int main() {
         sizeIteratively(start_depth, interval, clk, top, fifo_ports, istreams,
                         ostreams, inflightTimestamps, iters);
 
-#ifdef MPI_FOUND
     if (rank == 0)
-#endif
     {
         for (auto &&elem : fifoSizes) {
             std::cout << "FIFO size: " << elem << std::endl;
