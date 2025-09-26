@@ -309,36 +309,18 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
     return fifo_sizes;
 }
 
-int main() {
-    int world_size = 1;
-    int rank = 0;
-#ifdef MPI_FOUND
-    MPI_Init(NULL, NULL);
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    if (rank == 0) {
-        std::cout << "Running on " << world_size << " ranks." << std::endl;
-    }
-#endif
+struct simDesc {
+    xsi::Design top;
+    std::vector<S_AXIS_Control> istreams;
+    std::vector<M_AXIS_Control> ostreams;
+    std::vector<Port*> fifo_ports;
+    Clock& clk;
+};
 
+simDesc initDesign(const std::string& kernel_libname, const std::string& design_libname, const char* xsim_log_filename, const char* trace_filename) {
     // Load Kernel and Design
     xsi::Kernel kernel(kernel_libname);
     xsi::Design top(kernel, design_libname, xsim_log_filename, trace_filename);
-    if (trace_filename) {
-        // TODO make tracing more finer-grain if possible?
-        top.trace_all();
-    }
-
-    if (rank == 0) {
-        for (auto&& port : top.ports()) {
-            std::cout << "Port Name: " << port.name() << ", Direction: " << (port.dir()) << std::endl;
-        }
-    }
-
-    // Simulation Report Statistics
-    size_t iters = 0;
-    std::deque<size_t> inflightTimestamps;
-    inflightTimestamps.push_front(0);  // Insert start timestamp of first element
 
     // Find I/O Streams and initialize their Status
     std::vector<S_AXIS_Control> istreams;
@@ -355,11 +337,6 @@ int main() {
     clearPorts(top);
     reset(top);
 
-    // Start Stream Feed and Capture
-    if (rank == 0) {
-        std::cout << "Starting data feed with idle-output timeout of " << max_iters << " cycles ...\n" << std::endl;
-    }
-
     // Make all Inputs valid & all Outputs ready
     for (auto&& s : istreams) {
         s.valid();
@@ -368,7 +345,40 @@ int main() {
         s.ready();
     }
 
+    std::vector<xsi::Port*> fifo_ports;
+    for (xsi::Port& p : top.ports()) {
+        if (std::string(p.name()).find("depth") != std::string::npos) {
+            fifo_ports.emplace_back(&p);
+        }
+    }
+
+    return {top, istreams, ostreams, fifo_ports, clk};
+}
+
+int main() {
+    int world_size = 1;
+    int rank = 0;
+#ifdef MPI_FOUND
+    MPI_Init(NULL, NULL);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     if (rank == 0) {
+        std::cout << "Running on " << world_size << " ranks." << std::endl;
+    }
+#endif
+    auto [top, istreams, ostreams, fifo_ports, clk] = initDesign(kernel_libname, design_libname, xsim_log_filename, trace_filename);
+
+    if (trace_filename) {
+        // TODO make tracing more finer-grain if possible?
+        top.trace_all();
+    }
+
+    if (rank == 0) {
+        for (auto&& port : top.ports()) {
+            std::cout << "Port Name: " << port.name() << ", Direction: " << (port.dir()) << std::endl;
+        }
+        std::cout << "Starting data feed with idle-output timeout of " << max_iters << " cycles ...\n" << std::endl;
+
         if (istreams.size() > 1 || ostreams.size() > 1) {
             throw std::runtime_error(
                 "This simulation is not designed to run with "
@@ -376,12 +386,10 @@ int main() {
         }
     }
 
-    std::vector<xsi::Port*> fifo_ports;
-    for (xsi::Port& p : top.ports()) {
-        if (std::string(p.name()).find("depth") != std::string::npos) {
-            fifo_ports.emplace_back(&p);
-        }
-    }
+    // Simulation Report Statistics
+    size_t iters = 0;
+    std::deque<size_t> inflightTimestamps;
+    inflightTimestamps.push_front(0);  // Insert start timestamp of first element
 
     size_t start_depth = 0;
     size_t interval = 0;
