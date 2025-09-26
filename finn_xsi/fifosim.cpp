@@ -6,6 +6,7 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -23,6 +24,8 @@
 #ifdef MPI_FOUND
     #include <mpi.h>
 #endif
+
+#define MPI_ROOT_RANK 0
 
 using Port = xsi::Port;
 
@@ -404,23 +407,52 @@ int main() {
         0,
         fifo_ports.size() - 1
     );
-    std::cout << "Rank " << rank << " sizing " << end_index-start_index+1 << " FIFOs." << std::endl;
+
+    size_t elementsInRank = end_index - start_index + 1;
+    std::cout << "Rank " << rank << " sizing " << elementsInRank << " FIFOs." << std::endl;
 
 #ifdef MPI_FOUND
     // Synchronize and send depth to all other ranks
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(&depth, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&depth, 1, MPI_UNSIGNED, MPI_ROOT_RANK, MPI_COMM_WORLD);
 #endif
 
     if (rank == 0) {
         std::cout << "\nSizing iteratively..." << std::endl;
     }
+
+    // Size assigned FIFOs iteratively
     auto fifoSizes =
         sizeIteratively(depth, interval, clk, top, fifo_ports, istreams,
                         ostreams, inflightTimestamps, iters, start_index, end_index);
 
+    // Collect all FIFO sizes together into allSizes
+    std::vector<size_t> allSizes(fifo_ports.size());
+
+    // Gather all FIFO sizes from all ranks
+    #ifdef MPI_FOUND
+        // Gather how many FIFOs each rank worked on (might vary, at minimum the last rank might not be filled completely)
+        std::vector<size_t> elementsToGather(world_size);
+        MPI_Gather(
+            &elementsInRank, 1, MPI_UNSIGNED_LONG,
+            &elementsToGather[0], 1, MPI_UNSIGNED_LONG,
+            MPI_ROOT_RANK, MPI_COMM_WORLD
+        );
+
+        // Gather the FIFO sizes themselves
+        std::vector<unsigned int> displs(fifo_ports.size());
+        std::exclusive_scan(std::begin(elementsToGather), std::end(elementsToGather), std::begin(displs), 0);
+        MPI_Gatherv(
+            &fifoSizes[0], fifoSizes.size(), MPI_UNSIGNED_LONG,
+            &allSizes[0], elementsToGather, &displs[0], MPI_UNSIGNED_LONG,
+            MPI_ROOT_RANK, MPI_COMM_WORLD
+        );
+    #else
+        allSizes = fifoSizes;
+    #endif
+
     if (rank == 0) {
-        for (auto&& elem : fifoSizes) {
+        for (auto elem : allSizes) {
             std::cout << "FIFO size: " << elem << std::endl;
         }
     }
