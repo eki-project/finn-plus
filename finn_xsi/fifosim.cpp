@@ -21,23 +21,23 @@
 // simulation_config.h contains info (Start size, MPI, etc,)
 #include "simulation_config.h"
 #ifdef MPI_FOUND
-#include <mpi.h>
+    #include <mpi.h>
 #endif
 
 using Port = xsi::Port;
 
-void clearPorts(xsi::Design &top) {
+void clearPorts(xsi::Design& top) {
     // Clear all input ports
-    for (xsi::Port &p : top.ports()) {
+    for (xsi::Port& p : top.ports()) {
         if (p.isInput()) {
             p.clear().write_back();
         }
     }
 }
 
-void reset(xsi::Design &top) {
-    xsi::Port *const rst_n = top.getPort("ap_rst_n");
-    Clock &clk = Clock::initClock(top);
+void reset(xsi::Design& top) {
+    xsi::Port* const rst_n = top.getPort("ap_rst_n");
+    Clock& clk = Clock::initClock(top);
     if (!rst_n) {
         std::cerr << "No reset port found in design." << std::endl;
         return;
@@ -53,10 +53,7 @@ void reset(xsi::Design &top) {
 }
 
 // Helper function to process input streams with deferred writes
-void processInputStream(
-    S_AXIS_Control &stream, size_t &iters,
-    std::vector<std::reference_wrapper<xsi::Port>> &deferredWrites,
-    std::deque<size_t> &inflightTimestamps) {
+void processInputStream(S_AXIS_Control& stream, size_t& iters, std::vector<std::reference_wrapper<xsi::Port>>& deferredWrites, std::deque<size_t>& inflightTimestamps) {
     const bool isValid = stream.is_valid();
 
     // Skip if valid but not ready
@@ -69,8 +66,7 @@ void processInputStream(
         stream.job_txns++;
     }
 
-    const bool shouldProcessJob =
-        (stream.job_txns < stream.job_size) || (iters >= stream.await_iter);
+    const bool shouldProcessJob = (stream.job_txns < stream.job_size) || (iters >= stream.await_iter);
 
     // Handle throttling
     if (shouldProcessJob) {
@@ -90,9 +86,7 @@ void processInputStream(
 }
 
 // Helper function to process output streams
-bool processOutputStream(M_AXIS_Control &stream, size_t &iters,
-                         std::deque<size_t> &inflightTimestamps,
-                         size_t &completedMaps) {
+bool processOutputStream(M_AXIS_Control& stream, size_t& iters, std::deque<size_t>& inflightTimestamps, size_t& completedMaps) {
     if (!stream.is_ready() || !stream.is_valid()) {
         return false;
     }
@@ -118,11 +112,7 @@ bool processOutputStream(M_AXIS_Control &stream, size_t &iters,
     return true;
 }
 
-bool runForFeaturemaps(size_t featuremaps, Clock &clk,
-                       std::vector<S_AXIS_Control> &istreams,
-                       std::vector<M_AXIS_Control> &ostreams,
-                       std::deque<size_t> &inflightTimestamps, size_t &iters,
-                       size_t initialCompletedMaps) {
+bool runForFeaturemaps(size_t featuremaps, Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, std::deque<size_t>& inflightTimestamps, size_t& iters, size_t initialCompletedMaps) {
     // Enter Simulation Loop and track Progress
     auto const begin = std::chrono::steady_clock::now();
     std::vector<std::reference_wrapper<xsi::Port>> to_write;
@@ -136,7 +126,7 @@ bool runForFeaturemaps(size_t featuremaps, Clock &clk,
         //-------------------------------------------------------------------
         // Process input streams
 
-        for (auto &stream : istreams) {
+        for (auto& stream : istreams) {
             processInputStream(stream, iters, to_write, inflightTimestamps);
         }
 
@@ -144,9 +134,8 @@ bool runForFeaturemaps(size_t featuremaps, Clock &clk,
         // Process output streams
 
         bool hasActiveOutput = false;
-        for (auto &stream : ostreams) {
-            if (processOutputStream(stream, iters, inflightTimestamps,
-                                    completedMaps)) {
+        for (auto& stream : ostreams) {
+            if (processOutputStream(stream, iters, inflightTimestamps, completedMaps)) {
                 hasActiveOutput = true;
             }
         }
@@ -157,28 +146,19 @@ bool runForFeaturemaps(size_t featuremaps, Clock &clk,
         clk.cycle(1);
 
         // Write back Ports with registered updates
-        for (xsi::Port &p : to_write) p.write_back();
+        for (xsi::Port& p : to_write)
+            p.write_back();
         to_write.clear();
 
         ++iters;
 
         if (iters % 25000 == 0) {
-            std::cout << "Iteration: " << iters
-                      << ", Completed Maps: " << completedMaps
-                      << ", Inflight Timestamps Size: "
-                      << inflightTimestamps.size() << ", in "
-                      << std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now() - begin)
-                             .count()
-                      << "ms" << std::endl;
+            std::cout << "Iteration: " << iters << ", Completed Maps: " << completedMaps << ", Inflight Timestamps Size: " << inflightTimestamps.size() << ", in "
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count() << "ms" << std::endl;
         }
 
         if (completedMaps == featuremaps) {
-            std::cout << "Completing " << featuremaps << " maps took "
-                      << std::chrono::duration_cast<std::chrono::seconds>(
-                             std::chrono::steady_clock::now() - begin)
-                             .count()
-                      << "s" << std::endl;
+            std::cout << "Completing " << featuremaps << " maps took " << std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - begin).count() << "s" << std::endl;
             break;
         }
         // Check for timeout
@@ -189,15 +169,9 @@ bool runForFeaturemaps(size_t featuremaps, Clock &clk,
     return true;
 }
 
-size_t computeMovingAverage(const size_t oldAvg, const size_t newValue,
-                            const size_t count) {
-    return (oldAvg * (count - 1) + newValue) / count;
-}
+size_t computeMovingAverage(const size_t oldAvg, const size_t newValue, const size_t count) { return (oldAvg * (count - 1) + newValue) / count; }
 
-std::optional<std::tuple<size_t, size_t>> runToStableState(
-    Clock &clk, std::vector<S_AXIS_Control> &istreams,
-    std::vector<M_AXIS_Control> &ostreams,
-    std::deque<size_t> &inflightTimestamps, size_t &iters) {
+std::optional<std::tuple<size_t, size_t>> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, std::deque<size_t>& inflightTimestamps, size_t& iters) {
     // size_t avgLatency = 0;
     size_t avgMinLatency = 0;
     size_t avgInterval = 0;
@@ -205,24 +179,18 @@ std::optional<std::tuple<size_t, size_t>> runToStableState(
     size_t totalMaps = 0;
 
     while (true) {
-        if (!runForFeaturemaps(1, clk, istreams, ostreams, inflightTimestamps,
-                               iters, totalMaps)) {
+        if (!runForFeaturemaps(1, clk, istreams, ostreams, inflightTimestamps, iters, totalMaps)) {
             return std::nullopt;
         }
         totalMaps++;
 
-        size_t newAvgMinLatency = computeMovingAverage(
-            avgMinLatency, ostreams[0].min_latency, ++runs);
-        size_t newAvgInterval =
-            computeMovingAverage(avgInterval, ostreams[0].interval, runs);
+        size_t newAvgMinLatency = computeMovingAverage(avgMinLatency, ostreams[0].min_latency, ++runs);
+        size_t newAvgInterval = computeMovingAverage(avgInterval, ostreams[0].interval, runs);
 
-        std::cout << "Finished map " << totalMaps - 1
-                  << ". AvgMinLatency (new): ";
-        std::cout << newAvgMinLatency
-                  << ". AvgMinLatency (old): " << avgMinLatency << std::endl;
+        std::cout << "Finished map " << totalMaps - 1 << ". AvgMinLatency (new): ";
+        std::cout << newAvgMinLatency << ". AvgMinLatency (old): " << avgMinLatency << std::endl;
 
-        bool changed = (avgMinLatency != newAvgMinLatency) ||
-                       (avgInterval != newAvgInterval);
+        bool changed = (avgMinLatency != newAvgMinLatency) || (avgInterval != newAvgInterval);
 
         avgMinLatency = newAvgMinLatency;
         avgInterval = newAvgInterval;
@@ -236,43 +204,35 @@ std::optional<std::tuple<size_t, size_t>> runToStableState(
     return std::make_tuple(avgMinLatency, avgInterval);
 }
 
-template <typename T>
+template<typename T>
 std::string toBinaryString(T data) {
     return std::bitset<sizeof(T) * 8>(data).to_string();
 }
 
-std::tuple<size_t, size_t> determineStartDepth(
-    xsi::Design &top, Clock &clk, std::vector<S_AXIS_Control> &istreams,
-    std::vector<M_AXIS_Control> &ostreams,
-    std::deque<size_t> &inflightTimestamps, size_t &iters,
-    std::vector<Port *> &fifo_ports) {
+std::tuple<size_t, size_t> determineStartDepth(xsi::Design& top, Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, std::deque<size_t>& inflightTimestamps, size_t& iters,
+                                               std::vector<Port*>& fifo_ports) {
     // int start_depth = 3612672;
     int start_depth = 64;
     int last_start_depth = start_depth;
     uint32_t last_interval = 0;
 
     while (true) {
-        std::cout << "Starting testing start_depth: " << start_depth
-                  << std::endl;
+        std::cout << "Starting testing start_depth: " << start_depth << std::endl;
 
         reset(top);
         auto two_bin = toBinaryString(static_cast<uint32_t>(start_depth));
-        for (auto &p : fifo_ports) {
+        for (auto& p : fifo_ports) {
             p->set_binstr(two_bin).write_back();
         }
         clk.toggle_clk();
 
-        if (auto ret = runToStableState(clk, istreams, ostreams,
-                                        inflightTimestamps, iters);
-            ret) {
-            auto &&[latency, interval] = *ret;
+        if (auto ret = runToStableState(clk, istreams, ostreams, inflightTimestamps, iters); ret) {
+            auto&& [latency, interval] = *ret;
             if (interval > 0 && interval == last_interval) {
                 start_depth = last_start_depth;
                 break;
             }
-            std::cout << "Testing start_depth: " << start_depth
-                      << ", latency: " << latency << ", interval: " << interval
-                      << std::endl;
+            std::cout << "Testing start_depth: " << start_depth << ", latency: " << latency << ", interval: " << interval << std::endl;
             last_interval = interval;
         }
         break;
@@ -281,8 +241,7 @@ std::tuple<size_t, size_t> determineStartDepth(
         start_depth *= 2;  // Double the start depth
 
         if (start_depth > 1000000) {
-            throw std::runtime_error(
-                "Couldn't find a working start depth, please set manually!");
+            throw std::runtime_error("Couldn't find a working start depth, please set manually!");
         }
     }
 
@@ -305,7 +264,7 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
     while (!std::all_of(minimizedFifo.begin(), minimizedFifo.end(),
                         [](bool v) { return v; })) {
         std::cout << "Current FIFO sizes: ";
-        for (auto &&elem : fifo_sizes) {
+        for (auto&& elem : fifo_sizes) {
             std::cout << elem << " ";
         }
         std::cout << std::endl;
@@ -320,10 +279,8 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
                 // Set the new fifo depth in the actual component
                 fifo_depths[startIndex + i]->set_binstr(toBinaryString(fifo_sizes[i]));
 
-                if (auto ret = runToStableState(clk, istreams, ostreams,
-                                                inflightTimestamps, iters);
-                    ret) {
-                    auto &&[latency, currInterval] = *ret;
+                if (auto ret = runToStableState(clk, istreams, ostreams, inflightTimestamps, iters); ret) {
+                    auto&& [latency, currInterval] = *ret;
                     if (currInterval == 0 || currInterval > interval) {
                         // Performance drop
                         // Revert depth reduction and mark FIFO as minimized
@@ -351,10 +308,10 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
 
 int main() {
     int world_size = 1;
+    int rank = 0;
 #ifdef MPI_FOUND
     MPI_Init(NULL, NULL);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     if (rank == 0) {
         std::cout << "Running on " << world_size << " ranks." << std::endl;
@@ -369,59 +326,46 @@ int main() {
         top.trace_all();
     }
 
-#ifdef MPI_FOUND
-    if (rank == 0)
-#endif
-    {
-        for (auto &&port : top.ports()) {
-            std::cout << "Port Name: " << port.name()
-                      << ", Direction: " << (port.dir()) << std::endl;
+    if (rank == 0) {
+        for (auto&& port : top.ports()) {
+            std::cout << "Port Name: " << port.name() << ", Direction: " << (port.dir()) << std::endl;
         }
     }
 
     // Simulation Report Statistics
     size_t iters = 0;
     std::deque<size_t> inflightTimestamps;
-    inflightTimestamps.push_front(
-        0);  // Insert start timestamp of first element
+    inflightTimestamps.push_front(0);  // Insert start timestamp of first element
 
     // Find I/O Streams and initialize their Status
     std::vector<S_AXIS_Control> istreams;
-    for (auto &&elem : istream_descs) {
+    for (auto&& elem : istream_descs) {
         istreams.emplace_back(top, elem.job_size, elem.job_ticks, elem.name);
     }
     std::vector<M_AXIS_Control> ostreams;
-    for (auto &&elem : ostream_descs) {
+    for (auto&& elem : ostream_descs) {
         ostreams.emplace_back(top, elem.job_size, elem.name);
     }
 
     // Find Global Control & Run Startup Sequence
-    Clock &clk = Clock::initClock(top);
+    Clock& clk = Clock::initClock(top);
     clearPorts(top);
     reset(top);
 
     // Start Stream Feed and Capture
-#ifdef MPI_FOUND
-    if (rank == 0)
-#endif
-    {
-        std::cout << "Starting data feed with idle-output timeout of "
-                  << max_iters << " cycles ...\n"
-                  << std::endl;
+    if (rank == 0) {
+        std::cout << "Starting data feed with idle-output timeout of " << max_iters << " cycles ...\n" << std::endl;
     }
 
     // Make all Inputs valid & all Outputs ready
-    for (auto &&s : istreams) {
+    for (auto&& s : istreams) {
         s.valid();
     }
-    for (auto &&s : ostreams) {
+    for (auto&& s : ostreams) {
         s.ready();
     }
 
-#ifdef MPI_FOUND
-    if (rank == 0)
-#endif
-    {
+    if (rank == 0) {
         if (istreams.size() > 1 || ostreams.size() > 1) {
             throw std::runtime_error(
                 "This simulation is not designed to run with "
@@ -429,8 +373,8 @@ int main() {
         }
     }
 
-    std::vector<xsi::Port *> fifo_ports;
-    for (xsi::Port &p : top.ports()) {
+    std::vector<xsi::Port*> fifo_ports;
+    for (xsi::Port& p : top.ports()) {
         if (std::string(p.name()).find("depth") != std::string::npos) {
             fifo_ports.emplace_back(&p);
         }
@@ -438,19 +382,14 @@ int main() {
 
     size_t start_depth = 0;
     size_t interval = 0;
-#ifdef MPI_FOUND
-    if (rank == 0)
-#endif
-    {
+    if (rank == 0) {
         std::cout << "\nDetermining start depth..." << std::endl;
-        auto [_start_depth, _interval] =
-            determineStartDepth(top, clk, istreams, ostreams,
-                                inflightTimestamps, iters, fifo_ports);
+        auto [_start_depth, _interval] = determineStartDepth(top, clk, istreams, ostreams, inflightTimestamps, iters, fifo_ports);
         start_depth = _start_depth;
         interval = _interval;
     }
 
-    // Initial FIFO depth
+    // Set FIFO depth
     unsigned int depth = static_cast<unsigned int>(start_depth);
 
     // Which fifos this process must size
@@ -471,22 +410,17 @@ int main() {
     // Synchronize and send depth to all other ranks
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Bcast(&depth, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
-
-    if (rank == 0)
 #endif
 
-    {
+    if (rank == 0) {
         std::cout << "\nSizing iteratively..." << std::endl;
     }
     auto fifoSizes =
         sizeIteratively(depth, interval, clk, top, fifo_ports, istreams,
                         ostreams, inflightTimestamps, iters, start_index, end_index);
 
-#ifdef MPI_FOUND
-    if (rank == 0)
-#endif
-    {
-        for (auto &&elem : fifoSizes) {
+    if (rank == 0) {
+        for (auto&& elem : fifoSizes) {
             std::cout << "FIFO size: " << elem << std::endl;
         }
     }
