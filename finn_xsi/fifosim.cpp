@@ -393,26 +393,27 @@ int main() {
 
     size_t start_depth = 0;
     size_t interval = 0;
+#ifndef FIFO_START_SIZE
     if (rank == 0) {
         std::cout << "\nDetermining start depth..." << std::endl;
         auto [_start_depth, _interval] = determineStartDepth(top, clk, istreams, ostreams, inflightTimestamps, iters, fifo_ports);
         start_depth = _start_depth;
         interval = _interval;
     }
-
-    // Set FIFO depth
-    unsigned int depth = static_cast<unsigned int>(start_depth);
+#else
+    start_depth = FIFO_START_SIZE;
+#endif
 
     // Which fifos this process must size
     size_t start_index = 0;
     size_t end_index = fifo_ports.size() - 1;
 
     // Split work across ranks
-    size_t fifos_per_rank = static_cast<size_t>(fifo_ports.size() / world_size) + 1;
-    start_index = rank * fifos_per_rank;
+    size_t fifos_per_rank = fifo_ports.size() / static_cast<size_t>(world_size) + 1;
+    start_index = static_cast<size_t>(rank) * fifos_per_rank;
     end_index = std::clamp(
-        (rank + 1) * fifos_per_rank - 1,
-        0,
+        (static_cast<size_t>(rank) + 1) * fifos_per_rank - 1,
+        0lu,
         fifo_ports.size() - 1
     );
 
@@ -422,7 +423,7 @@ int main() {
 #ifdef MPI_FOUND
     // Synchronize and send depth to all other ranks
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(&depth, 1, MPI_UNSIGNED, MPI_ROOT_RANK, MPI_COMM_WORLD);
+    MPI_Bcast(&start_depth, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
 #endif
 
     if (rank == 0) {
@@ -431,7 +432,7 @@ int main() {
 
     // Size assigned FIFOs iteratively
     auto fifoSizes =
-        sizeIteratively(depth, interval, clk, top, fifo_ports, istreams,
+        sizeIteratively(start_depth, interval, clk, top, fifo_ports, istreams,
                         ostreams, inflightTimestamps, iters, start_index, end_index);
 
     // Collect all FIFO sizes together into allSizes
@@ -440,7 +441,7 @@ int main() {
     // Gather all FIFO sizes from all ranks
     #ifdef MPI_FOUND
         // Gather how many FIFOs each rank worked on (might vary, at minimum the last rank might not be filled completely)
-        std::vector<size_t> elementsToGather(world_size);
+        std::vector<int> elementsToGather(static_cast<size_t>(world_size));
         MPI_Gather(
             &elementsInRank, 1, MPI_UNSIGNED_LONG,
             &elementsToGather[0], 1, MPI_UNSIGNED_LONG,
@@ -448,11 +449,11 @@ int main() {
         );
 
         // Gather the FIFO sizes themselves
-        std::vector<unsigned int> displs(fifo_ports.size());
+        std::vector<int> displs(static_cast<size_t>(world_size));
         std::exclusive_scan(std::begin(elementsToGather), std::end(elementsToGather), std::begin(displs), 0);
         MPI_Gatherv(
-            &fifoSizes[0], fifoSizes.size(), MPI_UNSIGNED_LONG,
-            &allSizes[0], elementsToGather, &displs[0], MPI_UNSIGNED_LONG,
+            &fifoSizes[0], static_cast<int>(fifoSizes.size()), MPI_UNSIGNED_LONG,
+            &allSizes[0], &elementsToGather[0], &displs[0], MPI_UNSIGNED_LONG,
             MPI_ROOT_RANK, MPI_COMM_WORLD
         );
     #else
