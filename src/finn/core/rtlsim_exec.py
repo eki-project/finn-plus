@@ -35,6 +35,7 @@ except ModuleNotFoundError as e:
 import numpy as np
 import os
 import shlex
+import sys
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from subprocess import CalledProcessError
@@ -272,12 +273,12 @@ def rtlsim_exec_cppxsi(
         f.write(fifsom_config_template)
 
     # Building the whole simulation
-    build_cmd = shlex.split(f"cmake -DRTLSIM_WRAPPER_DIR={sim_base} -S . -B {sim_base}")
+    build_cmd = shlex.split(f"{sys.executable} -m cmake -S {finnxsi_dir} -B {sim_base}")
     log.info(f"Running cmake on RTLSIM Wrapper in {sim_base}")
     env = {}
     env.update(os.environ)
     try:
-        launch_process_helper(build_cmd, cwd=finnxsi_dir, print_stdout=False, proc_env=env)
+        launch_process_helper(build_cmd, cwd=finnxsi_dir, print_stdout=True, proc_env=env)
     except CalledProcessError as e:
         raise FINNError(f"Failed to run cmake in {sim_base}") from e
 

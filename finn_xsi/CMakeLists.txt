@@ -10,6 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 message(STATUS "Using C++ Standard ${CMAKE_CXX_STANDARD}")
 SET(CMAKE_COLOR_MAKEFILE ON)
 
+message(STATUS "CMake cwd: ${CMAKE_CURRENT_SOURCE_DIR}")
+
 # INCLUDES
 
 # OPENMPI
@@ -85,15 +87,15 @@ configure_file(simulation_config.h.in simulation_config.h)
 # Main
 add_executable(FIFO_Simulation fifosim.cpp xsi_finn.cpp clock/clock.cpp axis_control/axis_control.cpp axi_control/s_axi_control.cpp)
 
-# Get the rtlsim wrapper directory
-if(NOT DEFINED RTLSIM_WRAPPER_DIR)
-    message(FATAL_ERROR "Pass or define RTLSIM_WRAPPER_DIR pointing to the FINN generated wrapper directory!")
-else()
-    message(STATUS "RTLSIM Wrapper directory set to ${RTLSIM_WRAPPER_DIR}")
-endif()
+# # Get the rtlsim wrapper directory
+# if(NOT DEFINED RTLSIM_WRAPPER_DIR)
+#     message(FATAL_ERROR "Pass or define RTLSIM_WRAPPER_DIR pointing to the FINN generated wrapper directory!")
+# else()
+#     message(STATUS "RTLSIM Wrapper directory set to ${RTLSIM_WRAPPER_DIR}")
+# endif()
 
 # Include the rtlsim wrapper directory itself
-target_include_directories(FIFO_Simulation PUBLIC "${RTLSIM_WRAPPER_DIR}")
+target_include_directories(FIFO_Simulation PUBLIC "${CMAKE_BINARY_DIR}")
 
 # Add xsim includes
 target_include_directories(FIFO_Simulation PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include")
