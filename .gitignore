@@ -108,3 +108,4 @@ bench_output
 bench_save
 bench_work
 /models
+finn_xsi/simulation_config.h

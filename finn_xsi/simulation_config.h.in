@@ -1,0 +1,5 @@
+#cmakedefine MPI_FOUND
+
+// If set, use this as the FIFO start size and directly
+// skip to iterative sizing
+#cmakedefine FIFO_START_SIZE ${FIFO_START_SIZE}
