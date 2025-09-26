@@ -78,6 +78,7 @@ docs/_rst/*
 docs/_build/*
 cover/*
 MANIFEST
+/finn_xsi/build/
 
 # Per-project virtualenvs
 .venv*/

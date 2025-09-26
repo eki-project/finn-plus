@@ -1,13 +1,18 @@
 cmake_minimum_required(VERSION 3.10)
 project(FIFO_Simulation)
 
-# Require C++17
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# Additional flags
-set(CMAKE_CXX_FLAGS "-Wall -Wextra -O3")
+# Require C++20
+set(CMAKE_CXX_EXTENSIONS ON)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+message(STATUS "Using C++ Standard ${CMAKE_CXX_STANDARD}")
+SET(CMAKE_COLOR_MAKEFILE ON)
 
+# INCLUDES
+
+# OPENMPI
 # Check if OpenMPI was found
 find_package(MPI)
 if (MPI_FOUND)
@@ -15,6 +20,59 @@ if (MPI_FOUND)
 else()
     message("MPI not found. Proceeding normally.")
 endif()
+
+#Threads
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
+#OpenMP
+find_package(OpenMP REQUIRED)
+
+#Compiler Options
+add_library(fifosim_options INTERFACE)
+add_library(fifosim::options ALIAS fifosim_options)
+
+OPTION(FIFOSIM_ENABLE_ALLOPT "Enable all optimizations" ON)
+if(${FIFOSIM_ENABLE_ALLOPT})
+  message(STATUS "All optimizations are enabled")
+  target_compile_options(
+    fifosim_options
+    INTERFACE -Ofast -ffast-math -march=native -mtune=native -fstack-protector-strong -fopenmp -ffunction-sections -fdata-sections -pipe -funroll-loops -shared -fPIC)
+endif()
+
+### Enable compiler warnings
+option(FIFOSIM_ENABLE_WARNINGS "Enable warnings" ON)
+if (FIFOSIM_ENABLE_WARNINGS)
+  include(cmake/CompilerWarnings.cmake)
+  fifosim_set_project_warnings(
+    fifosim_options
+    OFF
+    ""
+    ""
+    ""
+    "")
+endif (FIFOSIM_ENABLE_WARNINGS)
+
+#
+# Create options for including cmake files from the cmake folder with a bit of output.
+#
+macro(check_include)
+  if(NOT ${ARGC} EQUAL 3)
+    message(FATAL_ERROR "Call to 'check_include' with ${ARGC} arguments instead of 3")
+  endif()
+  OPTION(${ARGV0} "Enable ${ARGV0}" ON)
+  if (${ARGV0})
+    message(STATUS "${ARGV1}: enabled")
+    include(cmake/${ARGV2})
+  else()
+    message(STATUS "${ARGV1}: disabled")
+  endif()
+endmacro()
+
+message(STATUS "Checks:")
+list(APPEND CMAKE_MESSAGE_INDENT "  ") #indent +1
+check_include(FIFOSIM_IPO          "InterproceduralOptimization" InterproceduralOptimization.cmake)
+list(POP_BACK CMAKE_MESSAGE_INDENT)    #indent -1
 
 # Clear cache to set a new starting fifo size
 if(FIFO_START_SIZE)
@@ -41,7 +99,7 @@ target_include_directories(FIFO_Simulation PUBLIC "${RTLSIM_WRAPPER_DIR}")
 target_include_directories(FIFO_Simulation PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include")
 
 # Link MPI if available
-target_link_libraries(FIFO_Simulation MPI::MPI_CXX)
+target_link_libraries(FIFO_Simulation fifosim::options MPI::MPI_CXX Threads::Threads OpenMP::OpenMP_CXX)
 
 # Link libraries
 target_link_libraries(FIFO_Simulation -ldl)
