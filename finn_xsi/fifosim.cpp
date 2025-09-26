@@ -295,11 +295,13 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
                                     std::vector<S_AXIS_Control> &istreams,
                                     std::vector<M_AXIS_Control> &ostreams,
                                     std::deque<size_t> &inflightTimestamps,
-                                    size_t &iters) {
-    std::vector<bool> minimizedFifo(fifo_depths.size(), false);
-    std::vector<size_t> fifo_sizes(fifo_depths.size(), start_size);
+                                    size_t &iters,
+                                size_t startIndex,
+                                size_t endIndex) {
+    auto totalFifos = endIndex - startIndex + 1;
+    std::vector<bool> minimizedFifo(totalFifos, false);
+    std::vector<size_t> fifo_sizes(totalFifos, start_size);
 
-    std::cout << "Total FIFO sizes: " << fifo_sizes.size() << std::endl;
     while (!std::all_of(minimizedFifo.begin(), minimizedFifo.end(),
                         [](bool v) { return v; })) {
         std::cout << "Current FIFO sizes: ";
@@ -307,16 +309,16 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
             std::cout << elem << " ";
         }
         std::cout << std::endl;
-        for (size_t i = 0; i < fifo_depths.size(); ++i) {
+        for (size_t i = 0; i < totalFifos; ++i) {
             if (!minimizedFifo[i]) {
                 // Try to minimize this FIFO
                 size_t oldFifoSize = fifo_sizes[i];
                 fifo_sizes[i] = std::max(oldFifoSize / 2, size_t(1));
 
                 reset(top);
-                for (auto &p : fifo_depths) {
-                    p->set_binstr(toBinaryString<uint32_t>(fifo_sizes[i]));
-                }
+
+                // Set the new fifo depth in the actual component
+                fifo_depths[startIndex + i]->set_binstr(toBinaryString(fifo_sizes[i]));
 
                 if (auto ret = runToStableState(clk, istreams, ostreams,
                                                 inflightTimestamps, iters);
@@ -348,9 +350,9 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
 }
 
 int main() {
+    int world_size = 1;
 #ifdef MPI_FOUND
     MPI_Init(NULL, NULL);
-    int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -434,8 +436,8 @@ int main() {
         }
     }
 
-    size_t start_depth;
-    size_t interval;
+    size_t start_depth = 0;
+    size_t interval = 0;
 #ifdef MPI_FOUND
     if (rank == 0)
 #endif
@@ -448,10 +450,37 @@ int main() {
         interval = _interval;
     }
 
-    std::cout << "\nSizing iteratively..." << std::endl;
+    // Initial FIFO depth
+    unsigned int depth = static_cast<unsigned int>(start_depth);
+
+    // Which fifos this process must size
+    size_t start_index = 0;
+    size_t end_index = fifo_ports.size() - 1;
+
+    // Split work across ranks
+    size_t fifos_per_rank = static_cast<size_t>(fifo_ports.size() / world_size) + 1;
+    start_index = rank * fifos_per_rank;
+    end_index = std::clamp(
+        (rank + 1) * fifos_per_rank - 1,
+        0,
+        fifo_ports.size() - 1
+    );
+    std::cout << "Rank " << rank << " sizing " << end_index-start_index+1 << " FIFOs." << std::endl;
+
+#ifdef MPI_FOUND
+    // Synchronize and send depth to all other ranks
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Bcast(&depth, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+
+    if (rank == 0)
+#endif
+
+    {
+        std::cout << "\nSizing iteratively..." << std::endl;
+    }
     auto fifoSizes =
-        sizeIteratively(start_depth, interval, clk, top, fifo_ports, istreams,
-                        ostreams, inflightTimestamps, iters);
+        sizeIteratively(depth, interval, clk, top, fifo_ports, istreams,
+                        ostreams, inflightTimestamps, iters, start_index, end_index);
 
 #ifdef MPI_FOUND
     if (rank == 0)
