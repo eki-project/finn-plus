@@ -315,11 +315,16 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval, size_t s
             std::cout << "Sizing Fifo " << i << "\n";
 
             reset(top);
-            size_t iters;
-
+            auto two_bin = toBinaryString(static_cast<uint32_t>(start_size));
+            for (auto&& p : fifo_ports) {
+                p.get().set_binstr(two_bin).write_back();
+            }
+            clk.toggle_clk();
             // Set the new fifo depth in the actual component
             fifo_ports[startIndex + i].get().set_binstr(toBinaryString(fifo_sizes[i]));
+            clk.toggle_clk();
 
+            size_t iters = 0;
             if (auto ret = runToStableState(clk, istreams, ostreams, iters); ret) {
                 auto&& currInterval = *ret;
                 std::cout << currInterval << "\n";
