@@ -18,12 +18,15 @@
 #include <vector>
 #include <tuple>
 #include <functional>
+#include <cstring>
 
 #include "axi_control/s_axi_control.h"
 #include "axis_control/axis_control.h"
 #include "clock/clock.h"
 #include "rtlsim_config.hpp"
-#include "xsi_finn.hpp"
+#include <Kernel.h>
+#include <Design.h>
+#include <Port.h>
 
 void clearPorts(xsi::Design &top) {
   // Clear all input ports

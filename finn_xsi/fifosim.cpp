@@ -1,3 +1,11 @@
+#include <AXIS_Control.h>
+#include <AXI_Control.h>
+#include <Clock.h>
+#include <Design.h>
+#include <Kernel.h>
+#include <Port.h>
+#include <SharedLibrary.h>
+
 #include <algorithm>
 #include <bitset>
 #include <chrono>
@@ -5,19 +13,15 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
-#include <optional>
 #include <numeric>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 
-#include "axi_control/s_axi_control.h"
-#include "axis_control/axis_control.h"
-#include "clock/clock.h"
 #include "rtlsim_config.hpp"
-#include "xsi_finn.hpp"
 
 // simulation_config.h contains info (Start size, MPI, etc,)
 #include "simulation_config.h"
@@ -26,8 +30,6 @@
 #endif
 
 #define MPI_ROOT_RANK 0
-
-using Port = xsi::Port;
 
 void clearPorts(xsi::Design& top) {
     // Clear all input ports
@@ -39,21 +41,16 @@ void clearPorts(xsi::Design& top) {
 }
 
 void reset(xsi::Design& top) {
-    xsi::Port* const rst_n = top.getPort("ap_rst_n");
+    xsi::Port& rst_n = top.getPort("ap_rst_n");
     Clock& clk = Clock::initClock(top);
-    if (!rst_n) {
-        std::cerr << "No reset port found in design." << std::endl;
-        return;
-    }
     // Reset all Inputs, Wait for Reset Period
-    rst_n->set(0).write_back();
-    if (rst_n) {
-        for (unsigned i = 0; i < 16; i++) {
-            clk.toggle_clk();
-        }
-        rst_n->set(1).write_back();
+    rst_n.set(0).write_back();
+    for (unsigned i = 0; i < 16; i++) {
+        clk.toggle_clk();
     }
+    rst_n.set(1).write_back();
 }
+
 
 // Helper function to process input streams with deferred writes
 void processInputStream(S_AXIS_Control& stream, size_t& iters, std::vector<std::reference_wrapper<xsi::Port>>& deferredWrites, std::deque<size_t>& inflightTimestamps) {
@@ -213,7 +210,7 @@ std::string toBinaryString(T data) {
 }
 
 std::tuple<size_t, size_t> determineStartDepth(xsi::Design& top, Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, std::deque<size_t>& inflightTimestamps, size_t& iters,
-                                               std::vector<Port*>& fifo_ports) {
+                                               std::vector<std::reference_wrapper<xsi::Port>>& fifo_ports) {
     // int start_depth = 3612672;
     int start_depth = 64;
     int last_start_depth = start_depth;
@@ -224,8 +221,8 @@ std::tuple<size_t, size_t> determineStartDepth(xsi::Design& top, Clock& clk, std
 
         reset(top);
         auto two_bin = toBinaryString(static_cast<uint32_t>(start_depth));
-        for (auto& p : fifo_ports) {
-            p->set_binstr(two_bin).write_back();
+        for (auto&& p : fifo_ports) {
+            p.get().set_binstr(two_bin).write_back();
         }
         clk.toggle_clk();
 
@@ -236,7 +233,7 @@ std::tuple<size_t, size_t> determineStartDepth(xsi::Design& top, Clock& clk, std
                 break;
             }
             std::cout << "Testing start_depth: " << start_depth << ", latency: " << latency << ", interval: " << interval << std::endl;
-            last_interval = interval;
+            last_interval = static_cast<uint32_t>(interval);
         }
         break;
 
@@ -251,21 +248,13 @@ std::tuple<size_t, size_t> determineStartDepth(xsi::Design& top, Clock& clk, std
     return std::make_tuple(start_depth, last_interval);
 }
 
-std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
-                                    Clock &clk, xsi::Design &top,
-                                    std::vector<Port *> &fifo_depths,
-                                    std::vector<S_AXIS_Control> &istreams,
-                                    std::vector<M_AXIS_Control> &ostreams,
-                                    std::deque<size_t> &inflightTimestamps,
-                                    size_t &iters,
-                                size_t startIndex,
-                                size_t endIndex) {
+std::vector<size_t> sizeIteratively(size_t start_size, size_t interval, Clock& clk, xsi::Design& top, std::vector<std::reference_wrapper<xsi::Port>>& fifo_depths, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams,
+                                    std::deque<size_t>& inflightTimestamps, size_t& iters, size_t startIndex, size_t endIndex) {
     auto totalFifos = endIndex - startIndex + 1;
     std::vector<bool> minimizedFifo(totalFifos, false);
     std::vector<size_t> fifo_sizes(totalFifos, start_size);
 
-    while (!std::all_of(minimizedFifo.begin(), minimizedFifo.end(),
-                        [](bool v) { return v; })) {
+    while (!std::all_of(minimizedFifo.begin(), minimizedFifo.end(), [](bool v) { return v; })) {
         std::cout << "Current FIFO sizes: ";
         for (auto&& elem : fifo_sizes) {
             std::cout << elem << " ";
@@ -280,7 +269,7 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
                 reset(top);
 
                 // Set the new fifo depth in the actual component
-                fifo_depths[startIndex + i]->set_binstr(toBinaryString(fifo_sizes[i]));
+                fifo_depths[startIndex + i].get().set_binstr(toBinaryString(fifo_sizes[i]));
 
                 if (auto ret = runToStableState(clk, istreams, ostreams, inflightTimestamps, iters); ret) {
                     auto&& [latency, currInterval] = *ret;
@@ -310,49 +299,53 @@ std::vector<size_t> sizeIteratively(size_t start_size, size_t interval,
 }
 
 struct simDesc {
+    xsi::Kernel kernel;
     xsi::Design top;
     std::vector<S_AXIS_Control> istreams;
     std::vector<M_AXIS_Control> ostreams;
-    std::vector<Port*> fifo_ports;
+    std::vector<std::reference_wrapper<xsi::Port>> fifo_ports;
     Clock& clk;
+
+    simDesc(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file)
+        : kernel(kernel_lib), top(kernel, design_lib, xsim_log_file, trace_file), clk(Clock::initClock(top)) {}
 };
 
-simDesc initDesign(const std::string& kernel_libname, const std::string& design_libname, const char* xsim_log_filename, const char* trace_filename) {
-    // Load Kernel and Design
-    xsi::Kernel kernel(kernel_libname);
-    xsi::Design top(kernel, design_libname, xsim_log_filename, trace_filename);
+simDesc initDesign(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file) {
+
+    simDesc desc(kernel_lib, design_lib, xsim_log_file, trace_file);
+
+    if (trace_file) {
+        // TODO make tracing more finer-grain if possible?
+        desc.top.trace_all();
+    }
 
     // Find I/O Streams and initialize their Status
-    std::vector<S_AXIS_Control> istreams;
     for (auto&& elem : istream_descs) {
-        istreams.emplace_back(top, elem.job_size, elem.job_ticks, elem.name);
+        desc.istreams.emplace_back(desc.top, elem.job_size, elem.job_ticks, elem.name);
     }
-    std::vector<M_AXIS_Control> ostreams;
     for (auto&& elem : ostream_descs) {
-        ostreams.emplace_back(top, elem.job_size, elem.name);
+        desc.ostreams.emplace_back(desc.top, elem.job_size, elem.name);
     }
 
     // Find Global Control & Run Startup Sequence
-    Clock& clk = Clock::initClock(top);
-    clearPorts(top);
-    reset(top);
+    clearPorts(desc.top);
+    reset(desc.top);
 
     // Make all Inputs valid & all Outputs ready
-    for (auto&& s : istreams) {
+    for (auto&& s : desc.istreams) {
         s.valid();
     }
-    for (auto&& s : ostreams) {
+    for (auto&& s : desc.ostreams) {
         s.ready();
     }
 
-    std::vector<xsi::Port*> fifo_ports;
-    for (xsi::Port& p : top.ports()) {
+    for (xsi::Port& p : desc.top.ports()) {
         if (std::string(p.name()).find("depth") != std::string::npos) {
-            fifo_ports.emplace_back(&p);
+            desc.fifo_ports.emplace_back(std::ref(p));
         }
     }
 
-    return {top, istreams, ostreams, fifo_ports, clk};
+    return desc;
 }
 
 int main() {
@@ -366,12 +359,7 @@ int main() {
         std::cout << "Running on " << world_size << " ranks." << std::endl;
     }
 #endif
-    auto [top, istreams, ostreams, fifo_ports, clk] = initDesign(kernel_libname, design_libname, xsim_log_filename, trace_filename);
-
-    if (trace_filename) {
-        // TODO make tracing more finer-grain if possible?
-        top.trace_all();
-    }
+    auto&& [kernel, top, istreams, ostreams, fifo_ports, clk] = initDesign(kernel_libname, design_libname, xsim_log_filename, trace_filename);
 
     if (rank == 0) {
         for (auto&& port : top.ports()) {
@@ -411,11 +399,7 @@ int main() {
     // Split work across ranks
     size_t fifos_per_rank = fifo_ports.size() / static_cast<size_t>(world_size) + 1;
     start_index = static_cast<size_t>(rank) * fifos_per_rank;
-    end_index = std::clamp(
-        (static_cast<size_t>(rank) + 1) * fifos_per_rank - 1,
-        0lu,
-        fifo_ports.size() - 1
-    );
+    end_index = std::clamp((static_cast<size_t>(rank) + 1) * fifos_per_rank - 1, 0lu, fifo_ports.size() - 1);
 
     size_t elementsInRank = end_index - start_index + 1;
     std::cout << "Rank " << rank << " sizing " << elementsInRank << " FIFOs." << std::endl;
@@ -431,34 +415,24 @@ int main() {
     }
 
     // Size assigned FIFOs iteratively
-    auto fifoSizes =
-        sizeIteratively(start_depth, interval, clk, top, fifo_ports, istreams,
-                        ostreams, inflightTimestamps, iters, start_index, end_index);
+    auto fifoSizes = sizeIteratively(start_depth, interval, clk, top, fifo_ports, istreams, ostreams, inflightTimestamps, iters, start_index, end_index);
 
     // Collect all FIFO sizes together into allSizes
     std::vector<size_t> allSizes(fifo_ports.size());
 
-    // Gather all FIFO sizes from all ranks
-    #ifdef MPI_FOUND
-        // Gather how many FIFOs each rank worked on (might vary, at minimum the last rank might not be filled completely)
-        std::vector<int> elementsToGather(static_cast<size_t>(world_size));
-        MPI_Gather(
-            &elementsInRank, 1, MPI_UNSIGNED_LONG,
-            &elementsToGather[0], 1, MPI_UNSIGNED_LONG,
-            MPI_ROOT_RANK, MPI_COMM_WORLD
-        );
+// Gather all FIFO sizes from all ranks
+#ifdef MPI_FOUND
+    // Gather how many FIFOs each rank worked on (might vary, at minimum the last rank might not be filled completely)
+    std::vector<int> elementsToGather(static_cast<size_t>(world_size));
+    MPI_Gather(&elementsInRank, 1, MPI_UNSIGNED_LONG, &elementsToGather[0], 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
 
-        // Gather the FIFO sizes themselves
-        std::vector<int> displs(static_cast<size_t>(world_size));
-        std::exclusive_scan(std::begin(elementsToGather), std::end(elementsToGather), std::begin(displs), 0);
-        MPI_Gatherv(
-            &fifoSizes[0], static_cast<int>(fifoSizes.size()), MPI_UNSIGNED_LONG,
-            &allSizes[0], &elementsToGather[0], &displs[0], MPI_UNSIGNED_LONG,
-            MPI_ROOT_RANK, MPI_COMM_WORLD
-        );
-    #else
-        allSizes = fifoSizes;
-    #endif
+    // Gather the FIFO sizes themselves
+    std::vector<int> displs(static_cast<size_t>(world_size));
+    std::exclusive_scan(std::begin(elementsToGather), std::end(elementsToGather), std::begin(displs), 0);
+    MPI_Gatherv(&fifoSizes[0], static_cast<int>(fifoSizes.size()), MPI_UNSIGNED_LONG, &allSizes[0], &elementsToGather[0], &displs[0], MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
+#else
+    allSizes = fifoSizes;
+#endif
 
     if (rank == 0) {
         for (auto elem : allSizes) {

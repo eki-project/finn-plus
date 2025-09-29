@@ -13,18 +13,18 @@ class Clock {
 
     Clock(Clock const&) = delete;
     Clock& operator=(Clock const&) = delete;
-public:
+
+     public:
     ~Clock() = default;
 
-    std::function<void(bool)>  cycle;
+    std::function<void(bool)> cycle;
 
-    static Clock& initClock(xsi::Design& design){
+    static Clock& initClock(xsi::Design& design) {
         static Clock clk(design);
         return clk;
     }
 
     void toggle_clk();
-
 };
 
 #endif /* CLOCK */

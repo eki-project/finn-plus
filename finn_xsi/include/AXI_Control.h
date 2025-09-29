@@ -1,27 +1,27 @@
-#ifndef S_AXI_CONTROL_H
-#define S_AXI_CONTROL_H
+#ifndef AXI_CONTROL
+#define AXI_CONTROL
 
 #include <cstdint>
 #include <string>
 
-//Fwd declarations
+// Fwd declarations
 namespace xsi {
     class Design;
     class Port;
-}
+}  // namespace xsi
 class Clock;
 
-class S_AXI_Control {
-public:
+class AXI_Control {
+     public:
     // Constructor/destructor
-    S_AXI_Control(xsi::Design& design, const std::string& axi_prefix = "s_axi_control_0_0_");
-    ~S_AXI_Control() = default;
+    AXI_Control(xsi::Design& design, const std::string& axi_prefix = "AXI_Control_0_0_");
+    ~AXI_Control() = default;
 
     // // Core register access functions
     void write_register(uint32_t addr, uint32_t data);
     uint32_t read_register(uint32_t addr);
 
-private:
+     private:
     // AXI interface prefix
     std::string prefix;
     xsi::Design& design;
@@ -37,4 +37,4 @@ private:
     bool chk_bool(const std::string& signal);
 };
 
-#endif // S_AXI_CONTROL_H
+#endif /* AXI_CONTROL */

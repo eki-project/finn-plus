@@ -39,7 +39,8 @@ if(${FIFOSIM_ENABLE_ALLOPT})
   message(STATUS "All optimizations are enabled")
   target_compile_options(
     fifosim_options
-    INTERFACE -Ofast -ffast-math -march=native -mtune=native -fstack-protector-strong -fopenmp -ffunction-sections -fdata-sections -pipe -funroll-loops -shared -fPIC)
+    INTERFACE -Ofast -ffast-math -march=native -mtune=native -fstack-protector-strong -fopenmp -ffunction-sections -fdata-sections -pipe -funroll-loops -shared -fPIC -g -fsanitize=undefined,address)
+  target_link_options(fifosim_options INTERFACE -fsanitize=undefined,address)
 endif()
 
 ### Enable compiler warnings
@@ -85,7 +86,8 @@ endif()
 configure_file(simulation_config.h.in simulation_config.h)
 
 # Main
-add_executable(FIFO_Simulation fifosim.cpp xsi_finn.cpp clock/clock.cpp axis_control/axis_control.cpp axi_control/s_axi_control.cpp)
+file(GLOB_RECURSE CORE_SRC src/*.cpp)
+add_executable(FIFO_Simulation fifosim.cpp ${CORE_SRC})
 
 # # Get the rtlsim wrapper directory
 # if(NOT DEFINED RTLSIM_WRAPPER_DIR)
@@ -99,6 +101,7 @@ target_include_directories(FIFO_Simulation PUBLIC "${CMAKE_BINARY_DIR}")
 
 # Add xsim includes
 target_include_directories(FIFO_Simulation PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include")
+target_include_directories(FIFO_Simulation PUBLIC "include")
 
 # Link MPI if available
 target_link_libraries(FIFO_Simulation fifosim::options MPI::MPI_CXX Threads::Threads OpenMP::OpenMP_CXX)
