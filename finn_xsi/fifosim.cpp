@@ -112,12 +112,14 @@ bool processOutputStream(M_AXIS_Control& stream, size_t& iters, std::deque<size_
     return true;
 }
 
-bool runForFeaturemaps(size_t featuremaps, Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, std::deque<size_t>& inflightTimestamps, size_t& iters, size_t initialCompletedMaps) {
+bool runForFeaturemaps(size_t featuremaps, Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, size_t& iters) {
     // Enter Simulation Loop and track Progress
     auto const begin = std::chrono::steady_clock::now();
     std::vector<std::reference_wrapper<xsi::Port>> to_write;
-    size_t completedMaps = initialCompletedMaps;
+    size_t completedMaps = 0;
     size_t timeout = 0;
+    std::deque<size_t> inflightTimestamps;
+    inflightTimestamps.push_front(0);
     while (true) {
         //-------------------------------------------------------------------
         // Clock down - then read signal updates from design
@@ -153,16 +155,16 @@ bool runForFeaturemaps(size_t featuremaps, Clock& clk, std::vector<S_AXIS_Contro
         ++iters;
 
         if (iters % 25000 == 0) {
-            std::cout << "Iteration: " << iters << ", Completed Maps: " << completedMaps << ", Inflight Timestamps Size: " << inflightTimestamps.size() << ", in "
+            std::cout << "Iteration: " << iters << ", Inflight Timestamps Size: " << inflightTimestamps.size() << ", in "
                       << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count() << "ms" << std::endl;
         }
 
         if (completedMaps == featuremaps) {
-            std::cout << "Completing " << featuremaps << " maps took " << std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - begin).count() << "s" << std::endl;
+            //std::cout << "Completing " << featuremaps << " maps took " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count() << "ms" << std::endl;
             break;
         }
         // Check for timeout
-        if (timeout > max_iters) {
+        if (timeout > max_iters*10) {
             return false;
         }
     }
@@ -171,131 +173,46 @@ bool runForFeaturemaps(size_t featuremaps, Clock& clk, std::vector<S_AXIS_Contro
 
 size_t computeMovingAverage(const size_t oldAvg, const size_t newValue, const size_t count) { return (oldAvg * (count - 1) + newValue) / count; }
 
-std::optional<std::tuple<size_t, size_t>> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, std::deque<size_t>& inflightTimestamps, size_t& iters) {
-    // size_t avgLatency = 0;
-    size_t avgMinLatency = 0;
+std::optional<size_t> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, size_t& iters) {
     size_t avgInterval = 0;
     size_t runs = 0;
     size_t totalMaps = 0;
 
+    size_t minimumMaps = 5;
+
+    //Warmup. Discard results, because empty pipeline
+    bool warmup = true;
+
     while (true) {
-        if (!runForFeaturemaps(1, clk, istreams, ostreams, inflightTimestamps, iters, totalMaps)) {
+        if (!runForFeaturemaps(1, clk, istreams, ostreams, iters)) {
             return std::nullopt;
         }
-        totalMaps++;
+        //Do one map as a warmup without calculating the avg to fill pipeline
+        if (warmup){
+            warmup = false;
+            continue;
+        }
 
-        size_t newAvgMinLatency = computeMovingAverage(avgMinLatency, ostreams[0].min_latency, ++runs);
-        size_t newAvgInterval = computeMovingAverage(avgInterval, ostreams[0].interval, runs);
+        size_t newAvgInterval = computeMovingAverage(avgInterval, ostreams[0].interval, ++runs);
 
-        std::cout << "Finished map " << totalMaps - 1 << ". AvgMinLatency (new): ";
-        std::cout << newAvgMinLatency << ". AvgMinLatency (old): " << avgMinLatency << std::endl;
+        std::cout << "Finished map " << totalMaps << ". avgInterval (new): "<< newAvgInterval << ". avgInterval (old): " << avgInterval << std::endl;
 
-        bool changed = (avgMinLatency != newAvgMinLatency) || (avgInterval != newAvgInterval);
+        bool notChanged = avgInterval == newAvgInterval;
 
-        avgMinLatency = newAvgMinLatency;
         avgInterval = newAvgInterval;
 
-        if (!changed) {
+        if (++totalMaps >= minimumMaps && notChanged) {
             break;
         }
     }
-    // Avg Latency and Interval are here equivalent to the output stream's
+    // Avg Interval here is equivalent to the output stream's
     // metrics, but easier to retrieve
-    return std::make_tuple(avgMinLatency, avgInterval);
+    return avgInterval;
 }
 
 template<typename T>
 std::string toBinaryString(T data) {
     return std::bitset<sizeof(T) * 8>(data).to_string();
-}
-
-std::tuple<size_t, size_t> determineStartDepth(xsi::Design& top, Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, std::deque<size_t>& inflightTimestamps, size_t& iters,
-                                               std::vector<std::reference_wrapper<xsi::Port>>& fifo_ports) {
-    // int start_depth = 3612672;
-    int start_depth = 64;
-    int last_start_depth = start_depth;
-    uint32_t last_interval = 0;
-
-    while (true) {
-        std::cout << "Starting testing start_depth: " << start_depth << std::endl;
-
-        reset(top);
-        auto two_bin = toBinaryString(static_cast<uint32_t>(start_depth));
-        for (auto&& p : fifo_ports) {
-            p.get().set_binstr(two_bin).write_back();
-        }
-        clk.toggle_clk();
-
-        if (auto ret = runToStableState(clk, istreams, ostreams, inflightTimestamps, iters); ret) {
-            auto&& [latency, interval] = *ret;
-            if (interval > 0 && interval == last_interval) {
-                start_depth = last_start_depth;
-                break;
-            }
-            std::cout << "Testing start_depth: " << start_depth << ", latency: " << latency << ", interval: " << interval << std::endl;
-            last_interval = static_cast<uint32_t>(interval);
-        }
-        break;
-
-        last_start_depth = start_depth;
-        start_depth *= 2;  // Double the start depth
-
-        if (start_depth > 1000000) {
-            throw std::runtime_error("Couldn't find a working start depth, please set manually!");
-        }
-    }
-
-    return std::make_tuple(start_depth, last_interval);
-}
-
-std::vector<size_t> sizeIteratively(size_t start_size, size_t interval, Clock& clk, xsi::Design& top, std::vector<std::reference_wrapper<xsi::Port>>& fifo_depths, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams,
-                                    std::deque<size_t>& inflightTimestamps, size_t& iters, size_t startIndex, size_t endIndex) {
-    auto totalFifos = endIndex - startIndex + 1;
-    std::vector<bool> minimizedFifo(totalFifos, false);
-    std::vector<size_t> fifo_sizes(totalFifos, start_size);
-
-    while (!std::all_of(minimizedFifo.begin(), minimizedFifo.end(), [](bool v) { return v; })) {
-        std::cout << "Current FIFO sizes: ";
-        for (auto&& elem : fifo_sizes) {
-            std::cout << elem << " ";
-        }
-        std::cout << std::endl;
-        for (size_t i = 0; i < totalFifos; ++i) {
-            if (!minimizedFifo[i]) {
-                // Try to minimize this FIFO
-                size_t oldFifoSize = fifo_sizes[i];
-                fifo_sizes[i] = std::max(oldFifoSize / 2, size_t(1));
-
-                reset(top);
-
-                // Set the new fifo depth in the actual component
-                fifo_depths[startIndex + i].get().set_binstr(toBinaryString(fifo_sizes[i]));
-
-                if (auto ret = runToStableState(clk, istreams, ostreams, inflightTimestamps, iters); ret) {
-                    auto&& [latency, currInterval] = *ret;
-                    if (currInterval == 0 || currInterval > interval) {
-                        // Performance drop
-                        // Revert depth reduction and mark FIFO as minimized
-                        fifo_sizes[i] = oldFifoSize;
-                        minimizedFifo[i] = true;
-                    }
-                } else {
-                    // Timeout
-                    // Revert depth reduction and mark FIFO as minimized
-                    fifo_sizes[i] = oldFifoSize;
-                    minimizedFifo[i] = true;
-                }
-
-                if (fifo_sizes[i] == 1) {
-                    // Minimum size reached
-                    minimizedFifo[i] = true;
-                }
-            }
-        }
-        std::cout << "\n";
-    }
-
-    return fifo_sizes;
 }
 
 struct simDesc {
@@ -306,12 +223,10 @@ struct simDesc {
     std::vector<std::reference_wrapper<xsi::Port>> fifo_ports;
     Clock& clk;
 
-    simDesc(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file)
-        : kernel(kernel_lib), top(kernel, design_lib, xsim_log_file, trace_file), clk(Clock::initClock(top)) {}
+    simDesc(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file) : kernel(kernel_lib), top(kernel, design_lib, xsim_log_file, trace_file), clk(Clock::initClock(top)) {}
 };
 
 simDesc initDesign(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file) {
-
     simDesc desc(kernel_lib, design_lib, xsim_log_file, trace_file);
 
     if (trace_file) {
@@ -348,6 +263,89 @@ simDesc initDesign(const std::string& kernel_lib, const std::string& design_lib,
     return desc;
 }
 
+std::tuple<size_t, size_t> determineStartDepth(xsi::Design& top, Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, size_t& iters, std::vector<std::reference_wrapper<xsi::Port>>& fifo_ports) {
+    int start_depth = 128;
+    int last_start_depth = start_depth;
+    uint32_t last_interval = 0;
+
+    while (true) {
+        std::cout << "Starting testing start_depth: " << start_depth << std::endl;
+
+        reset(top);
+        auto two_bin = toBinaryString(static_cast<uint32_t>(start_depth));
+        for (auto&& p : fifo_ports) {
+            p.get().set_binstr(two_bin).write_back();
+        }
+        clk.toggle_clk();
+
+        if (auto ret = runToStableState(clk, istreams, ostreams, iters); ret) {
+            auto&& interval = *ret;
+            if (interval > 0 && interval == last_interval) {
+                start_depth = last_start_depth;
+                break;
+            }
+            std::cout << "Testing start_depth: " << start_depth << ", interval: " << interval << std::endl;
+            last_interval = static_cast<uint32_t>(interval);
+        }
+
+        last_start_depth = start_depth;
+        start_depth *= 2;  // Double the start depth
+
+        if (start_depth > 1000000) {
+            throw std::runtime_error("Couldn't find a working start depth, please set manually!");
+        }
+    }
+
+    return std::make_tuple(start_depth, last_interval);
+}
+
+std::vector<size_t> sizeIteratively(size_t start_size, size_t interval, size_t startIndex, size_t endIndex, const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file) {
+    auto totalFifos = endIndex - startIndex + 1;
+    std::vector<size_t> fifo_sizes(totalFifos, start_size);
+
+    for (size_t i = 0; i < totalFifos; ++i) {
+
+        auto&& [kernel, top, istreams, ostreams, fifo_ports, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
+
+        while (true) {  // do until fifo minimized
+            // Try to minimize this FIFO
+            size_t oldFifoSize = fifo_sizes[i];
+            fifo_sizes[i] = std::max(oldFifoSize / 2, size_t(1));
+
+            std::cout << "Sizing Fifo " << i << "\n";
+
+            reset(top);
+            size_t iters;
+
+            // Set the new fifo depth in the actual component
+            fifo_ports[startIndex + i].get().set_binstr(toBinaryString(fifo_sizes[i]));
+
+            if (auto ret = runToStableState(clk, istreams, ostreams, iters); ret) {
+                auto&& currInterval = *ret;
+                std::cout << currInterval << "\n";
+                std::cout << interval << "\n";
+                if (currInterval == 0 || currInterval > interval) {
+                    // Performance drop
+                    // Revert depth reduction and mark FIFO as minimized
+                    fifo_sizes[i] = oldFifoSize;
+                    break;
+                }
+            } else {
+                // Timeout
+                // Revert depth reduction and mark FIFO as minimized
+                fifo_sizes[i] = oldFifoSize;
+                break;
+            }
+
+            if (fifo_sizes[i] == 1) {
+                // Minimum size reached
+                break;
+            }
+        }
+    }
+    return fifo_sizes;
+}
+
 int main() {
     int world_size = 1;
     int rank = 0;
@@ -376,20 +374,20 @@ int main() {
 
     // Simulation Report Statistics
     size_t iters = 0;
-    std::deque<size_t> inflightTimestamps;
-    inflightTimestamps.push_front(0);  // Insert start timestamp of first element
 
     size_t start_depth = 0;
     size_t interval = 0;
 #ifndef FIFO_START_SIZE
     if (rank == 0) {
         std::cout << "\nDetermining start depth..." << std::endl;
-        auto [_start_depth, _interval] = determineStartDepth(top, clk, istreams, ostreams, inflightTimestamps, iters, fifo_ports);
+        auto [_start_depth, _interval] = determineStartDepth(top, clk, istreams, ostreams, iters, fifo_ports);
         start_depth = _start_depth;
+        std::cout << "Interval: " << _interval << "\n";
         interval = _interval;
     }
 #else
     start_depth = FIFO_START_SIZE;
+    interval = ???;
 #endif
 
     // Which fifos this process must size
@@ -415,7 +413,7 @@ int main() {
     }
 
     // Size assigned FIFOs iteratively
-    auto fifoSizes = sizeIteratively(start_depth, interval, clk, top, fifo_ports, istreams, ostreams, inflightTimestamps, iters, start_index, end_index);
+    auto fifoSizes = sizeIteratively(start_depth, interval, start_index, end_index, kernel_libname, design_libname, xsim_log_filename, trace_filename);
 
     // Collect all FIFO sizes together into allSizes
     std::vector<size_t> allSizes(fifo_ports.size());
