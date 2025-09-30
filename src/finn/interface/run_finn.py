@@ -310,7 +310,7 @@ def bench(bench_config: str, dependency_path: str, num_workers: int, build_path:
     console = Console()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    prepare_finn(dep_path, Path(), build_dir, num_workers)
+    prepare_finn(dep_path, None, Path(), build_dir, num_workers)
     console.rule("RUNNING BENCHMARK")
 
     # Late import because we need prepare_finn to setup remaining dependencies first
@@ -343,7 +343,7 @@ def test(
     console = Console()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    prepare_finn(dep_path, Path(), build_dir, num_workers, is_test_run=True)
+    prepare_finn(dep_path, None, Path(), build_dir, num_workers, is_test_run=True)
     status(f"Using {num_test_workers} test workers")
     console.rule("RUNNING TESTS")
     run_test(variant, num_test_workers)
@@ -364,7 +364,7 @@ def deps() -> None:
 )
 def update(path: str) -> None:
     dep_path = Path(path).expanduser() if path != "" else None
-    prepare_finn(dep_path, Path(), None, 1)
+    prepare_finn(deps=dep_path, cache_path=None, flow_config=Path(), build_dir=None, num_workers=1)
 
 
 @click.group(help="Manage FINN settings")
