@@ -206,7 +206,7 @@ class bench:
         # TODO: check OMX synth strategy again!
         cfg.vitis_opt_strategy = build_cfg.VitisOptStrategy.PERFORMANCE_BEST
         cfg.verbose = True
-        cfg.console_log_level = "ERROR"
+        cfg.console_log_level = build_cfg.LogLevel.ERROR
         cfg.enable_build_pdb_debug = False
         cfg.enable_exception_snapshots = True
         # cfg.stitched_ip_gen_dcp = False # only needed for further manual integration
@@ -220,9 +220,14 @@ class bench:
 
         # Overwrite build config settings with run-specific YAML build definition
         # TODO: warn/error if there are unrecognized options set?
-        for key in self.params:
-            if hasattr(cfg, key):
-                setattr(cfg, key, self.params[key])
+        valid_params = {k: v for k, v in self.params.items() if hasattr(cfg, k)}
+        if valid_params:
+            # Use DataflowBuildConfig's from_dict method which handles enum conversion automatically
+            updated_cfg = DataflowBuildConfig.from_dict(valid_params)
+
+            # Only apply values that were actually in the original params (not defaults)
+            for param_key in valid_params.keys():
+                setattr(cfg, param_key, getattr(updated_cfg, param_key))
 
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?
