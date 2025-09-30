@@ -1,0 +1,61 @@
+git_deps:
+    finn-experimental:
+        url: "https://github.com/Xilinx/finn-experimental.git"
+        commit: "0724be21111a21f0d81a072fccc1c446e053f851"
+        pip_install: False
+    brevitas:
+        url: "https://github.com/iksnagreb/brevitas.git"
+        commit: "003f9f4070c20639790c7b406a28612a089fc502"
+        pip_install: True
+    qonnx:
+        url: "https://github.com/fpjentzsch/qonnx.git"
+        commit: "fab7dca2e1734cf8767fa3f6161f674aaa26a402"
+        pip_install: True
+    dataset_loading:
+        url: "https://github.com/fbcotter/dataset_loading.git"
+        commit: "5b9faa226e5f7c857579d31cdd9acde8cdfb816f"
+        pip_install: True
+    cnpy:
+        url: "https://github.com/rogersce/cnpy.git"
+        commit: "4e8810b1a8637695171ed346ce68f6984e585ef4"
+        pip_install: False
+    finn-hlslib:
+        url: "https://github.com/Xilinx/finn-hlslib.git"
+        commit: "5c5ad631e3602a8dd5bd3399a016477a407d6ee7"
+        pip_install: False
+    attention-hlslib:
+        url: "https://github.com/iksnagreb/attention-hlslib.git"
+        commit: "afc9720f10e551e1f734e137b21bb6d0a8342177"
+        pip_install: False
+    pyxsi:
+        url: "https://github.com/fpjentzsch/pyxsi.git"
+        commit: "bbef09f9520457186830505a99050256821d5079"
+        pip_install: False
+
+boardfiles:
+    avnet-bdf:
+        url: "https://github.com/Avnet/bdf.git"
+        commit: "2d49cfc25766f07792c0b314489f21fe916b639b"
+        subdirectory: .
+    xil-bdf:
+        url: "https://github.com/Xilinx/XilinxBoardStore.git"
+        commit: "8cf4bb674a919ac34e3d99d8d71a9e60af93d14e"
+        subdirectory: "boards/Xilinx/rfsoc2x2"
+    rfsoc4x2-bdf: 
+        url: "https://github.com/RealDigitalOrg/RFSoC4x2-BSP.git"
+        commit: "13fb6f6c02c7dfd7e4b336b18b959ad5115db696"
+        subdirectory: "board_files/rfsoc4x2"
+    kv260-som-bdf:
+        url: "https://github.com/Xilinx/XilinxBoardStore.git"
+        commit: "98e0d3efc901f0b974006bc4370c2a7ad8856c79"
+        subdirectory: "boards/Xilinx/kv260_som"
+
+direct_download:
+    pynq-z1:
+        url: "https://github.com/cathalmccabe/pynq-z1_board_files/raw/master/pynq-z1.zip"
+        do_unzip: True
+        target_directory: "board_files"
+    pynq-z2:
+        url: "https://dpoauwgwqsy2x.cloudfront.net/Download/pynq-z2.zip"
+        do_unzip: True
+        target_directory: "board_files"

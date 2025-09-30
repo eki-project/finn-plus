@@ -115,6 +115,10 @@ def prepare_finn(
     """Prepare a FINN environment with the given settings. The settings will be adapted
     and modified with the necessary runtime data and returned."""  # noqa
     status(f"Using settings file at {settings.get_path()}")
+    if not settings.get_path().exists():
+        warning("Settings file does not exist. Creating one in ~/.finn/settings.yaml. "
+        "Feel free to edit it.")
+        settings.load_defaults()
 
     # Dependencies
     deps_path = settings.resolve_deps_path(deps)

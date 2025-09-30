@@ -69,6 +69,15 @@ class FINNSettings:
                 return path
         return None
 
+    def load_defaults(self) -> None:
+        """Load the default values into the settings by updating them."""
+        self._settings.update({
+            "DEPS_GIT_TIMEOUT": 120,
+            "AUTOMATIC_DEPENDENCY_UPDATES": True,
+            "FINN_DEPS": Path("deps"),
+            "FINN_BUILD_DIR": Path("FINN_TMP")
+        })
+
     def get_path(self) -> Path:
         """Get the path to the settings file. If not existent, it will be created when needed."""
         return self._settings_path
