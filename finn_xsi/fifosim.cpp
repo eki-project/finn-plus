@@ -102,20 +102,19 @@ static void reset(simDesc& desc) noexcept {
 }
 
 // Helper function to process output streams
+[[gnu::hot]] [[gnu::flatten]]
 static bool processOutputStream(M_AXIS_Control& stream, size_t& iters, size_t& completedMaps) noexcept {
-    if (!stream.is_ready() || !stream.is_valid()) {
+    if (!stream.is_ready() || !stream.is_valid()) [[unlikely]] {
         return false;
     }
 
-    const size_t totalTransactions = ++stream.total_txns;
-
     // Track first completion
-    if (totalTransactions == stream.job_size) {
+    if (++stream.total_txns == stream.job_size) [[unlikely]] {
         stream.first_complete = iters;
     }
 
     // Track job completion and intervals
-    if (++stream.job_txns == stream.job_size) {
+    if (++stream.job_txns == stream.job_size) [[unlikely]] {
         stream.interval = iters - stream.last_complete;
         stream.last_complete = iters;
         stream.job_txns = 0;
@@ -125,18 +124,25 @@ static bool processOutputStream(M_AXIS_Control& stream, size_t& iters, size_t& c
     return true;
 }
 
+[[gnu::hot]] [[gnu::flatten]]
 bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, size_t& iters) {
     // Enter Simulation Loop and track Progress
-    const auto begin = std::chrono::steady_clock::now();
+    const auto begin = std::chrono::high_resolution_clock::now();
     size_t completedMaps = 0;
     size_t timeout = 0;
-    size_t max_timeout = 0;
+    constexpr size_t max_timeout_limit = max_iters * 100;
+
+    // Pre-cache frequently accessed values
+    const size_t num_ostreams = ostreams.size();
+    const size_t num_istreams = istreams.size();
+
     //-------------------------------------------------------------------
     // Make sure all inputs are valid. We do not care about throttling
-    for (auto& stream : istreams) {
-        stream.valid(true);
+    for (size_t i = 0; i < num_istreams; ++i) {
+        istreams[i].valid(true);
     }
-    while (true) {
+
+    while (true) [[likely]] {
         //-------------------------------------------------------------------
         // Clock down - then read signal updates from design
         clk.cycle(0);
@@ -145,14 +151,13 @@ bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::vector<S_AXIS_
         // Process output streams
 
         bool hasActiveOutput = false;
-        for (auto& stream : ostreams) {
-            if (processOutputStream(stream, iters, completedMaps)) {
+        for (size_t i = 0; i < num_ostreams; ++i) {
+            if (processOutputStream(ostreams[i], iters, completedMaps)) [[likely]] {
                 hasActiveOutput = true;
                 // std::cout << "Cycle: " << iters << std::endl;
             }
         }
         timeout = hasActiveOutput ? 0 : timeout + 1;
-        max_timeout = std::max(timeout, max_timeout);
 
         //-------------------------------------------------------------------
         // Clock up - then write signal updates back to design
@@ -160,15 +165,15 @@ bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::vector<S_AXIS_
 
         ++iters;
 
-        if (iters % 25000 == 0) {
-            std::cout << "Iteration: " << iters << " in " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count() << "ms" << std::endl;
+        if (iters % 25000 == 0) [[unlikely]] {
+            std::cout << "Iteration: " << iters << " in " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - begin).count() << "ms" << std::endl;
         }
 
-        if (completedMaps == featuremaps) {
+        if (completedMaps == featuremaps) [[unlikely]] {
             return true;
         }
         // Check for timeout
-        if (timeout > max_iters * 100) {
+        if (timeout > max_timeout_limit) [[unlikely]] {
             return false;
         }
     }
@@ -177,6 +182,7 @@ bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::vector<S_AXIS_
 
 constexpr size_t computeMovingAverage(const size_t oldAvg, const size_t newValue, const size_t count) noexcept { return (oldAvg * (count - 1) + newValue) / count; }
 
+[[gnu::hot]]
 std::optional<size_t> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, size_t& iters) {
     size_t avgInterval = 0;
     size_t runs = 0;
@@ -187,12 +193,12 @@ std::optional<size_t> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& 
     // Warmup. Discard results, because empty pipeline
     bool warmup = true;
 
-    while (true) {
-        if (!runForFeaturemaps(1, clk, istreams, ostreams, iters)) {
+    while (true) [[likely]] {
+        if (!runForFeaturemaps(1, clk, istreams, ostreams, iters)) [[unlikely]] {
             return std::nullopt;
         }
         // Do one map as a warmup without calculating the avg to fill pipeline
-        if (warmup) {
+        if (warmup) [[unlikely]] {
             warmup = false;
             continue;
         }
@@ -201,7 +207,7 @@ std::optional<size_t> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& 
         const bool notChanged = avgInterval == newAvgInterval;
         avgInterval = newAvgInterval;
 
-        if (++totalMaps >= minimumMaps && notChanged) {
+        if (++totalMaps >= minimumMaps && notChanged) [[unlikely]] {
             break;
         }
     }
@@ -211,6 +217,7 @@ std::optional<size_t> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& 
 }
 
 template<typename T>
+[[gnu::always_inline]] inline
 std::string toBinaryString(const T data) noexcept {
     return std::bitset<sizeof(T) * 8>(data).to_string();
 }
@@ -251,9 +258,9 @@ std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, co
         }
 
         last_start_depth = start_depth;
-        start_depth *= 2;  // Double the start depth
+        start_depth <<= 1;  // Double the start depth
 
-        if (start_depth > 1000000) {
+        if (start_depth >= (2 << 20)) {
             throw std::runtime_error("Couldn't find a working start depth, please set manually!");
         }
     }
@@ -261,6 +268,7 @@ std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, co
     return std::make_tuple(start_depth, last_interval);
 }
 
+[[gnu::hot]]
 std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interval, const size_t startIndex, const size_t endIndex, const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file,
                                     const char* const trace_file) {
     const auto totalFifos = endIndex - startIndex + 1;
@@ -269,10 +277,10 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
     for (size_t i = 0; i < totalFifos; ++i) {
         auto&& [kernel, top, istreams, ostreams, fifo_ports, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
 
-        while (true) {  // do until fifo minimized
+        while (true) [[likely]] {  // do until fifo minimized
             // Try to minimize this FIFO
             const size_t oldFifoSize = fifo_sizes[i];
-            fifo_sizes[i] = std::max(oldFifoSize / 2, size_t(1));
+            fifo_sizes[i] = std::max(oldFifoSize >> 1, size_t(1));  // Use bit shift for division by 2
 
             const auto two_bin = toBinaryString(static_cast<uint32_t>(start_size));
             for (auto&& p : fifo_ports) {
@@ -290,22 +298,22 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
             }
 
             size_t iters = 0;
-            if (auto ret = runToStableState(clk, istreams, ostreams, iters); ret) {
+            if (auto ret = runToStableState(clk, istreams, ostreams, iters); ret) [[likely]] {
                 auto&& currInterval = *ret;
-                if (currInterval == 0 || currInterval > interval) {
+                if (currInterval == 0 || currInterval > interval) [[unlikely]] {
                     // Performance drop
                     // Revert depth reduction and mark FIFO as minimized
                     fifo_sizes[i] = oldFifoSize;
                     break;
                 }
-            } else {
+            } else [[unlikely]] {
                 // Timeout
                 // Revert depth reduction and mark FIFO as minimized
                 fifo_sizes[i] = oldFifoSize;
                 break;
             }
 
-            if (fifo_sizes[i] == 1) {
+            if (fifo_sizes[i] == 1) [[unlikely]] {
                 // Minimum size reached
                 break;
             }
