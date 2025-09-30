@@ -68,6 +68,7 @@ def start_bench_run(config_name):
     _default_session_options = ort.capi._pybind_state.get_default_session_options()
 
     def get_default_session_options_new():
+        """Return specific default session options for onnxruntime."""
         _default_session_options.inter_op_num_threads = 1
         _default_session_options.intra_op_num_threads = 1
         return _default_session_options

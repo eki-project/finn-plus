@@ -66,6 +66,8 @@ def weight_quantizer(bits, _signed=True):
 
     # Derive a Quantizer from the brevitas bases
     class Quantizer(NarrowIntQuant, MaxStatsScaling, WeightQuantSolver):
+        """Weight quantizer with configurable bit-width and signedness."""
+
         # Configure the quantization bit-width
         bit_width = bits
         # Signedness of the quantization output
@@ -87,6 +89,8 @@ def bias_quantizer(bits, _signed=True):
 
     # Derive a Quantizer from the brevitas bases
     class Quantizer(IntBias):
+        """Bias quantizer with configurable bit-width and signedness."""
+
         # Configure the quantization bit-width
         bit_width = bits
         # Signedness of the quantization output
@@ -108,6 +112,8 @@ def act_quantizer(bits, _signed=True):
 
     # Derive a Quantizer from the brevitas bases
     class Quantizer(IntQuant, ParamFromRuntimePercentileScaling, ActQuantSolver):
+        """Activation quantizer with configurable bit-width and signedness."""
+
         # Configure the quantization bit-width
         bit_width = bits
         # Signedness of the quantization output
@@ -368,7 +374,9 @@ class TransformerBlock(torch.nn.Module):
         # Generate the attention mask according to configuration
         self.mask = get_mask(mask, seq_len)
 
+    # Forward pass adding positional encoding to the input tensor
     def forward(self, x):
+        """Forward pass adding sinusoidal positional encoding to input tensor."""
         """Forward pass through the transformer block."""
         # Move the mask to the same device as the input, just in case...
         mask = self.mask.to(x.device) if self.mask is not None else None
@@ -444,12 +452,14 @@ class QuantLearnedPositionalEncoding(torch.nn.Module):
 
     # Resets/Initializes the positional encoding parameter tensor
     def reset_parameters(self):
+        """Resets/Initializes positional encoding parameters from normal distribution."""
         # Initialize the positional encoding from a normal distribution with
         # zero mean and unit standard deviation
         torch.nn.init.normal_(self.pos, mean=0, std=1)
 
     # Forward pass adding positional encoding to the input tensor
     def forward(self, x):
+        """Forward pass adding learned positional encoding to input tensor."""
         # Add the quantized encoding to the quantized input
         return self.add(x, self.pos)
 
@@ -470,6 +480,7 @@ class LazyQuantLearnedPositionalEncoding(
 
     # Initializes the model and registers the module parameters
     def __init__(self, input_quant, output_quant, return_quant_tensor):
+        """Initializes lazy learned positional encoding with uninitialized parameters."""
         # Initialize the quantizer parts of QuantLearnedPositionalEncoding,
         # leaving the dimensions empty
         super().__init__(0, 0, input_quant, output_quant, return_quant_tensor)
@@ -478,6 +489,7 @@ class LazyQuantLearnedPositionalEncoding(
 
     # Resets/Initializes the positional encoding parameter tensor
     def reset_parameters(self):
+        """Resets parameters if already initialized, otherwise delegates to parent."""
         # If this has already been initialized, delegate to the actual
         # implementation
         if not self.has_uninitialized_params():
@@ -486,6 +498,7 @@ class LazyQuantLearnedPositionalEncoding(
     # Initializes/Materializes the uninitialized parameter tensor given some
     # sample input tensor to infer the dimensions
     def initialize_parameters(self, x):
+        """Materializes uninitialized parameter tensor by inferring dimensions from input."""
         # Only materialize the parameter tensor if it is not yet initialized
         if self.has_uninitialized_params():
             # Do not accumulate gradient information from initialization
@@ -504,6 +517,7 @@ class QuantBinaryPositionalEncoding(torch.nn.Module):
 
     # Initializes the model and registers the module parameters
     def __init__(self, input_quant, output_quant, return_quant_tensor):
+        """Initializes binary positional encoding with quantized addition."""
         # Initialize the PyTorch Module superclass
         super().__init__()
         # Adds the quantized input and positional encoding
@@ -519,6 +533,7 @@ class QuantBinaryPositionalEncoding(torch.nn.Module):
 
     # Forward pass adding positional encoding to the input tensor
     def forward(self, x):
+        """Forward pass adding binary positional encoding to input tensor."""
         # Get the size of the inputs to dynamically generate encodings of the
         # same size
         _, seq, emb = x.shape
