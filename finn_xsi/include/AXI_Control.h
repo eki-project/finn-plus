@@ -14,8 +14,8 @@ class Clock;
 class AXI_Control {
      public:
     // Constructor/destructor
-    AXI_Control(xsi::Design& design, const std::string& axi_prefix = "AXI_Control_0_0_");
-    ~AXI_Control() = default;
+    AXI_Control(xsi::Design& design, Clock& clock, const std::string& axi_prefix = "AXI_Control_0_0_");
+    ~AXI_Control() noexcept = default;
 
     // // Core register access functions
     void write_register(uint32_t addr, uint32_t data);

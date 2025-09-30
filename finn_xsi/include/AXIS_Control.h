@@ -16,14 +16,14 @@ class Clock;
 class AXIS_Control {
      public:
     // Constructor/destructor
-    AXIS_Control(xsi::Design& design, size_t job_size, const std::string& prefix = "s_axis_");
-    ~AXIS_Control() = default;
+    AXIS_Control(xsi::Design& design, Clock& clock, size_t job_size, const std::string& prefix = "s_axis_");
+    ~AXIS_Control() noexcept = default;
 
     // Core functions - immediate writes
     void valid(bool value = true);
-    bool is_valid() const;
+    bool is_valid() const noexcept;
     void ready(bool value = true);
-    bool is_ready() const;
+    bool is_ready() const noexcept;
 
     // Deferred write functions
     std::reference_wrapper<xsi::Port> set_valid(bool value = true);
@@ -42,15 +42,15 @@ class AXIS_Control {
     xsi::Port& port_rdy;
 
      private:
-    xsi::Design& design;
-    Clock& clk;
+    const xsi::Design& design;
+    const Clock& clk;
 };
 
 class S_AXIS_Control : public AXIS_Control {
      public:
     // Constructor/destructor
-    S_AXIS_Control(xsi::Design& design, size_t job_size, size_t job_ticks, const std::string& prefix = "s_axis_");
-    ~S_AXIS_Control() = default;
+    S_AXIS_Control(xsi::Design& design, Clock& clock, size_t job_size, size_t job_ticks, const std::string& prefix = "s_axis_");
+    ~S_AXIS_Control() noexcept = default;
 
     size_t job_ticks;   // throttle if job_size < job_ticks
     size_t await_iter;  // iteration allowing start of next job
@@ -59,10 +59,10 @@ class S_AXIS_Control : public AXIS_Control {
 class M_AXIS_Control : public AXIS_Control {
      public:
     // Constructor/destructor
-    M_AXIS_Control(xsi::Design& design, size_t job_size, const std::string& prefix = "m_axis_");
-    ~M_AXIS_Control() = default;
+    M_AXIS_Control(xsi::Design& design, Clock& clock, size_t job_size, const std::string& prefix = "m_axis_");
+    ~M_AXIS_Control() noexcept = default;
 
-    size_t last_complete;
+    size_t last_complete = 0;
     size_t interval;
     size_t latency = 0;
     size_t min_latency = std::numeric_limits<size_t>::max();  // Minimum latency observed

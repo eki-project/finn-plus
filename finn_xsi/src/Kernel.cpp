@@ -54,9 +54,9 @@ Kernel::Xsi& Kernel::Xsi::operator=(Xsi&& other) noexcept {
 }
 
 // Xsi Handle management
-void Kernel::Xsi::setHandle(xsiHandle hdl) { _hdl = hdl; }
+void Kernel::Xsi::setHandle(xsiHandle hdl) noexcept { _hdl = hdl; }
 
-bool Kernel::Xsi::hasValidHandle() const { return _hdl != nullptr; }
+bool Kernel::Xsi::hasValidHandle() const noexcept { return _hdl != nullptr; }
 //---------------------------------------------------------------------------
 // Life Cycle
 
@@ -103,14 +103,14 @@ Kernel& Kernel::operator=(Kernel&& other) noexcept {
     return *this;
 }
 
-Kernel::Kernel(std::string const& kernel_lib) : _kernel_lib(kernel_lib), _xsi(_kernel_lib) {}
+Kernel::Kernel(const std::string& kernel_lib) : _kernel_lib(kernel_lib), _xsi(_kernel_lib) {}
 
 Kernel::~Kernel() {
     if (_design_lib)
         std::cerr << "Disposing XSI Kernel with open Design." << std::endl;
 }
 
-void Kernel::open(std::string const& design_lib, s_xsi_setup_info const& setup_info) {
+void Kernel::open(const std::string& design_lib, const s_xsi_setup_info& setup_info) {
     _design_lib.open(design_lib);
     try {
         auto const f = t_fp_xsi_open(resolve_or_throw(_design_lib, "xsi_open"));
@@ -145,7 +145,7 @@ void Kernel::close() noexcept {
         *vptr = nullptr;
 }
 
-Port& Kernel::getPort(char const* const name) {
+Port& Kernel::getPort(const char* const name) {
     int const id = xsi<Xsi::get_port_number>(name);
 
     if (id == -1 || id >= static_cast<int>(_ports.size())) {
@@ -153,7 +153,7 @@ Port& Kernel::getPort(char const* const name) {
     }
     return _ports[static_cast<std::size_t>(id)];
 }
-const Port& Kernel::getPort(char const* const name) const {
+const Port& Kernel::getPort(const char* const name) const {
     int const id = xsi<Xsi::get_port_number>(name);
 
     if (id == -1 || id >= static_cast<int>(_ports.size())) {
@@ -161,8 +161,8 @@ const Port& Kernel::getPort(char const* const name) const {
     }
     return _ports[static_cast<std::size_t>(id)];
 }
-std::span<Port> Kernel::ports() { return std::span<Port>(_ports.data(), _ports.data() + _ports.size()); }
-std::span<const Port> Kernel::ports() const { return std::span<const Port>(_ports.data(), _ports.data() + _ports.size()); }
+std::span<Port> Kernel::ports() noexcept { return std::span<Port>(_ports.data(), _ports.data() + _ports.size()); }
+std::span<const Port> Kernel::ports() const noexcept { return std::span<const Port>(_ports.data(), _ports.data() + _ports.size()); }
 
 // Port count accessor for Design class
-size_t Kernel::port_count() const { return _ports.size(); }
+size_t Kernel::port_count() const noexcept { return _ports.size(); }

@@ -32,7 +32,7 @@ Clock::Clock(xsi::Design& des) : design(des) {
                     });
 }
 
-void Clock::toggle_clk() {
+void Clock::toggle_clk() noexcept {
     cycle(1);
     cycle(0);
 }

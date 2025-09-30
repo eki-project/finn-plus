@@ -34,7 +34,7 @@ namespace xsi {
         // Life Cycle
          public:
         SharedLibrary();
-        SharedLibrary(std::string const& path);
+        SharedLibrary(const std::string& path);
         ~SharedLibrary();
 
          private:
@@ -49,19 +49,19 @@ namespace xsi {
         SharedLibrary& operator=(SharedLibrary&& other) noexcept;
 
          public:
-        operator bool() const;
-        SharedLibrary& open(std::string const& path);
-        SharedLibrary& close();
+        operator bool() const noexcept;
+        SharedLibrary& open(const std::string& path);
+        SharedLibrary& close() noexcept;
 
          private:
-        static handle_type load(std::string const& path);
-        void unload();
+        static handle_type load(const std::string& path);
+        void unload() noexcept;
 
         //-----------------------------------------------------------------------
         // Accessors
          public:
-        std::string const& path() const;
-        std::optional<void*> getsymbol(char const* const name);
+        const std::string& path() const noexcept;
+        std::optional<void*> getsymbol(const char* const name);
 
     };  // class SharedLibrary
 }  // namespace xsi

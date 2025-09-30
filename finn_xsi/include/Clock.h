@@ -3,28 +3,30 @@
 
 #include <functional>
 
+// Fwd declarations
 namespace xsi {
     class Design;
 }
 
+struct simDesc;
+
 class Clock {
     xsi::Design& design;
-    Clock(xsi::Design& design);
 
     Clock(Clock const&) = delete;
     Clock& operator=(Clock const&) = delete;
+    Clock(xsi::Design& design);
+    friend simDesc;
 
      public:
-    ~Clock() = default;
+    Clock(Clock&&) noexcept = default;
+    Clock& operator=(Clock&&) noexcept = default;
+    ~Clock() noexcept = default;
 
     std::function<void(bool)> cycle;
 
-    static Clock& initClock(xsi::Design& design) {
-        static Clock clk(design);
-        return clk;
-    }
 
-    void toggle_clk();
+    void toggle_clk() noexcept;
 };
 
 #endif /* CLOCK */

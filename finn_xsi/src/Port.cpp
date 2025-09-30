@@ -4,16 +4,16 @@
 
 using namespace xsi;
 
-Port::Port(Kernel& kernel, unsigned const id) : _kernel(kernel), _id(id), buffer((width() + 31) / 32) {}
+Port::Port(Kernel& kernel, const unsigned id) : _kernel(kernel), _id(id), buffer((width() + 31) / 32) {}
 
 Port::Port(Port&& other) noexcept : _kernel(other._kernel), _id(other._id), buffer(std::move(other.buffer)) {
     // Note: _kernel and _id are reference and const respectively, so they're initialized from other
     // The buffer is moved from the other object
 }
 
-Port::~Port() {}
+Port::~Port() noexcept {}
 
-bool Port::hasUnknown() const {
+bool Port::hasUnknown() const noexcept {
     for (auto&& elem : buffer) {
         if (elem.bVal)
             return true;
@@ -21,7 +21,7 @@ bool Port::hasUnknown() const {
     return false;
 }
 
-bool Port::isZero() const {
+bool Port::isZero() const noexcept {
     for (auto&& elem : buffer) {
         if (elem.aVal)
             return false;
@@ -82,17 +82,17 @@ Port& Port::clear() {
     return *this;
 }
 
-char const* Port::name() const { return _kernel.xsi<Kernel::Xsi::get_str_port>(static_cast<int>(_id), xsiNameTopPort); }
+const char* Port::name() const noexcept { return _kernel.xsi<Kernel::Xsi::get_str_port>(static_cast<int>(_id), xsiNameTopPort); }
 
-int Port::dir() const { return _kernel.xsi<Kernel::Xsi::get_int_port>(static_cast<int>(_id), xsiDirectionTopPort); }
+int Port::dir() const noexcept { return _kernel.xsi<Kernel::Xsi::get_int_port>(static_cast<int>(_id), xsiDirectionTopPort); }
 
-unsigned Port::width() const { return static_cast<unsigned>(_kernel.xsi<Kernel::Xsi::get_int_port>(static_cast<int>(_id), xsiHDLValueSize)); }
+unsigned Port::width() const noexcept { return static_cast<unsigned>(_kernel.xsi<Kernel::Xsi::get_int_port>(static_cast<int>(_id), xsiHDLValueSize)); }
 
-bool Port::isInput() const { return dir() == xsiInputPort; }
+bool Port::isInput() const noexcept { return dir() == xsiInputPort; }
 
-bool Port::isOutput() const { return dir() == xsiOutputPort; }
+bool Port::isOutput() const noexcept { return dir() == xsiOutputPort; }
 
-bool Port::isInout() const { return dir() == xsiInoutPort; }
+bool Port::isInout() const noexcept { return dir() == xsiInoutPort; }
 
 Port& Port::read() {
     _kernel.xsi<Kernel::Xsi::get_value>(static_cast<int>(_id), buffer.data());
@@ -101,20 +101,20 @@ Port& Port::read() {
 
 void Port::write_back() { _kernel.xsi<Kernel::Xsi::put_value>(static_cast<int>(_id), buffer.data()); }
 
-bool Port::operator[](unsigned const idx) const { return (buffer[idx / 32].aVal >> (idx % 32)) & 1; }
+bool Port::operator[](const unsigned idx) const noexcept { return (buffer[idx / 32].aVal >> (idx % 32)) & 1; }
 
-bool Port::as_bool() const { return buffer[0].aVal & 1; }
+bool Port::as_bool() const noexcept { return buffer[0].aVal & 1; }
 
-unsigned Port::as_unsigned() const { return buffer[0].aVal; }
+unsigned Port::as_unsigned() const noexcept { return buffer[0].aVal; }
 
-Port& Port::set(unsigned val) {
+Port& Port::set(const unsigned val) {
     s_xsi_vlog_logicval* const p = buffer.data();
     p->aVal = val;
     p->bVal = 0;
     return *this;
 }
 
-Port& Port::set_binstr(std::string const& val) {
+Port& Port::set_binstr(const std::string& val) {
     auto val_iter = val.crbegin();  // Process from right to left
 
     size_t chars_processed = 0;
@@ -160,7 +160,7 @@ Port& Port::set_binstr(std::string const& val) {
     return *this;
 }
 
-Port& Port::set_hexstr(std::string const& val) {
+Port& Port::set_hexstr(const std::string& val) {
     auto val_iter = val.crbegin();  // Process from right to left
 
     size_t chars_processed = 0;

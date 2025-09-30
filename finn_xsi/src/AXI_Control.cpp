@@ -11,7 +11,7 @@
 using namespace xsi;
 
 // Constructor
-AXI_Control::AXI_Control(xsi::Design& des, const std::string& axi_prefix) : prefix(axi_prefix), design(des), clk(Clock::initClock(des)) {
+AXI_Control::AXI_Control(xsi::Design& des, Clock& clock, const std::string& axi_prefix) : prefix(axi_prefix), design(des), clk(clock) {
     // Check if the prefix is valid
     if (prefix.empty()) {
         throw std::invalid_argument("AXI prefix cannot be empty.");

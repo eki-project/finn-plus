@@ -25,7 +25,7 @@ namespace {
 }  // namespace
 #endif
 
-SharedLibrary& SharedLibrary::open(std::string const& path) {
+SharedLibrary& SharedLibrary::open(const std::string& path) {
     if (_lib)
         throw std::runtime_error("SharedLibrary still open for " + _path);
     _lib = load(path);
@@ -33,7 +33,7 @@ SharedLibrary& SharedLibrary::open(std::string const& path) {
     return *this;
 }
 
-SharedLibrary::handle_type SharedLibrary::load(std::string const& path) {
+SharedLibrary::handle_type SharedLibrary::load(const std::string& path) {
     if (path.empty())
         throw std::domain_error("Empty library path.");
 
@@ -55,7 +55,7 @@ SharedLibrary::handle_type SharedLibrary::load(std::string const& path) {
     return lib;
 }
 
-void SharedLibrary::unload() {
+void SharedLibrary::unload() noexcept {
     if (_lib) {
 #if defined(_WIN32)
         FreeLibrary(_lib);
@@ -65,7 +65,7 @@ void SharedLibrary::unload() {
     }
 }
 
-std::optional<void*> SharedLibrary::getsymbol(char const* const name) {
+std::optional<void*> SharedLibrary::getsymbol(const char* const name) {
     void* sym;
 #if defined(_WIN32)
     sym = (void*) GetProcAddress(_lib, name);
@@ -83,7 +83,7 @@ std::optional<void*> SharedLibrary::getsymbol(char const* const name) {
 // Constructors
 SharedLibrary::SharedLibrary() : _lib(nullptr), _path() {}
 
-SharedLibrary::SharedLibrary(std::string const& path) : _lib(load(path)), _path(path) {}
+SharedLibrary::SharedLibrary(const std::string& path) : _lib(load(path)), _path(path) {}
 
 // Destructor
 SharedLibrary::~SharedLibrary() { unload(); }
@@ -108,13 +108,13 @@ SharedLibrary& SharedLibrary::operator=(SharedLibrary&& other) noexcept {
 }
 
 // Member functions
-SharedLibrary::operator bool() const { return bool(_lib); }
+SharedLibrary::operator bool() const noexcept { return bool(_lib); }
 
-SharedLibrary& SharedLibrary::close() {
+SharedLibrary& SharedLibrary::close() noexcept {
     unload();
     _lib = nullptr;
     _path.clear();
     return *this;
 }
 
-std::string const& SharedLibrary::path() const { return _path; }
+const std::string& SharedLibrary::path() const noexcept { return _path; }

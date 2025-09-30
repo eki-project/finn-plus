@@ -21,20 +21,20 @@ namespace xsi {
         // Con- and destruction under full control of Kernel
         Port(Port const&) = delete;
         Port& operator=(Port const&) = delete;
-        Port(Kernel& kernel, unsigned const id);
+        Port(Kernel& kernel, const unsigned id);
 
          public:
         Port(Port&& other) noexcept;
-        ~Port();
+        ~Port() noexcept;
 
          public:
-        char const* name() const;
-        int dir() const;
-        unsigned width() const;
+        const char* name() const noexcept;
+        int dir() const noexcept;
+        unsigned width() const noexcept;
 
-        bool isInput() const;
-        bool isOutput() const;
-        bool isInout() const;
+        bool isInput() const noexcept;
+        bool isOutput() const noexcept;
+        bool isInout() const noexcept;
 
          public:
         // Buffer Synchronization
@@ -42,20 +42,20 @@ namespace xsi {
         void write_back();
 
         // Inspection
-        bool hasUnknown() const;
-        bool isZero() const;
-        bool operator[](unsigned const idx) const;
+        bool hasUnknown() const noexcept;
+        bool isZero() const noexcept;
+        bool operator[](const unsigned idx) const noexcept;
 
-        bool as_bool() const;
-        unsigned as_unsigned() const;
+        bool as_bool() const noexcept;
+        unsigned as_unsigned() const noexcept;
         std::string as_binstr() const;
         std::string as_hexstr() const;
 
         // Manipulation
         Port& clear();
-        Port& set(unsigned val);
-        Port& set_binstr(std::string const& val);
-        Port& set_hexstr(std::string const& val);
+        Port& set(const unsigned val);
+        Port& set_binstr(const std::string& val);
+        Port& set_hexstr(const std::string& val);
 
     };  // class Port
 

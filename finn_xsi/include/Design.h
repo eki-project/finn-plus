@@ -10,8 +10,8 @@ namespace xsi {
         xsi::Kernel _kernel;
 
          public:
-        Design(xsi::Kernel& kernel, std::string const& design_lib, s_xsi_setup_info const& setup_info);
-        Design(xsi::Kernel& kernel, std::string const& design_lib, char const* const log_file = nullptr, char const* const wdb_file = nullptr);
+        Design(xsi::Kernel& kernel, const std::string& design_lib, const s_xsi_setup_info& setup_info);
+        Design(xsi::Kernel& kernel, const std::string& design_lib, const char* const log_file = nullptr, const char* const wdb_file = nullptr);
         ~Design();
 
          private:
@@ -31,21 +31,21 @@ namespace xsi {
         // Simulation Control & Status
          public:
         void trace_all();
-        void run(XSI_INT64 const step);
+        void run(const XSI_INT64 step);
         void restart();
 
-        int get_status() const;
-        char const* get_error_info() const;
+        int get_status() const noexcept;
+        const char* get_error_info() const noexcept;
 
         // Port Access
          public:
-        int num_ports() const;
+        int num_ports() const noexcept;
 
-        xsi::Port& getPort(std::string const& name);
-        xsi::Port const& getPort(std::string const& name) const;
+        xsi::Port& getPort(const std::string& name);
+        const xsi::Port& getPort(const std::string& name) const;
 
-        std::span<xsi::Port> ports();
-        std::span<xsi::Port const> ports() const;
+        std::span<xsi::Port> ports() noexcept;
+        std::span<const xsi::Port> ports() const noexcept;
 
     };  // class Design
 }  // namespace xsi

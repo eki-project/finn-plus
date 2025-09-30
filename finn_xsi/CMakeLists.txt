@@ -39,8 +39,8 @@ if(${FIFOSIM_ENABLE_ALLOPT})
   message(STATUS "All optimizations are enabled")
   target_compile_options(
     fifosim_options
-    INTERFACE -Ofast -ffast-math -march=native -mtune=native -fstack-protector-strong -fopenmp -ffunction-sections -fdata-sections -pipe -funroll-loops -shared -fPIC -g -fsanitize=undefined,address)
-  target_link_options(fifosim_options INTERFACE -fsanitize=undefined,address)
+    INTERFACE -Ofast -ffast-math -march=native -mtune=native -fstack-protector-strong -fopenmp -ffunction-sections -fdata-sections -pipe -funroll-loops -shared -fPIC)
+  #target_link_options(fifosim_options INTERFACE -fsanitize=undefined,address)
 endif()
 
 ### Enable compiler warnings

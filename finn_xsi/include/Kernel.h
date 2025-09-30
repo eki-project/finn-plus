@@ -69,8 +69,8 @@ namespace xsi {
 
             //- Handle Update ---------------
              public:
-            void setHandle(xsiHandle hdl);
-            bool hasValidHandle() const;
+            void setHandle(xsiHandle hdl) noexcept;
+            bool hasValidHandle() const noexcept;
 
             //- XSI Function Invocation -----
              public:
@@ -92,7 +92,7 @@ namespace xsi {
         std::vector<Port> _ports;
 
          public:
-        Kernel(std::string const& kernel_lib);
+        Kernel(const std::string& kernel_lib);
         Kernel(Kernel const&) = delete;
         Kernel& operator=(Kernel const&) = delete;
 
@@ -113,18 +113,18 @@ namespace xsi {
         }
 
         // Port Accessors inlined below and public through Design
-        Port& getPort(char const* const name);
-        const Port& getPort(char const* const name) const;
-        std::span<Port> ports();
-        std::span<Port const> ports() const;
+        Port& getPort(const char* const name);
+        const Port& getPort(const char* const name) const;
+        std::span<Port> ports() noexcept;
+        std::span<const Port> ports() const noexcept;
 
         // Design con- & destruction hooks
-        void open(std::string const& design_lib, s_xsi_setup_info const& setup_info);
+        void open(const std::string& design_lib, const s_xsi_setup_info& setup_info);
         void close() noexcept;
 
          public:
         // Port count accessor for Design class
-        size_t port_count() const;
+        size_t port_count() const noexcept;
 
     };  // class Kernel
 
