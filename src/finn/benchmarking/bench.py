@@ -1,3 +1,11 @@
+"""
+FINN benchmarking execution framework.
+
+This module provides the main entry point for running FINN benchmarks, supporting
+both SLURM-based cluster execution and local testing. It handles configuration
+expansion, job distribution, and result collection.
+"""
+
 import itertools
 import json
 import onnxruntime as ort
@@ -21,24 +29,38 @@ dut["transformer"] = bench_transformer
 
 
 class PrefixPrinter(object):
-    """
-    Create a custom stream handler that adds a prefix
-    """
+    """Custom stream handler that adds a prefix to console output for run identification."""
 
     def __init__(self, prefix, originalstream):
+        """Initialize the prefix printer with a prefix string and target stream."""
         self.console = originalstream
         self.prefix = prefix
         self.linebuf = ""
 
     def write(self, buf):
+        """Write buffer content with prefix to the target stream."""
         for line in buf.rstrip().splitlines():
             self.console.write(f"[{self.prefix}] " + line + "\n")
 
     def flush(self):
+        """Flush the target stream."""
         self.console.flush()
 
 
 def start_bench_run(config_name):
+    """
+    Start a benchmarking run with the specified configuration.
+
+    This function handles both SLURM cluster execution and local testing,
+    loading configuration files, expanding parameter combinations, and
+    distributing work across available tasks.
+
+    Args:
+        config_name (str): Name of configuration file or path to config file
+
+    Returns:
+        int: Exit code (0 for success, 1 for failure)
+    """
     exit_code = 0
     # Attempt to work around onnxruntime issue on Slurm-managed clusters:
     # See https://github.com/microsoft/onnxruntime/issues/8313

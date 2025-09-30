@@ -1,4 +1,4 @@
-# Adapted from Christoph's attention-dummy repository
+"""Transformer benchmarking module adapted from Christoph's attention-dummy repository."""
 
 # PyTorch base package: Math and Tensor Stuff
 import json
@@ -49,18 +49,16 @@ from finn.builder.custom_step_library.transformer import (
 
 
 # ADAPTED FROM utils.py
-# Seeds all relevant random number generators to the same seed for
-# reproducibility
 def seed(s):
+    """Seeds all relevant random number generators to the same seed for reproducibility."""
     random.seed(s)
     np.random.seed(s)
     torch.manual_seed(s)
 
 
 # ADAPTED FROM model.py
-# Derives a weight quantizer from the brevitas bases leaving bit-width and
-# signedness configurable
 def weight_quantizer(bits, _signed=True):
+    """Derives a weight quantizer, leaving bit-width and signedness configurable."""
     # Brevitas quantizer base classes
     from brevitas.inject.enum import RestrictValueType
     from brevitas.quant.base import MaxStatsScaling, NarrowIntQuant
@@ -82,9 +80,8 @@ def weight_quantizer(bits, _signed=True):
     return Quantizer
 
 
-# Derives a bias quantizer from the brevitas bases leaving bit-width and
-# signedness configurable
 def bias_quantizer(bits, _signed=True):
+    """Derives a bias quantizer, leaving bit-width and signedness configurable."""
     # Brevitas quantizer base classes
     from brevitas.quant import IntBias
 
@@ -102,9 +99,8 @@ def bias_quantizer(bits, _signed=True):
     return Quantizer
 
 
-# Derives an activation quantizer from the brevitas bases leaving bit-width and
-# signedness configurable
 def act_quantizer(bits, _signed=True):
+    """Derives an activation quantizer, leaving bit-width and signedness configurable."""
     # Brevitas quantizer base classes
     from brevitas.inject.enum import RestrictValueType
     from brevitas.quant.base import IntQuant, ParamFromRuntimePercentileScaling
@@ -126,12 +122,14 @@ def act_quantizer(bits, _signed=True):
     return Quantizer
 
 
-# Gets the normalization layer from configuration key
 def get_norm(key, normalized_shape):
-    # Transposes Sequence and Embedding dimensions
+    """Gets the normalization layer from configuration key."""
+
     class Transpose(torch.nn.Module):
-        # Forward pass transposing the feature map
+        """Transposes Sequence and Embedding dimensions."""
+
         def forward(self, x):  # noqa: May be static
+            """Forward pass transposing the feature map."""
             # Transpose the last two dimensions of batch x seq x emb layout
             return torch.transpose(x, dim0=-1, dim1=-2)
 
@@ -164,8 +162,8 @@ def get_norm(key, normalized_shape):
     return norms[key]
 
 
-# Gets the attention mask from configuration key and shape
 def get_mask(key, length):
+    """Gets the attention mask from configuration key and shape."""
     # Dictionary mapping keys to supported normalization layer implementations
     masks = {
         # No attention mask
@@ -182,10 +180,11 @@ def get_mask(key, length):
     return masks[key]
 
 
-# Single-layer scaled dot-product attention block with MLP and normalization
 class TransformerBlock(torch.nn.Module):
-    # Initializes the model and registers the module parameters
+    """Single-layer scaled dot-product attention block with MLP and normalization."""
+
     def __init__(self, num_heads, emb_dim, mlp_dim, seq_len, bias, norm, mask, bits):
+        """Initializes the model and registers the module parameters."""
         # Initialize the PyTorch Module superclass
         super().__init__()
 
@@ -369,8 +368,8 @@ class TransformerBlock(torch.nn.Module):
         # Generate the attention mask according to configuration
         self.mask = get_mask(mask, seq_len)
 
-    # Forward pass through the transformer block
     def forward(self, x):
+        """Forward pass through the transformer block."""
         # Move the mask to the same device as the input, just in case...
         mask = self.mask.to(x.device) if self.mask is not None else None
         # Quantize the input to the attention block
@@ -381,10 +380,11 @@ class TransformerBlock(torch.nn.Module):
         return self.norm_mlp(self.residual_mlp(x, self.mlp(x)))
 
 
-# Quantized sinusoidal positional encoding layer
 class QuantSinusoidalPositionalEncoding(torch.nn.Module):
-    # Initializes the model and registers the module parameters
+    """Quantized sinusoidal positional encoding layer."""
+
     def __init__(self, input_quant, output_quant, return_quant_tensor):
+        """Initializes the model and registers the module parameters."""
         # Initialize the PyTorch Module superclass
         super().__init__()
         # Adds the quantized input and positional encoding
@@ -419,10 +419,11 @@ class QuantSinusoidalPositionalEncoding(torch.nn.Module):
         return self.add(x, pos)
 
 
-# Quantized learned positional encoding layer
 class QuantLearnedPositionalEncoding(torch.nn.Module):
-    # Initializes the model and registers the module parameters
+    """Quantized learned positional encoding layer."""
+
     def __init__(self, seq_len, emb_dim, input_quant, output_quant, return_quant_tensor):
+        """Initializes the model and registers the module parameters."""
         # Initialize the PyTorch Module superclass
         super().__init__()
         # Adds the quantized input and positional encoding
@@ -453,11 +454,14 @@ class QuantLearnedPositionalEncoding(torch.nn.Module):
         return self.add(x, self.pos)
 
 
-# Lazy version of the learned encoding not requiring input dimensions at
-# initialization, inferring these at the first forward pass
 class LazyQuantLearnedPositionalEncoding(
     torch.nn.modules.lazy.LazyModuleMixin, QuantLearnedPositionalEncoding  # noqa
 ):
+    """
+    Lazy version of the learned encoding not requiring input dimensions at initialization,
+    inferring these at the first forward pass.
+    """
+
     # Once initialized, this will become a QuantLearnedPositionalEncoding as
     # defined above
     cls_to_become = QuantLearnedPositionalEncoding
@@ -495,8 +499,9 @@ class LazyQuantLearnedPositionalEncoding(
                 self.reset_parameters()
 
 
-# Quantized binary positional encoding layer
 class QuantBinaryPositionalEncoding(torch.nn.Module):
+    """Quantized binary positional encoding layer."""
+
     # Initializes the model and registers the module parameters
     def __init__(self, input_quant, output_quant, return_quant_tensor):
         # Initialize the PyTorch Module superclass
@@ -527,9 +532,8 @@ class QuantBinaryPositionalEncoding(torch.nn.Module):
         return self.add(x, 2 * pos - 1)
 
 
-# Gets the positional encoding layer from configuration key, quantizers and
-# shape
 def get_positional_encoding(key, input_quant, output_quant, return_quant_tensor):
+    """Gets the positional encoding layer from configuration key, quantizers and shape."""
     # Dictionary mapping keys to supported normalization layer implementations
     masks = {
         # No positional encoding
@@ -550,8 +554,8 @@ def get_positional_encoding(key, input_quant, output_quant, return_quant_tensor)
     return masks[key]
 
 
-# Unpacks the standard PyTorch tensor from a brevitas QuantTensor
 def unpack_from_quant(tensor: torch.Tensor | QuantTensor):
+    """Unpacks the standard PyTorch tensor from a brevitas QuantTensor."""
     # If this is a QuantTensor we can extract the wrapped tensor
     if isinstance(tensor, QuantTensor):
         # The underlying tensor is wrapped as the value attribute
@@ -560,9 +564,9 @@ def unpack_from_quant(tensor: torch.Tensor | QuantTensor):
     return tensor
 
 
-# Dummy transformer encoder model
 class DummyTransformer(torch.nn.Module):
-    # Initializes the model and registers the module parameters
+    """Dummy transformer encoder model."""
+
     def __init__(
         self,
         # Number of layers of attention blocks
@@ -590,6 +594,7 @@ class DummyTransformer(torch.nn.Module):
         #   Options are: none, sinusoidal, binary, learned
         positional_encoding="none",
     ):
+        """Initializes the model and registers the module parameters."""
         # Initialize the PyTorch Module superclass
         super().__init__()
 
@@ -615,9 +620,8 @@ class DummyTransformer(torch.nn.Module):
             ]
         )
 
-    # Model forward pass taking an input sequence and returning a single set of
-    # class probabilities
     def forward(self, x):
+        """Model forward pass."""
         # Add positional encoding to the input and feed through the encoder
         # stack
         # Note: Get the wrapped value out of the QuantTensor to have only a
@@ -628,8 +632,8 @@ class DummyTransformer(torch.nn.Module):
 # ADAPTED FROM export.py
 
 
-# Check whether a layer is a normalization layer of some supported type
 def is_norm_layer(module):
+    """Check whether a layer is a normalization layer of some supported type."""
     # Set of normalization layer (bases) which maybe need to be patched
     norm_layers = {
         # All BatchNorm and InstanceNorm variants derive from this baseclass
@@ -641,10 +645,10 @@ def is_norm_layer(module):
     return any(isinstance(module, norm) for norm in norm_layers)
 
 
-# Fixes export issues of normalization layers with disabled affine parameters.
-# Somehow the export to ONNX trips when it encounters the weight and bias tensor
-# to be 'None'.
 def patch_non_affine_norms(model: torch.nn.Module):  # noqa: Shadows model
+    """Fixes export issues of normalization layers with disabled affine parameters."""
+    # Somehow the export to ONNX trips when it encounters the weight and bias tensor
+    # to be 'None'.
     # Iterate all modules in the model container
     for name, module in model.named_modules():
         # If the module is a normalization layer it might require patching the
@@ -763,34 +767,37 @@ defaults:
 
 
 class bench_transformer(bench):
-    def step_export_onnx(self, output_onnx_path):
+    """Benchmark class for quantized transformer models."""
+
+    def _step_export_onnx(self, output_onnx_path):
+        """Generates a dummy transformer block, not used for actual models (RadioML, GPT, etc.)."""
         # Generates a dummy transformer block,
         # not used for actual models (RadioML, GPT, etc.)
 
         # Load the parameters file
         # params = dvc.api.params_show("params.yaml")
         # Seed all RNGs
-        seed(self.params["seed"])
+        seed(self._params["seed"])
         # Make PyTorch behave deterministically if possible
         torch.use_deterministic_algorithms(mode=True, warn_only=True)
         # Create a model instance from the configuration parameters
         # model = DummyTransformer(**params["model"])
         model = DummyTransformer(
-            num_layers=self.params["model_num_layers"],
-            num_heads=self.params["model_num_heads"],
-            emb_dim=self.params["model_emb_dim"],
-            mlp_dim=self.params["model_mlp_dim"],
-            seq_len=self.params["model_seq_len"],
-            bias=self.params["model_bias"],
-            bits=self.params["model_bits"],
-            norm=self.params["model_norm"],
-            mask=self.params["model_mask"],
-            positional_encoding=self.params["model_positional_encoding"],
+            num_layers=self._params["model_num_layers"],
+            num_heads=self._params["model_num_heads"],
+            emb_dim=self._params["model_emb_dim"],
+            mlp_dim=self._params["model_mlp_dim"],
+            seq_len=self._params["model_seq_len"],
+            bias=self._params["model_bias"],
+            bits=self._params["model_bits"],
+            norm=self._params["model_norm"],
+            mask=self._params["model_mask"],
+            positional_encoding=self._params["model_positional_encoding"],
         )
 
         # Get the configured sequence length and embedding dimension to generate
         # test inputs
-        seq, dim = self.params["model_seq_len"], self.params["model_emb_dim"]
+        seq, dim = self._params["model_seq_len"], self._params["model_emb_dim"]
         # No gradient accumulation for calibration passes required
         with torch.no_grad():
             # Check whether GPU training is available and select the appropriate
@@ -800,7 +807,7 @@ class bench_transformer(bench):
             model = model.to(device)
             # Multiple passes of calibration might be necessary for larger/deep
             # models
-            for _ in trange(0, self.params["calibration_passes"], desc="calibrating"):
+            for _ in trange(0, self._params["calibration_passes"], desc="calibrating"):
                 # Pass random data through the model to "calibrate" dummy quantizer.
                 # Large batch to have more calibration samples. Otherwise, there is
                 # too much deviation between this calibration and the verification
@@ -819,30 +826,31 @@ class bench_transformer(bench):
         # Save the input and output data for verification purposes later
         np.save("inp.npy", x.detach().numpy())
         np.save("out.npy", o.detach().numpy())
-        self.build_inputs["input_npy_path"] = "inp.npy"
-        self.build_inputs["output_npy_path"] = "out.npy"
+        self._build_inputs["input_npy_path"] = "inp.npy"
+        self._build_inputs["output_npy_path"] = "out.npy"
         # Export the model graph to QONNX
-        # export_qonnx(model, (x,), "attention.onnx", **self.params["export"])
+        # export_qonnx(model, (x,), "attention.onnx", **self._params["export"])
         export_qonnx(model, (x,), output_onnx_path, opset_version=14, do_constant_folding=True)
 
-    def step_build_setup(self):
+    def _step_build_setup(self):
+        """Set up the dataflow build for transformer models with custom attention steps."""
         # with open("params.yaml") as file:
         #    params = yaml.safe_load(file)
         # Seed all RNGs
-        seed(self.params["seed"])
+        seed(self._params["seed"])
         # Extract sequence length and embedding dimension from parameters
-        if "model_seq_len" in self.params and "model_emb_dim" in self.params:
+        if "model_seq_len" in self._params and "model_emb_dim" in self._params:
             # for dummy Transformer DUT
-            seq_len, emb_dim = self.params["model_seq_len"], self.params["model_emb_dim"]
+            seq_len, emb_dim = self._params["model_seq_len"], self._params["model_emb_dim"]
         else:
             # for real input models
-            inp_shape = np.load(self.build_inputs["input_npy_path"]).shape
+            inp_shape = np.load(self._build_inputs["input_npy_path"]).shape
             if len(inp_shape) == 3:
                 # for RadioML Transformers
                 _, seq_len, emb_dim = inp_shape
             else:
                 # for GPTs (why is this different?)
-                model = ModelWrapper(self.build_inputs["onnx_path"])
+                model = ModelWrapper(self._build_inputs["onnx_path"])
                 _, seq_len, emb_dim = model.get_tensor_shape(
                     "/emb_add/input_quant/export_handler/Quant_output_0"
                 )
@@ -890,9 +898,9 @@ class bench_transformer(bench):
                 # No RTL Simulation support for now
             ],
             # File with test inputs for verification
-            verify_input_npy=self.build_inputs["input_npy_path"],
+            verify_input_npy=self._build_inputs["input_npy_path"],
             # File with expected test outputs for verification
-            verify_expected_output_npy=self.build_inputs["output_npy_path"],
+            verify_expected_output_npy=self._build_inputs["output_npy_path"],
             # Build steps to execute
             steps=[
                 # Prepares the QONNX graph to be consumed by FINN: Cleanup, lowering
@@ -955,7 +963,7 @@ class bench_transformer(bench):
         )
 
         # TESTING custom vs live FIFO-sizing
-        if self.params.get("live_fifo_sizing"):
+        if self._params.get("live_fifo_sizing"):
             # insert default FIFO-sizing step (behind step_generate_estimate_reports)
             for i in range(len(cfg.steps)):
                 if cfg.steps[i] == "step_generate_estimate_reports":
