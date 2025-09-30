@@ -406,8 +406,8 @@ class QuantSinusoidalPositionalEncoding(torch.nn.Module):
             return_quant_tensor=return_quant_tensor,
         )
 
-    # Forward pass adding positional encoding to the input tensor
     def forward(self, x):
+        """Forward pass adding sinusoidal positional encoding to input tensor."""
         # Get the size of the inputs to dynamically generate encodings of the
         # same size
         _, seq, emb = x.shape
