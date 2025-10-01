@@ -7,13 +7,19 @@ to identify functions, classes, and modules that are missing docstrings.
 
 Usage:
     python check_docstrings.py <file1.py> [file2.py] ...
+    python check_docstrings.py --changed-files
+
+Options:
+    --changed-files: Automatically check all changed Python files in the git repository
 
 Exit codes:
     0: All checked files have proper docstrings
     1: Missing docstrings found or error occurred
 """
+import argparse
 import ast
 import os
+import subprocess
 import sys
 from typing import Dict, List, Optional, Union
 
@@ -122,6 +128,68 @@ class DocstringChecker(ast.NodeVisitor):
             self.missing_docstrings.append({"type": node_type, "name": name, "line": node.lineno})
 
 
+def get_changed_python_files() -> List[str]:
+    """
+    Get a list of changed Python files in the git repository.
+
+    This function runs git commands to identify Python files that have been
+    modified, staged, or are untracked. It combines both staged and unstaged
+    changes to provide a comprehensive list.
+
+    Returns:
+        List of file paths to changed Python files
+
+    Raises:
+        SystemExit: If not in a git repository or git commands fail
+    """
+    try:
+        # Check if we're in a git repository
+        subprocess.run(
+            ["git", "rev-parse", "--git-dir"], check=True, capture_output=True, text=True
+        )
+    except subprocess.CalledProcessError:
+        print("Error: Not in a git repository")
+        sys.exit(1)
+
+    try:
+        # Get staged files
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMRT"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        staged_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
+
+        # Get unstaged files
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=ACMRT"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        unstaged_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
+
+        # Get untracked files
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        untracked_files = result.stdout.strip().split("\n") if result.stdout.strip() else []
+
+        # Combine all changed files and filter for Python files
+        all_files = set(staged_files + unstaged_files + untracked_files)
+        python_files = [f for f in all_files if f and f.endswith(".py") and os.path.exists(f)]
+
+        return python_files
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error running git command: {e}")
+        sys.exit(1)
+
+
 def check_file_docstrings(filepath: str) -> List[Dict[str, Union[str, int]]]:
     """
     Check docstrings in a single Python file.
@@ -163,9 +231,12 @@ def main() -> None:
 
     Processes command-line arguments to get a list of Python files,
     checks each file for missing docstrings, and reports the results.
+    Supports both explicit file specification and automatic detection
+    of changed files in the git repository.
 
     Command-line usage:
         python check_docstrings.py <file1.py> [file2.py] ...
+        python check_docstrings.py --changed-files
 
     Exit behavior:
         - Exits with code 0 if all files have proper docstrings
@@ -175,14 +246,46 @@ def main() -> None:
         - Prints results to stdout
         - May print warnings for non-existent files
     """
-    if len(sys.argv) < 2:
-        print("Usage: python check_docstrings.py <file1.py> [file2.py] ...")
+    parser = argparse.ArgumentParser(
+        description="Check for missing docstrings in Python files.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  %(prog)s file1.py file2.py        # Check specific files
+  %(prog)s --changed-files          # Check all changed Python files in git repo
+        """,
+    )
+    parser.add_argument("files", nargs="*", help="Python files to check for docstrings")
+    parser.add_argument(
+        "--changed-files",
+        action="store_true",
+        help="Automatically check all changed Python files in the git repository",
+    )
+
+    args = parser.parse_args()
+
+    # Determine which files to check
+    if args.changed_files:
+        if args.files:
+            print("Warning: --changed-files option ignores explicitly specified files")
+        files_to_check = get_changed_python_files()
+        if not files_to_check:
+            print("✅ No changed Python files found in git repository!")
+            sys.exit(0)
+        print(f"Checking {len(files_to_check)} changed Python file(s):")
+        for f in files_to_check:
+            print(f"  - {f}")
+        print()
+    elif args.files:
+        files_to_check = args.files
+        print(f"Checking {len(files_to_check)} changed Python file(s):")
+    else:
+        parser.print_help()
         sys.exit(1)
 
     all_missing: Dict[str, List[Dict[str, Union[str, int]]]] = {}
     total_missing: int = 0
 
-    for filepath in sys.argv[1:]:
+    for filepath in files_to_check:
         if not os.path.exists(filepath):
             print(f"Warning: File {filepath} does not exist")
             continue
