@@ -1,3 +1,6 @@
+"""Here we organize FINN+`s exceptions and error handling. It also contains a decorator to
+snapshot FINN+ when it crashes for debugging purposes.
+"""
 from __future__ import annotations
 
 import functools
@@ -25,31 +28,36 @@ Every error should subclass FINNUserError or FINNInternalError
 
 
 class FINNError(Exception):
-    """Base-class for FINN exceptions. Useful to differentiate exceptions while catching."""
+    """Base-class for all FINN exceptions. Useful to differentiate exceptions while catching."""
 
     def __init__(self, *args: object) -> None:
+        """Create a new FINNError."""
         super().__init__(*args)
 
 
 class FINNInternalError(FINNError):
-    """Custom exception class for internal compiler errors"""
+    """Custom exception class for internal compiler errors."""
 
     def __init__(self, *args: object) -> None:
+        """Create a new FINNInternalError."""
         super().__init__(*args)
 
 
 class FINNUserError(FINNError):
     """Custom exception class which should be used to
-    print errors without stacktraces if debug is disabled."""
+    print errors without stacktraces if debug is disabled.
+    """
 
     def __init__(self, *args: object) -> None:
+        """Create a new FINNUserError."""
         super().__init__(*args)
 
 
 class FINNConfigurationError(FINNUserError):
-    """Error emitted when FINN is configured incorrectly"""
+    """Error emitted if FINN is configured incorrectly."""
 
     def __init__(self, *args: object) -> None:
+        """Create a new FINNConfigurationError."""
         super().__init__(*args)
 
 
@@ -57,6 +65,7 @@ class FINNDataflowError(FINNInternalError):
     """Errors regarding the dataflow, dataflow config, step resolution, etc."""
 
     def __init__(self, *args: object) -> None:
+        """Create a new FINNDataflowError."""
         super().__init__(*args)
 
 
@@ -83,6 +92,18 @@ def snapshot_on_exception(
     to, in case an exception is raised, snapshot the ONNX model directly after the crash, as
     well as a snapshot of FINN itself, as well as the build config and the dataflow build log.
 
+    The items that can be snapshot are these:
+    - FINN itself (the source tree)
+    - The build config
+    - The current ONNX model
+        - (Optionally) every ONNX model in the current scope
+    - The build log file
+    - FINN specific environment variables
+    - Other environment variables
+
+    Everything is stored in a new directory in your configured output directory for the run, with a
+    timestamp. For example: .../<cfg.output_dir>/crash_reports/crash_<date+time>_<random suffix>/
+
     For the ONNX model, the function first tries to find a ModelWrapper object called model in the
     scope where the exception was raised. If this is not found, the first object of type
     ModelWrapper is used. If this is not available, the ModelWrapper of the step function is used.
@@ -101,8 +122,10 @@ def snapshot_on_exception(
         additional_envvars = []
 
     def decorator(step: StepFunction) -> StepFunction:
+        """Construct the snapshot_on_exception decorator."""
         @functools.wraps(step)
         def wrapped(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+            """Wrap the step function in the snapshot code."""
             try:
                 return step(model, cfg)
             except Exception as e:
@@ -111,7 +134,13 @@ def snapshot_on_exception(
                     prefix = f"crash_{date}_"
                 else:
                     prefix = f"{build_dir_prefix}_{date}_"
-                path = Path(make_build_dir(prefix))
+                temp_path = Path(make_build_dir(prefix))
+                crash_report_dir = Path(cfg.output_dir) / "crash_reports"
+                if not crash_report_dir.exists():
+                    crash_report_dir.mkdir(parents=True)
+                path = crash_report_dir / temp_path.name
+                temp_path.rename(path.absolute())
+
                 if snapshot_model:
                     # Get the frame where the exception was raised, get it's frame object,
                     # and from it all locals, hopefully containing our ModelWrapper object
@@ -145,18 +174,14 @@ def snapshot_on_exception(
                                     submodel_dir.mkdir()
                                     shutil.copy(submodel, submodel_dir)
                 if snapshot_config:
-                    yaml = str(cfg.to_yaml())
-                    with (path / "cfg.yaml").open("w+") as f:
-                        f.write(yaml)
+                    (path / "cfg.yaml").write_text(str(cfg.to_yaml()))
                 if snapshot_finn:
                     finn_root = Path(finn.__file__).parent
                     shutil.copytree(finn_root, path / "finn")
                 if snapshot_buildlog and cfg.output_dir is not None:
-                    shutil.copy(
-                        Path(cfg.output_dir) / "build_dataflow.log", path / "build_dataflow.log"
-                    )
-                    with (path / "build_dataflow.log").open("a") as f:
-                        f.write(traceback.format_exc())
+                    dataflow_log = (Path(cfg.output_dir) / "build_dataflow.log").read_text()
+                    dataflow_log += traceback.format_exc()
+                    (path / "build_dataflow.log").write_text(dataflow_log)
                 if snapshot_finn_envvars:
                     env: dict[str, str] = {}
                     non_finn_envvars: list[str] = [*additional_envvars, "NUM_DEFAULT_WORKERS"]
