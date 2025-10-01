@@ -123,6 +123,7 @@ def snapshot_on_exception(
 
     def decorator(step: StepFunction) -> StepFunction:
         """Construct the snapshot_on_exception decorator."""
+
         @functools.wraps(step)
         def wrapped(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
             """Wrap the step function in the snapshot code."""
