@@ -887,7 +887,9 @@ class bench_transformer(bench):
                 # Verify the model after generating C++ HLS and applying folding
                 # only inserted if live FIFO-sizing is off:
                 # build_cfg.VerificationStepType.FOLDED_HLS_CPPSIM,
-                # No RTL Simulation support for now
+                # RTL simulation now supported after switching to XSI:
+                build_cfg.VerificationStepType.NODE_BY_NODE_RTLSIM,
+                build_cfg.VerificationStepType.STITCHED_IP_RTLSIM,
             ],
             # File with test inputs for verification
             verify_input_npy=self.build_inputs["input_npy_path"],
