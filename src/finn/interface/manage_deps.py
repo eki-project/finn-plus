@@ -19,7 +19,6 @@ from typing import Literal
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import error
-from finn.util.deps import get_deps_path
 from finn.util.exception import FINNConfigurationError, FINNUserError
 
 
@@ -361,34 +360,31 @@ class DependencyUpdater:
             )
 
 
-def install_pyxsi() -> bool:
+def install_finnxsi() -> bool:
     # TODO: integrate properly into the rich.Live above?
-    # Will soon be replaced by finnXSI
-    pyxsi_path = get_deps_path() / "pyxsi"
-    pyxsi_so_path = pyxsi_path / "pyxsi.so"
+    finnxsi_path = os.environ["FINN_XSI"]
+    finnxsi_so_path = os.path.join(finnxsi_path, "xsi.so")
 
-    # Disable PyXSI makefile Docker wrapper
-    os.environ["PYXSI_MAKE_USE_DOCKER"] = "0"
-
-    # Run make
-    res = sp.run(["make"], cwd=pyxsi_path, capture_output=True, text=True)
-    if res.returncode != 0:
-        Console().print(res.stderr)
-        return False
-
-    # Check if .so was created
-    if not pyxsi_so_path.exists():
-        return False
-
-    # Set environment variables
-    os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{pyxsi_path}:{pyxsi_path}/py"
-    sys.path.append(str(pyxsi_path))
-    sys.path.append(str(pyxsi_path / "py"))
+    # Set LD_LIBRARY_PATH
     vivado_path = os.environ["XILINX_VIVADO"]
     if "LD_LIBRARY_PATH" not in os.environ.keys():
         os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
     else:
         os.environ[
             "LD_LIBRARY_PATH"
-        ] = f"{os.environ['LD_LIBRARY_PATH']}:/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
+        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
+
+    # Run make
+    res = sp.run(["make"], cwd=finnxsi_path, capture_output=True, text=True)
+    if res.returncode != 0:
+        Console().print(res.stderr)
+        return False
+
+    # Check if .so was created
+    if not os.path.isfile(finnxsi_so_path):
+        return False
+
+    # Set PATH/PYTHONPATH so the .so can be imported
+    os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finnxsi_path}"
+    sys.path.append(str(finnxsi_path))
     return True

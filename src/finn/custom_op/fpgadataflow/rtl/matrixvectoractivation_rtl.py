@@ -58,6 +58,7 @@ class MVAU_rtl(MVAU, RTLBackend):
 
     def execute_node(self, context, graph):
         mode = self.get_nodeattr("exec_mode")
+        dynamic_input = self.get_nodeattr("dynamic_input")
         mem_mode = self.get_nodeattr("mem_mode")
         node = self.onnx_node
 
@@ -66,10 +67,14 @@ class MVAU_rtl(MVAU, RTLBackend):
         elif mode == "rtlsim":
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
             # create a npy file fore each input of the node (in_ind is input index)
-            in_ind = 0
-            for inputs in node.input:
+            for in_ind, inputs in enumerate(node.input):
                 # it is assumed that the first input of the node is the data input
                 # the second input are the weights
+                assert (
+                    str(context[inputs].dtype) == "float32"
+                ), """Input datatype is
+                not float32 as expected."""
+
                 if in_ind == 0:
                     assert (
                         str(context[inputs].dtype) == "float32"
@@ -81,21 +86,31 @@ class MVAU_rtl(MVAU, RTLBackend):
                     # make copy before saving the array
                     reshaped_input = reshaped_input.copy()
                     np.save(
-                        os.path.join(code_gen_dir, "input_{}.npy".format(in_ind)),
+                        os.path.join(code_gen_dir, "input_0.npy"),
                         reshaped_input,
                     )
-                elif in_ind > 1:
-                    raise Exception("Unexpected input found for MatrixVectorActivation_rtl")
-                in_ind += 1
+
+                if in_ind == 1:
+                    if dynamic_input:
+                        reshaped_input = context[inputs].reshape(-1, context[inputs].shape[-1])
+                        self.make_weight_file(
+                            reshaped_input, "decoupled_npy", "{}/input_1.npy".format(code_gen_dir)
+                        )
+
             sim = self.get_rtlsim()
-            nbits = self.get_instream_width(0)
+            nbits = self.get_instream_width()
             inp = npy_to_rtlsim_input("{}/input_0.npy".format(code_gen_dir), export_idt, nbits)
             super().reset_rtlsim(sim)
-            if mem_mode in ["external", "internal_decoupled"]:
+
+            if dynamic_input or mem_mode in ["external", "internal_decoupled"]:
                 wnbits = self.get_instream_width(1)
+                if dynamic_input:
+                    wnbits = wnbits * self.get_nodeattr("SIMD")
                 export_wdt = self.get_input_datatype(1)
-                wei = npy_to_rtlsim_input("{}/weights.npy".format(code_gen_dir), export_wdt, wnbits)
+
+                wei = npy_to_rtlsim_input("{}/input_1.npy".format(code_gen_dir), export_wdt, wnbits)
                 num_w_reps = np.prod(self.get_nodeattr("numInputVectors"))
+
                 io_dict = {
                     "inputs": {"in0": inp, "in1": wei * num_w_reps},
                     "outputs": {"out0": []},
@@ -114,6 +129,7 @@ class MVAU_rtl(MVAU, RTLBackend):
             out_npy_path = "{}/output.npy".format(code_gen_dir)
             out_shape = self.get_folded_output_shape()
             rtlsim_output_to_npy(output, out_npy_path, odt, out_shape, packed_bits, target_bits)
+
             # load and reshape output
             output = np.load(out_npy_path)
             oshape = self.get_normal_output_shape()
@@ -147,13 +163,17 @@ class MVAU_rtl(MVAU, RTLBackend):
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "mvu/")
         sourcefiles = [
-            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v"),
-            rtllib_dir + "mvu_vvu_axi.sv",
-            rtllib_dir + "replay_buffer.sv",
-            rtllib_dir + "mvu_4sx4u.sv",
-            rtllib_dir + "mvu_vvu_8sx9_dsp58.sv",
-            rtllib_dir + "mvu_8sx8u_dsp48.sv",
+            "mvu_pkg.sv",
+            "mvu_vvu_axi.sv",
+            "replay_buffer.sv",
+            "mvu.sv",
+            "mvu_vvu_8sx9_dsp58.sv",
+            "add_multi.sv",
         ]
+        sourcefiles = [
+            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v")
+        ] + [rtllib_dir + _ for _ in sourcefiles]
+
         for f in sourcefiles:
             cmd.append("add_files -norecurse %s" % (f))
         mem_mode = self.get_nodeattr("mem_mode")
@@ -227,7 +247,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         dsp_chain_len = critical_path_dsps if critical_path_dsps < max_chain_len else max_chain_len
         return dsp_chain_len
 
-    def _resolve_impl_style(self, dsp_block):
+    def _resolve_dsp_version(self, dsp_block):
         # Based on target device and activation/weight-width, choose the
         # supported RTL compute core
         assert (
@@ -237,22 +257,13 @@ class MVAU_rtl(MVAU, RTLBackend):
             self.onnx_node.name
         )
 
-        act_width = self.get_input_datatype(0).bitwidth()
-        weight_width = self.get_input_datatype(1).bitwidth()
-
-        if dsp_block == "DSP58":
-            if act_width <= 4 and weight_width <= 4:
-                return "mvu_4sx4u_dsp48e2"
-            else:
-                return "mvu_vvu_8sx9_dsp58"
-        else:
-            if act_width <= 4 and weight_width <= 4:
-                if dsp_block == "DSP48E1":
-                    return "mvu_4sx4u_dsp48e1"
-                elif dsp_block == "DSP48E2":
-                    return "mvu_4sx4u_dsp48e2"
-            else:
-                return "mvu_8sx8u_dsp48"
+        match dsp_block:
+            case "DSP58":
+                return 3
+            case "DSP48E2":
+                return 2
+            case _:
+                return 1
 
     def generate_hdl(self, model, fpgapart, clk):
         # Generate params as part of IP preparation
@@ -263,7 +274,9 @@ class MVAU_rtl(MVAU, RTLBackend):
         # determine if weights are narrow range and add parameter to code gen dict
         weights = model.get_initializer(self.onnx_node.input[1])
         wdt = self.get_input_datatype(1)
-        narrow_weights = 0 if np.min(weights) == wdt.min() else 1
+        narrow_weights = (
+            0 if np.min(weights) == wdt.min() or self.get_nodeattr("dynamic_input") else 1
+        )
         code_gen_dict["$NARROW_WEIGHTS$"] = str(narrow_weights)
         # add general parameters to dictionary
         code_gen_dict["$MODULE_NAME_AXI_WRAPPER$"] = [self.get_verilog_top_module_name()]
@@ -289,7 +302,12 @@ class MVAU_rtl(MVAU, RTLBackend):
         ) as f:
             f.write(template_wrapper.replace("$FORCE_BEHAVIORAL$", str(1)))
 
-        if self.get_nodeattr("mem_mode") == "internal_decoupled":
+        dynamic_input = self.get_nodeattr("dynamic_input")
+        mem_mode = self.get_nodeattr("mem_mode")
+
+        if dynamic_input:
+            self.generate_hdl_dynload()
+        elif mem_mode == "internal_decoupled":
             if self.get_nodeattr("ram_style") == "ultra" and not is_versal(fpgapart):
                 runtime_writeable = self.get_nodeattr("runtime_writeable_weights")
                 assert (
@@ -297,6 +315,7 @@ class MVAU_rtl(MVAU, RTLBackend):
                 ), """Layer with URAM weights must have runtime_writeable_weights=1
                     if Ultrascale device is targeted."""
             self.generate_hdl_memstream(fpgapart, pumped_memory=self.get_nodeattr("pumpedMemory"))
+
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
         self.set_nodeattr("ipgen_path", code_gen_dir)
@@ -315,7 +334,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         dsp_block = get_dsp_block(fpgapart)
         code_gen_dict = {}
         code_gen_dict["$IS_MVU$"] = [str(1)]
-        code_gen_dict["$COMPUTE_CORE$"] = [self._resolve_impl_style(dsp_block)]
+        code_gen_dict["$VERSION$"] = [str(self._resolve_dsp_version(dsp_block))]
         code_gen_dict["$PUMPED_COMPUTE$"] = [str(pumped_compute)]
         code_gen_dict["$MW$"] = [str(self.get_nodeattr("MW"))]
         code_gen_dict["$MH$"] = [str(self.get_nodeattr("MH"))]
@@ -338,14 +357,19 @@ class MVAU_rtl(MVAU, RTLBackend):
         else:
             code_gen_dir = ""
             rtllib_dir = ""
+
         verilog_files = [
-            code_gen_dir + self.get_nodeattr("gen_top_module") + "_wrapper_sim.v",
-            rtllib_dir + "mvu_vvu_axi.sv",
-            rtllib_dir + "replay_buffer.sv",
-            rtllib_dir + "mvu_4sx4u.sv",
-            rtllib_dir + "mvu_vvu_8sx9_dsp58.sv",
-            rtllib_dir + "mvu_8sx8u_dsp48.sv",
+            "mvu_pkg.sv",
+            "mvu_vvu_axi.sv",
+            "replay_buffer.sv",
+            "mvu.sv",
+            "mvu_vvu_8sx9_dsp58.sv",
+            "add_multi.sv",
         ]
+        verilog_files = [
+            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v")
+        ] + [rtllib_dir + _ for _ in verilog_files]
+
         return verilog_files
 
     def get_verilog_paths(self):
