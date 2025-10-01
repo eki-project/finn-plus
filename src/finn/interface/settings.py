@@ -47,6 +47,8 @@ class FINNSettings:
                     self._settings_path = Path.home() / ".finn" / "settings.yaml"
                 else:
                     self._settings_path = fallback_settings_path
+            else:
+                self._settings_path = settings_path
         self._settings: dict[str, Any] = {}
         self.load()
 
@@ -71,12 +73,14 @@ class FINNSettings:
 
     def load_defaults(self) -> None:
         """Load the default values into the settings by updating them."""
-        self._settings.update({
-            "DEPS_GIT_TIMEOUT": 120,
-            "AUTOMATIC_DEPENDENCY_UPDATES": True,
-            "FINN_DEPS": Path("deps"),
-            "FINN_BUILD_DIR": Path("FINN_TMP")
-        })
+        self._settings.update(
+            {
+                "DEPS_GIT_TIMEOUT": 120,
+                "AUTOMATIC_DEPENDENCY_UPDATES": True,
+                "FINN_DEPS": Path("deps"),
+                "FINN_BUILD_DIR": Path("FINN_TMP"),
+            }
+        )
 
     def get_path(self) -> Path:
         """Get the path to the settings file. If not existent, it will be created when needed."""
@@ -107,6 +111,7 @@ class FINNSettings:
                 f,
                 yaml.Dumper,
             )
+        return True
 
     def resolve_build_dir(
         self, build_dir: Path | None, flow_config: Path, is_test_run: bool
@@ -132,7 +137,7 @@ class FINNSettings:
             return Path("/tmp/FINN_TEST_BUILD_DIR")
         return flow_config.parent / "FINN_TMP"
 
-    def resolve_deps_path(self, deps: Path | None) -> Path | None:
+    def resolve_deps_path(self, deps: Path | None) -> Path:
         """Resolve the path of the deps directory.
 
         **NOTE**: This does *not* modify the settings.
@@ -149,10 +154,7 @@ class FINNSettings:
             if not p.is_absolute():
                 return Path(__file__).parent.parent.parent.parent / p
             return p
-        p = Path.home() / ".finn" / deps
-        if p.exists():
-            return p
-        return None
+        return Path.home() / ".finn" / "deps"
 
     def resolve_num_workers(self, num: int) -> int:
         """Resolve the number of workers to use. Uses 75% of cores available as default fallback.
@@ -199,8 +201,11 @@ class FINNSettings:
     def __contains__(self, key: Any) -> bool:  # noqa
         return key in self._settings
 
+    def keys(self) -> Generator:  # noqa
+        yield from self._settings.keys()
+
     def items(self) -> Generator:  # noqa
-        yield from self._settings
+        yield from self._settings.items()
 
     def values(self) -> Generator:  # noqa
         yield from self._settings.values()

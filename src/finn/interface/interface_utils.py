@@ -31,28 +31,28 @@ class NullablePath(click.ParamType):
 
 def error(msg: str) -> None:
     """Print an error."""
-    Console().print(f"[bold red]ERROR: [/bold red][red]{msg}[/red]")
+    Console().print(f"[bold red]ERROR: [/bold red][red]\t{msg}[/red]")
 
 
 def warning(msg: str) -> None:
     """Print a warning."""
-    Console().print(f"[bold orange1]WARNING: [/bold orange1][orange3]{msg}[/orange3]")
+    Console().print(f"[bold orange1]WARNING: [/bold orange1][orange3]\t{msg}[/orange3]")
 
 
 def status(msg: str) -> None:
     """Print a status message."""
-    Console().print(f"[bold cyan]STATUS: [/bold cyan][cyan]{msg}[/cyan]")
+    Console().print(f"[bold cyan]STATUS: [/bold cyan][cyan]\t{msg}[/cyan]")
 
 
 def success(msg: str) -> None:
     """Print a success message."""
-    Console().print(f"[bold green]SUCCESS: [/bold green][green]{msg}[/green]")
+    Console().print(f"[bold green]SUCCESS: [/bold green][green]\t{msg}[/green]")
 
 
 def debug(msg: str) -> None:
     """Print a debug message. Only done when the flag is set."""
     if DEBUG:
-        Console().print(f"[bold blue]DEBUG: [/bold blue][blue]{msg}[/blue]")
+        Console().print(f"[bold blue]DEBUG: [/bold blue][blue]\t{msg}[/blue]")
 
 
 def assert_path_valid(p: Path) -> None:

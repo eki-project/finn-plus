@@ -6,22 +6,22 @@ import shlex
 import shutil
 import subprocess as sp
 import sys
+import yaml
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from rich.console import Console
 from rich import box
+from rich.console import Console
 from rich.live import Live
+from rich.panel import Panel
 from rich.table import Table
 from threading import RLock
-
-import yaml
+from typing import Literal
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import error
 from finn.util.deps import get_deps_path
 from finn.util.exception import FINNConfigurationError, FINNUserError
-from typing import Literal
-from rich.panel import Panel
+
 
 class _StatusTracker:
     """Small helper class to thread-safely organize status data."""
@@ -47,9 +47,12 @@ class _StatusTracker:
         with self.datalock:
             table = Table(
                 title="Dependency Updates",
-                caption=f"Installed: [cyan]{self.done}[/cyan] / [cyan bold]{self.total}[/cyan bold].",
+                caption=(
+                    f"Installed: [cyan]{self.done}[/cyan] / "
+                    f"[cyan bold]{self.total}[/cyan bold]."
+                ),
                 box=box.SIMPLE,
-                expand=True
+                expand=True,
             )
             table.add_column("Dependency", justify="center", style="italic aquamarine3")
             table.add_column("Dependency Type", justify="center")
@@ -78,11 +81,16 @@ class _StatusTracker:
             self.update_status(name, "Update failed!", "red")
         self.update_live()
 
+
 class DependencyUpdater:
     """Manage non-python dependencies."""
 
-    def __init__(self, dependency_location: Path,
-                 dependency_definition_file: Path | None, git_timeout_s: float) -> None:
+    def __init__(
+        self,
+        dependency_location: Path,
+        dependency_definition_file: Path | None,
+        git_timeout_s: float,
+    ) -> None:
         """Create a new updater.
 
         Boardfiles will be downloaded to the specified location at
@@ -100,8 +108,9 @@ class DependencyUpdater:
         else:
             self.depfile = dependency_definition_file
         if not self.depfile.exists():
-            raise FINNConfigurationError(f"External dependency definition"
-                                         f"file not found at: {self.depfile}")
+            raise FINNConfigurationError(
+                f"External dependency definition" f"file not found at: {self.depfile}"
+            )
         self.git_deps = {}
         self.boarfiles = {}
         self.direct_downloads = {}
@@ -138,38 +147,44 @@ class DependencyUpdater:
 
     def _git_clone(self, url: str, commit: str, target: Path) -> bool:
         """Try to clone and checkout the git url to the given target directory. If something
-        went wrong return False, True otherwise.""" # noqa
+        went wrong return False, True otherwise."""  # noqa
         if self._run_silent(f"git clone {url} {target.absolute()}", timeout=self.git_timeout) != 0:
             return False
         return self._run_silent(f"git checkout {commit}", cwd=target.absolute()) == 0
 
     def _get_git_hash(self, package_name: str) -> str | None:
         """Return the hash of the given package_name dependency.
-        If there is no such package return None.""" # noqa
-        if package_name not in self.git_deps and package_name not in self.boarfiles:
-            return None
+        If there is no such package return None."""  # noqa
         if package_name in self.git_deps:
             target = self.dep_location / package_name
         elif package_name in self.boarfiles:
             target = self.boardfile_temporary_downloads / package_name
+        else:
+            return None
         if not target.exists():
             return None
-        result = sp.run("git rev-parse HEAD", text=True,
-                        capture_output=True, shell=True, cwd=target, timeout=self.git_timeout)
+        result = sp.run(
+            "git rev-parse HEAD",
+            text=True,
+            capture_output=True,
+            shell=True,
+            cwd=target,
+            timeout=self.git_timeout,
+        )
         return result.stdout.strip()
 
     def _get_fields(self, package_name: str, package_data: dict, *field_names: str) -> tuple:
         """Return a tuple with all required fields from the data. If one of the fields does not
-        exist, raise an exception.""" # noqa
+        exist, raise an exception."""  # noqa
         for field in field_names:
             if field not in package_data:
-                raise FINNUserError(f"Missing field {field} in"
-                                    f"dependency definition of {package_name}!")
+                raise FINNUserError(
+                    f"Missing field {field} in" f"dependency definition of {package_name}!"
+                )
         return tuple([package_data[field] for field in field_names])
 
     def _dependency_type(
-            self,
-            package_name: str
+        self, package_name: str
     ) -> Literal["Git", "Boardfiles", "Data", "Unknown"]:
         """Return a string to tell which type this dependency is."""
         if package_name in self.git_deps:
@@ -182,8 +197,9 @@ class DependencyUpdater:
 
     def _install_git_dependency(self, package_name: str) -> bool:
         """Install a git dependency. Return success."""
-        url, commit, pip_install = self._get_fields(package_name, self.git_deps[package_name],
-                                                    "url", "commit", "pip_install")
+        url, commit, pip_install = self._get_fields(
+            package_name, self.git_deps[package_name], "url", "commit", "pip_install"
+        )
         target = self.dep_location / package_name
         if not self._git_clone(url, commit, target):
             return False
@@ -196,8 +212,9 @@ class DependencyUpdater:
 
     def _install_boardfile_dependency(self, package_name: str) -> bool:
         """Install a board file dependency. Return success."""
-        url, commit, subdir = self._get_fields(package_name, self.boarfiles[package_name],
-                                                    "url", "commit", "subdirectory")
+        url, commit, subdir = self._get_fields(
+            package_name, self.boarfiles[package_name], "url", "commit", "subdirectory"
+        )
         subdir = Path(subdir)
         temp_target = self.boardfile_temporary_downloads / package_name
         source = temp_target / subdir
@@ -215,8 +232,9 @@ class DependencyUpdater:
         """Install a direct download dependency. Return success."""
         if shutil.which("wget") is None or shutil.which("unzip") is None:
             # TODO: Allow curl and gzip etc. as well
-            raise FINNConfigurationError("Make sure that both \"wget\" and"
-                                            "\"unzip\" are available on your system.")
+            raise FINNConfigurationError(
+                'Make sure that both "wget" and' '"unzip" are available on your system.'
+            )
         url, do_unzip, target_directory = self._get_fields(
             package_name, self.direct_downloads[package_name], "url", "do_unzip", "target_directory"
         )
@@ -228,7 +246,7 @@ class DependencyUpdater:
             return False
 
         # If we want to unzip and it fails, return False
-        if do_unzip: # noqa
+        if do_unzip:  # noqa
             if self._run_silent(f"unzip {Path(url).name}", cwd=target) != 0:
                 return False
         return not self.is_outdated(package_name)
@@ -237,7 +255,7 @@ class DependencyUpdater:
         """Install the dependency in the dependency location. If no definition for this dependency
         exists or the installation failed, return False.
         If the installation was successful return true.
-        """ # noqa
+        """  # noqa
         match self._dependency_type(package_name):
             case "Git":
                 return self._install_git_dependency(package_name)
@@ -255,6 +273,7 @@ class DependencyUpdater:
             return True
 
         # Compare hashes for git dependencies and boardfiles
+        dep_data = {}
         if package_name in self.git_deps:
             dep_data = self.git_deps
         elif package_name in self.boarfiles:
@@ -269,8 +288,10 @@ class DependencyUpdater:
 
         # Compare hashes
         if "commit" not in dep_data[package_name]:
-            raise FINNConfigurationError(f"Git dependency {package_name} has no \"commit\""
-                                            f"field in the definition file. Please provide one.")
+            raise FINNConfigurationError(
+                f'Git dependency {package_name} has no "commit"'
+                f"field in the definition file. Please provide one."
+            )
         expected_hash = dep_data[package_name]["commit"]
         return expected_hash != has_hash
 
@@ -284,7 +305,7 @@ class DependencyUpdater:
 
     def get_oudated_dependencies(self) -> list[str]:
         """Return a list of the names of all outdated packages. For Git dependencies this means
-        an outdated commit hash, for the others a different URL or target directory.""" # noqa
+        an outdated commit hash, for the others a different URL or target directory."""  # noqa
         return list(filter(self.is_outdated, self.get_all_dependencies()))
 
     def update(self) -> None:
@@ -300,15 +321,15 @@ class DependencyUpdater:
                 return result
             except Exception:
                 status.set_finish(package_name, False)
-                status.update_status(package_name, "Updated failed! (Internal exception!)",
-                                     "purple")
+                status.update_status(
+                    package_name, "Updated failed! (Internal exception!)", "purple"
+                )
                 status.update_live()
                 return False
 
         # Keep track of the status of all dependencies
         status = _StatusTracker(
-            [(name, self._dependency_type(name)) for name in deps_outdated],
-            Live()
+            [(name, self._dependency_type(name)) for name in deps_outdated], Live()
         )
         if len(deps_outdated) > 0:
             # Display live updates of the installation process
@@ -324,14 +345,20 @@ class DependencyUpdater:
                 if not future.result():
                     error("Dependency updates failed.")
                     sys.exit(1)
-            Console().print(Panel(f"Installed [green bold]{status.total}[/green bold] dependencies. "
-                                f"(Skipped [orange3 bold]{self.get_dependency_count() - status.total}"
-                                f"[/orange3 bold] dependencies "
-                                f"due to existing installations.)"),
-                                justify="center")
+            Console().print(
+                Panel(
+                    f"Installed [green bold]{status.total}[/green bold] dependencies. "
+                    f"(Skipped [orange3 bold]{self.get_dependency_count() - status.total}"
+                    f"[/orange3 bold] dependencies "
+                    f"due to existing installations.)"
+                ),
+                justify="center",
+            )
         else:
-            Console().print(Panel("[green]All dependencies are already cached and up to date.[/green]"), justify="center")
-
+            Console().print(
+                Panel("[green]All dependencies are already cached and up to date.[/green]"),
+                justify="center",
+            )
 
 
 def install_pyxsi() -> bool:

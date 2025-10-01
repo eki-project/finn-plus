@@ -21,7 +21,7 @@ from finn.interface.interface_utils import (
     status,
     warning,
 )
-from finn.interface.manage_deps import install_pyxsi, update_dependencies
+from finn.interface.manage_deps import DependencyUpdater, install_pyxsi
 from finn.interface.manage_tests import run_test
 from finn.interface.settings import FINNSettings
 
@@ -114,19 +114,21 @@ def prepare_finn(
 ) -> FINNSettings:
     """Prepare a FINN environment with the given settings. The settings will be adapted
     and modified with the necessary runtime data and returned."""  # noqa
-    status(f"Using settings file at {settings.get_path()}")
+    status(f"[SETTINGS FILE] {settings.get_path()}")
     if not settings.get_path().exists():
-        warning("Settings file does not exist. Creating one in ~/.finn/settings.yaml. "
-        "Feel free to edit it.")
+        warning(
+            "Settings file does not exist. Creating one in ~/.finn/settings.yaml. "
+            "Feel free to edit it."
+        )
         settings.load_defaults()
+
+    # Set arbitrary git timeout
+    if "DEPS_GIT_TIMEOUT" not in settings:
+        settings["DEPS_GIT_TIMEOUT"] = 100
 
     # Dependencies
     deps_path = settings.resolve_deps_path(deps)
-    if deps_path is None:
-        error("Dependency location could not be resolved!")
-        sys.exit(1)
-    else:
-        status(f"Using dependency path: {deps_path}")
+    status(f"[DEPENDENCY PATH] {deps_path}")
     settings["FINN_DEPS"] = deps_path.absolute()
     os.environ["FINN_DEPS"] = str(settings["FINN_DEPS"])
 
@@ -141,7 +143,14 @@ def prepare_finn(
 
     # Update / Install all dependencies
     if settings["AUTOMATIC_DEPENDENCY_UPDATES"]:
-        update_dependencies(deps_path)
+        # TODO: Make external_dependencies.yaml location settable via settings.yaml
+        updater = DependencyUpdater(
+            dependency_location=deps_path,
+            dependency_definition_file=None,
+            git_timeout_s=settings["DEPS_GIT_TIMEOUT"],
+        )
+        status(f"[EXTERNAL DEPENDENCY DEFINITION FILE] {updater.depfile.absolute()}")
+        updater.update()
     else:
         warning("Skipping dependency updates!")
 
@@ -162,7 +171,7 @@ def prepare_finn(
     os.environ["FINN_BUILD_DIR"] = str(resolved_build_dir)
     if not resolved_build_dir.exists():
         resolved_build_dir.mkdir(parents=True)
-    status(f"Build directory set to: {resolved_build_dir}")
+    status(f"[BUILD DIRECTORY] {resolved_build_dir}")
 
     # Resolve the number of workers
     workers = settings.resolve_num_workers(num_workers)
@@ -204,8 +213,8 @@ def main_group() -> None:
     "this stops the flow at the given step.",
 )
 def build(
-    dependency_path: str | None,
-    build_path: str | None,
+    dependency_path: Path | None,
+    build_path: Path | None,
     num_workers: int,
     skip_dep_update: bool,
     start: str,
@@ -294,7 +303,7 @@ def run(
         cmdparam_skip_dep_update=skip_dep_update,
     )
     Console().rule(
-        f"[bold cyan]Starting script " f"[/bold cyan][bold orange1]{script.name}[/bold orange1]"
+        f"[bold cyan]Starting script [/bold cyan][bold orange1]{script.name}[/bold orange1]"
     )
     subprocess.run(
         shlex.split(f"{sys.executable} {script.name}", posix=IS_POSIX), cwd=script.parent
@@ -306,7 +315,9 @@ def run(
 @requires_dependencies
 @requires_builddir
 @with_num_workers_option
-def bench(bench_config: str, dependency_path: str, num_workers: int, build_path: str) -> None:
+def bench(
+    bench_config: str, dependency_path: Path | None, num_workers: int, build_path: Path | None
+) -> None:
     console = Console()
     prepare_finn(FINNSettings(), dependency_path, Path(), build_path, num_workers)
     console.rule("RUNNING BENCHMARK")
@@ -354,7 +365,7 @@ def deps() -> None:
 @click.option(
     "--path", "-p", help="Path to install to", default="", show_default=True, type=NullablePath()
 )
-def update(path: str) -> None:
+def update(path: Path | None) -> None:
     prepare_finn(FINNSettings(), path, Path(), None, 1)
 
 
