@@ -220,6 +220,7 @@ jobs:
     - name: Generate API documentation
       run: |
         echo "Building API documentation with pydoc-markdown..."
+        mkdir -p docs
         pydoc-markdown
         echo "✅ API documentation generated successfully"
 
