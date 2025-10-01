@@ -120,6 +120,8 @@ def file_to_basename(x):
 def rtlsim_exec_cppxsi(
     model,
     execution_context,
+    require_mpi_fifosim,
+    fixed_fifosim_start_depth,
     dummy_data_mode=False,
     timeout_cycles=None,
     throttle_cycles=0,
@@ -279,11 +281,16 @@ def rtlsim_exec_cppxsi(
 
     # Building the whole simulation
     # Running CMake first
-    build_cmd = shlex.split(f"{sys.executable} -m cmake -S {finnxsi_dir} -B {sim_base}")
+    cmake_call = f"{sys.executable} -m cmake "
+    if require_mpi_fifosim:
+        cmake_call += "-DMPI_REQUIRED=1 "
+    if fixed_fifosim_start_depth is not None:
+        cmake_call += f"-DFIFO_START_SIZE={fixed_fifosim_start_depth} "
+    cmake_call += f"-S {finnxsi_dir} -B {sim_base}"
     log.info(f"Running cmake on RTLSIM Wrapper in {sim_base}")
     try:
         launch_process_helper(
-            build_cmd, cwd=finnxsi_dir, print_stdout=True, proc_env=os.environ.copy()
+            shlex.split(cmake_call), cwd=finnxsi_dir, print_stdout=True, proc_env=os.environ.copy()
         )
     except CalledProcessError as e:
         raise FINNError(f"Failed to run cmake in {sim_base}") from e

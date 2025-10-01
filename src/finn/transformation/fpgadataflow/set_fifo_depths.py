@@ -190,7 +190,14 @@ class CapConvolutionFIFODepths(Transformation):
         return (model, False)
 
 
-def xsi_fifosim(model, n_inferences, max_iters=None, throttle_cycles=0):
+def xsi_fifosim(
+    model,
+    n_inferences,
+    require_mpi_fifosim,
+    fixed_fifosim_start_depth,
+    max_iters=None,
+    throttle_cycles=0,
+):
     """Create a XSI model of stitched IP and use a simple C++
     driver to drive the input stream. Useful for FIFO sizing, latency
     and throughput measurement. If max_iters is None, use the default
@@ -209,6 +216,8 @@ def xsi_fifosim(model, n_inferences, max_iters=None, throttle_cycles=0):
     ret_dict = rtlsim_exec_cppxsi(
         model,
         ctx,
+        require_mpi_fifosim,
+        fixed_fifosim_start_depth,
         dummy_data_mode=True,
         timeout_cycles=max_iters,
         throttle_cycles=throttle_cycles,
@@ -263,6 +272,8 @@ class InsertAndSetFIFODepths(Transformation):
     def __init__(
         self,
         fpgapart,
+        require_mpi_fifosim=False,
+        fixed_fifosim_start_depth=None,
         clk_ns=10.0,
         max_qsrl_depth=256,
         max_depth=None,
@@ -273,6 +284,8 @@ class InsertAndSetFIFODepths(Transformation):
         super().__init__()
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
+        self.require_mpi_fifosim = require_mpi_fifosim
+        self.fixed_fifosim_start_depth = fixed_fifosim_start_depth
         self.max_qsrl_depth = max_qsrl_depth
         self.max_depth = max_depth
         self.swg_exception = swg_exception
@@ -380,7 +393,14 @@ class InsertAndSetFIFODepths(Transformation):
         else:
             throttle_cycles = 0
 
-        sim = xsi_fifosim(model, n_inferences, max_iters=max_iters, throttle_cycles=throttle_cycles)
+        sim = xsi_fifosim(
+            model,
+            n_inferences,
+            self.require_mpi_fifosim,
+            self.fixed_fifosim_start_dept,
+            hmax_iters=max_iters,
+            throttle_cycles=throttle_cycles,
+        )
 
         for ind, node in enumerate(fifo_nodes):
             maxcount_name = "maxcount_%d" % ind

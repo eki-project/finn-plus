@@ -666,6 +666,8 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                 InsertAndSetFIFODepths(
                     cfg._resolve_fpga_part(),
                     cfg._resolve_hls_clk_period(),
+                    require_mpi_fifosim=cfg.require_mpi_fifosim,
+                    fixed_fifosim_start_depth=cfg.fixed_fifosim_start_depth,
                     swg_exception=cfg.default_swg_exception,
                     vivado_ram_style=cfg.large_fifo_mem_style,
                     fifosim_input_throttle=cfg.fifosim_input_throttle,
@@ -814,7 +816,9 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
         perf = model.analysis(dataflow_performance)
         latency = perf["critical_path_cycles"]
         max_iters = latency * 1.1 + 20
-        rtlsim_perf_dict = xsi_fifosim(model, rtlsim_bs, max_iters=max_iters)
+        rtlsim_perf_dict = xsi_fifosim(
+            model, rtlsim_bs, require_mpi_fifosim=False, max_iters=max_iters
+        )
         # keep keys consistent between the Python and C++-styles
         cycles = rtlsim_perf_dict["cycles"]
         clk_ns = cfg.synth_clk_period_ns

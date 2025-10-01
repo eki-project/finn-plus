@@ -20,6 +20,9 @@ find_package(MPI)
 if (MPI_FOUND)
     message("MPI found. Using parallel iterative sizing.")
 else()
+    if (DEFINED MPI_REQUIRED)
+        message(FATAL_ERROR "MPI was not found but was requested to be required for FIFO Simulation!")
+    endif()
     message("MPI not found. Proceeding normally.")
 endif()
 
@@ -84,6 +87,9 @@ endif()
 
 # Write configuration header
 configure_file("${CMAKE_BINARY_DIR}/simulation_config.hpp.in" "${CMAKE_BINARY_DIR}/simulation_config.hpp")
+
+# Export compile commands for clangd
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Main
 file(GLOB_RECURSE CORE_SRC src/*.cpp)
