@@ -16,11 +16,10 @@
 #include "axi_control/s_axi_control.h"
 #include "axis_control/axis_control.h"
 #include "clock/clock.h"
-#include "rtlsim_config.hpp"
 #include "xsi_finn.hpp"
 
 // simulation_config.h contains info (Start size, MPI, etc,)
-#include "simulation_config.h"
+#include "simulation_config.hpp"
 #ifdef MPI_FOUND
     #include <mpi.h>
 #endif
@@ -317,6 +316,7 @@ int main() {
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     if (rank == 0) {
+        std::cout << "MPI Available!" << std::endl;
         std::cout << "Running on " << world_size << " ranks." << std::endl;
     }
 #endif
@@ -393,6 +393,9 @@ int main() {
         interval = _interval;
     }
 #else
+    if (rank == 0) {
+        std::cout << "Skipping FIFO startup sizing. Set to: " << FIFO_START_SIZE << std::endl;
+    }
     start_depth = FIFO_START_SIZE;
 #endif
 

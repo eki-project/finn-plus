@@ -82,17 +82,10 @@ if(FIFO_START_SIZE)
 endif()
 
 # Write configuration header
-configure_file(simulation_config.h.in simulation_config.h)
+configure_file("${CMAKE_BINARY_DIR}/simulation_config.hpp.in" "${CMAKE_BINARY_DIR}/simulation_config.hpp")
 
 # Main
 add_executable(FIFO_Simulation fifosim.cpp xsi_finn.cpp clock/clock.cpp axis_control/axis_control.cpp axi_control/s_axi_control.cpp)
-
-# # Get the rtlsim wrapper directory
-# if(NOT DEFINED RTLSIM_WRAPPER_DIR)
-#     message(FATAL_ERROR "Pass or define RTLSIM_WRAPPER_DIR pointing to the FINN generated wrapper directory!")
-# else()
-#     message(STATUS "RTLSIM Wrapper directory set to ${RTLSIM_WRAPPER_DIR}")
-# endif()
 
 # Include the rtlsim wrapper directory itself
 target_include_directories(FIFO_Simulation PUBLIC "${CMAKE_BINARY_DIR}")
