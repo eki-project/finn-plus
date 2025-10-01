@@ -44,7 +44,7 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
-from finn.util.test import get_test_model_trained
+from tests.testing_util.test import get_test_model_trained
 
 export_onnx_path = "test_output_bn2affine.onnx"
 

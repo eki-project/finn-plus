@@ -158,7 +158,7 @@ from finn.transformation.streamline.reorder import (
 from finn.transformation.streamline.streamline_plus import StreamlinePlus as Streamline
 
 # Execute onnx model graphs from the dataflow parent for verification
-from finn.util.test import execute_parent
+from finn.util.execution import execute_parent
 
 
 # Prepares the graph to be consumed by FINN:

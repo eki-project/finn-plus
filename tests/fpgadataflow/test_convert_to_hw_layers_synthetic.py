@@ -56,7 +56,7 @@ from finn.transformation.streamline.collapse_repeated import (
     CollapseRepeatedMul,
 )
 from finn.transformation.streamline.reorder import MoveAddPastMul, MoveScalarLinearPastInvariants
-from finn.util.test import soft_verify_topk
+from tests.testing_util.test import soft_verify_topk
 
 export_onnx_path = "test_output_synthetic.onnx"
 

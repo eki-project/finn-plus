@@ -42,7 +42,7 @@ from tempfile import TemporaryDirectory
 
 import finn.core.onnx_exec as oxe
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
-from finn.util.test import get_test_model_trained
+from tests.testing_util.test import get_test_model_trained
 
 
 def get_brev_model_and_sample_inputs(model_name, wbits, abits):

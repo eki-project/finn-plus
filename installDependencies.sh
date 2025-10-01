@@ -9,7 +9,6 @@ sudo apt-get update && sudo apt-get install -y \
     libsm6 \
     libxext6 \
     libxrender-dev \
-    zsh \
     zip \
     perl \
     make \

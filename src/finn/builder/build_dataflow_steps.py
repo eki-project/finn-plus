@@ -115,8 +115,8 @@ from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth
 from finn.util.exception import FINNUserError
+from finn.util.execution import execute_parent
 from finn.util.logging import log
-from finn.util.test import execute_parent
 
 
 def verify_step(

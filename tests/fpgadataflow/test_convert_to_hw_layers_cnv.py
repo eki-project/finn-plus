@@ -58,7 +58,7 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
-from finn.util.test import get_test_model_trained
+from tests.testing_util.test import get_test_model_trained
 
 export_onnx_path_cnv = "test_convert_to_hw_layers_cnv.onnx"
 
