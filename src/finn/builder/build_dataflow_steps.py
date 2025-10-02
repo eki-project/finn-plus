@@ -27,6 +27,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Collection of default build steps for building and verifying a dataflow accelerator from an ONNX model."""
+
 import json
 import numpy as np
 import os
@@ -126,6 +128,7 @@ def verify_step(
     need_parent: bool,
     rtlsim_pre_hook=None,
 ):
+    """Runs verification of the model after a build step by executing the ONNX model a sample inputs and checking against known target outputs."""
     log.info(f"Running verification for {step_name}")
     verify_out_dir = cfg.output_dir + "/verification_output"
     intermediate_models_dir = cfg.output_dir + "/intermediate_models"
@@ -203,6 +206,7 @@ def verify_step(
 
 
 def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
+    """Prepares the model for execution via RTL simulation as a stitched IP."""
     if not cfg.rtlsim_use_vivado_comps:
         need_restitch = False
         # switch impl_style=vivado components to rtl
