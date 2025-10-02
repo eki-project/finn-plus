@@ -63,6 +63,11 @@ from finn.util.exception import (
 )
 
 
+def get_logfile_path(cfg: DataflowBuildConfig) -> str:
+    """Return the path to the logfile in the build dir."""
+    return str(Path(cfg.output_dir) / "build_dataflow.log")
+
+
 # adapted from https://stackoverflow.com/a/39215961
 class PrintLogger(object):
     """Custom stream handler that writes to both console and log file with timestamps."""
@@ -230,7 +235,7 @@ def setup_logging(cfg: DataflowBuildConfig):
     #   which is needed if the file was deleted/moved or the output dir changed
     # - In a PyTest session, this logger will replace the PyTest log handlers, so logs
     #   (+ captured warnings!) will end up in the log file instead of being collected by PyTest
-    logpath = os.path.join(cfg.output_dir, "build_dataflow.log")
+    logpath = get_logfile_path(cfg)
     if cfg.verbose:
         logging.basicConfig(
             level=logging.DEBUG,
@@ -253,6 +258,11 @@ def setup_logging(cfg: DataflowBuildConfig):
 
     # Mirror stdout and stderr to log
     log = logging.getLogger("build_dataflow")
+    # Explicitly set the logger level based on cfg.verbose
+    if cfg.verbose:
+        log.setLevel(logging.DEBUG)
+    else:
+        log.setLevel(logging.INFO)
     if not isinstance(sys.stdout, PrintLogger):
         # Prevent rediricting stdout/sterr multiple times
         sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
@@ -335,10 +345,10 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     os.makedirs(os.path.join(cfg.output_dir, "report"), exist_ok=True)
 
     log = setup_logging(cfg)
-
+    logfile = get_logfile_path(cfg)
     print(f"Intermediate outputs will be generated in {os.environ['FINN_BUILD_DIR']}")
     print(f"Final outputs will be generated in {cfg.output_dir}")
-    print(f"Build log is at {cfg.output_dir}/build_dataflow.log")
+    print(f"Build log is at {logfile}")
 
     # Setup done, start build flow
     try:
@@ -402,7 +412,17 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
 
         # Print traceback for interal errors or if in debug mode
         if not issubclass(type(e), FINNUserError) or log.level == logging.DEBUG:
+            # Restoring stdout and stderr
+            if type(sys.stdout) is PrintLogger:
+                sys.stdout = sys.stdout.console
+            if type(sys.stderr) is PrintLogger:
+                sys.stderr = sys.stderr.console
+
+            # Print traceback both to console and logfile
             rprint(Traceback(show_locals=False))
+            with Path(get_logfile_path(cfg)).open("a") as f:
+                rprint(Traceback(show_locals=False), file=f)
+
             # Start postmortem debug if configured
             if cfg.enable_build_pdb_debug:
                 pdb.post_mortem(e.__traceback__)

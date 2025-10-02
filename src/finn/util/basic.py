@@ -56,7 +56,7 @@ from finn.util.logging import log
 test_board_map = ["Pynq-Z1", "KV260_SOM", "ZCU104", "U55C"]
 
 # mapping from PYNQ board names to FPGA part names
-pynq_part_map = dict()
+pynq_part_map: dict[str, str] = {}
 pynq_part_map["Ultra96"] = "xczu3eg-sbva484-1-e"
 pynq_part_map["Ultra96-V2"] = "xczu3eg-sbva484-1-i"
 pynq_part_map["Pynq-Z1"] = "xc7z020clg400-1"
@@ -71,7 +71,7 @@ pynq_part_map["AUP-ZU3_8GB"] = "xczu3eg-sfvc784-2-e"
 
 
 # native AXI HP port width (in bits) for PYNQ boards
-pynq_native_port_width = dict()
+pynq_native_port_width: dict[str, int] = {}
 pynq_native_port_width["Pynq-Z1"] = 64
 pynq_native_port_width["Pynq-Z2"] = 64
 pynq_native_port_width["Ultra96"] = 128
@@ -85,14 +85,14 @@ pynq_native_port_width["KV260_SOM"] = 128
 pynq_native_port_width["AUP-ZU3_8GB"] = 128
 
 # Alveo device and platform mappings
-alveo_part_map = dict()
+alveo_part_map: dict[str, str] = {}
 alveo_part_map["U50"] = "xcu50-fsvh2104-2L-e"
 alveo_part_map["U200"] = "xcu200-fsgd2104-2-e"
 alveo_part_map["U250"] = "xcu250-figd2104-2L-e"
 alveo_part_map["U280"] = "xcu280-fsvh2892-2L-e"
 alveo_part_map["U55C"] = "xcu55c-fsvh2892-2L-e"
 
-alveo_default_platform = dict()
+alveo_default_platform: dict[str, str] = {}
 alveo_default_platform["U50"] = "xilinx_u50_gen3x16_xdma_5_202210_1"
 alveo_default_platform["U200"] = "xilinx_u200_gen3x16_xdma_2_202110_1"
 alveo_default_platform["U250"] = "xilinx_u250_gen3x16_xdma_2_1_202010_1"
@@ -100,7 +100,7 @@ alveo_default_platform["U280"] = "xilinx_u280_gen3x16_xdma_1_202211_1"
 alveo_default_platform["U55C"] = "xilinx_u55c_gen3x16_xdma_3_202210_1"
 
 # Create a joint part map, encompassing other boards too
-part_map = {**pynq_part_map, **alveo_part_map}
+part_map: dict[str, str] = {**pynq_part_map, **alveo_part_map}
 part_map["VEK280"] = "xcve2802-vsvh1760-2MP-e-S"
 part_map["VCK190"] = "xcvc1902-vsva2197-2MP-e-S"
 part_map["V80"] = "xcv80-lsva4737-2MHP-e-s"
