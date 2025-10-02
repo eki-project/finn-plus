@@ -666,8 +666,8 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                 InsertAndSetFIFODepths(
                     cfg._resolve_fpga_part(),
                     cfg._resolve_hls_clk_period(),
-                    require_mpi_fifosim=cfg.require_mpi_fifosim,
-                    fixed_fifosim_start_depth=cfg.fixed_fifosim_start_depth,
+                    # require_mpi_fifosim=cfg.require_mpi_fifosim,
+                    # fixed_fifosim_start_depth=cfg.fixed_fifosim_start_depth,
                     swg_exception=cfg.default_swg_exception,
                     vivado_ram_style=cfg.large_fifo_mem_style,
                     fifosim_input_throttle=cfg.fifosim_input_throttle,

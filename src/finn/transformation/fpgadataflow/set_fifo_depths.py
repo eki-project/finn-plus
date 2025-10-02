@@ -194,7 +194,7 @@ def xsi_fifosim(
     model,
     n_inferences,
     require_mpi_fifosim,
-    fixed_fifosim_start_depth,
+    fixed_fifosim_start_depth=None,
     max_iters=None,
     throttle_cycles=0,
 ):
@@ -397,8 +397,8 @@ class InsertAndSetFIFODepths(Transformation):
             model,
             n_inferences,
             self.require_mpi_fifosim,
-            self.fixed_fifosim_start_dept,
-            hmax_iters=max_iters,
+            # self.fixed_fifosim_start_depth,
+            max_iters=max_iters,
             throttle_cycles=throttle_cycles,
         )
 

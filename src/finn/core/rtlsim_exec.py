@@ -121,7 +121,7 @@ def rtlsim_exec_cppxsi(
     model,
     execution_context,
     require_mpi_fifosim,
-    fixed_fifosim_start_depth,
+    fixed_fifosim_start_depth=None,
     dummy_data_mode=False,
     timeout_cycles=None,
     throttle_cycles=0,

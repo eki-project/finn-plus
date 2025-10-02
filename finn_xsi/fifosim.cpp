@@ -5,7 +5,6 @@
 #include <Kernel.h>
 #include <Port.h>
 #include <SharedLibrary.h>
-#include <Port.h>
 
 #include <algorithm>
 #include <bitset>
@@ -25,7 +24,7 @@
 #include "simulation_config.hpp"
 #ifdef MPI_FOUND
     #include <mpi.h>
-    constexpr int MPI_ROOT_RANK = 0;
+constexpr int MPI_ROOT_RANK = 0;
 #endif
 
 
@@ -215,8 +214,7 @@ std::optional<size_t> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& 
 }
 
 template<typename T>
-[[gnu::always_inline]] inline
-std::string toBinaryString(const T data) noexcept {
+[[gnu::always_inline]] inline std::string toBinaryString(const T data) noexcept {
     return std::bitset<sizeof(T) * 8>(data).to_string();
 }
 
@@ -274,7 +272,9 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
 
     for (size_t i = 0; i < totalFifos; ++i) {
         auto&& [kernel, top, istreams, ostreams, fifo_ports, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
-        std::cout << "Sizing FIFO number " << i << std::endl;
+
+        std::cout << "Sizing FIFO number " << (startIndex + i) << " of " << (endIndex + 1) << std::endl;
+        /* std::cout << "Sizing FIFO number " << i << std::endl;
         while (true) [[likely]] {  // do until fifo minimized
             // Try to minimize this FIFO
             const size_t oldFifoSize = fifo_sizes[i];
@@ -315,7 +315,7 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
                 // Minimum size reached
                 break;
             }
-        }
+        } */
     }
     return fifo_sizes;
 }
@@ -337,12 +337,21 @@ int main() {
     size_t interval = 0;
 #ifndef FIFO_START_SIZE
     if (rank == 0) {
-        std::cout << "\nDetermining start depth..." << std::endl;
-        auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename);
-        start_depth = _start_depth;
-        std::cout << "Interval: " << _interval << "\n";
-        interval = _interval;
+        // std::cout << "\nDetermining start depth..." << std::endl;
+        // auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename);
+        // start_depth = _start_depth;
+        // std::cout << "Interval: " << _interval << "\n";
+        // interval = _interval;
+        // Just for testing, use fixed start depth of 16k
+        start_depth = 16000;
+        interval = 2000;
     }
+    #ifdef MPI_FOUND
+    // Synchronize and send depth to all other ranks
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Bcast(&start_depth, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
+    MPI_Bcast(&interval, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
+    #endif  // MPI_FOUND
 #else
     if (rank == 0) {
         std::cout << "Skipping FIFO startup sizing. Set to: " << FIFO_START_SIZE << std::endl;
@@ -350,33 +359,54 @@ int main() {
     start_depth = FIFO_START_SIZE;
 
     // Since we dont know the interval simply assume the worst and let iterations improve
-    interval = std::numeric_limits<decltype(interval)>::max();
+    // interval = std::numeric_limits<decltype(interval)>::max();
+    // Funktioniert nicht, da unsere exit condition ist, dass die gemessene Intervalle steigen im Vergleich zu interval.
 #endif
-    // Create a new design just to count the FIFOs...
-    simDesc design = initDesign(kernel_libname, design_libname, xsim_log_filename, trace_filename);
-    size_t fifo_count = design.fifo_ports.size();
-
-    // Check that we dont have too many ranks (results in errors later on)
-    // TODO: Temporary solution. In the future this should not cause an error
-    if (rank == 0) {
-        if (static_cast<size_t>(world_size) > fifo_count) {
-            std::cout << "Too many ranks! There are " << world_size << " ranks for " << fifo_count << " FIFOs!" << std::endl;
-            MPI_Abort(MPI_COMM_WORLD, 1);
-        }
+    // Create a new design just to count the FIFOs and make sure its destroyed directly afterwards...
+    std::cout << "Using start depth of " << start_depth << " and target interval of " << interval << std::endl;
+    size_t fifo_count = 0;
+    {
+        auto&& [kernel, top, istreams, ostreams, fifo_ports, clk] = initDesign(kernel_libname, design_libname, xsim_log_filename, trace_filename);
+        fifo_count = fifo_ports.size();
     }
 
     // Determine FIFOs to be calculated per rank
     // Which fifos this process must size
     size_t start_index = 0;
-    size_t end_index = fifo_count - 1;
+    size_t end_index = 0;
+    size_t elementsInRank = 0;
 
-    // Split work across ranks
-    size_t fifos_per_rank = static_cast<size_t>(static_cast<float>(fifo_count) / static_cast<float>(world_size)) + 1;
-    start_index = static_cast<size_t>(rank) * fifos_per_rank;
-    end_index = std::clamp((static_cast<size_t>(rank) + 1) * fifos_per_rank - 1, 0lu, fifo_count - 1);
+    // Split work across ranks more carefully
+    if (static_cast<size_t>(rank) < fifo_count) {
+        size_t base_fifos_per_rank = fifo_count / static_cast<size_t>(world_size);
+        size_t remaining_fifos = fifo_count % static_cast<size_t>(world_size);
 
-    size_t elementsInRank = end_index - start_index + 1;
-    std::cout << "Rank " << rank << " sizing " << elementsInRank << " FIFOs. (end_index: " << end_index << ", start_index: " << start_index << ")"  << std::endl;
+        // When world_size > fifo_count, base_fifos_per_rank = 0
+        // Only the first fifo_count ranks get exactly 1 FIFO each
+        if (base_fifos_per_rank == 0) {
+            // Each of the first fifo_count ranks gets exactly 1 FIFO
+            start_index = static_cast<size_t>(rank);
+            end_index = static_cast<size_t>(rank);
+            elementsInRank = 1;
+        } else {
+            // Normal case: distribute FIFOs across ranks
+            // Some ranks get one extra FIFO if there's a remainder
+            size_t fifos_for_this_rank = base_fifos_per_rank + (static_cast<size_t>(rank) < remaining_fifos ? 1 : 0);
+
+            // Calculate start index
+            start_index = static_cast<size_t>(rank) * base_fifos_per_rank + std::min(static_cast<size_t>(rank), remaining_fifos);
+
+            // Calculate end index and elements count
+            end_index = start_index + fifos_for_this_rank - 1;
+            elementsInRank = fifos_for_this_rank;
+        }
+    } else {
+        // This rank has no work (more ranks than FIFOs)
+        start_index = 0;
+        end_index = 0;
+        elementsInRank = 0;
+    }
+    std::cout << "Rank " << rank << " sizing " << elementsInRank << " FIFOs. (end_index: " << end_index << ", start_index: " << start_index << ")" << std::endl;
 
 #ifdef MPI_FOUND
     // Synchronize and send depth to all other ranks
@@ -389,21 +419,34 @@ int main() {
     }
 
     // Size assigned FIFOs iteratively
-    const auto fifoSizes = sizeIteratively(start_depth, interval, 0, 97, kernel_libname, design_libname, xsim_log_filename, trace_filename);
+    std::vector<size_t> fifoSizes;
+    if (elementsInRank > 0) {
+        fifoSizes = sizeIteratively(start_depth, interval, start_index, end_index, kernel_libname, design_libname, xsim_log_filename, trace_filename);
+    } else {
+        // This rank has no work, create empty vector
+        fifoSizes.clear();
+    }
 
     // Collect all FIFO sizes together into allSizes
-    std::vector<size_t> allSizes(3);
+    std::vector<size_t> allSizes(fifo_count, 0);
 
 // Gather all FIFO sizes from all ranks
 #ifdef MPI_FOUND
-    // Gather how many FIFOs each rank worked on (might vary, at minimum the last rank might not be filled completely)
-    std::vector<int> elementsToGather(static_cast<size_t>(world_size));
-    MPI_Gather(&elementsInRank, 1, MPI_UNSIGNED_LONG, &elementsToGather[0], 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
-
-    // Gather the FIFO sizes themselves
+    // First, gather the number of elements each rank has
+    std::vector<int> recvcounts(static_cast<size_t>(world_size));
     std::vector<int> displs(static_cast<size_t>(world_size));
-    std::exclusive_scan(std::begin(elementsToGather), std::end(elementsToGather), std::begin(displs), 0);
-    MPI_Gatherv(&fifoSizes[0], static_cast<int>(fifoSizes.size()), MPI_UNSIGNED_LONG, &allSizes[0], &elementsToGather[0], &displs[0], MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
+
+    int my_count = static_cast<int>(elementsInRank);
+    MPI_Allgather(&my_count, 1, MPI_INT, recvcounts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+
+    // Calculate displacements
+    displs[0] = 0;
+    for (size_t i = 1; i < static_cast<size_t>(world_size); ++i) {
+        displs[i] = displs[i - 1] + recvcounts[i - 1];
+    }
+
+    // Gather all FIFO sizes using MPI_Gatherv
+    MPI_Gatherv(fifoSizes.data(), my_count, MPI_UNSIGNED_LONG, allSizes.data(), recvcounts.data(), displs.data(), MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
 #else
     allSizes = fifoSizes;
 #endif
@@ -414,5 +457,8 @@ int main() {
         }
     }
 
+#ifdef MPI_FOUND
+    MPI_Finalize();
+#endif  // MPI_FOUND
     return 0;
 }
