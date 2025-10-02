@@ -258,6 +258,11 @@ def setup_logging(cfg: DataflowBuildConfig):
 
     # Mirror stdout and stderr to log
     log = logging.getLogger("build_dataflow")
+    # Explicitly set the logger level based on cfg.verbose
+    if cfg.verbose:
+        log.setLevel(logging.DEBUG)
+    else:
+        log.setLevel(logging.INFO)
     if not isinstance(sys.stdout, PrintLogger):
         # Prevent rediricting stdout/sterr multiple times
         sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
