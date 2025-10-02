@@ -27,6 +27,14 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""
+Dataflow build steps for FINN.
+
+This module contains utility functions and build steps for the FINN dataflow
+compiler, including verification, IP stitching preparation, and other build-related
+functionalities.
+"""
+
 import json
 import numpy as np
 import os
@@ -126,6 +134,15 @@ def verify_step(
     need_parent: bool,
     rtlsim_pre_hook=None,
 ):
+    """Verify a build step by running simulation and comparing results.
+
+    Args:
+        model: The ONNX model to verify
+        cfg: Build configuration object
+        step_name: Name of the build step being verified
+        need_parent: Whether parent model execution is needed for comparison
+        rtlsim_pre_hook: Optional pre-hook function for RTL simulation
+    """
     log.info(f"Running verification for {step_name}")
     verify_out_dir = cfg.output_dir + "/verification_output"
     intermediate_models_dir = cfg.output_dir + "/intermediate_models"
@@ -203,6 +220,15 @@ def verify_step(
 
 
 def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
+    """Prepare model for stitched IP RTL simulation.
+
+    Switches implementation styles from Vivado components to RTL where needed
+    and ensures proper configuration for RTL simulation.
+
+    Args:
+        verify_model: The model to prepare for RTL simulation
+        cfg: Build configuration object
+    """
     if not cfg.rtlsim_use_vivado_comps:
         need_restitch = False
         # switch impl_style=vivado components to rtl

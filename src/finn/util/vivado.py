@@ -26,6 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""
+Vivado-related utility functions for FINN.
+
+This module provides utilities for working with Xilinx Vivado, including
+out-of-context synthesis, project creation, and other Vivado-related operations.
+"""
+
 import os
 from pathlib import Path
 

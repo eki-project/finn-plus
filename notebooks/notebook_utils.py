@@ -115,7 +115,16 @@ def get_trained_network_and_ishape(topology, wbits, abits):
 
 
 class Normalize(Module):
+    """PyTorch module for normalizing input tensors with given mean and standard deviation."""
+
     def __init__(self, mean, std, channels):
+        """Initialize the Normalize module.
+
+        Args:
+            mean: Mean values for normalization
+            std: Standard deviation values for normalization
+            channels: Number of channels in the input tensor
+        """
         super(Normalize, self).__init__()
 
         self.mean = mean
@@ -123,22 +132,50 @@ class Normalize(Module):
         self.channels = channels
 
     def forward(self, x):
+        """Apply normalization to input tensor.
+
+        Args:
+            x: Input tensor to normalize
+
+        Returns:
+            Normalized tensor
+        """
         x = x - torch.tensor(self.mean, device=x.device).reshape(1, self.channels, 1, 1)
         x = x / self.std
         return x
 
 
 class ToTensor(Module):
+    """PyTorch module that converts input values from [0, 255] range to [0, 1] range."""
+
     def __init__(self):
+        """Initialize the ToTensor module."""
         super(ToTensor, self).__init__()
 
     def forward(self, x):
+        """Convert input tensor from [0, 255] range to [0, 1] range.
+
+        Args:
+            x: Input tensor with values in [0, 255] range
+
+        Returns:
+            Tensor with values in [0, 1] range
+        """
         x = x / 255
         return x
 
 
 class NormalizePreProc(Module):
+    """PyTorch module that combines ToTensor scaling and normalization preprocessing."""
+
     def __init__(self, mean, std, channels):
+        """Initialize the NormalizePreProc module.
+
+        Args:
+            mean: Mean values for normalization
+            std: Standard deviation values for normalization
+            channels: Number of channels in the input tensor
+        """
         super(NormalizePreProc, self).__init__()
         self.features = Sequential()
         scaling = ToTensor()
@@ -147,6 +184,14 @@ class NormalizePreProc(Module):
         self.features.add_module("normalize", normalize)
 
     def forward(self, x):
+        """Apply scaling and normalization preprocessing to input tensor.
+
+        Args:
+            x: Input tensor to preprocess
+
+        Returns:
+            Preprocessed tensor
+        """
         return self.features(x)
 
 
