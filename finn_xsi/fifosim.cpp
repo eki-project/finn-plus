@@ -5,31 +5,29 @@
 #include <Kernel.h>
 #include <Port.h>
 #include <SharedLibrary.h>
+#include <Port.h>
 
 #include <algorithm>
 #include <bitset>
 #include <chrono>
+#include <cstddef>
 #include <deque>
-#include <fstream>
 #include <functional>
 #include <iostream>
 #include <numeric>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 
-#include "rtlsim_config.hpp"
-
 // simulation_config.h contains info (Start size, MPI, etc,)
-#include "simulation_config.h"
+#include "simulation_config.hpp"
 #ifdef MPI_FOUND
     #include <mpi.h>
+    constexpr int MPI_ROOT_RANK = 0;
 #endif
 
-constexpr int MPI_ROOT_RANK = 0;
 
 static void clearPorts(xsi::Design& top) noexcept;
 static void reset(simDesc& desc) noexcept;
@@ -276,7 +274,7 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
 
     for (size_t i = 0; i < totalFifos; ++i) {
         auto&& [kernel, top, istreams, ostreams, fifo_ports, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
-
+        std::cout << "Sizing FIFO number " << i << std::endl;
         while (true) [[likely]] {  // do until fifo minimized
             // Try to minimize this FIFO
             const size_t oldFifoSize = fifo_sizes[i];
@@ -323,31 +321,17 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
 }
 
 int main() {
-    // int world_size = 1;
+    int world_size = 1;
     int rank = 0;
 #ifdef MPI_FOUND
     MPI_Init(NULL, NULL);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     if (rank == 0) {
+        std::cout << "MPI Available!" << std::endl;
         std::cout << "Running on " << world_size << " ranks." << std::endl;
     }
 #endif
-
-    // if (rank == 0) {
-    //     for (auto&& port : top.ports()) {
-    //         std::cout << "Port Name: " << port.name() << ", Direction: " << (port.dir()) << std::endl;
-    //     }
-    //     std::cout << "Starting data feed with idle-output timeout of " << max_iters << " cycles ...\n" << std::endl;
-
-    //     if (istreams.size() > 1 || ostreams.size() > 1) {
-    //         throw std::runtime_error(
-    //             "This simulation is not designed to run with "
-    //             "multiple input or output streams.");
-    //     }
-    // }
-
-    // Simulation Report Statistics
 
     size_t start_depth = 1;
     size_t interval = 0;
@@ -360,21 +344,39 @@ int main() {
         interval = _interval;
     }
 #else
+    if (rank == 0) {
+        std::cout << "Skipping FIFO startup sizing. Set to: " << FIFO_START_SIZE << std::endl;
+    }
     start_depth = FIFO_START_SIZE;
-    interval = ? ? ? ;
+
+    // Since we dont know the interval simply assume the worst and let iterations improve
+    interval = std::numeric_limits<decltype(interval)>::max();
 #endif
+    // Create a new design just to count the FIFOs...
+    simDesc design = initDesign(kernel_libname, design_libname, xsim_log_filename, trace_filename);
+    size_t fifo_count = design.fifo_ports.size();
 
-    /*     // Which fifos this process must size
-        size_t start_index = 0;
-        size_t end_index = fifo_ports.size() - 1;
+    // Check that we dont have too many ranks (results in errors later on)
+    // TODO: Temporary solution. In the future this should not cause an error
+    if (rank == 0) {
+        if (static_cast<size_t>(world_size) > fifo_count) {
+            std::cout << "Too many ranks! There are " << world_size << " ranks for " << fifo_count << " FIFOs!" << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, 1);
+        }
+    }
 
-        // Split work across ranks
-        size_t fifos_per_rank = fifo_ports.size() / static_cast<size_t>(world_size) + 1;
-        start_index = static_cast<size_t>(rank) * fifos_per_rank;
-        end_index = std::clamp((static_cast<size_t>(rank) + 1) * fifos_per_rank - 1, 0lu, fifo_ports.size() - 1);
+    // Determine FIFOs to be calculated per rank
+    // Which fifos this process must size
+    size_t start_index = 0;
+    size_t end_index = fifo_count - 1;
 
-        size_t elementsInRank = end_index - start_index + 1;
-        std::cout << "Rank " << rank << " sizing " << elementsInRank << " FIFOs." << std::endl; */
+    // Split work across ranks
+    size_t fifos_per_rank = static_cast<size_t>(static_cast<float>(fifo_count) / static_cast<float>(world_size)) + 1;
+    start_index = static_cast<size_t>(rank) * fifos_per_rank;
+    end_index = std::clamp((static_cast<size_t>(rank) + 1) * fifos_per_rank - 1, 0lu, fifo_count - 1);
+
+    size_t elementsInRank = end_index - start_index + 1;
+    std::cout << "Rank " << rank << " sizing " << elementsInRank << " FIFOs. (end_index: " << end_index << ", start_index: " << start_index << ")"  << std::endl;
 
 #ifdef MPI_FOUND
     // Synchronize and send depth to all other ranks

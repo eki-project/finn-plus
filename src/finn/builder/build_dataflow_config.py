@@ -26,6 +26,7 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+from __future__ import annotations
 
 import numpy as np
 import os
@@ -293,6 +294,16 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: When `auto_fifo_depths = True`, select which method will be used for
     #: setting the FIFO sizes.
     auto_fifo_strategy: Optional[AutoFIFOSizingMethod] = AutoFIFOSizingMethod.LARGEFIFO_RTLSIM
+
+    #: If True requires any MPI implementation to be available
+    #: in order to successfully compile the FIFO simulation.
+    require_mpi_fifosim: bool = False
+
+    #: When set to an integer, this value is used as the starting point of the
+    #: second phase of the FIFO sizing. This way only the second step
+    #: shrinking the given depth as far as possible is executed.
+    #: Setting this value manually may lead to non-optimal FIFO sizes!
+    fixed_fifosim_start_depth: int | None = None
 
     #: Memory resource type for large FIFOs
     #: Only relevant when `auto_fifo_depths = True`

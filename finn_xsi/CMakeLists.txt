@@ -20,6 +20,9 @@ find_package(MPI)
 if (MPI_FOUND)
     message("MPI found. Using parallel iterative sizing.")
 else()
+    if (DEFINED MPI_REQUIRED)
+        message(FATAL_ERROR "MPI was not found but was requested to be required for FIFO Simulation!")
+    endif()
     message("MPI not found. Proceeding normally.")
 endif()
 
@@ -83,18 +86,14 @@ if(FIFO_START_SIZE)
 endif()
 
 # Write configuration header
-configure_file(simulation_config.h.in simulation_config.h)
+configure_file("${CMAKE_BINARY_DIR}/simulation_config.hpp.in" "${CMAKE_BINARY_DIR}/simulation_config.hpp")
+
+# Export compile commands for clangd
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Main
 file(GLOB_RECURSE CORE_SRC src/*.cpp)
 add_executable(FIFO_Simulation fifosim.cpp ${CORE_SRC})
-
-# # Get the rtlsim wrapper directory
-# if(NOT DEFINED RTLSIM_WRAPPER_DIR)
-#     message(FATAL_ERROR "Pass or define RTLSIM_WRAPPER_DIR pointing to the FINN generated wrapper directory!")
-# else()
-#     message(STATUS "RTLSIM Wrapper directory set to ${RTLSIM_WRAPPER_DIR}")
-# endif()
 
 # Include the rtlsim wrapper directory itself
 target_include_directories(FIFO_Simulation PUBLIC "${CMAKE_BINARY_DIR}")

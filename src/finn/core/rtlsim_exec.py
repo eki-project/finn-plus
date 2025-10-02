@@ -120,6 +120,8 @@ def file_to_basename(x):
 def rtlsim_exec_cppxsi(
     model,
     execution_context,
+    require_mpi_fifosim,
+    fixed_fifosim_start_depth,
     dummy_data_mode=False,
     timeout_cycles=None,
     throttle_cycles=0,
@@ -189,9 +191,6 @@ def rtlsim_exec_cppxsi(
         sim_rel = "xsim.dir" + sim_rel
     # prepare the C++ sim driver template
     finnxsi_dir = os.environ["FINN_XSI"]
-    fifosim_config_fname = finnxsi_dir + "/rtlsim_config.hpp.template"
-    with open(fifosim_config_fname, "r") as f:
-        fifsom_config_template = f.read()
 
     instream_iters = []
     outstream_iters = []
@@ -267,43 +266,59 @@ def rtlsim_exec_cppxsi(
         # log file for xsi (not the sim driver)
         "XSIM_LOG_FILE": '"xsi.log"',
     }
+
+    # Read the fifosim config template and insert all template arguments
+    fifosim_config_fname = Path(finnxsi_dir) / "rtlsim_config.hpp.template"
+    fsim_config = fifosim_config_fname.read_text()
     for key, val in template_dict.items():
-        fifsom_config_template = fifsom_config_template.replace(f"@{key}@", str(val))
-    with open(sim_base + "/rtlsim_config.hpp", "w") as f:
-        f.write(fifsom_config_template)
+        fsim_config = fsim_config.replace(f"@{key}@", str(val))
+
+    # Write the config to the simulation directory
+    # From here, CMake will add additional definitions relevant for compilation
+    # (Hence the suffix ".in")
+    simulation_config_in = Path(sim_base) / "simulation_config.hpp.in"
+    simulation_config_in.write_text(fsim_config)
 
     # Building the whole simulation
-    build_cmd = shlex.split(f"{sys.executable} -m cmake -S {finnxsi_dir} -B {sim_base}")
+    # Running CMake first
+    cmake_call = f"{sys.executable} -m cmake "
+    if require_mpi_fifosim:
+        cmake_call += "-DMPI_REQUIRED=1 "
+    if fixed_fifosim_start_depth is not None:
+        cmake_call += f"-DFIFO_START_SIZE={fixed_fifosim_start_depth} "
+    cmake_call += f"-S {finnxsi_dir} -B {sim_base}"
     log.info(f"Running cmake on RTLSIM Wrapper in {sim_base}")
-    env = {}
-    env.update(os.environ)
     try:
-        launch_process_helper(build_cmd, cwd=finnxsi_dir, print_stdout=True, proc_env=env)
+        launch_process_helper(
+            shlex.split(cmake_call), cwd=finnxsi_dir, print_stdout=True, proc_env=os.environ.copy()
+        )
     except CalledProcessError as e:
         raise FINNError(f"Failed to run cmake in {sim_base}") from e
 
+    # Calling make to actually build the simulation
     makefile = Path(sim_base) / "Makefile"
     if not makefile.exists():
         raise FINNUserError(f"Failed to create Makefile in {sim_base}!")
     try:
-        launch_process_helper(["make"], proc_env=env, cwd=sim_base)
+        launch_process_helper(["make"], proc_env=os.environ.copy(), cwd=sim_base)
     except CalledProcessError as e:
         raise FINNUserError(f"Failed to create executable in {sim_base}!") from e
-    assert (Path(sim_base) / "FIFO_Simulation").exists()
 
-    # launch the rtlsim executable
-    # important to specify LD_LIBRARY_PATH here for XSI to work correctly
-    runsim_env = os.environ.copy()
-    runsim_env["LD_LIBRARY_PATH"] = get_vivado_root() + "/lib/lnx64.o"
-    runsim_cmd = ["bash", "run_fifosim.sh"]
-    with open(sim_base + "/run_fifosim.sh", "w") as f:
-        f.write(
-            f"LD_LIBRARY_PATH={runsim_env['LD_LIBRARY_PATH']}:$LD_LIBRARY_PATH ./FIFO_Simulation"
-        )
-    env = {}
-    env.update(os.environ)
+    # TODO: Fix name for general rtlsim
+    simulation_executable = Path(sim_base) / "FIFO_Simulation"
+    assert simulation_executable.exists()
+
+    # Prepare the script to run the simulation
+    # (important to specify LD_LIBRARY_PATH here for XSI to work correctly)
+    runsim = Path(sim_base) / "run_fifosim.sh"
+    ld_library_path = get_vivado_root() + "/lib/lnx64.o"
+    runsim.write_text(
+        f"LD_LIBRARY_PATH={ld_library_path}:$LD_LIBRARY_PATH ./{simulation_executable}"
+    )
     exit()
-    launch_process_helper(runsim_cmd, cwd=sim_base, proc_env=env)
+
+    # Actually run the simulation
+    launch_process_helper(["bash", runsim.name], cwd=sim_base, proc_env=os.environ.copy())
 
     # parse results file and return dict
     results_filename = sim_base + "/results.txt"
