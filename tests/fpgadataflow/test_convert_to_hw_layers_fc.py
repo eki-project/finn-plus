@@ -51,6 +51,7 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 import finn.core.onnx_exec as oxe
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
+from finn.tests.testing_util.test import get_test_model_trained
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
@@ -58,7 +59,6 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from tests.testing_util.test import get_test_model_trained
 
 export_onnx_path = "test_convert_to_hw_layers_fc.onnx"
 

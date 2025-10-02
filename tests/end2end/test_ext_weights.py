@@ -36,8 +36,8 @@ import wget
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
+from finn.tests.testing_util.test import load_test_checkpoint_or_skip
 from finn.util.basic import make_build_dir
-from tests.testing_util.test import load_test_checkpoint_or_skip
 
 
 def get_checkpoint_name(step):

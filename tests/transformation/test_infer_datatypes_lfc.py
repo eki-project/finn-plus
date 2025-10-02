@@ -39,8 +39,8 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
+from finn.tests.testing_util.test import get_test_model_trained
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
-from tests.testing_util.test import get_test_model_trained
 
 export_onnx_path = "test_infer_datatypes.onnx"
 

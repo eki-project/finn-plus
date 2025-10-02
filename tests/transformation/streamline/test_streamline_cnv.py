@@ -45,10 +45,10 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
+from finn.tests.testing_util.test import get_test_model_trained
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
 from finn.util.basic import make_build_dir
-from tests.testing_util.test import get_test_model_trained
 
 
 @pytest.mark.streamline
