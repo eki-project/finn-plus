@@ -17,9 +17,9 @@
 default: xsi.so
 
 # Python Binding
-xsi.so: xsi_bind.cpp xsi_finn.cpp
-	g++ --std=c++17 -Wall -O3 -shared -fPIC \
-	$$(python3.10-config --includes) -I$(XILINX_VIVADO)/data/xsim/include \
+xsi.so: xsi_bind.cpp src/Port.cpp src/Design.cpp src/Kernel.cpp src/SharedLibrary.cpp
+	g++ --std=c++20 -Wall -O3 -shared -fPIC \
+	$$(python3.10-config --includes) -I$(XILINX_VIVADO)/data/xsim/include -I./include \
 	-o$@ $^ -ldl -lrt
 
 

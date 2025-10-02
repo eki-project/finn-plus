@@ -91,7 +91,7 @@ def compile_sim_obj(top_module_name, source_list, sim_out_dir, debug=False):
         top_module_name,
     ]
     # Add debug flag if debug is enabled
-    if True:
+    if False:
         cmd_xelab.append("-debug")
         cmd_xelab.append("all")
     for lib in xelab_libs:

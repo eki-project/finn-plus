@@ -387,7 +387,7 @@ int main() {
     }
 
     // Size assigned FIFOs iteratively
-    const auto fifoSizes = sizeIteratively(start_depth, interval, 0, 2, kernel_libname, design_libname, xsim_log_filename, trace_filename);
+    const auto fifoSizes = sizeIteratively(start_depth, interval, 0, 97, kernel_libname, design_libname, xsim_log_filename, trace_filename);
 
     // Collect all FIFO sizes together into allSizes
     std::vector<size_t> allSizes(3);
