@@ -26,6 +26,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""HLS backend implementation for FINN custom operations."""
+
 try:
     import finn_xsi.adapter as finnxsi
 except ModuleNotFoundError:
@@ -54,6 +56,7 @@ class HLSBackend(ABC):
     when writing a new HLS custom op node."""
 
     def get_nodeattr_types(self):
+        """Return dictionary of node attribute types and properties."""
         return {
             "code_gen_dir_cppsim": ("s", False, ""),
             "executable_path": ("s", False, ""),
@@ -65,7 +68,7 @@ class HLSBackend(ABC):
         }
 
     def get_all_verilog_paths(self):
-        "Return list of all folders containing Verilog code for this node."
+        """Return list of all folders containing Verilog code for this node."""
 
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         assert (
@@ -84,7 +87,7 @@ class HLSBackend(ABC):
         return ret
 
     def get_all_verilog_filenames(self, abspath=False):
-        "Return list of all Verilog files used for this node."
+        """Return list of all Verilog files used for this node."""
 
         verilog_files = []
         verilog_paths = self.get_all_verilog_paths()
@@ -112,7 +115,7 @@ class HLSBackend(ABC):
         self.set_nodeattr("rtlsim_so", ret[0] + "/" + ret[1])
 
     def code_generation_ipgen(self, model, fpgapart, clk):
-        """Generates c++ code and tcl script for ip generation."""
+        """Generate C++ code and TCL script for IP generation."""
         node = self.onnx_node
 
         # generate top cpp file for ip generation
@@ -168,7 +171,7 @@ class HLSBackend(ABC):
         self.code_gen_dict.clear()
 
     def ipgen_default_directives(self):
-        """Return list of default HLS synthesis directives"""
+        """Return list of default HLS synthesis directives."""
 
         default_directives = [
             "set_param hls.enable_hidden_option_error false",
@@ -180,11 +183,11 @@ class HLSBackend(ABC):
         return default_directives
 
     def ipgen_extra_directives(self):
-        "Return a list of extra tcl directives for HLS synthesis."
+        """Return a list of extra TCL directives for HLS synthesis."""
         return []
 
     def ipgen_singlenode_code(self):
-        """Builds the bash script for IP generation using the CallHLS utility."""
+        """Build the bash script for IP generation using the CallHLS utility."""
         node = self.onnx_node
         code_gen_dir = Path(self.get_nodeattr("code_gen_dir_ipgen"))
         builder = CallHLS(
@@ -229,7 +232,7 @@ class HLSBackend(ABC):
         self.set_nodeattr("ip_vlnv", vlnv)
 
     def code_generation_cppsim(self, model):
-        """Generates c++ code for simulation (cppsim)."""
+        """Generate C++ code for simulation (cppsim)."""
         node = self.onnx_node
         path = self.get_nodeattr("code_gen_dir_cppsim")
         self.code_gen_dict["$AP_INT_MAX_W$"] = [str(self.get_ap_int_max_w())]
@@ -262,14 +265,13 @@ class HLSBackend(ABC):
         self.code_gen_dict.clear()
 
     def code_generation_ipi(self):
-        """Constructs and returns the TCL for node instantiation in Vivado IPI."""
+        """Construct and return the TCL for node instantiation in Vivado IPI."""
         vlnv = self.get_nodeattr("ip_vlnv")
         cmd = ["create_bd_cell -type ip -vlnv %s %s" % (vlnv, self.onnx_node.name)]
         return cmd
 
     def compile_singlenode_code(self):
-        """Builds the bash script for compilation using the CppBuilder from
-        finn.util.basic and executes the script to produce the executable."""
+        """Build bash script for compilation using CppBuilder and execute to produce executable."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         builder = CppBuilder()
         # to enable additional debug features please uncommand the next line
@@ -292,8 +294,7 @@ class HLSBackend(ABC):
         self.set_nodeattr("executable_path", builder.executable_path)
 
     def npy_to_dynamic_output(self, context):
-        """Reads the output from an output.npy file generated from cppsim and
-        places its content into the context dictionary."""
+        """Read output.npy file generated from cppsim and place into context dictionary."""
         node = self.onnx_node
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         for o, outp in enumerate(node.output):
@@ -302,7 +303,7 @@ class HLSBackend(ABC):
             context[outp] = output.reshape(exp_shape)
 
     def exec_precompiled_singlenode_model(self):
-        """Executes precompiled executable."""
+        """Execute precompiled executable."""
         executable_path = self.get_nodeattr("executable_path")
         if executable_path == "":
             raise Exception(
@@ -325,6 +326,7 @@ compilation transformations?
         return "V"
 
     def execute_node(self, context, graph):
+        """Execute node in specified mode (cppsim or rtlsim)."""
         mode = self.get_nodeattr("exec_mode")
         node = self.onnx_node
 
@@ -447,8 +449,8 @@ compilation transformations?
         pass
 
     def read_npy_data(self):
-        """Function to generate the commands for reading data from .npy file in c++,
-        might need to be overwritten depending on custom op."""
+        """Generate commands for reading data from .npy file in C++.
+        Might need to be overwritten depending on CustomOp."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         self.code_gen_dict["$READNPYDATA$"] = []
         cpp_interface = self.get_nodeattr("cpp_interface")
@@ -495,9 +497,8 @@ compilation transformations?
                 )
 
     def strm_decl(self):
-        """Function to generate the commands for the stream declaration in c++,
-        is member function of HLSBackend class but might need to be filled
-        by node."""
+        """Generate commands for stream declaration in C++.
+        Might need to be overwritten depending on CustomOp."""
         node = self.onnx_node
         cpp_interface = self.get_nodeattr("cpp_interface")
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
@@ -562,9 +563,8 @@ compilation transformations?
         pass
 
     def dataoutstrm(self):
-        """Function to generate the commands for reading out data from c++ and convert
-        into npy format, is member function of HLSBackend class might need to be filled
-        by node."""
+        """Generate commands for reading out data from C++ and converting to npy format.
+        Might need to be overwritten depending on CustomOp."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         self.code_gen_dict["$DATAOUTSTREAM$"] = []
 
@@ -616,7 +616,7 @@ compilation transformations?
                 )
 
     def save_as_npy(self):
-        """Function to generate the commands for saving data in .npy file in c++"""
+        """Generate commands for saving data in .npy file in C++."""
         self.code_gen_dict["$SAVEASCNPY$"] = []
 
     @abstractmethod
@@ -627,8 +627,8 @@ compilation transformations?
         pass
 
     def pragmas(self):
-        """Function to generate the pragma commands in c++,
-        might need to be overwritten depending on custom op."""
+        """Generate pragma commands in C++.
+        Might need to be overwritten depending on CustomOp."""
         self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0_V"]
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
@@ -643,13 +643,13 @@ compilation transformations?
         return ret
 
     def timeout_value(self):
-        """Set timeout value for HLS functions defined for one clock cycle"""
+        """Set timeout value for HLS functions defined for one clock cycle."""
         self.code_gen_dict["$TIMEOUT_VALUE$"] = ["1000"]
 
     def timeout_condition(self):
-        """Set timeout condition for HLS functions defined for one clock cycle"""
+        """Set timeout condition for HLS functions defined for one clock cycle."""
         self.code_gen_dict["$TIMEOUT_CONDITION$"] = ["out0_V.empty()"]
 
     def timeout_read_stream(self):
-        """Set reading output stream procedure for HLS functions defined for one clock cycle"""
+        """Set reading output stream procedure for HLS functions defined for one clock cycle."""
         self.code_gen_dict["$TIMEOUT_READ_STREAM$"] = ["strm0 << out0_V.read();"]

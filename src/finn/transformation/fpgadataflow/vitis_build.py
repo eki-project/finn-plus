@@ -27,6 +27,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Transformation to build FINN dataflow designs for Alveo using Vitis."""
+
 import json
 import os
 from qonnx.core.modelwrapper import ModelWrapper
@@ -57,6 +59,7 @@ from . import templates
 
 
 def _check_vitis_envvars():
+    """Check environment variables for Vitis installation."""
     assert "XILINX_VITIS" in os.environ, "XILINX_VITIS must be set for Vitis"
     assert "PLATFORM_REPO_PATHS" in os.environ, "PLATFORM_REPO_PATHS must be set for Vitis"
     assert (
@@ -73,10 +76,12 @@ class CreateVitisXO(Transformation):
     """
 
     def __init__(self, ip_name="finn_design"):
+        """Initialize CreateVitisXO transformation."""
         super().__init__()
         self.ip_name = ip_name
 
     def apply(self, model):
+        """Apply CreateVitisXO transformation to create Vitis object file."""
         _check_vitis_envvars()
         vivado_proj_dir = model.get_metadata_prop("vivado_stitch_proj")
         stitched_ip_dir = vivado_proj_dir + "/ip"
@@ -173,6 +178,7 @@ class VitisLink(Transformation):
         enable_debug=False,
         fpga_memory_type="default",
     ):
+        """Initialize VitisLink transformation with platform and build settings."""
         super().__init__()
         self.platform = platform
         self.f_mhz = f_mhz
@@ -181,6 +187,7 @@ class VitisLink(Transformation):
         self.fpga_memory_type = fpga_memory_type
 
     def apply(self, model):
+        """Apply VitisLink transformation to create XCLBIN."""
         _check_vitis_envvars()
         # create a config file and empty list of xo files
         config = ["[connectivity]"]
@@ -392,6 +399,7 @@ class VitisBuild(Transformation):
         partition_model_dir=None,
         fpga_memory_type=FpgaMemoryType.DEFAULT,
     ):
+        """Initialize VitisBuild transformation with FPGA and build settings."""
         super().__init__()
         self.fpga_part = fpga_part
         self.period_ns = period_ns
@@ -404,6 +412,7 @@ class VitisBuild(Transformation):
         self.fpga_memory_type = fpga_memory_type
 
     def apply(self, model):
+        """Apply VitisBuild transformation to create complete Vitis accelerator."""
         _check_vitis_envvars()
         # prepare at global level, then break up into kernels
         prep_transforms = [InsertIODMA(512), InsertDWC(), SpecializeLayers(self.fpga_part)]
