@@ -1,3 +1,5 @@
+"""Utilities for the FINN command line interface."""
+
 from __future__ import annotations
 
 import os
@@ -71,8 +73,7 @@ def set_synthesis_tools_paths() -> None:
 
         # Append to the search path just in case it was missing before, if
         # already in there adding again should do nothing
-        os.environ["PATH"] += \
-            os.pathsep + str((Path(envname_path) / "bin").absolute())
+        os.environ["PATH"] += os.pathsep + str((Path(envname_path) / "bin").absolute())
 
     if (
         "PLATFORM_REPO_PATHS" not in os.environ.keys()
