@@ -41,7 +41,7 @@ clize = "~5.0.2"
 gspread = "~3.6.0"
 importlib-resources = "~6.5.2"
 ipython = "~8.37.0"  # ipython>=9.0.0 requires python>=3.11
-numpy = "1.26.4"  # numpy<=1.24.4 required by brevitas
+numpy = "1.26.4"  # numpy<=1.26.4 required by brevitas
 # Cannot upgrade onnx and onnxruntime any further. For now this seems to be the
 # last compatible pair which is also consistent with qonnx.
 # Upgrading onnx will result in model IR version not supported by onnxruntime
@@ -93,6 +93,9 @@ tclwrapper = "0.0.1"
 setuptools = ">40.8.0,<70.0.0"  # setuptools<70.0.0 required by brevitas
 pytest-xdist = {version = "~3.6.1", extras = ["setproctitle"]}
 cmake = "~4.0.3"
+
+# TODO: Eventually use the PyPI version...
+onnx-passes = { git = "https://github.com/iksnagreb/onnx-passes.git@8b6654c" }
 
 termcolor = "^2.5.0"
 rich = "^13.9.4"
