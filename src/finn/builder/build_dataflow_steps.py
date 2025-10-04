@@ -784,7 +784,7 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
         #  be overwritten by setting LIVENESS_THRESHOLD to a very large value.
         verify_model = verify_model.transform(AnnotateCycles())
         liveness = get_liveness_threshold_cycles()
-        perf = model.analysis(dataflow_performance)
+        perf = verify_model.analysis(dataflow_performance)
         latency = perf["critical_path_cycles"]
         max_iters = max(liveness, int(np.ceil(latency * 1.1 + 20)))
         os.environ["LIVENESS_THRESHOLD"] = str(max_iters)
