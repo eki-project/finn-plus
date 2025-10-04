@@ -89,8 +89,8 @@ def _apply_passes(model: ir.Model, passes: list[str], cfg: dict, state: dict):
     # the model and evaluates pre- and post-conditions of each pass, e.g.,
     # for automatic verification.
     passes = ir.passes.PassManager(passes=passes, steps=1)
-    # Load ONNX IR to modify/analyze from the model file - format should
-    # be inferred and apply the sequence of passes
+    # Inject custom operator ONNX functions into the model before applying the
+    # configured pass sequence
     return passes(inject_custom_ops(model)).model
 
 
