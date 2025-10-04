@@ -146,9 +146,13 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
     """Exports MultiThreshold representation from ONNX Passes to FINN format."""
 
     def pattern(self, op, x, thresholds, weights):
+        """Target pattern to match."""
+
         return op.MultiThreshold(x, thresholds, weights, _domain=CUSTOM_DOMAIN)
 
     def check(self, op, x, thresholds, weights):
+        """Match condition."""
+
         # Threshold parameter tensors must be constant, otherwise compatibility
         # with FINN cannot be checked...
         # TODO: Extend this to support non-constant thresholds to support
@@ -170,6 +174,8 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
         return True
 
     def rewrite(self, op, x, thresholds, weights):
+        """Replacement pattern."""
+
         # Remove leading dimensions from the thresholds parameter tensor as
         # expected by QONNX
         thresholds = ir.convenience.get_const_tensor(thresholds).numpy()
