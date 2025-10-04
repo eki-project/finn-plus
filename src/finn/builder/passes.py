@@ -118,7 +118,7 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
     # Create configuration for all passes and assume initially empty state
     cfg, state = _make_pass_config(cfg), {}
-    # Imports the QONNX operators (if present) into the custom domain
+    # Operator inlining passes and shape annotations
     passes = ["inline-qonnx", "inline-batchnorm", "shape-inference", "checker"]
 
     # Apply passes and serialize the resulting ONNX IR format back to ONNX proto
@@ -134,7 +134,7 @@ def streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
     # Create configuration for all passes and assume initially empty state
     cfg, state = _make_pass_config(cfg), {}
-    # Imports the QONNX operators (if present) into the custom domain
+    # Streamlining and threshold conversion passes
     passes = ["streamline-thresholds", "streamline", "checker"]
 
     # Apply passes and serialize the resulting ONNX IR format back to ONNX proto
