@@ -333,26 +333,6 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: If not specified it will default to synth_clk_period_ns
     hls_clk_period_ns: Optional[float] = None
 
-    #: If True, use an IP Cache to avoid unnecessary waiting
-    #: times to run HLSSynthIP() repeatedly for the same
-    #: model / configuration
-    use_ip_caching: Optional[bool] = True
-
-    #: Hash function to be used when caching the IP cores. Only
-    #: relevant if use_ip_caching = True
-    ip_cache_hashfunction: str = "sha256"
-
-    #: If use_ip_caching is enabled, this flag determines whether
-    #: the value of _resolve_hls_clk_period() is used as part of
-    #: the cached key. Can be turned off for more cache hits, but
-    #: then delivers an IP with an outdated constraints file. This
-    #: might affect OOC Synthesis and other parts of the design, use
-    #: at your own risk.
-    cache_hls_clk_period: bool = True
-
-    #: The same as `cache_hls_clk_period`, but for the passed FPGA part.
-    cache_fpgapart: bool = True
-
     #: Use an IP Cache to re-use code-gen (PrepareIP) and HLS (HLSSynthIP)
     #: artifacts from previous runs to speed up the build process.
     use_ip_caching: bool = True

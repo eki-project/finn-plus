@@ -363,18 +363,6 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
                 if "ignore" in v.keys():
                     log.info("\nignore: " + ", ".join(v["ignore"]))
 
-    # Printing all cached IPs
-    if cfg.use_ip_caching:
-        log.info("IP Caching enabled.")
-        if cfg.verbose:
-            log.info("Caching enabled for operators: ")
-            for k, v in CACHE_IP_DEFINITIONS.items():
-                log.info(f"Operator: {k}:")
-                if "use" in v.keys():
-                    log.info("\tuse: " + ", ".join(v["use"]))
-                if "ignore" in v.keys():
-                    log.info("\nignore: " + ", ".join(v["use"]))
-
     # Setup done, start build flow
     try:
         # If start_step is specified, override the input model
