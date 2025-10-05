@@ -238,3 +238,14 @@ def export(model: ModelWrapper, _: DataflowBuildConfig) -> ModelWrapper:
     # Serialize the resulting ONNX IR format back to ONNX proto wrapped by QONNX
     # and add quantization datatype annotations
     return _infer_qonnx_datatypes(ModelWrapper(ir.to_proto(model)))
+
+
+def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Meta build step calling the ONNX Passes steps in the expected order."""
+
+    model = prepare(model, cfg)
+    model = inline(model, cfg)
+    model = streamline(model, cfg)
+    model = export(model, cfg)
+
+    return model
