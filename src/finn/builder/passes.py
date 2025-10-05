@@ -119,7 +119,18 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     # Create configuration for all passes and assume initially empty state
     cfg, state = _make_pass_config(cfg), {}
     # Operator inlining passes and shape annotations
-    passes = ["inline-qonnx", "inline-batchnorm", "shape-inference", "checker"]
+    passes = [
+        # Expresses QONNX Quant nodes as rounding, clipping and scaling
+        "inline-qonnx",
+        # Expresses batchnorm as affine scale and bias
+        "inline-batchnorm",
+        # Expresses Gemm as MatMul (+ bias and transposes)
+        "inline-gemm",
+        # Adds shape annotations
+        "shape-inference",
+        # Make sure the model is still valid
+        "checker"
+    ]
 
     # Apply passes and serialize the resulting ONNX IR format back to ONNX proto
     # wrapped by QONNX
