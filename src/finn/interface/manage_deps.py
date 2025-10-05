@@ -135,7 +135,7 @@ def make_status_table(data: dict[str, tuple[str, str]]) -> Table:
 
 
 def update_dependencies(location: Path) -> None:
-    """Update dependencies at the given path. Display live status"""
+    """Update dependencies at the given path with live status display."""
     if not location.exists():
         location.mkdir(parents=True)
     board_file_dir = location / "board_files"
@@ -147,12 +147,14 @@ def update_dependencies(location: Path) -> None:
     with Live(make_status_table(current_state)) as live:
 
         def update_status(key: str, msg: str, color: str) -> None:
+            """Update the status display for a given dependency."""
             state_lock.acquire()
             current_state[key] = (msg, color)
             live.update(make_status_table(current_state))
             state_lock.release()
 
         def pull_data(args: tuple) -> bool:
+            """Download and optionally unzip data from a URL."""
             name, url, do_unzip, target = args
             purl = Path(url)
             target = location.absolute() / target
@@ -177,6 +179,7 @@ def update_dependencies(location: Path) -> None:
             return True
 
         def pull_dep(args: tuple) -> bool:
+            """Clone and install a Git dependency with specific commit."""
             pkg_name, giturl, commit, install = args
             target = (location / pkg_name).absolute()
             update_status(pkg_name, "Pulling data...", "orange1")
@@ -213,6 +216,7 @@ def update_dependencies(location: Path) -> None:
             return True
 
         def pull_board(args: tuple) -> bool:
+            """Clone board file repository and copy board files to target location."""
             pkg_name, giturl, commit, copy_from_here = args
             clone_location = location / pkg_name
             copy_source = clone_location / copy_from_here
@@ -270,18 +274,10 @@ def update_dependencies(location: Path) -> None:
 
 
 def install_finnxsi() -> bool:
+    """Install the FINN XSI shared library by building it and setting environment paths."""
     # TODO: integrate properly into the rich.Live above?
     finnxsi_path = os.environ["FINN_XSI"]
     finnxsi_so_path = os.path.join(finnxsi_path, "xsi.so")
-
-    # Set LD_LIBRARY_PATH
-    vivado_path = os.environ["XILINX_VIVADO"]
-    if "LD_LIBRARY_PATH" not in os.environ.keys():
-        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
-    else:
-        os.environ[
-            "LD_LIBRARY_PATH"
-        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
 
     # Run make
     res = sp.run(["make"], cwd=finnxsi_path, capture_output=True, text=True)

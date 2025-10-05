@@ -1,3 +1,20 @@
+"""
+Synthetic nonlinear CNN benchmarking module for FINN.
+
+This module provides capabilities for generating and benchmarking synthetic nonlinear
+convolutional neural network models. This is used mostly to test FIFO sizing.
+
+Key Features:
+    - Synthetic CNN generation with configurable branching topologies
+    - Parallel branch processing with split-process-merge patterns
+    - Convolutional building blocks with configurable parameters
+    - Support for various folding configurations and parallel processing
+    - Integration with FINN's dataflow build pipeline for comprehensive analysis
+
+Classes:
+    bench_synthetic_nonlinear: Benchmark class for synthetic nonlinear CNNs
+"""
+
 import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
@@ -21,9 +38,32 @@ from finn.benchmarking.bench_base import bench
 from finn.util.basic import make_build_dir
 
 
-def generate_random_threshold_values(
+def _generate_random_threshold_values(
     data_type, num_input_channels, num_steps, narrow=False, per_tensor=False
 ):
+    """
+    Generate random threshold values for quantization operations.
+
+    This helper function creates random threshold arrays used in multi-threshold operators.
+
+    Args:
+        data_type (DataType): FINN data type for the thresholds (determines range)
+        num_input_channels (int): Number of input channels requiring thresholds
+        num_steps (int): Number of quantization steps (thresholds per channel)
+        narrow (bool, optional): If True, reduce num_steps by 1 for narrow range.
+                               Defaults to False.
+        per_tensor (bool, optional): If True, use single threshold set for all channels.
+                                   Defaults to False (per-channel thresholds).
+
+    Returns:
+        np.ndarray: Random threshold array of shape (num_input_channels, num_steps)
+                   or (1, num_steps) if per_tensor=True. Values are within the
+                   data_type's valid range and cast to float32.
+
+    Note:
+        The generated thresholds are random and may require sorting to ensure
+        monotonic increasing order for proper quantization behavior.
+    """
     if per_tensor:
         num_input_channels = 1
     if narrow:
@@ -36,11 +76,61 @@ def generate_random_threshold_values(
     ).astype(np.float32)
 
 
-def sort_thresholds_increasing(thresholds):
+def _sort_thresholds_increasing(thresholds):
+    """
+    Sort threshold arrays in ascending order along the last axis.
+
+    This helper function ensures that threshold values are in monotonic increasing order,
+    which is required for proper activation quantization. Each channel's thresholds
+    are sorted independently.
+
+    Args:
+        thresholds (np.ndarray): Input threshold array of shape (..., num_steps)
+                               where the last dimension contains threshold values
+
+    Returns:
+        np.ndarray: Sorted threshold array with same shape as input, where
+                   values along axis=1 are in ascending order
+    """
     return np.sort(thresholds, axis=1)
 
 
-def make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_window=0):
+def _make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_window=0):
+    """
+    Create a single convolutional building block for synthetic CNN models.
+
+    This function generates a complete convolutional processing block consisting of:
+    1. Feature map padding to maintain spatial dimensions
+    2. Convolution input generation (im2col-style sliding window)
+    3. Matrix-vector multiplication with quantized activation
+
+    The building block is designed to maintain input/output dimension compatibility
+    for stacking multiple blocks or creating branching topologies.
+
+    Args:
+        ifm_dim (int): Input feature map spatial dimension (assumes square images)
+        ch (int): Number of input/output channels (maintained for stacking compatibility)
+        kernel_size (int): Convolution kernel size (assumes square kernels, must be odd)
+        simd (int): SIMD parallelization factor for input channels
+        pe (int): PE parallelization factor for output channels
+        parallel_window (int, optional): Sliding window parallelization setting.
+                                       If 0, standard processing; if >0, produces
+                                       entire window in parallel. Defaults to 0.
+
+    Returns:
+        ModelWrapper: Complete ONNX model containing the convolutional building block
+                     with initialized weights and thresholds
+
+    Raises:
+        AssertionError: If input and output dimensions don't match (not stackable)
+
+    Fixed Configuration:
+        - Data types: UINT4 for inputs/weights/outputs, UINT32 for thresholds
+        - Stride: 1 (maintains spatial dimensions with padding)
+        - Padding: Calculated to maintain input_dim == output_dim
+        - Memory mode: internal_embedded for weights
+        - Resource type: LUT-based implementation
+    """
     # hardcoded parameters
     idt = DataType["UINT4"]
     wdt = DataType["UINT4"]
@@ -138,10 +228,10 @@ def make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_window
 
     weights = gen_finn_dt_tensor(wdt, weights_shape)
     # TODO: thresholds are all the same
-    thresholds = generate_random_threshold_values(
+    thresholds = _generate_random_threshold_values(
         tdt, out_ch, odt.get_num_possible_values() - 1, False, True
     )
-    thresholds = sort_thresholds_increasing(thresholds)
+    thresholds = _sort_thresholds_increasing(thresholds)
 
     model.set_initializer("weights", weights)
     model.set_initializer("thresholds", thresholds)
@@ -153,7 +243,34 @@ def make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_window
     return model
 
 
-def combine_blocks(lb, rb, ifm_dim, ch, pe):
+def _combine_blocks(lb, rb, ifm_dim, ch, pe):
+    """
+    Combine two processing branches into a nonlinear topology with split-merge pattern.
+
+    This function creates a nonlinear CNN architecture by combining two
+    separate processing branches (left and right) into a unified model. The topology
+    follows a common pattern in modern CNNs: input duplication, parallel processing,
+    and feature addition (similar to ResNet skip connections).
+
+    Architecture Pattern:
+        Input -> DuplicateStreams -> [Left Branch]  -> AddStreams -> Output
+                                  -> [Right Branch] ->
+
+    Args:
+        lb (ModelWrapper): Left branch model (complete ONNX model)
+        rb (ModelWrapper): Right branch model (complete ONNX model)
+        ifm_dim (int): Input feature map spatial dimension
+        ch (int): Number of channels
+        pe (int): Processing elements for stream operations
+
+    Returns:
+        ModelWrapper: Combined ONNX model with branching topology
+
+    Requirements:
+        - Both branches must have compatible input/output shapes
+        - Both branches should process the same tensor dimensions
+        - Input and output data types must be compatible for addition
+    """
     # assumes left branch (lb) and right branch (rb) each have a
     # single (dynamic) input/output with the same shape
 
@@ -246,7 +363,48 @@ def combine_blocks(lb, rb, ifm_dim, ch, pe):
 
 
 class bench_synthetic_nonlinear(bench):
-    def step_export_onnx(self, onnx_export_path):
+    """
+    Specialized benchmark class for synthetic nonlinear CNN topologies.
+
+    This class extends the base benchmark framework to generate and evaluate
+    complex synthetic CNN models with branching topologies.
+
+    Model Generation Features:
+        - Configurable number of layers per branch (lb_num_layers, rb_num_layers)
+        - Adjustable spatial dimensions and channel counts
+        - Flexible folding parameters (SIMD, PE, parallel_window)
+    """
+
+    def _step_export_onnx(self, onnx_export_path):
+        """
+        Generate and export a synthetic nonlinear CNN model for benchmarking.
+
+        This method creates a synthetic CNN with branching topology by:
+        1. Building configurable left and right processing branches
+        2. Combining branches into a unified nonlinear architecture
+        3. Exporting the complete model for FINN pipeline processing
+
+        The generated model follows a split-process-merge pattern that is common
+        in modern CNN architectures and provides comprehensive testing of FINN's
+        dataflow capabilities in nonlinear scenarios.
+
+        Args:
+            onnx_export_path (str): Path where the generated ONNX model will be saved
+
+        Parameter Requirements:
+            - dim (int): Input feature map spatial dimension (square images)
+            - kernel_size (int): Convolution kernel size (must be odd for proper padding)
+            - ch (int): Number of channels throughout the network
+            - simd (int): SIMD parallelization factor for input channels
+            - pe (int): PE parallelization factor for output channels
+            - parallel_window (int): Parallel window setting for convolution input generation
+            - lb_num_layers (int): Number of convolutional layers in left branch
+            - rb_num_layers (int): Number of convolutional layers in right branch
+
+        Architecture Pattern:
+            Input -> DuplicateStreams -> [Left: N conv blocks]  -> AddStreams -> Output
+                                      -> [Right: M conv blocks] ->
+        """
         np.random.seed(0)
         tmp_output_dir = make_build_dir("test_fifosizing")
 
@@ -254,33 +412,39 @@ class bench_synthetic_nonlinear(bench):
         # TODO: how to determine rtlsim_n automatically?
 
         # conv parameters
-        dim = self.params["dim"]
-        kernel_size = self.params["kernel_size"]
-        ch = self.params["ch"]
-        simd = self.params["simd"]
-        pe = self.params["pe"]
-        parallel_window = self.params["parallel_window"]
+        dim = self._params["dim"]
+        kernel_size = self._params["kernel_size"]
+        ch = self._params["ch"]
+        simd = self._params["simd"]
+        pe = self._params["pe"]
+        parallel_window = self._params["parallel_window"]
 
         lb = None
-        for i in range(self.params["lb_num_layers"]):
-            new_block = make_conv_building_block(
+        for i in range(self._params["lb_num_layers"]):
+            new_block = _make_conv_building_block(
                 dim, ch, kernel_size=kernel_size, simd=simd, pe=pe, parallel_window=parallel_window
             )
             lb = new_block if lb is None else lb.transform(MergeONNXModels(new_block))
         lb.save(tmp_output_dir + "/lb.onnx")
 
         rb = None
-        for i in range(self.params["rb_num_layers"]):
-            new_block = make_conv_building_block(
+        for i in range(self._params["rb_num_layers"]):
+            new_block = _make_conv_building_block(
                 dim, ch, kernel_size=kernel_size, simd=simd, pe=pe, parallel_window=parallel_window
             )
             rb = new_block if rb is None else rb.transform(MergeONNXModels(new_block))
         rb.save(tmp_output_dir + "/rb.onnx")
 
-        model = combine_blocks(lb, rb, dim, ch, pe=4)
+        model = _combine_blocks(lb, rb, dim, ch, pe=4)
         model.save(onnx_export_path)
 
-    def step_build_setup(self):
+    def _step_build_setup(self):
+        """
+        Configure a minimal dataflow build config for synthetic nonlinear CNN benchmarks.
+
+        Returns:
+            DataflowBuildConfig: Configured build pipeline for nonlinear CNN benchmarking
+        """
         # create build config for synthetic test models
 
         cfg = build_cfg.DataflowBuildConfig(

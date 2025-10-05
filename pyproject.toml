@@ -147,3 +147,13 @@ profile="black"
 ignore_comments=true
 ignore_whitespace=true
 honor_noqa=true
+
+[tool.pydoc-markdown]
+loaders = [
+    { type = "python", search_path = ["src"] }
+]
+
+[tool.pydoc-markdown.renderer]
+type = "markdown"
+filename = "docs/api.md"
+classdef_with_decorators = true
