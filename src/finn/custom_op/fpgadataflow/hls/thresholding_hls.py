@@ -246,6 +246,18 @@ class Thresholding_hls(Thresholding, HLSBackend):
 
     def generate_params(self, model, path):
         code_gen_dir = path
+
+        # Check input and threshold datatypes
+        idt = self.get_input_datatype(0)
+        tdt = self.get_input_datatype(1)
+        if idt.is_integer() and not tdt.is_integer():
+            raise ValueError(
+                "Thresholds must be converted to integers for integer inputs "
+                "using RoundAndClipThresholds transform before code generation."
+            )
+        if not idt.is_integer() and tdt.is_integer():
+            raise ValueError("Floating-point inputs and integer thresholds are not supported.")
+
         thresholds = model.get_initializer(self.onnx_node.input[1])
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_embedded":
@@ -604,7 +616,8 @@ class Thresholding_hls(Thresholding, HLSBackend):
             )
             # instantiate a streamer and connect it to the IP
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-            swg_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
+            axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
+            ms_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
             file_suffix = "_memstream_wrapper.v"
             # automatically find memstream verilog component in code generation directory
             for fname in os.listdir(code_gen_dir):
@@ -613,9 +626,9 @@ class Thresholding_hls(Thresholding, HLSBackend):
             strm_tmpl_name = strm_tmpl[:-2]
             sourcefiles = [
                 os.path.join(code_gen_dir, strm_tmpl),
-                swg_rtllib_dir + "axilite_if.v",
-                swg_rtllib_dir + "memstream_axi.sv",
-                swg_rtllib_dir + "memstream.sv",
+                axi_dir + "axilite.sv",
+                ms_rtllib_dir + "memstream_axi.sv",
+                ms_rtllib_dir + "memstream.sv",
             ]
             for f in sourcefiles:
                 cmd += ["add_files -copy_to %s -norecurse %s" % (source_target, f)]

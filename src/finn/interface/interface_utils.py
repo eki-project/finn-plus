@@ -1,3 +1,5 @@
+"""Utilities for the FINN command line interface."""
+
 from __future__ import annotations
 
 import os
@@ -69,6 +71,10 @@ def set_synthesis_tools_paths() -> None:
             warning(f"Path for {toolname} found, but executable not found in {p}!")
         # TODO: simply check "which" instead?
 
+        # Append to the search path just in case it was missing before, if
+        # already in there adding again should do nothing
+        os.environ["PATH"] += os.pathsep + str((Path(envname_path) / "bin").absolute())
+
     if (
         "PLATFORM_REPO_PATHS" not in os.environ.keys()
         or not Path(os.environ["PLATFORM_REPO_PATHS"]).exists()
@@ -117,12 +123,12 @@ def resolve_deps_path(deps: Path | None, settings: dict) -> Path | None:
     if "FINN_DEPS" in os.environ.keys():
         p = Path(os.environ["FINN_DEPS"])
         if not p.is_absolute():
-            return Path(__file__).parent.parent / p
+            return Path(__file__).parent.parent.parent.parent / p
         return p
     if "FINN_DEPS" in settings.keys():
         p = Path(settings["FINN_DEPS"])
         if not p.is_absolute():
-            return Path(__file__).parent.parent / p
+            return Path(__file__).parent.parent.parent.parent / p
         return p
     return None
 

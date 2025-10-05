@@ -16,7 +16,6 @@ from rich.table import Table
 from threading import Lock
 
 from finn.interface import IS_POSIX
-from finn.util.deps import get_deps_path
 
 FINN_DEPS = {
     "finn-experimental": (
@@ -31,7 +30,7 @@ FINN_DEPS = {
     ),
     "qonnx": (
         "https://github.com/fpjentzsch/qonnx.git",
-        "fab7dca2e1734cf8767fa3f6161f674aaa26a402",
+        "61863d197f22d893503ba6383ffea8e49b896275",
         True,
     ),
     "dataset_loading": (
@@ -46,17 +45,12 @@ FINN_DEPS = {
     ),
     "finn-hlslib": (
         "https://github.com/Xilinx/finn-hlslib.git",
-        "5c5ad631e3602a8dd5bd3399a016477a407d6ee7",
+        "5dde96382b84979c6caa6f34cdad2ac72fa28489",
         False,
     ),
     "attention-hlslib": (
         "https://github.com/iksnagreb/attention-hlslib.git",
         "afc9720f10e551e1f734e137b21bb6d0a8342177",
-        False,
-    ),
-    "pyxsi": (
-        "https://github.com/fpjentzsch/pyxsi.git",
-        "bbef09f9520457186830505a99050256821d5079",
         False,
     ),
 }
@@ -81,6 +75,11 @@ FINN_BOARDFILES = {
         "https://github.com/Xilinx/XilinxBoardStore.git",
         "98e0d3efc901f0b974006bc4370c2a7ad8856c79",
         Path("boards/Xilinx/kv260_som"),
+    ),
+    "aupzu3-8gb-bdf": (
+        "https://github.com/RealDigitalOrg/aup-zu3-bsp.git",
+        "b595ecdf37c7204129517de1773b0895bcdcc2ed",
+        Path("board-files/aup-zu3-8gb"),
     ),
 }
 
@@ -270,34 +269,31 @@ def update_dependencies(location: Path) -> None:
         sys.exit(1)
 
 
-def install_pyxsi() -> bool:
+def install_finnxsi() -> bool:
     # TODO: integrate properly into the rich.Live above?
-    # Will soon be replaced by finnXSI
-    pyxsi_path = get_deps_path() / "pyxsi"
-    pyxsi_so_path = pyxsi_path / "pyxsi.so"
+    finnxsi_path = os.environ["FINN_XSI"]
+    finnxsi_so_path = os.path.join(finnxsi_path, "xsi.so")
 
-    # Disable PyXSI makefile Docker wrapper
-    os.environ["PYXSI_MAKE_USE_DOCKER"] = "0"
-
-    # Run make
-    res = sp.run(["make"], cwd=pyxsi_path, capture_output=True, text=True)
-    if res.returncode != 0:
-        Console().print(res.stderr)
-        return False
-
-    # Check if .so was created
-    if not pyxsi_so_path.exists():
-        return False
-
-    # Set environment variables
-    os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{pyxsi_path}:{pyxsi_path}/py"
-    sys.path.append(str(pyxsi_path))
-    sys.path.append(str(pyxsi_path / "py"))
+    # Set LD_LIBRARY_PATH
     vivado_path = os.environ["XILINX_VIVADO"]
     if "LD_LIBRARY_PATH" not in os.environ.keys():
         os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
     else:
         os.environ[
             "LD_LIBRARY_PATH"
-        ] = f"{os.environ['LD_LIBRARY_PATH']}:/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
+        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
+
+    # Run make
+    res = sp.run(["make"], cwd=finnxsi_path, capture_output=True, text=True)
+    if res.returncode != 0:
+        Console().print(res.stderr)
+        return False
+
+    # Check if .so was created
+    if not os.path.isfile(finnxsi_so_path):
+        return False
+
+    # Set PATH/PYTHONPATH so the .so can be imported
+    os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finnxsi_path}"
+    sys.path.append(str(finnxsi_path))
     return True
