@@ -20,6 +20,7 @@ default: xsi.so
 xsi.so: xsi_bind.cpp xsi_finn.cpp
 	g++ --std=c++17 -Wall -O3 -shared -fPIC \
 	$$(python3.10-config --includes) -I$(XILINX_VIVADO)/data/xsim/include \
+	-Wl,-rpath=$(XILINX_VIVADO)/lib/lnx64.o,-rpath=/lib/x86_64-linux-gnu,-rpath=$(XILINX_VITIS)/lnx64/tools/fpo_v7_1 \
 	-o$@ $^ -ldl -lrt
 
 
