@@ -271,8 +271,8 @@ template<typename T>
 }
 
 
-std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file, const char* const trace_file) {
-    int start_depth = 1;
+std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file, const char* const trace_file, std::optional<int> start_fifo_size = std::nullopt) {
+    int start_depth = start_fifo_size.value_or(1);
     int last_start_depth = start_depth;
     uint32_t last_interval = 0;
 
@@ -318,26 +318,30 @@ std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, co
 
 [[gnu::hot]]
 std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interval, const size_t startIndex, const size_t endIndex, const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file,
-                                    const char* const trace_file) {
+                                    const char* const trace_file, int rank) {
     const auto totalFifos = endIndex - startIndex + 1;
-    std::vector<size_t> fifo_sizes(totalFifos, start_size);
+    std::vector<size_t> fifoSizes(totalFifos, start_size);
 
     for (size_t i = 0; i < totalFifos; ++i) {
-        auto&& [kernel, top, istreams, ostreams, fifo_ports, fifo_occupancies, fifo_max_occupancies, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
+        auto&& [kernel, top, istreams, ostreams, fifoPorts, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
 
-        std::cout << "Sizing FIFO number " << (startIndex + i) << " of " << (endIndex + 1) << std::endl;
-        /* std::cout << "Sizing FIFO number " << i << std::endl;
+        // Set the previously found start depth for all fifos in the model
+        const std::string startDepthString = toBinaryString<size_t>(start_size);
+        for (auto&& p : fifoPorts) {
+            p.get().set_binstr(startDepthString).write_back();
+        }
+
+        std::cout << "[Rank " << rank << "] Sizing FIFO number " << i << " (from " << startIndex << " to " << endIndex << ")" << std::endl;
+
+        // Keep track of the FIFO size of the previous iteration
+        size_t previousFifoSize = fifoSizes[i];
+
         while (true) [[likely]] {  // do until fifo minimized
-            // Try to minimize this FIFO
-            const size_t oldFifoSize = fifo_sizes[i];
-            fifo_sizes[i] = std::max(oldFifoSize >> 1, size_t(1));  // Use bit shift for division by 2
+            // TODO: Bin search for more accurate sizes
+            fifoSizes[i] = std::max(previousFifoSize >> 1, size_t(1));  // Use bit shift for division by 2
 
-            const auto two_bin = toBinaryString(static_cast<uint32_t>(start_size));
-            for (auto&& p : fifo_ports) {
-                p.get().set_binstr(two_bin).write_back();
-            }
-            // Set the new fifo depth in the actual component
-            fifo_ports[startIndex + i].get().set_binstr(toBinaryString(fifo_sizes[i])).write_back();
+            // Try out the new FIFO depth
+            fifoPorts[startIndex + i].get().set_binstr(toBinaryString(fifoSizes[i])).write_back();
             clk.toggle_clk();
             for (auto&& s : ostreams) {
                 s.job_txns = 0;
@@ -353,29 +357,34 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
                 if (currInterval == 0 || currInterval > interval) [[unlikely]] {
                     // Performance drop
                     // Revert depth reduction and mark FIFO as minimized
-                    fifo_sizes[i] = oldFifoSize;
+                    fifoSizes[i] = previousFifoSize;
                     break;
+                } else {
+                    // currInterval <= interval: Smaller fifo depth but same performance. Thus this depth is a safe value
+                    previousFifoSize = fifoSizes[i];
                 }
             } else [[unlikely]] {
                 // Timeout
                 // Revert depth reduction and mark FIFO as minimized
-                fifo_sizes[i] = oldFifoSize;
+                fifoSizes[i] = previousFifoSize;
                 break;
             }
 
-            if (fifo_sizes[i] == 1) [[unlikely]] {
+            if (fifoSizes[i] == 1) [[unlikely]] {
                 // Minimum size reached
                 break;
             }
-        } */
+        }
     }
-    return fifo_sizes;
+    return fifoSizes;
 }
 
 int main() {
     int world_size = 1;
     int rank = 0;
+
 #ifdef MPI_FOUND
+    // Initialize MPI
     MPI_Init(NULL, NULL);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -383,41 +392,56 @@ int main() {
         std::cout << "MPI Available!" << std::endl;
         std::cout << "Running on " << world_size << " ranks." << std::endl;
     }
+    MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
+    // Initialize depth and interval
+    std::optional<int> initial_start_depth = std::nullopt;
     size_t start_depth = 1;
     size_t interval = 0;
-#ifndef FIFO_START_SIZE
+
+#ifdef FIFO_START_SIZE
+    // If a starting size was given, use it here
+    initial_start_depth = std::make_optional(FIFO_START_SIZE);
+#endif
+
+    // Run until a suitable starting depth was found
     if (rank == 0) {
-        std::cout << "\nDetermining start depth..." << std::endl;
-        auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename);
+        std::cout << "\n--------------------------------------------\n";
+        std::cout << "\nDetermining start depth (single rank)..." << std::endl;
+        if (initial_start_depth) {
+            std::cout << "Setting initial start depth to: " << initial_start_depth.value() << std::endl;
+        }
+        auto startDepthBegin = std::chrono::high_resolution_clock::now();
+        auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename, initial_start_depth);
+        auto startDepthDuration = std::chrono::high_resolution_clock::now() - startDepthBegin;
         start_depth = _start_depth;
         std::cout << "Interval: " << _interval << "\n";
         interval = _interval;
+        std::cout << "Finished start depth sizing in " << std::chrono::duration_cast<std::chrono::minutes>(startDepthDuration).count() << "m (" << std::chrono::duration_cast<std::chrono::hours>(startDepthDuration).count() << "h)" << std::endl;
     }
-    #ifdef MPI_FOUND
+
+#ifdef MPI_FOUND
     // Synchronize and send depth to all other ranks
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Bcast(&start_depth, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
     MPI_Bcast(&interval, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
-    #endif  // MPI_FOUND
-#else
-    if (rank == 0) {
-        std::cout << "Skipping FIFO startup sizing. Set to: " << FIFO_START_SIZE << std::endl;
-    }
-    start_depth = FIFO_START_SIZE;
+    MPI_Barrier(MPI_COMM_WORLD);
+#endif  // MPI_FOUND
 
-    // Since we dont know the interval simply assume the worst and let iterations improve
-    // interval = std::numeric_limits<decltype(interval)>::max();
-    // Funktioniert nicht, da unsere exit condition ist, dass die gemessene Intervalle steigen im Vergleich zu interval.
-#endif
     // Create a new design just to count the FIFOs and make sure its destroyed directly afterwards...
-    std::cout << "Using start depth of " << start_depth << " and target interval of " << interval << std::endl;
+    if (rank == 0) {
+        std::cout << "Using start depth of " << start_depth << " and target interval of " << interval << std::endl;
+    }
     size_t fifo_count = 0;
     {
         auto&& [kernel, top, istreams, ostreams, fifo_ports, fifo_occupancies, fifo_max_occupancies, clk] = initDesign(kernel_libname, design_libname, xsim_log_filename, trace_filename);
         fifo_count = fifo_ports.size();
     }
+
+#ifdef MPI_FOUND
+    MPI_Barrier(MPI_COMM_WORLD);
+#endif
 
     // Determine FIFOs to be calculated per rank
     // Which fifos this process must size
@@ -425,7 +449,7 @@ int main() {
     size_t end_index = 0;
     size_t elementsInRank = 0;
 
-    // Split work across ranks more carefully
+    // Split work across ranks
     if (static_cast<size_t>(rank) < fifo_count) {
         size_t base_fifos_per_rank = fifo_count / static_cast<size_t>(world_size);
         size_t remaining_fifos = fifo_count % static_cast<size_t>(world_size);
@@ -455,7 +479,6 @@ int main() {
         end_index = 0;
         elementsInRank = 0;
     }
-    std::cout << "Rank " << rank << " sizing " << elementsInRank << " FIFOs. (end_index: " << end_index << ", start_index: " << start_index << ")" << std::endl;
 
 #ifdef MPI_FOUND
     // Synchronize and send depth to all other ranks
@@ -464,13 +487,15 @@ int main() {
 #endif
 
     if (rank == 0) {
+        std::cout << "\n--------------------------------------------\n";
         std::cout << "\nSizing iteratively..." << std::endl;
     }
+    std::cout << "Rank " << rank << " sizing " << elementsInRank << " FIFOs. (end_index: " << end_index << ", start_index: " << start_index << ")" << std::endl;
 
     // Size assigned FIFOs iteratively
     std::vector<size_t> fifoSizes;
     if (elementsInRank > 0) {
-        fifoSizes = sizeIteratively(start_depth, interval, start_index, end_index, kernel_libname, design_libname, xsim_log_filename, trace_filename);
+        fifoSizes = sizeIteratively(start_depth, interval, start_index, end_index, kernel_libname, design_libname, xsim_log_filename, trace_filename, rank);
     } else {
         // This rank has no work, create empty vector
         fifoSizes.clear();
