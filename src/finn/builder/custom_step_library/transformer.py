@@ -2,12 +2,7 @@
 # build_steps.py
 # custom/apply_config.py
 
-# Copies (deep-copies) python objects
-import copy
 import json
-
-# Numpy for loading and comparing the verification input/output
-import numpy as np
 
 # YAML for loading experiment configurations
 import yaml
@@ -105,7 +100,6 @@ from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 # Transformations preparing the operators for synthesis and simulation
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
-from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 
 # Converts fork-nodes to ReplicateStream hardware operator
 from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
@@ -156,9 +150,6 @@ from finn.transformation.streamline.reorder import (
     MoveTransposePastSplit,
 )
 from finn.transformation.streamline.streamline_plus import StreamlinePlus as Streamline
-
-# Execute onnx model graphs from the dataflow parent for verification
-from finn.util.test import execute_parent
 
 
 # Prepares the graph to be consumed by FINN:
@@ -677,96 +668,3 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     # Return model with configuration applied
     return model
-
-
-# Runs a node-by-node C++ simulation of the model saving the fill execution
-# context
-def node_by_node_cppsim(model: ModelWrapper, cfg: DataflowBuildConfig):
-    # Save the original model
-    original = model
-    # Copy the model
-    model = copy.deepcopy(model)
-    # Set model execution mode to C++ simulation
-    model = model.transform(SetExecMode("cppsim"))
-    # Generates the C++ source and compiles the C++ simulation
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareCppSim())
-    model = model.transform(CompileCppSim())
-
-    # Load the verification input/output pair
-    inp = np.load(cfg.verify_input_npy)  # noqa
-    out = np.load(cfg.verify_expected_output_npy)
-
-    # Path to the parent model wrapping the streaming dataflow partition and the
-    # wrapped child model, i.e., the inside of the streaming dataflow partition
-    parent = f"{cfg.output_dir}/intermediate_models/dataflow_parent.onnx"
-    child = f"{cfg.output_dir}/intermediate_models/verify_cppsim.onnx"
-    # Save the child model prepared for C++ simulation
-    model.save(child)
-    # Load the parent model to pass to verification execution
-    parent_model = ModelWrapper(parent)
-
-    # Reshape the input/output to match the model
-    inp = inp.reshape(parent_model.get_tensor_shape(model.graph.input[0].name))
-    out = out.reshape(parent_model.get_tensor_shape(model.graph.output[0].name))
-
-    # Execute the onnx model to collect the result
-    # context = execute_onnx(model, context, return_full_exec_context=True)
-    context = execute_parent(parent, child, inp, return_full_ctx=True)
-    # Extract the output tensor from the execution context
-    model_out = context[parent_model.graph.output[0].name]
-    # Compare input to output
-    result = {True: "SUCCESS", False: "FAIL"}[np.allclose(out, model_out)]
-    # Save the verification outputs into the configured build directory
-    verification_output = f"{cfg.output_dir}/verification_output/"
-    # Save the verification execution context
-    np.savez(f"{verification_output}/verify_cppsim_{result}.npz", **context)
-    # Return the original, unmodified model
-    return original
-
-
-# Runs a node-by-node RTL simulation of the model saving the fill execution
-# context
-def node_by_node_rtlsim(model: ModelWrapper, cfg: DataflowBuildConfig):
-    # Save the original model
-    original = model
-    # Copy the model
-    model = copy.deepcopy(model)
-    # Set model execution mode to RTL simulation
-    model = model.transform(SetExecMode("rtlsim"))
-    # Generates the C++ source and compiles the RTL simulation
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareIP(cfg._resolve_fpga_part(), cfg.synth_clk_period_ns))  # noqa
-    model = model.transform(HLSSynthIP())
-    model = model.transform(PrepareRTLSim())
-
-    # Load the verification input/output pair
-    inp = np.load(cfg.verify_input_npy)  # noqa
-    out = np.load(cfg.verify_expected_output_npy)
-
-    # Path to the parent model wrapping the streaming dataflow partition and the
-    # wrapped child model, i.e., the inside of the streaming dataflow partition
-    parent = f"{cfg.output_dir}/intermediate_models/dataflow_parent.onnx"
-    child = f"{cfg.output_dir}/intermediate_models/verify_rtlsim.onnx"
-    # Save the child model prepared for RTL simulation
-    model.save(child)
-    # Load the parent model to pass to verification execution
-    parent_model = ModelWrapper(parent)
-
-    # Reshape the input/output to match the model
-    inp = inp.reshape(parent_model.get_tensor_shape(model.graph.input[0].name))
-    out = out.reshape(parent_model.get_tensor_shape(model.graph.output[0].name))
-
-    # Execute the onnx model to collect the result
-    # context = execute_onnx(model, context, return_full_exec_context=True)
-    context = execute_parent(parent, child, inp, return_full_ctx=True)
-    # Extract the output tensor from the execution context
-    model_out = context[parent_model.graph.output[0].name]
-    # Compare input to output
-    result = {True: "SUCCESS", False: "FAIL"}[np.allclose(out, model_out)]
-    # Save the verification outputs into the configured build directory
-    verification_output = f"{cfg.output_dir}/verification_output/"
-    # Save the verification execution context
-    np.savez(f"{verification_output}/verify_rtlsim_{result}.npz", **context)
-    # Return the original, unmodified model
-    return original
