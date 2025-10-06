@@ -219,8 +219,8 @@ template<typename T>
 }
 
 
-std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file, const char* const trace_file) {
-    int start_depth = 1;
+std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file, const char* const trace_file, std::optional<int> start_fifo_size = std::nullopt) {
+    int start_depth = start_fifo_size.value_or(1);
     int last_start_depth = start_depth;
     uint32_t last_interval = 0;
 
@@ -323,7 +323,9 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
 int main() {
     int world_size = 1;
     int rank = 0;
+
 #ifdef MPI_FOUND
+    // Initialize MPI
     MPI_Init(NULL, NULL);
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -331,43 +333,54 @@ int main() {
         std::cout << "MPI Available!" << std::endl;
         std::cout << "Running on " << world_size << " ranks." << std::endl;
     }
+    MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
+    // Initialize depth and interval
+    std::optional<int> initial_start_depth = std::nullopt;
     size_t start_depth = 1;
     size_t interval = 0;
-#ifndef FIFO_START_SIZE
+
+#ifdef FIFO_START_SIZE
+    // If a starting size was given, use it here
+    initial_start_depth = std::make_optional(FIFO_START_SIZE);
+#endif
+
+    // Run until a suitable starting depth was found
     if (rank == 0) {
-        // std::cout << "\nDetermining start depth..." << std::endl;
-        // auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename);
-        // start_depth = _start_depth;
-        // std::cout << "Interval: " << _interval << "\n";
-        // interval = _interval;
-        // Just for testing, use fixed start depth of 16k
-        start_depth = 16000;
-        interval = 2000;
+        std::cout << "\nDetermining start depth..." << std::endl;
+        if (initial_start_depth) {
+            std::cout << "Setting initial start depth to: " << initial_start_depth.value() << std::endl;
+        }
+        auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename, initial_start_depth);
+        start_depth = _start_depth;
+        std::cout << "Interval: " << _interval << "\n";
+        interval = _interval;
     }
-    #ifdef MPI_FOUND
+
+#ifdef MPI_FOUND
     // Synchronize and send depth to all other ranks
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Bcast(&start_depth, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
     MPI_Bcast(&interval, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
-    #endif  // MPI_FOUND
-#else
-    if (rank == 0) {
-        std::cout << "Skipping FIFO startup sizing. Set to: " << FIFO_START_SIZE << std::endl;
-    }
-    start_depth = FIFO_START_SIZE;
+    MPI_Barrier(MPI_COMM_WORLD);
+#endif  // MPI_FOUND
 
-    // Since we dont know the interval simply assume the worst and let iterations improve
-    // interval = std::numeric_limits<decltype(interval)>::max();
-    // Funktioniert nicht, da unsere exit condition ist, dass die gemessene Intervalle steigen im Vergleich zu interval.
-#endif
     // Create a new design just to count the FIFOs and make sure its destroyed directly afterwards...
-    std::cout << "Using start depth of " << start_depth << " and target interval of " << interval << std::endl;
+    if (rank == 0) {
+        std::cout << "Using start depth of " << start_depth << " and target interval of " << interval << std::endl;
+    }
     size_t fifo_count = 0;
     {
         auto&& [kernel, top, istreams, ostreams, fifo_ports, clk] = initDesign(kernel_libname, design_libname, xsim_log_filename, trace_filename);
         fifo_count = fifo_ports.size();
+    }
+
+#ifdef MPI_FOUND
+    MPI_Barrier(MPI_COMM_WORLD);
+#endif
+    if (rank == 0) {
+        std::cout << "Total FIFOs to size: " << fifo_count << std::endl;
     }
 
     // Determine FIFOs to be calculated per rank
@@ -376,7 +389,7 @@ int main() {
     size_t end_index = 0;
     size_t elementsInRank = 0;
 
-    // Split work across ranks more carefully
+    // Split work across ranks
     if (static_cast<size_t>(rank) < fifo_count) {
         size_t base_fifos_per_rank = fifo_count / static_cast<size_t>(world_size);
         size_t remaining_fifos = fifo_count % static_cast<size_t>(world_size);
