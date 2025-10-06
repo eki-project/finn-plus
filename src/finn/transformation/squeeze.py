@@ -1,3 +1,5 @@
+"""Transformation to squeeze tensors by removing dimensions of size 1."""
+
 # QONNX wrapper of ONNX model graphs
 # For array handling
 import numpy as np
@@ -33,16 +35,19 @@ from finn.util.logging import log
 from .util import is_attention, is_threshold
 
 
-# Squeezes, i.e., removes, dimensions of size 1
-# Note: Use this transformation with great care, it currently serves only the
-# purpose of turning the not well-supported 3d data layouts encountered in
-# transformer models with batch dimension of size 1 into 2d data layouts where
-# the sequence dimension is treated as a batch dimension. Everything else is
-# not tested, it might break the model or simply lack support for certain node
-# op-types.
 class Squeeze(Transformation):
-    # Applies the transform to a whole model graph
+    """
+    Squeezes, i.e., removes, dimensions of size 1
+    Note: Use this transformation with great care, it currently serves only the
+    purpose of turning the not well-supported 3d data layouts encountered in
+    transformer models with batch dimension of size 1 into 2d data layouts where
+    the sequence dimension is treated as a batch dimension. Everything else is
+    not tested, it might break the model or simply lack support for certain node
+    op-types.
+    """
+
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply squeeze transformation to remove size-1 dimensions."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # # Keep track of whether the graph has been modified
