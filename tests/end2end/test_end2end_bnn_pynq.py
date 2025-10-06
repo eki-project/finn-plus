@@ -66,6 +66,7 @@ import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.core.onnx_exec import execute_onnx
 from finn.core.throughput_test import throughput_test_rtlsim
+from finn.tests.testing_util.pytorch import ToTensor
 from finn.tests.testing_util.test import (
     get_build_env,
     get_example_input,
@@ -95,7 +96,6 @@ from finn.transformation.streamline.reorder import MakeMaxPoolNHWC, MoveScalarLi
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import make_build_dir, test_board_map
 from finn.util.execution import execute_parent
-from tests.testing_util.pytorch import ToTensor
 
 target_clk_ns = 20
 mem_mode = "internal_decoupled"
