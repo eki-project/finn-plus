@@ -226,6 +226,7 @@ bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::vector<S_AXIS_
             }
         }
     }
+    std::cout << "Stable state reached after " << iters << " iterations in " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - begin).count() << "ms" << std::endl;
     return true;
 }
 
