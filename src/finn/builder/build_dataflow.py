@@ -26,6 +26,14 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""
+FINN dataflow build system.
+
+This module provides the main build infrastructure for converting ONNX models
+to FINN dataflow accelerators. It handles step resolution, logging, error handling,
+and the complete build pipeline from ONNX input to hardware accelerator output.
+"""
+
 import clize
 import datetime
 import importlib
@@ -46,32 +54,58 @@ from rich.traceback import Traceback
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
-from finn.util.exception import FINNConfigurationError, FINNDataflowError, FINNError, FINNUserError
+from finn.util.exception import (
+    FINNConfigurationError,
+    FINNDataflowError,
+    FINNError,
+    FINNUserError,
+    snapshot_on_exception,
+)
+
+
+def get_logfile_path(cfg: DataflowBuildConfig) -> str:
+    """Return the path to the logfile in the build dir."""
+    return str(Path(cfg.output_dir) / "build_dataflow.log")
 
 
 # adapted from https://stackoverflow.com/a/39215961
 class PrintLogger(object):
-    """
-    Create a custom stream handler that writes to both the console and the log file.
-    """
+    """Custom stream handler that writes to both console and log file with timestamps."""
 
     def __init__(self, logger, level, originalstream):
+        """Initialize the print logger with logger, level, and original stream."""
         self.logger = logger
         self.level = level
         self.console = originalstream
         self.linebuf = ""
 
     def write(self, buf):
+        """Write buffer content to both logger and console with timestamp."""
         for line in buf.rstrip().splitlines():
             self.logger.log(self.level, line.rstrip())
             timestamp = datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S")
             self.console.write(f"[{timestamp}] " + line + "\n")
 
     def flush(self):
+        """Flush the console stream."""
         self.console.flush()
 
 
 def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[Callable]:
+    """
+    Resolve build step names to callable functions.
+
+    Converts string step names to callable functions by looking up in the step registry,
+    importing from modules, or using direct callable objects. Supports partial execution
+    between start_step and stop_step if specified in config.
+
+    Args:
+        cfg: Build configuration containing step definitions
+        partial: If True, respect start_step/stop_step boundaries
+
+    Returns:
+        List of callable step functions ready for execution
+    """
     steps = cfg.steps
     if steps is None:
         steps = default_build_dataflow_steps
@@ -139,10 +173,32 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
             stop_ind = step_names.index(cfg.stop_step)
         steps_as_fxns = steps_as_fxns[start_ind : (stop_ind + 1)]
 
-    return steps_as_fxns
+    # Add the exception snapshot decorator if needed
+    return [
+        snapshot_on_exception(
+            snapshot_finn=False, snapshot_config=True, snapshot_buildlog=True, build_dir_prefix=None
+        )(transform_step)
+        if (
+            cfg.enable_exception_snapshots
+            and "snapshot_on_exception_enabled" not in dir(transform_step)
+        )
+        else transform_step
+        for transform_step in steps_as_fxns
+    ]
 
 
 def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: int = 0):
+    """
+    Resolve the intermediate model filename for a given build step.
+
+    Args:
+        step_name: Name of the build step
+        cfg: Build configuration
+        step_delta: Offset from the step (0=current, -1=previous, +1=next)
+
+    Returns:
+        Path to the intermediate model file for the specified step
+    """
     step_names = list(map(lambda x: x.__name__, resolve_build_steps(cfg, partial=False)))
     if step_name not in step_names:
         raise FINNConfigurationError(
@@ -162,12 +218,24 @@ def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: 
 
 
 def setup_logging(cfg: DataflowBuildConfig):
+    """
+    Configure logging for the build process.
+
+    Sets up file logging, console mirroring, and rich console handlers
+    based on the build configuration settings.
+
+    Args:
+        cfg: Build configuration with logging settings
+
+    Returns:
+        Configured logger instance
+    """
     # Set up global logger, the force=True has the following effects:
     # - If multiple build are run in a row, the log file will be re-created for each,
     #   which is needed if the file was deleted/moved or the output dir changed
     # - In a PyTest session, this logger will replace the PyTest log handlers, so logs
     #   (+ captured warnings!) will end up in the log file instead of being collected by PyTest
-    logpath = os.path.join(cfg.output_dir, "build_dataflow.log")
+    logpath = get_logfile_path(cfg)
     if cfg.verbose:
         logging.basicConfig(
             level=logging.DEBUG,
@@ -190,6 +258,11 @@ def setup_logging(cfg: DataflowBuildConfig):
 
     # Mirror stdout and stderr to log
     log = logging.getLogger("build_dataflow")
+    # Explicitly set the logger level based on cfg.verbose
+    if cfg.verbose:
+        log.setLevel(logging.DEBUG)
+    else:
+        log.setLevel(logging.INFO)
     if not isinstance(sys.stdout, PrintLogger):
         # Prevent rediricting stdout/sterr multiple times
         sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
@@ -217,6 +290,19 @@ def setup_logging(cfg: DataflowBuildConfig):
 
 
 def exit_buildflow(cfg: DataflowBuildConfig, time_per_step: dict = None, exit_code: int = 0):
+    """
+    Handle build completion and generate metadata files.
+
+    Creates metadata_builder.json and time_per_step.json files with build results.
+
+    Args:
+        cfg: Build configuration
+        time_per_step: Dictionary of step execution times
+        exit_code: Build exit code (0=success, non-zero=failure)
+
+    Returns:
+        The provided exit code
+    """
     if exit_code:
         print("Build failed")
         status = "failed"
@@ -242,19 +328,27 @@ def exit_buildflow(cfg: DataflowBuildConfig, time_per_step: dict = None, exit_co
 
 
 def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
-    """Best-effort build a dataflow accelerator using the given configuration.
+    """
+    Build a dataflow accelerator using the given configuration.
 
-    :param model_filename: ONNX model filename to build
-    :param cfg: Build configuration
+    Main entry point for building FINN dataflow accelerators. Handles step execution,
+    logging, error handling, and intermediate model saving.
+
+    Args:
+        model_filename: ONNX model filename to build
+        cfg: Build configuration specifying steps and options
+
+    Returns:
+        Exit code (0=success, non-zero=failure)
     """
     # Create the output (report) dir if it doesn't exist
     os.makedirs(os.path.join(cfg.output_dir, "report"), exist_ok=True)
 
     log = setup_logging(cfg)
-
+    logfile = get_logfile_path(cfg)
     print(f"Intermediate outputs will be generated in {os.environ['FINN_BUILD_DIR']}")
     print(f"Final outputs will be generated in {cfg.output_dir}")
-    print(f"Build log is at {cfg.output_dir}/build_dataflow.log")
+    print(f"Build log is at {logfile}")
 
     # Setup done, start build flow
     try:
@@ -318,7 +412,17 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
 
         # Print traceback for interal errors or if in debug mode
         if not issubclass(type(e), FINNUserError) or log.level == logging.DEBUG:
+            # Restoring stdout and stderr
+            if type(sys.stdout) is PrintLogger:
+                sys.stdout = sys.stdout.console
+            if type(sys.stderr) is PrintLogger:
+                sys.stderr = sys.stderr.console
+
+            # Print traceback both to console and logfile
             rprint(Traceback(show_locals=False))
+            with Path(get_logfile_path(cfg)).open("a") as f:
+                rprint(Traceback(show_locals=False), file=f)
+
             # Start postmortem debug if configured
             if cfg.enable_build_pdb_debug:
                 pdb.post_mortem(e.__traceback__)
@@ -328,15 +432,18 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
 
 
 def build_dataflow_directory(path_to_cfg_dir: str):
-    """Best-effort build a dataflow accelerator from the specified directory.
+    """
+    Build a dataflow accelerator from a directory containing model and config.
 
-    :param path_to_cfg_dir: Directory containing the model and build config
+    Args:
+        path_to_cfg_dir: Directory containing model.onnx and dataflow_build_config.json
 
-    The specified directory path_to_cfg_dir must contain the following files:
+    Returns:
+        Exit code from build process
 
-    * model.onnx : ONNX model to be converted to dataflow accelerator
-    * dataflow_build_config.json : JSON file with build configuration
-
+    The directory must contain:
+    - model.onnx: ONNX model to be converted to dataflow accelerator
+    - dataflow_build_config.json: JSON file with build configuration
     """
     # get absolute path
     path_to_cfg_dir = os.path.abspath(path_to_cfg_dir)
@@ -357,8 +464,7 @@ def build_dataflow_directory(path_to_cfg_dir: str):
 
 
 def main():
-    """Entry point for dataflow builds. Invokes `build_dataflow_directory` using
-    command line arguments"""
+    """Entry point for dataflow builds using command line arguments."""
     clize.run(build_dataflow_directory)
 
 

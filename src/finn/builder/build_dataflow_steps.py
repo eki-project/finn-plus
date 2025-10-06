@@ -27,6 +27,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Collection of default build steps for building and verifying a dataflow
+ accelerator from an ONNX model."""
+
 import json
 import numpy as np
 import os
@@ -126,6 +129,8 @@ def verify_step(
     need_parent: bool,
     rtlsim_pre_hook=None,
 ):
+    """Runs verification of the model after a build step by executing the ONNX
+    model a sample inputs and checking against known target outputs."""
     log.info(f"Running verification for {step_name}")
     verify_out_dir = cfg.output_dir + "/verification_output"
     intermediate_models_dir = cfg.output_dir + "/intermediate_models"
@@ -203,6 +208,7 @@ def verify_step(
 
 
 def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
+    """Prepares the model for execution via RTL simulation as a stitched IP."""
     if not cfg.rtlsim_use_vivado_comps:
         need_restitch = False
         # switch impl_style=vivado components to rtl
@@ -770,21 +776,26 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
         # prepare ip-stitched rtlsim
         verify_model = deepcopy(model)
         verify_model = prepare_for_stitched_ip_rtlsim(verify_model, cfg)
-        # use critical path estimate to set rtlsim liveness threshold
-        # (very conservative)
+
+        # Use critical path estimate to set rtlsim liveness threshold
+        # TODO: This is a heuristic which usually overestimates the maximum
+        #  cycles (by a lot), but can actually also underestimate causing
+        #  incorrect detection of timeouts. In these cases, this estimation can
+        #  be overwritten by setting LIVENESS_THRESHOLD to a very large value.
         verify_model = verify_model.transform(AnnotateCycles())
-        estimate_network_performance = verify_model.analysis(dataflow_performance)
-        prev_liveness = get_liveness_threshold_cycles()
-        os.environ["LIVENESS_THRESHOLD"] = str(
-            int(estimate_network_performance["critical_path_cycles"] * 1.1)
-        )
+        liveness = get_liveness_threshold_cycles()
+        perf = verify_model.analysis(dataflow_performance)
+        latency = perf["critical_path_cycles"]
+        max_iters = max(liveness, int(np.ceil(latency * 1.1 + 20)))
+        os.environ["LIVENESS_THRESHOLD"] = str(max_iters)
+
         if cfg.verify_save_rtlsim_waveforms:
             verify_out_dir = cfg.output_dir + "/verification_output"
             os.makedirs(verify_out_dir, exist_ok=True)
             abspath = os.path.abspath(verify_out_dir)
             verify_model.set_metadata_prop("rtlsim_trace", abspath + "/verify_rtlsim.wdb")
         verify_step(verify_model, cfg, "stitched_ip_rtlsim", need_parent=True)
-        os.environ["LIVENESS_THRESHOLD"] = str(prev_liveness)
+        os.environ["LIVENESS_THRESHOLD"] = str(liveness)
     return model
 
 
@@ -809,11 +820,18 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
                 "rtlsim_trace",
                 "%s/rtlsim_perf_batch_%d.wdb" % (os.path.abspath(report_dir), rtlsim_bs),
             )
-        # use the critical_path_cycles estimate to set the timeout limit for FIFO sim
+
+        # Use critical path estimate to set the timeout limit for FIFO sim
+        # TODO: This is a heuristic which usually overestimates the maximum
+        #  cycles (by a lot), but can actually also underestimate causing
+        #  incorrect detection of timeouts. In these cases, this estimation can
+        #  be overwritten by setting LIVENESS_THRESHOLD to a very large value.
         model = model.transform(AnnotateCycles())
+        liveness = get_liveness_threshold_cycles()
         perf = model.analysis(dataflow_performance)
         latency = perf["critical_path_cycles"]
-        max_iters = latency * 1.1 + 20
+        max_iters = max(liveness, int(np.ceil(latency * 1.1 + 20)))
+
         rtlsim_perf_dict = xsi_fifosim(model, rtlsim_bs, max_iters=max_iters)
         # keep keys consistent between the Python and C++-styles
         cycles = rtlsim_perf_dict["cycles"]
