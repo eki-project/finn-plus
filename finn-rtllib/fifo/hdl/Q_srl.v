@@ -25,10 +25,10 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
 	assign o_d = 0;
 
 	// Dummy values required by FINN
-	output [countwidth-1:0] count;  // - output number of elems in queue
-	output [countwidth-1:0] maxcount;  // - maximum observed count since reset
+	output [31:0] count;  // - output number of elems in queue
+	output [31:0] maxcount;  // - maximum observed count since reset
 	assign count = current_depth;
-	assign maxcount = maxcount > current_depth ? maxcount : current_depth;
+	assign maxcount = 0;
 
 
 	wire have_capacity;
@@ -50,11 +50,15 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
 	always @(posedge clock) begin
 		if (reset) begin
 			current_depth <= 0;
+			count <= 0;
+			maxcount <= 0;
 		end else begin
 			if (read & ~write) begin
 				current_depth <= current_depth + 1;
 			end else if (~read & write) begin
 				current_depth <= current_depth - 1;
+			end else if (maxcount < current_depth) begin
+				maxcount <= current_depth;
 			end
 		end
    end // always @ (posedge clock)

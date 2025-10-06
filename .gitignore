@@ -60,6 +60,7 @@ compile_commands.json
 CMakeCache.txt
 cmake_install.cmake
 simulation_config.hpp*
+**/compile_commands.json
 
 # Package files
 *.egg
