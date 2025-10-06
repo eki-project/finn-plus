@@ -33,7 +33,6 @@ from finn.benchmarking.bench_base import bench
 
 # Custom build steps required to streamline and convert the attention operator
 from finn.builder.custom_step_library.transformer import (
-    node_by_node_cppsim,
     prepare_graph,
     set_fifo_depths,
     set_target_parallelization,
@@ -899,20 +898,19 @@ class bench_transformer(bench):
             max_multithreshold_bit_width=16,
             mvau_wwidth_max=2048,
             verify_steps=[
-                # Verify the model after converting to the FINN onnx dialect
-                build_cfg.VerificationStepType.QONNX_TO_FINN_PYTHON,
-                # Verify the model again using python mode after the default
-                # streamlining step
-                build_cfg.VerificationStepType.STREAMLINED_PYTHON,
-                # Verify the model again after tidy up transformations, right before
-                # converting to HLS
+                # In this custom flow, VerificationStepType is repurposed as follows:
+                # Enables "tidied_up_python" (before lowering) verification in step_prepare_graph
                 build_cfg.VerificationStepType.TIDY_UP_PYTHON,
-                # Verify the model after generating C++ HLS and applying folding
-                # only inserted if live FIFO-sizing is off:
-                # build_cfg.VerificationStepType.FOLDED_HLS_CPPSIM,
-                # RTL simulation now supported after switching to XSI:
-                build_cfg.VerificationStepType.NODE_BY_NODE_RTLSIM,
-                build_cfg.VerificationStepType.STITCHED_IP_RTLSIM,
+                # Enables "lowered_python" (after lowering) and "prepared_graph_python"
+                # (after QONNX to FINN conversion) verification in step_prepare_graph
+                build_cfg.VerificationStepType.QONNX_TO_FINN_PYTHON,
+                # Enables "streamlined_python" verification after custom step_streamline
+                build_cfg.VerificationStepType.STREAMLINED_PYTHON,
+                # Enables "folded_hls_cppsim" verification after custom step_apply_folding_config
+                build_cfg.VerificationStepType.FOLDED_HLS_CPPSIM,
+                # Enables RTL simulation of default steps contained in the flow:
+                build_cfg.VerificationStepType.NODE_BY_NODE_RTLSIM,  # after step_hw_ipgen
+                build_cfg.VerificationStepType.STITCHED_IP_RTLSIM,  # after step_create_stitched_ip
             ],
             # File with test inputs for verification
             verify_input_npy=self._build_inputs["input_npy_path"],
@@ -930,48 +928,33 @@ class bench_transformer(bench):
                 # hardware, including cleanup and data layout squeezing
                 step_convert_attention_to_hw,
                 # Convert the elementwise binary operations to hardware operators.
-                # These include for example adding residual branches and positional
-                # encoding
+                # These include for example adding residual branches and positional encoding
                 step_convert_elementwise_binary_to_hw,
-                # Convert Lookup layers, e.g., token embedding, to hardware custom
-                # operators
+                # Convert Lookup layers, e.g., token embedding, to hardware custom operators
                 step_convert_lookup_to_hw,
                 # Convert Split and Concat operators to hardware, e.g., splits
                 # contained in the GLU activation
                 step_convert_split_concat_to_hw,
                 # Convert depth-wise convolution MatMuls to VVUs
                 step_convert_depth_wise_to_hw,
-                # Properly replicate the stream feeding the query, key and value
-                # projections
+                # Properly replicate the stream feeding the query, key and value projections
                 step_replicate_streams,
                 # Convert most other layers supported by FINN to HW operators
                 "step_convert_to_hw",
                 # Specialize HW layer implementations as either HLS or RTL
                 "step_specialize_layers",
                 "step_create_dataflow_partition",
-                # Set the folding configuration to meet the cycles per sequence
-                # target
+                # Set the folding configuration to meet the cycles per sequence target
                 set_target_parallelization(seq_len, emb_dim),
-                # Apply folding configuration, specifying hardware implementation
-                # details
-                # Note: This triggers a verification step
+                # Apply folding configuration, specifying hardware implementation details
                 step_apply_folding_config,
                 "step_minimize_bit_width",
-                # The ScaledDotProductAttention custom op does not define any
-                # estimates
+                # The ScaledDotProductAttention custom op does not define any estimates
                 "step_generate_estimate_reports",
                 "step_hw_codegen",
                 "step_hw_ipgen",
-                # Run additional node-by-node verification in RTL simulation of the
-                # model before creating the stitched IP
-                # Note: end-to-end verification of the stitched IP in RTL simulation
-                # is still not possible due to missing float IPs
-                # node_by_node_cppsim, #only inserted if live FIFO-sizing is off
-                # Only for debugging for now, does not work if "vivado" style
-                # StreamingFIFOs are used
-                # node_by_node_rtlsim,
                 "step_create_stitched_ip",
-                # "step_measure_rtlsim_performance", # not possible due to float components
+                "step_measure_rtlsim_performance",
                 "step_out_of_context_synthesis",  # for synthesis results (e.g. utilization)
                 "step_synthesize_bitfile",
                 "step_make_driver",
@@ -985,6 +968,8 @@ class bench_transformer(bench):
             for i in range(len(cfg.steps)):
                 if cfg.steps[i] == "step_generate_estimate_reports":
                     cfg.steps.insert(i + 1, "step_set_fifo_depths")
+            # disable verification if live FIFO-sizing is on
+            cfg.verify_steps = None
         else:
             # insert Christoph's custom FIFO-sizing step (behind step_hw_ipgen)
             for i in range(len(cfg.steps)):
@@ -992,8 +977,4 @@ class bench_transformer(bench):
                     cfg.steps.insert(
                         i + 1, set_fifo_depths(seq_len, emb_dim, uram_threshold=seq_len)
                     )
-                    # also enable cppsim, which doesn't work with virtual FIFOs
-                    cfg.steps.insert(i + 2, node_by_node_cppsim)
-                    cfg.verify_steps.append(build_cfg.VerificationStepType.FOLDED_HLS_CPPSIM)
-
         return cfg

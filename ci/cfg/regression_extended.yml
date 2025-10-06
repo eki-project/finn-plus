@@ -97,7 +97,7 @@
                       "models/rml_transformer_d",],
         "board": ["RFSoC2x2"],
         "synth_clk_period_ns": [10],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
     },
 
     # 1x RadioML Conformer model
@@ -107,6 +107,6 @@
         "model_dir": ["models/rml_conformer"],
         "board": ["RFSoC2x2"],
         "synth_clk_period_ns": [10],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
     }
 ]
