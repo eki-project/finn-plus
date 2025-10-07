@@ -350,8 +350,14 @@ def step_convert_lookup_to_hw(model: ModelWrapper, _):
     for index, node in enumerate(model.graph.node):
         # If this is a Gather node, force the input (index) type annotation
         if node.op_type == "Gather":
-            # Force to unsigned 64-bit integer for now
+            # Force input type to unsigned 64-bit integer for now
             model.set_tensor_datatype(node.input[1], DataType["UINT64"])
+            # Workaround:
+            # Also force global input to UINT64 to avoid type inference to reset it to FLOAT32
+            # TODO: Address properly by either
+            # 1) Annotating the global input with the correct datatype (at export)
+            # 2) Make ModelWrapper.get_tensor_datatype() fall back to container type, not of FP32
+            model.set_tensor_datatype(model.graph.input[0].name, DataType["UINT64"])
             # Get the value info for the input tensor to have access to the ONNX
             # datatype of the tensor
             value_info = model.get_tensor_valueinfo(node.input[1])
