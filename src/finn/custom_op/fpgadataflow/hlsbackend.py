@@ -36,6 +36,7 @@ from finn.custom_op.fpgadataflow import templates
 from finn.util.basic import CppBuilder, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.deps import get_deps_path
+from finn.util.exception import FINNError
 from finn.util.hls import CallHLS
 from finn.util.logging import log
 
@@ -179,15 +180,36 @@ class HLSBackend(ABC):
         builder = CallHLS()
         builder.append_tcl(code_gen_dir + "/hls_syn_{}.tcl".format(node.name))
         builder.set_ipgen_path(code_gen_dir + "/project_{}".format(node.name))
-        builder.build(code_gen_dir)
-        ipgen_path = builder.ipgen_path
-        assert os.path.isdir(ipgen_path), "IPGen failed: %s not found" % (ipgen_path)
-        self.set_nodeattr("ipgen_path", ipgen_path)
-        ip_path = ipgen_path + "/sol1/impl/ip"
-        assert os.path.isdir(ip_path), "IPGen failed: %s not found. Check log under %s" % (
-            ip_path,
-            code_gen_dir,
-        )
+
+        success = False
+        while not success:
+            builder.build(code_gen_dir)
+            ipgen_path = builder.ipgen_path
+            if not os.path.isdir(ipgen_path):
+                raise FINNError(f"IPGen failed: {ipgen_path} not found")
+            self.set_nodeattr("ipgen_path", ipgen_path)
+            ip_path = ipgen_path + "/sol1/impl/ip"
+            if not os.path.isdir(ip_path):
+                # Workaround for possible race condition between Vitis HLS instances
+                is_port_conflict = False
+                xcd_log_path = os.path.join(ipgen_path, "sol1", ".autopilot", "xcd.log")
+                if os.path.isfile(xcd_log_path):
+                    with open(xcd_log_path, "r") as xcd_log:
+                        for line in xcd_log:
+                            if "Address already in use" in line:
+                                is_port_conflict = True
+                if is_port_conflict:
+                    log.warning(
+                        f"Vitis HLS IPGen ({code_gen_dir}) failed due to race condition "
+                        "(XCD server port conflict). Retrying..."
+                    )
+                else:
+                    raise FINNError(
+                        f"IPGen failed: {ip_path} not found. Check log under {code_gen_dir}"
+                    )
+            else:
+                success = True
+
         self.set_nodeattr("ip_path", ip_path)
         vlnv = "xilinx.com:hls:%s:1.0" % node.name
         self.set_nodeattr("ip_vlnv", vlnv)
@@ -309,7 +331,7 @@ compilation transformations?
             folded_ishape = self.get_folded_input_shape(i)
             inp_val = context[inp]
             # Make sure the input has the right container datatype
-            if inp_val.dtype is not np.float32:
+            if inp_val.dtype != np.float32:
                 # Issue a warning to make the user aware of this type-cast
                 log.warning(
                     f"{node.name}: Changing input container datatype from "

@@ -1,0 +1,28 @@
+# This defines the build flow for the KWS finn-example, which is an MLP topology
+
+# There is a single variant, so we define a fixed path to model and corresponding config files
+model_path: models/kws/MLP_W3A3_python_speech_features_pre-processing_QONNX_opset-11.onnx
+folding_config_file: models/kws/kws_folding_config.json
+specialize_layers_config_file: models/kws/kws_specialize_layers.json
+
+steps:
+  - finn.builder.custom_step_library.general.add_postproc_top1 # Custom step
+  - step_qonnx_to_finn
+  - step_tidy_up
+  - step_streamline
+  - step_convert_to_hw
+  - step_create_dataflow_partition
+  - step_specialize_layers
+  - step_target_fps_parallelization
+  - step_apply_folding_config
+  - step_minimize_bit_width
+  - step_generate_estimate_reports
+  - step_set_fifo_depths
+  - step_hw_codegen
+  - step_hw_ipgen
+  - step_create_stitched_ip
+  - step_measure_rtlsim_performance
+  - step_out_of_context_synthesis
+  - step_synthesize_bitfile
+  - step_make_driver
+  - step_deployment_package

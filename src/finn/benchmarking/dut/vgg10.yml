@@ -1,0 +1,31 @@
+model_path: models/vgg10/radioml_w4a4_small_tidy.onnx
+folding_config_file: models/vgg10/ZCU104_folding_config.json
+specialize_layers_config_file: models/vgg10/ZCU104_specialize_layers.json
+
+steps:
+  - step_tidy_up
+  - finn.builder.custom_step_library.conv1d.step_pre_streamline # Custom step
+  - step_streamline
+  - step_convert_to_hw
+  - finn.builder.custom_step_library.conv1d.step_convert_final_layers # Custom step
+  - step_create_dataflow_partition
+  - step_specialize_layers
+  - step_target_fps_parallelization
+  - step_apply_folding_config
+  - step_minimize_bit_width
+  - step_generate_estimate_reports
+  - step_set_fifo_depths
+  - step_hw_codegen
+  - step_hw_ipgen
+  - step_create_stitched_ip
+  - step_measure_rtlsim_performance
+  - step_out_of_context_synthesis
+  - step_synthesize_bitfile
+  - step_make_driver
+  - step_deployment_package
+
+# folding config doesn't come with FIFO sizes
+auto_fifo_depths: True
+auto_fifo_strategy: largefifo_rtlsim
+
+standalone_thresholds: True

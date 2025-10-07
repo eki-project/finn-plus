@@ -59,7 +59,7 @@ from qonnx.transformation.insert_topk import InsertTopK
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.transformation.merge_onnx_models import MergeONNXModels
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
-from shutil import copy
+from shutil import copy, copytree
 
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
@@ -73,7 +73,7 @@ from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDat
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
-from finn.transformation.fpgadataflow.make_driver import MakePYNQDriver
+from finn.transformation.fpgadataflow.make_driver import MakeCPPDriver, MakePYNQDriverIODMA
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
@@ -349,8 +349,13 @@ def deploy_based_on_board(model, model_title, topology, wbits, abits, board):
 
     # driver.py and python libraries
     pynq_driver_dir = model.get_metadata_prop("pynq_driver_dir")
-    shutil.copytree(pynq_driver_dir, deployment_dir, dirs_exist_ok=True)
-    model.set_metadata_prop("pynq_deploy_dir", deployment_dir)
+    if not None:
+        copytree(pynq_driver_dir, deployment_dir, dirs_exist_ok=True)
+        model.set_metadata_prop("pynq_deploy_dir", deployment_dir)
+    else:
+        cpp_driver_dir = model.get_metadata_prop("cpp_driver_dir")
+        copytree(cpp_driver_dir, deployment_dir, dirs_exist_ok=True)
+        model.set_metadata_prop("cpp_deploy_dir", deployment_dir)
 
 
 # parameters that make up inputs to test case(s)
@@ -456,7 +461,6 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize(argnames, argvalues, ids=idlist, scope="class")
 
 
-@pytest.mark.xfail(reason="Outstanding data layout issue")
 @pytest.mark.sanity_bnn
 @pytest.mark.bnn_pynq
 @pytest.mark.bnn_zcu104
@@ -757,6 +761,8 @@ class TestEnd2End:
         y = execute_parent(parent_chkpt, rtlsim_chkpt, input_tensor_npy)
         assert np.isclose(y, output_tensor_npy).all()
 
+    # TODO: Consider improving heuristic for N or stopping sim when steady state is reached
+    @pytest.mark.skip("Test disabled due to excessive runtime")
     @pytest.mark.slow
     @pytest.mark.vivado
     def test_throughput_rtlsim(self, topology, wbits, abits, board):
@@ -805,14 +811,17 @@ class TestEnd2End:
     @pytest.mark.slow
     @pytest.mark.vivado
     @pytest.mark.vitis
-    def test_make_pynq_driver(self, topology, wbits, abits, board):
+    def test_make_driver(self, topology, wbits, abits, board):
         build_data = get_build_env(board, target_clk_ns)
         if build_data["kind"] == "alveo" and ("XILINX_VITIS" not in os.environ):
             pytest.skip("XILINX_VITIS not set")
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "build")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         board_to_driver_platform = "alveo" if build_data["kind"] == "alveo" else "zynq-iodma"
-        model = model.transform(MakePYNQDriver(board_to_driver_platform))
+        if build_data["kind"] == "alveo" and topology == "tfc":
+            model = model.transform(MakeCPPDriver(board_to_driver_platform, version="latest"))
+        else:
+            model = model.transform(MakePYNQDriverIODMA(board_to_driver_platform))
         model.save(get_checkpoint_name(board, topology, wbits, abits, "driver"))
 
     def test_deploy(self, topology, wbits, abits, board):

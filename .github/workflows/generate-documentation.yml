@@ -1,0 +1,150 @@
+name: Generate Builder Config Documentation
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'src/finn/builder/build_dataflow_config.py'
+      - 'scripts/builder_conf_to_wiki.py'
+  push:
+    branches: [dev]
+    paths:
+      - 'src/finn/builder/build_dataflow_config.py'
+      - 'scripts/builder_conf_to_wiki.py'
+
+jobs:
+  validate-documentation:
+    name: Validate Documentation Completeness
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    # Add permissions to allow PR comments
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Generate documentation with strict mode
+      id: generate-docs
+      run: |
+        cd scripts
+        echo "Generating documentation in strict mode..."
+        if output=$(python builder_conf_to_wiki.py --strict --output DataflowBuildConfig_Documentation.md 2>&1); then
+          echo "✅ Documentation generation successful - all fields are documented"
+          echo "success=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Documentation generation failed - undocumented fields found"
+          echo "success=false" >> $GITHUB_OUTPUT
+          echo "$output"
+
+          # Extract undocumented field names from the output
+          undocumented_fields=$(echo "$output" | grep "^  - " | sed 's/^  - //' | tr '\n' ',' | sed 's/,$//')
+          echo "undocumented_fields=$undocumented_fields" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+    - name: Upload generated documentation as artifact
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: builder-config-documentation-pr-${{ github.event.number }}
+        path: scripts/DataflowBuildConfig_Documentation.md
+        retention-days: 7
+
+    - name: Add PR comment on failure
+      uses: actions/github-script@v6
+      if: failure()
+      with:
+        script: |
+          const undocumentedFields = '${{ steps.generate-docs.outputs.undocumented_fields }}';
+          let body = '❌ **Documentation Check Failed**\n\n';
+          body += 'Some DataflowBuildConfig fields are missing documentation. Please add documentation comments (starting with `#:`) for all configuration fields before merging.\n\n';
+
+          if (undocumentedFields) {
+            const fields = undocumentedFields.split(',').filter(f => f.trim());
+            body += '### Missing Documentation for Fields:\n';
+            fields.forEach(field => {
+              body += `- \`${field.trim()}\`\n`;
+            });
+            body += '\n';
+          }
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          })
+
+  publish-to-wiki:
+    name: Publish Documentation to Wiki
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Generate documentation
+      run: |
+        cd scripts
+        echo "Generating DataflowBuildConfig documentation..."
+        python builder_conf_to_wiki.py --output DataflowBuildConfig_Documentation.md
+        echo "Documentation generated successfully"
+
+    - name: Checkout wiki
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ github.repository }}.wiki
+        path: wiki
+        token: ${{ secrets.WIKI_ACCESS_TOKEN }}
+      continue-on-error: true
+
+    - name: Update wiki with generated documentation
+      run: |
+        # Copy the generated documentation to wiki
+        cp scripts/DataflowBuildConfig_Documentation.md wiki/DataflowBuildConfig-Documentation.md
+
+        # Navigate to wiki directory
+        cd wiki
+
+        # Configure git
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+        # Add timestamp to documentation
+        echo "" >> DataflowBuildConfig-Documentation.md
+        echo "*Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC') by GitHub Actions*" >> DataflowBuildConfig-Documentation.md
+        echo "*Generated from commit: ${{ github.sha }}*" >> DataflowBuildConfig-Documentation.md
+
+        # Add and commit changes
+        git add .
+
+        # Check if there are any changes to commit
+        if git diff --staged --quiet; then
+          echo "No changes to wiki documentation"
+        else
+          git commit -m "Update DataflowBuildConfig documentation
+
+          - Generated from commit ${{ github.sha }}
+          - Updated on $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          - Branch: ${{ github.ref_name }}"
+
+          git push
+          echo "✅ Wiki documentation updated successfully"
+          echo "📖 Documentation available at: https://github.com/${{ github.repository }}/wiki/DataflowBuildConfig-Documentation"
+        fi

@@ -30,14 +30,15 @@
 import json
 import multiprocessing as mp
 import os
-import subprocess
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_num_default_workers
 from shutil import copytree
+from subprocess import CalledProcessError
 
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
-from finn.util.basic import make_build_dir
+from finn.util.basic import launch_process_helper, make_build_dir
+from finn.util.exception import FINNError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
@@ -626,21 +627,19 @@ close $ofile
             f.write(tcl_string)
         # create a shell script and call Vivado
         make_project_sh = vivado_stitch_proj_dir + "/make_project.sh"
-        working_dir = os.environ["PWD"]
+        working_dir = os.getcwd()
         with open(make_project_sh, "w") as f:
             f.write("#!/bin/bash \n")
             f.write("cd {}\n".format(vivado_stitch_proj_dir))
             f.write("vivado -mode batch -source make_project.tcl\n")
             f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", make_project_sh]
-        process_compile = subprocess.Popen(
-            bash_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        (_, stderr_data) = process_compile.communicate()
 
-        stderr_stripped = stderr_data.decode().strip()
-        if stderr_stripped != "" and stderr_stripped is not None:
-            log.critical(stderr_stripped)  # Decode bytes and log as critical
+        try:
+            launch_process_helper(bash_command, print_stdout=False)
+        except CalledProcessError:
+            # Check success manually by looking for wrapper HDL
+            pass
 
         # wrapper may be created in different location depending on Vivado version
         if not os.path.isfile(wrapper_filename):
@@ -649,7 +648,7 @@ close $ofile
             if os.path.isfile(wrapper_filename_alt):
                 model.set_metadata_prop("wrapper_filename", wrapper_filename_alt)
             else:
-                raise Exception(
+                raise FINNError(
                     """CreateStitchedIP failed, no wrapper HDL found under %s or %s.
                     Please check logs under the parent directory."""
                     % (wrapper_filename, wrapper_filename_alt)
