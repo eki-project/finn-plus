@@ -18,7 +18,7 @@ from threading import RLock
 from typing import Literal
 
 from finn.interface import IS_POSIX
-from finn.interface.interface_utils import error
+from finn.interface.interface_utils import debug, error
 from finn.util.exception import FINNConfigurationError, FINNUserError
 
 
@@ -85,10 +85,7 @@ class DependencyUpdater:
     """Manage non-python dependencies."""
 
     def __init__(
-        self,
-        dependency_location: Path,
-        dependency_definition_file: Path | None,
-        git_timeout_s: float,
+        self, dependency_location: Path, dependency_definition_file: Path, git_timeout_s: float
     ) -> None:
         """Create a new updater.
 
@@ -97,18 +94,14 @@ class DependencyUpdater:
 
         Args:
             dependency_location: Path to the directory where all files are placed / checked.
-            dependency_definition_file: If None, search the root of FINN+ for the file.
-                This points to the yaml file containing all dependencies.
+            dependency_definition_file: This points to the yaml file containing all dependencies.
             git_timeout_s: Timeout for git requests in seconds.
         """
         self.git_timeout = git_timeout_s
-        if dependency_definition_file is None:
-            self.depfile = Path(__file__).parent.parent.parent.parent / "external_dependencies.yaml"
-        else:
-            self.depfile = dependency_definition_file
+        self.depfile = dependency_definition_file
         if not self.depfile.exists():
             raise FINNConfigurationError(
-                f"External dependency definition" f"file not found at: {self.depfile}"
+                f"External dependency definition file not found at: {self.depfile}"
             )
         self.git_deps = {}
         self.boarfiles = {}
@@ -119,6 +112,7 @@ class DependencyUpdater:
         self.boardfile_temporary_downloads = self.dep_location / "board_files_downloads"
 
         # Load the definitions
+        debug("Loading dependency definitions")
         data = {}
         with self.depfile.open() as f:
             data = yaml.load(f, yaml.Loader)
@@ -135,6 +129,7 @@ class DependencyUpdater:
 
     def _run_silent(self, cmd: str, cwd: Path | None = None, timeout: float | None = None) -> int:
         """Run a given command silently. Return its returncode."""
+        debug(f"[DependencyUpdater] Running command: {cmd}", False)
         return sp.run(
             shlex.split(cmd, posix=IS_POSIX),
             cwd=cwd,
@@ -178,7 +173,7 @@ class DependencyUpdater:
         for field in field_names:
             if field not in package_data:
                 raise FINNUserError(
-                    f"Missing field {field} in" f"dependency definition of {package_name}!"
+                    f"Missing field {field} in dependency definition of {package_name}!"
                 )
         return tuple([package_data[field] for field in field_names])
 
@@ -196,6 +191,7 @@ class DependencyUpdater:
 
     def _install_git_dependency(self, package_name: str) -> bool:
         """Install a git dependency. Return success."""
+        debug(f"Trying to install GIT dependency: {package_name}", False)
         url, commit, pip_install = self._get_fields(
             package_name, self.git_deps[package_name], "url", "commit", "pip_install"
         )
@@ -211,6 +207,7 @@ class DependencyUpdater:
 
     def _install_boardfile_dependency(self, package_name: str) -> bool:
         """Install a board file dependency. Return success."""
+        debug(f"Trying to install BOARDFILE dependency: {package_name}", False)
         url, commit, subdir = self._get_fields(
             package_name, self.boarfiles[package_name], "url", "commit", "subdirectory"
         )
@@ -229,6 +226,7 @@ class DependencyUpdater:
 
     def _install_direct_download_dependency(self, package_name: str) -> bool:
         """Install a direct download dependency. Return success."""
+        debug(f"Trying to install DIRECT DOWNLOAD dependency: {package_name}", False)
         if shutil.which("wget") is None or shutil.which("unzip") is None:
             # TODO: Allow curl and gzip etc. as well
             raise FINNConfigurationError(
@@ -237,16 +235,20 @@ class DependencyUpdater:
         url, do_unzip, target_directory = self._get_fields(
             package_name, self.direct_downloads[package_name], "url", "do_unzip", "target_directory"
         )
-        target = self.dep_location / target_directory
+        target: Path = self.dep_location / target_directory
 
         # Return if the download fails
         # Automatically skips if not modified
         if self._run_silent(f"wget -N {url}", cwd=target) != 0:
             return False
 
-        # If we want to unzip and it fails, return False
+        unzipped = (target / Path(url).name).with_suffix("")
+        if unzipped.exists():
+            unzipped.unlink()
+
+        # Unzip
         if do_unzip:  # noqa
-            if self._run_silent(f"unzip {Path(url).name}", cwd=target) != 0:
+            if self._run_silent(f"unzip -o {Path(url).name}", cwd=target) != 0:
                 return False
         return not self.is_outdated(package_name)
 

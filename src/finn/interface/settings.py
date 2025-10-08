@@ -7,7 +7,7 @@ import yaml
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
-from finn.interface.interface_utils import error
+from finn.interface.interface_utils import error, warning
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -16,6 +16,29 @@ if TYPE_CHECKING:
 class FINNSettings:
     """Keeps track of FINN settings."""
 
+    KNOWN_KEYS: Final[dict[str, str]] = {
+        "AUTOMATIC_DEPENDENCY_UPDATES": "Execute dependency updates at the start of a FINN+ build.",
+        "DEPS_GIT_TIMEOUT": "Timeout in seconds for pulling a Git dependency.",
+        "FINN_BUILD_DIR": (
+            "Directory that contains all temporary build related files."
+            "Absolute or relative to the build config."
+        ),
+        "FINN_DEPS": (
+            "Directory that contains all non-Python dependencies."
+            "Absolute or relative to the FINN+ root directory."
+        ),
+        "FINN_DEPS_DEFINITIONS": (
+            "Path to the non-Python dependency definition file. Absolute or"
+            "relative to the FINN+ root directory"
+        ),
+        "IGNORE_UNKNOWN_SETTINGS": (
+            "Whether to emit warnings in case " "the settings contain unknown field names."
+        ),
+    }
+
+    # Keys that need to be converted to str/Path when saving/loading
+    PATH_KEYS: Final[list[str]] = ["FINN_DEPS", "FINN_BULD_DIR", "FINN_DEPS_DEFINITIONS"]
+
     def __init__(
         self,
         sync: bool = False,
@@ -23,6 +46,9 @@ class FINNSettings:
         override_path: Path | None = None,
     ) -> None:
         """Create a new settings instance. Automatically resolves settings location.
+        **NOTE**: This class can be constructed even if the resolved settings location does not
+        exist. Note that in this case it has to be written either automatically via sync=True or
+        manually by calling .save().
 
         Args:
             sync: If True, changes to settings are automatically synced back to the settings file.
@@ -33,7 +59,6 @@ class FINNSettings:
                             location. Can for example be used to generate a new config from scratch.
         """
         self.sync = sync
-        self._settigs_path_keys: list[str] = ["FINN_DEPS", "FINN_BULD_DIR"]
         self._settings_path: Final[Path]
         if override_path is not None:
             self._settings_path = override_path
@@ -50,7 +75,14 @@ class FINNSettings:
             else:
                 self._settings_path = settings_path
         self._settings: dict[str, Any] = {}
+        # Set to true only for initial loading to avoid double printed warnings
+        self.ignore_unknown_settings = True
         self.load()
+        self.ignore_unknown_settings = self._settings.get("IGNORE_UNKNOWN_SETTINGS", False)
+        if self.ignore_unknown_settings:
+            for key in self._settings.keys():
+                if key not in FINNSettings.KNOWN_KEYS:
+                    warning(f"Found unknown key {key} in settings.")
 
     @staticmethod
     def _resolve_settings_path() -> Path | None:
@@ -71,16 +103,28 @@ class FINNSettings:
                 return path
         return None
 
-    def load_defaults(self) -> None:
-        """Load the default values into the settings by updating them."""
-        self._settings.update(
-            {
-                "DEPS_GIT_TIMEOUT": 120,
-                "AUTOMATIC_DEPENDENCY_UPDATES": True,
-                "FINN_DEPS": Path("deps"),
-                "FINN_BUILD_DIR": Path("FINN_TMP"),
-            }
-        )
+    def load_defaults(self) -> bool:
+        """Load the default values into the settings by updating them.If sync=True was given,
+        the settings are immediately written.
+
+        Returns:
+            bool: If sync=True the return value indicates if writing the file was successful.
+                    If sync=False, True is always returned.
+        """
+        defaults = {
+            "DEPS_GIT_TIMEOUT": 120,
+            "AUTOMATIC_DEPENDENCY_UPDATES": True,
+            "FINN_DEPS": Path("deps"),
+            "FINN_BUILD_DIR": Path("FINN_TMP"),
+            "IGNORE_UNKNOWN_SETTINGS": False,
+            "FINN_DEPS_DEFINITIONS": Path("external_dependencies.yaml"),
+        }
+        for key in FINNSettings.KNOWN_KEYS.keys():
+            assert key in defaults, f"Key {key} is missing in settings defaults."
+        self._settings.update(defaults)
+        if self.sync:
+            return self.save()
+        return True
 
     def get_path(self) -> Path:
         """Get the path to the settings file. If not existent, it will be created when needed."""
@@ -98,16 +142,22 @@ class FINNSettings:
         with self._settings_path.open() as f:
             temp = yaml.load(f, yaml.Loader)
         for key, value in temp.items():
-            if key in self._settigs_path_keys:
+            if key in FINNSettings.PATH_KEYS:
                 temp[key] = Path(value)
+        if not self.ignore_unknown_settings:
+            for key in temp.keys():
+                if key not in FINNSettings.KNOWN_KEYS:
+                    warning(f"Loaded unknown key {key} in settings.")
         self._settings.update(temp)
         return True
 
     def save(self) -> bool:
         """Save settings to the settings path."""
+        # Convert Path objects to strings for readability
+        data = {k: (v if not isinstance(v, Path) else str(v)) for k, v in self._settings.items()}
         with self._settings_path.open("w+") as f:
             yaml.dump(
-                {k: (v if type(k) is not Path else str(v)) for k, v in self._settings.items()},
+                data,
                 f,
                 yaml.Dumper,
             )
@@ -155,6 +205,24 @@ class FINNSettings:
                 return Path(__file__).parent.parent.parent.parent / p
             return p
         return Path.home() / ".finn" / "deps"
+
+    def resolve_deps_definitions_path(self, dep_def: Path | None) -> Path:
+        """Resolve the path of the deps definition file.
+        **NOTE**: This does *not* modify the settings.
+        """
+        if dep_def is not None:
+            return dep_def
+        if "FINN_DEPS_DEFINITIONS" in os.environ.keys():
+            p = Path(os.environ["FINN_DEPS_DEFINITIONS"])
+            if not p.is_absolute():
+                return Path(__file__).parent.parent.parent.parent / p
+            return p
+        if "FINN_DEPS_DEFINITIONS" in self:
+            p = Path(self["FINN_DEPS_DEFINITIONS"])
+            if not p.is_absolute():
+                return Path(__file__).parent.parent.parent.parent / p
+            return p
+        return Path(__file__).parent.parent.parent.parent / "external_dependencies.yaml"
 
     def resolve_num_workers(self, num: int) -> int:
         """Resolve the number of workers to use. Uses 75% of cores available as default fallback.

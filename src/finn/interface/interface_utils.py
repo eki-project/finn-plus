@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import click
 import os
+import rich
+import rich.box
+import rich.table
 import sys
 from pathlib import Path
 from rich.console import Console
@@ -31,28 +34,39 @@ class NullablePath(click.ParamType):
 
 def error(msg: str) -> None:
     """Print an error."""
-    Console().print(f"[bold red]ERROR: [/bold red][red]\t{msg}[/red]")
+    Console().print(f"[bold red]ERROR: [/bold red][red]{msg}[/red]")
 
 
 def warning(msg: str) -> None:
     """Print a warning."""
-    Console().print(f"[bold orange1]WARNING: [/bold orange1][orange3]\t{msg}[/orange3]")
+    Console().print(f"[bold orange1]WARNING: [/bold orange1][orange3]{msg}[/orange3]")
 
 
 def status(msg: str) -> None:
     """Print a status message."""
-    Console().print(f"[bold cyan]STATUS: [/bold cyan][cyan]\t{msg}[/cyan]")
+    Console().print(f"[bold cyan]STATUS: [/bold cyan][cyan]{msg}[/cyan]")
 
 
 def success(msg: str) -> None:
     """Print a success message."""
-    Console().print(f"[bold green]SUCCESS: [/bold green][green]\t{msg}[/green]")
+    Console().print(f"[bold green]SUCCESS: [/bold green][green]{msg}[/green]")
 
 
-def debug(msg: str) -> None:
+def debug(msg: str, with_rich: bool = True) -> None:
     """Print a debug message. Only done when the flag is set."""
     if DEBUG:
-        Console().print(f"[bold blue]DEBUG: [/bold blue][blue]\t{msg}[/blue]")
+        if with_rich:
+            Console().print(f"[bold blue]DEBUG: [/bold blue][blue]{msg}[/blue]")
+        else:
+            print(f"DEBUG: {msg}")
+
+
+def table(data: dict[Any, Any], key_header: str, value_header: str) -> None:
+    """Print the data as a table."""
+    table = rich.table.Table(key_header, value_header, box=rich.box.SIMPLE)
+    for k, v in data.items():
+        table.add_row(str(k), str(v))
+    Console().print(table)
 
 
 def assert_path_valid(p: Path) -> None:

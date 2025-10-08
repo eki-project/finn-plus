@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from rich.console import Console
 from rich.pretty import pprint
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import (
@@ -19,11 +19,15 @@ from finn.interface.interface_utils import (
     error,
     set_synthesis_tools_paths,
     status,
+    table,
     warning,
 )
 from finn.interface.manage_deps import DependencyUpdater, install_finnxsi
 from finn.interface.manage_tests import run_test
 from finn.interface.settings import FINNSettings
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 # Resolves the path to modules which are not part of the FINN package hierarchy
@@ -47,6 +51,12 @@ def requires_dependencies(f: Callable) -> Callable[..., Any]:
     """Add a click parameter named --dependency-path (-d) that defaults to
     None if the param is empty, and a path otherwise."""  # noqa
     return click.option("--dependency-path", "-d", default="", type=NullablePath())(f)
+
+
+def requires_dependency_definitions(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter named --dependency-definitions (-D) that defaults to
+    None if the param is empty, and a path otherwise."""  # noqa
+    return click.option("--dependency-definitions", "-D", default="", type=NullablePath())(f)
 
 
 def requires_builddir(f: Callable) -> Callable[..., Any]:
@@ -106,6 +116,7 @@ def with_skip_depenency_update_option(f: Callable) -> Callable[..., Any]:
 def prepare_finn(
     settings: FINNSettings,
     deps: Path | None,
+    deps_definitions: Path | None,
     flow_config: Path,
     build_dir: Path | None,
     num_workers: int,
@@ -114,13 +125,16 @@ def prepare_finn(
 ) -> FINNSettings:
     """Prepare a FINN environment with the given settings. The settings will be adapted
     and modified with the necessary runtime data and returned."""  # noqa
-    status(f"[SETTINGS FILE] {settings.get_path()}")
-    if not settings.get_path().exists():
-        warning(
-            "Settings file does not exist. Creating one in ~/.finn/settings.yaml. "
-            "Feel free to edit it."
-        )
-        settings.load_defaults()
+    settings_path = settings.get_path()
+    status(f"[SETTINGS FILE] {settings_path.absolute()}")
+
+    # Load defaults only if the settings file does not exist.
+    # If a settings file exists but a key is not given, it is resolved below.
+    if not settings_path.exists():
+        warning("Settings file does not exist yet. Creating file with default values now.")
+        if not settings.load_defaults():
+            error("Could not write settings file. Make sure the parent path exists.")
+            sys.exit(1)
 
     # Set arbitrary git timeout
     if "DEPS_GIT_TIMEOUT" not in settings:
@@ -129,8 +143,9 @@ def prepare_finn(
     # Dependencies
     deps_path = settings.resolve_deps_path(deps)
     status(f"[DEPENDENCY PATH] {deps_path}")
-    settings["FINN_DEPS"] = deps_path.absolute()
-    os.environ["FINN_DEPS"] = str(settings["FINN_DEPS"])
+    if "FINN_DEPS" not in settings:
+        settings["FINN_DEPS"] = deps_path.absolute()
+    os.environ["FINN_DEPS"] = str(deps_path.absolute())
 
     # Skipping dependency updates
     settings["AUTOMATIC_DEPENDENCY_UPDATES"] = not settings.resolve_skip_update(
@@ -144,9 +159,13 @@ def prepare_finn(
     # Update / Install all dependencies
     if settings["AUTOMATIC_DEPENDENCY_UPDATES"]:
         # TODO: Make external_dependencies.yaml location settable via settings.yaml
+        if "FINN_DEPS_DEFINITIONS" not in settings:
+            settings["FINN_DEPS_DEFINITIONS"] = settings.resolve_deps_definitions_path(
+                deps_definitions
+            )
         updater = DependencyUpdater(
             dependency_location=deps_path,
-            dependency_definition_file=None,
+            dependency_definition_file=settings["FINN_DEPS_DEFINITIONS"],
             git_timeout_s=settings["DEPS_GIT_TIMEOUT"],
         )
         status(f"[EXTERNAL DEPENDENCY DEFINITION FILE] {updater.depfile.absolute()}")
@@ -178,7 +197,6 @@ def prepare_finn(
     os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
     os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = _resolve_module_path("tests")
-    return settings
 
     # Install FINN XSI
     finnxsi_status = install_finnxsi()
@@ -187,6 +205,7 @@ def prepare_finn(
     else:
         error("FINN XSI installation failed.")
         sys.exit(1)
+    return settings
 
 
 @click.group()
@@ -196,6 +215,7 @@ def main_group() -> None:
 
 @click.command(help="Build a hardware design")
 @requires_dependencies
+@requires_dependency_definitions
 @requires_builddir
 @requires_config
 @requires_model
@@ -215,6 +235,7 @@ def main_group() -> None:
 )
 def build(
     dependency_path: Path | None,
+    dependency_definitions: Path | None,
     build_path: Path | None,
     num_workers: int,
     skip_dep_update: bool,
@@ -227,6 +248,7 @@ def build(
     prepare_finn(
         FINNSettings(),
         dependency_path,
+        dependency_definitions,
         config.expanduser(),
         build_path,
         num_workers,
@@ -280,6 +302,7 @@ def build(
 
 @click.command(help="Run a script in a FINN environment")
 @requires_dependencies
+@requires_dependency_definitions
 @requires_builddir
 @with_num_workers_option
 @with_skip_depenency_update_option
@@ -289,6 +312,7 @@ def build(
 )
 def run(
     dependency_path: Path | None,
+    dependency_definitions: Path | None,
     build_path: Path | None,
     skip_dep_update: bool,
     num_workers: int,
@@ -298,6 +322,7 @@ def run(
     prepare_finn(
         FINNSettings(),
         dependency_path,
+        dependency_definitions,
         script,
         build_path,
         num_workers,
@@ -314,13 +339,20 @@ def run(
 @click.command(help="Run a given benchmark configuration.")
 @click.option("--bench_config", help="Name or path of experiment configuration file", required=True)
 @requires_dependencies
+@requires_dependency_definitions
 @requires_builddir
 @with_num_workers_option
 def bench(
-    bench_config: str, dependency_path: Path | None, num_workers: int, build_path: Path | None
+    bench_config: str,
+    dependency_path: Path | None,
+    dependency_definitions: Path | None,
+    num_workers: int,
+    build_path: Path | None,
 ) -> None:
     console = Console()
-    prepare_finn(FINNSettings(), dependency_path, Path(), build_path, num_workers)
+    prepare_finn(
+        FINNSettings(), dependency_path, dependency_definitions, Path(), build_path, num_workers
+    )
     console.rule("RUNNING BENCHMARK")
 
     # Late import because we need prepare_finn to setup remaining dependencies first
@@ -332,6 +364,7 @@ def bench(
 
 @click.command(help="Run a given test. Uses /tmp/FINN_TMP as the temporary file location")
 @requires_dependencies
+@requires_dependency_definitions
 @requires_builddir
 @with_num_workers_option
 @click.option(
@@ -346,12 +379,21 @@ def bench(
 def test(
     variant: str,
     dependency_path: Path | None,
+    dependency_definitions: Path | None,
     num_workers: int,
     num_test_workers: str,
     build_path: Path | None,
 ) -> None:
     console = Console()
-    prepare_finn(FINNSettings(), dependency_path, Path(), build_path, num_workers, is_test_run=True)
+    prepare_finn(
+        FINNSettings(),
+        dependency_path,
+        dependency_definitions,
+        Path(),
+        build_path,
+        num_workers,
+        is_test_run=True,
+    )
     status(f"Using {num_test_workers} test workers")
     console.rule("RUNNING TESTS")
     run_test(variant, num_test_workers)
@@ -363,11 +405,10 @@ def deps() -> None:
 
 
 @click.command(help="Update or install dependencies to the given path")
-@click.option(
-    "--path", "-p", help="Path to install to", default="", show_default=True, type=NullablePath()
-)
-def update(path: Path | None) -> None:
-    prepare_finn(FINNSettings(), path, Path(), None, 1)
+@requires_dependencies
+@requires_dependency_definitions
+def update(dependency_path: Path | None, dependency_definitions: Path | None) -> None:
+    prepare_finn(FINNSettings(), dependency_path, dependency_definitions, Path(), None, 1)
 
 
 @click.group(help="Manage FINN settings")
@@ -407,6 +448,11 @@ def config_set(key: str, value: str) -> None:
     settings[key] = value
 
 
+@click.command("help", help="List all known settings fields and their purpose")
+def config_help() -> None:
+    table(FINNSettings.KNOWN_KEYS, "Settings Key", "Purpose")
+
+
 @click.command(
     "create",
     help="Create a template settings file. If one exists at the given path, "
@@ -418,7 +464,7 @@ def config_create(path: str) -> None:
     if not p.exists():
         error("The given path does not seem to exist!")
         sys.exit(1)
-    if not p.is_file():
+    if p.suffix != "":
         error("Please specify a path to a directory, not a file!")
         sys.exit(1)
     p = p / "settings.yaml"
@@ -428,6 +474,7 @@ def config_create(path: str) -> None:
     settings = prepare_finn(
         settings=settings,
         deps=None,
+        deps_definitions=None,
         flow_config=Path(),
         build_dir=Path("FINN_TMP"),
         num_workers=1,
@@ -445,6 +492,7 @@ def main() -> None:
     config.add_command(config_create)
     config.add_command(config_get)
     config.add_command(config_set)
+    config.add_command(config_help)
     deps.add_command(update)
     main_group.add_command(config)
     main_group.add_command(deps)
