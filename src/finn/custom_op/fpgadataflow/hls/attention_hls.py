@@ -1,3 +1,5 @@
+"""HLS backend implementation of scaled dot-product attention operator."""
+
 # fmt: off
 # Disable formatter. This is deliberately formatted to stay within 80 characters
 # per line. Black, however, formats some lines going beyond this.
@@ -28,13 +30,14 @@ RAM_STYLES = {
 }
 
 
-# HLS Backend specialization of the Scale Dot-product Attention Operator
 class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
     # CapWords convention
     ScaledDotProductAttention, HLSBackend
 ):
-    # Node attributes matching the HLS operator
+    """HLS Backend specialization of the Scaled Dot-product Attention Operator."""
+
     def get_nodeattr_types(self):
+        """Return node attributes matching the HLS operator."""
         # Start from parent operator class attributes
         attrs = ScaledDotProductAttention.get_nodeattr_types(self)
         # Add the HLSBackend default attributes on top
@@ -43,8 +46,15 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         # Return the updated attributes dictionary
         return attrs
 
-    # Executes the attention operator in C++ mode simulation
     def _execute_node_cppsim(self, context, graph):  # noqa: graph unused
+        """Execute the attention operator in C++ mode simulation.
+
+        Prepares input data by reading from execution context, reshaping to match
+        expected folding, and saving to numpy files for C++ simulation. Handles
+        inputs q, k, v (query, key, value) and optionally mask input if configured.
+        After executing the precompiled model, reads the output and reshapes it
+        back to normal shape for insertion into execution context.
+        """
         # Get the node wrapped by this custom op
         node = self.onnx_node
         # Input data is stored in numpy files in the code generation dictionary
@@ -90,16 +100,24 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             self.get_normal_output_shape(ind=0)
         )
 
-    # Executes the attention operator in RTL mode simulation
     def _execute_node_rtlsim(self, context, graph):  # noqa: graph unused
-        # TODO: Implement rtlsim mode
-        # Note: Cannot even compile this right now due to missing float ips
+        """Execute the attention operator in RTL mode simulation.
+
+        Initially not implemented as RTL simulation requires floating-point
+        IP cores that were not available with Verilator.
+        """
+        # TODO: Implement!
         raise NotImplementedError(
             "exec_mode rtlsim is not implemented yet!"
         )
 
-    # Maximum width of any ap_int used in this operator
     def get_ap_int_max_w(self):
+        """Return the maximum width of any ap_int used in this operator.
+
+        Calculates the maximum bit width required across all inputs, outputs,
+        and optional mask elements for use in determining the widest ap_int
+        type needed for HLS synthesis.
+        """
         # Find the widths of the widest input
         i_bits_max = max((self.get_instream_width(ind) for ind in range(3)))
         # Find the widths of the widest output
@@ -153,16 +171,26 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         # Find maximum of all (maximal) bit-widths
         return max([i_bits_max, o_bits_max, m_bits, a_bits, matmul_bits_max])
 
-    # Generates list of C++ includes to be placed at the top of the generated
-    # code
     def global_includes(self):
+        """Generate list of C++ includes to be placed at the top of the generated code.
+
+        Adds necessary header files for the attention operator HLS implementation,
+        including FINN HLSLIB activation functions and the attention-specific
+        HLS implementation header.
+        """
         # FINN HLSLIB activation functions: e.g. PassThroughActivation
         self.code_gen_dict["$GLOBALS$"] = ['#include "activations.hpp"']
         # Attention operator HLS code
         self.code_gen_dict["$GLOBALS$"] += ['#include "attention.hpp"']
 
-    # Generates C++ parameters file, i.e. activation function thresholds
     def generate_params(self, model: ModelWrapper, path):
+        """Generate C++ parameters file including activation function thresholds.
+
+        Creates parameter files including activation function thresholds and
+        other configuration parameters needed for HLS synthesis. The code
+        generation directory is specified as an argument to work for both
+        RTL and C++ simulation modes.
+        """
         # The code generation directory is specified as an argument, so this
         # will work for both RTL and C++ simulation
         code_gen_dir = path
@@ -183,8 +211,13 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         thresholds_av_matmul = "{}"
         thresholds_a_softmax = "{}"
 
-        # Prepares a threshold tensor as C++ string for code generation
         def prepare_thresholds(ts, length, fold, dtype):
+            """Prepare a threshold tensor as C++ string for code generation.
+
+            Converts threshold tensors into the proper format for HLS code generation.
+            Performs broadcasting from per-tensor to per-channel, partitions thresholds
+            along the length dimension into parallel folds, and formats as C++ code.
+            """
             # Number of thresholds is given as the last dimension of the
             # threshold tensor, first dimension is covering all output elements
             num = ts.shape[-1]  # noqa
@@ -401,10 +434,10 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
                 "\n"
             ]))
 
-    # Generates C++ code of type alias, global constant and macro definitions
     def defines(self, var):
-        # Generate shape definitions from attributes to C++ constant definitions
+        """Generate C++ code of type alias, global constant and macro definitions."""
         def shapedefs(*names):
+            """Generate shape definitions from attributes to C++ constant definitions."""
             # C++ qualified type to be used for shape constants
             shape = "static constexpr std::size_t"
             # Generate a C++ constant definition for each of the attributes
@@ -413,11 +446,10 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
                 f"{shape} {name} = {self.get_nodeattr(name)};" for name in names
             )
 
-        # Generate datatype definitions mapping from QONNX DataType to HLS type
         def typedefs(*names):
-            # Gets the HLS type string for the datatype specified by the named
-            # attribute
+            """Generate datatype definitions mapping from QONNX DataType to HLS type."""
             def hls_type(name):
+                """Get the HLS type string for the datatype specified by the named attribute."""
                 # Looks up the datatype specified for the attribute and
                 # translates from QONNX to HLS type
                 return DataType[self.get_nodeattr(name)].get_hls_datatype_str()
@@ -518,9 +550,12 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             "using MStream = Attention::MStream;",
         ]
 
-    # Generates C++ code for reading data from .npy (numpy format) for testing
-    # in C++ simulation
     def read_npy_data(self):
+        """Generate C++ code for reading data from .npy for testing in C++ simulation.
+
+        Creates function calls for reading the input files (q, k, v, and optionally m)
+        into the input streams for C++ simulation testing.
+        """
         # Input data is stored in numpy files in the code generation dictionary
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
 
@@ -570,9 +605,12 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
                 ');',
             ]
 
-    # Generates C++ code for declaring all streams involved in C++ simulation
-    # for testing
     def strm_decl(self):
+        """Generate C++ code for declaring all streams involved in C++ simulation for testing.
+
+        Declares input streams (query, key, value) and output streams, with optional
+        mask stream declaration if mask is provided as input.
+        """
         # Declare input (query, key, value) and output streams
         self.code_gen_dict["$STREAMDECLARATIONS$"] = [
             # Note: Assumes stream type aliases to be set in defines
@@ -590,8 +628,13 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
                 f"MStream m_{self.hls_sname()};",
             ]
 
-    # Generates C++ code for calling the computation part of the operator
     def docompute(self):
+        """Generate C++ code for calling the computation part of the operator.
+
+        Creates the main HLS computation call with proper RAM style directives
+        for thresholds and mask storage, along with necessary pragmas for
+        threshold arrays and storage binding.
+        """
         # Convert the thresholds RAM style attribute to HLS directive
         ram_style_thresholds = RAM_STYLES[
             self.get_nodeattr("ram_style_thresholds")
@@ -599,15 +642,13 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         # Convert the attention mask RAM style attribute to HLS directive
         ram_style_mask = RAM_STYLES[self.get_nodeattr("ram_style_mask")]
 
-        # Generates the "BIND_STORAGE" pragma for the threshold activations
-        # threshold memory of "name"
         def bind_threshold_storage(name: str):
+            """Generate the BIND_STORAGE pragma for the activations threshold memory."""
             return (f"#pragma HLS BIND_STORAGE variable={name}"
                     f" type=ROM_2P impl={ram_style_thresholds}")
 
-        # Generates the ARRAY_PARTITION pragma for the threshold activations
-        # threshold memory of "name" and along dimension "dim"
         def partition_thresholds_array(name: str, dim: int):
+            """Generate the ARRAY_PARTITION pragma for the activations threshold memory."""
             return (f"#pragma HLS ARRAY_PARTITION variable={name}"
                     f" complete dim={dim}")
 
@@ -714,9 +755,12 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             ");",
         ]
 
-    # Generates C++ code for reading the output stream and converting back to
-    # numpy format for testing in C** simulation
     def dataoutstrm(self):
+        """Generate C++ code for reading the output stream and converting back to numpy format.
+
+        Creates function calls for reading from the output stream into the output
+        file for testing in C++ simulation.
+        """
         # Output data will be stored in numpy files in the code generation
         # dictionary
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
@@ -738,16 +782,20 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             ');',
         ]
 
-    # Generates C++ code for saving the output of C++ simulation to a file in
-    # numpy format
     def save_as_npy(self):
-        # Note: This seems to be empty in ALL HLSCustomOps. Probably it was used
-        # for something before, which is now integrated into dataoutstrm()?
+        """Generate C++ code for saving the output of C++ simulation to a file in numpy format.
+
+        Note: This seems to be empty in ALL HLSCustomOps. Probably it was used
+        for something before, which is now integrated into dataoutstrm().
+        """
         self.code_gen_dict["$SAVEASCNPY$"] = []
 
-    # Generates essentially the head of the C++ function from which the IP block
-    # will be generated during ipgen, i.e. actual synthesis
     def blackboxfunction(self):
+        """Generate the head of the C++ function from which the IP block will be generated.
+
+        Creates the function signature describing the top level interface of the
+        attention operator for HLS synthesis (ipgen).
+        """
         # Insert function head describing the top level interface of the
         # attention operator
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
@@ -760,9 +808,12 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             ")",
         ]
 
-    # Generates C++ pragmas to be inserted into the main function of the C++
-    # simulation and the ipgen-blackboxfunction as well
     def pragmas(self):
+        """Generate C++ pragmas to be inserted into the main function.
+
+        Creates HLS interface directives specifying how to create RTL ports for
+        the top-level function arguments in both C++ simulation and ipgen-blackboxfunction.
+        """
         # Add HLS interface directives specifying how to create RTL ports for
         # the top-level function arguments
         self.code_gen_dict["$PRAGMAS$"] = [
@@ -780,8 +831,12 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             "#pragma HLS INTERFACE ap_ctrl_none port=return"
         )
 
-    # Returns the names of input and output interfaces grouped by protocol
     def get_verilog_top_module_intf_names(self):
+        """Return the names of input and output interfaces grouped by protocol.
+
+        Collects interface names in a dictionary organized by protocol type
+        (clock, reset, AXI stream, etc.) for Verilog module generation.
+        """
         # Start collecting interface names in a dictionary starting with clock
         # and reset
         intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}  # noqa
@@ -802,9 +857,11 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         # Return the interface name dictionary
         return intf_names
 
-    # Prepare for RTL simulation: There is no RTL simulation of the attention
-    # operator for now
     def prepare_rtlsim(self):
-        # This attribute must be present anyway, but it is ok if it points
-        # nowhere as long as execute_node doe not ry to execute the rtlsim
+        """Prepare for RTL simulation.
+
+        Currently there is no RTL simulation of the attention operator.
+        This attribute must be present anyway, but it is ok if it points
+        nowhere as long as execute_node does not try to execute the rtlsim.
+        """
         self.set_nodeattr("rtlsim_so", "none")
