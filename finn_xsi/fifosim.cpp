@@ -324,7 +324,7 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
     std::vector<size_t> fifoSizes(totalFifos, start_size);
 
     for (size_t i = 0; i < totalFifos; ++i) {
-        auto&& [kernel, top, istreams, ostreams, fifoPorts, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
+        auto&& [kernel, top, istreams, ostreams, fifoPorts, fifo_occupancies, fifo_max_occupancies, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
 
         // Set the previously found start depth for all fifos in the model
         const std::string startDepthString = toBinaryString<size_t>(start_size);
@@ -353,7 +353,7 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
             }
 
             size_t iters = 0;
-            if (auto ret = runToStableState(clk, istreams, ostreams, iters); ret) [[likely]] {
+            if (auto ret = runToStableState(clk, istreams, ostreams,fifo_occupancies, iters); ret) [[likely]] {
                 auto&& currInterval = *ret;
                 if (currInterval == 0 || currInterval > interval) [[unlikely]] {
                     // Performance drop
@@ -408,18 +408,20 @@ int main() {
 
     // Run until a suitable starting depth was found
     if (rank == 0) {
-        std::cout << "\n--------------------------------------------\n";
-        std::cout << "\nDetermining start depth (single rank)..." << std::endl;
-        if (initial_start_depth) {
-            std::cout << "Setting initial start depth to: " << initial_start_depth.value() << std::endl;
-        }
-        auto startDepthBegin = std::chrono::high_resolution_clock::now();
-        auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename, initial_start_depth);
-        auto startDepthDuration = std::chrono::high_resolution_clock::now() - startDepthBegin;
-        start_depth = _start_depth;
-        std::cout << "Interval: " << _interval << "\n";
-        interval = _interval;
-        std::cout << "Finished start depth sizing in " << std::chrono::duration_cast<std::chrono::minutes>(startDepthDuration).count() << "m (" << std::chrono::duration_cast<std::chrono::hours>(startDepthDuration).count() << "h)" << std::endl;
+        // std::cout << "\n--------------------------------------------\n";
+        // std::cout << "\nDetermining start depth (single rank)..." << std::endl;
+        // if (initial_start_depth) {
+        //     std::cout << "Setting initial start depth to: " << initial_start_depth.value() << std::endl;
+        // }
+        // auto startDepthBegin = std::chrono::high_resolution_clock::now();
+        // auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename, initial_start_depth);
+        // auto startDepthDuration = std::chrono::high_resolution_clock::now() - startDepthBegin;
+        // start_depth = _start_depth;
+        // std::cout << "Interval: " << _interval << "\n";
+        // interval = _interval;
+        // std::cout << "Finished start depth sizing in " << std::chrono::duration_cast<std::chrono::minutes>(startDepthDuration).count() << "m (" << std::chrono::duration_cast<std::chrono::hours>(startDepthDuration).count() << "h)" << std::endl;
+        start_depth = 160000;
+        interval = 2500;
     }
 
 #ifdef MPI_FOUND
