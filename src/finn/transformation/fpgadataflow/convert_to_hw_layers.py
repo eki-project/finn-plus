@@ -1917,6 +1917,15 @@ class InferSqueeze(Transformation):
                 inst.set_nodeattr("inp_shape", model.get_tensor_shape(inp))
                 inst.set_nodeattr("out_dtype", str(model.get_tensor_datatype(out)))
                 inst.set_nodeattr("out_shape", model.get_tensor_shape(out))
+                if len(node.input) > 1:
+                    axes = model.get_initializer(node.input[1])
+                    if np.ndim(axes) == 0:
+                        # Fix axes input initializer by converting from scalar (0D) to 1D array
+                        axes = np.array([axes])
+                        model.set_initializer(node.input[1], axes)
+                        model.set_tensor_shape(node.input[1], axes.shape)
+                    # Set axes attribute (used by older opsets) even if axes is provided as input
+                    inst.set_nodeattr("axes", list(axes))
                 # Consider the graph to be modified, triggering exhaustive
                 # re-application of this transformation
                 graph_modified = True
@@ -1965,6 +1974,15 @@ class InferUnsqueeze(Transformation):
                 inst.set_nodeattr("inp_shape", model.get_tensor_shape(inp))
                 inst.set_nodeattr("out_dtype", str(model.get_tensor_datatype(out)))
                 inst.set_nodeattr("out_shape", model.get_tensor_shape(out))
+                if len(node.input) > 1:
+                    axes = model.get_initializer(node.input[1])
+                    if np.ndim(axes) == 0:
+                        # Fix axes input initializer by converting from scalar (0D) to 1D array
+                        axes = np.array([axes])
+                        model.set_initializer(node.input[1], axes)
+                        model.set_tensor_shape(node.input[1], axes.shape)
+                    # Set axes attribute (used by older opsets) even if axes is provided as input
+                    inst.set_nodeattr("axes", list(axes))
                 # Consider the graph to be modified, triggering exhaustive
                 # re-application of this transformation
                 graph_modified = True

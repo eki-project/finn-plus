@@ -419,6 +419,8 @@ class Squeeze(Transformation):
                     # Skip without warning
                     continue
                 # First squeeze the actual data of the initializer tensors
+                # TODO: This creates illegal ONNX in certain cases (!), e.g.,
+                # for the axes input to Squeeze/Unsqueeze, which should not be a scalar
                 model.set_initializer(name, np.squeeze(init))
                 # Now also annotate the squeezed shape, otherwise the following
                 # shape inference might fail or break the graph

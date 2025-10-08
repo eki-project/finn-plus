@@ -184,11 +184,7 @@ class Squeeze(HWCustomOp):
     def get_normal_input_shape(self, ind=0):
         # Infer shape of axes input
         if ind == 1:
-            num_axes = len(self.inp_shape) - len(self.out_shape)
-            if num_axes == 1:
-                return ()
-            else:
-                return (num_axes)
+            return (len(self.get_nodeattr("axes")),)
         # Data input
         return self.inp_shape
 
