@@ -401,9 +401,11 @@ class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
                 # Convert heads attribute proto to integer
                 heads = heads.i
 
-                # Repeat the thresholds for each head along the channel
-                # dimension
-                thresholds = np.concatenate(heads * [thresholds])
+                # Do not concatenate per-tensor thresholds
+                if thresholds.shape[0] > 1:
+                    # Repeat the thresholds for each head along the channel
+                    # dimension
+                    thresholds = np.concatenate(heads * [thresholds])
                 # Update the thresholds tensor to simply repurpose the existing
                 # node
                 model.set_initializer(thresholds_node.input[1], thresholds)
@@ -514,9 +516,15 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                 # Convert heads attribute proto to integer
                 heads = heads.i
 
-                # Split the thresholds for each head along the channel dimension
-                # Note: This is a list of thresholds per head now
-                thresholds = np.split(thresholds, heads)
+                # Do not split per-tensor thresholds (there is only one set of
+                # thresholds)
+                if thresholds.shape[0] > 1:
+                    # Split the thresholds for each head along the channel
+                    # dimension
+                    thresholds = np.split(thresholds, heads)
+                else:
+                    # Replicate the single per-tensor thresholds
+                    thresholds = [thresholds for _ in range(heads)]
 
                 # Need to insert a new thresholding operation at each input of
                 # the multi-head merging
