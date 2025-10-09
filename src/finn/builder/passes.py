@@ -19,6 +19,9 @@ import onnx_passes.passes.inline.qonnx  # noqa: Used indirectly via registry
 from onnx_passes.ops import DOMAIN as CUSTOM_DOMAIN, inject_custom_ops
 from onnx_passes.ops.qonnx import DOMAIN as QONNX_DOMAIN
 
+# Make custom Im2Col operator available for convolution lowering
+from onnx_passes.ops.im2col import Im2Col  # noqa: Used indirectly via registry
+
 # QONNX representation wrapper of ONNX models is used on the interface side to
 # bridge between the FINN and the new ONNX IR representation
 from qonnx.core.modelwrapper import ModelWrapper
@@ -37,9 +40,19 @@ import onnx_ir as ir
 # we use numpy to operate on those
 import numpy as np
 
+# YAML for loading layout assumption/conversion configuration from file
+import yaml
+
 
 def _make_pass_config(cfg: DataflowBuildConfig):
     """Creates ONNX Passes configuration from FINN build configuration."""
+    # If specified, load data layout annotations from file
+    if cfg.layouts_config_file is not None:
+        with open(cfg.layouts_config_file, "r") as file:
+            layouts = yaml.safe_load(file)
+
+    # Construct configuration dictionary with subset of options from the
+    # DataflowBuildConfig and some other ONNX Passes specific options
     return {
         # Reference data for verification and analysis: Inputs, expected
         # outputs, ...
@@ -75,7 +88,9 @@ def _make_pass_config(cfg: DataflowBuildConfig):
         "logging": {
             # Enable all passes to print a message when entering/leaving
             "verbose": cfg.verbose
-        }
+        },
+        # Forward layout configuration loaded from file
+        "layouts": layouts,
     }
 
 
@@ -102,8 +117,9 @@ def prepare(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
     # Create configuration for all passes and assume initially empty state
     cfg, state = _make_pass_config(cfg), {}
-    # Imports the QONNX operators (if present) into the custom domain
-    passes = ["import-qonnx", "shape-inference", "checker"]
+    # Imports the QONNX operators (if present) into the custom domain and
+    # convert data layouts at the input/output if configured
+    passes = ["import-qonnx", "convert-layouts", "shape-inference", "checker"]
 
     # Apply passes and serialize the resulting ONNX IR format back to ONNX proto
     # wrapped by QONNX
@@ -126,6 +142,8 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
         "inline-batchnorm",
         # Expresses Gemm as MatMul (+ bias and transposes)
         "inline-gemm",
+        # Expresses Conv as Im2Col + MatMul (+ bias and transpose)
+        "lower-conv",
         # Adds shape annotations
         "shape-inference",
         # Make sure the model is still valid
@@ -198,10 +216,16 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
         # Create a new constant operator for the squeezed thresholds input
         thresholds = op.Constant(value=ir.tensor(thresholds))
 
+        # Custom operator attributes according to QONNX: currently QONNX
+        # defaults to NCHW layout and converts later, while the new flow
+        # already exports NHWC layout (not entirely true, appropriate layout
+        # conversion needs to be inserted)
+        attributes = {"out_dtype": out_dtype, "data_layout": "NHWC"}
+
         # Replacement pattern: MultiThreshold operator in QONNX domain without
         # weights and with explicit datatype attribute
         return op.MultiThreshold(
-            x, thresholds, out_dtype=out_dtype, _domain=QONNX_DOMAIN
+            x, thresholds, **attributes, _domain=QONNX_DOMAIN
         )
 
 
@@ -210,9 +234,54 @@ def _export_thresholds_to_finn(model: ir.Model):
     return _ExportThresholdsToFINN(config={}, state={})(model).model
 
 
+class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
+    """Exports Im2Col representation from ONNX Passes to FINN format."""
+
+    def pattern(self, op, x, indices, dilations, kernel_shape, strides):
+        """Target pattern to match."""
+
+        return op.Im2Col(
+            # Proper input and auxiliary index input holding the access pattern
+            x, indices,
+            # Attributes from which the access pattern ca be re-derived
+            dilations=dilations, kernel_shape=kernel_shape, strides=strides,
+            # Part of the ONNX Passes custom domain
+            _domain=CUSTOM_DOMAIN
+        )
+
+    def check(self, op, x, indices, dilations, kernel_shape, strides):
+        """Match condition."""
+
+        # QONNX needs statically annotated input shape as this will be turned
+        # into an attribute of the node
+        return x.shape is not None and x.shape.is_static()
+
+    def rewrite(self, op, x, indices, dilations, kernel_shape, strides):
+        """Replacement pattern."""
+
+        # Convert attributes to format required by QONNX
+        attributes = {
+            # TODO: Apparently QONNX needs the shape as a string...
+            "input_shape": "({})".format(",".join(map(str, x.shape.numpy()))),
+            # Remaining attributes are named differently but accepted as lists
+            "dilations": dilations.as_ints(),
+            "kernel_size": kernel_shape.as_ints(),
+            "stride": strides.as_ints(),
+            # Padding attributes left as defaults, i.e., no padding, as ONNX
+            # Passes makes padding explicit and standalone
+            # "pad_amount":..., "pad_value":...,
+            # ONNX Passes never generates a depthwise inout generator, grouped
+            # convolutions are split explicitly
+            # "depthwise": 0,
+        }
+
+        # Omit precomputed access pattern and transplant into the QONNX domain
+        return op.Im2Col(x, **attributes, _domain=QONNX_DOMAIN)
+
+
 def _export_im2col_to_finn(model: ir.Model):
     """Exports Im2Col representation from ONNX Passes to FINN format."""
-    return model  # TODO: Implement the export transformation...
+    return _ExportIm2ColToFINN(config={}, state={})(model).model
 
 
 def _infer_qonnx_datatypes(model: ModelWrapper):
@@ -245,6 +314,11 @@ def export(model: ModelWrapper, _: DataflowBuildConfig) -> ModelWrapper:
     # Export custom operators to the FINN representation
     model = _export_thresholds_to_finn(model)
     model = _export_im2col_to_finn(model)
+
+    # Finalize the data layout annotations and get rid of remaining functions
+    # TODO: Inlining is more of a workaround as qonnx execution does not really
+    #  understand the LayoutConverter operator...
+    model = _apply_passes(model, ["absorb-layouts", "inline-functions"], {}, {})
 
     # Serialize the resulting ONNX IR format back to ONNX proto wrapped by QONNX
     # and add quantization datatype annotations
