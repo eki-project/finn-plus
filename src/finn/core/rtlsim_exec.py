@@ -33,6 +33,7 @@ except ModuleNotFoundError:
 
 import numpy as np
 import os
+from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from subprocess import CalledProcessError
 
@@ -43,7 +44,7 @@ from finn.util.basic import (
     make_build_dir,
 )
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.exception import FINNError
+from finn.util.exception import FINNConfigurationError, FINNError
 
 
 def prep_rtlsim_io_dict(model, execution_context):
@@ -146,6 +147,8 @@ def rtlsim_exec_cppxsi(
         timeout_cycles = get_liveness_threshold_cycles()
 
     assert dummy_data_mode, "Only dummy_data_mode=True is supported for now"
+    if finnxsi is None:
+        raise FINNConfigurationError("Cannot execute RTLSIM since finn_xsi is not available!")
 
     # ensure stitched ip project already exists
     assert os.path.isfile(
@@ -186,9 +189,9 @@ def rtlsim_exec_cppxsi(
         sim_base, sim_rel = rtlsim_so.split("xsim.dir")
         sim_rel = "xsim.dir" + sim_rel
     # prepare the C++ sim driver template
-    finnxsi_dir = os.environ["FINN_XSI"]
-    fifosim_config_fname = finnxsi_dir + "/rtlsim_config.hpp.template"
-    with open(fifosim_config_fname, "r") as f:
+    finnxsi_dir = Path(finnxsi.__file__).parent
+    fifosim_config_fname = finnxsi_dir / "rtlsim_config.hpp.template"
+    with fifosim_config_fname.open() as f:
         fifsom_config_template = f.read()
 
     instream_iters = []

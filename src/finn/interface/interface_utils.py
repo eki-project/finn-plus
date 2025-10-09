@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import click
+import importlib
 import os
 import rich
 import rich.box
@@ -12,6 +13,23 @@ from rich.console import Console
 from typing import Any
 
 from finn.interface import DEBUG
+
+
+def _resolve_module_path(name: str) -> str:
+    """Resolve the path to modules which are not part of the FINN package hierarchy."""
+    # Try to import the module via importlib - allows "-" in names and resolve
+    # the absolute path to the first candidate location as a string
+    try:
+        return str(importlib.import_module(name).__path__[0])
+    except ModuleNotFoundError:
+        # Try a different location if notebooks have not been found, maybe we
+        # are in the Git repository root and should look there as well...
+        try:
+            return str(importlib.import_module(f"finn.{name}").__path__[0])
+        except ModuleNotFoundError:
+            warning(f"Could not resolve {name}. FINN might not work properly.")
+    # Return the empty string as a default...
+    return ""
 
 
 class NullablePath(click.ParamType):

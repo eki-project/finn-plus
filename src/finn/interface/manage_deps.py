@@ -18,7 +18,7 @@ from threading import RLock
 from typing import Literal
 
 from finn.interface import IS_POSIX
-from finn.interface.interface_utils import debug, error
+from finn.interface.interface_utils import _resolve_module_path, debug, error
 from finn.util.exception import FINNConfigurationError, FINNUserError
 
 
@@ -66,12 +66,16 @@ class _StatusTracker:
             self.live.update(self._generate_renderable(), refresh=True)
 
     def set_updating(self, name: str) -> None:
-        """Set the package to updating. If name doesnt exist, do nothing."""
+        """Set the package to updating and update the live display.
+        If name doesnt exist, do nothing.
+        """
         self.update_status(name, "Updating...", "yellow")
         self.update_live()
 
     def set_finish(self, name: str, successful: bool) -> None:
-        """Set the package to finished. If name doesnt exist, do nothing."""
+        """Set the package to finished and update the live display.
+        If name doesnt exist, do nothing.
+        """
         if successful:
             with self.datalock:
                 self.done += 1
@@ -122,6 +126,10 @@ class DependencyUpdater:
             self.boarfiles = data["boardfiles"]
         if "direct_downloads" in data:
             self.direct_downloads = data["direct_downloads"]
+
+        # Try to find FINN_XSI. If it cannot be found, it is ignored in the
+        # list of all dependencies (since this is neither a failed nor a successful install)
+        self.finn_xsi_str = _resolve_module_path("finn_xsi")
 
     def get_dependency_count(self) -> int:
         """Sum of all dependencies."""
@@ -177,9 +185,7 @@ class DependencyUpdater:
                 )
         return tuple([package_data[field] for field in field_names])
 
-    def _dependency_type(
-        self, package_name: str
-    ) -> Literal["Git", "Boardfiles", "Data", "Unknown"]:
+    def _dependency_type(self, package_name: str) -> Literal["Git", "Boardfiles", "Data", "Misc"]:
         """Return a string to tell which type this dependency is."""
         if package_name in self.git_deps:
             return "Git"
@@ -187,7 +193,7 @@ class DependencyUpdater:
             return "Boardfiles"
         if package_name in self.direct_downloads:
             return "Data"
-        return "Unknown"
+        return "Misc"
 
     def _install_git_dependency(self, package_name: str) -> bool:
         """Install a git dependency. Return success."""
@@ -202,6 +208,7 @@ class DependencyUpdater:
             return False
         if not pip_install:
             return True
+        debug(f"[{package_name}] Running pip install..")
         self._run_silent(f"{sys.executable} -m pip install -e {target}")
         return not self.is_outdated(package_name)
 
@@ -218,6 +225,7 @@ class DependencyUpdater:
         if not self._git_clone(url, commit, temp_target):
             return False
         # shutil.copytree() doesnt copy the _contents_, only the whole directory
+        debug(f"[{package_name}] Copying to target at {target}")
         if subdir == Path():
             self._run_silent(f"cp -r {source}/* {target}")
         else:
@@ -230,7 +238,7 @@ class DependencyUpdater:
         if shutil.which("wget") is None or shutil.which("unzip") is None:
             # TODO: Allow curl and gzip etc. as well
             raise FINNConfigurationError(
-                'Make sure that both "wget" and' '"unzip" are available on your system.'
+                'Make sure that both "wget" and "unzip" are available on your system.'
             )
         url, do_unzip, target_directory = self._get_fields(
             package_name, self.direct_downloads[package_name], "url", "do_unzip", "target_directory"
@@ -239,24 +247,65 @@ class DependencyUpdater:
 
         # Return if the download fails
         # Automatically skips if not modified
-        if self._run_silent(f"wget -N {url}", cwd=target) != 0:
-            return False
-
         unzipped = (target / Path(url).name).with_suffix("")
+        debug(f"[{package_name}] Running: wget -N {url}", False)
+        wget_download = sp.run(
+            shlex.split(f"wget -N {url}"), cwd=target, capture_output=True, text=True
+        )
+        if wget_download.returncode != 0:
+            debug(f"[{package_name}] wget failed!", False)
+            return False
+        if "304 Not Modified" in wget_download.stderr.strip() and unzipped.exists():
+            return True
+
+        debug(f"[{package_name}] Removing previous install if necessary.", False)
         if unzipped.exists():
-            unzipped.unlink()
+            shutil.rmtree(unzipped)
 
         # Unzip
+        debug(f"[{package_name}] Unpacking..", False)
         if do_unzip:  # noqa
             if self._run_silent(f"unzip -o {Path(url).name}", cwd=target) != 0:
                 return False
-        return not self.is_outdated(package_name)
+        return unzipped.exists()
+
+    def _install_finn_xsi(self) -> bool:
+        """Install FINN XSI bindings and return if installation was successful."""
+        debug("[finn_xsi] Preparing LD LIBRARY PATH", False)
+        finn_xsi_path = Path(self.finn_xsi_str)
+        vivado_path = os.environ["XILINX_VIVADO"]
+        required_paths = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
+        if "LD_LIBRARY_PATH" not in os.environ:
+            os.environ["LD_LIBRARY_PATH"] = required_paths
+        else:
+            os.environ["LD_LIBRARY_PATH"] = f"{required_paths}:{os.environ['LD_LIBRARY_PATH']}"
+
+        # Run make
+        debug("[finn_xsi] Calling make..", False)
+        res = sp.run(["make"], cwd=finn_xsi_path, capture_output=True, text=True)
+        if res.returncode != 0:
+            Console().print(res.stderr)
+            return False
+
+        # Check if .so was created
+        finn_xsi_so = finn_xsi_path / "xsi.so"
+        debug(f"[finn_xsi] Checking if xsi.so was generated (at {finn_xsi_so})", False)
+        if not finn_xsi_so.exists():
+            return False
+
+        # Set PATH/PYTHONPATH so the .so can be imported
+        debug(f"[finn_xsi] Appending {finn_xsi_path} to PYTHONPATH", False)
+        os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finn_xsi_path.absolute()}"
+        sys.path.append(str(finn_xsi_path))
+        return True
 
     def install_dependency(self, package_name: str) -> bool:
         """Install the dependency in the dependency location. If no definition for this dependency
         exists or the installation failed, return False.
         If the installation was successful return true.
-        """  # noqa
+        """
+        if package_name == "finn_xsi":
+            return self._install_finn_xsi()
         match self._dependency_type(package_name):
             case "Git":
                 return self._install_git_dependency(package_name)
@@ -269,8 +318,31 @@ class DependencyUpdater:
 
     def is_outdated(self, package_name: str) -> bool:
         """Return whether the a package is outdated. If no such package exist return False too."""
+        if package_name == "finn_xsi":
+            # If finn xsi was found its outdated, if it wasnt found, its never outdated
+            return self.finn_xsi_str != ""
         if package_name in self.direct_downloads:
-            # This check is done by wget implicitly
+            # TODO: Improve (e.g. by checking directly instead of by using wget).
+            # Check by letting wget compare timestamps. To avoid large wait times
+            # immediately delete the file again after a short timeout.
+            url = self.direct_downloads[package_name]["url"]
+            target = (
+                self.dep_location
+                / self.direct_downloads[package_name]["target_directory"]
+                / Path(url).name
+            )
+            wget_result = sp.run(
+                shlex.split(f"wget -N {url}"),
+                cwd=target.parent,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if "304 Not Modified" in wget_result.stderr.strip():
+                return False
+            debug(wget_result.stderr.strip(), False)
+            if target.exists():
+                target.unlink()
             return True
 
         # Compare hashes for git dependencies and boardfiles
@@ -302,6 +374,7 @@ class DependencyUpdater:
             list(self.git_deps.keys())
             + list(self.boarfiles.keys())
             + list(self.direct_downloads.keys())
+            + ["finn_xsi"]
         )
 
     def get_oudated_dependencies(self) -> list[str]:
@@ -360,33 +433,3 @@ class DependencyUpdater:
                 Panel("[green]All dependencies are already cached and up to date.[/green]"),
                 justify="center",
             )
-
-
-def install_finnxsi() -> bool:
-    # TODO: integrate properly into the rich.Live above?
-    finnxsi_path = os.environ["FINN_XSI"]
-    finnxsi_so_path = os.path.join(finnxsi_path, "xsi.so")
-
-    # Set LD_LIBRARY_PATH
-    vivado_path = os.environ["XILINX_VIVADO"]
-    if "LD_LIBRARY_PATH" not in os.environ.keys():
-        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
-    else:
-        os.environ[
-            "LD_LIBRARY_PATH"
-        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
-
-    # Run make
-    res = sp.run(["make"], cwd=finnxsi_path, capture_output=True, text=True)
-    if res.returncode != 0:
-        Console().print(res.stderr)
-        return False
-
-    # Check if .so was created
-    if not os.path.isfile(finnxsi_so_path):
-        return False
-
-    # Set PATH/PYTHONPATH so the .so can be imported
-    os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finnxsi_path}"
-    sys.path.append(str(finnxsi_path))
-    return True

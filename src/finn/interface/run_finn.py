@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import click
-import importlib
 import os
 import shlex
 import subprocess
@@ -16,35 +15,19 @@ from typing import TYPE_CHECKING, Any
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import (
     NullablePath,
+    _resolve_module_path,
     error,
     set_synthesis_tools_paths,
     status,
     table,
     warning,
 )
-from finn.interface.manage_deps import DependencyUpdater, install_finnxsi
+from finn.interface.manage_deps import DependencyUpdater
 from finn.interface.manage_tests import run_test
 from finn.interface.settings import FINNSettings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-
-# Resolves the path to modules which are not part of the FINN package hierarchy
-def _resolve_module_path(name: str) -> str:
-    # Try to import the module via importlib - allows "-" in names and resolve
-    # the absolute path to the first candidate location as a string
-    try:
-        return str(importlib.import_module(name).__path__[0])
-    except ModuleNotFoundError:
-        # Try a different location if notebooks have not been found, maybe we
-        # are in the Git repository root and should look there as well...
-        try:
-            return str(importlib.import_module(f"finn.{name}").__path__[0])
-        except ModuleNotFoundError:
-            warning(f"Could not resolve {name}. FINN might not work properly.")
-    # Return the empty string as a default...
-    return ""
 
 
 def requires_dependencies(f: Callable) -> Callable[..., Any]:
@@ -186,25 +169,16 @@ def prepare_finn(
 
     # Resolve the number of workers
     workers = settings.resolve_num_workers(num_workers)
-    status(f"Using {workers} workers.")
+    status(f"[NUM DEFAULT WORKERS] {workers} workers")
     settings["NUM_DEFAULT_WORKERS"] = workers
     os.environ["NUM_DEFAULT_WORKERS"] = str(workers)
 
     # Resolve paths to some not properly packaged components...
-    os.environ["FINN_XSI"] = _resolve_module_path("finn_xsi")
     os.environ["FINN_RTLLIB"] = _resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = _resolve_module_path("custom_hls")
     os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
     os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = _resolve_module_path("tests")
-
-    # Install FINN XSI
-    finnxsi_status = install_finnxsi()
-    if finnxsi_status:
-        status("FINN XSI installed successfully.")
-    else:
-        error("FINN XSI installation failed.")
-        sys.exit(1)
     return settings
 
 
@@ -270,9 +244,7 @@ def build(
             with config.open() as f:
                 dfbc = DataflowBuildConfig.from_json(f.read())
         case _:
-            error(
-                f"Unknown config file type: {config.name}. " "Valid formats are: .json, .yml, .yaml"
-            )
+            error(f"Unknown config file type: {config.name}. Valid formats are: .json, .yml, .yaml")
             sys.exit(1)
     if dfbc is None:
         error("Failed to generate dataflow build config!")
@@ -468,6 +440,9 @@ def config_create(path: str) -> None:
         error("Please specify a path to a directory, not a file!")
         sys.exit(1)
     p = p / "settings.yaml"
+    if p.exists():
+        status(f"A settings file already exists at {p}")
+        return
     settings = FINNSettings(sync=True, override_path=p)
 
     # This should return good defaults for a template
