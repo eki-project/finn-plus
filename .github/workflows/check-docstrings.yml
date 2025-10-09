@@ -279,6 +279,7 @@ jobs:
     - name: Build API documentation
       run: |
         echo "Building comprehensive API documentation with pydoc-markdown..."
+        mkdir -p docs
         pydoc-markdown --verbose
         echo "✅ API documentation generated successfully"
 

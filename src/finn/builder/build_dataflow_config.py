@@ -45,6 +45,7 @@ The module also defines various enumerations for build options such as:
 This configuration system allows users to customize the entire FINN dataflow
 build process through a single, serializable configuration object.
 """
+from __future__ import annotations
 
 import numpy as np
 import os
@@ -52,7 +53,7 @@ from dataclasses import dataclass
 from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
-from typing import Any, List, Optional
+from typing import Any, Literal, Optional
 
 from finn.util.basic import alveo_default_platform, part_map
 
@@ -192,16 +193,16 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     """
 
     #: Directory where the final build outputs will be written into
-    output_dir: Optional[str] = None
+    output_dir: str = "finn_build_output"
 
     #: Target clock frequency (in nanoseconds) for Vivado synthesis.
     #: e.g. synth_clk_period_ns=5.0 will target a 200 MHz clock.
     #: If hls_clk_period_ns is not specified it will default to this value.
-    synth_clk_period_ns: Optional[float] = None
+    synth_clk_period_ns: float = 10.0
 
     #: Which output(s) to generate from the build flow.  See documentation of
     #: DataflowOutputType for available options.
-    generate_outputs: Optional[List[DataflowOutputType]] = None
+    generate_outputs: Optional[list[DataflowOutputType]] = None
 
     #: (Optional) Path to configuration JSON file in which user can specify
     #: a preferred implementation style (HLS or RTL) for each node.
@@ -226,207 +227,212 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: that will override the target_fps setting here.
     target_fps: Optional[int] = None
 
-    #: (Optional) Use two-pass relaxation for folding, only relevant if target_fps
-    #: is set. If enabled, parallelization will internally run a second time if the
+    #: (Only relevant if target_fps is set) Use two-pass relaxation for folding.
+    #: If enabled, parallelization will internally run a second time if the
     #: target cycles from the first pass could not be achieved, instead using the
     #: achievable target to obtain a balanced pipeline. If disabled, this can be
     #: useful for decreasing the latency (even though throughput won't increase).
-    folding_two_pass_relaxation: Optional[bool] = True
+    folding_two_pass_relaxation: bool = True
 
     #: (Optional) At which steps the generated intermediate output model
     #: will be verified. See documentation of VerificationStepType for
     #: available options.
-    verify_steps: Optional[List[VerificationStepType]] = None
+    verify_steps: Optional[list[VerificationStepType]] = None
 
-    #: (Optional) Name of .npy file that will be used as the input for
-    #: verification. Only required if verify_steps is not empty.
-    verify_input_npy: Optional[str] = "input.npy"
+    #: (Only relevant if verify_steps is set)
+    #: Name of .npy file that will be used as the input for verification.
+    verify_input_npy: str = "input.npy"
 
-    #: (Optional) Name of .npy file that will be used as the expected output for
-    #: verification. Only required if verify_steps is not empty.
-    verify_expected_output_npy: Optional[str] = "expected_output.npy"
+    #: (Only relevant if verify_steps is set)
+    #: Name of .npy file that will be used as the expected output for verification.
+    verify_expected_output_npy: str = "expected_output.npy"
 
-    #: (Optional) Save full execution context for each of the verify_steps.
+    #: (Only relevant if verify_steps is set)
+    #: Save full execution context for each of the verify_steps.
     #: By default, only the top-level graph output is saved.
-    verify_save_full_context: Optional[bool] = False
+    verify_save_full_context: bool = False
 
-    #: (Optional) Save .vcd waveforms from rtlsim under reports.
+    #: (Only relevant if verify_steps is set or RTLSIM_PERFORMANCE output product is enabled)
+    #: Save .vcd waveforms from rtlsim under reports.
     #: By default, waveforms won't be saved.
-    verify_save_rtlsim_waveforms: Optional[bool] = False
+    verify_save_rtlsim_waveforms: bool = False
 
-    #: (Optional) Run synthesis to generate a .dcp for the stitched-IP output product.
+    #: Run synthesis to generate a .dcp for the stitched-IP output product.
     #: This can make it easier to treat it as a standalone artifact without requiring
     #: the full list of layer IP build directories. By default, synthesis will not run.
-    stitched_ip_gen_dcp: Optional[bool] = False
+    stitched_ip_gen_dcp: bool = False
 
-    #: Insert a signature node to the stitched-IP to read/write information
+    #: (Optional) Insert a signature node to the stitched-IP to read/write information
     #: to the design: e.g. Customer signature, application signature, version
-    signature: Optional[List[int]] = None
+    signature: Optional[list[int]] = None
 
-    #: (Optional) Control the maximum width of the per-PE MVAU stream while
-    #: exploring the parallelization attributes to reach target_fps
-    #: Only relevant if target_fps is specified.
+    #: (Only relevant if target_fps is set) Control the maximum width of the per-PE MVAU stream
+    #: while exploring the parallelization attributes to reach target_fps.
     #: Set this to a large value (e.g. 10000) if targeting full unfolding or
     #: very high performance.
-    mvau_wwidth_max: Optional[int] = 36
+    mvau_wwidth_max: int = 36
 
-    #: (Optional) Whether thresholding layers (which implement quantized
-    #: activations in FINN) will be implemented as stand-alone HW layers,
+    #: Whether thresholding layers (which implement quantized
+    #: activations in FINN) will be implemented as standalone HW layers,
     #: instead of being part of MatrixVectorActivation layer. This gives larger
     #: flexibility, and makes it possible to have runtime-writable thresholds.
-    standalone_thresholds: Optional[bool] = False
+    standalone_thresholds: bool = False
 
-    #: (Optional) Whether optimizations that minimize the bit width of the
+    #: Whether optimizations that minimize the bit width of the
     #: weights and accumulator will be applied. Because this optimization relies
     #: on the the values of the weights, it will only be applied if runtime-
     #: writeable weights is not enabled.
-    minimize_bit_width: Optional[bool] = True
+    minimize_bit_width: bool = True
 
-    #: Target board, only needed for generating full bitfiles where the FINN
-    #: design is integrated into a shell.
-    #: e.g. "Pynq-Z1" or "U250"
+    #: (Only needed for generating full bitfiles with shell integration)
+    #: Target board, e.g. "Pynq-Z1" or "U250".
     board: Optional[str] = None
 
-    #: Target shell flow, only needed for generating full bitfiles where the FINN
-    #: design is integrated into a shell. See documentation of ShellFlowType
-    #: for options.
+    #: (Only needed for generating full bitfiles with shell integration)
+    #: Target shell flow, see documentation of ShellFlowType for options.
     shell_flow_type: Optional[ShellFlowType] = None
 
-    #: Target Xilinx FPGA part. Only needed when board is not specified.
-    #: e.g. "xc7z020clg400-1"
+    #: (Only needed when board not specified) Target Xilinx FPGA part, e.g. "xc7z020clg400-1".
     fpga_part: Optional[str] = None
 
     #: Whether FIFO depths will be set automatically. Involves running stitched
     #: rtlsim and can take a long time.
     #: If set to False, the folding_config_file can be used to specify sizes
     #: for each FIFO.
-    auto_fifo_depths: Optional[bool] = True
+    auto_fifo_depths: bool = True
 
     #: Enables experimental live FIFO sizing on the FPGA.
-    live_fifo_sizing: Optional[bool] = False
+    live_fifo_sizing: bool = False
 
     #: Whether FIFO nodes with depth larger than 32768 will be split.
     #: Allow to configure very large FIFOs in the folding_config_file.
-    split_large_fifos: Optional[bool] = False
+    split_large_fifos: bool = False
 
-    #: When `auto_fifo_depths = True`, select which method will be used for
-    #: setting the FIFO sizes.
-    auto_fifo_strategy: Optional[AutoFIFOSizingMethod] = AutoFIFOSizingMethod.LARGEFIFO_RTLSIM
+    #: (Only relevant when auto_fifo_depths is enabled)
+    #: Select which method will be used for setting the FIFO sizes.
+    auto_fifo_strategy: AutoFIFOSizingMethod = AutoFIFOSizingMethod.LARGEFIFO_RTLSIM
 
-    #: Memory resource type for large FIFOs
-    #: Only relevant when `auto_fifo_depths = True`
-    large_fifo_mem_style: Optional[LargeFIFOMemStyle] = LargeFIFOMemStyle.AUTO
+    #: (Only relevant when auto_fifo_depths is enabled)
+    #: Memory resource type for large FIFOs.
+    large_fifo_mem_style: LargeFIFOMemStyle = LargeFIFOMemStyle.AUTO
 
-    #: Enable input throttling for simulation-based FIFO sizing
-    #: Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM
-    fifosim_input_throttle: Optional[bool] = True
+    #: (Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM)
+    #: Enable input throttling for simulation-based FIFO sizing.
+    fifosim_input_throttle: bool = True
 
-    #: Enable saving waveforms from simulation-based FIFO sizing
-    #: Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM
-    fifosim_save_waveform: Optional[bool] = False
+    #: (Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM)
+    #: Enable saving waveforms from simulation-based FIFO sizing.
+    fifosim_save_waveform: bool = False
 
-    #: Target clock frequency (in nanoseconds) for Vitis HLS synthesis.
+    #: (Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM)
+    #: Call CapConvolutionFIFODepths in InsertAndSetFIFODepths transform
+    #: to make convolution FIFOs smaller where appropriate.
+    default_swg_exception: bool = False
+
+    #: (Optional) Target clock frequency (in nanoseconds) for Vitis HLS synthesis.
     #: e.g. `hls_clk_period_ns=5.0` will target a 200 MHz clock.
     #: If not specified it will default to synth_clk_period_ns
     hls_clk_period_ns: Optional[float] = None
 
-    #: Call CapConvolutionFIFODepths in InsertAndSetFIFODepths transform
-    #: to make convolution FIFOs smaller where appropriate
-    default_swg_exception: Optional[bool] = False
-
-    #: Which Vitis platform will be used.
-    #: Only relevant when `shell_flow_type = ShellFlowType.VITIS_ALVEO`
-    #: e.g. "xilinx_u250_xdma_201830_2"
+    #: (Optional, only relevant when shell_flow_type = VITIS_ALVEO)
+    #: Which Vitis platform will be used, e.g. "xilinx_u250_xdma_201830_2".
     #: If not specified but "board" is specified, will use the FINN
-    #: default (if any) for that Alveo board
+    #: default (if any) for that Alveo board.
     vitis_platform: Optional[str] = None
 
+    #: (Optional, only relevant when shell_flow_type = VITIS_ALVEO)
     #: Path to JSON config file assigning each layer to an SLR.
-    #: Only relevant when `shell_flow_type = ShellFlowType.VITIS_ALVEO`
     #: Will be applied with :py:mod:`qonnx.transformation.general.ApplyConfig`
     vitis_floorplan_file: Optional[str] = None
 
-    #: Vitis optimization strategy
-    #: Only relevant when `shell_flow_type = ShellFlowType.VITIS_ALVEO`
-    vitis_opt_strategy: Optional[VitisOptStrategy] = VitisOptStrategy.DEFAULT
+    #: (Only relevant when shell_flow_type = VITIS_ALVEO)
+    #: Select Vitis optimization strategy.
+    vitis_opt_strategy: VitisOptStrategy = VitisOptStrategy.DEFAULT
 
-    #: FPGA memory type
+    #: (Only relevant when shell_flow_type = VITIS_ALVEO)
+    #: Select FPGA memory type.
     #: Can be used to use host memory for input/output data instead of DDR or HBM memory
-    fpga_memory: Optional[FpgaMemoryType] = FpgaMemoryType.DEFAULT
+    fpga_memory: FpgaMemoryType = FpgaMemoryType.DEFAULT
 
     #: Whether intermediate ONNX files will be saved during the build process.
     #: These can be useful for debugging if the build fails.
-    save_intermediate_models: Optional[bool] = True
+    save_intermediate_models: bool = True
+
+    #: When set to true, decorates every step in the build flow with a function
+    #: that catches exceptions, snapshots the ONNX model, the config and the build log,
+    #: saves them into the location of FINN_BUILD_DIR, and re-raises the exception for
+    #: further error handling. By default this does _not_ save FINN itself; however
+    #: any step can still be manually decorated to do so (see finn/utils/exception.py).
+    enable_exception_snapshots: bool = False
 
     #: Whether hardware debugging will be enabled (e.g. ILA cores inserted to
-    #: debug signals in the generated hardware)
-    enable_hw_debug: Optional[bool] = False
+    #: debug signals in the generated hardware).
+    enable_hw_debug: bool = False
 
     #: Whether the accelerator will be simulated and synthesized with an
     #: instrumentation wrapper attached to accurately measure performance.
-    enable_instrumentation: Optional[bool] = False
+    enable_instrumentation: bool = False
 
-    #: Whether pdb postmortem debuggig will be launched when the build fails
-    enable_build_pdb_debug: Optional[bool] = False
+    #: Whether pdb postmortem debugging will be launched when the build fails.
+    enable_build_pdb_debug: bool = False
 
     #: When True, additional information (level = DEBUG) will be written to the log file.
     #: Otherwise, this additional information will be suppressed (level = INFO).
-    verbose: Optional[bool] = False
+    verbose: bool = False
 
     #: Log level to be used on the command line for finn-plus internal logging.
     #: This is different from the log level used for build_dataflow.log,
     #: which is controlled using the verbose flag.
-    console_log_level: Optional[LogLevel] = LogLevel.ERROR
+    console_log_level: LogLevel = LogLevel.ERROR
 
-    #: If given, only run the steps in the list. If not, run default steps.
+    #: (Optional) Only run the steps in the list. If not set, run default steps.
     #: See `default_build_dataflow_steps` for the default list of steps.
     #: When specified:
     #: Each item can either be a string, or a function (does not apply to json
     #: serialized configs) and does the following:
     #: - strings are resolved to functions from the default list
     #: - functions are called with (model, DataflowBuildConfig) as args
-    steps: Optional[List[Any]] = None
+    steps: Optional[list[Any]] = None
 
-    #: If given, start from this step, loading the intermediate model generated
-    #: from the previous step (save_intermediate_models must be enabled)
+    #: (Optional) Start build from this step, loading the intermediate model generated
+    #: from the previous step (save_intermediate_models must be enabled).
     start_step: Optional[str] = None
 
-    #: If given, stop at this step.
+    #: (Optional) Stop build at this step.
     stop_step: Optional[str] = None
 
-    #: The optional argument `max_multithreshold_bit_width` affects which Quant nodes
-    #: of the QONNX format get converted to the MultiThreshold nodes of FINN. This
-    #: only affects Quant nodes in the activation path. Quant nodes, which define a
+    #: Control which Quant nodes of the QONNX format get converted to FINN's MultiThreshold nodes.
+    #: This only affects Quant nodes in the activation path. Quant nodes, which define a
     #: bit width larger than `max_multithreshold_bit_width` are not converted to
     #: MultiThreshold nodes and a warning is raised instead.
-    #: If not given `max_multithreshold_bit_width` defaults to 8.
-    max_multithreshold_bit_width: Optional[int] = 8
+    max_multithreshold_bit_width: int = 8
 
-    #: Override the number of inputs for rtlsim performance measurement.
-    rtlsim_batch_size: Optional[int] = 1
+    #: Control the number of input frames for rtlsim performance measurement.
+    rtlsim_batch_size: int = 1
 
     #: If set to True, FIFOs with impl_style=vivado will be kept during
     #: rtlsim, otherwise they will be replaced by RTL implementations.
-    rtlsim_use_vivado_comps: Optional[bool] = True
+    rtlsim_use_vivado_comps: bool = True
 
-    #: Determine if the C++ driver should be generated instead of the PYNQ driver
-    #: If set to latest newest version will be used
-    #: If set to commit hash specified version will be used
-    cpp_driver_version: Optional[str] = "latest"
+    #: (Only relevant if CPP_DRIVER output product is enabled) Selects C++ driver version.
+    #: If set to "latest", newest version will be used.
+    #: If set to commit hash, specified version will be used.
+    cpp_driver_version: str = "latest"
 
-    #: Specify validation dataset to be used for deployment of the PYNQ driver
+    #: (Optional) Specify validation dataset to be used for deployment of the PYNQ driver.
     validation_dataset: Optional[str] = None
 
-    #: Whether to simulate the switching activity of the design for Vivado power estimation
-    #: If set to False, use only a fixed set of static toggle rates and static probabilities
-    #: If set to True, use simulated activity to generate an additonal power report
-    vivado_power_simulate_activity: Optional[bool] = True
+    #: (Only relevant if step_vivado_power_estimation is run)
+    #: Whether to simulate the switching activity of the design for Vivado power estimation.
+    #: If set to False, use only a fixed set of static toggle rates and static probabilities.
+    #: If set to True, use simulated activity to generate an additional power report.
+    vivado_power_simulate_activity: bool = True
 
-    #: Whether to use "functional" or "timing" simulation for Vivado power estimation,
-    #: only relevant if vivado_power_simulate_activity is True.
-    vivado_power_simulation_type: Optional[str] = "functional"
+    #: (Only relevant for step_vivado_power_estimation if vivado_power_simulate_activity is True)
+    #: Whether to use "functional" or "timing" simulation for Vivado power estimation.
+    vivado_power_simulation_type: Literal["timing", "functional"] = "functional"
 
-    def _resolve_hls_clk_period(self):
+    def _resolve_hls_clk_period(self) -> float:
         """
         Resolve the HLS clock period, falling back to synthesis clock period if not set.
 
@@ -440,7 +446,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         else:
             return self.hls_clk_period_ns
 
-    def _resolve_driver_platform(self):
+    def _resolve_driver_platform(self) -> Literal["zynq-iodma", "alveo"]:
         """
         Resolve the driver platform based on the shell flow type.
 
@@ -458,7 +464,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         else:
             raise Exception("Couldn't resolve driver platform for " + str(self.shell_flow_type))
 
-    def _resolve_fpga_part(self):
+    def _resolve_fpga_part(self) -> str:
         """
         Resolve the FPGA part identifier.
 
@@ -484,7 +490,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             # return as-is when explicitly specified
             return self.fpga_part
 
-    def _resolve_cycles_per_frame(self):
+    def _resolve_cycles_per_frame(self) -> None | int:
         """
         Calculate the number of clock cycles available per frame based on target FPS.
 
@@ -502,7 +508,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             n_cycles_per_frame = n_clock_cycles_per_sec / self.target_fps
             return int(n_cycles_per_frame)
 
-    def _resolve_vitis_platform(self):
+    def _resolve_vitis_platform(self) -> str:
         """
         Resolve the Vitis platform identifier for Alveo board builds.
 
@@ -526,7 +532,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
                 "Could not resolve Vitis platform:" " need either board or vitis_platform specified"
             )
 
-    def _resolve_verification_steps(self):
+    def _resolve_verification_steps(self) -> list[VerificationStepType]:
         """
         Resolve the list of verification steps to be performed during the build.
 
@@ -539,7 +545,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         else:
             return self.verify_steps
 
-    def _resolve_verification_io_pair(self):
+    def _resolve_verification_io_pair(self) -> None | tuple[Any, Any]:
         """
         Load and validate the input/output numpy arrays for verification.
 

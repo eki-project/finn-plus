@@ -26,50 +26,71 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Utilities for Vitis HLS synthesis and IP generation."""
+
+from __future__ import annotations
+
 import os
 import re
+from pathlib import Path
+from subprocess import CalledProcessError
+
 from finn.util.basic import launch_process_helper, which
+from finn.util.exception import FINNInternalError, FINNUserError
 
 
 class CallHLS:
     """Call vitis_hls to run HLS build tcl scripts."""
 
-    def __init__(self):
-        self.tcl_script = ""
-        self.ipgen_path = ""
-        self.code_gen_dir = ""
-        self.ipgen_script = ""
+    def __init__(
+        self, tcl_script: str | Path, code_gen_dir: str | Path, ipgen_path: str | Path
+    ) -> None:
+        """Create a new HLS builder.
 
-    def append_tcl(self, tcl_script):
-        """Sets the tcl script to be executed."""
-        self.tcl_script = tcl_script
+        Args:
+            tcl_script: Path to the Tcl script that will be executed to build.
+            code_gen_dir: Directory that contains the Tcl script (and sources).
+            ipgen_path: Path to the IP Generation project.
+        """
+        self.tcl_script = Path(tcl_script)
+        self.ipgen_path = Path(ipgen_path)
+        self.code_gen_dir = Path(code_gen_dir)
+        self.ipgen_script: Path | None = None
+        if self.tcl_script not in self.code_gen_dir.iterdir():
+            raise FINNInternalError(
+                f"code_gen_dir {code_gen_dir} does not"
+                f"seem to contain the Tcl script {tcl_script}"
+            )
 
-    def set_ipgen_path(self, path):
-        """Sets member variable ipgen_path to given path."""
-        self.ipgen_path = path
-
-    def build(self, code_gen_dir):
-        """Builds the bash script with given parameters and saves it in given folder.
-        To guarantee the generation in the correct folder the bash script contains a
-        cd command."""
+    def build(self) -> None:
+        """Create and run a shell script to execute the Tcl script in code_gen_dir."""
         vivado_path = os.environ.get("XILINX_VIVADO")
+        if vivado_path is None:
+            raise FINNUserError("XILINX_VIVADO was not set but is required.")
         # xsi kernel lib name depends on Vivado version (renamed in 2024.2)
         match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path)
+        if match is None:
+            raise FINNUserError(f"Could not find a version number in XILINX_VIVADO: {vivado_path}")
         year, minor = int(match.group(1)), int(match.group(2))
         if (year, minor) > (2024, 2):
-            assert which("vitis-run") is not None, "vitis-run not found in PATH"
-            vitis_cmd = "vitis-run --mode hls --tcl %s\n" % (self.tcl_script)
+            if which("vitis-run") is None:
+                raise FINNUserError("vitis-run not found in PATH")
+            vitis_cmd = f"vitis-run --mode hls --tcl {self.tcl_script}\n"
         else:
-            assert which("vitis_hls") is not None, "vitis_hls not found in PATH"
-            vitis_cmd = "vitis_hls %s\n" % (self.tcl_script)
-        self.code_gen_dir = code_gen_dir
-        self.ipgen_script = str(self.code_gen_dir) + "/ipgen.sh"
-        working_dir = os.getcwd()
-        f = open(self.ipgen_script, "w")
-        f.write("#!/bin/bash \n")
-        f.write("cd {}\n".format(code_gen_dir))
-        f.write(vitis_cmd)
-        f.write("cd {}\n".format(working_dir))
-        f.close()
-        bash_command = ["bash", self.ipgen_script]
-        launch_process_helper(bash_command, print_stdout=False)
+            if which("vitis_hls") is None:
+                raise FINNUserError("vitis_hls was not found in PATH!")
+            vitis_cmd = f"vitis_hls {self.tcl_script}\n"
+        self.ipgen_script = self.code_gen_dir / "ipgen.sh"
+        working_dir = Path.cwd()
+        with self.ipgen_script.open("w") as f:
+            f.write("#!/bin/bash \n")
+            f.write("set -e\n")
+            f.write(f"cd {self.code_gen_dir}\n")
+            f.write(vitis_cmd)
+            f.write(f"cd {working_dir}\n")
+        try:
+            launch_process_helper(["bash", str(self.ipgen_script)], print_stdout=False)
+        except CalledProcessError as e:
+            raise FINNUserError(
+                f"HLS IP Generation failed. Logs and sources are in {self.code_gen_dir}"
+            ) from e
