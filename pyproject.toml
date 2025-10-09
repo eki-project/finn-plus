@@ -24,7 +24,7 @@ packages = [
     { include = "tests", to = "finn" }
 ]
 include = [
-    "tests/example-data/**/*"
+    "tests/example_data/**/*"
 ]
 version = "0.0.0"
 

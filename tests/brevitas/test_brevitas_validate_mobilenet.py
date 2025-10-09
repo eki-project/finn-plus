@@ -52,8 +52,8 @@ from qonnx.transformation.merge_onnx_models import MergeONNXModels
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
+import finn.tests.testing_util.imagenet as imagenet_util
 import finn.transformation.streamline.absorb as absorb
-import tests.testing_util.imagenet as imagenet_util
 from finn.tests.testing_util.pytorch import NormalizePreProc
 from finn.tests.testing_util.test import get_test_model_trained
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
