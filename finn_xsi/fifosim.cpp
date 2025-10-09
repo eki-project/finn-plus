@@ -7,7 +7,6 @@
 #include <SharedLibrary.h>
 
 #include <algorithm>
-#include <bitset>
 #include <chrono>
 #include <cstddef>
 #include <functional>
@@ -169,8 +168,6 @@ bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::vector<S_AXIS_
     // Enter Simulation Loop and track Progress
     const auto begin = std::chrono::high_resolution_clock::now();
     size_t completedMaps = 0;
-    size_t timeout = 0;
-    constexpr size_t max_timeout_limit = max_iters * 100;
 
     // Pre-cache frequently accessed values
     const size_t num_ostreams = ostreams.size();
@@ -190,35 +187,17 @@ bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::vector<S_AXIS_
         //-------------------------------------------------------------------
         // Process output streams
 
-        bool hasActiveOutput = false;
         for (size_t i = 0; i < num_ostreams; ++i) {
-            if (processOutputStream(ostreams[i], iters, completedMaps)) [[likely]] {
-                hasActiveOutput = true;
-                // std::cout << "Cycle: " << iters << std::endl;
-            }
+            processOutputStream(ostreams[i], iters, completedMaps);
         }
-        timeout = hasActiveOutput ? 0 : timeout + 1;
 
         //-------------------------------------------------------------------
         // Clock up - then write signal updates back to design
         clk.cycle(1);
 
-        ++iters;
-
-        if (iters % 25000 == 0) [[unlikely]] {
+        if (++iters % 25000 == 0) [[unlikely]] {
             std::cout << "Iteration: " << iters << " in " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - begin).count() << "ms" << std::endl;
-        }
-
-        if (completedMaps == featuremaps) [[unlikely]] {
-            return true;
-        }
-        // Check for timeout
-        /* if (timeout > max_timeout_limit) [[unlikely]] {
-            return false;
-        } */
-
-        // Check for deadlock
-        if (iters % 25000 == 0) [[unlikely]] {
+            //Deadlock detection
             std::vector<size_t> occupancies;
             for (const auto& p : fifo_occupancies) {
                 occupancies.push_back(p.get().read().as_unsigned());
@@ -228,6 +207,14 @@ bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::vector<S_AXIS_
                 return false;
             }
         }
+
+        if (completedMaps == featuremaps) [[unlikely]] {
+            return true;
+        }
+        // Check for timeout
+        /* if (timeout > max_timeout_limit) [[unlikely]] {
+            return false;
+        } */
     }
     std::cout << "Stable state reached after " << iters << " iterations in " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - begin).count() << "ms" << std::endl;
     return true;
@@ -269,12 +256,6 @@ std::optional<size_t> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& 
     return avgInterval;
 }
 
-template<typename T>
-[[gnu::always_inline]] inline std::string toBinaryString(const T data) noexcept {
-    return std::bitset<sizeof(T) * 8>(data).to_string();
-}
-
-
 std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file, const char* const trace_file, std::optional<int> start_fifo_size = std::nullopt) {
     int start_depth = start_fifo_size.value_or(1);
     int last_start_depth = start_depth;
@@ -285,9 +266,8 @@ std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, co
 
         auto&& [kernel, top, istreams, ostreams, fifo_ports, fifo_occupancies, fifo_max_occupancies, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
 
-        const auto depth_bin = toBinaryString(static_cast<uint32_t>(start_depth));
         for (auto&& p : fifo_ports) {
-            p.get().set_binstr(depth_bin).write_back();
+            p.get().set(static_cast<unsigned>(start_depth)).write_back();
         }
         clk.toggle_clk();
         for (auto&& s : ostreams) {
@@ -330,9 +310,8 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
         auto&& [kernel, top, istreams, ostreams, fifoPorts, fifo_occupancies, fifo_max_occupancies, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
 
         // Set the previously found start depth for all fifos in the model
-        const std::string startDepthString = toBinaryString<size_t>(start_size);
         for (auto&& p : fifoPorts) {
-            p.get().set_binstr(startDepthString).write_back();
+            p.get().set(static_cast<unsigned>(start_size)).write_back();
         }
 
         std::cout << "[Rank " << rank << "] Sizing FIFO number " << i << " (from " << startIndex << " to " << endIndex << ")" << std::endl;
@@ -345,7 +324,7 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
             fifoSizes[i] = std::max(previousFifoSize >> 1, size_t(1));  // Use bit shift for division by 2
 
             // Try out the new FIFO depth
-            fifoPorts[startIndex + i].get().set_binstr(toBinaryString(fifoSizes[i])).write_back();
+            fifoPorts[startIndex + i].get().set(static_cast<unsigned>(fifoSizes[i])).write_back();
             clk.toggle_clk();
             for (auto&& s : ostreams) {
                 s.job_txns = 0;
