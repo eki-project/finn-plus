@@ -37,8 +37,8 @@ input   ap_clk,
 (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
 input   ap_rst_n,
 
-output $COUNT_RANGE$ count,
-output $COUNT_RANGE$ maxcount,
+output [31:0] count,
+output [31:0] maxcount,
 
 input [31:0] depth,
 

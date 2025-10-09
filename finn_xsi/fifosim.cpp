@@ -25,9 +25,6 @@ constexpr int MPI_ROOT_RANK = 0;
 #endif
 
 
-static void clearPorts(xsi::Design& top) noexcept;
-static void reset(simDesc& desc) noexcept;
-
 struct simDesc {
     xsi::Kernel kernel;
     xsi::Design top;
@@ -40,6 +37,9 @@ struct simDesc {
 
     simDesc(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file) : kernel(kernel_lib), top(kernel, design_lib, xsim_log_file, trace_file), clk(top) {}
 };
+
+static void clearPorts(xsi::Design& top) noexcept;
+static void reset(simDesc& desc) noexcept;
 
 simDesc initDesign(const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file, const char* const trace_file) {
     simDesc desc(kernel_lib, design_lib, xsim_log_file, trace_file);
@@ -76,7 +76,7 @@ simDesc initDesign(const std::string& kernel_lib, const std::string& design_lib,
     }
 
     for (xsi::Port& p : desc.top.ports()) {
-        if (std::string(p.name()).find("count") != std::string::npos) {
+        if (std::string(p.name()).find("count") != std::string::npos && std::string(p.name()).find("maxcount") == std::string::npos) {
             desc.fifo_occupancies.emplace_back(std::ref(p));
         }
     }
@@ -88,6 +88,9 @@ simDesc initDesign(const std::string& kernel_lib, const std::string& design_lib,
     }
 
     if (desc.fifo_depths.empty() || desc.fifo_occupancies.empty() || desc.fifo_max_occupancies.empty()) {
+        std::cout << "DEBUG: FIFO Depth Ports Found: " << desc.fifo_depths.size() << std::endl;
+        std::cout << "DEBUG: FIFO Occupancy Ports Found: " << desc.fifo_occupancies.size() << std::endl;
+        std::cout << "DEBUG: FIFO Max Occupancy Ports Found: " << desc.fifo_max_occupancies.size() << std::endl;
         throw std::runtime_error("FIFO detection failed! Make sure the design contains FIFOs.");
     }
 
@@ -282,9 +285,9 @@ std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, co
 
         auto&& [kernel, top, istreams, ostreams, fifo_ports, fifo_occupancies, fifo_max_occupancies, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
 
-        const auto two_bin = toBinaryString(static_cast<uint32_t>(start_depth));
+        const auto depth_bin = toBinaryString(static_cast<uint32_t>(start_depth));
         for (auto&& p : fifo_ports) {
-            p.get().set_binstr(two_bin).write_back();
+            p.get().set_binstr(depth_bin).write_back();
         }
         clk.toggle_clk();
         for (auto&& s : ostreams) {
@@ -408,20 +411,18 @@ int main() {
 
     // Run until a suitable starting depth was found
     if (rank == 0) {
-        // std::cout << "\n--------------------------------------------\n";
-        // std::cout << "\nDetermining start depth (single rank)..." << std::endl;
-        // if (initial_start_depth) {
-        //     std::cout << "Setting initial start depth to: " << initial_start_depth.value() << std::endl;
-        // }
-        // auto startDepthBegin = std::chrono::high_resolution_clock::now();
-        // auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename, initial_start_depth);
-        // auto startDepthDuration = std::chrono::high_resolution_clock::now() - startDepthBegin;
-        // start_depth = _start_depth;
-        // std::cout << "Interval: " << _interval << "\n";
-        // interval = _interval;
-        // std::cout << "Finished start depth sizing in " << std::chrono::duration_cast<std::chrono::minutes>(startDepthDuration).count() << "m (" << std::chrono::duration_cast<std::chrono::hours>(startDepthDuration).count() << "h)" << std::endl;
-        start_depth = 160000;
-        interval = 2500;
+        std::cout << "\n--------------------------------------------\n";
+        std::cout << "\nDetermining start depth (single rank)..." << std::endl;
+        if (initial_start_depth) {
+            std::cout << "Setting initial start depth to: " << initial_start_depth.value() << std::endl;
+        }
+        auto startDepthBegin = std::chrono::high_resolution_clock::now();
+        auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename, initial_start_depth);
+        auto startDepthDuration = std::chrono::high_resolution_clock::now() - startDepthBegin;
+        start_depth = _start_depth;
+        std::cout << "Interval: " << _interval << "\n";
+        interval = _interval;
+        std::cout << "Finished start depth sizing in " << std::chrono::duration_cast<std::chrono::minutes>(startDepthDuration).count() << "m (" << std::chrono::duration_cast<std::chrono::hours>(startDepthDuration).count() << "h)" << std::endl;
     }
 
 #ifdef MPI_FOUND

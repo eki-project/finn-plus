@@ -45,19 +45,19 @@ module Q_srl (clock, reset, i_d, i_v, i_r, o_d, o_v, o_r, count, maxcount, depth
     assign i_r = have_capacity;
     assign o_v = have_data;
 
-	wire read;
-	wire write;
-	assign read = i_v & i_r;
-	assign write = o_v & o_r;
+	wire can_read;
+	wire can_write;
+	assign can_read = i_v & i_r;
+	assign can_write = o_v & o_r;
 
 	// Reset
 	always @(posedge clock) begin
 		if (reset) begin
 			current_depth <= 0;
 		end else begin
-			if (read & ~write) begin
+			if (can_read & ~can_write) begin
 				current_depth <= current_depth + 1;
-			end else if (~read & write) begin
+			end else if (~can_read & can_write) begin
 				current_depth <= current_depth - 1;
 			end
 		end
