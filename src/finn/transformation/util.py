@@ -1,3 +1,5 @@
+"""Utility functions for graph transformations and node type checking."""
+
 # fmt: off
 # Disable formatter. This is deliberately formatted to stay within 80 characters
 # per line. Black, however, formats some lines going beyond this.
@@ -8,14 +10,18 @@ from onnx import NodeProto
 from qonnx.core.modelwrapper import ModelWrapper
 
 
-# Tests whether a node is a multi-threshold operation
 def is_threshold(node: NodeProto):
+    """Check if node is a MultiThreshold operator."""
     return node.op_type == "MultiThreshold"
 
 
-# Tests whether a node is a join-node MatMul operation, i.e., a MatMul with two
-# runtime inputs but no weights initializers
+def is_attention(node: NodeProto):
+    """Check if node is an Attention operator."""
+    return node.op_type == "ScaledDotProductAttention"
+
+
 def is_join_matmul(node: NodeProto, model: ModelWrapper):  # noqa
+    """Check if node is a join (two input) matrix multiplication."""
     # Only handle existing MatMul type nodes
     if node is not None and node.op_type in {"MatMul"}:
         # No input must have an initializer
@@ -24,43 +30,46 @@ def is_join_matmul(node: NodeProto, model: ModelWrapper):  # noqa
     return False
 
 
-# Tests whether a node is a MatMul operator
 def is_matmul(node: NodeProto):
+    """Check if node is a MatMul operator."""
     # Node must exist and be of type MatMul
     return node is not None and node.op_type in {"MatMul"}
 
 
-# Tests whether a node is a Softmax operator
 def is_softmax(node: NodeProto):
+    """Check if node is a Softmax operator."""
     # Node must exist and be of type Softmax
     return node is not None and node.op_type in {"Softmax"}
 
 
-# Tests whether a node is an element-wise Mul
 def is_mul(node: NodeProto):
+    """Check if node is an element-wise Mul."""
     # Node must exist and be of type Mul
     return node is not None and node.op_type in {"Mul"}
 
 
-# Tests whether a node is an element-wise Add
 def is_add(node: NodeProto):
+    """Check if node is an element-wise Add."""
     # Node must exist and be of type Add
     return node is not None and node.op_type in {"Add"}
 
 
 def is_end(node: NodeProto, model: ModelWrapper):  # noqa
+    """Check if node is an end node."""
     return node is not None and not model.find_direct_predecessors(node)
 
 
-# Tests whether a tensor is a scalar, i.e., whether all dimensions are 1
 def is_scalar(tensor):
+    """Check whether tensor is a scalar, i.e., whether all dimensions are 1."""
     return tensor is not None and all(x == 1 for x in tensor.shape)
 
 
 # Follow all input branches of a node until reaching a matmul
 def all_upstream_to_matmul(node: NodeProto, model: ModelWrapper):  # noqa
+    """Get all upstream nodes to matrix multiplication."""
     # Check whether the node is either a matmul node or the end of the graph
     def is_matmul_or_end(n: NodeProto):
+        """Check if node is matrix multiplication or end node."""
         return is_matmul(n) or is_end(n, model)
 
     # Enumerate all inputs and collect everything upstream until finding the
@@ -68,24 +77,23 @@ def all_upstream_to_matmul(node: NodeProto, model: ModelWrapper):  # noqa
     return (model.find_upstream(i, is_matmul_or_end, True) for i in node.input)
 
 
-# Projects a list of ONNX graph nodes to the string representation of the
-# operator types
 def op_types(nodes: list[NodeProto]) -> list[str]:
+    """Projects a list of ONNX graph nodes to the string representation of the operator types"""
     return [node.op_type if node is not None else "None" for node in nodes]
 
 
-# Tests whether a node is a Reshape operator
 def is_reshape(node: NodeProto):
+    """Check if node is a reshape operator."""
     return node is not None and node.op_type in {"Reshape"}
 
 
-# Tests whether a node is a Transpose operator
 def is_transpose(node: NodeProto):
+    """Check if node is a transpose operator."""
     return node is not None and node.op_type in {"Transpose"}
 
 
-# Tests whether a node is a Reshape-Transpose operator chain
 def is_reshape_transpose(node: NodeProto, model: ModelWrapper):  # noqa
+    """Check if node is reshape followed by transpose."""
     # Reshape-transpose pattern detection is triggered by detecting a reshape
     # operation
     if is_reshape(node):
@@ -109,8 +117,8 @@ def is_reshape_transpose(node: NodeProto, model: ModelWrapper):  # noqa
     return False
 
 
-# Tests whether a node is a Transpose-Reshape operator chain
 def is_transpose_reshape(node: NodeProto, model: ModelWrapper):  # noqa
+    """Check if node is transpose followed by reshape."""
     # Transpose-Reshape pattern detection is triggered by detecting a transpose
     # operation
     if is_transpose(node):
@@ -134,9 +142,11 @@ def is_transpose_reshape(node: NodeProto, model: ModelWrapper):  # noqa
     return False
 
 
-# Groups inputs by categories, i.e., groups dynamic inputs first, followed by
-# initializers. Keeps order of inputs in each category.
 def group_inputs_by_category(node: NodeProto, model: ModelWrapper):  # noqa
+    """
+    Group inputs by categories, i.e., groups dynamic inputs first, followed by
+    initializers. Keep order of inputs in each category.
+    """
     # First select all dynamic inputs, which are those without initializer
     # tensor
     dynamics = [i for i in node.input if model.get_initializer(i) is None]

@@ -35,13 +35,12 @@ except ModuleNotFoundError:
 
 import numpy as np
 import os
-import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow import templates
-from finn.util.basic import CppBuilder, make_build_dir
+from finn.util.basic import CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.deps import get_deps_path
 from finn.util.exception import FINNError, FINNUserError
@@ -312,13 +311,12 @@ Found no executable for this node, did you run the codegen and
 compilation transformations?
             """
             )
-        process_execute = subprocess.Popen(executable_path, stdout=subprocess.PIPE)
-        process_execute.communicate()
+        launch_process_helper(executable_path, print_stdout=False)
 
     # TODO: Should have been removed by refactoring (PR #1318)
     # However, it is still used by some CustomOps, namely:
-    # SplitMultiHeads, MergeMultiHeads, ScaledDotProductAttention, ElementwiseBinaryOperation,
-    # ReplicateStream, Squeeze, Unsqueeze, StreamingConcat
+    # SplitMultiHeads, MergeMultiHeads, ScaledDotProductAttention,
+    # ReplicateStream, StreamingConcat
     def hls_sname(self):
         """Get the naming convention used by Vitis HLS for stream signals
         Example: the TDATA for a stream called "out" would be out_V_TDATA.
