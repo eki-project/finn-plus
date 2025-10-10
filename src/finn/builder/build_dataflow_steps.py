@@ -187,9 +187,20 @@ def verify_step(
             log.info("Attempting to force model shape on verification input")
             out_npy = out_npy.reshape(exp_oshape)
 
-        res = np.isclose(
+        # Check 1: Element-wise closeness between output and expected output
+        res1 = np.isclose(
             out_npy, exp_out_npy, atol=cfg.verification_atol, rtol=cfg.verification_rtol
         ).all()
+        # Check 2 and 3: Mean absolute and relative error over all output elements
+        num_elements = out_npy.size
+        abs_error = np.abs(out_npy - exp_out_npy)
+        # Avoid division by zero for relative error
+        exp_out_npy_safe = np.where(exp_out_npy == 0, np.finfo(float).eps, exp_out_npy)
+        rel_error = np.abs((out_npy - exp_out_npy) / exp_out_npy_safe)
+        res2 = np.mean(abs_error) <= cfg.verification_mean_atol
+        res3 = np.mean(rel_error) <= cfg.verification_mean_rtol
+
+        res = res1 and res2 and res3
         all_res = all_res and res
         res_to_str = {True: "SUCCESS", False: "FAIL"}
         res_str = res_to_str[res]
@@ -252,24 +263,20 @@ def verify_step(
                 f.write("OUTPUT ERROR ANALYSIS\n")
                 f.write("=" * 108 + "\n")
 
-                # Calculate error metrics between output and expected output
-                num_elements = out_npy.size
-                abs_error = np.abs(out_npy - exp_out_npy)
-
-                # Avoid division by zero for relative error
-                exp_out_npy_safe = np.where(exp_out_npy == 0, np.finfo(float).eps, exp_out_npy)
-                rel_error = np.abs((out_npy - exp_out_npy) / exp_out_npy_safe)
-
-                f.write(f"Number of elements:        {num_elements}\n")
-                f.write(f"Min absolute error:        {np.min(abs_error):.6e}\n")
-                f.write(f"Max absolute error:        {np.max(abs_error):.6e}\n")
-                f.write(f"Min relative error:        {np.min(rel_error):.6e}\n")
-                f.write(f"Max relative error:        {np.max(rel_error):.6e}\n")
+                f.write(f"Number of elements:           {num_elements}\n")
+                f.write(f"Min absolute error:           {np.min(abs_error):.6e}\n")
+                f.write(f"Max absolute error:           {np.max(abs_error):.6e}\n")
+                f.write(f"Mean absolute error:          {np.mean(abs_error):.6e}\n")
+                f.write(f"Min relative error:           {np.min(rel_error):.6e}\n")
+                f.write(f"Max relative error:           {np.max(rel_error):.6e}\n")
+                f.write(f"Mean relative error:          {np.mean(rel_error):.6e}\n")
                 f.write(
-                    f"Verification tolerance:    atol={cfg.verification_atol:.6e} + "
+                    f"Tolerance per element:        atol={cfg.verification_atol:.6e} + "
                     f"rtol={cfg.verification_rtol:.6e}\n"
                 )
-                f.write(f"Verification result:       {res_str}\n")
+                f.write(f"Tolerance for mean abs. err:  {cfg.verification_mean_atol:.6e}\n")
+                f.write(f"Tolerance for mean rel. err:  {cfg.verification_mean_rtol:.6e}\n")
+                f.write(f"Verification result:          {res_str}\n")
         else:
             verification_output_fn = os.path.join(
                 verify_out_dir, f"verify_{step_name}_{b}_{res_str}.npy"

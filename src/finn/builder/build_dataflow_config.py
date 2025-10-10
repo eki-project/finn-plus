@@ -258,12 +258,18 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: By default, waveforms won't be saved.
     verify_save_rtlsim_waveforms: bool = False
 
-    #: Specify absolute tolerance to be used for verification.
+    #: Set verification tolerance: absolute error per output element.
     verification_atol: float = 1e-3
 
-    #: Specify relative tolerance to be used for verification.
-    #: This is added to the absolute tolerance.
+    #: Set verification tolerance: relative error per output element.
+    #: This is added to the absolute tolerance (as computed by numpy.isclose).
     verification_rtol: float = 1e-5
+
+    #: Set verification tolerance: mean absolute error over output elements of each frame.
+    verification_mean_atol: float = 1e-3
+
+    #: Set verification tolerance: mean relative error over output elements of each frame.
+    verification_mean_rtol: float = 1e-1
 
     #: Run synthesis to generate a .dcp for the stitched-IP output product.
     #: This can make it easier to treat it as a standalone artifact without requiring
