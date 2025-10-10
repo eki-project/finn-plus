@@ -24,7 +24,8 @@ packages = [
     { include = "tests", to = "finn" }
 ]
 include = [
-    "tests/example_data/**/*"
+    "tests/example_data/**/*",
+    "src/finn/util/vivado_scripts/**/*",
 ]
 version = "0.0.0"
 
