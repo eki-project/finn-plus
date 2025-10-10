@@ -77,7 +77,7 @@
     {
         "dut": ["transformer"],
         "seed": [12],
-        "model_dir": ["models/gpt_a_6b_gpt2-s256-t2048-l2-h4-e256"],
+        "model_dir": ["models/transformer/gpt_a_6b_gpt2-s256-t2048-l2-h4-e256"],
         # Increase verification error tolerance due to worse than usual scale aggregation errors
         "verification_atol": [1e0],
         "verification_mean_atol": [1e-2],
@@ -90,9 +90,9 @@
         "dut": ["transformer"],
         "seed": [12],
         "model_dir": [
-                      "models/gpt_b_4b_gpt2-s256-t2048-l2-h4-e256",
-                      #"models/gpt_c_gpt2-s512-t2048-l2-h4-e512", # disabled to save time
-                      "models/gpt_d_gpt2-s256-t2048-l1-h2-e256"
+                      "models/transformer/gpt_b_4b_gpt2-s256-t2048-l2-h4-e256",
+                      #"models/transformer/gpt_c_gpt2-s512-t2048-l2-h4-e512", # disabled to save time
+                      "models/transformer/gpt_d_gpt2-s256-t2048-l1-h2-e256"
                       ],
         "board": ["U250"],
         "synth_clk_period_ns": [10],
@@ -105,11 +105,11 @@
         "dut": ["transformer"],
         "seed": [12],
         "model_dir": [
-                      "models/rml_transformer_0",
-                      "models/rml_transformer_a",
-                      #"models/rml_transformer_b", # disabled due to URAM over-utilization
-                      #"models/rml_transformer_c", # disabled to save time
-                      #"models/rml_transformer_d", # disabled due to URAM over-utilization
+                      "models/transformer/rml_transformer_0",
+                      "models/transformer/rml_transformer_a",
+                      #"models/transformer/rml_transformer_b", # disabled due to URAM over-utilization
+                      #"models/transformer/rml_transformer_c", # disabled to save time
+                      #"models/transformer/rml_transformer_d", # disabled due to URAM over-utilization
                       ],
         "board": ["RFSoC2x2"],
         "synth_clk_period_ns": [10],
@@ -120,7 +120,7 @@
     {
         "dut": ["transformer"],
         "seed": [12],
-        "model_dir": ["models/rml_conformer"],
+        "model_dir": ["models/transformer/rml_conformer"],
         "board": ["RFSoC2x2"],
         "synth_clk_period_ns": [10],
         "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]

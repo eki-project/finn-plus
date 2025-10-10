@@ -1,0 +1,5 @@
+outs:
+- md5: b161208ef19438baea6b910744ef8f2a
+  size: 246571
+  hash: md5
+  path: tfc-w2a2_qonnx.onnx
