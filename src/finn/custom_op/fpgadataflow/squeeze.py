@@ -8,9 +8,6 @@ import copy
 # Numpy math and arrays
 import numpy as np
 
-# Operating system stuff, e.g. paths
-import os
-
 # QONNX/FINN datatypes
 from qonnx.core.datatype import DataType
 
@@ -22,9 +19,6 @@ from finn.custom_op.fpgadataflow import register_custom_op
 
 # Derive custom operators form the FINN base custom op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
-
-# Converts inputs/outputs to/from RTL simulation format
-from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 
 # FINN logging
 from finn.util.logging import log
@@ -147,8 +141,8 @@ class Squeeze(HWCustomOp):
         # Force the output data type stored as a node attribute
         model.set_tensor_datatype(node.output[0], self.out_dtype)
 
-    # Executes squeeze operation in python
-    def _execute_node_python(self, context, graph):  # noqa: graph unused
+    def execute_node(self, context, graph):
+        """Execute unsqueeze operation (Python fallback)."""
         # Get the node wrapped by this custom op
         node = self.onnx_node  # noqa: Duplicate
         # Get the input from the execution context
@@ -167,85 +161,6 @@ class Squeeze(HWCustomOp):
         # Make sure the output has the right type (always use float32 as the
         # container type) and insert into the execution context
         context[node.output[0]] = out.astype(np.float32)
-
-    # Executes squeeze operation in C++ simulation
-    def _execute_node_cppsim(self, context, graph):  # noqa: graph unused
-        # C++ Simulation needs to be implemented in HLS backend specialization
-        raise NotImplementedError(
-            f"exec_mode cppsim of {self.__class__.__name__} is not implemented!"
-        )
-
-    # Executes squeeze operation in RTL simulation
-    def _execute_node_rtlsim(self, context, graph):  # noqa: graph unused
-        # Get the node wrapped by this custom op  # noqa Duplicate
-        node = self.onnx_node
-        # Input data is stored in numpy files in the code generation dictionary
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        # Get the inputs out of the execution context
-        inp = context[node.input[0]]  # noqa: Duplicate code prepare simulation
-        # Validate the shape of the inputs
-        assert list(inp.shape) == self.get_normal_input_shape(ind=0), \
-            f"Input shape mismatch for {node.input[0]}"
-        # Reshape the input into folded form
-        inp = inp.reshape(self.get_folded_input_shape(ind=0))
-        # Path to store the intermediate input in numpy format
-        inp_filename = os.path.join(code_gen_dir, "inp.npy")
-        # Save the folded input to file to be used by simulation
-        np.save(inp_filename, inp)
-        # Start collecting inputs/outputs to the RTL simulation in a dictionary
-        #   Note: Prepare one output empty output list
-        io_dict = {
-            "inputs": {},
-            "outputs": {"out": []}
-        }
-        # Type and width of the input tensors
-        inp_dtype = self.get_input_datatype(ind=0)
-        inp_width = self.get_instream_width(ind=0)
-
-        # Convert input to RTL simulation format
-        io_dict["inputs"]["inp"] = npy_to_rtlsim_input(
-            inp_filename, inp_dtype, inp_width
-        )
-
-        # Setup PyVerilator simulation of the node
-        sim = self.get_rtlsim()  # noqa: Duplicate code prepare simulation
-        # Reset the RTL simulation
-        super().reset_rtlsim(sim)
-        super().toggle_clk(sim)
-        # Run the RTL Simulation
-        self.rtlsim_multi_io(sim, io_dict)
-
-        # Collect the output from RTL simulation
-        out = io_dict["outputs"]["out"]
-        # Type and sizes of the output tensor
-        dtype = self.get_output_datatype(ind=0)  # noqa: Duplicate readout code
-        width = self.get_outstream_width(ind=0)
-        shape = self.get_folded_output_shape(ind=0)
-        # Path to store the intermediate numpy file
-        filename = os.path.join(code_gen_dir, "out.npy")
-        # Convert from RTL simulation format to numpy format
-        rtlsim_output_to_npy(
-            out, filename, dtype, shape, width, dtype.bitwidth()
-        )
-        # Load the generated output numpy file
-        out = np.load(filename)
-        # Reshape the folded output and insert into the execution context
-        context[node.output[0]] = out.reshape(
-            self.get_normal_output_shape(ind=0)
-        )
-
-    # Executes squeeze operation in simulation (either python c++ or rtl sim)
-    def execute_node(self, context, graph):
-        # Get the configured execution mode
-        mode = self.get_nodeattr("exec_mode")
-        # Lookup table mapping execution modes to implementing methods
-        exec_fns = {
-            "python": self._execute_node_python,
-            "cppsim": self._execute_node_cppsim,
-            "rtlsim": self._execute_node_rtlsim,
-        }
-        # Select and execute the function by mode string
-        exec_fns[mode](context, graph)
 
     # Verifies the node attributes, inputs and outputs
     def verify_node(self):
@@ -267,8 +182,10 @@ class Squeeze(HWCustomOp):
 
     # Gets the shape of the input at index ind without folding
     def get_normal_input_shape(self, ind=0):
-        # There is only one proper input (we ignore the optional axes input
-        # here)
+        # Infer shape of axes input
+        if ind == 1:
+            return (len(self.get_nodeattr("axes")),)
+        # Data input
         return self.inp_shape
 
     # Gets the shape of the output at index ind without folding
@@ -278,6 +195,9 @@ class Squeeze(HWCustomOp):
 
     # Gets the shape of the input at index ind with folding
     def get_folded_input_shape(self, ind=0):
+        # Axes input
+        if ind == 1:
+            return self.get_normal_input_shape(ind=ind)
         # Get the normal shape before applying folding
         *num_inputs, num_elems = self.get_normal_input_shape(ind=ind)
         # Valid folding requires the PE to divide the number of elements
@@ -296,10 +216,12 @@ class Squeeze(HWCustomOp):
 
     # Widths of the input data stream of the input at index ind
     def get_instream_width(self, ind=0):
+        # Axes input is not exposed:
+        if ind == 1:
+            return 0
         # Get the number of bits used to represent the input
         i_bits = self.get_input_datatype(ind).bitwidth()
-        # Parallelism is the number of elements in the last dimension of the
-        # folded input
+        # Parallelism is the number of elements in the last dimension of the folded input
         *_, elems = self.get_folded_input_shape(ind)
         # Width of a stream receiving input elements in parallel
         return elems * i_bits

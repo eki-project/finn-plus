@@ -1,4 +1,4 @@
-# Utility functions for benchmarking
+"""Utility functions for benchmarking and report processing."""
 import json
 import os
 import shutil
@@ -6,6 +6,17 @@ import xml.etree.ElementTree as ET
 
 
 def _find_rows_and_headers(table):
+    """Find table rows and headers in XML table structure.
+
+    Searches through table rows to find the first row that contains
+    table headers, which are used to identify column structure.
+
+    Args:
+        table: XML table element to parse
+
+    Returns:
+        tuple: (list of all table rows, list of header elements)
+    """
     rows = table.findall("tablerow")
     headers = []
 
@@ -17,6 +28,18 @@ def _find_rows_and_headers(table):
 
 
 def summarize_table(table):
+    """Summarize table data into a structured dictionary format.
+
+    Parses XML table structure to extract headers and row data,
+    organizing the information into a summary dictionary for easier
+    processing and analysis of benchmarking results.
+
+    Args:
+        table: XML table element to summarize
+
+    Returns:
+        dict: Summary containing headers and processed row data
+    """
     table_summary = {}
     table_summary["headers"] = []
     rows, headers = _find_rows_and_headers(table)
@@ -43,6 +66,7 @@ def summarize_table(table):
 
 
 def summarize_section(section):
+    """Summarize report section."""
     section_summary = {}
     section_summary["tables"] = []
     section_summary["subsections"] = {}
@@ -60,6 +84,7 @@ def summarize_section(section):
 
 
 def power_xml_to_dict(xml_path):
+    """Convert power XML to dictionary."""
     tree = ET.parse(xml_path)
     root = tree.getroot()
     sections = root.findall("section")
@@ -72,6 +97,7 @@ def power_xml_to_dict(xml_path):
 
 
 def delete_dir_contents(dir):
+    """Delete directory contents."""
     for filename in os.listdir(dir):
         file_path = os.path.join(dir, filename)
         try:
@@ -84,6 +110,7 @@ def delete_dir_contents(dir):
 
 
 def merge_dicts(a: dict, b: dict):
+    """Merge multiple dictionaries."""
     for key in b:
         if key in a:
             if isinstance(a[key], dict) and isinstance(b[key], dict):
@@ -96,6 +123,7 @@ def merge_dicts(a: dict, b: dict):
 
 
 def merge_logs(log_a, log_b, log_out):
+    """Merge log files."""
     # merges json log (list of nested dicts) b into a, not vice versa (TODO)
 
     with open(log_a, "r") as f:

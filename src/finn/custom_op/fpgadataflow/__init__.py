@@ -27,8 +27,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-# The base class of all generic custom operations before specializing to either
-# HLS or RTL backend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # Dictionary of HWCustomOp implementations
@@ -42,7 +40,7 @@ def register_custom_op(cls):
     # The class must actually implement HWCustomOp
     assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"
     # Insert the class into the custom_op dictionary by its name
-    custom_op[cls.__name__] = cls  # noqa: Some weird type annotation issue?
+    custom_op[cls.__name__] = cls
     # Pass through the class unmodified
     return cls
 
@@ -67,7 +65,6 @@ from finn.custom_op.fpgadataflow.attention_heads import MergeMultiHeads, SplitMu
 from finn.custom_op.fpgadataflow.channelwise_op import ChannelwiseOp
 from finn.custom_op.fpgadataflow.concat import StreamingConcat
 from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
-from finn.custom_op.fpgadataflow.downsampler import DownSampler
 from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams
 from finn.custom_op.fpgadataflow.fmpadding import FMPadding
 from finn.custom_op.fpgadataflow.fmpadding_pixel import FMPadding_Pixel
@@ -82,7 +79,6 @@ from finn.custom_op.fpgadataflow.streamingdataflowpartition import StreamingData
 from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
 from finn.custom_op.fpgadataflow.streamingeltwise import StreamingEltwise
 from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
-from finn.custom_op.fpgadataflow.streamingmaxpool import StreamingMaxPool
 from finn.custom_op.fpgadataflow.thresholding import Thresholding
 from finn.custom_op.fpgadataflow.upsampler import UpsampleNearestNeighbour
 from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU
@@ -98,7 +94,6 @@ custom_op["StreamingDataflowPartition"] = StreamingDataflowPartition
 custom_op["AddStreams"] = AddStreams
 custom_op["ChannelwiseOp"] = ChannelwiseOp
 custom_op["ConvolutionInputGenerator"] = ConvolutionInputGenerator
-custom_op["DownSampler"] = DownSampler
 custom_op["DuplicateStreams"] = DuplicateStreams
 custom_op["FMPadding"] = FMPadding
 custom_op["FMPadding_Pixel"] = FMPadding_Pixel
@@ -110,7 +105,6 @@ custom_op["StreamingConcat"] = StreamingConcat
 custom_op["StreamingSplit"] = StreamingSplit
 custom_op["StreamingDataWidthConverter"] = StreamingDataWidthConverter
 custom_op["StreamingEltwise"] = StreamingEltwise
-custom_op["StreamingMaxPool"] = StreamingMaxPool
 custom_op["UpsampleNearestNeighbour"] = UpsampleNearestNeighbour
 custom_op["ScaledDotProductAttention"] = ScaledDotProductAttention
 custom_op["SplitMultiHeads"] = SplitMultiHeads

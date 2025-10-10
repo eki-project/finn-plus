@@ -62,6 +62,7 @@ repos:
   - id: black
     language_version: python3
     args: [--line-length=100]
+    exclude: '^scripts/split_api_docs.py$'
 
 - repo: https://github.com/PyCQA/flake8
   rev: 6.1.0
@@ -70,3 +71,4 @@ repos:
     # black-compatible flake-8 config
     args: ['--max-line-length=100',  # black default
            '--extend-ignore=E203']  # E203 is not PEP8 compliant
+    exclude: '^scripts/split_api_docs.py$'

@@ -150,13 +150,17 @@ class VVAU_rtl(VVAU, RTLBackend):
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "mvu/")
         sourcefiles = [
-            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v"),
-            rtllib_dir + "mvu_vvu_axi.sv",
-            rtllib_dir + "replay_buffer.sv",
-            rtllib_dir + "mvu_4sx4u.sv",
-            rtllib_dir + "mvu_vvu_8sx9_dsp58.sv",
-            rtllib_dir + "mvu_8sx8u_dsp48.sv",
+            "mvu_pkg.sv",
+            "mvu_vvu_axi.sv",
+            "replay_buffer.sv",
+            "mvu.sv",
+            "mvu_vvu_8sx9_dsp58.sv",
+            "add_multi.sv",
         ]
+        sourcefiles = [
+            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v")
+        ] + [rtllib_dir + _ for _ in sourcefiles]
+
         for f in sourcefiles:
             cmd.append("add_files -norecurse %s" % (f))
 
@@ -250,7 +254,7 @@ class VVAU_rtl(VVAU, RTLBackend):
         dsp_chain_len = critical_path_dsps if critical_path_dsps < max_chain_len else max_chain_len
         return dsp_chain_len
 
-    def _resolve_impl_style(self, fpgapart):
+    def _resolve_dsp_version(self, fpgapart):
         # Based on target device and activation/weight-width, choose the
         # supported RTL compute core
         assert (
@@ -264,14 +268,14 @@ class VVAU_rtl(VVAU, RTLBackend):
             is_versal_family
         ), "DSP-based (RTL) VVU currently only supported on Versal (DSP58) devices"
 
-        return "mvu_vvu_8sx9_dsp58"
+        return 3
 
     def prepare_codegen_default(self, fpgapart, clk):
         template_path = os.path.join(os.environ["FINN_RTLLIB"], "mvu/mvu_vvu_axi_wrapper.v")
 
         code_gen_dict = {}
         code_gen_dict["$IS_MVU$"] = [str(0)]
-        code_gen_dict["$COMPUTE_CORE$"] = [self._resolve_impl_style(fpgapart)]
+        code_gen_dict["$VERSION$"] = [str(self._resolve_dsp_version(fpgapart))]
         code_gen_dict["$PUMPED_COMPUTE$"] = [str(0)]
         mw = int(np.prod(self.get_nodeattr("Kernel")))
         code_gen_dict["$MW$"] = [str(mw)]
@@ -297,13 +301,17 @@ class VVAU_rtl(VVAU, RTLBackend):
             rtllib_dir = ""
 
         verilog_files = [
-            code_gen_dir + self.get_nodeattr("gen_top_module") + "_wrapper_sim.v",
-            rtllib_dir + "mvu_vvu_axi.sv",
-            rtllib_dir + "replay_buffer.sv",
-            rtllib_dir + "mvu_4sx4u.sv",
-            rtllib_dir + "mvu_vvu_8sx9_dsp58.sv",
-            rtllib_dir + "mvu_8sx8u_dsp48.sv",
+            "mvu_pkg.sv",
+            "mvu_vvu_axi.sv",
+            "replay_buffer.sv",
+            "mvu.sv",
+            "mvu_vvu_8sx9_dsp58.sv",
+            "add_multi.sv",
         ]
+        verilog_files = [
+            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v")
+        ] + [rtllib_dir + _ for _ in verilog_files]
+
         return verilog_files
 
     def get_verilog_paths(self):
