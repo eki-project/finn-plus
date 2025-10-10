@@ -203,7 +203,6 @@ Bench (Basic):
       pipeline_variables: true
   variables:
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
-    PARALLEL_JOBS: "8"
   parallel:
     matrix:
       - BENCH_CFG: [regression_extended]
@@ -225,7 +224,7 @@ Bench (Extended):
       pipeline_variables: true
   variables:
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
-    PARALLEL_JOBS: "8"
+    PARALLEL_JOBS: "2"
   parallel:
     matrix:
-      - BENCH_CFG: [regression_extended, microbenchmark_basic]
+      - BENCH_CFG: [regression_extended]
