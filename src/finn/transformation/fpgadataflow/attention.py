@@ -141,11 +141,18 @@ class InferScaledDotProductAttention(Transformation):
                 # @formatter:on
                 # Collect the input tensors to the attention operation, i.e.,
                 # the query, key and value tensors
-                q, k, v = lhs[-1].input[0], transpose.input[0], rhs[0].output[0]
+                q, k, v = lhs[-1].input[0], transpose.input[0], None
+                # Check all outputs of the right hand side branch for being the
+                # values input (this could for example be a split feeding
+                # multiple heads)
+                for candidate in rhs[0].output:
+                    if node in model.find_consumers(candidate):
+                        v = candidate
+
                 # Validate that the values are actually consumed by the final
                 # matmul. For queries and keys this should all be given, as we
                 # just walked upwards the graph.
-                assert node in model.find_consumers(v)
+                assert v is not None
 
                 # Get the (optional) Softmax activation function
                 act_a_softmax = lhs[0] if is_softmax(lhs[1]) else None
