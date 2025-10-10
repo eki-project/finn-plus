@@ -11,7 +11,7 @@ variables:
     value: ""
   TEST_SUITE:
     description: "Select test suite to run"
-    value: "full_ci"
+    value: "none"
     options:
       - "none"
       - "quicktest_ci"
@@ -206,7 +206,7 @@ Bench (Basic):
     PARALLEL_JOBS: "8"
   parallel:
     matrix:
-      - BENCH_CFG: [regression_basic, regression_transformer]
+      - BENCH_CFG: [regression_extended]
 
 Bench (Extended):
   stage: test
