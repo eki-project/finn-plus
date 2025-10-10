@@ -9,7 +9,7 @@ def unsupported_layers(model: ModelWrapper):
     """
 
     def is_supported_node(node):
-        return node.domain.startswith("finn.custom_op.fpgadataflow.")
+        return node.domain.startswith("finn.custom_op.fpgadataflow")
 
     # Find source and sink nodes in the model
     source_nodes = []

@@ -448,7 +448,7 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
     unmapped_layers = [
         node.name
         for node in model.graph.node
-        if not node.domain.startswith("finn.custom_op.fpgadataflow.")
+        if not node.domain.startswith("finn.custom_op.fpgadataflow")
     ]
     # Check if there are unsupported layers somewhere between supported layers
     # This would cause a "cyclic-free graph partitioning violated" error otherwise
