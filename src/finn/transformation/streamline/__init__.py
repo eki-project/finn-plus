@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # namespace package, extend path
+"""Collection of default streamlining transformations."""
 from pkgutil import extend_path
 
 __path__ = extend_path(__path__, __name__)
@@ -72,6 +73,7 @@ class Streamline(Transformation):
     """Apply the streamlining transform, see arXiv:1709.04060."""
 
     def apply(self, model):
+        """Collects and applies the default list of streamlining transformations."""
         streamline_transformations = [
             ConvertSubToAdd(),
             ConvertDivToMul(),
