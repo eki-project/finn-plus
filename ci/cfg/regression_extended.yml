@@ -77,8 +77,19 @@
     {
         "dut": ["transformer"],
         "seed": [12],
+        "model_dir": ["models/gpt_a_6b_gpt2-s256-t2048-l2-h4-e256"],
+        # Increase verification error tolerance due to worse than usual scale aggregation errors
+        "verification_atol": [1e0],
+        "verification_mean_atol": [1e-2],
+        "board": ["U250"],
+        "synth_clk_period_ns": [10],
+        "enable_instrumentation": [False],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["transformer"],
+        "seed": [12],
         "model_dir": [
-                      "models/gpt_a_6b_gpt2-s256-t2048-l2-h4-e256",
                       "models/gpt_b_4b_gpt2-s256-t2048-l2-h4-e256",
                       #"models/gpt_c_gpt2-s512-t2048-l2-h4-e512", # disabled to save time
                       "models/gpt_d_gpt2-s256-t2048-l1-h2-e256"

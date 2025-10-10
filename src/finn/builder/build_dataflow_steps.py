@@ -134,6 +134,10 @@ def verify_step(
     log.info(f"Running verification for {step_name}")
     verify_out_dir = cfg.output_dir + "/verification_output"
     intermediate_models_dir = cfg.output_dir + "/intermediate_models"
+    # Ensure tensor names are sorted and readable for easier debugging
+    model = model.transform(SortGraph())
+    model = model.transform(GiveUniqueNodeNames())
+    model = model.transform(GiveReadableTensorNames())
     os.makedirs(verify_out_dir, exist_ok=True)
     (in_npy_all, exp_out_npy_all) = cfg._resolve_verification_io_pair()
     bsize_in = in_npy_all.shape[0]
@@ -183,7 +187,20 @@ def verify_step(
             log.info("Attempting to force model shape on verification input")
             out_npy = out_npy.reshape(exp_oshape)
 
-        res = np.isclose(exp_out_npy, out_npy, atol=1e-3).all()
+        # Check 1: Element-wise closeness between output and expected output
+        res1 = np.isclose(
+            out_npy, exp_out_npy, atol=cfg.verification_atol, rtol=cfg.verification_rtol
+        ).all()
+        # Check 2 and 3: Mean absolute and relative error over all output elements
+        num_elements = out_npy.size
+        abs_error = np.abs(out_npy - exp_out_npy)
+        # Avoid division by zero for relative error
+        exp_out_npy_safe = np.where(exp_out_npy == 0, np.finfo(float).eps, exp_out_npy)
+        rel_error = np.abs((out_npy - exp_out_npy) / exp_out_npy_safe)
+        res2 = np.mean(abs_error) <= cfg.verification_mean_atol
+        res3 = np.mean(rel_error) <= cfg.verification_mean_rtol
+
+        res = res1 and res2 and res3
         all_res = all_res and res
         res_to_str = {True: "SUCCESS", False: "FAIL"}
         res_str = res_to_str[res]
@@ -192,6 +209,74 @@ def verify_step(
                 verify_out_dir, f"verify_{step_name}_{b}_{res_str}.npz"
             )
             np.savez(verification_output_fn, **out_dict)
+
+            # Log tensor statistics for debugging (only output tensors, in topological order)
+            tensors_to_log = ["global_in"]
+            if need_parent:
+                for node in parent_model.graph.node:
+                    for output in node.output:
+                        tensors_to_log.append(output)
+                sdp_node = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
+                sdp_prefix = sdp_node.name + "_"
+            else:
+                sdp_prefix = ""
+            for node in model.graph.node:
+                for output in node.output:
+                    tensors_to_log.append(sdp_prefix + output)
+
+            tensor_stats = []
+            for key in tensors_to_log:
+                if key in out_dict:
+                    stat_dict = {
+                        "tensor": key,
+                        "shape": list(out_dict[key].shape),
+                        "mean": float(np.mean(out_dict[key])),
+                        "std": float(np.std(out_dict[key])),
+                        "min": float(np.min(out_dict[key])),
+                        "max": float(np.max(out_dict[key])),
+                    }
+                    tensor_stats.append(stat_dict)
+
+            # Write tensor statistics in compact human-readable table format
+            with open(
+                os.path.join(verify_out_dir, f"verify_{step_name}_{b}_{res_str}_stats.txt"), "w"
+            ) as f:
+                # Write header
+                f.write(
+                    f"{'Tensor':<40} {'Shape':<20} {'Mean':<12} "
+                    f"{'Std':<12} {'Min':<12} {'Max':<12}\n"
+                )
+                f.write("-" * 108 + "\n")
+
+                # Write data rows
+                for stat in tensor_stats:
+                    # Shorten/truncate long names and shapes
+                    tensor_name = stat["tensor"].replace("GenericPartition", "GP")[:39]
+                    shape_str = str(stat["shape"])[:19]
+                    f.write(
+                        f"{tensor_name:<40} {shape_str:<20} {stat['mean']:<12.6f} "
+                        f"{stat['std']:<12.6f} {stat['min']:<12.6f} {stat['max']:<12.6f}\n"
+                    )
+
+                # Add output error analysis
+                f.write("\n" + "=" * 108 + "\n")
+                f.write("OUTPUT ERROR ANALYSIS\n")
+                f.write("=" * 108 + "\n")
+
+                f.write(f"Number of elements:           {num_elements}\n")
+                f.write(f"Min absolute error:           {np.min(abs_error):.6e}\n")
+                f.write(f"Max absolute error:           {np.max(abs_error):.6e}\n")
+                f.write(f"Mean absolute error:          {np.mean(abs_error):.6e}\n")
+                f.write(f"Min relative error:           {np.min(rel_error):.6e}\n")
+                f.write(f"Max relative error:           {np.max(rel_error):.6e}\n")
+                f.write(f"Mean relative error:          {np.mean(rel_error):.6e}\n")
+                f.write(
+                    f"Tolerance per element:        atol={cfg.verification_atol:.6e} + "
+                    f"rtol={cfg.verification_rtol:.6e}\n"
+                )
+                f.write(f"Tolerance for mean abs. err:  {cfg.verification_mean_atol:.6e}\n")
+                f.write(f"Tolerance for mean rel. err:  {cfg.verification_mean_rtol:.6e}\n")
+                f.write(f"Verification result:          {res_str}\n")
         else:
             verification_output_fn = os.path.join(
                 verify_out_dir, f"verify_{step_name}_{b}_{res_str}.npy"
