@@ -210,6 +210,12 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
         thresholds = ir.convenience.get_const_tensor(thresholds).numpy()
         thresholds = thresholds.reshape(thresholds.shape[-2:])
 
+        # QONNX requires per-tensor thresholds explicitly marked as 1xN shape
+        # Needs to be checked and corrected here due to effects of the un-
+        # broadcasting transformation
+        if len(thresholds.shape) < 2:
+            thresholds = thresholds.reshape((1, -1))
+
         # Infer the output bitwidth based on the number of thresholds
         out_dtype = f"UINT{int(np.ceil(np.log2(thresholds.shape[-1] + 1)))}"
 
