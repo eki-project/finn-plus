@@ -1,0 +1,6 @@
+outs:
+- md5: e441721d1e15f773b167e2c561818aca.dir
+  size: 2554081
+  nfiles: 17
+  hash: md5
+  path: reports
