@@ -1,3 +1,4 @@
+"""Manage execution of RTL based simulation."""
 # Copyright (c) 2020 Xilinx, Inc.
 # All rights reserved.
 #
@@ -48,6 +49,7 @@ from finn.util.exception import FINNConfigurationError, FINNError
 
 
 def prep_rtlsim_io_dict(model, execution_context):
+    """Prepare the input/output dictionary for RTLSim execution."""
     # extract i/o info to prepare io_dict
     io_dict = {"inputs": {}, "outputs": {}}
     if_dict = eval(model.get_metadata_prop("vivado_stitch_ifnames"))
@@ -112,8 +114,10 @@ def prep_rtlsim_io_dict(model, execution_context):
     return io_dict, if_dict, num_out_values, o_tensor_info, batchsize
 
 
-def file_to_basename(x):
-    return os.path.basename(os.path.realpath(x))
+def file_to_basename(x: str | Path) -> str:
+    """Given a path return it's name (basename), without any symlinks."""
+    return str(Path(x).resolve())
+    # return os.path.basename(os.path.realpath(x))
 
 
 def rtlsim_exec_cppxsi(

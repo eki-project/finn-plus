@@ -250,12 +250,14 @@ class FINNSettings:
             return do_skip_cmdline_arg or default
         return do_skip_cmdline_arg
 
-    def __getitem__(self, key: Any) -> Any:  # noqa
+    def __getitem__(self, key: Any) -> Any:
+        """Get a settings value from a given key."""
         if self.sync:
             self.load()
         return self._settings.__getitem__(key)
 
-    def __setitem__(self, key: Any, value: Any) -> None:  # noqa
+    def __setitem__(self, key: Any, value: Any) -> None:
+        """Set a settings value."""
         self._settings.__setitem__(key, value)
         if self.sync:
             self.save()
@@ -266,19 +268,24 @@ class FINNSettings:
         if self.sync:
             self.save()
 
-    def __contains__(self, key: Any) -> bool:  # noqa
+    def __contains__(self, key: Any) -> bool:
+        """Return whether the settings contain the given key."""
         return key in self._settings
 
-    def keys(self) -> Generator:  # noqa
+    def keys(self) -> Generator:
+        """Return a generator to loop all settings keys."""
         yield from self._settings.keys()
 
-    def items(self) -> Generator:  # noqa
+    def items(self) -> Generator:
+        """Return a generator to loop all settings keys and values."""
         yield from self._settings.items()
 
-    def values(self) -> Generator:  # noqa
+    def values(self) -> Generator:
+        """Return a generator to loop all settings values."""
         yield from self._settings.values()
 
-    def delete(self, key: Any) -> None:  # noqa
+    def delete(self, key: Any) -> None:
+        """Delete the given key/value in the settings."""
         del self._settings[key]
         if self.sync:
             self.save()

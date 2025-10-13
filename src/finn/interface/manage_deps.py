@@ -26,6 +26,12 @@ class _StatusTracker:
     """Small helper class to thread-safely organize status data."""
 
     def __init__(self, names_types: list[tuple[str, str]], live: Live) -> None:
+        """Create a status tracker.
+
+        Args:
+            names_types: List of tuples that associate dependency names with their type.
+            live: The rich.live.Live object that is used to display the status data.
+        """
         # Name: (type, status, color)
         self.data = {}
         self.live = live
@@ -388,6 +394,10 @@ class DependencyUpdater:
 
         # Function passed to threadpool
         def install_wrapper(package_name: str, status: _StatusTracker) -> bool:
+            """Wrap the installation function. Can be passed to a thread.
+
+            Installs the given dependency and updates the status tracker along the way.
+            """
             try:
                 status.set_updating(package_name)
                 result = self.install_dependency(package_name)

@@ -1,5 +1,5 @@
 """Run FINN+."""
-# ruff: noqa: D103
+# ruff: noqa: PIE790
 from __future__ import annotations
 
 import click
@@ -106,8 +106,24 @@ def prepare_finn(
     is_test_run: bool = False,
     cmdparam_skip_dep_update: bool = False,
 ) -> FINNSettings:
-    """Prepare a FINN environment with the given settings. The settings will be adapted
-    and modified with the necessary runtime data and returned."""  # noqa
+    """Prepare a FINN environment. After executing this function, FINN can be run. The function
+    receives a `FINNSettings` object which, combined with optional override values,
+    resolves all paths and settings. The modified settings are returned.
+
+    Args:
+        settings: FINNSettings used for configuring FINN. Doesn't need to be complete.
+        deps: Path to the dependency directory. If none resolved via settings and env-vars.
+        deps_definitions: Path to the dependency definition file. If none resolved
+                            via settings and env-vars.
+        flow_config: Path to the build config (yaml or script).
+        build_dir: Path to temporary files directory. If none resolved via settings and env-vars.
+        num_workers: Number of workers used in parallel tasks. Further resolved by settings.
+        is_test_run: True passed when running tests to modify build_dir.
+        cmdparam_skip_dep_update: Whether to skip dependency updates.
+
+    Returns:
+        FINNSettings: Modified settings. If the settings file didn't exist before, it was created.
+    """
     settings_path = settings.get_path()
     status(f"[SETTINGS FILE] {settings_path.absolute()}")
 
@@ -136,12 +152,11 @@ def prepare_finn(
     )
 
     # Pythonpath
-    if "PYTHONPATH" not in os.environ.keys():
+    if "PYTHONPATH" not in os.environ:
         os.environ["PYTHONPATH"] = ""
 
     # Update / Install all dependencies
     if settings["AUTOMATIC_DEPENDENCY_UPDATES"]:
-        # TODO: Make external_dependencies.yaml location settable via settings.yaml
         if "FINN_DEPS_DEFINITIONS" not in settings:
             settings["FINN_DEPS_DEFINITIONS"] = settings.resolve_deps_definitions_path(
                 deps_definitions
@@ -184,6 +199,7 @@ def prepare_finn(
 
 @click.group()
 def main_group() -> None:
+    """Main click group."""  # noqa
     pass
 
 
@@ -218,6 +234,7 @@ def build(
     config: Path,
     model: Path,
 ) -> None:
+    """Click command line option to build a FINN flow from a YAML config and an ONNX model."""
     status(f"Starting FINN build with config {config.name} and model {model.name}!")
     prepare_finn(
         FINNSettings(),
@@ -290,6 +307,10 @@ def run(
     num_workers: int,
     script: Path,
 ) -> None:
+    """Click command line option to run a script in a FINN+ context.
+
+    Can be used for backwards compability with old FINN build flows.
+    """
     script = script.expanduser()
     prepare_finn(
         FINNSettings(),
@@ -321,6 +342,7 @@ def bench(
     num_workers: int,
     build_path: Path | None,
 ) -> None:
+    """Run a benchmark."""
     console = Console()
     prepare_finn(
         FINNSettings(), dependency_path, dependency_definitions, Path(), build_path, num_workers
@@ -356,6 +378,7 @@ def test(
     num_test_workers: str,
     build_path: Path | None,
 ) -> None:
+    """Run a selected subset of the FINN(+) testsuite."""
     console = Console()
     prepare_finn(
         FINNSettings(),
@@ -373,6 +396,7 @@ def test(
 
 @click.group(help="Dependency management")
 def deps() -> None:
+    """Click group collecting depenency related commands."""
     pass
 
 
@@ -380,11 +404,13 @@ def deps() -> None:
 @requires_dependencies
 @requires_dependency_definitions
 def update(dependency_path: Path | None, dependency_definitions: Path | None) -> None:
+    """Update all FINN+ dependencies and then exit."""
     prepare_finn(FINNSettings(), dependency_path, dependency_definitions, Path(), None, 1)
 
 
 @click.group(help="Manage FINN settings")
 def config() -> None:
+    """Click group for config related commands."""
     # TODO: Config remove?
     pass
 
@@ -399,12 +425,14 @@ def _command_get_settings() -> FINNSettings:
 
 @click.command("list", help="List the settings files contents")
 def config_list() -> None:
+    """List all settings found in the current settings file."""
     pprint(_command_get_settings()._settings)  # noqa
 
 
 @click.command("get", help="Get a specific key from the settings")
 @click.argument("key")
 def config_get(key: str) -> None:
+    """Get the value of a settings key."""
     settings = _command_get_settings()
     if key not in settings.keys():
         error(f"Key {key} could not be found in the settings file!")
@@ -416,12 +444,14 @@ def config_get(key: str) -> None:
 @click.argument("key")
 @click.argument("value")
 def config_set(key: str, value: str) -> None:
+    """Set a setting key to a given value."""
     settings = FINNSettings(sync=True)
     settings[key] = value
 
 
 @click.command("help", help="List all known settings fields and their purpose")
 def config_help() -> None:
+    """Print a table with all known settings keys and their purpose."""
     table(FINNSettings.KNOWN_KEYS, "Settings Key", "Purpose")
 
 
@@ -432,6 +462,7 @@ def config_help() -> None:
 )
 @click.argument("path", default="~/.finn/")
 def config_create(path: str) -> None:
+    """Create a template config at the `<given path>/settings.yaml`. Uses the default values."""
     p = Path(path).expanduser()
     if not p.exists():
         error("The given path does not seem to exist!")
@@ -463,6 +494,7 @@ def config_create(path: str) -> None:
 
 
 def main() -> None:
+    """Clicks entrypoint function."""
     config.add_command(config_list)
     config.add_command(config_create)
     config.add_command(config_get)

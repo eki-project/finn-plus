@@ -38,11 +38,13 @@ class NullablePath(click.ParamType):
 
     name = "NullablePath"
 
-    def __init__(self, expand_user: bool = True) -> None:  # noqa
+    def __init__(self, expand_user: bool = True) -> None:
+        """Initialize a NullablePath."""
         super().__init__()
         self.expand_user = expand_user
 
     def convert(self, value: str, param: Any, ctx: Any) -> Path | None:  # noqa
+        """Convert a string value into a Path or None, depending on the contents."""
         if value == "":
             return None
         p = Path(value)
