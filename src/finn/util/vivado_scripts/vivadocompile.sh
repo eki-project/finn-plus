@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -e
+
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

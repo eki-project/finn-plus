@@ -56,15 +56,9 @@ def out_of_context_synth(
     file_dir = Path(__file__).parent.resolve()
     script_path = file_dir / "vivado_scripts" / "vivadocompile.sh"
     # vivadocompile.sh <top-level-entity> <clock-name (optional)> <fpga-part (optional)>
-    call_omx = "sh %s %s %s %s %f" % (
-        script_path,
-        top_name,
-        clk_name,
-        fpga_part,
-        float(clk_period_ns),
-    )
-    call_omx = call_omx.split()
-    launch_process_helper(call_omx, proc_env=os.environ.copy(), cwd=verilog_dir)
+    call = f"{script_path} {top_name} {clk_name} {fpga_part} {float(clk_period_ns)}"
+    call = call.split()
+    launch_process_helper(call, proc_env=os.environ.copy(), cwd=verilog_dir)
 
     vivado_proj_folder = "%s/results_%s" % (verilog_dir, top_name)
     res_counts_path = vivado_proj_folder + "/res.txt"
