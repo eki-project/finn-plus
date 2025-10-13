@@ -32,12 +32,12 @@ mkdir results_$1
 cd results_$1
 
 # put all files in a prf file..
-cp ../*.vhd .
-cp ../*.v .
-cp ../*.h .
-cp ../*.xdc .
-cp ../*.vh .
-cp ../*.sv .
+cp ../*.vhd . || /bin/true
+cp ../*.v . || /bin/true
+cp ../*.h . || /bin/true
+cp ../*.xdc . || /bin/true
+cp ../*.vh . || /bin/true
+cp ../*.sv . || /bin/true
 #put FPGA part to be used into the project compile tcl script
 echo "set fpga_part \"$FPGA_PART\"" > $1.tcl
 cat "$SCRIPT_DIR/vivadocompile.tcl" >> $1.tcl
