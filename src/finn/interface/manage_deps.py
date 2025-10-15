@@ -8,18 +8,157 @@ import subprocess as sp
 import sys
 import yaml
 from concurrent.futures import Future, ThreadPoolExecutor
+from itertools import chain
 from pathlib import Path
+from pydantic import BaseModel, ValidationError
 from rich import box
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from threading import RLock
-from typing import Literal
+from typing import Literal, cast
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import _resolve_module_path, debug, error
 from finn.util.exception import FINNConfigurationError, FINNUserError
+
+
+class Dependency:
+    """Baseclass for all dependencies."""
+
+    pass  # noqa
+
+
+class GitDependency(BaseModel, Dependency):
+    """Data model for a Git-based dependency.
+
+    url: Git repository URL.
+    commit: Commit to checkout.
+    pip_install: Whether to install the repository using pip.
+    """
+
+    url: str
+    commit: str
+    pip_install: bool
+
+
+class BoardfileDependency(BaseModel, Dependency):
+    """Data model for a Boardfile dependency.
+
+    url: Git repository URL.
+    commit: Commit to checkout.
+    subdirectory: Path inside the repository from which to copy to the boardfiles directoty.
+    """
+
+    url: str
+    commit: str
+    subdirectory: Path
+
+
+class DirectDownloadDependency(BaseModel, Dependency):
+    """Data model for a direct download dependency.
+
+    url: URL to download from.
+    do_unzip: Whether to unzip the downloaded data.
+    target_directory: Where to place the downloaded (uncompressed) data.
+    """
+
+    url: str
+    do_unzip: bool
+    target_directory: Path
+
+
+class CustomDependency(BaseModel, Dependency):
+    """Data model for a custom dependency.
+
+    installation_function: Name of the function that should be implemented in the DependencyUpdater
+                            to install this dependency.
+    outdated_function: Name of function that returns whether this dependency is outdated.
+    """
+
+    installation_function: str
+    outdated_function: str
+
+
+class DependencyData(BaseModel):
+    """Data model that stores all dependencies."""
+
+    git_deps: dict[str, GitDependency]
+    boardfile_deps: dict[str, BoardfileDependency]
+    direct_download_deps: dict[str, DirectDownloadDependency]
+    custom_deps: dict[str, CustomDependency]
+
+    def get_all_dependencies(self) -> list[str]:
+        """Return a list of all packages, across dependency types."""
+        return list(
+            chain.from_iterable(
+                [
+                    map(str, (x.keys()))
+                    for x in [
+                        self.git_deps,
+                        self.boardfile_deps,
+                        self.direct_download_deps,
+                        self.custom_deps,
+                    ]
+                ]
+            )
+        )
+
+    def get_dependency_count(self) -> int:
+        """Return the total number of dependencies."""
+        return len(self.get_all_dependencies())
+
+    def assert_unique_dependency_names(self) -> None:
+        """Assert that all dependencies across categories have unique names.
+        Raise AssertionError otherwise.
+        """
+        assert self.get_dependency_count() == len(set(self.get_all_dependencies()))
+
+    def dependency_type_str(
+        self, package_name: str
+    ) -> Literal["Git", "Boardfiles", "Data", "Custom", "Misc"]:
+        """Return a string to tell which type this dependency is."""
+        if package_name in self.git_deps:
+            return "Git"
+        if package_name in self.boardfile_deps:
+            return "Boardfiles"
+        if package_name in self.direct_download_deps:
+            return "Data"
+        if package_name in self.custom_deps:
+            return "Custom"
+        return "Misc"
+
+    def get_dependency_data(self, package_name: str) -> Dependency | None:
+        """Return the dependency data for the given package. If no such package
+        exists return None.
+        """
+        for depdict in [
+            self.git_deps,
+            self.boardfile_deps,
+            self.direct_download_deps,
+            self.custom_deps,
+        ]:
+            if package_name in depdict:
+                return depdict[package_name]
+        return None
+
+    def get_fields(self, package_name: str, *field_names: str) -> tuple:
+        """Return a tuple with all required fields from the data. If one of the fields does not
+        exist, raise an exception."""  # noqa
+        self.assert_unique_dependency_names()
+        dep_data = self.get_dependency_data(package_name)
+        if dep_data is None:
+            raise FINNUserError(
+                f"Cannot request dependency data for " f"non-existing dependency {package_name}!"
+            )
+
+        try:
+            return tuple([dep_data.__getattribute__(field) for field in field_names])
+        except AttributeError as e:
+            raise FINNUserError(
+                f"One of the fields in {field_names} does not exist in data for {package_name}!"
+            ) from e
 
 
 class _StatusTracker:
@@ -113,9 +252,6 @@ class DependencyUpdater:
             raise FINNConfigurationError(
                 f"External dependency definition file not found at: {self.depfile}"
             )
-        self.git_deps = {}
-        self.boarfiles = {}
-        self.direct_downloads = {}
         self.dep_location = dependency_location
         if not self.dep_location.exists():
             self.dep_location.mkdir(parents=True)
@@ -126,20 +262,15 @@ class DependencyUpdater:
         data = {}
         with self.depfile.open() as f:
             data = yaml.load(f, yaml.Loader)
-        if "git_deps" in data:
-            self.git_deps = data["git_deps"]
-        if "boardfiles" in data:
-            self.boarfiles = data["boardfiles"]
-        if "direct_downloads" in data:
-            self.direct_downloads = data["direct_downloads"]
+        try:
+            self.deps = DependencyData.model_validate(data)
+        except ValidationError as e:
+            print(e)
+            sys.exit(0)
 
         # Try to find FINN_XSI. If it cannot be found, it is ignored in the
         # list of all dependencies (since this is neither a failed nor a successful install)
         self.finn_xsi_str = _resolve_module_path("finn_xsi")
-
-    def get_dependency_count(self) -> int:
-        """Sum of all dependencies."""
-        return len(self.git_deps) + len(self.boarfiles) + len(self.direct_downloads)
 
     def _run_silent(self, cmd: str, cwd: Path | None = None, timeout: float | None = None) -> int:
         """Run a given command silently. Return its returncode."""
@@ -163,9 +294,9 @@ class DependencyUpdater:
     def _get_git_hash(self, package_name: str) -> str | None:
         """Return the hash of the given package_name dependency.
         If there is no such package return None."""  # noqa
-        if package_name in self.git_deps:
+        if package_name in self.deps.git_deps:
             target = self.dep_location / package_name
-        elif package_name in self.boarfiles:
+        elif package_name in self.deps.boardfile_deps:
             target = self.boardfile_temporary_downloads / package_name
         else:
             return None
@@ -181,31 +312,11 @@ class DependencyUpdater:
         )
         return result.stdout.strip()
 
-    def _get_fields(self, package_name: str, package_data: dict, *field_names: str) -> tuple:
-        """Return a tuple with all required fields from the data. If one of the fields does not
-        exist, raise an exception."""  # noqa
-        for field in field_names:
-            if field not in package_data:
-                raise FINNUserError(
-                    f"Missing field {field} in dependency definition of {package_name}!"
-                )
-        return tuple([package_data[field] for field in field_names])
-
-    def _dependency_type(self, package_name: str) -> Literal["Git", "Boardfiles", "Data", "Misc"]:
-        """Return a string to tell which type this dependency is."""
-        if package_name in self.git_deps:
-            return "Git"
-        if package_name in self.boarfiles:
-            return "Boardfiles"
-        if package_name in self.direct_downloads:
-            return "Data"
-        return "Misc"
-
     def _install_git_dependency(self, package_name: str) -> bool:
         """Install a git dependency. Return success."""
         debug(f"Trying to install GIT dependency: {package_name}", False)
-        url, commit, pip_install = self._get_fields(
-            package_name, self.git_deps[package_name], "url", "commit", "pip_install"
+        url, commit, pip_install = self.deps.get_fields(
+            package_name, "url", "commit", "pip_install"
         )
         target = self.dep_location / package_name
         if not self._git_clone(url, commit, target):
@@ -221,9 +332,7 @@ class DependencyUpdater:
     def _install_boardfile_dependency(self, package_name: str) -> bool:
         """Install a board file dependency. Return success."""
         debug(f"Trying to install BOARDFILE dependency: {package_name}", False)
-        url, commit, subdir = self._get_fields(
-            package_name, self.boarfiles[package_name], "url", "commit", "subdirectory"
-        )
+        url, commit, subdir = self.deps.get_fields(package_name, "url", "commit", "subdirectory")
         subdir = Path(subdir)
         temp_target = self.boardfile_temporary_downloads / package_name
         source = temp_target / subdir
@@ -246,8 +355,8 @@ class DependencyUpdater:
             raise FINNConfigurationError(
                 'Make sure that both "wget" and "unzip" are available on your system.'
             )
-        url, do_unzip, target_directory = self._get_fields(
-            package_name, self.direct_downloads[package_name], "url", "do_unzip", "target_directory"
+        url, do_unzip, target_directory = self.deps.get_fields(
+            package_name, "url", "do_unzip", "target_directory"
         )
         target: Path = self.dep_location / target_directory
 
@@ -274,6 +383,26 @@ class DependencyUpdater:
             if self._run_silent(f"unzip -o {Path(url).name}", cwd=target) != 0:
                 return False
         return unzipped.exists()
+
+    def _install_custom(self, package_name: str) -> bool:
+        """Install the custom dependency. The function name provided by the definition file
+        must exist as a method of this class. If so, it is executed and it's return value
+        used to check for success.
+        """
+        data = self.deps.get_dependency_data(package_name)
+        assert data is not None
+        function_name = cast("CustomDependency", data).installation_function
+        try:
+            return self.__getattribute__(function_name)()
+        except AttributeError as e:
+            raise FINNUserError(
+                f"Implementation for custom installation function for "
+                f"{package_name} not found in DependencyUpdater!"
+            ) from e
+
+    def _is_outdated_finn_xsi(self) -> bool:
+        # If finn xsi was found its outdated, if it wasnt found, its never outdated
+        return self.finn_xsi_str != ""
 
     def _install_finn_xsi(self) -> bool:
         """Install FINN XSI bindings and return if installation was successful."""
@@ -312,33 +441,44 @@ class DependencyUpdater:
         """
         if package_name == "finn_xsi":
             return self._install_finn_xsi()
-        match self._dependency_type(package_name):
+        match self.deps.dependency_type_str(package_name):
             case "Git":
                 return self._install_git_dependency(package_name)
             case "Boardfiles":
                 return self._install_boardfile_dependency(package_name)
             case "Data":
                 return self._install_direct_download_dependency(package_name)
+            case "Custom":
+                return self._install_custom(package_name)
             case _:
                 return False
 
     def is_outdated(self, package_name: str) -> bool:
         """Return whether the a package is outdated. If no such package exist return False too."""
-        if package_name == "finn_xsi":
-            # If finn xsi was found its outdated, if it wasnt found, its never outdated
-            return self.finn_xsi_str != ""
-        if package_name in self.direct_downloads:
+        data = self.deps.get_dependency_data(package_name)
+        if data is None:
+            raise FINNUserError(
+                f"Cannot check if non-existing " f"dependency {package_name} is outdated."
+            )
+        if package_name in self.deps.custom_deps:
+            function_name = cast("CustomDependency", data).outdated_function
+            try:
+                return self.__getattribute__(function_name)()
+            except AttributeError as e:
+                raise FINNUserError(
+                    f"Custom package {package_name} is missing the implementation"
+                    f"of the outdated check function in DependencyUpdater!"
+                ) from e
+        if package_name in self.deps.direct_download_deps:
             # TODO: Improve (e.g. by checking directly instead of by using wget).
             # Check by letting wget compare timestamps. To avoid large wait times
             # immediately delete the file again after a short timeout.
-            url = self.direct_downloads[package_name]["url"]
-            target = (
-                self.dep_location
-                / self.direct_downloads[package_name]["target_directory"]
-                / Path(url).name
-            )
+            data = cast("DirectDownloadDependency", data)
+            target = self.dep_location / data.target_directory / Path(data.url).name
+            if not target.parent.exists():
+                target.parent.mkdir(parents=True)
             wget_result = sp.run(
-                shlex.split(f"wget -N {url}"),
+                shlex.split(f"wget -N {data.url}"),
                 cwd=target.parent,
                 capture_output=True,
                 text=True,
@@ -352,12 +492,6 @@ class DependencyUpdater:
             return True
 
         # Compare hashes for git dependencies and boardfiles
-        dep_data = {}
-        if package_name in self.git_deps:
-            dep_data = self.git_deps
-        elif package_name in self.boarfiles:
-            dep_data = self.boarfiles
-
         # Try to fetch the current hash
         has_hash = self._get_git_hash(package_name)
 
@@ -366,27 +500,13 @@ class DependencyUpdater:
             return True
 
         # Compare hashes
-        if "commit" not in dep_data[package_name]:
-            raise FINNConfigurationError(
-                f'Git dependency {package_name} has no "commit"'
-                f"field in the definition file. Please provide one."
-            )
-        expected_hash = dep_data[package_name]["commit"]
-        return expected_hash != has_hash
-
-    def get_all_dependencies(self) -> list[str]:
-        """Return a list of all dependencies."""
-        return (
-            list(self.git_deps.keys())
-            + list(self.boarfiles.keys())
-            + list(self.direct_downloads.keys())
-            + ["finn_xsi"]
-        )
+        data = cast("GitDependency", data)
+        return data.commit != has_hash
 
     def get_oudated_dependencies(self) -> list[str]:
         """Return a list of the names of all outdated packages. For Git dependencies this means
         an outdated commit hash, for the others a different URL or target directory."""  # noqa
-        return list(filter(self.is_outdated, self.get_all_dependencies()))
+        return list(filter(self.is_outdated, self.deps.get_all_dependencies()))
 
     def update(self) -> None:
         """With a live display and multithreading update all dependencies that are outdated."""
@@ -413,7 +533,7 @@ class DependencyUpdater:
 
         # Keep track of the status of all dependencies
         status = _StatusTracker(
-            [(name, self._dependency_type(name)) for name in deps_outdated], Live()
+            [(name, self.deps.dependency_type_str(name)) for name in deps_outdated], Live()
         )
         if len(deps_outdated) > 0:
             # Display live updates of the installation process
@@ -432,7 +552,7 @@ class DependencyUpdater:
             Console().print(
                 Panel(
                     f"Installed [green bold]{status.total}[/green bold] dependencies. "
-                    f"(Skipped [orange3 bold]{self.get_dependency_count() - status.total}"
+                    f"(Skipped [orange3 bold]{self.deps.get_dependency_count() - status.total}"
                     f"[/orange3 bold] dependencies "
                     f"due to existing installations.)"
                 ),

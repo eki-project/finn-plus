@@ -54,13 +54,8 @@ from rich.traceback import Traceback
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
-from finn.util.exception import (
-    FINNConfigurationError,
-    FINNDataflowError,
-    FINNError,
-    FINNUserError,
-    snapshot_on_exception,
-)
+from finn.util.exception import FINNConfigurationError, FINNDataflowError, FINNError, FINNUserError
+from finn.util.exception_snapshot import snapshot_on_exception
 
 
 def get_logfile_path(cfg: DataflowBuildConfig) -> str:

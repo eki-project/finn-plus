@@ -32,7 +32,7 @@ git_deps:
         commit: "bbef09f9520457186830505a99050256821d5079"
         pip_install: False
 
-boardfiles:
+boardfile_deps:
     avnet-bdf:
         url: "https://github.com/Avnet/bdf.git"
         commit: "2d49cfc25766f07792c0b314489f21fe916b639b"
@@ -50,7 +50,7 @@ boardfiles:
         commit: "98e0d3efc901f0b974006bc4370c2a7ad8856c79"
         subdirectory: "boards/Xilinx/kv260_som"
 
-direct_downloads:
+direct_download_deps:
     pynq-z1:
         url: "https://github.com/cathalmccabe/pynq-z1_board_files/raw/master/pynq-z1.zip"
         do_unzip: True
@@ -59,3 +59,8 @@ direct_downloads:
         url: "https://dpoauwgwqsy2x.cloudfront.net/Download/pynq-z2.zip"
         do_unzip: True
         target_directory: "board_files"
+
+custom_deps:
+    finn_xsi:
+        installation_function: "_install_finn_xsi"
+        outdated_function: "_is_outdated_finn_xsi"
