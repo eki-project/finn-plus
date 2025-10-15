@@ -1,7 +1,10 @@
+"""Transformations for generating and simulating instrumentation IP."""
+
 import numpy as np
 import os
 import shutil
 import subprocess
+from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
@@ -13,7 +16,7 @@ from finn.util.hls import CallHLS
 
 # TODO: duplicate function from make_zynq_proj.py
 def collect_ip_dirs(model, ipstitch_path):
-    # collect list of all IP dirs
+    """Collect list of all IP directories required by the design."""
     ip_dirs = []
     need_memstreamer = False
     for node in model.graph.node:
@@ -35,18 +38,22 @@ def collect_ip_dirs(model, ipstitch_path):
 
 
 class GenerateInstrumentationIP(Transformation):
+    """Generate instrumentation IP for performance monitoring."""
+
     def __init__(
         self,
         fpga_part,
         clk_period_ns,
         format="ip",  # "ip" for Vivado (Zynq) or "xo" for Vitis (Alveo/Versal)
     ):
+        """Initialize instrumentation IP generation with FPGA part and clock settings."""
         super().__init__()
         self.fpga_part = fpga_part
         self.clk_period_ns = clk_period_ns
         self.format = format
 
     def apply(self, model):
+        """Generate instrumentation IP core."""
         # Create directory for code-gen and HLS of instrumentation IP
         wrapper_output_dir = make_build_dir(prefix="code_gen_ipgen_Instrumentation_")
         model.set_metadata_prop("instrumentation_ipgen", wrapper_output_dir)
@@ -106,15 +113,17 @@ class GenerateInstrumentationIP(Transformation):
         with open(wrapper_output_dir + "/hls_syn.tcl", "w") as f:
             f.write(ipgentcl)
         # build bash script to launch HLS synth and call it
-        code_gen_dir = wrapper_output_dir
-        builder = CallHLS()
-        builder.append_tcl(code_gen_dir + "/hls_syn.tcl")
-        builder.set_ipgen_path(code_gen_dir + "/{}".format(prjname))
-        builder.build(code_gen_dir)
+        code_gen_dir = Path(wrapper_output_dir)
+        builder = CallHLS(
+            tcl_script=code_gen_dir / "hls_syn.tcl",
+            code_gen_dir=code_gen_dir,
+            ipgen_path=code_gen_dir / prjname,
+        )
+        builder.build()
         ipgen_path = builder.ipgen_path
-        assert os.path.isdir(ipgen_path), "HLS IPGen failed: %s not found" % (ipgen_path)
-        ip_path = ipgen_path + "/sol1/impl/ip"
-        assert os.path.isdir(ip_path), "HLS IPGen failed: %s not found. Check log under %s" % (
+        assert ipgen_path.is_dir(), "HLS IPGen failed: %s not found" % (ipgen_path)
+        ip_path = ipgen_path / "sol1" / "impl" / "ip"
+        assert ip_path.is_dir(), "HLS IPGen failed: %s not found. Check log under %s" % (
             ip_path,
             code_gen_dir,
         )
@@ -135,11 +144,15 @@ class GenerateInstrumentationIP(Transformation):
 
 
 class PrepareInstrumentationSim(Transformation):
+    """Prepare simulation environment for instrumentation."""
+
     def __init__(self, fpga_part):
+        """Initialize instrumentation simulation preparation."""
         super().__init__()
         self.fpga_part = fpga_part
 
     def apply(self, model):
+        """Prepare scripts for simulating instrumentation IP."""
         # Create directory for simulation of instrumentation IP + FINN IP
         sim_output_dir = make_build_dir(prefix="sim_Instrumentation_")
         model.set_metadata_prop("instrumentation_sim", sim_output_dir)
@@ -182,10 +195,14 @@ class PrepareInstrumentationSim(Transformation):
 
 
 class RunInstrumentationSim(Transformation):
+    """Run instrumentation simulation to collect performance data."""
+
     def __init__(self):
+        """Initialize instrumentation simulation runner."""
         super().__init__()
 
     def apply(self, model):
+        """Run instrumentation simulation script."""
         sim_output_dir = model.get_metadata_prop("instrumentation_sim")
         if sim_output_dir is None or (not os.path.isdir(sim_output_dir)):
             raise Exception(
