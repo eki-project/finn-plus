@@ -856,10 +856,11 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
     if DataflowOutputType.PYNQ_DRIVER in cfg.generate_outputs:
         # determine drivertype
         if cfg.enable_instrumentation:
+            driver_type = "FINNDMAInstrumentationOverlay"
+            if cfg.instrumentation_no_dma:
+                driver_type = "FINNInstrumentationOverlay"
             if cfg.live_fifo_sizing:
                 driver_type = "FINNLiveFIFOOverlay"
-            else:
-                driver_type = "FINNInstrumentationOverlay"
         else:
             driver_type = "FINNDMAOverlay"
 

@@ -1129,3 +1129,56 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             json.dump(report, f, indent=2)
 
         print("Done.")
+
+
+class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
+    def __init__(
+        self,
+        bitfile_name,
+        io_shape_dict,
+        platform="zynq",
+        fclk_mhz=100.0,
+        device=None,
+        download=True,
+        runtime_weight_dir="runtime_weights/",
+        batch_size=1,
+        seed=1,
+    ):
+        super().__init__(
+            bitfile_name,
+            io_shape_dict=io_shape_dict,
+            platform=platform,
+            fclk_mhz=fclk_mhz,
+            device=device,
+            download=download,
+            runtime_weight_dir=runtime_weight_dir,
+            batch_size=batch_size,
+            seed=seed,
+        )
+
+    def set_current_mode(self, mode):
+        if self.get_current_mode() != mode:
+            self.reset_accelerator()
+            val = 1 if mode == "instr" else 0
+            self.axi_gpio_0.write(
+                offset=self.ip_dict["axi_gpio_0"]["registers"]["GPIO2_DATA"]["address_offset"],
+                value=val,
+            )
+
+    def get_current_mode(self):
+        val = self.axi_gpio_0.read(
+            offset=self.ip_dict["axi_gpio_0"]["registers"]["GPIO2_DATA"]["address_offset"]
+        )
+        return "instr" if val == 1 else "dma"
+
+    def throughput_test(self, **kwargs):
+        self.set_current_mode("dma")
+        return super().throughput_test(**kwargs)
+
+    def execute(self, input_npy):
+        self.set_current_mode("dma")
+        return super().execute(input_npy)
+
+    def experiment_instrumentation(self, **kwargs):
+        self.set_current_mode("instr")
+        return super().experiment_instrumentation(**kwargs)

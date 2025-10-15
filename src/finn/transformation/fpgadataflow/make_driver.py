@@ -614,7 +614,7 @@ class MakePYNQDriver(Transformation):
                 experiment_information = json.load(f)
 
         driver_information["driver_type"] = self.driver_type
-        if self.driver_type == "FINNDMAOverlay":
+        if self.driver_type in ["FINNDMAOverlay", "FINNDMAInstrumentationOverlay"]:
             external_weights, runtime_weights = self._generate_weight_files(model)
             driver_shapes: Dict = get_driver_shapes(model)
             driver_information["io_shape_dict"] = driver_shapes
