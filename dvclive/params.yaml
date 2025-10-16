@@ -1,0 +1,15 @@
+params:
+  dut: transformer
+  seed: 12
+  model_dir: models/transformer/gpt_d_gpt2-s256-t2048-l1-h2-e256
+  board: U250
+  synth_clk_period_ns: 10
+  enable_instrumentation: false
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - out_of_context_synth
+  shell_flow_type: vitis_alveo
+  vitis_platform: xilinx_u250_gen3x16_xdma_4_1_202210_1
+metadata:
+  tool_version: '2024.2'
