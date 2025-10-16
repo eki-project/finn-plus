@@ -11,6 +11,22 @@
  *	prior to compilation.
  ***************************************************************************/
 
+#include <cstddef>
+#include <initializer_list>
+
+/**** The following two defines are relevant for FIFO Simulation only ****/
+
+#cmakedefine MPI_FOUND
+
+// If set, use this as the FIFO start size and directly
+// skip to iterative sizing
+#cmakedefine FIFO_START_SIZE ${FIFO_START_SIZE}
+
+
+
+
+/**** General RTLSIM Configuration Parameters ****/
+
 struct stream_desc {
 	char const *name;
 	size_t      job_size;
@@ -27,10 +43,10 @@ static char const  design_libname[] = "xsim.dir/@TOP_MODULE_NAME@/xsimk.so";
 
 // AXI stream descriptors {stream_name, transactions_per_inference}
 // input AXI stream descriptors
-static std::initializer_list<stream_desc> const  istream_descs { @ISTREAM_DESC@ };
+static constexpr std::initializer_list<stream_desc> const  istream_descs { @ISTREAM_DESC@ };
 
 // output AXI stream descriptors
-static std::initializer_list<stream_desc> const  ostream_descs { @OSTREAM_DESC@ };
+static constexpr std::initializer_list<stream_desc> const  ostream_descs { @OSTREAM_DESC@ };
 
 // number of inferences to perform
 constexpr unsigned  n_inferences = @N_INFERENCES@;

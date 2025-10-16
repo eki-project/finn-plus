@@ -1,0 +1,89 @@
+cmake_minimum_required(VERSION 3.10)
+project(LayerSimulationBackend)
+
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+# Require C++20
+set(CMAKE_CXX_EXTENSIONS ON)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+message(STATUS "Using C++ Standard ${CMAKE_CXX_STANDARD}")
+SET(CMAKE_COLOR_MAKEFILE ON)
+
+message(STATUS "CMake cwd: ${CMAKE_CURRENT_SOURCE_DIR}")
+
+# Export compile commands for clangd
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# INCLUDES
+
+#Threads
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
+#OpenMP
+find_package(OpenMP REQUIRED)
+
+#Compiler Options
+add_library(fifosim_options INTERFACE)
+add_library(fifosim::options ALIAS fifosim_options)
+
+OPTION(FIFOSIM_ENABLE_ALLOPT "Enable all optimizations" ON)
+if(${FIFOSIM_ENABLE_ALLOPT})
+  message(STATUS "All optimizations are enabled")
+  target_compile_options(
+    fifosim_options
+    INTERFACE -Ofast -ffast-math -march=native -mtune=native -fstack-protector-strong -fopenmp -ffunction-sections -fdata-sections -pipe -funroll-loops -shared -fPIC)
+  #target_link_options(fifosim_options INTERFACE -fsanitize=undefined,address)
+endif()
+
+### Enable compiler warnings
+option(FIFOSIM_ENABLE_WARNINGS "Enable warnings" ON)
+if (FIFOSIM_ENABLE_WARNINGS)
+  include(cmake/CompilerWarnings.cmake)
+  fifosim_set_project_warnings(
+    fifosim_options
+    OFF
+    ""
+    ""
+    ""
+    "")
+endif (FIFOSIM_ENABLE_WARNINGS)
+
+#
+# Create options for including cmake files from the cmake folder with a bit of output.
+#
+macro(check_include)
+  if(NOT ${ARGC} EQUAL 3)
+    message(FATAL_ERROR "Call to 'check_include' with ${ARGC} arguments instead of 3")
+  endif()
+  OPTION(${ARGV0} "Enable ${ARGV0}" ON)
+  if (${ARGV0})
+    message(STATUS "${ARGV1}: enabled")
+    include(cmake/${ARGV2})
+  else()
+    message(STATUS "${ARGV1}: disabled")
+  endif()
+endmacro()
+
+message(STATUS "Checks:")
+list(APPEND CMAKE_MESSAGE_INDENT "  ") #indent +1
+check_include(FIFOSIM_IPO          "InterproceduralOptimization" InterproceduralOptimization.cmake)
+list(POP_BACK CMAKE_MESSAGE_INDENT)    #indent -1
+
+# Write configuration header
+#configure_file("${CMAKE_BINARY_DIR}/simulation_config.hpp.in" "${CMAKE_BINARY_DIR}/simulation_config.hpp")
+
+# Main
+file(GLOB_RECURSE CORE_SRC src/*.cpp)
+add_executable(LayerSimulationBackend LayerSimulationBackend.cpp ${CORE_SRC})
+
+# Include the rtlsim wrapper directory itself
+target_include_directories(LayerSimulationBackend PUBLIC "${CMAKE_BINARY_DIR}")
+
+# Add xsim includes
+target_include_directories(LayerSimulationBackend PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include")
+target_include_directories(LayerSimulationBackend PUBLIC "include")
+
+# Link libraries
+target_link_libraries(LayerSimulationBackend fifosim::options Threads::Threads OpenMP::OpenMP_CXX -ldl -lrt)
