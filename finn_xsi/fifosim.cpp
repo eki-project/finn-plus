@@ -7,6 +7,7 @@
 #include <SharedLibrary.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <functional>
@@ -27,8 +28,8 @@ constexpr int MPI_ROOT_RANK = 0;
 struct simDesc {
     xsi::Kernel kernel;
     xsi::Design top;
-    std::vector<S_AXIS_Control> istreams;
-    std::vector<M_AXIS_Control> ostreams;
+    std::array<S_AXIS_Control, istream_descs.size()> istreams;
+    std::array<M_AXIS_Control, istream_descs.size()> ostreams;
     std::vector<std::reference_wrapper<xsi::Port>> fifo_depths;
     std::vector<std::reference_wrapper<xsi::Port>> fifo_occupancies;
     std::vector<std::reference_wrapper<xsi::Port>> fifo_max_occupancies;
@@ -49,11 +50,11 @@ simDesc initDesign(const std::string& kernel_lib, const std::string& design_lib,
     }
 
     // Find I/O Streams and initialize their Status
-    for (auto&& elem : istream_descs) {
-        desc.istreams.emplace_back(desc.top, desc.clk, elem.job_size, elem.job_ticks, elem.name);
+    for (size_t i = 0; i < istream_descs.size(); ++i) {
+        desc.istreams[i] = S_AXIS_Control{desc.top, desc.clk, std::data(istream_descs)[i].job_size, std::data(istream_descs)[i].job_ticks, std::data(istream_descs)[i].name};
     }
-    for (auto&& elem : ostream_descs) {
-        desc.ostreams.emplace_back(desc.top, desc.clk, elem.job_size, elem.name);
+    for (size_t i = 0; i < ostream_descs.size(); ++i) {
+        desc.ostreams[i] = M_AXIS_Control{desc.top, desc.clk, std::data(ostream_descs)[i].job_size, std::data(ostream_descs)[i].name};
     }
 
     // Find Global Control & Run Startup Sequence
@@ -115,70 +116,91 @@ static void reset(simDesc& desc) noexcept {
     rst_n.set(1).write_back();
 }
 
-// Helper function to process output streams
-[[gnu::hot]] [[gnu::flatten]]
-static bool processOutputStream(M_AXIS_Control& stream, size_t& iters, size_t& completedMaps) noexcept {
-    if (!stream.is_ready() || !stream.is_valid()) [[unlikely]] {
-        return false;
-    }
-
-    // Track first completion
-    if (++stream.total_txns == stream.job_size) [[unlikely]] {
-        stream.first_complete = iters;
-    }
-
-    // Track job completion and intervals
-    if (++stream.job_txns == stream.job_size) [[unlikely]] {
-        stream.interval = iters - stream.last_complete;
-        stream.last_complete = iters;
-        stream.job_txns = 0;
-        ++completedMaps;
-    }
-
-    return true;
-}
-
 bool isDeadlocked(const std::vector<size_t> fifo_occupancies) {
     static std::vector<size_t> last_occupancies(fifo_occupancies.size(), 0);
     static bool init = true;
+    static size_t deadlockCounter = 0;
     if (init) {
         last_occupancies = fifo_occupancies;
         init = false;
         return false;
     }
 
-    std::cout << "DEBUG: FIFO Occupancies: ";
-    for (const auto& occ : fifo_occupancies) {
-        std::cout << occ << " ";
-    }
-    std::cout << std::endl;
-    std::cout << "DEBUG: Last Occupancies: ";
-    for (const auto& occ : last_occupancies) {
-        std::cout << occ << " ";
-    }
-    std::cout << std::endl;
+    bool unchanged = std::equal(fifo_occupancies.begin(), fifo_occupancies.end(), last_occupancies.begin());
+    bool zeros = std::all_of(fifo_occupancies.begin(), fifo_occupancies.end(), [](int i) { return i==0; });
 
-    bool deadlocked = std::equal(fifo_occupancies.begin(), fifo_occupancies.end(), last_occupancies.begin());
+    if (unchanged && !zeros) {
+        std::cout << "FIFO Occupancies: ";
+        for (const auto& occ : fifo_occupancies) {
+            std::cout << occ << " ";
+        }
+        std::cout << "\n";
+        std::cout << "Last FIFO Occupancies: ";
+        for (const auto& occ : last_occupancies) {
+            std::cout << occ << " ";
+        }
+        std::cout << "\n";
+    }
+
     last_occupancies = fifo_occupancies;
-    return deadlocked;
+    if (unchanged && !zeros) {
+        if (++deadlockCounter >= 3) {
+            deadlockCounter = 0;
+            return true;
+        }
+    } else {
+        deadlockCounter = 0;
+    }
+    return false;
 }
 
+
+template<size_t istreams_size = istream_descs.size(), size_t ostreams_size = ostream_descs.size()>
 [[gnu::hot]] [[gnu::flatten]]
-bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, std::vector<std::reference_wrapper<xsi::Port>>& fifo_occupancies, size_t& iters) {
-    // Enter Simulation Loop and track Progress
-    const auto begin = std::chrono::high_resolution_clock::now();
+bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::array<S_AXIS_Control, istreams_size>& istreams, std::array<M_AXIS_Control, ostreams_size>& ostreams, std::vector<std::reference_wrapper<xsi::Port>>& fifo_occupancies,
+                       size_t& iters, const size_t max_inputs = std::numeric_limits<size_t>::max(), const size_t iterations_to_stable_state = std::numeric_limits<size_t>::max()) {
     size_t completedMaps = 0;
-
-    // Pre-cache frequently accessed values
-    const size_t num_ostreams = ostreams.size();
-    const size_t num_istreams = istreams.size();
-
+    bool inputs_valid = false;
     //-------------------------------------------------------------------
     // Make sure all inputs are valid. We do not care about throttling
-    for (size_t i = 0; i < num_istreams; ++i) {
-        istreams[i].valid(true);
+    if (iters < max_inputs) {
+        inputs_valid = true;
+        for (auto&& stream : istreams) {
+            stream.valid(true);
+        }
     }
 
+    if (iters % 2 == 1) {  // Prepare for unrolling
+        //-------------------------------------------------------------------
+        // Clock down - then read signal updates from design
+        clk.cycle(0);
+
+        //-------------------------------------------------------------------
+        // Process output streams
+
+        for (auto&& stream : ostreams) {
+            if (stream.is_valid() && ++stream.job_txns == stream.job_size) {
+                // Track job completion and intervals
+                stream.interval = iters - stream.last_complete;
+                stream.last_complete = iters;
+                stream.job_txns = 0;
+                if (++completedMaps == featuremaps) [[unlikely]] {
+                    clk.cycle(1);
+                    return true;
+                }
+            }
+        }
+
+
+        //-------------------------------------------------------------------
+        // Clock up - then write signal updates back to design
+        clk.cycle(1);
+
+        ++iters;
+    }
+
+    // Enter Simulation Loop and track Progress
+    const auto begin = std::chrono::high_resolution_clock::now();
     while (true) [[likely]] {
         //-------------------------------------------------------------------
         // Clock down - then read signal updates from design
@@ -187,43 +209,94 @@ bool runForFeaturemaps(const size_t featuremaps, Clock& clk, std::vector<S_AXIS_
         //-------------------------------------------------------------------
         // Process output streams
 
-        for (size_t i = 0; i < num_ostreams; ++i) {
-            processOutputStream(ostreams[i], iters, completedMaps);
+        for (auto&& stream : ostreams) {
+            if (stream.is_valid() && ++stream.job_txns == stream.job_size) {
+                // Track job completion and intervals
+                stream.interval = iters - stream.last_complete;
+                stream.last_complete = iters;
+                stream.job_txns = 0;
+                std::cout << "Featuremap completed\n";
+                if (++completedMaps == featuremaps) [[unlikely]] {
+                    clk.cycle(1);
+                    return true;
+                }
+            }
         }
+
+
+        //-------------------------------------------------------------------
+        // Clock up - then write signal updates back to design
+        clk.cycle(1);
+        //-------------------------------------------------------------------
+        // Clock down - then read signal updates from design
+        clk.cycle(0);
+
+        //-------------------------------------------------------------------
+        // Process output streams
+        ++iters;
+        for (auto&& stream : ostreams) {
+            if (stream.is_valid() && ++stream.job_txns == stream.job_size) {
+                // Track job completion and intervals
+                stream.interval = iters - stream.last_complete;
+                stream.last_complete = iters;
+                stream.job_txns = 0;
+                std::cout << "Featuremap completed\n";
+                if (++completedMaps == featuremaps) [[unlikely]] {
+                    clk.cycle(1);
+                    return true;
+                }
+            }
+        }
+
 
         //-------------------------------------------------------------------
         // Clock up - then write signal updates back to design
         clk.cycle(1);
 
-        if (++iters % 25000 == 0) [[unlikely]] {
+        if ((++iters & (0x7FFF)) == 0) [[unlikely]] {  // mod 2^15 //This can only be true in even cycles therefore only check this here
             std::cout << "Iteration: " << iters << " in " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - begin).count() << "ms" << std::endl;
-            //Deadlock detection
-            std::vector<size_t> occupancies;
+            // Deadlock detection
+            /* std::vector<size_t> occupancies;
+            occupancies.reserve(fifo_occupancies.size());
             for (const auto& p : fifo_occupancies) {
-                occupancies.push_back(p.get().read().as_unsigned());
+                occupancies.emplace_back(p.get().read().as_unsigned());
             }
             if (isDeadlocked(occupancies)) {
                 std::cout << "Deadlock detected after " << iters << " iterations!" << std::endl;
                 return false;
+            } */
+        }
+        // Disable new inputs after max_inputs iterations to speed up simulation
+        if (inputs_valid && iters >= max_inputs) [[unlikely]] {
+            std::cout << "Disabling new inputs after " << iters << " iterations." << std::endl;
+            inputs_valid = false;
+            for (auto&& stream : istreams) {
+                stream.valid(false);
             }
         }
 
-        if (completedMaps == featuremaps) [[unlikely]] {
-            return true;
-        }
-        // Check for timeout
-        /* if (timeout > max_timeout_limit) [[unlikely]] {
+        if (iters >= iterations_to_stable_state) [[unlikely]] {
+            std::cout << "Reached maximum number of iterations to stable state (" << iterations_to_stable_state << ")." << std::endl;
             return false;
-        } */
+        }
     }
-    std::cout << "Stable state reached after " << iters << " iterations in " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - begin).count() << "ms" << std::endl;
-    return true;
 }
 
 constexpr size_t computeMovingAverage(const size_t oldAvg, const size_t newValue, const size_t count) noexcept { return (oldAvg * (count - 1) + newValue) / count; }
 
+consteval size_t maxIStreamJobSize() {
+    size_t maxSize = 0;
+    for (const auto& desc : istream_descs) {
+        if (desc.job_size > maxSize) {
+            maxSize = desc.job_size;
+        }
+    }
+    return maxSize;
+}
+
 [[gnu::hot]]
-std::optional<size_t> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& istreams, std::vector<M_AXIS_Control>& ostreams, std::vector<std::reference_wrapper<xsi::Port>>& fifo_occupancies, size_t& iters) {
+std::optional<std::tuple<size_t, size_t>> runToStableState(Clock& clk, std::array<S_AXIS_Control, istream_descs.size()>& istreams, std::array<M_AXIS_Control, istream_descs.size()>& ostreams, std::vector<std::reference_wrapper<xsi::Port>>& fifo_occupancies,
+                                       size_t& iters, const size_t max_inputs = std::numeric_limits<size_t>::max(), const size_t iterations_to_stable_state = std::numeric_limits<size_t>::max()) {
     size_t avgInterval = 0;
     size_t runs = 0;
     size_t totalMaps = 0;
@@ -234,7 +307,7 @@ std::optional<size_t> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& 
     bool warmup = true;
 
     while (true) [[likely]] {
-        if (!runForFeaturemaps(1, clk, istreams, ostreams, fifo_occupancies, iters)) [[unlikely]] {
+        if (!runForFeaturemaps(1, clk, istreams, ostreams, fifo_occupancies, iters, max_inputs, iterations_to_stable_state)) [[unlikely]] {
             return std::nullopt;
         }
         // Do one map as a warmup without calculating the avg to fill pipeline
@@ -253,65 +326,51 @@ std::optional<size_t> runToStableState(Clock& clk, std::vector<S_AXIS_Control>& 
     }
     // Avg Interval here is equivalent to the output stream's
     // metrics, but easier to retrieve
-    return avgInterval;
+    return std::make_tuple(avgInterval, (totalMaps+10) * maxIStreamJobSize());
 }
 
-std::tuple<size_t, size_t> determineStartDepth(const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file, const char* const trace_file, std::optional<int> start_fifo_size = std::nullopt) {
-    int start_depth = start_fifo_size.value_or(1);
-    int last_start_depth = start_depth;
-    uint32_t last_interval = 0;
+std::vector<unsigned> getMaxFIFOUtilization(const std::vector<std::reference_wrapper<xsi::Port>>& fifo_max_occupancies) {
+    std::vector<unsigned> maxUtil;
+    maxUtil.reserve(fifo_max_occupancies.size());
+    for (const auto& p : fifo_max_occupancies) {
+        maxUtil.emplace_back(p.get().read().as_unsigned());
+    }
+    return maxUtil;
+}
 
-    while (true) {
-        std::cout << "Starting testing start_depth: " << start_depth << std::endl;
+std::tuple<std::vector<unsigned>, size_t, size_t, size_t> determineStartDepth(const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file, const char* const trace_file, int start_depth = std::numeric_limits<int>::max()) {
+    auto&& [kernel, top, istreams, ostreams, fifo_ports, fifo_occupancies, fifo_max_occupancies, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
 
-        auto&& [kernel, top, istreams, ostreams, fifo_ports, fifo_occupancies, fifo_max_occupancies, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
+    for (auto&& p : fifo_ports) {
+        p.get().set(static_cast<unsigned>(start_depth)).write_back();
+    }
+    clk.toggle_clk();
 
-        for (auto&& p : fifo_ports) {
-            p.get().set(static_cast<unsigned>(start_depth)).write_back();
-        }
-        clk.toggle_clk();
-        for (auto&& s : ostreams) {
-            s.job_txns = 0;
-            s.total_txns = 0;
-            s.first_complete = 0;
-            s.last_complete = 0;
-            s.interval = 0;
-        }
-
-        size_t iters = 0;
-        if (auto ret = runToStableState(clk, istreams, ostreams, fifo_occupancies, iters); ret) {
-            auto&& interval = *ret;
-            if (interval > 0 && interval == last_interval) {
-                start_depth = last_start_depth;
-                break;
-            }
-            // std::cout << "Testing start_depth: " << start_depth << ", interval: " << interval << std::endl;
-            last_interval = static_cast<uint32_t>(interval);
-        }
-
-        last_start_depth = start_depth;
-        start_depth <<= 1;  // Double the start depth
-
-        if (start_depth >= (2 << 20)) {
-            throw std::runtime_error("Couldn't find a working start depth, please set manually!");
+    size_t iters = 0;
+    if (auto ret = runToStableState(clk, istreams, ostreams, fifo_occupancies, iters); ret) {
+        auto&& [interval, maxInputs] = *ret;
+        if (interval > 0) {
+            return std::make_tuple(getMaxFIFOUtilization(fifo_max_occupancies), static_cast<uint32_t>(interval), maxInputs, static_cast<size_t>(iters*1.1));
         }
     }
-
-    return std::make_tuple(start_depth, last_interval);
+    throw std::runtime_error("Couldn't find a working start depth, please set manually!");
 }
 
 [[gnu::hot]]
-std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interval, const size_t startIndex, const size_t endIndex, const std::string& kernel_lib, const std::string& design_lib, const char* const xsim_log_file,
-                                    const char* const trace_file, int rank) {
+std::vector<size_t> sizeIteratively(const std::vector<unsigned>& start_depths, const size_t interval, const size_t max_inputs, const size_t iterations_to_stable_state, const size_t startIndex, const size_t endIndex, const std::string& kernel_lib, const std::string& design_lib,
+                                    const char* const xsim_log_file, const char* const trace_file, int rank) {
     const auto totalFifos = endIndex - startIndex + 1;
-    std::vector<size_t> fifoSizes(totalFifos, start_size);
+    std::vector<size_t> fifoSizes(totalFifos);
+
+    // Initialize fifoSizes with the corresponding start depths
+    for (size_t i = 0; i < totalFifos; ++i) {
+        fifoSizes[i] = static_cast<size_t>(start_depths[startIndex + i]);
+    }
 
     for (size_t i = 0; i < totalFifos; ++i) {
-        auto&& [kernel, top, istreams, ostreams, fifoPorts, fifo_occupancies, fifo_max_occupancies, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
-
-        // Set the previously found start depth for all fifos in the model
-        for (auto&& p : fifoPorts) {
-            p.get().set(static_cast<unsigned>(start_size)).write_back();
+        if (fifoSizes[i] <= 1) {
+            // Skip sizing for this FIFO, as it is already at minimum size
+            continue;
         }
 
         std::cout << "[Rank " << rank << "] Sizing FIFO number " << i << " (from " << startIndex << " to " << endIndex << ")" << std::endl;
@@ -321,10 +380,24 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
 
         while (true) [[likely]] {  // do until fifo minimized
             // TODO: Bin search for more accurate sizes
-            fifoSizes[i] = std::max(previousFifoSize >> 1, size_t(1));  // Use bit shift for division by 2
+            //fifoSizes[i] = std::max(previousFifoSize >> 1, size_t(1));  // Use bit shift for division by 2
+
+            auto&& [kernel, top, istreams, ostreams, fifoPorts, fifo_occupancies, fifo_max_occupancies, clk] = initDesign(kernel_lib, design_lib, xsim_log_file, trace_file);
+
+            // Set the start depths for all fifos in the model
+            for (size_t j = 0; j < fifoPorts.size(); ++j) {
+                fifoPorts[j].get().set(start_depths[j]+1).write_back();
+            }
 
             // Try out the new FIFO depth
-            fifoPorts[startIndex + i].get().set(static_cast<unsigned>(fifoSizes[i])).write_back();
+            fifoPorts[startIndex + i].get().set(static_cast<unsigned>(fifoSizes[i]+1)).write_back();
+
+            std::cout << "FIFO sizes: ";
+            for (auto&& p : fifoPorts) {
+                std::cout << p.get().read().as_unsigned() << " ";
+            }
+            std::cout << std::endl;
+
             clk.toggle_clk();
             for (auto&& s : ostreams) {
                 s.job_txns = 0;
@@ -335,8 +408,8 @@ std::vector<size_t> sizeIteratively(const size_t start_size, const size_t interv
             }
 
             size_t iters = 0;
-            if (auto ret = runToStableState(clk, istreams, ostreams,fifo_occupancies, iters); ret) [[likely]] {
-                auto&& currInterval = *ret;
+            if (auto ret = runToStableState(clk, istreams, ostreams, fifo_occupancies, iters, max_inputs, iterations_to_stable_state); ret) [[likely]] {
+                auto&& [currInterval, _maxInputs] = *ret;
                 if (currInterval == 0 || currInterval > interval) [[unlikely]] {
                     // Performance drop
                     // Revert depth reduction and mark FIFO as minimized
@@ -380,8 +453,10 @@ int main() {
 
     // Initialize depth and interval
     std::optional<int> initial_start_depth = std::nullopt;
-    size_t start_depth = 1;
+    std::vector<unsigned> start_depth;
     size_t interval = 0;
+    size_t max_maps = std::numeric_limits<size_t>::max();
+    size_t iterations_to_stable_state = std::numeric_limits<size_t>::max();
 
 #ifdef FIFO_START_SIZE
     // If a starting size was given, use it here
@@ -394,27 +469,59 @@ int main() {
         std::cout << "\nDetermining start depth (single rank)..." << std::endl;
         if (initial_start_depth) {
             std::cout << "Setting initial start depth to: " << initial_start_depth.value() << std::endl;
+            auto startDepthBegin = std::chrono::high_resolution_clock::now();
+            auto [_start_depth, _interval, _max_maps, _iterations_to_stable_state] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename, initial_start_depth.value());
+            auto startDepthDuration = std::chrono::high_resolution_clock::now() - startDepthBegin;
+            start_depth = _start_depth;
+            std::cout << "Interval: " << _interval << "\n";
+            interval = _interval;
+            max_maps = _max_maps;
+            iterations_to_stable_state = _iterations_to_stable_state;
+            std::cout << "Finished start depth sizing in " << std::chrono::duration_cast<std::chrono::minutes>(startDepthDuration).count() << "m (" << std::chrono::duration_cast<std::chrono::hours>(startDepthDuration).count() << "h)"
+                      << std::endl;
+        } else {
+            auto startDepthBegin = std::chrono::high_resolution_clock::now();
+            auto [_start_depth, _interval, _max_iters, _iterations_to_stable_state] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename);
+            auto startDepthDuration = std::chrono::high_resolution_clock::now() - startDepthBegin;
+            start_depth = _start_depth;
+            std::cout << "Interval: " << _interval << "\n";
+            interval = _interval;
+            max_maps = _max_iters;
+            iterations_to_stable_state = _iterations_to_stable_state;
+            std::cout << "Finished start depth sizing in " << std::chrono::duration_cast<std::chrono::minutes>(startDepthDuration).count() << "m (" << std::chrono::duration_cast<std::chrono::hours>(startDepthDuration).count() << "h)"
+                      << std::endl;
         }
-        auto startDepthBegin = std::chrono::high_resolution_clock::now();
-        auto [_start_depth, _interval] = determineStartDepth(kernel_libname, design_libname, xsim_log_filename, trace_filename, initial_start_depth);
-        auto startDepthDuration = std::chrono::high_resolution_clock::now() - startDepthBegin;
-        start_depth = _start_depth;
-        std::cout << "Interval: " << _interval << "\n";
-        interval = _interval;
-        std::cout << "Finished start depth sizing in " << std::chrono::duration_cast<std::chrono::minutes>(startDepthDuration).count() << "m (" << std::chrono::duration_cast<std::chrono::hours>(startDepthDuration).count() << "h)" << std::endl;
     }
 
 #ifdef MPI_FOUND
     // Synchronize and send depth to all other ranks
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(&start_depth, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
+
+    // First broadcast the size of the start_depth vector
+    size_t start_depth_size = start_depth.size();
+    MPI_Bcast(&start_depth_size, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
+
+    // Resize vector on non-root ranks
+    if (rank != MPI_ROOT_RANK) {
+        start_depth.resize(start_depth_size);
+    }
+
+    // Broadcast the vector data
+    MPI_Bcast(start_depth.data(), static_cast<int>(start_depth_size), MPI_UNSIGNED, MPI_ROOT_RANK, MPI_COMM_WORLD);
     MPI_Bcast(&interval, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
+    MPI_Bcast(&max_maps, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
+    MPI_Bcast(&iterations_to_stable_state, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
 #endif  // MPI_FOUND
 
     // Create a new design just to count the FIFOs and make sure its destroyed directly afterwards...
     if (rank == 0) {
-        std::cout << "Using start depth of " << start_depth << " and target interval of " << interval << std::endl;
+        std::cout << "Using start depth vector of size " << start_depth.size() << " and target interval of " << interval << std::endl;
+        std::cout << "Start Depths: ";
+        for (auto&& elem : start_depth) {
+            std::cout << elem << " ";
+        }
+        std::cout << "\n";
     }
     size_t fifo_count = 0;
     {
@@ -464,9 +571,8 @@ int main() {
     }
 
 #ifdef MPI_FOUND
-    // Synchronize and send depth to all other ranks
+    // Synchronize - start_depth vector already broadcast above
     MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Bcast(&start_depth, 1, MPI_UNSIGNED_LONG, MPI_ROOT_RANK, MPI_COMM_WORLD);
 #endif
 
     if (rank == 0) {
@@ -478,7 +584,7 @@ int main() {
     // Size assigned FIFOs iteratively
     std::vector<size_t> fifoSizes;
     if (elementsInRank > 0) {
-        fifoSizes = sizeIteratively(start_depth, interval, start_index, end_index, kernel_libname, design_libname, xsim_log_filename, trace_filename, rank);
+        fifoSizes = sizeIteratively(start_depth, interval, max_maps, iterations_to_stable_state, start_index, end_index, kernel_libname, design_libname, xsim_log_filename, trace_filename, rank);
     } else {
         // This rank has no work, create empty vector
         fifoSizes.clear();

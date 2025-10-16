@@ -20,13 +20,14 @@
 #include <functional>
 #include <cstring>
 
-#include "axi_control/s_axi_control.h"
-#include "axis_control/axis_control.h"
-#include "clock/clock.h"
-#include "rtlsim_config.hpp"
+#include <AXI_Control.h>
+#include <AXIS_Control.h>
+#include <Clock.h>
 #include <Kernel.h>
 #include <Design.h>
 #include <Port.h>
+
+#include "rtlsim_config.hpp"
 
 void clearPorts(xsi::Design &top) {
   // Clear all input ports
@@ -38,7 +39,7 @@ void clearPorts(xsi::Design &top) {
 }
 
 void reset(xsi::Design &top) {
-  xsi::Port *const rst_n = top.getPort("ap_rst_n");
+  xsi::Port& rst_n = top.getPort("ap_rst_n");
   Clock &clk = Clock::initClock(top);
   if (!rst_n) {
     std::cerr << "No reset port found in design." << std::endl;

@@ -2,9 +2,6 @@
 #include <Design.h>
 #include <Port.h>
 
-#include <algorithm>
-#include <iostream>
-
 using namespace xsi;
 
 Clock::Clock(xsi::Design& des) : design(des) {

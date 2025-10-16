@@ -4,7 +4,6 @@
 #include <functional>
 #include <limits>
 #include <string>
-#include <vector>
 
 // Fwd declarations
 namespace xsi {
@@ -17,7 +16,13 @@ class AXIS_Control {
      public:
     // Constructor/destructor
     AXIS_Control(xsi::Design& design, Clock& clock, size_t job_size, const std::string& prefix = "s_axis_");
-    ~AXIS_Control() noexcept = default;
+    AXIS_Control() = default;
+    virtual ~AXIS_Control() noexcept = default;
+
+    AXIS_Control(AXIS_Control&& other) = default;
+    AXIS_Control& operator=(AXIS_Control&& other) = default;
+
+    void inititialized_or_throw();
 
     // Core functions - immediate writes
     void valid(bool value = true);
@@ -38,19 +43,23 @@ class AXIS_Control {
     // AXI interface prefix
     std::string name;
 
-    xsi::Port& port_vld;
-    xsi::Port& port_rdy;
-
      private:
-    const xsi::Design& design;
-    const Clock& clk;
+    const xsi::Design* design;
+    const Clock* clk;
+
+    xsi::Port* port_vld;
+    xsi::Port* port_rdy;
 };
 
 class S_AXIS_Control : public AXIS_Control {
      public:
     // Constructor/destructor
     S_AXIS_Control(xsi::Design& design, Clock& clock, size_t job_size, size_t job_ticks, const std::string& prefix = "s_axis_");
+    S_AXIS_Control() = default;
     ~S_AXIS_Control() noexcept = default;
+
+    S_AXIS_Control(S_AXIS_Control&& other) = default;
+    S_AXIS_Control& operator=(S_AXIS_Control&& other) = default;
 
     size_t job_ticks;   // throttle if job_size < job_ticks
     size_t await_iter;  // iteration allowing start of next job
@@ -60,7 +69,11 @@ class M_AXIS_Control : public AXIS_Control {
      public:
     // Constructor/destructor
     M_AXIS_Control(xsi::Design& design, Clock& clock, size_t job_size, const std::string& prefix = "m_axis_");
+    M_AXIS_Control() = default;
     ~M_AXIS_Control() noexcept = default;
+
+    M_AXIS_Control(M_AXIS_Control&& other) = default;
+    M_AXIS_Control& operator=(M_AXIS_Control&& other) = default;
 
     size_t last_complete = 0;
     size_t interval;
