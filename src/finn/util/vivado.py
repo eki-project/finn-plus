@@ -35,6 +35,7 @@ from finn.util.logging import log
 def out_of_context_synth(
     verilog_dir,
     top_name,
+    float_ip_tcl,
     fpga_part="xczu3eg-sbva484-1-e",
     clk_name="ap_clk_0",
     clk_period_ns=5.0,
@@ -45,10 +46,11 @@ def out_of_context_synth(
         raise Exception("vivado is not in PATH, ensure settings64.sh is sourced.")
 
     script_path = os.path.join(os.environ["FINN_QNN_DATA"], "vivado_scripts", "vivadocompile.sh")
-    # vivadocompile.sh <top-level-entity> <clock-name (optional)> <fpga-part (optional)>
-    call_omx = "zsh %s %s %s %s %f" % (
+    # vivadocompile.sh <top-level-entity> <fp0.tcl#fp1.tcl> <clk-name (opt)> <fpga-part (opt)>
+    call_omx = "zsh %s %s %s %s %s %f" % (
         script_path,
         top_name,
+        '"%s"' % "#".join(float_ip_tcl),
         clk_name,
         fpga_part,
         float(clk_period_ns),
