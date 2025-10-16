@@ -20,11 +20,8 @@ packages = [
     { include = "finn_xsi", from = "finn_xsi" },
     { include = "finn-rtllib", to = "finn" },
     { include = "custom_hls", to = "finn" },
-    { include = "notebooks", to = "finn" },
-    { include = "tests", to = "finn" },
 ]
 include = [
-    "tests/example_data/**/*",
     "src/finn/util/vivado_scripts/*.sh",
     "src/finn/util/vivado_scripts/*.tcl",
     "src/finn/util/vivado_scripts/*.xdc",
@@ -56,11 +53,10 @@ numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
 # due to the model IR version support issue...
 onnx = "1.17.0"
 onnxruntime = "1.20.1"
-pre-commit = "~4.2.0"
-protobuf = "3.20.3"          # protobuf==3.20.3 required by qonnx
+protobuf = "3.20.3"                                   # protobuf==3.20.3 required by qonnx
 psutil = "~5.9.4"
 pyscaffold = "~4.6"
-scipy = "~1.15.0"            # scipy>=1.16.0 requires python>=3.11
+scipy = "~1.15.0"                                     # scipy>=1.16.0 requires python>=3.11
 setupext-janitor = "^1.1.2"
 sigtools = "~4.0.1"
 toposort = "~1.7.0"
@@ -69,35 +65,17 @@ wget = "~3.2"
 pygments = "~2.19.2"
 torch = "~2.7.1"
 torchvision = "~0.22.1"
-ipykernel = "~6.29.5"
-jupyter = "~1.1.1"
 markupsafe = "~3.0.2"
-matplotlib = "~3.10.3"
-pytest-dependency = "~0.6.0"
-pytest-parallel = "~0.1.1"
-# Beyond version 8.5.0, subsequent Netron calls in a Jupyter notebook cause "Address already in use" errors
-netron = ">5.0.0,<=8.5.0"
-pandas = "~2.3.1"
-scikit-learn = "~1.7.0"
-tqdm = "~4.67.1"
-pytest = "~8.4.1"
-pytest-metadata = "~3.1.1"
-pytest-html = "~4.1.1"
-pytest-html-merger = "~0.1.0"
-pytest-cov = "~6.2.1"
-pytest-forked = "~1.6.0"
-pytest-rerunfailures = "~15.1"
 dvc = { version = " ~3.59.1", extras = ["webdav"] }
 dvclive = { version = "~3.48.2", extras = ["image"] }
 deap = "~1.4.3"
 pyyaml = "~6.0.2"
 mip = "~1.13.0"
 networkx = "~3.4.2"
-dependencies = "2.0.1"                                           # dependencies==2.0.1 required by brvitas
+dependencies = "2.0.1"                                # dependencies==2.0.1 required by brvitas
 tokenize-rt = "~4.2.1"
 tclwrapper = "0.0.1"
-setuptools = ">40.8.0,<70.0.0"                                   # setuptools<70.0.0 required by brevitas
-pytest-xdist = { version = "~3.6.1", extras = ["setproctitle"] }
+setuptools = ">40.8.0,<70.0.0"                        # setuptools<70.0.0 required by brevitas
 cmake = "~4.0.3"
 
 termcolor = "^2.5.0"
@@ -105,6 +83,17 @@ rich = "^13.9.4"
 click = "^8.1.8"
 onnxoptimizer = "^0.3.13"
 mashumaro = { extras = ["yaml"], version = "^3.15" }
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "~4.2.0"
+finn-plus-tests = { path = "./tests", develop = true }
+finn-plus-notebooks = { path = "./notebooks", develop = true }
+
+[tool.poetry.extras]
+tests = ["finn-plus-tests"]
+notebooks = ["finn-plus-notebooks"]
+all = ["finn-plus-tests", "finn-plus-notebooks"]
+
 
 [build-system]
 requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]

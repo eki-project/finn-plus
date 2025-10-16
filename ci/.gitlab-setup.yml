@@ -34,6 +34,8 @@
     - cd $PATH_WORKDIR
     # Create fresh virtual environment and install finn-plus from .whl (artifact)
     - python3 -m venv finn-plus-venv
+    - finn-plus-venv/bin/pip install tests/dist/*.whl
+    - finn-plus-venv/bin/pip install notebooks/dist/*.whl
     - finn-plus-venv/bin/pip install dist/*.whl
 
 .setup_full_2022_2:

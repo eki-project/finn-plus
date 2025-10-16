@@ -73,6 +73,9 @@ coverage.xml
 build/*
 dist/*
 sdist/*
+*/build/*
+*/dist/*
+*/sdist/*
 docs/api/*
 docs/_rst/*
 docs/_build/*
