@@ -168,7 +168,7 @@ set util_lutram [exec echo $util | grep LUT | head -n 3 | tail -1 | cut -d| -f3 
 
 #set util_lut [llength [get_cells -hier -filter {PRIMITIVE_TYPE =~ *LUT*}]]
 set util_ff [llength [get_cells -hier -filter {PRIMITIVE_TYPE =~ *.F*E*}]]
-set util_dsp [llength [get_cells -hier -filter {PRIMITIVE_GROUP == DSP}]]
+set util_dsp [exec echo $util | grep DSP | head -n 1 | cut -d| -f3 | tr -d " "]
 #set util_bram [llength [get_cells -hier -filter {PRIMITIVE_TYPE =~ *BRAM*}]]
 #set time_wns [get_property STATS.WNS [current_run]]
 set time_wns [get_property SLACK [get_timing_paths]]
