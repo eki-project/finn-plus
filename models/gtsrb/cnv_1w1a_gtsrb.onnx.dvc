@@ -1,0 +1,5 @@
+outs:
+- md5: 558a9f00377dc890f68664fbe8365113
+  size: 6280329
+  hash: md5
+  path: cnv_1w1a_gtsrb.onnx

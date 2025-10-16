@@ -26,10 +26,18 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Transformations for specializing FINN layers to HLS or RTL implementations.
+
+This module provides functionality to automatically select and specialize FINN dataflow
+layers to their optimal hardware implementation variants (HLS or RTL) based on FPGA
+target, layer constraints, and user preferences.
+"""
+
 import numpy as np
 from onnx import helper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
@@ -38,6 +46,11 @@ from finn.util.logging import log
 
 
 def _determine_impl_style(node, fpgapart, model):
+    """Determine the optimal implementation style (HLS or RTL) for a given node.
+
+    Analyzes node constraints, FPGA capabilities, and user preferences to select
+    the best hardware implementation variant for a dataflow layer.
+    """
     optype = node.op_type
 
     # check if there is an HLS or RTL variant or both
@@ -169,7 +182,10 @@ def _determine_impl_style(node, fpgapart, model):
 
 
 def _dwc_determine_impl_style(node):
-    # when possible use rtl variant
+    """Determine implementation style for StreamingDataWidthConverter nodes.
+
+    When possible, uses RTL variant based on width ratio compatibility.
+    """
     dwc = getCustomOp(node)
     dwc_in_width = dwc.get_nodeattr("inWidth")
     dwc_out_width = dwc.get_nodeattr("outWidth")
@@ -183,13 +199,14 @@ def _dwc_determine_impl_style(node):
 
 
 def _mvu_rtl_possible(n, fpgapart, model):
-    # Checks whether RTL-based MVU is supported
-    # Currently, for DSP48 we only support computations up to
-    # 8sx8u (8-bit signed weights x 8-bit (un)signed activations)
-    # and for DSP58 we support up to 8sx9s.
-    # Please note, DSP48E1 does only support narrow range for weights
-    # Next to that, embedded thresholding functionality is not supported
-    # and neither binaryxnormode computation.
+    """Check whether RTL-based MVU implementation is supported for given node.
+
+    RTL-MVU constraints:
+    - DSP48: supports up to 8sx8u (8-bit signed weights x 8-bit activations)
+    - DSP58: supports up to 8sx9s
+    - DSP48E1: only supports narrow range weights
+    - No embedded thresholding or binaryXnor mode supported
+    """
     node_inst = getCustomOp(n)
     # first check if no Activation or binary xnor mode and return False
     # immediately if one of them is True
@@ -229,10 +246,13 @@ def _mvu_rtl_possible(n, fpgapart, model):
 
 
 def _vvu_rtl_possible(n, fpgapart):
-    # Checks whether RTL-based VVU is supported
-    # Currently, we only support RTL-VVU on DSP58 up to 8sx9s inputs
-    # (8-bit signed weights x (9-bit signed OR 8-bit (un)signed) activations).
-    # Next to that, embedded thresholding functionality is not supported.
+    """Check whether RTL-based VVU implementation is supported for given node.
+
+    RTL-VVU constraints:
+    - Only supported on Versal DSP58
+    - Supports up to 8sx9s inputs (8-bit signed weights x 9-bit signed or 8-bit activations)
+    - No embedded thresholding functionality supported
+    """
     node_inst = getCustomOp(n)
     if not node_inst.get_nodeattr("noActivation"):
         return False
@@ -252,10 +272,20 @@ class SpecializeLayers(Transformation):
     """Specialize all layers to either HLS or RTL variants"""
 
     def __init__(self, fpgapart):
+        """Initialize the SpecializeLayers transformation.
+
+        Args:
+            fpgapart: Target FPGA part string for implementation selection
+        """
         super().__init__()
         self.fpgapart = fpgapart
 
     def apply(self, model):
+        """Apply layer specialization transformation to model.
+
+        Converts all dataflow layers to their optimal HLS or RTL implementation
+        variants based on target FPGA and layer constraints.
+        """
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -280,5 +310,7 @@ class SpecializeLayers(Transformation):
             graph.node.insert(node_ind, new_node)
             # remove old nodes
             graph.node.remove(node)
+            # update node names to reflect new op types
+            model = model.transform(GiveUniqueNodeNames())
             graph_modified = True
         return (model, graph_modified)

@@ -2,6 +2,13 @@
 # Disable formatter. This is deliberately formatted to stay within 80 characters
 # per line. Black, however, formats some lines going beyond this.
 
+"""Transformations for converting scaled dot-product attention patterns to FINN hardware layers.
+
+This module provides transformations to detect and convert multi-node ONNX patterns
+representing scaled dot-product attention into single FINN custom hardware operations,
+enabling efficient FPGA implementation of transformer attention mechanisms.
+"""
+
 # Standard math functions
 import math
 
@@ -48,11 +55,12 @@ from finn.transformation.util import (
 from finn.util.logging import log
 
 
-# Convert the operator pattern corresponding to scaled dot-product attention to
-# the hardware custom operator node
 class InferScaledDotProductAttention(Transformation):
-    # Applies the transform to a whole model graph
+    """Convert the operator pattern corresponding to scaled dot-product attention to
+    the hardware custom operator node."""
+
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transform to a whole model graph."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -141,11 +149,18 @@ class InferScaledDotProductAttention(Transformation):
                 # @formatter:on
                 # Collect the input tensors to the attention operation, i.e.,
                 # the query, key and value tensors
-                q, k, v = lhs[-1].input[0], transpose.input[0], rhs[0].output[0]
+                q, k, v = lhs[-1].input[0], transpose.input[0], None
+                # Check all outputs of the right hand side branch for being the
+                # values input (this could for example be a split feeding
+                # multiple heads)
+                for candidate in rhs[0].output:
+                    if node in model.find_consumers(candidate):
+                        v = candidate
+
                 # Validate that the values are actually consumed by the final
                 # matmul. For queries and keys this should all be given, as we
                 # just walked upwards the graph.
-                assert node in model.find_consumers(v)
+                assert v is not None
 
                 # Get the (optional) Softmax activation function
                 act_a_softmax = lhs[0] if is_softmax(lhs[1]) else None
@@ -159,10 +174,11 @@ class InferScaledDotProductAttention(Transformation):
                     # pattern candidates
                     act_qk_matmul = None
 
-                # Check whether the node is a supported type of activation
                 def is_supported_activation(n: NodeProto):  # noqa: Shadows name
-                    # Currently, only none-type and MultiThreshold activations
-                    # are supported
+                    """Check whether the node is a supported type of activation.
+
+                    Currently, only none-type and MultiThreshold activations are supported.
+                    """
                     return n is None or n.op_type in {"MultiThreshold"}
 
                 # Get the (optional) output matmul activation function
@@ -240,16 +256,22 @@ class InferScaledDotProductAttention(Transformation):
                     # it is given as an initializer, it can either be a causal
                     # mask or some arbitrary pattern.
 
-                    # Check whether a tensor is a valid mask tensor
                     def valid_mask(tensor):
-                        # Valid masks contain only two types of values, i.e.,
-                        # zero for not masked and -inf for masked slots
+                        """Check whether a tensor is a valid mask tensor.
+
+                        Valid masks contain only two types of values: zero for not masked
+                        and -inf for masked slots.
+                        """
                         return all(
                             x in {0.0, -np.inf} for x in np.unique(tensor)
                         )
 
-                    # Check whether a tensor describes a causal attention mask
                     def is_causal(tensor):
+                        """Check whether a tensor describes a causal attention mask.
+
+                        Generates a causal mask of the same size and compares it against
+                        the candidate tensor.
+                        """
                         # Generate a causal mask of the same size
                         causal = np.triu(-np.inf * np.ones_like(tensor), 1)
                         # Compare candidate against the causal mask
@@ -379,8 +401,12 @@ class InferScaledDotProductAttention(Transformation):
                     act.input[1] for act in acts if act is not None
                 ]
 
-                # Convert activation function types to string representation
                 def act_op_type_str(act):
+                    """Convert activation function types to string representation.
+
+                    Only MultiThreshold is supported currently. The attention custom op
+                    uses "thresholds" to identify this type.
+                    """
                     # Only MultiThreshold is supported currently
                     if act is not None and act.op_type == "MultiThreshold":
                         # The attention custom op uses "thresholds" to identify
@@ -400,8 +426,12 @@ class InferScaledDotProductAttention(Transformation):
                     # Single output tensor of the activation function
                     out_qk_matmul = act_qk_matmul.output[0]
 
-                # Extract output bias of the thresholding activation functions
                 def out_bias(act):
+                    """Extract output bias of the thresholding activation functions.
+
+                    Only applies to thresholding activations. Extracts via interpreting
+                    the node as QONNX custom op.
+                    """
                     # Does only apply to thresholding activations
                     if act is not None and act.op_type == "MultiThreshold":
                         # Extract via interpreting the node as QONNX custom op
@@ -510,8 +540,12 @@ class InferScaledDotProductAttention(Transformation):
                     "BiasActASoftmax": out_bias(act_a_softmax),
                 }
 
-                # Converts QONNX datatypes to their name (as a string)
                 def maybe_name(value):
+                    """Convert QONNX datatypes to their name (as a string).
+
+                    All QONNX datatypes are instances of BaseDataType. Everything else
+                    is assumed to be in the right format already.
+                    """
                     # All QONNX datatypes are instances of the BaseDataType
                     if isinstance(value, BaseDataType):
                         # Convert to the name by referring to the datatypes name
@@ -550,11 +584,12 @@ class InferScaledDotProductAttention(Transformation):
         return model, graph_modified
 
 
-# Absorbs a MultiThreshold into ScaledDotProductAttention if there is not
-# already an activation included
 class AbsorbMultiThresholdIntoScaledDotProductAttention(Transformation):
-    # Applies the transform to a whole model graph
+    """Absorb a MultiThreshold into ScaledDotProductAttention if there is not
+    already an activation included."""
+
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transform to a whole model graph."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified

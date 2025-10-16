@@ -1,3 +1,10 @@
+"""Analysis for detecting unsupported layers in FINN dataflow models.
+
+This module provides functionality to validate that FINN models have a valid
+partition structure where FPGA-supported operations form a single contiguous
+section in the dataflow graph.
+"""
+
 from collections import deque
 from qonnx.core.modelwrapper import ModelWrapper
 
@@ -9,7 +16,8 @@ def unsupported_layers(model: ModelWrapper):
     """
 
     def is_supported_node(node):
-        return node.domain == "finn.custom_op.fpgadataflow"
+        """Check if a node is supported by (= mapped to) the FPGA backend."""
+        return node.domain.startswith("finn.custom_op.fpgadataflow")
 
     # Find source and sink nodes in the model
     source_nodes = []
