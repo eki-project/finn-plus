@@ -99,8 +99,10 @@ class Simulation:
 
         return node_model
 
-    def run_sim_node_parallel(self, inputs: int) -> dict[int, Any]:
-        """Run a fast simulation by simulating every node in parallel."""
+    def run_sim_node_parallel_isolated(self, inputs: int) -> dict[int, Any]:
+        """Simulate the given number of inputs for every layer. Layers are completely isolated
+        and simulated in parallel.
+        """
 
         def _run_simulation(node_index: int) -> Any:
             nodemodel = self._isolated_node_model(node_index)
@@ -118,6 +120,11 @@ class Simulation:
             for i, future in enumerate(futures):
                 results[i] = future.result()
         return results
+
+    def run_sim_node_parallel_connected(self, inputs: int) -> Any:
+        """Simulate a whole model, with all layers simulated in parallel."""
+        # TODO: Enable control through either Python or a seperate C++ driver
+        raise NotImplementedError()
 
     def run_sim_complete(self) -> Any:
         raise NotImplementedError()
