@@ -61,13 +61,6 @@ import finn.transformation.streamline.reorder as reorder
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.core.onnx_exec import execute_onnx
 from finn.core.throughput_test import throughput_test_rtlsim
-from finn.tests.testing_util.pytorch import NormalizePreProc
-from finn.tests.testing_util.test import (
-    crop_center,
-    get_test_model_trained,
-    load_test_checkpoint_or_skip,
-    resize_smaller_side,
-)
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
@@ -89,6 +82,13 @@ from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.collapse_repeated import CollapseRepeatedMul
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
+from tests.testing_util.pytorch import NormalizePreProc
+from tests.testing_util.test import (
+    crop_center,
+    get_test_model_trained,
+    load_test_checkpoint_or_skip,
+    resize_smaller_side,
+)
 
 # Select Versal device such that RTL VVU (i.e. DSP58) can be enabled
 fpga_part = "xcvm1802-vsvd1760-2MP-e-S"

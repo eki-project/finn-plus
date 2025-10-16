@@ -44,9 +44,9 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
-from finn.tests.testing_util.test import load_test_checkpoint_or_skip
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.util.basic import make_build_dir
+from tests.testing_util.test import load_test_checkpoint_or_skip
 
 
 def get_checkpoint_name(step):

@@ -43,7 +43,6 @@ from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
-from finn.tests.testing_util.test import soft_verify_topk
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
@@ -57,6 +56,7 @@ from finn.transformation.streamline.collapse_repeated import (
     CollapseRepeatedMul,
 )
 from finn.transformation.streamline.reorder import MoveAddPastMul, MoveScalarLinearPastInvariants
+from tests.testing_util.test import soft_verify_topk
 
 export_onnx_path = "test_output_synthetic.onnx"
 

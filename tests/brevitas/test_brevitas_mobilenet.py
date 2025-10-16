@@ -50,10 +50,10 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
 import finn.transformation.streamline.absorb as absorb
-from finn.tests.testing_util.pytorch import NormalizePreProc
-from finn.tests.testing_util.test import crop_center, get_test_model_trained, resize_smaller_side
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.util.basic import make_build_dir
+from tests.testing_util.pytorch import NormalizePreProc
+from tests.testing_util.test import crop_center, get_test_model_trained, resize_smaller_side
 
 
 @pytest.mark.brevitas_export

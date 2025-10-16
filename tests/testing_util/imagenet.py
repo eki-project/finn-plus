@@ -31,7 +31,7 @@ import os
 from PIL import Image
 from qonnx.core.data_layout import NCHW, NHWC
 
-from finn.tests.testing_util.test import crop_center, resize_smaller_side
+from tests.testing_util.test import crop_center, resize_smaller_side
 
 
 def get_val_images(n_images=100, interleave_classes=False):

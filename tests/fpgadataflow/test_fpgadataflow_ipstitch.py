@@ -40,7 +40,6 @@ from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 from finn.core.onnx_exec import execute_onnx
-from finn.tests.testing_util.test import load_test_checkpoint_or_skip
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
@@ -52,6 +51,7 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
 from finn.util.basic import alveo_default_platform, alveo_part_map, pynq_part_map
+from tests.testing_util.test import load_test_checkpoint_or_skip
 
 
 def create_one_fc_model(mem_mode="internal_embedded"):

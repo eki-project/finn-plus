@@ -37,7 +37,6 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-from finn.tests.testing_util.test import soft_verify_topk
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
@@ -45,6 +44,7 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from tests.testing_util.test import soft_verify_topk
 
 
 def make_labelselect_modelwrapper(labels, pe, k, idt, impl_style):
