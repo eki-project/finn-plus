@@ -204,9 +204,9 @@ if {$ZYNQ_TYPE == "zynq_us+"} {
 if { $enable_finn_switch == 1 } {
     set_property -dict [list CONFIG.C_ALL_OUTPUTS_2 {1} CONFIG.C_GPIO2_WIDTH {1} CONFIG.C_IS_DUAL {1}] [get_bd_cells axi_gpio_0]
     connect_bd_net [get_bd_pins axi_gpio_0/gpio2_io_o] [get_bd_pins finn_switch/sel]
-    # TODO: Mabye there is a better solution. Getting the FREQ_HZ from other IPs does not work for some reason
-    #set_property CONFIG.FREQ_HZ [get_property CONFIG.FREQ_HZ [get_bd_intf_pins /zynq_ps/M_AXI_HPM0_FPD]] [get_bd_intf_pins /finn_switch/*]
-    set_property CONFIG.FREQ_HZ [expr {$FREQ_MHZ * 1000000 - 15}] [get_bd_intf_pins /finn_switch/*]
+    # TODO: This is a workaround - FREQ_HZ changes after applying validate_bd_design the first time, which results in an error
+    catch validate_bd_design
+    set_property CONFIG.FREQ_HZ [get_property CONFIG.FREQ_HZ [get_bd_intf_pins /zynq_ps/M_AXI_HPM0_FPD]] [get_bd_intf_pins /finn_switch/*]
 }
 
 save_bd_design
