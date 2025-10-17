@@ -20,10 +20,6 @@ from brevitas.nn import (
 from brevitas.quant_tensor import QuantTensor
 from qonnx.core.modelwrapper import ModelWrapper
 
-# Range information structure for seeding the range analysis for converting
-# quantized activations to MultiThreshold
-from qonnx.util.range_analysis import RangeInfo
-
 # Progressbar
 from tqdm import trange
 
@@ -33,7 +29,6 @@ from finn.benchmarking.bench_base import bench
 
 # Custom build steps required to streamline and convert the attention operator
 from finn.builder.custom_step_library.transformer import (
-    prepare_graph,
     set_fifo_depths,
     set_target_parallelization,
     step_apply_folding_config,
@@ -43,8 +38,11 @@ from finn.builder.custom_step_library.transformer import (
     step_convert_lookup_to_hw,
     step_convert_split_concat_to_hw,
     step_replicate_streams,
-    step_streamline,
 )
+
+# Range information structure for seeding the range analysis for converting
+# quantized activations to MultiThreshold
+# from qonnx.util.range_analysis import RangeInfo
 
 
 # ADAPTED FROM utils.py
@@ -871,10 +869,10 @@ class bench_transformer(bench):
 
         # Read the input value range information for the dataset from the parameters
         # Note: Consider calibrating this on the fly from the dataset
-        value_range = [-100, +100]  # params["build"]["range"] # TODO: make configurable?
-        input_range = tuple(np.array([value_range]).T)
+        # value_range = [-100, +100]  # params["build"]["range"] # TODO: make configurable?
+        # input_range = tuple(np.array([value_range]).T)
         # Construct the seed range information of the input tensor
-        range_info = RangeInfo(shape=(1, seq_len, emb_dim), range=input_range)
+        # range_info = RangeInfo(shape=(1, seq_len, emb_dim), range=input_range)
 
         # Prepare config files
         # TODO: make configurable
@@ -918,12 +916,10 @@ class bench_transformer(bench):
             verify_expected_output_npy=self._build_inputs["output_npy_path"],
             # Build steps to execute
             steps=[
-                # Prepares the QONNX graph to be consumed by FINN: Cleanup, lowering
-                # and Quant to MultiThreshold conversion
-                prepare_graph(range_info=range_info),
-                # Unified exhaustive streamlining of complex model topologies
-                # including attention, residuals and splits
-                step_streamline,
+                # prepare_graph(range_info=range_info),
+                # step_streamline, # Custom Transformer-specific StreamlinePlus
+                "step_passes_frontend",  # New onnx-passes frontend
+                # "step_streamline", # Old default streamlining
                 # conversion of the scaled dot-product attention pattern to
                 # hardware, including cleanup and data layout squeezing
                 step_convert_attention_to_hw,

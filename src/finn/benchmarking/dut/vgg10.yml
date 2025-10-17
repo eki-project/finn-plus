@@ -3,9 +3,7 @@ folding_config_file: models/vgg10/ZCU104_folding_config.json
 specialize_layers_config_file: models/vgg10/ZCU104_specialize_layers.json
 
 steps:
-  - step_tidy_up
-  - finn.builder.custom_step_library.conv1d.step_pre_streamline # Custom step
-  - step_streamline
+  - step_passes_frontend
   - step_convert_to_hw
   - finn.builder.custom_step_library.conv1d.step_convert_final_layers # Custom step
   - step_create_dataflow_partition
