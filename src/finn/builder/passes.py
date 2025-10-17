@@ -79,7 +79,8 @@ def _make_pass_config(cfg: DataflowBuildConfig):
             # Tolerance-based verification, parameters passed to
             # np.allclose(...)
             "tolerance": {
-                "atol": 1.0e-6
+                "atol": cfg.verification_atol,
+                "rtol": cfg.verification_rtol
             }
         },
         # Configuration of the model checker pass: Options according to the ONNX
