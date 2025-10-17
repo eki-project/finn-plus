@@ -348,6 +348,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(to_hw.InferPool())
         model = model.transform(to_hw.InferConvInpGen())
         model = model.transform(RemoveCNVtoFCFlatten())
+    model = model.transform(to_hw.InferFMPadding())
     # get rid of Tranpose -> Tranpose identity seq
     model = model.transform(absorb.AbsorbConsecutiveTransposes())
     model = model.transform(GiveUniqueNodeNames())
