@@ -102,9 +102,9 @@ Build:
     # Build .whl finn-plus package
     - poetry build --clean --format=wheel
     # Also build .whl finn-plus-tests package (for test dependencies)
-    - poetry build -C tests --format=wheel
+    - poetry build -P tests --clean --format=wheel
     # Also build .whl finn-plus-notebooks package (for notebooks dependencies)
-    - poetry build -C notebooks --format=wheel
+    - poetry build -P notebooks --format=wheel
     # Let FINN download additional dependencies, cache resulting deps directory
     # Also fetch & checkout DVC-managed data, $CI_DVC_CACHE_DIR persists between jobs
     - |
