@@ -101,11 +101,12 @@ Build:
     - poetry install
     # Build .whl finn-plus package
     - poetry build --clean --format=wheel
-    - poetry config virtualenvs.create false --local
+    - export POETRY_VIRTUALENVS_CREATE=false #DO NOT TOUCH: needed to build sub-packages
     # Also build .whl finn-plus-tests package (for test dependencies)
     - poetry build -P tests --clean --format=wheel
     # Also build .whl finn-plus-notebooks package (for notebooks dependencies)
     - poetry build -P notebooks --format=wheel
+    - export POETRY_VIRTUALENVS_CREATE=true #DO NOT TOUCH: revert to default behavior
     # Let FINN download additional dependencies, cache resulting deps directory
     # Also fetch & checkout DVC-managed data, $CI_DVC_CACHE_DIR persists between jobs
     - |
