@@ -33,6 +33,9 @@ except ModuleNotFoundError:
 
 import numpy as np
 import os
+import shlex
+import sys
+from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from subprocess import CalledProcessError
 
@@ -43,7 +46,8 @@ from finn.util.basic import (
     make_build_dir,
 )
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.exception import FINNError
+from finn.util.exception import FINNError, FINNUserError
+from finn.util.logging import log
 
 
 def prep_rtlsim_io_dict(model, execution_context):
@@ -187,9 +191,6 @@ def rtlsim_exec_cppxsi(
         sim_rel = "xsim.dir" + sim_rel
     # prepare the C++ sim driver template
     finnxsi_dir = os.environ["FINN_XSI"]
-    fifosim_config_fname = finnxsi_dir + "/rtlsim_config.hpp.template"
-    with open(fifosim_config_fname, "r") as f:
-        fifsom_config_template = f.read()
 
     instream_iters = []
     outstream_iters = []
@@ -249,62 +250,69 @@ def rtlsim_exec_cppxsi(
         "TOP_MODULE_NAME": top_module_name,
         # top-level AXI stream descriptors
         "ISTREAM_DESC": instream_descrs_str,
+        "ISTREAM_LEN": len(instream_names),
         "OSTREAM_DESC": outstream_descrs_str,
+        "OSTREAM_LEN": len(outstream_names),
         # control tracing and trace filename
         "TRACE_FILE": "nullptr" if trace_file is None else f'"{trace_file}"',
         # sim kernel .so to use (depends on Vivado version)
         "SIMKERNEL_SO": finnxsi.get_simkernel_so(),
         # log file for xsi (not the sim driver)
         "XSIM_LOG_FILE": '"xsi.log"',
+        # Node name in case of single-node simulation
+        "NODE_NAME": model.graph.node[0].name,
     }
+
+    fifosim_config_fname = Path(finnxsi_dir) / "rtlsim_config.hpp.template"
+    fsim_config = fifosim_config_fname.read_text()
     for key, val in template_dict.items():
-        fifsom_config_template = fifsom_config_template.replace(f"@{key}@", str(val))
-    with open(sim_base + "/rtlsim_config.hpp", "w") as f:
-        f.write(fifsom_config_template)
+        fsim_config = fsim_config.replace(f"@{key}@", str(val))
 
-    vivado_incl_dir = get_vivado_root() + "/data/xsim/include"
-    # launch g++ to compile the rtlsim executable
-    build_cmd = [
-        "g++",
-        f"-I{finnxsi_dir}",
-        f"-I{vivado_incl_dir}",
-        f"-I{sim_base}",
-        "-std=c++17",
-        "-O3",
-        "-o",
-        "rtlsim_xsi",
-        f"{finnxsi_dir}/rtlsim_xsi.cpp",
-        f"{finnxsi_dir}/xsi_finn.cpp",
-        "-ldl",
-        "-lrt",
-    ]
-    # write compilation command to a file for easy re-running/debugging
-    with open(sim_base + "/compile_rtlsim.sh", "w") as f:
-        f.write(" ".join(build_cmd))
+    # Write the config to the simulation directory
+    rtlsim_config = Path(sim_base) / "rtlsim_config.hpp"
+    rtlsim_config.write_text(fsim_config)
+
+    # Building the whole simulation
+    # Running CMake first
+    cmake_call = f"{sys.executable} -m cmake -S {finnxsi_dir} -B {sim_base}"
+    log.info(f"Running cmake on RTLSIM Wrapper in {sim_base}")
     try:
-        launch_process_helper(build_cmd, cwd=sim_base, print_stdout=False)
-    except CalledProcessError:
-        raise FINNError("Failed to compile rtlsim executable")
-    if not os.path.isfile(sim_base + "/rtlsim_xsi"):
-        raise FINNError("Failed to compile rtlsim executable")
+        launch_process_helper(
+            shlex.split(cmake_call), cwd=finnxsi_dir, print_stdout=True, proc_env=os.environ.copy()
+        )
+    except CalledProcessError as e:
+        raise FINNError(f"Failed to run cmake in {sim_base}") from e
 
-    # launch the rtlsim executable
-    runsim_cmd = ["bash", "run_rtlsim.sh"]
-    with open(sim_base + "/run_rtlsim.sh", "w") as f:
-        f.write("./rtlsim_xsi > rtlsim_xsi_log.txt")
-    launch_process_helper(runsim_cmd, cwd=sim_base)
+    # Calling make to actually build the simulation
+    makefile = Path(sim_base) / "Makefile"
+    if not makefile.exists():
+        raise FINNUserError(f"Failed to create Makefile in {sim_base}!")
+    try:
+        launch_process_helper(["make"], proc_env=os.environ.copy(), cwd=sim_base)
+    except CalledProcessError as e:
+        raise FINNUserError(f"Failed to create executable in {sim_base}!") from e
+
+    # TODO: Fix name for general rtlsim
+    simulation_executable = Path(sim_base) / "LayerSimulationBackend"
+    assert simulation_executable.exists()
+
+    # Prepare the script to run the simulation
+    # (important to specify LD_LIBRARY_PATH here for XSI to work correctly)
+    runsim = Path(sim_base) / "run_fifosim.sh"
+    ld_library_path = get_vivado_root() + "/lib/lnx64.o"
+    runsim.write_text(f"LD_LIBRARY_PATH={ld_library_path}:$LD_LIBRARY_PATH {simulation_executable}")
+
+    # Actually run the simulation
+    out, err = launch_process_helper(
+        ["bash", runsim.name], cwd=sim_base, proc_env=os.environ.copy()
+    )
+
+    # TODO: remove output printing
+    log.warning(f"{model.graph.node[0].name}: {out}")
 
     # parse results file and return dict
-    results_filename = sim_base + "/results.txt"
-    with open(results_filename, "r") as f:
-        results = f.read().strip().split("\n")
-    ret_dict = {}
-    for result_line in results:
-        key, val = result_line.split("\t")
-        ret_dict[key] = int(val)
-    if "TIMEOUT" in ret_dict.keys():
-        assert ret_dict["TIMEOUT"] == 0, f"XSI C++ simulation timed out, see {results_filename}"
-    return ret_dict
+    # TODO
+    return {}
 
 
 def rtlsim_exec_finnxsi(model, execution_context, pre_hook=None, post_hook=None):

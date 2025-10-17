@@ -1,11 +1,12 @@
 """Manage FINN simulation variants."""
 import onnx
 import os
-from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from onnx import NodeProto, TensorProto
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.base import Transformation
 from typing import TYPE_CHECKING, Any, cast
 
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
@@ -113,7 +114,7 @@ class Simulation:
         workers = int(os.environ["NUM_DEFAULT_WORKERS"])
         futures: list[Future] = []
         results = {}
-        with ProcessPoolExecutor(max_workers=workers) as pool:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
             for i in range(len(self.model.graph.node)):
                 futures.append(pool.submit(_run_simulation, i))
             pool.shutdown(wait=True)
@@ -131,3 +132,16 @@ class Simulation:
 
     def run_sim_single_node(self, node: Any) -> Any:
         raise NotImplementedError()
+
+
+# TODO: Just a test transformation. Will be integrated properly later
+class RunLayerParallelSimulation(Transformation):  # noqa
+    def __init__(self, fpgapart: str, clk_ns: float) -> None:  # noqa
+        super().__init__()
+        self.fpgapart = fpgapart
+        self.clk_ns = clk_ns
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        sim = Simulation(model, self.fpgapart, self.clk_ns)
+        sim.run_sim_node_parallel_isolated(1)
+        return model, False

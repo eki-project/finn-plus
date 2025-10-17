@@ -14,7 +14,7 @@ class Clock {
     Clock(Clock const&) = delete;
     Clock& operator=(Clock const&) = delete;
     Clock(xsi::Design& design);
-    template<size_t IStreamsSize, size_t OStreamsSize>
+    template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, bool SingleNode>
     friend class Simulation;
 
      public:

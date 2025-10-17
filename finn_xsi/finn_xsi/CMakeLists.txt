@@ -78,6 +78,10 @@ list(POP_BACK CMAKE_MESSAGE_INDENT)    #indent -1
 file(GLOB_RECURSE CORE_SRC src/*.cpp)
 add_executable(LayerSimulationBackend LayerSimulationBackend.cpp ${CORE_SRC})
 
+# Add boost for IPC
+find_package(Boost REQUIRED)
+target_include_directories(LayerSimulationBackend SYSTEM PUBLIC ${Boost_INCLUDE_DIRS})
+
 # Include the rtlsim wrapper directory itself
 target_include_directories(LayerSimulationBackend PUBLIC "${CMAKE_BINARY_DIR}")
 

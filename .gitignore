@@ -55,6 +55,13 @@ poetry.lock
 *.code-workspace
 .env
 
+# Cmake files
+**/CMakeFiles
+**/cmake_install.cmake
+**/CMakeCache.txt
+**/compile_commands.json
+**/.cache
+
 # Package files
 *.egg
 *.eggs/
