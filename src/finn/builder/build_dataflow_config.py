@@ -220,6 +220,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Will be applied with :py:mod:`qonnx.transformation.general.ApplyConfig`
     folding_config_file: Optional[str] = None
 
+    #: (Optional) Path to configuration YAML file listing layout assumptions and
+    #: conversion (permutation) for global model inputs and outputs.
+    layouts_config_file: Optional[str] = None
+
     #: (Optional) Target inference performance in frames per second.
     #: Note that target may not be achievable due to specific layer constraints,
     #: or due to resource limitations of the FPGA.

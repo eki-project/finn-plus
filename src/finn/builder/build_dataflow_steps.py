@@ -71,6 +71,7 @@ from finn.builder.build_dataflow_config import (
     ShellFlowType,
     VerificationStepType,
 )
+from finn.builder.passes import step_passes_frontend
 from finn.core.onnx_exec import execute_onnx
 from finn.core.rtlsim_exec import rtlsim_exec
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
@@ -1138,6 +1139,7 @@ def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 #: map step name strings to step functions
 build_dataflow_step_lookup = {
+    "step_passes_frontend": step_passes_frontend,
     "step_qonnx_to_finn": step_qonnx_to_finn,
     "step_tidy_up": step_tidy_up,
     "step_streamline": step_streamline,
