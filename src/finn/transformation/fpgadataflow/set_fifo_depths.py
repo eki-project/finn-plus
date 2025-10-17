@@ -190,7 +190,14 @@ class CapConvolutionFIFODepths(Transformation):
         return (model, False)
 
 
-def xsi_fifosim(model, n_inferences, max_iters=None, throttle_cycles=0):
+def xsi_fifosim(
+    model,
+    n_inferences,
+    is_single_node,
+    previous_node_name: str | None = None,
+    max_iters=None,
+    throttle_cycles=0,
+):
     """Create a XSI model of stitched IP and use a simple C++
     driver to drive the input stream. Useful for FIFO sizing, latency
     and throughput measurement. If max_iters is None, use the default
@@ -209,6 +216,8 @@ def xsi_fifosim(model, n_inferences, max_iters=None, throttle_cycles=0):
     ret_dict = rtlsim_exec_cppxsi(
         model,
         ctx,
+        is_single_node,
+        previous_node_name=previous_node_name,
         dummy_data_mode=True,
         timeout_cycles=max_iters,
         throttle_cycles=throttle_cycles,

@@ -13,9 +13,13 @@
 
 #include <cstddef>
 #include <initializer_list>
+#include <string>
+#include <optional>
 
 /**** General RTLSIM Configuration Parameters ****/
-const char* nodeName = "@NODE_NAME@";
+const std::optional<std::string> currentNodeName = "@NODE_NAME@";
+const std::optional<std::string> previousNodeName = @PREVIOUS_NODE_NAME@;
+constexpr bool SingleNode = @SINGLE_NODE@;
 
 struct stream_desc {
 	char const *name;

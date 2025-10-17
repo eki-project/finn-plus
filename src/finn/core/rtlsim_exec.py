@@ -122,6 +122,8 @@ def file_to_basename(x):
 def rtlsim_exec_cppxsi(
     model,
     execution_context,
+    is_single_node,
+    previous_node_name=None,
     dummy_data_mode=False,
     timeout_cycles=None,
     throttle_cycles=0,
@@ -261,6 +263,12 @@ def rtlsim_exec_cppxsi(
         "XSIM_LOG_FILE": '"xsi.log"',
         # Node name in case of single-node simulation
         "NODE_NAME": model.graph.node[0].name,
+        # Previous node name (for single node simulation)
+        "PREVIOUS_NODE_NAME": "std::nullopt"
+        if previous_node_name is None
+        else f'"{previous_node_name}"',
+        # Whether to execute a single node simulation
+        "SINGLE_NODE": "true" if is_single_node else "false",
     }
 
     fifosim_config_fname = Path(finnxsi_dir) / "rtlsim_config.hpp.template"

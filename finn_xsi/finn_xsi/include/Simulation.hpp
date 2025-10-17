@@ -10,11 +10,14 @@
 #include <atomic>
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/shared_memory_object.hpp>
+#include <cstddef>
 #include <iostream>
 #include <memory>
 #include <fstream>
-#include "boost/interprocess/creation_tags.hpp"
-#include "boost/interprocess/interprocess_fwd.hpp"
+#include <boost/interprocess/creation_tags.hpp>
+#include <boost/interprocess/interprocess_fwd.hpp>
+#include <optional>
+#include <stdexcept>
 
 namespace ipc = boost::interprocess;
 
@@ -65,13 +68,15 @@ class SimulationInterface {
 };
 
 
+/// Create a new simulation. To run single-node simulations with IPC, enable SingleNode
+/// and pass previousNodeName and nodeName to identify shared memory of adjacent node simulation processes
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, bool SingleNode>
 class Simulation {
     private:
     using ConsumerInterface = SimulationInterface<SimulationInterfaceType::CONSUMING>;
     using ProducerInterface = SimulationInterface<SimulationInterfaceType::PRODUCING>;
-    std::array<std::unique_ptr<ConsumerInterface>, IStreamsSize> fromProducerInterface;
-    std::array<std::unique_ptr<ProducerInterface>, OStreamsSize> toConsumerInterface;
+    std::optional<std::array<std::unique_ptr<ConsumerInterface>, IStreamsSize>> fromProducerInterface;
+    std::optional<std::array<std::unique_ptr<ProducerInterface>, OStreamsSize>> toConsumerInterface;
     std::ofstream readyLog;
     std::ofstream validLog;
 
@@ -102,9 +107,16 @@ class Simulation {
         rst_n.set(1).write_back();
     }
 
-    Simulation(const std::string& previousName, const std::string& name, const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file, std::array<StreamDescriptor, IStreamsSize> _istream_descs,
-               std::array<StreamDescriptor, OStreamsSize> _ostream_descs)
-        : kernel(kernel_lib), top(kernel, design_lib, xsim_log_file, trace_file), clk(top) {
+    Simulation(
+        const std::string& kernel_lib,
+        const std::string& design_lib,
+        const char* xsim_log_file,
+        const char* trace_file,
+        std::array<StreamDescriptor, IStreamsSize> _istream_descs,
+        std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
+        std::optional<std::string> previousNodeName = std::nullopt,
+        std::optional<std::string> currentNodeName = std::nullopt
+    ) : kernel(kernel_lib), top(kernel, design_lib, xsim_log_file, trace_file), clk(top) {
         if (trace_file) {
             top.trace_all();
         }
@@ -130,12 +142,18 @@ class Simulation {
         }
 
         if constexpr(SingleNode) {
+            if (!previousNodeName || !currentNodeName) {
+                throw std::runtime_error("Cannot construct single-node simulation without specifying the previous and this nodes names.");
+            }
+            fromProducerInterface = std::make_optional<std::array<std::unique_ptr<ConsumerInterface>, IStreamsSize>>();
+            toConsumerInterface = std::make_optional<std::array<std::unique_ptr<ProducerInterface>, OStreamsSize>>();
+
             // Create simulation interfaces
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                fromProducerInterface[i] = std::make_unique<ConsumerInterface>((previousName + std::to_string(i)).c_str());
+                (*fromProducerInterface)[i] = std::make_unique<ConsumerInterface>((*previousNodeName + std::to_string(i)).c_str());
             }
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                toConsumerInterface[i] = std::make_unique<ProducerInterface>((name + std::to_string(i)).c_str());
+                (*toConsumerInterface)[i] = std::make_unique<ProducerInterface>((*currentNodeName + std::to_string(i)).c_str());
             }
 
             // Save simulation input output behaviour
@@ -152,14 +170,14 @@ class Simulation {
     /// Read valid signal from producer, write own ready signal to it
     void updateFromProducer() requires (SingleNode) {
         for (std::size_t i = 0; i < IStreamsSize; ++i) {
-            istreams[i].valid(fromProducerInterface[i]->communicate(istreams[i].is_ready()));
+            istreams[i].valid((*fromProducerInterface)[i]->communicate(istreams[i].is_ready()));
         }
     }
 
     /// Read ready signal from consumer, write own valid signal to it.
     void updateToConsumer() requires (SingleNode) {
         for (std::size_t i = 0; i < OStreamsSize; ++i) {
-            ostreams[i].ready(toConsumerInterface[i]->communicate(ostreams[i].is_valid()));
+            ostreams[i].ready((*toConsumerInterface)[i]->communicate(ostreams[i].is_valid()));
         }
     }
 

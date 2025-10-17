@@ -105,18 +105,26 @@ class Simulation:
         and simulated in parallel.
         """
 
-        def _run_simulation(node_index: int) -> Any:
+        def _run_simulation(node_index: int, prev_node_name: str) -> Any:
             nodemodel = self._isolated_node_model(node_index)
             nodemodel = nodemodel.transform(CreateStitchedIP(self.fpgapart, self.clk_ns))
             # TODO: Remove xsi_fifosim from set_fifo_depths.py / change simulation functions
-            return xsi_fifosim(nodemodel, inputs)
+            return xsi_fifosim(
+                nodemodel, inputs, is_single_node=True, previous_node_name=prev_node_name
+            )
 
         workers = int(os.environ["NUM_DEFAULT_WORKERS"])
         futures: list[Future] = []
         results = {}
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for i in range(len(self.model.graph.node)):
-                futures.append(pool.submit(_run_simulation, i))
+                futures.append(
+                    pool.submit(
+                        _run_simulation,
+                        i,
+                        self.model.graph.node[i - 1].name if i >= 1 else None,  # type: ignore
+                    )
+                )
             pool.shutdown(wait=True)
             for i, future in enumerate(futures):
                 results[i] = future.result()
