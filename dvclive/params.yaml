@@ -1,0 +1,15 @@
+params:
+  dut: transformer
+  seed: 12
+  model_dir: models/transformer/finn-transformers/benchmark
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
