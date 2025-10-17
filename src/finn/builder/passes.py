@@ -50,6 +50,9 @@ def _make_pass_config(cfg: DataflowBuildConfig):
     if cfg.layouts_config_file is not None:
         with open(cfg.layouts_config_file, "r") as file:
             layouts = yaml.safe_load(file)
+    # Otherwise assume emtpy layout annotations
+    else:
+        layouts = {}
 
     # Construct configuration dictionary with subset of options from the
     # DataflowBuildConfig and some other ONNX Passes specific options

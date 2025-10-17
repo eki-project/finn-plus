@@ -160,6 +160,88 @@ class InferConvInpGen(Transformation):
         return (model, graph_modified)
 
 
+class InferFMPadding(Transformation):
+    """Convert Pad layers to FMPadding layers."""
+
+    def apply(self, model: ModelWrapper):
+        """Apply the transformation to the entire model graph."""
+        # Get the model graph out of the model wrapper object
+        graph = model.graph
+        # Keep track of whether the graph has been modified
+        graph_modified = False
+
+        # Enumerate all node in the graph and check for standalone standard ONNX
+        # padding operators
+        for index, node in enumerate(graph.node):
+            if node.op_type == "Pad":
+                # FMPadding only implements constant padding
+                if (mode := get_by_name(node.attribute, "mode")) is not None:
+                    if mode.s.decode("ascii") != "constant":
+                        continue
+
+                # Input shape must describe 4d image layout to be compatible
+                # with the FMPadding operator
+                if len(model.get_tensor_shape(node.input[0])) != 4:
+                    continue
+
+                # Padding axes must be constant initializer tensors, we cannot
+                # do runtime dynamic behavior
+                if (axes := model.get_initializer(node.input[3])) is None:
+                    continue
+
+                # Assuming NHWC layout as expected by FMPadding, the axes must
+                # be the first two (HW) following the batch dimension
+                if list(axes) != [1, 2]:
+                    continue
+
+                # FMPadding only implements constant zero padding at the moment
+                if (const := model.get_initializer(node.input[2])) != 0:
+                    continue
+
+                # Padding amount for each dimension must be constant and match
+                # the HW dimensions
+                if (pads := model.get_initializer(node.input[1])) is None:
+                    continue
+
+                if len(pads) != 4:
+                    continue
+
+                # Configure the FINN CustomOp replacement of the pad operator
+                padding = helper.make_node(
+                    "FMPadding",
+                    [node.input[0]],
+                    [*node.output],
+                    domain="finn.custom_op.fpgadataflow",
+                    backend="fpgadataflow",
+                    ImgDim=model.get_tensor_shape(node.input[0])[1:3],
+                    Padding=list(pads),
+                    NumChannels=model.get_tensor_shape(node.input[0])[-1],
+                    inputDataType=model.get_tensor_datatype(node.input[0]).name,
+                    SIMD=model.get_tensor_shape(node.input[0])[-1],
+                    name="FMPadding_" + node.name,
+                )
+
+                graph.node.insert(index, padding)
+                graph.node.remove(node)
+
+                # Consider the graph to be modified, triggering exhaustive
+                # re-application of this transformation
+                graph_modified = True
+                # Exiting here triggers type and shape inference and cleanup
+                # after each transformed node. This helps QONNX to behave
+                # better/more consistent in certain cases...
+                break
+
+        # Re-do shape and data type annotations after potential changes to the
+        # model graph
+        model = model.transform(InferShapes())
+        model = model.transform(InferDataTypes())
+
+        # Return the transformed model and indicate whether the graph actually
+        # has been transformed
+        return model, graph_modified
+
+
 class InferThresholdingLayer(Transformation):
     """Convert any MultiThreshold into a standalone thresholding layer."""
 
@@ -1539,10 +1621,8 @@ class InferQuantizedMatrixVectorActivation(Transformation):
     """Convert MatMul layers with quantized inputs and weights to
     MatrixVectorActivation layers."""
 
-    def __init__(self):
-        super().__init__()
-
     def apply(self, model):
+        """Apply the transformation to the entire model graph."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1944,8 +2024,11 @@ class InferElementwiseBinaryOperation(Transformation):
 
 # Converts the Squeeze operation to the corresponding FINN custom operation
 class InferSqueeze(Transformation):
+    """Convert Squeeze layers to the FINN equivalent of the same name."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transformation to the entire model graph."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
