@@ -227,4 +227,4 @@ Bench (Extended):
     PARALLEL_JOBS: "8"
   parallel:
     matrix:
-      - BENCH_CFG: [regression_extended, microbenchmark_basic]
+      - BENCH_CFG: [regression_extended, regression_transformer, microbenchmark_basic]

@@ -1,0 +1,5 @@
+outs:
+- md5: 8a800475e362db74107d3f61abcba8e4
+  size: 197397
+  hash: md5
+  path: unsw_nb15-mlp-w2a2.onnx
