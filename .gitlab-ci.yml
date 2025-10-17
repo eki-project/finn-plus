@@ -101,7 +101,7 @@ Build:
     - poetry install
     # Build .whl finn-plus package
     - poetry build --clean --format=wheel
-    - poetry config virtualenvs.create false
+    - poetry config virtualenvs.create false --local
     # Also build .whl finn-plus-tests package (for test dependencies)
     - poetry build -P tests --clean --format=wheel
     # Also build .whl finn-plus-notebooks package (for notebooks dependencies)
