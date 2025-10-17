@@ -158,7 +158,9 @@ class InferConvInpGen(Transformation):
 
 
 class InferFMPadding(Transformation):
+    """Convert Pad layers to FMPadding layers."""
     def apply(self, model: ModelWrapper):
+        """Apply the transformation to the entire model graph."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -1435,9 +1437,6 @@ class InferBinaryMatrixVectorActivation(Transformation):
     MatrixVectorActivation layers. Any immediately following MultiThreshold
     layers will also be absorbed into the MVTU."""
 
-    def __init__(self):
-        super().__init__()
-
     def apply(self, model):
         graph = model.graph
         node_ind = 0
@@ -1569,10 +1568,8 @@ class InferQuantizedMatrixVectorActivation(Transformation):
     """Convert MatMul layers with quantized inputs and weights to
     MatrixVectorActivation layers."""
 
-    def __init__(self):
-        super().__init__()
-
     def apply(self, model):
+        """Apply the transformation to the entire model graph."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1966,8 +1963,11 @@ class InferElementwiseBinaryOperation(Transformation):
 
 # Converts the Squeeze operation to the corresponding FINN custom operation
 class InferSqueeze(Transformation):
+    """Convert Squeeze layers to the FINN equivalent of the same name."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transformation to the entire model graph."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -2014,8 +2014,11 @@ class InferSqueeze(Transformation):
 
 # Converts the Unsqueeze operation to the corresponding FINN custom operation
 class InferUnsqueeze(Transformation):
+    """Convert Unsqueeze layers to the FINN equivalent of the same name."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transformation to the entire model graph."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
