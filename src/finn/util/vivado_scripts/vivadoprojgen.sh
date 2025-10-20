@@ -24,7 +24,9 @@ echo $CLK_PERIOD
 echo $GEN_VERILOG
 
 # Get the directory where this script is located
+OLD_DIR=$(pwd)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd $OLD_DIR
 
 # clean results..
 rm -rf results_$1

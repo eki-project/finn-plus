@@ -47,6 +47,7 @@ def out_of_context_synth(
     fpga_part="xczu3eg-sbva484-1-e",
     clk_name="ap_clk_0",
     clk_period_ns=5.0,
+    post_synth_verilog=False,
 ):
     "Run out-of-context Vivado synthesis, return resources and slack."
     # ensure that vivado is in PATH: source VIVADO_INSTALLATION/settings64.sh
@@ -56,7 +57,11 @@ def out_of_context_synth(
     file_dir = Path(__file__).parent.resolve()
     script_path = file_dir / "vivado_scripts" / "vivadocompile.sh"
     # vivadocompile.sh <top-level-entity> <clock-name (optional)> <fpga-part (optional)>
-    call = f"{script_path} {top_name} {clk_name} {fpga_part} {float(clk_period_ns)}"
+    flag_post_synth_verilog = 0 if post_synth_verilog else 1
+    call = (
+        f"{script_path} {top_name} {clk_name} {fpga_part} {float(clk_period_ns)}"
+        f"{flag_post_synth_verilog}"
+    )
     call = call.split()
     launch_process_helper(call, proc_env=os.environ.copy(), cwd=verilog_dir)
 
