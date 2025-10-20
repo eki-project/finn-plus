@@ -19,7 +19,14 @@
 /**** General RTLSIM Configuration Parameters ****/
 const std::optional<std::string> currentNodeName = "@NODE_NAME@";
 const std::optional<std::string> previousNodeName = @PREVIOUS_NODE_NAME@;
-constexpr bool SingleNode = @SINGLE_NODE@;
+
+// Which index node this simulation executes
+// In a complete design simulation this is 0
+constexpr size_t NodeIndex = @NODE_INDEX@;
+
+// Number of total nodes in the simulation (over all processes)
+// In a complete design simulation this is 1
+constexpr size_t TotalNodes = @TOTAL_NODES@;
 
 struct stream_desc {
 	char const *name;

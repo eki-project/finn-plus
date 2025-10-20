@@ -8,6 +8,7 @@
 #include <SharedLibrary.h>
 #include <helper.h>
 #include <atomic>
+#include <boost/asio/thread_pool.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/shared_memory_object.hpp>
 #include <cstddef>
@@ -16,8 +17,16 @@
 #include <fstream>
 #include <boost/interprocess/creation_tags.hpp>
 #include <boost/interprocess/interprocess_fwd.hpp>
+#include <boost/asio.hpp>
 #include <optional>
 #include <stdexcept>
+
+#include <new>
+#ifdef __cpp_lib_hardware_interference_size
+    using std::hardware_destructive_interference_size;
+#else
+    constexpr std::size_t hardware_destructive_interference_size = 64;
+#endif
 
 namespace ipc = boost::interprocess;
 
@@ -27,18 +36,18 @@ template<SimulationInterfaceType T, std::size_t ShmemSize = 1024>
 class SimulationInterface {
     private:
     struct _SimulationInterface {
-        std::atomic_bool ready;
-        std::atomic_bool valid;
-        std::atomic_bool unread;
+        alignas(hardware_destructive_interference_size) std::atomic_bool ready;
+        alignas(hardware_destructive_interference_size) std::atomic_bool valid;
+        alignas(hardware_destructive_interference_size) std::atomic_bool unread;
     };
     ipc::managed_shared_memory shmem;
     _SimulationInterface interface;
-
+    const std::string shmIdentifier;
 
     public:
-    SimulationInterface(const char* shmIdentifier) {
-        ipc::shared_memory_object::remove(shmIdentifier);
-        shmem = ipc::managed_shared_memory(ipc::open_or_create, shmIdentifier, ShmemSize);
+    SimulationInterface(const char* _shmIdentifier) : shmIdentifier(_shmIdentifier) {
+        ipc::shared_memory_object::remove(_shmIdentifier);
+        shmem = ipc::managed_shared_memory(ipc::open_or_create, _shmIdentifier, ShmemSize);
         interface.ready = shmem.find_or_construct<std::atomic_bool>("ready")(true);
         interface.valid = shmem.find_or_construct<std::atomic_bool>("valid")(false);
         interface.unread = shmem.find_or_construct<std::atomic_bool>("unread")(false);
@@ -54,8 +63,8 @@ class SimulationInterface {
     /// Wait until predecessor has sent recent data. Then send ready.
     bool communicate(bool sendReady) requires (T == SimulationInterfaceType::CONSUMING) {
         while (!interface.unread) {}
-        interface.ready = sendReady;
         auto validValue = interface.valid.load();
+        interface.ready = sendReady;
         interface.unread = false;
         return validValue;
     }
@@ -63,24 +72,16 @@ class SimulationInterface {
     /// Wait until successor has read the previous data. Then send valid.
     bool communicate(bool sendValid) requires (T == SimulationInterfaceType::PRODUCING) {
         while (interface.unread) {}
-        interface.valid = sendValid;
         auto readyValue = interface.ready.load();
+        interface.valid = sendValid;
         interface.unread = true;
         return readyValue;
     }
-
 };
 
-
-/// Create a new simulation. To run single-node simulations with IPC, enable SingleNode
-/// and pass previousNodeName and nodeName to identify shared memory of adjacent node simulation processes
-template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, bool SingleNode>
+template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled>
 class Simulation {
-    private:
-    using ConsumerInterface = SimulationInterface<SimulationInterfaceType::CONSUMING>;
-    using ProducerInterface = SimulationInterface<SimulationInterfaceType::PRODUCING>;
-    std::optional<std::array<std::unique_ptr<ConsumerInterface>, IStreamsSize>> fromProducerInterface;
-    std::optional<std::array<std::unique_ptr<ProducerInterface>, OStreamsSize>> toConsumerInterface;
+    protected:
     std::ofstream readyLog;
     std::ofstream validLog;
 
@@ -90,6 +91,48 @@ class Simulation {
     std::array<S_AXIS_Control, IStreamsSize> istreams;
     std::array<M_AXIS_Control, OStreamsSize> ostreams;
     Clock clk;
+
+    /// Initialize streams to the correct valid and ready states.
+    void initStreams() {
+        for (auto&& s : istreams) {
+            s.valid();
+        }
+        for (auto&& s : ostreams) {
+            s.ready();
+        }
+    }
+
+    Simulation(
+        const std::string& kernel_lib,
+        const std::string& design_lib,
+        const char* xsim_log_file,
+        const char* trace_file,
+        std::array<StreamDescriptor, IStreamsSize> _istream_descs,
+        std::array<StreamDescriptor, OStreamsSize> _ostream_descs
+    ) : kernel(kernel_lib), top(kernel, design_lib, xsim_log_file, trace_file), clk(top) {
+        if (trace_file) {
+            top.trace_all();
+        }
+
+        // Find I/O Streams and initialize their Status
+        for (size_t i = 0; i < _istream_descs.size(); ++i) {
+            istreams[i] = S_AXIS_Control{top, clk, std::data(_istream_descs)[i].job_size, std::data(_istream_descs)[i].job_ticks, std::data(_istream_descs)[i].name};
+        }
+        for (size_t i = 0; i < _ostream_descs.size(); ++i) {
+            ostreams[i] = M_AXIS_Control{top, clk, std::data(_ostream_descs)[i].job_size, std::data(_ostream_descs)[i].name};
+        }
+
+        // Save simulation input output behaviour
+        if constexpr(LoggingEnabled) {
+            readyLog.open("ready_log.txt");
+            validLog.open("valid_log.txt");
+        }
+
+        // Find Global Control & Run Startup Sequence
+        clearPorts();
+        reset();
+        initStreams();
+    }
 
 
     void clearPorts() noexcept {
@@ -110,8 +153,23 @@ class Simulation {
         }
         rst_n.set(1).write_back();
     }
+};
 
-    Simulation(
+
+template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes>
+class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
+    private:
+    using ConsumingInterface = SimulationInterface<SimulationInterfaceType::CONSUMING>;
+    using ProducingInterface = SimulationInterface<SimulationInterfaceType::PRODUCING>;
+    std::optional<std::array<std::unique_ptr<ConsumingInterface>, IStreamsSize>> fromProducerInterface;
+    std::optional<std::array<std::unique_ptr<ProducingInterface>, OStreamsSize>> toConsumerInterface;
+
+    // Coordinating reads and writes
+    // Could be done without a pool but this is more flexible for large branching models
+    boost::asio::thread_pool communicationPool;
+
+    public:
+    SingleNodeSimulation(
         const std::string& kernel_lib,
         const std::string& design_lib,
         const char* xsim_log_file,
@@ -120,106 +178,93 @@ class Simulation {
         std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
         std::optional<std::string> previousNodeName = std::nullopt,
         std::optional<std::string> currentNodeName = std::nullopt
-    ) : kernel(kernel_lib), top(kernel, design_lib, xsim_log_file, trace_file), clk(top) {
-        if (trace_file) {
-            top.trace_all();
+    ) : Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs) {
+        initStreams();
+
+        if ((NodeIndex != 0 && !previousNodeName) || !currentNodeName) {
+            throw std::runtime_error("Cannot construct single-node simulation without specifying the previous and this nodes names.");
         }
 
-        // Find I/O Streams and initialize their Status
-        for (size_t i = 0; i < _istream_descs.size(); ++i) {
-            istreams[i] = S_AXIS_Control{top, clk, std::data(_istream_descs)[i].job_size, std::data(_istream_descs)[i].job_ticks, std::data(_istream_descs)[i].name};
-        }
-        for (size_t i = 0; i < _ostream_descs.size(); ++i) {
-            ostreams[i] = M_AXIS_Control{top, clk, std::data(_ostream_descs)[i].job_size, std::data(_ostream_descs)[i].name};
-        }
-
-        // Find Global Control & Run Startup Sequence
-        clearPorts();
-        reset();
-
-        // Make all Inputs valid & all Outputs ready
-        for (auto&& s : istreams) {
-            s.valid();
-        }
-        for (auto&& s : ostreams) {
-            s.ready();
-        }
-
-        if constexpr(SingleNode) {
-            if (!previousNodeName || !currentNodeName) {
-                throw std::runtime_error("Cannot construct single-node simulation without specifying the previous and this nodes names.");
-            }
-            fromProducerInterface = std::make_optional<std::array<std::unique_ptr<ConsumerInterface>, IStreamsSize>>();
-            toConsumerInterface = std::make_optional<std::array<std::unique_ptr<ProducerInterface>, OStreamsSize>>();
-
-            // Create simulation interfaces
+        // Create producer facing interfaces
+        if constexpr(NodeIndex != 0) {
+            fromProducerInterface = std::make_optional<std::array<std::unique_ptr<ConsumingInterface>, IStreamsSize>>();
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                (*fromProducerInterface)[i] = std::make_unique<ConsumerInterface>((*previousNodeName + std::to_string(i)).c_str());
-            }
-            for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                (*toConsumerInterface)[i] = std::make_unique<ProducerInterface>((*currentNodeName + std::to_string(i)).c_str());
-            }
-
-            // Save simulation input output behaviour
-            if constexpr(LoggingEnabled) {
-                readyLog.open("ready_log.txt");
-                validLog.open("valid_log.txt");
+                (*fromProducerInterface)[i] = std::make_unique<ConsumingInterface>((*previousNodeName + std::to_string(i)).c_str());
             }
         } else {
-            // TODO
-            // Entire design in one simulation
+            fromProducerInterface = std::nullopt;
+        }
+
+        // Create consumer facing interfaces
+        if constexpr(NodeIndex != TotalNodes - 1) {
+        toConsumerInterface = std::make_optional<std::array<std::unique_ptr<ProducingInterface>, OStreamsSize>>();
+            for (std::size_t i = 0; i < OStreamsSize; ++i) {
+                (*toConsumerInterface)[i] = std::make_unique<ProducingInterface>((*currentNodeName + std::to_string(i)).c_str());
+            }
+        } else {
+            toConsumerInterface = std::nullopt;
         }
     }
 
-    /// Read valid signal from producer, write own ready signal to it
-    void updateFromProducer() requires (SingleNode) {
-        for (std::size_t i = 0; i < IStreamsSize; ++i) {
-            istreams[i].valid((*fromProducerInterface)[i]->communicate(istreams[i].is_ready()));
+    /// Init streams according to nodeindex
+    void initStreams() {
+        if constexpr(NodeIndex == 0) {
+            // The first node receives all valid input streams
+            for (auto&& s : this->istreams) {
+                s.valid();
+            }
+        }
+        if constexpr(NodeIndex == TotalNodes - 1) {
+            // The last nodes receives all ready output streams
+            for (auto&& s : this->ostreams) {
+                s.ready();
+            }
         }
     }
 
-    /// Read ready signal from consumer, write own valid signal to it.
-    void updateToConsumer() requires (SingleNode) {
-        for (std::size_t i = 0; i < OStreamsSize; ++i) {
-            ostreams[i].ready((*toConsumerInterface)[i]->communicate(ostreams[i].is_valid()));
+    /// Communicate with predecessors and successors and update their values and our own
+    void communicate() {
+        if constexpr(NodeIndex != TotalNodes - 1) {
+            for (std::size_t i = 0; i < OStreamsSize; ++i) {
+                boost::asio::dispatch(communicationPool, [this, i]() {
+                    this->ostreams[i].ready((*toConsumerInterface)[i]->communicate(this->ostreams[i].is_valid()));
+                });
+            }
         }
+        if constexpr(NodeIndex != 0) {
+            for (std::size_t i = 0; i < IStreamsSize; ++i) {
+                boost::asio::dispatch(communicationPool, [this, i]() {
+                    this->istreams[i].valid((*fromProducerInterface)[i]->communicate(this->istreams[i].is_ready()));
+                });
+            }
+        }
+        communicationPool.join();
     }
 
     void runSingleCycle() {
-        if constexpr(SingleNode) {
-            clk.toggle_clk();
-            // Order: Send update forward to consumer, read update from producer second
-            updateFromProducer();
-            updateToConsumer();
+        this->clk.toggle_clk();
+        communicate();
 
-            // Log the signals that this simulations set (ready to predecessor, valid to successor)
-            if constexpr(LoggingEnabled) {
-                for (S_AXIS_Control& stream : istreams) {
-                    readyLog << stream.is_ready() << " ";
-                }
-                readyLog << "\n";
-                for (M_AXIS_Control& stream : ostreams) {
-                    validLog << stream.is_valid() << " ";
-                }
-                validLog << "\n";
+        // Log the signals that this simulations set (ready to predecessor, valid to successor)
+        if constexpr(LoggingEnabled) {
+            for (S_AXIS_Control& stream : this->istreams) {
+                this->readyLog << stream.is_ready() << " ";
             }
-        } else {
-            // TODO
-            // Single design case
+            this->readyLog << "\n";
+            for (M_AXIS_Control& stream : this->ostreams) {
+                this->validLog << stream.is_valid() << " ";
+            }
+            this->validLog << "\n";
         }
     }
 
     /// Run for the given number of frames (frames * job_size   cycles or transactions)
     void runForFrames(std::size_t frames) {
-        if constexpr(SingleNode) {
-            // TODO: Multiple IO streams: Current cycle count is hardcoded for the number of inputs of the first stream
-            std::size_t cycleCount = frames * istreams[0].job_size;
-            for (std::size_t i = 0; i < cycleCount; ++i) {
-                runSingleCycle();
-            }
-        } else {
-            // TODO
-            // Single design case
+        // TODO: Multiple IO streams: Current cycle count is hardcoded for the number of inputs of the first stream
+        std::size_t cycleCount = frames * this->istreams[0].job_size;
+        for (std::size_t i = 0; i < cycleCount; ++i) {
+            std::cout << "Cycle " << i << std::endl;
+            runSingleCycle();
         }
     }
 };

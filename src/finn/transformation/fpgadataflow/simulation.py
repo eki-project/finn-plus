@@ -104,13 +104,20 @@ class Simulation:
         """Simulate the given number of inputs for every layer. Layers are completely isolated
         and simulated in parallel.
         """
+        for i, node in enumerate(self.model.graph.node):
+            print(f"{i}: {node.name}")
 
         def _run_simulation(node_index: int, prev_node_name: str) -> Any:
             nodemodel = self._isolated_node_model(node_index)
             nodemodel = nodemodel.transform(CreateStitchedIP(self.fpgapart, self.clk_ns))
             # TODO: Remove xsi_fifosim from set_fifo_depths.py / change simulation functions
             return xsi_fifosim(
-                nodemodel, inputs, is_single_node=True, previous_node_name=prev_node_name
+                nodemodel,
+                inputs,
+                is_single_node=True,
+                total_nodes=len(self.model.graph.node),
+                current_node_index=node_index,
+                previous_node_name=prev_node_name,
             )
 
         workers = int(os.environ["NUM_DEFAULT_WORKERS"])

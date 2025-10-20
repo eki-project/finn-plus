@@ -11,7 +11,7 @@
 
 int main(){
     // TODO: Give proper names for previous and name
-    Simulation<1, 1, true, SingleNode> sim(
+    SingleNodeSimulation<1, 1, true, NodeIndex, TotalNodes> sim(
         kernel_libname,
         design_libname,
         "xsim_log_file.txt",

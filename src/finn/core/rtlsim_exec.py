@@ -34,6 +34,7 @@ except ModuleNotFoundError:
 import numpy as np
 import os
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
@@ -122,8 +123,10 @@ def file_to_basename(x):
 def rtlsim_exec_cppxsi(
     model,
     execution_context,
-    is_single_node,
-    previous_node_name=None,
+    is_single_node: bool,
+    total_nodes: int = 1,
+    current_node_index: int | None = None,
+    previous_node_name: str | None = None,
     dummy_data_mode=False,
     timeout_cycles=None,
     throttle_cycles=0,
@@ -177,7 +180,8 @@ def rtlsim_exec_cppxsi(
         vivado_stitch_proj_dir = model.get_metadata_prop("vivado_stitch_proj")
         with open(vivado_stitch_proj_dir + "/all_verilog_srcs.txt", "r") as f:
             all_verilog_srcs = f.read().split()
-        single_src_dir = make_build_dir("rtlsim_" + top_module_name + "_")
+        rtlsim_name = model.graph.node[0].name if is_single_node else top_module_name
+        single_src_dir = make_build_dir("rtlsim_" + rtlsim_name + "_")
         debug = not (trace_file is None or trace_file == "")
         rtlsim_so = finnxsi.compile_sim_obj(
             top_module_name, all_verilog_srcs, single_src_dir, debug=debug
@@ -267,8 +271,8 @@ def rtlsim_exec_cppxsi(
         "PREVIOUS_NODE_NAME": "std::nullopt"
         if previous_node_name is None
         else f'"{previous_node_name}"',
-        # Whether to execute a single node simulation
-        "SINGLE_NODE": "true" if is_single_node else "false",
+        "NODE_INDEX": current_node_index if is_single_node else 0,
+        "TOTAL_NODES": total_nodes,
     }
 
     fifosim_config_fname = Path(finnxsi_dir) / "rtlsim_config.hpp.template"
@@ -311,12 +315,9 @@ def rtlsim_exec_cppxsi(
     runsim.write_text(f"LD_LIBRARY_PATH={ld_library_path}:$LD_LIBRARY_PATH {simulation_executable}")
 
     # Actually run the simulation
-    out, err = launch_process_helper(
-        ["bash", runsim.name], cwd=sim_base, proc_env=os.environ.copy()
+    subprocess.run(
+        ["bash", runsim.name], cwd=sim_base, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
-
-    # TODO: remove output printing
-    log.warning(f"{model.graph.node[0].name}: {out}")
 
     # parse results file and return dict
     # TODO
