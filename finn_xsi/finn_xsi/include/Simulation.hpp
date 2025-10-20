@@ -26,18 +26,22 @@ enum class SimulationInterfaceType { PRODUCING, CONSUMING };
 template<SimulationInterfaceType T, std::size_t ShmemSize = 1024>
 class SimulationInterface {
     private:
+    struct _SimulationInterface {
+        std::atomic_bool ready;
+        std::atomic_bool valid;
+        std::atomic_bool unread;
+    };
     ipc::managed_shared_memory shmem;
-    std::atomic_bool ready;
-    std::atomic_bool valid;
-    std::atomic_bool unread;
+    _SimulationInterface interface;
+
 
     public:
     SimulationInterface(const char* shmIdentifier) {
         ipc::shared_memory_object::remove(shmIdentifier);
         shmem = ipc::managed_shared_memory(ipc::open_or_create, shmIdentifier, ShmemSize);
-        ready = shmem.find_or_construct<std::atomic_bool>("ready")(true);
-        valid = shmem.find_or_construct<std::atomic_bool>("valid")(false);
-        unread = shmem.find_or_construct<std::atomic_bool>("unread")(false);
+        interface.ready = shmem.find_or_construct<std::atomic_bool>("ready")(true);
+        interface.valid = shmem.find_or_construct<std::atomic_bool>("valid")(false);
+        interface.unread = shmem.find_or_construct<std::atomic_bool>("unread")(false);
     }
 
     ~SimulationInterface() {
@@ -49,19 +53,19 @@ class SimulationInterface {
 
     /// Wait until predecessor has sent recent data. Then send ready.
     bool communicate(bool sendReady) requires (T == SimulationInterfaceType::CONSUMING) {
-        while (!unread) {}
-        ready = sendReady;
-        auto validValue = valid.load();
-        unread = false;
+        while (!interface.unread) {}
+        interface.ready = sendReady;
+        auto validValue = interface.valid.load();
+        interface.unread = false;
         return validValue;
     }
 
     /// Wait until successor has read the previous data. Then send valid.
     bool communicate(bool sendValid) requires (T == SimulationInterfaceType::PRODUCING) {
-        while (unread) {}
-        valid = sendValid;
-        auto readyValue = ready.load();
-        unread = true;
+        while (interface.unread) {}
+        interface.valid = sendValid;
+        auto readyValue = interface.ready.load();
+        interface.unread = true;
         return readyValue;
     }
 
