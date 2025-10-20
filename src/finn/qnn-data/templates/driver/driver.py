@@ -28,6 +28,7 @@ class FINNDMAOverlay(Overlay):
         device=None,
         download=True,
         runtime_weight_dir="runtime_weights/",
+        **kwargs,
     ):
         """Initialize the FINN accelerator.
 
@@ -660,6 +661,7 @@ class FINNInstrumentationOverlay(Overlay):
         device=None,
         download=True,
         seed=1,
+        **kwargs,
     ):
         super().__init__(bitfile_name, download=download, device=device)
 
@@ -781,6 +783,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         download=True,
         seed=1,
         fifo_widths=dict(),
+        **kwargs,
     ):
         super().__init__(
             bitfile_name,
@@ -1143,6 +1146,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         runtime_weight_dir="runtime_weights/",
         batch_size=1,
         seed=1,
+        **kwargs,
     ):
         super().__init__(
             bitfile_name,
