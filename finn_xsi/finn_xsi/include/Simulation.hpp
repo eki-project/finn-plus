@@ -7,12 +7,13 @@
 #include <Port.h>
 #include <SharedLibrary.h>
 #include <helper.h>
-#include <atomic>
 #include <boost/asio/thread_pool.hpp>
+#include <boost/interprocess/detail/os_file_functions.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/shared_memory_object.hpp>
+#include <boost/atomic/ipc_atomic.hpp>
 #include <cstddef>
-#include <iostream>
+#include <cstdlib>
 #include <memory>
 #include <fstream>
 #include <boost/interprocess/creation_tags.hpp>
@@ -22,6 +23,8 @@
 #include <stdexcept>
 
 #include <new>
+#include <thread>
+#include <type_traits>
 #ifdef __cpp_lib_hardware_interference_size
     using std::hardware_destructive_interference_size;
 #else
@@ -30,54 +33,6 @@
 
 namespace ipc = boost::interprocess;
 
-enum class SimulationInterfaceType { PRODUCING, CONSUMING };
-
-template<SimulationInterfaceType T, std::size_t ShmemSize = 1024>
-class SimulationInterface {
-    private:
-    struct _SimulationInterface {
-        alignas(hardware_destructive_interference_size) std::atomic_bool ready;
-        alignas(hardware_destructive_interference_size) std::atomic_bool valid;
-        alignas(hardware_destructive_interference_size) std::atomic_bool unread;
-    };
-    ipc::managed_shared_memory shmem;
-    _SimulationInterface interface;
-    const std::string shmIdentifier;
-
-    public:
-    SimulationInterface(const char* _shmIdentifier) : shmIdentifier(_shmIdentifier) {
-        ipc::shared_memory_object::remove(_shmIdentifier);
-        shmem = ipc::managed_shared_memory(ipc::open_or_create, _shmIdentifier, ShmemSize);
-        interface.ready = shmem.find_or_construct<std::atomic_bool>("ready")(true);
-        interface.valid = shmem.find_or_construct<std::atomic_bool>("valid")(false);
-        interface.unread = shmem.find_or_construct<std::atomic_bool>("unread")(false);
-    }
-
-    ~SimulationInterface() {
-        // TODO: Called implicitly?
-        shmem.destroy<std::atomic_bool>("ready");
-        shmem.destroy<std::atomic_bool>("valid");
-        shmem.destroy<std::atomic_bool>("unread");
-    }
-
-    /// Wait until predecessor has sent recent data. Then send ready.
-    bool communicate(bool sendReady) requires (T == SimulationInterfaceType::CONSUMING) {
-        while (!interface.unread) {}
-        auto validValue = interface.valid.load();
-        interface.ready = sendReady;
-        interface.unread = false;
-        return validValue;
-    }
-
-    /// Wait until successor has read the previous data. Then send valid.
-    bool communicate(bool sendValid) requires (T == SimulationInterfaceType::PRODUCING) {
-        while (interface.unread) {}
-        auto readyValue = interface.ready.load();
-        interface.valid = sendValid;
-        interface.unread = true;
-        return readyValue;
-    }
-};
 
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled>
 class Simulation {
@@ -155,6 +110,64 @@ class Simulation {
     }
 };
 
+enum class SimulationInterfaceType { PRODUCING, CONSUMING };
+
+template<SimulationInterfaceType T, std::size_t ShmemSize = 1024>
+class SimulationInterface {
+    private:
+    struct _SimulationInterface {
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* ready;
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* valid;
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* unread;
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* fifoOccupation;
+    };
+    ipc::managed_shared_memory shmem;
+    _SimulationInterface interface;
+    const std::string shmIdentifier;
+
+    /// Logging
+    std::ofstream out;
+
+    public:
+    SimulationInterface(const char* _shmIdentifier) : shmIdentifier(_shmIdentifier) {
+        if (T == SimulationInterfaceType::PRODUCING) {
+            ipc::shared_memory_object::remove(_shmIdentifier);
+        }
+        shmem = ipc::managed_shared_memory(ipc::open_or_create, _shmIdentifier, ShmemSize);
+        interface.ready = shmem.find_or_construct<boost::ipc_atomic<bool>>("ready")(true);
+        interface.valid = shmem.find_or_construct<boost::ipc_atomic<bool>>("valid")(false);
+        interface.unread = shmem.find_or_construct<boost::ipc_atomic<bool>>("unread")(false);
+        interface.fifoOccupation = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("fifoOccupation")(0);
+    }
+
+    ~SimulationInterface() {
+        // TODO: Called implicitly?
+        shmem.destroy<boost::ipc_atomic<bool>>("ready");
+        shmem.destroy<boost::ipc_atomic<bool>>("valid");
+        shmem.destroy<boost::ipc_atomic<bool>>("unread");
+        shmem.destroy<boost::ipc_atomic<unsigned int>>("fifoOccupation");
+    }
+
+    /// Wait until predecessor has sent recent data. Then send ready.
+    bool communicate(bool sendReady) requires (T == SimulationInterfaceType::CONSUMING) {
+        while (!*(interface.unread)) {}
+        bool validValue = *(interface.valid);
+        *(interface.ready) = sendReady;
+        *(interface.unread) = false;
+        return validValue;
+    }
+
+    /// Wait until successor has read the previous data. Then send valid.
+    bool communicate(bool sendValid) requires (T == SimulationInterfaceType::PRODUCING) {
+        while (*(interface.unread)) {}
+        bool readyValue = *(interface.ready);
+        *(interface.valid) = sendValid;
+        *(interface.unread) = true;
+        return readyValue;
+    }
+};
+
+
 
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes>
 class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
@@ -163,10 +176,6 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     using ProducingInterface = SimulationInterface<SimulationInterfaceType::PRODUCING>;
     std::optional<std::array<std::unique_ptr<ConsumingInterface>, IStreamsSize>> fromProducerInterface;
     std::optional<std::array<std::unique_ptr<ProducingInterface>, OStreamsSize>> toConsumerInterface;
-
-    // Coordinating reads and writes
-    // Could be done without a pool but this is more flexible for large branching models
-    boost::asio::thread_pool communicationPool;
 
     public:
     SingleNodeSimulation(
@@ -178,7 +187,8 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
         std::optional<std::string> previousNodeName = std::nullopt,
         std::optional<std::string> currentNodeName = std::nullopt
-    ) : Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs) {
+    ) :
+    Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs) {
         initStreams();
 
         if ((NodeIndex != 0 && !previousNodeName) || !currentNodeName) {
@@ -204,8 +214,25 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         } else {
             toConsumerInterface = std::nullopt;
         }
+
     }
 
+    private:
+    /// Communicate with predecessors and successors and update their values and our own
+    void communicate() {
+        if constexpr(NodeIndex != TotalNodes - 1) {
+            for (std::size_t i = 0; i < OStreamsSize; ++i) {
+                this->ostreams[i].ready((*toConsumerInterface)[i]->communicate(this->ostreams[i].is_valid()));
+            }
+        }
+        if constexpr(NodeIndex != 0) {
+            for (std::size_t i = 0; i < IStreamsSize; ++i) {
+                this->istreams[i].valid((*fromProducerInterface)[i]->communicate(this->istreams[i].is_ready()));
+            }
+        }
+    }
+
+    public:
     /// Init streams according to nodeindex
     void initStreams() {
         if constexpr(NodeIndex == 0) {
@@ -220,25 +247,6 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 s.ready();
             }
         }
-    }
-
-    /// Communicate with predecessors and successors and update their values and our own
-    void communicate() {
-        if constexpr(NodeIndex != TotalNodes - 1) {
-            for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                boost::asio::dispatch(communicationPool, [this, i]() {
-                    this->ostreams[i].ready((*toConsumerInterface)[i]->communicate(this->ostreams[i].is_valid()));
-                });
-            }
-        }
-        if constexpr(NodeIndex != 0) {
-            for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                boost::asio::dispatch(communicationPool, [this, i]() {
-                    this->istreams[i].valid((*fromProducerInterface)[i]->communicate(this->istreams[i].is_ready()));
-                });
-            }
-        }
-        communicationPool.join();
     }
 
     void runSingleCycle() {
@@ -263,7 +271,6 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         // TODO: Multiple IO streams: Current cycle count is hardcoded for the number of inputs of the first stream
         std::size_t cycleCount = frames * this->istreams[0].job_size;
         for (std::size_t i = 0; i < cycleCount; ++i) {
-            std::cout << "Cycle " << i << std::endl;
             runSingleCycle();
         }
     }
