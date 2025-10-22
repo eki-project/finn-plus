@@ -49,12 +49,9 @@ std::array<stream_desc, @ISTREAM_LEN@> istream_descs { @ISTREAM_DESC@ };
 // output AXI stream descriptors
 std::array<stream_desc, @OSTREAM_LEN@> ostream_descs { @OSTREAM_DESC@ };
 
-// number of inferences to perform
-constexpr unsigned  n_inferences = @N_INFERENCES@;
-
 // max number of cycles to wait for output activity on any stream before timeout
-constexpr unsigned  max_iters = @TIMEOUT_CYCLES@;
+constexpr unsigned max_iters = @TIMEOUT_CYCLES@;
 
 // filename for trace and debug, if enabled. This needs xelab -debug option too.
-static char const *const trace_filename = @TRACE_FILE@;
-static char const *const xsim_log_filename = @XSIM_LOG_FILE@;
+static const std::optional<std::string> trace_filename = @TRACE_FILE@;
+static const std::string xsim_log_filename = @XSIM_LOG_FILE@;
