@@ -18,6 +18,7 @@ CLK_NAME=${2:-clk}
 FPGA_PART=${3:-xc7z020clg400-1}
 CLK_PERIOD=${4:-2.0}
 GEN_VERILOG=${5:-0}
+echo $1
 echo $CLK_NAME
 echo $FPGA_PART
 echo $CLK_PERIOD
@@ -34,12 +35,10 @@ mkdir results_$1
 cd results_$1
 
 # put all files in a prf file..
-cp ../*.vhd . || /bin/true
-cp ../*.v . || /bin/true
-cp ../*.h . || /bin/true
-cp ../*.xdc . || /bin/true
-cp ../*.vh . || /bin/true
-cp ../*.sv . || /bin/true
+for ext in vhd v h xdc vh sv; do
+    [ -n "$(ls ../*.$ext 2>/dev/null)" ] && cp ../*.$ext .
+done
+
 #put FPGA part to be used into the project compile tcl script
 echo "set fpga_part \"$FPGA_PART\"" > $1.tcl
 cat "$SCRIPT_DIR/vivadocompile.tcl" >> $1.tcl
@@ -62,6 +61,7 @@ echo "]" >> sources.tcl
 echo "add_files -norecurse -fileset \$obj \$files" >> sources.tcl
 
 # Handle headers with find
+touch headers.tcl
 find . -maxdepth 1 -name "*.h" -type f | while read -r file; do
     basename_file=$(basename "$file")
     echo "set file \"\$origin_dir/$basename_file\"" >> headers.tcl
@@ -78,5 +78,8 @@ sed -i "s/CLK_PERIOD_NS/$CLK_PERIOD/g" $1.xdc
 
 for i in *.xdc
 do
+    if [ "$i" = "$1.xdc" ]; then
+        continue
+    fi
 	cat $i >> $1.xdc
 done
