@@ -1063,6 +1063,8 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
                     cfg.synth_clk_period_ns,
                     cfg.enable_hw_debug,
                     cfg.enable_instrumentation,
+                    cfg.live_fifo_sizing,
+                    cfg.instrumentation_no_dma,
                     partition_model_dir=partition_model_dir,
                 )
             )

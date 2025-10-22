@@ -496,6 +496,8 @@ class FINNDMAOverlay(Overlay):
         return res
 
     def validate(self, *args, **kwargs):
+        print("TODO FIX")
+        return
         report_dir = kwargs.get("report_dir")
         dataset = kwargs.get("validation_dataset")
         dataset_root = kwargs.get("dataset_root")

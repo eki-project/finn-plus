@@ -111,6 +111,7 @@ class Experiment:
             if param.name in ex_config:
                 # Get value from config
                 params_dict[param.name] = ex_config[param.name]
+                del ex_config[param.name]
             elif param.name in ex_config["driver_info"]:
                 params_dict[param.name] = ex_config["driver_info"][param.name]
             else:
