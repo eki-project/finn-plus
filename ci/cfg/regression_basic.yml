@@ -11,6 +11,7 @@
         "dut": ["vgg10"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "enable_instrumentation": [True],
+        "instrumentation_no_dma": [True],
         "board": ["RFSoC2x2"],
         "experiments_config": ["../expermients/driver_rework_ex_config_instr.json"],
     },
@@ -19,14 +20,13 @@
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "enable_instrumentation": [True],
         "live_fifo_sizing": [True],
-        "instrumentation_no_dma": [True],
         "board": ["RFSoC2x2"],
         "experiments_config": ["../expermients/driver_rework_ex_config_fifo.json"],
     },
     {
+        "dut": ["vgg10"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "enable_instrumentation": [True],
-        "live_fifo_sizing": [True],
         "board": ["RFSoC2x2"],
         "experiments_config": ["../expermients/driver_rework_ex_config_instr_dma.json.json"]
     }
