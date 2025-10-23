@@ -413,7 +413,9 @@ class Simulation:
             )
 
         def _run_simulation(binary: Path) -> None:
-            subprocess.run(["bash", str(binary)], capture_output=True)
+            subprocess.run(
+                ["bash", str(binary)], stdout=sys.stdout, stderr=sys.stderr, cwd=binary.parent
+            )
 
         # Build simulations in parallel
         # TODO: Change to info when done
@@ -437,6 +439,9 @@ class Simulation:
 
         # TODO: Change to info when done
         log.warning("RUNNING NODE SIMULATIONS")
+        # TODO: Might be unnecessary. Remove later
+        sys.stdout = sys.stdout.console
+        sys.stderr = sys.stderr.console
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for i, binary in binaries.items():
                 print(
