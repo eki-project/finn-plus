@@ -12,6 +12,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from random import Random
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Any, cast
 
@@ -313,6 +314,7 @@ class Simulation:
 
     def _build_single_node_simulation(
         self,
+        node_name: str,
         node_model: ModelWrapper,
         node_index: int,
         total_nodes: int,
@@ -327,6 +329,8 @@ class Simulation:
         Much of this is from the rtlsim_exec.py in core/
 
         Args:
+            node_name: Despite the fact that we receive an isolated node model, we can still
+                    manually pass a node name. This is useful to give unique names (e.g. for IPC)
             node_model: The single node ModelWrapper to build the simulation from.
             node_index: The index of the simulated node. Used to determine whether a node shares IO
                         with successors or predecessors.
@@ -352,7 +356,6 @@ class Simulation:
                 "1 node. Make sure to pass the ModelWrapper containing only"
                 "the relevant node."
             )
-        node_name = node_model.graph.node[0].name
 
         # Check that the relevant data exists
         wrapper_filename = node_model.get_metadata_prop("wrapper_filename")
@@ -404,18 +407,31 @@ class Simulation:
             print(f"{i}: {node.name}")
 
         def _build_simulation(
-            node_index: int, total_nodes: int, prev_node_name: str | None, build_dir: Path
+            node_name: str,
+            node_index: int,
+            total_nodes: int,
+            prev_node_name: str | None,
+            build_dir: Path,
         ) -> Any:
             nodemodel = self._isolated_node_model(node_index)
             nodemodel = nodemodel.transform(CreateStitchedIP(self.fpgapart, self.clk_ns))
             return self._build_single_node_simulation(
-                nodemodel, node_index, total_nodes, prev_node_name, build_dir
+                node_name, nodemodel, node_index, total_nodes, prev_node_name, build_dir
             )
 
         def _run_simulation(binary: Path) -> None:
             subprocess.run(
                 ["bash", str(binary)], stdout=sys.stdout, stderr=sys.stderr, cwd=binary.parent
             )
+
+        # Create randomized names to avoid clashing with old IPC shared memory segments.
+        rand = Random()
+        rand.seed()
+        randomized_names = {
+            i: self.model.graph.node[i].name
+            + "".join(rand.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(5))
+            for i in range(len(self.model.graph.node))
+        }
 
         # Build simulations in parallel
         # TODO: Change to info when done
@@ -428,10 +444,11 @@ class Simulation:
             for i in range(total_nodes):
                 futures[i] = pool.submit(
                     _build_simulation,
+                    randomized_names[i],
                     i,
                     total_nodes,
-                    self.model.graph.node[i - 1].name if i >= 1 else None,  # type: ignore
-                    Path(make_build_dir(f"rtlsim_{self.model.graph.node[i].name}_")),
+                    randomized_names[i - 1] if i >= 1 else None,  # type: ignore
+                    Path(make_build_dir(f"rtlsim_{randomized_names[i]}_")),
                 )
             pool.shutdown(wait=True)
             for i, future in futures.items():

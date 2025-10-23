@@ -9,6 +9,7 @@
 #include <helper.h>
 #include <boost/asio/thread_pool.hpp>
 #include <boost/interprocess/detail/os_file_functions.hpp>
+#include <boost/interprocess/exceptions.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/shared_memory_object.hpp>
 #include <boost/atomic/ipc_atomic.hpp>
@@ -27,6 +28,7 @@
 #include <stdexcept>
 
 #include <new>
+#include <thread>
 #ifdef __cpp_lib_hardware_interference_size
     using std::hardware_destructive_interference_size;
 #else
@@ -34,7 +36,7 @@
 #endif
 
 #ifdef NDEBUG
-    inline void debug([[maybe_unused]] std::string_view s) {}
+    [[maybe_unused]] inline void debug([[maybe_unused]] std::string_view s) {}
 #else
     inline void debug(std::string_view s) { std::cout << "[DBG] " << s << "\n"; }
 #endif
@@ -136,13 +138,14 @@ class SimulationInterface {
         alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* oValid;
         alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* oCycle;
         alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* fifoOccupation;
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* maxFifoDepth;
     };
     _SimulationInterface interface;
     ipc::managed_shared_memory shmem;
     const std::string shmIdentifier;
 
 #ifdef NDEBUG
-    void simInterfaceDebug([[maybe_unused]] std::string_view s) {}
+    [[maybe_unused]] void simInterfaceDebug([[maybe_unused]] std::string_view s) {}
 #else
     /// Log the given text with a header identifying the shared memory region and the interface type
     void simInterfaceDebug(std::string_view s) {
@@ -151,39 +154,58 @@ class SimulationInterface {
 #endif
 
     public:
-    unsigned int maxDepth;
-
-    SimulationInterface(const char* _shmIdentifier, unsigned int initialMaxDepth = 2) : shmIdentifier(_shmIdentifier), maxDepth(initialMaxDepth) {
-        simInterfaceDebug("Creating simulation interface");
+    SimulationInterface(const char* _shmIdentifier, unsigned int initialMaxDepth = 2) : shmIdentifier(_shmIdentifier) {
+        simInterfaceDebug(std::format("Creating simulation interface with {} depth.", initialMaxDepth));
         if (T == SimulationInterfaceType::PRODUCING) {
             ipc::shared_memory_object::remove(_shmIdentifier);
             simInterfaceDebug("Removed previous shared memory objects.");
+            shmem = ipc::managed_shared_memory(ipc::create_only, _shmIdentifier, ShmemSize);
+        } else {
+            while(true) {
+                try {
+                    shmem = ipc::managed_shared_memory(ipc::open_only, _shmIdentifier);
+                    break;
+                } catch (const ipc::interprocess_exception& e) {
+                    simInterfaceDebug("Producer shared memory not yet created. Waiting..");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            }
         }
-        shmem = ipc::managed_shared_memory(ipc::open_or_create, _shmIdentifier, ShmemSize);
         simInterfaceDebug("Shared memory constructed or found.");
 
         // Find variables. CONSUMING interfaces only communicate with o... signals, PRODUCING ones only with i... interfaces
         interface.fifoOccupation = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("fifoOccupation")(0);
-        interface.iReady = shmem.find_or_construct<boost::ipc_atomic<bool>>("iReady")(maxDepth > 0);
+        interface.maxFifoDepth = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("maxFifoDepth")(initialMaxDepth);
+        interface.iReady = shmem.find_or_construct<boost::ipc_atomic<bool>>("iReady")(initialMaxDepth > 0);
         interface.iCycle = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("iCycle")(0);
         interface.oValid = shmem.find_or_construct<boost::ipc_atomic<bool>>("oValid")(*(interface.fifoOccupation) > 9);
         interface.oCycle = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("oCycle")(0);
         simInterfaceDebug("Shared variables constructed or found.");
+
     }
 
     ~SimulationInterface() {
         // TODO: Called implicitly?
         shmem.destroy<boost::ipc_atomic<bool>>("iReady");
-        shmem.destroy<boost::ipc_atomic<bool>>("iCycle");
+        shmem.destroy<boost::ipc_atomic<unsigned int>>("iCycle");
         shmem.destroy<boost::ipc_atomic<bool>>("oValid");
-        shmem.destroy<boost::ipc_atomic<bool>>("oCycle");
+        shmem.destroy<boost::ipc_atomic<unsigned int>>("oCycle");
         shmem.destroy<boost::ipc_atomic<unsigned int>>("fifoOccupation");
+        shmem.destroy<boost::ipc_atomic<unsigned int>>("maxFifoDepth");
+    }
+
+    /// Set the max fifo depth in this interface.
+    void setMaxFifoDepth(unsigned int depth) {
+        simInterfaceDebug(std::format("Setting max FIFO depth to {}", depth));
+        *interface.maxFifoDepth = depth;
     }
 
     /// Reset all interface data fields to their defaults
-    void reset() {
+    void reset(unsigned int maxFifoDepth = 2) {
+        simInterfaceDebug(std::format("Resetting simulation interface (with max FIFO depth {})", maxFifoDepth));
         *interface.fifoOccupation = 0;
-        *interface.iReady = maxDepth > 0;
+        *interface.maxFifoDepth = maxFifoDepth;
+        *interface.iReady = true;
         *interface.iCycle = 0;
         *interface.oValid = *(interface.fifoOccupation) > 0;
         *interface.oCycle = 0;
@@ -196,8 +218,7 @@ class SimulationInterface {
     bool communicate(bool consumerReady) requires (T == SimulationInterfaceType::CONSUMING) {
         // The input side must always be one cycle ahead of the output side
         // Wait until input catches up (and overtakes)
-        simInterfaceDebug("Waiting for input side to catch up.");
-        while (*interface.iCycle < *interface.oCycle + 1) {}
+        while (*interface.iCycle <= *interface.oCycle) {}
         *interface.oValid = *interface.fifoOccupation > 0;
         if (*interface.oValid && consumerReady) {
             --(*interface.fifoOccupation);
@@ -214,9 +235,8 @@ class SimulationInterface {
     bool communicate(bool producerValid) requires (T == SimulationInterfaceType::PRODUCING) {
         // The input side must always be one cycle ahead of the output side
         // Wait until output catches up
-        simInterfaceDebug("Waiting for output side to catch up.");
-        while (*interface.oCycle < *interface.iCycle - 1) {}
-        *interface.iReady = *interface.fifoOccupation < maxDepth;
+        while (*interface.oCycle != *interface.iCycle) {}
+        *interface.iReady = *interface.fifoOccupation < *interface.maxFifoDepth;
         if (*interface.iReady && producerValid) {
             ++(*interface.fifoOccupation);
         }
@@ -269,12 +289,12 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         debug(std::format("Creating {} interfaces for communication with predecessors.", IStreamsSize));
         if (NodeIndex != 0 && prevNodeName && CommunicatesWithPredecessor) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                fromProducerInterface[i]= std::make_unique<ConsumingInterface>(std::format("{}_{}", *prevNodeName, i).c_str());
+                fromProducerInterface[i] = std::make_unique<ConsumingInterface>(std::format("{}_{}", *prevNodeName, i).c_str());
             }
         }
 
         // Create consumer facing interfaces
-        debug(std::format("Creating {} interfaces for communication with successors.", IStreamsSize));
+        debug(std::format("Creating {} interfaces for communication with successors.", OStreamsSize));
         if (NodeIndex != TotalNodes - 1 && nodeName && CommunicatesWithSuccessor) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
                 toConsumerInterface[i] = std::make_unique<ProducingInterface>(std::format("{}_{}", *nodeName, i).c_str());
@@ -338,24 +358,6 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         }
     }
 
-    /// Run for the given number of frames (frames * job_size   cycles or transactions)
-    void runForFrames(std::size_t frames) {
-        // TODO: Multiple IO streams: Current cycle count is hardcoded for the number of inputs of the first stream
-        auto start = std::chrono::high_resolution_clock::now();
-        for (std::size_t i = 0; i < frames; ++i) {
-            for (std::size_t j = 0; j < this->istreams[0].job_size; ++j) {
-                runSingleCycle();
-            }
-            // TODO: Unstable (inner nodes may also be outputs)
-            std::cout << NodeIndex << ": Finished frame " << i << std::endl;
-        }
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
-        if constexpr(NodeIndex == TotalNodes - 1) {
-            std::cout << "Total time: " << duration << " ms" << std::endl;
-            std::cout << "Average per frame: " << duration / static_cast<int>(frames) << std::endl;
-        }
-
-    }
 };
 
 #endif /* SIMULATION */
