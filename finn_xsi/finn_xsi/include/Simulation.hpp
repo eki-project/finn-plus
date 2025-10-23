@@ -133,12 +133,14 @@ template<SimulationInterfaceType T, std::size_t ShmemSize = 1024>
 class SimulationInterface {
     private:
     struct _SimulationInterface {
-        alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* iReady;
-        alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* iCycle;
-        alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* oValid;
-        alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* oCycle;
         alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* fifoOccupation;
         alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* maxFifoDepth;
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* iCycle;
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* oCycle;
+
+        // Don't need to be atomic
+        alignas(hardware_destructive_interference_size) bool* iReady;
+        alignas(hardware_destructive_interference_size) bool* oValid;
     };
     _SimulationInterface interface;
     ipc::managed_shared_memory shmem;
@@ -167,7 +169,6 @@ class SimulationInterface {
                     break;
                 } catch (const ipc::interprocess_exception& e) {
                     simInterfaceDebug("Producer shared memory not yet created. Waiting..");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
             }
         }
@@ -176,9 +177,9 @@ class SimulationInterface {
         // Find variables. CONSUMING interfaces only communicate with o... signals, PRODUCING ones only with i... interfaces
         interface.fifoOccupation = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("fifoOccupation")(0);
         interface.maxFifoDepth = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("maxFifoDepth")(initialMaxDepth);
-        interface.iReady = shmem.find_or_construct<boost::ipc_atomic<bool>>("iReady")(initialMaxDepth > 0);
+        interface.iReady = shmem.find_or_construct<bool>("iReady")(initialMaxDepth > 0);
         interface.iCycle = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("iCycle")(0);
-        interface.oValid = shmem.find_or_construct<boost::ipc_atomic<bool>>("oValid")(*(interface.fifoOccupation) > 9);
+        interface.oValid = shmem.find_or_construct<bool>("oValid")(*(interface.fifoOccupation) > 9);
         interface.oCycle = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("oCycle")(0);
         simInterfaceDebug("Shared variables constructed or found.");
 
@@ -186,9 +187,9 @@ class SimulationInterface {
 
     ~SimulationInterface() {
         // TODO: Called implicitly?
-        shmem.destroy<boost::ipc_atomic<bool>>("iReady");
+        shmem.destroy<bool>("iReady");
         shmem.destroy<boost::ipc_atomic<unsigned int>>("iCycle");
-        shmem.destroy<boost::ipc_atomic<bool>>("oValid");
+        shmem.destroy<bool>("oValid");
         shmem.destroy<boost::ipc_atomic<unsigned int>>("oCycle");
         shmem.destroy<boost::ipc_atomic<unsigned int>>("fifoOccupation");
         shmem.destroy<boost::ipc_atomic<unsigned int>>("maxFifoDepth");
@@ -215,16 +216,13 @@ class SimulationInterface {
     /// If the interface has valid data, it will do the exchange.
     /// The function returns the interfaces (FIFOs) output_valid signal, which should be
     /// read by the consumer and set on their simulation port.
-    bool communicate(bool consumerReady) requires (T == SimulationInterfaceType::CONSUMING) {
+   bool communicate(bool consumerReady) requires (T == SimulationInterfaceType::CONSUMING) {
         // The input side must always be one cycle ahead of the output side
         // Wait until input catches up (and overtakes)
         while (*interface.iCycle <= *interface.oCycle) {}
         *interface.oValid = *interface.fifoOccupation > 0;
-        if (*interface.oValid && consumerReady) {
-            --(*interface.fifoOccupation);
-        }
+        *interface.fifoOccupation -= static_cast<unsigned int>(*interface.oValid && consumerReady);
         ++(*interface.oCycle);
-        simInterfaceDebug("Exchanged data with consumer.");
         return *interface.oValid;
     }
 
@@ -237,11 +235,8 @@ class SimulationInterface {
         // Wait until output catches up
         while (*interface.oCycle != *interface.iCycle) {}
         *interface.iReady = *interface.fifoOccupation < *interface.maxFifoDepth;
-        if (*interface.iReady && producerValid) {
-            ++(*interface.fifoOccupation);
-        }
+        *interface.fifoOccupation += static_cast<unsigned int>(*interface.iReady && producerValid);
         ++(*interface.iCycle);
-        simInterfaceDebug("Exchanged data with producer.");
         return *interface.iReady;
     }
 };
@@ -305,7 +300,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
 
     private:
     /// Communicate with predecessors and successors and update their values and our own
-    void communicate() {
+    [[gnu::hot]] void communicate() {
         if constexpr(NodeIndex != TotalNodes - 1 && CommunicatesWithSuccessor) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
                 this->ostreams[i].ready(toConsumerInterface[i]->communicate(this->ostreams[i].is_valid()));
@@ -335,8 +330,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         }
     }
 
-    void runSingleCycle() {
-        debug("Running single cycle.\n------------------");
+    [[gnu::hot]] void runSingleCycle() {
         this->clk.toggle_clk();
         communicate();
         if constexpr(LoggingEnabled) {

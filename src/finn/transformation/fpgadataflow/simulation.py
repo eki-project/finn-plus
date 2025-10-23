@@ -1,4 +1,5 @@
 """Manage FINN simulation variants."""
+import multiprocessing
 import numpy as np
 import onnx
 import os
@@ -419,9 +420,14 @@ class Simulation:
                 node_name, nodemodel, node_index, total_nodes, prev_node_name, build_dir
             )
 
-        def _run_simulation(binary: Path) -> None:
+        def _run_simulation(binary: Path, cpu: int | None) -> None:
+            command = ""
+            if cpu is not None:
+                command += f"taskset --cpu-list {cpu} "
+                # TODO: numactl
+            command += f"bash {binary}"
             subprocess.run(
-                ["bash", str(binary)], stdout=sys.stdout, stderr=sys.stderr, cwd=binary.parent
+                shlex.split(command), stdout=sys.stdout, stderr=sys.stderr, cwd=binary.parent
             )
 
         # Create randomized names to avoid clashing with old IPC shared memory segments.
@@ -465,7 +471,8 @@ class Simulation:
                     f"Submitting thread for running simulation {i} / {total_nodes} "
                     f"({self.model.graph.node[i].name})"
                 )
-                pool.submit(_run_simulation, binary)
+                # TODO: If more processes than CPU cores, group processes to their adjacent nodes
+                pool.submit(_run_simulation, binary, i % multiprocessing.cpu_count())
             pool.shutdown(wait=True)
 
     def run_sim_node_parallel_connected(self, inputs: int) -> Any:

@@ -25,11 +25,11 @@ void AXIS_Control::inititialized_or_throw() {
     }
 }
 
-void AXIS_Control::valid(bool value) { port_vld->set(value ? 1 : 0).write_back(); }
+void AXIS_Control::valid(bool value) { port_vld->set(static_cast<unsigned int>(value)).write_back(); }
 
 bool AXIS_Control::is_valid() const noexcept { return port_vld->read().as_bool(); }
 
-void AXIS_Control::ready(bool value) { port_rdy->set(value ? 1 : 0).write_back(); }
+void AXIS_Control::ready(bool value) { port_rdy->set(static_cast<unsigned int>(value)).write_back(); }
 
 bool AXIS_Control::is_ready() const noexcept { return port_rdy->read().as_bool(); }
 
