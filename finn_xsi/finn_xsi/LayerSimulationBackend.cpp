@@ -11,7 +11,9 @@
 
 int main(){
     // TODO: Give proper names for previous and name
-    SingleNodeSimulation<1, 1, true, NodeIndex, TotalNodes> sim(
+    constexpr bool communicateWithPredecessor = (NodeIndex != 0);
+    constexpr bool communicateWithSuccessor = (NodeIndex != TotalNodes - 1);
+    SingleNodeSimulation<1, 1, true, NodeIndex, TotalNodes, communicateWithPredecessor, communicateWithSuccessor> sim(
         kernel_libname,
         design_libname,
         "xsim_log_file.txt",

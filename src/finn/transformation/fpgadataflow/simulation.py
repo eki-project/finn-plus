@@ -191,14 +191,16 @@ class Simulation:
         """
         rtlsim_so_str = model.get_metadata_prop("rtlsim_so")
         if (rtlsim_so_str is None) or not Path(rtlsim_so_str).exists():
-            all_verilog_srcs = Path(vivado_stitched_proj).read_text().split()
+            all_verilog_srcs = (
+                (Path(vivado_stitched_proj) / "all_verilog_srcs.txt").read_text().split()
+            )
             sim_dir = (
                 make_build_dir(f"rtlsim_{model.graph.node[0].name}_")
                 if build_dir is None
                 else build_dir
             )
             sim_base, sim_rel = finnxsi.compile_sim_obj(
-                top_module_name, all_verilog_srcs, sim_dir, debug=debug
+                top_module_name, all_verilog_srcs, str(sim_dir), debug=debug
             )  # noqa # type: ignore
             rtlsim_so = Path(sim_base) / Path(sim_rel)
             model.set_metadata_prop("rtlsim_so", str(rtlsim_so))
