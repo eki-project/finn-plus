@@ -34,7 +34,6 @@ to FINN dataflow accelerators. It handles step resolution, logging, error handli
 and the complete build pipeline from ONNX input to hardware accelerator output.
 """
 
-import clize
 import datetime
 import importlib
 import json
@@ -409,44 +408,3 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
 
         return exit_buildflow(cfg, time_per_step, -1)
     return exit_buildflow(cfg, time_per_step, 0)
-
-
-def build_dataflow_directory(path_to_cfg_dir: str):
-    """
-    Build a dataflow accelerator from a directory containing model and config.
-
-    Args:
-        path_to_cfg_dir: Directory containing model.onnx and dataflow_build_config.json
-
-    Returns:
-        Exit code from build process
-
-    The directory must contain:
-    - model.onnx: ONNX model to be converted to dataflow accelerator
-    - dataflow_build_config.json: JSON file with build configuration
-    """
-    # get absolute path
-    path_to_cfg_dir = os.path.abspath(path_to_cfg_dir)
-    assert os.path.isdir(path_to_cfg_dir), "Directory not found: " + path_to_cfg_dir
-    onnx_filename = path_to_cfg_dir + "/model.onnx"
-    json_filename = path_to_cfg_dir + "/dataflow_build_config.json"
-    assert os.path.isfile(onnx_filename), "ONNX not found: " + onnx_filename
-    assert os.path.isfile(json_filename), "Build config not found: " + json_filename
-    with open(json_filename, "r") as f:
-        json_str = f.read()
-    build_cfg = DataflowBuildConfig.from_json(json_str)
-    old_wd = os.getcwd()
-    # change into build dir to resolve relative paths
-    os.chdir(path_to_cfg_dir)
-    ret = build_dataflow_cfg(onnx_filename, build_cfg)
-    os.chdir(old_wd)
-    return ret
-
-
-def main():
-    """Entry point for dataflow builds using command line arguments."""
-    clize.run(build_dataflow_directory)
-
-
-if __name__ == "__main__":
-    main()

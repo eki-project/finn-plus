@@ -33,6 +33,8 @@ pytest-rerunfailures = "~15.1"
 pytest-dependency = "~0.6.0"
 pytest-parallel = "~0.1.1"
 pytest-xdist = { version = "~3.6.1", extras = ["setproctitle"] }
+torch = "~2.7.1"
+torchvision = "~0.22.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

@@ -1,8 +1,0 @@
-include README.md
-include LICENSE.txt
-include AUTHORS.rst
-include CONTRIBUTING.md
-recursive-include src/finn/util/vivado_scripts *.sh *.tcl *.xdc
-recursive-include tests/example_data *
-global-exclude __pycache__
-global-exclude *.py[co]

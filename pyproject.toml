@@ -40,10 +40,7 @@ finn = "finn.interface.run_finn:main"
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
 bitstring = "~4.3.1"
-clize = "~5.0.2"
-gspread = "~3.6.0"
 importlib-resources = "~6.5.2"
-ipython = "~8.37.0"            # ipython>=9.0.0 requires python>=3.11
 numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
 # Cannot upgrade onnx and onnxruntime any further. For now this seems to be the
 # last compatible pair which is also consistent with qonnx.
@@ -54,27 +51,14 @@ numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
 onnx = "1.17.0"
 onnxruntime = "1.20.1"
 protobuf = "3.20.3"                                   # protobuf==3.20.3 required by qonnx
-psutil = "~5.9.4"
-pyscaffold = "~4.6"
-scipy = "~1.15.0"                                     # scipy>=1.16.0 requires python>=3.11
-setupext-janitor = "^1.1.2"
-sigtools = "~4.0.1"
-toposort = "~1.7.0"
-vcdvcd = "~1.0.5"
-wget = "~3.2"
-pygments = "~2.19.2"
-torch = "~2.7.1"
-torchvision = "~0.22.1"
-markupsafe = "~3.0.2"
-dvc = { version = " ~3.59.1", extras = ["webdav"] }
-dvclive = { version = "~3.48.2", extras = ["image"] }
-deap = "~1.4.3"
+scipy = "~1.15.0"                                     # scipy>=1.16.0 requires python>=3.11, required by brevitas
+torch = "~2.7.1"                                      # required by CI (CI uses non dev package)
+torchvision = "~0.22.1"                               # required by CI (CI uses non dev package)
+dvc = { version = " ~3.59.1", extras = ["webdav"] }   # required by CI (CI uses non dev package)
+dvclive = { version = "~3.48.2", extras = ["image"] } # required by CI (CI uses non dev package)
 pyyaml = "~6.0.2"
 mip = "~1.13.0"
-networkx = "~3.4.2"
-dependencies = "2.0.1"                                # dependencies==2.0.1 required by brvitas
-tokenize-rt = "~4.2.1"
-tclwrapper = "0.0.1"
+dependencies = "2.0.1"                                # dependencies==2.0.1 required by brevitas
 setuptools = ">40.8.0,<70.0.0"                        # setuptools<70.0.0 required by brevitas
 cmake = "~4.0.3"
 
@@ -88,6 +72,7 @@ mashumaro = { extras = ["yaml"], version = "^3.15" }
 pre-commit = "~4.2.0"
 finn-plus-tests = { path = "./tests", develop = true }
 finn-plus-notebooks = { path = "./notebooks", develop = true }
+pygments = "~2.19.2"
 
 [tool.poetry.extras]
 tests = ["finn-plus-tests"]
