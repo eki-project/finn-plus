@@ -12,6 +12,7 @@
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/shared_memory_object.hpp>
 #include <boost/atomic/ipc_atomic.hpp>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <format>
@@ -33,7 +34,7 @@
 #endif
 
 #ifdef NDEBUG
-    inline void debug(std::string_view s) {}
+    inline void debug([[maybe_unused]] std::string_view s) {}
 #else
     inline void debug(std::string_view s) { std::cout << "[DBG] " << s << "\n"; }
 #endif
@@ -130,9 +131,10 @@ template<SimulationInterfaceType T, std::size_t ShmemSize = 1024>
 class SimulationInterface {
     private:
     struct _SimulationInterface {
-        alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* ready;
-        alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* valid;
-        alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* read;
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* iReady;
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* iCycle;
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool>* oValid;
+        alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* oCycle;
         alignas(hardware_destructive_interference_size) boost::ipc_atomic<unsigned int>* fifoOccupation;
     };
     _SimulationInterface interface;
@@ -140,7 +142,7 @@ class SimulationInterface {
     const std::string shmIdentifier;
 
 #ifdef NDEBUG
-    void simInterfaceDebug(std::string_view s) {}
+    void simInterfaceDebug([[maybe_unused]] std::string_view s) {}
 #else
     /// Log the given text with a header identifying the shared memory region and the interface type
     void simInterfaceDebug(std::string_view s) {
@@ -149,7 +151,9 @@ class SimulationInterface {
 #endif
 
     public:
-    SimulationInterface(const char* _shmIdentifier) : shmIdentifier(_shmIdentifier) {
+    unsigned int maxDepth;
+
+    SimulationInterface(const char* _shmIdentifier, unsigned int initialMaxDepth = 2) : shmIdentifier(_shmIdentifier), maxDepth(initialMaxDepth) {
         simInterfaceDebug("Creating simulation interface");
         if (T == SimulationInterfaceType::PRODUCING) {
             ipc::shared_memory_object::remove(_shmIdentifier);
@@ -157,43 +161,68 @@ class SimulationInterface {
         }
         shmem = ipc::managed_shared_memory(ipc::open_or_create, _shmIdentifier, ShmemSize);
         simInterfaceDebug("Shared memory constructed or found.");
-        interface.ready = shmem.find_or_construct<boost::ipc_atomic<bool>>("ready")(true);
-        interface.valid = shmem.find_or_construct<boost::ipc_atomic<bool>>("valid")(false);
-        interface.read = shmem.find_or_construct<boost::ipc_atomic<bool>>("read")(true);
+
+        // Find variables. CONSUMING interfaces only communicate with o... signals, PRODUCING ones only with i... interfaces
         interface.fifoOccupation = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("fifoOccupation")(0);
+        interface.iReady = shmem.find_or_construct<boost::ipc_atomic<bool>>("iReady")(maxDepth > 0);
+        interface.iCycle = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("iCycle")(0);
+        interface.oValid = shmem.find_or_construct<boost::ipc_atomic<bool>>("oValid")(*(interface.fifoOccupation) > 9);
+        interface.oCycle = shmem.find_or_construct<boost::ipc_atomic<unsigned int>>("oCycle")(0);
         simInterfaceDebug("Shared variables constructed or found.");
     }
 
     ~SimulationInterface() {
         // TODO: Called implicitly?
-        shmem.destroy<boost::ipc_atomic<bool>>("ready");
-        shmem.destroy<boost::ipc_atomic<bool>>("valid");
-        shmem.destroy<boost::ipc_atomic<bool>>("read");
+        shmem.destroy<boost::ipc_atomic<bool>>("iReady");
+        shmem.destroy<boost::ipc_atomic<bool>>("iCycle");
+        shmem.destroy<boost::ipc_atomic<bool>>("oValid");
+        shmem.destroy<boost::ipc_atomic<bool>>("oCycle");
         shmem.destroy<boost::ipc_atomic<unsigned int>>("fifoOccupation");
     }
 
-    bool dataRead() { return *(interface.read); }
-
-    /// Wait until predecessor has sent recent data. Then send ready.
-    bool communicate(bool sendReady) requires (T == SimulationInterfaceType::CONSUMING) {
-        simInterfaceDebug("Waiting for predecessor data.");
-        while (dataRead()) {}
-        bool validValue = *(interface.valid);
-        *(interface.ready) = sendReady;
-        *(interface.read) = true;
-        simInterfaceDebug("Exchanged data with predecessor.");
-        return validValue;
+    /// Reset all interface data fields to their defaults
+    void reset() {
+        *interface.fifoOccupation = 0;
+        *interface.iReady = maxDepth > 0;
+        *interface.iCycle = 0;
+        *interface.oValid = *(interface.fifoOccupation) > 0;
+        *interface.oCycle = 0;
     }
 
-    /// Wait until successor has read the previous data. Then send valid.
-    bool communicate(bool sendValid) requires (T == SimulationInterfaceType::PRODUCING) {
-        simInterfaceDebug("Waiting for successor data.");
-        while (!dataRead()) {}
-        bool readyValue = *(interface.ready);
-        *(interface.valid) = sendValid;
-        *(interface.read) = false;
-        simInterfaceDebug("Exchanged data with successor.");
-        return readyValue;
+    /// Communicate with the interface from the consumer side. Pass in the consuming nodes' input_ready.
+    /// If the interface has valid data, it will do the exchange.
+    /// The function returns the interfaces (FIFOs) output_valid signal, which should be
+    /// read by the consumer and set on their simulation port.
+    bool communicate(bool consumerReady) requires (T == SimulationInterfaceType::CONSUMING) {
+        // The input side must always be one cycle ahead of the output side
+        // Wait until input catches up (and overtakes)
+        simInterfaceDebug("Waiting for input side to catch up.");
+        while (*interface.iCycle < *interface.oCycle + 1) {}
+        *interface.oValid = *interface.fifoOccupation > 0;
+        if (*interface.oValid && consumerReady) {
+            --(*interface.fifoOccupation);
+        }
+        ++(*interface.oCycle);
+        simInterfaceDebug("Exchanged data with consumer.");
+        return *interface.oValid;
+    }
+
+    /// Communicate with the interface from the producer side. Pass in the producing nodes' output_valid.
+    /// If the interface is ready to receive data, it will do the exchange.
+    /// The function returns the interfaces (FIFOs) input_ready signal, which should be
+    /// read by the producer and set on their simulation port.
+    bool communicate(bool producerValid) requires (T == SimulationInterfaceType::PRODUCING) {
+        // The input side must always be one cycle ahead of the output side
+        // Wait until output catches up
+        simInterfaceDebug("Waiting for output side to catch up.");
+        while (*interface.oCycle < *interface.iCycle - 1) {}
+        *interface.iReady = *interface.fifoOccupation < maxDepth;
+        if (*interface.iReady && producerValid) {
+            ++(*interface.fifoOccupation);
+        }
+        ++(*interface.iCycle);
+        simInterfaceDebug("Exchanged data with producer.");
+        return *interface.iReady;
     }
 };
 
@@ -215,18 +244,18 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         const char* trace_file,
         std::array<StreamDescriptor, IStreamsSize> _istream_descs,
         std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
-        std::optional<std::string> previousNodeName = std::nullopt,
-        std::optional<std::string> currentNodeName = std::nullopt
+        std::optional<std::string> prevNodeName = std::nullopt,
+        std::optional<std::string> nodeName = std::nullopt
     ) :
     Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs) {
-        if (CommunicatesWithPredecessor && !previousNodeName) {
+        if (CommunicatesWithPredecessor && !prevNodeName) {
             throw std::runtime_error("Cannot communicate with predecessor because previous node name was not given!");
-        } else if (!CommunicatesWithPredecessor && previousNodeName) {
+        } else if (!CommunicatesWithPredecessor && prevNodeName) {
             std::cout << "Simulation was passed the previous nodes name but is NOT marked for communication with predecessor node. No shared memory will be created." << std::endl;
         }
-        if (CommunicatesWithSuccessor && !currentNodeName) {
+        if (CommunicatesWithSuccessor && !nodeName) {
             throw std::runtime_error("Cannot communicate with successor because current node name was not given!");
-        } else if (!CommunicatesWithSuccessor && currentNodeName) {
+        } else if (!CommunicatesWithSuccessor && nodeName) {
             std::cout << "Simulation was passed the current nodes name but is NOT marked for communication with successor node. No shared memory will be created." << std::endl;
         }
 
@@ -238,17 +267,17 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
 
         // Create producer facing interfaces
         debug(std::format("Creating {} interfaces for communication with predecessors.", IStreamsSize));
-        if (NodeIndex != 0 && previousNodeName && CommunicatesWithPredecessor) {
+        if (NodeIndex != 0 && prevNodeName && CommunicatesWithPredecessor) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                fromProducerInterface[i]= std::make_unique<ConsumingInterface>(std::format("{}_{}", *previousNodeName, i).c_str());
+                fromProducerInterface[i]= std::make_unique<ConsumingInterface>(std::format("{}_{}", *prevNodeName, i).c_str());
             }
         }
 
         // Create consumer facing interfaces
         debug(std::format("Creating {} interfaces for communication with successors.", IStreamsSize));
-        if (NodeIndex != TotalNodes - 1 && currentNodeName && CommunicatesWithSuccessor) {
+        if (NodeIndex != TotalNodes - 1 && nodeName && CommunicatesWithSuccessor) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                toConsumerInterface[i] = std::make_unique<ProducingInterface>(std::format("{}_{}", *currentNodeName, i).c_str());
+                toConsumerInterface[i] = std::make_unique<ProducingInterface>(std::format("{}_{}", *nodeName, i).c_str());
             }
         }
         debug("Finished initializing simulation.\n------------------------------\n");
@@ -274,6 +303,17 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     void initStreams() requires (NodeIndex == 0) { for (auto&& s : this->istreams) { s.valid(); } }
     void initStreams() requires (NodeIndex == TotalNodes - 1) { for (auto&& s : this->ostreams) { s.ready(); } }
     void initStreams() requires (NodeIndex > 0 && NodeIndex < TotalNodes - 1) { }
+
+    /// Reset simulation (stream and current FIFO depth)
+    void reset() {
+        this->reset();
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
+            toConsumerInterface[i]->reset();
+        }
+        for (std::size_t i = 0; i < IStreamsSize; ++i) {
+            fromProducerInterface[i]->reset();
+        }
+    }
 
     void runSingleCycle() {
         debug("Running single cycle.\n------------------");
@@ -301,10 +341,20 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     /// Run for the given number of frames (frames * job_size   cycles or transactions)
     void runForFrames(std::size_t frames) {
         // TODO: Multiple IO streams: Current cycle count is hardcoded for the number of inputs of the first stream
-        std::size_t cycleCount = frames * this->istreams[0].job_size;
-        for (std::size_t i = 0; i < cycleCount; ++i) {
-            runSingleCycle();
+        auto start = std::chrono::high_resolution_clock::now();
+        for (std::size_t i = 0; i < frames; ++i) {
+            for (std::size_t j = 0; j < this->istreams[0].job_size; ++j) {
+                runSingleCycle();
+            }
+            // TODO: Unstable (inner nodes may also be outputs)
+            std::cout << NodeIndex << ": Finished frame " << i << std::endl;
         }
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
+        if constexpr(NodeIndex == TotalNodes - 1) {
+            std::cout << "Total time: " << duration << " ms" << std::endl;
+            std::cout << "Average per frame: " << duration / static_cast<int>(frames) << std::endl;
+        }
+
     }
 };
 

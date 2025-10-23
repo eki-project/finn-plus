@@ -49,6 +49,7 @@ if (FIFOSIM_ENABLE_WARNINGS)
     ""
     "")
 endif (FIFOSIM_ENABLE_WARNINGS)
+target_compile_options(fifosim_options INTERFACE -Wno-interference-size)
 
 #
 # Create options for including cmake files from the cmake folder with a bit of output.
