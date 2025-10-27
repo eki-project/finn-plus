@@ -15,6 +15,7 @@ from finn.util.exception import FINNUserError, FINNValidationError
 # Modify yaml globally to convert paths to strings
 # (Path() can be created from strings, and strings are more easily human-readable and changeable)
 def path_repr(dumper, data):  # noqa
+    """Represent a given object as a string."""
     return dumper.represent_scalar("tag:yaml.org,2002:str", str(data))
 
 
@@ -62,6 +63,7 @@ class FINNSettings(BaseModel):
 
     @num_default_workers.setter
     def num_default_workers(self, new_value: int | str) -> None:
+        """Set number of default workers."""
         self._num_default_workers = int(new_value)
         if self._auto_set_envvars:
             os.environ["NUM_DEFAULT_WORKERS"] = str(self.num_default_workers)
@@ -76,11 +78,12 @@ class FINNSettings(BaseModel):
                 f"{self._finn_build_dir} without a flow config path."
             )
         return resolve_relative(
-            self._finn_build_dir, Path(self._flow_config).parent
-        )  # type: ignore
+            self._finn_build_dir, Path(self._flow_config).parent  # type:ignore
+        )
 
     @finn_build_dir.setter
     def finn_build_dir(self, new_path: str | Path | None) -> None:
+        """Set the FINN_BUILD_DIR."""
         if new_path is None:
             return
         self._finn_build_dir = str(new_path)
@@ -95,6 +98,7 @@ class FINNSettings(BaseModel):
 
     @finn_deps.setter
     def finn_deps(self, new_path: str | Path) -> None:
+        """Set the FINN_DEPS dir."""
         if new_path is None:
             return
         self._finn_deps = str(new_path)
@@ -109,6 +113,7 @@ class FINNSettings(BaseModel):
 
     @finn_deps_definitions.setter
     def finn_deps_definitions(self, new_path: str | Path) -> None:
+        """Set the FINN_DEPS_DEFINITIONS."""
         if new_path is None:
             return
         self._finn_deps_definitions = str(new_path)
@@ -121,6 +126,30 @@ class FINNSettings(BaseModel):
         os.environ["FINN_DEPS"] = str(self.finn_deps)
         os.environ["FINN_DEPS_DEFINITIONS"] = str(self.finn_deps_definitions)
         os.environ["NUM_DEFAULT_WORKERS"] = str(self.num_default_workers)
+
+    @staticmethod
+    def resolve_settings_file(override_settings_path: Path | None) -> Path:
+        """Resolve the location of the settings file. Checks the following locations in the
+        following order.
+
+        1. Override (method argument)
+        2. FINN_SETTINGS environment variable
+        3. In the FINN+ repository root
+        4. In ~/.finn/
+        If the file does not exist, the function will still return the path for 1,2 and 4.
+        It must then be created by another function.
+        """
+        if override_settings_path is not None:
+            return override_settings_path
+        if "FINN_SETTINGS" in os.environ:
+            return Path(os.environ["FINN_SETTINGS"])
+        repo_settings = FINN_ROOT / "settings.yaml"
+        if repo_settings.exists():
+            return repo_settings
+        finn_home = Path("~/.finn").expanduser()
+        if not finn_home.exists():
+            finn_home.mkdir()
+        return finn_home / "settings.yaml"
 
     @staticmethod
     def init(
@@ -164,31 +193,7 @@ class FINNSettings(BaseModel):
         ], "All FINNSettings fields must be lowercase due to implementation details."
 
         # Resolve settings path
-        settings_path = Path()
-        if override_settings_path is not None:
-            # Override Path
-            settings_path = override_settings_path
-        else:
-            if "FINN_SETTINGS" in os.environ:
-                # From environment variable
-                settings_path = Path(os.environ["FINN_SETTINGS"])
-            else:
-                repo_settings = FINN_ROOT / "settings.yaml"
-                if repo_settings.exists():
-                    # Repository root
-                    settings_path = repo_settings
-                else:
-                    # Home FINN directory
-                    finn_home = Path("~/.finn").expanduser()
-                    if not finn_home.exists():
-                        finn_home.mkdir()
-                    settings_path = finn_home / "settings.yaml"
-
-        # Helper required below
-        def _set_private_attributes(m: FINNSettings) -> None:
-            m._flow_config = flow_config
-            m._auto_set_envvars = False
-            m._settings_path = settings_path
+        settings_path = FINNSettings.resolve_settings_file(override_settings_path)
 
         # Verify file exists
         if must_exist and not settings_path.exists():
@@ -197,47 +202,37 @@ class FINNSettings(BaseModel):
                 f"The file does not yet exist, but must_exist was passed to "
                 f"the settings constructor."
             )
+        settings_data = {}
+        if settings_path.exists():
+            with settings_path.open() as f:
+                settings_data = yaml.load(f, yaml.Loader)
 
         # Keep track of which fields have been set.
         set_fields = []
 
-        # Load the Settings
-        # 0. Defaults
+        # Sources for the settings (in order of priority)
+        data = {
+            "CLI Arguments": kwargs,
+            "Environment Variables": os.environ.copy(),
+            "Settings File": settings_data,
+        }
+
+        # Init settings with defaults
         settings = FINNSettings()
-
-        # False for now, so that the property setters dont overwrite the
-        # environment before we have loaded from it.
         settings._auto_set_envvars = False
-        _set_private_attributes(settings)
-
-        # 1. Settings file
-        with settings_path.open() as f:
-            data = yaml.load(f, yaml.Loader)
-            settings = settings.update_from(data, "Settings File", ignore=set_fields)
-            _set_private_attributes(settings)
-            set_fields += [x.lower() for x in data.keys()]
-
-        # 2. Environment variables
-        data = os.environ.copy()
-        settings = settings.update_from(
-            os.environ.copy(), "Environment Variables", ignore=set_fields
-        )
-        _set_private_attributes(settings)
-        for key in data.keys():
-            set_fields.append(key.lower())
-
-        # 3. Command line arguments
-        settings = settings.update_from(kwargs, "CLI Arguments", ignore=set_fields)
-        _set_private_attributes(settings)
-        for key in kwargs.keys():
-            set_fields.append(key.lower())
-
-        # 4. Reload private attribute values (are discarded when the model is re-validated)
-        settings._settings_path = settings_path
-        settings._auto_set_envvars = auto_set_environment_vars
         settings._flow_config = flow_config
+        settings._auto_set_envvars = False
+        settings._settings_path = settings_path
 
-        if settings._auto_set_envvars:
+        # Update settings values from various sources
+        for name, data_source in data.items():
+            settings = settings.update_from(data_source, name, ignore=set_fields)
+            settings._flow_config = flow_config
+            settings._auto_set_envvars = False
+            settings._settings_path = settings_path
+            set_fields += [k.lower() for k in data_source.keys()]
+        settings._auto_set_envvars = auto_set_environment_vars
+        if auto_set_environment_vars:
             settings.update_environment()
         return settings
 
@@ -271,13 +266,10 @@ class FINNSettings(BaseModel):
             new_model._settings_path = self._settings_path
             new_model._auto_set_envvars = False
             new_model._flow_config = self._flow_config
-            computed_fields = FINNSettings.model_computed_fields.keys()
-            for key in data.keys():
-                lkey = key.lower()
-                # Dont have to check ignore-list, because modified_data holds only
-                # data that was already in the model anyways
-                if lkey in computed_fields:
-                    new_model.__setattr__(lkey, modified_data[lkey])
+            # We need to manually update computed fields
+            for key in modified_data.keys():
+                if key in FINNSettings.model_computed_fields.keys():
+                    new_model.__setattr__(key, modified_data[key])
         except ValidationError as e:
             err = str(e)
             if update_type is not None:
@@ -299,5 +291,6 @@ class FINNSettings(BaseModel):
     @staticmethod
     def get_settings_keys() -> list[str]:
         """Return all settings keys there are."""
-        # TODO: Include computed fields
-        return list(FINNSettings.model_fields.keys())
+        computed_fields = list(FINNSettings.model_computed_fields.keys())
+        normal_fields = list(FINNSettings.model_fields.keys())
+        return computed_fields + normal_fields

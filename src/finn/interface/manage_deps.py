@@ -17,11 +17,14 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from threading import RLock
-from typing import Literal, cast
+from typing import TYPE_CHECKING, cast
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import _resolve_module_path, debug, error
 from finn.util.exception import FINNConfigurationError, FINNUserError
+
+if TYPE_CHECKING:
+    from pydantic.networks import HttpUrl
 
 
 class Dependency:
@@ -38,9 +41,10 @@ class GitDependency(BaseModel, Dependency):
     pip_install: Whether to install the repository using pip.
     """
 
-    url: str
+    url: HttpUrl
     commit: str
     pip_install: bool
+    install_editable: bool
 
 
 class BoardfileDependency(BaseModel, Dependency):
@@ -51,7 +55,7 @@ class BoardfileDependency(BaseModel, Dependency):
     subdirectory: Path inside the repository from which to copy to the boardfiles directoty.
     """
 
-    url: str
+    url: HttpUrl
     commit: str
     subdirectory: Path
 
@@ -64,7 +68,7 @@ class DirectDownloadDependency(BaseModel, Dependency):
     target_directory: Where to place the downloaded (uncompressed) data.
     """
 
-    url: str
+    url: HttpUrl
     do_unzip: bool
     target_directory: Path
 
@@ -115,11 +119,13 @@ class DependencyData(BaseModel):
         """
         assert self.get_dependency_count() == len(set(self.get_all_dependencies()))
 
-    def dependency_type_str(
-        self, package_name: str
-    ) -> Literal["Git", "Boardfiles", "Data", "Custom", "Misc"]:
+    def dependency_type_str(self, package_name: str) -> str:
         """Return a string to tell which type this dependency is."""
         if package_name in self.git_deps:
+            if self.git_deps[package_name].pip_install:
+                if self.git_deps[package_name].install_editable:
+                    return "Git (pip, editable)"
+                return "Git (pip)"
             return "Git"
         if package_name in self.boardfile_deps:
             return "Boardfiles"
@@ -265,8 +271,7 @@ class DependencyUpdater:
         try:
             self.deps = DependencyData.model_validate(data)
         except ValidationError as e:
-            print(e)
-            sys.exit(0)
+            raise FINNUserError(f"Validation error: {e}") from e
 
         # Try to find FINN_XSI. If it cannot be found, it is ignored in the
         # list of all dependencies (since this is neither a failed nor a successful install)
@@ -315,9 +320,14 @@ class DependencyUpdater:
     def _install_git_dependency(self, package_name: str) -> bool:
         """Install a git dependency. Return success."""
         debug(f"Trying to install GIT dependency: {package_name}", False)
-        url, commit, pip_install = self.deps.get_fields(
-            package_name, "url", "commit", "pip_install"
+        url, commit, pip_install, install_editable = self.deps.get_fields(
+            package_name, "url", "commit", "pip_install", "install_editable"
         )
+        if not pip_install and install_editable:
+            raise FINNUserError(
+                f"Dependency definition file: Package {package_name} is not "
+                f"installed via Pip, but install_editable is set to True."
+            )
         target = self.dep_location / package_name
         if not self._git_clone(url, commit, target):
             return False
@@ -326,7 +336,13 @@ class DependencyUpdater:
         if not pip_install:
             return True
         debug(f"[{package_name}] Running pip install..")
-        self._run_silent(f"{sys.executable} -m pip install -e {target}")
+        editable_flag = "" if not install_editable else "-e"
+        self._run_silent(f"{sys.executable} -m pip {editable_flag} install {target}")
+
+        # In editable install cases we need to make the package available in this run
+        # otherwise it will only be available on the next start
+        if install_editable:
+            sys.path.append(str(target.absolute()))
         return not self.is_outdated(package_name)
 
     def _install_boardfile_dependency(self, package_name: str) -> bool:
@@ -358,6 +374,7 @@ class DependencyUpdater:
         url, do_unzip, target_directory = self.deps.get_fields(
             package_name, "url", "do_unzip", "target_directory"
         )
+        url = str(url)
         target: Path = self.dep_location / target_directory
 
         # Return if the download fails
@@ -401,6 +418,7 @@ class DependencyUpdater:
             ) from e
 
     def _is_outdated_finn_xsi(self) -> bool:
+        """Return whether FINN XSI is outdated."""
         # If finn xsi was found its outdated, if it wasnt found, its never outdated
         return self.finn_xsi_str != ""
 
@@ -439,19 +457,17 @@ class DependencyUpdater:
         exists or the installation failed, return False.
         If the installation was successful return true.
         """
-        if package_name == "finn_xsi":
-            return self._install_finn_xsi()
-        match self.deps.dependency_type_str(package_name):
-            case "Git":
-                return self._install_git_dependency(package_name)
-            case "Boardfiles":
-                return self._install_boardfile_dependency(package_name)
-            case "Data":
-                return self._install_direct_download_dependency(package_name)
-            case "Custom":
-                return self._install_custom(package_name)
-            case _:
-                return False
+        # Match doesnt work here for technical reasons (pydantic, match semantics)
+        t = type(self.deps.get_dependency_data(package_name))
+        if t is GitDependency:
+            return self._install_git_dependency(package_name)
+        if t is BoardfileDependency:
+            return self._install_boardfile_dependency(package_name)
+        if t is DirectDownloadDependency:
+            return self._install_direct_download_dependency(package_name)
+        if t is CustomDependency:
+            return self._install_custom(package_name)
+        return False
 
     def is_outdated(self, package_name: str) -> bool:
         """Return whether the a package is outdated. If no such package exist return False too."""
@@ -474,7 +490,7 @@ class DependencyUpdater:
             # Check by letting wget compare timestamps. To avoid large wait times
             # immediately delete the file again after a short timeout.
             data = cast("DirectDownloadDependency", data)
-            target = self.dep_location / data.target_directory / Path(data.url).name
+            target = self.dep_location / data.target_directory / Path(str(data.url)).name
             if not target.parent.exists():
                 target.parent.mkdir(parents=True)
             wget_result = sp.run(
@@ -506,7 +522,7 @@ class DependencyUpdater:
     def get_oudated_dependencies(self) -> list[str]:
         """Return a list of the names of all outdated packages. For Git dependencies this means
         an outdated commit hash, for the others a different URL or target directory."""  # noqa
-        return list(filter(self.is_outdated, self.deps.get_all_dependencies()))
+        return list(map(str, filter(self.is_outdated, self.deps.get_all_dependencies())))
 
     def update(self) -> None:
         """With a live display and multithreading update all dependencies that are outdated."""

@@ -378,6 +378,7 @@ def config() -> None:
 
 
 def _command_get_settings() -> FINNSettings:
+    """Return a settings instance for use in config commands."""
     settings = FINNSettings.init(
         auto_set_environment_vars=True, automatic_dependency_updates=False, flow_config=Path()
     )
@@ -420,7 +421,7 @@ def config_set(key: str, value: str) -> None:
 def config_help() -> None:
     """Print a table with all known settings keys and their purpose."""
     # TODO
-    # table(FINNSettings.get_settings_keys(), "Settings Key", "Purpose")
+    rich.print(_command_get_settings().get_settings_keys())
 
 
 @click.command(
