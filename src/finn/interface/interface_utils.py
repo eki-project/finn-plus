@@ -16,7 +16,7 @@ from typing import Any
 from finn.interface import DEBUG
 
 
-def _resolve_module_path(name: str) -> str:
+def resolve_module_path(name: str) -> str:
     """Resolve the path to modules which are not part of the FINN package hierarchy."""
     # Try to import the module via importlib - allows "-" in names and resolve
     # the absolute path to the first candidate location as a string

@@ -28,7 +28,8 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Collection of default build steps for building and verifying a dataflow
- accelerator from an ONNX model."""
+accelerator from an ONNX model.
+"""
 
 import json
 import numpy as np

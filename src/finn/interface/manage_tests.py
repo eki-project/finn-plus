@@ -1,3 +1,4 @@
+"""Manage FINNs testsuite."""
 import os
 import shlex
 import subprocess
@@ -9,7 +10,7 @@ from finn.interface.interface_utils import status
 
 
 def run_test(variant: str, num_workers: str) -> None:
-    """Run a given test variant with the given number of workers"""
+    """Run a given test variant with the given number of workers."""
     original_dir = Path.cwd()
 
     # TODO: Make this optional

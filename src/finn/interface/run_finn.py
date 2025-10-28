@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING, Any
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import (
     NullablePath,
-    _resolve_module_path,
     error,
+    resolve_module_path,
     set_synthesis_tools_paths,
     status,
     warning,
@@ -25,7 +25,7 @@ from finn.interface.interface_utils import (
 from finn.interface.manage_deps import DependencyUpdater
 from finn.interface.manage_tests import run_test
 from finn.interface.settings import FINNSettings
-from finn.util.exception import FINNValidationError
+from finn.util.exception import FINNUserError, FINNValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -116,13 +116,17 @@ def prepare_finn(settings: FINNSettings) -> None:
 
     # Update / Install all dependencies
     if settings.automatic_dependency_updates:
-        updater = DependencyUpdater(
-            dependency_location=settings.finn_deps,
-            dependency_definition_file=settings.finn_deps_definitions,
-            git_timeout_s=settings.deps_git_timeout,
-        )
-        status(f"[EXTERNAL DEPENDENCY DEFINITION FILE] {updater.depfile.absolute()}")
-        updater.update()
+        try:
+            updater = DependencyUpdater(
+                dependency_location=settings.finn_deps,
+                dependency_definition_file=settings.finn_deps_definitions,
+                git_timeout_s=settings.deps_git_timeout,
+            )
+            status(f"[EXTERNAL DEPENDENCY DEFINITION FILE] {updater.depfile.absolute()}")
+            updater.update()
+        except FINNUserError as e:
+            error(f"FINN ERROR: {e}")
+            sys.exit(1)
     else:
         warning("Skipping dependency updates!")
 
@@ -130,11 +134,11 @@ def prepare_finn(settings: FINNSettings) -> None:
     set_synthesis_tools_paths()
 
     # Resolve paths to some not properly packaged components...
-    os.environ["FINN_RTLLIB"] = _resolve_module_path("finn-rtllib")
-    os.environ["FINN_CUSTOM_HLS"] = _resolve_module_path("custom_hls")
-    os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
-    os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks")
-    os.environ["FINN_TESTS"] = _resolve_module_path("tests")
+    os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
+    os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
+    os.environ["FINN_QNN_DATA"] = resolve_module_path("qnn-data")
+    os.environ["FINN_NOTEBOOKS"] = resolve_module_path("notebooks")
+    os.environ["FINN_TESTS"] = resolve_module_path("tests")
 
 
 @click.group()

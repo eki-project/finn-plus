@@ -10,7 +10,7 @@ import yaml
 from concurrent.futures import Future, ThreadPoolExecutor
 from itertools import chain
 from pathlib import Path
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from rich import box
 from rich.console import Console
 from rich.live import Live
@@ -20,7 +20,7 @@ from threading import RLock
 from typing import cast
 
 from finn.interface import IS_POSIX
-from finn.interface.interface_utils import _resolve_module_path, debug, error
+from finn.interface.interface_utils import debug, error, resolve_module_path
 from finn.util.exception import FINNConfigurationError, FINNUserError
 from pydantic.networks import HttpUrl  # noqa
 
@@ -28,7 +28,7 @@ from pydantic.networks import HttpUrl  # noqa
 class Dependency:
     """Baseclass for all dependencies."""
 
-    pass  # noqa
+    model_config = ConfigDict(strict=True)
 
 
 class GitDependency(BaseModel, Dependency):
@@ -44,6 +44,16 @@ class GitDependency(BaseModel, Dependency):
     pip_install: bool
     install_editable: bool
 
+    @model_validator(mode="after")
+    def editable_install_requires_pip(self) -> GitDependency:
+        """Validate that editable installs can only be done on pip installed repos."""
+        if self.install_editable and not self.pip_install:
+            raise FINNUserError(
+                f"Dependency definition file: Git URL dependency {self.url} is not "
+                f"installed via Pip, but install_editable is set to True."
+            )
+        return self
+
 
 class BoardfileDependency(BaseModel, Dependency):
     """Data model for a Boardfile dependency.
@@ -55,7 +65,7 @@ class BoardfileDependency(BaseModel, Dependency):
 
     url: HttpUrl
     commit: str
-    subdirectory: Path
+    subdirectory: Path = Field(strict=False)
 
 
 class DirectDownloadDependency(BaseModel, Dependency):
@@ -68,7 +78,7 @@ class DirectDownloadDependency(BaseModel, Dependency):
 
     url: HttpUrl
     do_unzip: bool
-    target_directory: Path
+    target_directory: Path = Field(strict=False)
 
 
 class CustomDependency(BaseModel, Dependency):
@@ -254,7 +264,9 @@ class DependencyUpdater:
         self.depfile = dependency_definition_file
         if not self.depfile.exists():
             raise FINNConfigurationError(
-                f"External dependency definition file not found at: {self.depfile}"
+                f"External dependency definition file not found at: {self.depfile}. "
+                f"(If a different path was specified in the settings.yaml file, it was "
+                f"not found either!)"
             )
         self.dep_location = dependency_location
         if not self.dep_location.exists():
@@ -273,7 +285,7 @@ class DependencyUpdater:
 
         # Try to find FINN_XSI. If it cannot be found, it is ignored in the
         # list of all dependencies (since this is neither a failed nor a successful install)
-        self.finn_xsi_str = _resolve_module_path("finn_xsi")
+        self.finn_xsi_str = resolve_module_path("finn_xsi")
 
     def _run_silent(self, cmd: str, cwd: Path | None = None, timeout: float | None = None) -> int:
         """Run a given command silently. Return its returncode."""
@@ -321,11 +333,6 @@ class DependencyUpdater:
         url, commit, pip_install, install_editable = self.deps.get_fields(
             package_name, "url", "commit", "pip_install", "install_editable"
         )
-        if not pip_install and install_editable:
-            raise FINNUserError(
-                f"Dependency definition file: Package {package_name} is not "
-                f"installed via Pip, but install_editable is set to True."
-            )
         target = self.dep_location / package_name
         if not self._git_clone(url, commit, target):
             return False
