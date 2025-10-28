@@ -17,14 +17,12 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from threading import RLock
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import _resolve_module_path, debug, error
 from finn.util.exception import FINNConfigurationError, FINNUserError
-
-if TYPE_CHECKING:
-    from pydantic.networks import HttpUrl
+from pydantic.networks import HttpUrl  # noqa
 
 
 class Dependency:
