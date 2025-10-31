@@ -251,7 +251,7 @@ class Simulation:
         runsim = Path(sim_base) / "run_fifosim.sh"
         ld_library_path = get_vivado_root() + "/lib/lnx64.o"
         runsim.write_text(
-            f"LD_LIBRARY_PATH={ld_library_path}:" f"$LD_LIBRARY_PATH {simulation_executable}"
+            f"LD_LIBRARY_PATH={ld_library_path}:$LD_LIBRARY_PATH {simulation_executable} --depth 2"
         )
         return runsim
 
@@ -362,7 +362,7 @@ class Simulation:
         wrapper_filename = node_model.get_metadata_prop("wrapper_filename")
         if wrapper_filename is None or not Path(wrapper_filename).exists():
             raise FINNUserError(
-                f"Call CreateStitchedIP prior to building " f"the simulation for {node_name}"
+                f"Call CreateStitchedIP prior to building the simulation for {node_name}"
             )
 
         vivado_stitched_proj = node_model.get_metadata_prop("vivado_stitch_proj")
@@ -459,6 +459,16 @@ class Simulation:
             pool.shutdown(wait=True)
             for i, future in futures.items():
                 binaries[i] = future.result()
+
+        # Create a script to run the entire simulation again
+        run_simulation = make_build_dir("run:simulation")
+        run_all_simulations = Path(run_simulation) / "run.sh"
+        log.info(f"Storing run-all-simulations script in {run_all_simulations}")
+        with (run_all_simulations).open("w+") as f:
+            f.write("#!/bin/bash\n")
+            f.write('echo "Running simulation"')
+            for binary in binaries.values():
+                f.write(f"bash {binary}\n")
 
         # TODO: Change to info when done
         log.warning("RUNNING NODE SIMULATIONS")

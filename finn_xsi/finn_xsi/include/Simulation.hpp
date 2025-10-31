@@ -20,12 +20,16 @@
 #include <boost/interprocess/shared_memory_object.hpp>
 #include <cstddef>
 #include <cstdlib>
+#include <filesystem>
 #include <format>
 #include <fstream>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
+
+#include <nlohmann/json.hpp>
+using json = nlohmann::json;
 
 
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled>
@@ -111,7 +115,8 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
 
      public:
     SingleNodeSimulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file, std::array<StreamDescriptor, IStreamsSize> _istream_descs,
-                         std::array<StreamDescriptor, OStreamsSize> _ostream_descs, std::optional<std::string> prevNodeName = std::nullopt, std::optional<std::string> nodeName = std::nullopt)
+                         std::array<StreamDescriptor, OStreamsSize> _ostream_descs, std::optional<std::string> prevNodeName = std::nullopt, std::optional<std::string> nodeName = std::nullopt,
+                         unsigned int initialFIFODepth = 2)
         : Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs) {
         if (CommunicatesWithPredecessor && !prevNodeName) {
             throw std::runtime_error("Cannot communicate with predecessor because previous node name was not given!");
@@ -134,7 +139,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         debug(std::format("Creating {} interfaces for communication with successors.", OStreamsSize));
         if (NodeIndex != TotalNodes - 1 && nodeName && CommunicatesWithSuccessor) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                toConsumerInterface[i] = std::move(ProducingInterface(std::format("{}_{}", *nodeName, i).c_str()));
+                toConsumerInterface[i] = std::move(ProducingInterface(std::format("{}_{}", *nodeName, i).c_str(), initialFIFODepth));
             }
         }
 
@@ -142,7 +147,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         debug(std::format("Creating {} interfaces for communication with predecessors.", IStreamsSize));
         if (NodeIndex != 0 && prevNodeName && CommunicatesWithPredecessor) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                fromProducerInterface[i] = std::move(ConsumingInterface(std::format("{}_{}", *prevNodeName, i).c_str()));
+                fromProducerInterface[i] = std::move(ConsumingInterface(std::format("{}_{}", *prevNodeName, i).c_str(), initialFIFODepth));
             }
         }
 
@@ -210,6 +215,16 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             }
             this->validLog << "\n";
         }
+    }
+
+    /// Write the results of the simulation as a JSON file
+    void writeResults(std::filesystem::path& path) {
+        json j;
+        j["maxOccupation"] = 0;
+        j["cyclesSimulated"] = 0;
+        std::ofstream file(path);
+        file << j;
+        file.close();
     }
 };
 
