@@ -460,15 +460,23 @@ class Simulation:
             for i, future in futures.items():
                 binaries[i] = future.result()
 
-        # Create a script to run the entire simulation again
-        run_simulation = make_build_dir("run:simulation")
+        # Create a script to build and run the entire simulation again
+        run_simulation = make_build_dir("run_simulation")
         run_all_simulations = Path(run_simulation) / "run.sh"
-        log.info(f"Storing run-all-simulations script in {run_all_simulations}")
+        build_all_simulations = Path(run_simulation) / "build.sh"
+        log.info(f"Storing run-all-simulations script in {run_simulation}")
         with (run_all_simulations).open("w+") as f:
             f.write("#!/bin/bash\n")
-            f.write('echo "Running simulation"')
+            f.write('echo "Running simulation"\n')
             for binary in binaries.values():
-                f.write(f"bash {binary}\n")
+                f.write(f"bash {binary} &\n")
+            f.write("wait\n")
+        with build_all_simulations.open("w+") as f:
+            f.write("#!/bin/bash\n")
+            for binary in binaries.values():
+                # Build each binary new. Done in parallel in the background
+                f.write(f"{{ cd {binary.parent};cmake . && make; }} &\n")
+            f.write("wait\n")
 
         # TODO: Change to info when done
         log.warning("RUNNING NODE SIMULATIONS")

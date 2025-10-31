@@ -9,6 +9,8 @@
 #include <iostream>
 #include <boost/program_options.hpp>
 #include <chrono>
+
+#define NDEBUG
 #include <rtlsim_config.hpp>
 #include <Simulation.hpp>
 

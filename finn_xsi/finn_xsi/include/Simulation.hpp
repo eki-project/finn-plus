@@ -198,10 +198,8 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     [[gnu::hot]] void runSingleCycle() {
         this->clk.toggle_clk();
         communicate();
-        if constexpr (LoggingEnabled) {
-            ++cyclesRun;
-            debug(std::format("Finished cycle {}\n\n", cyclesRun));
-        }
+        debug(std::format("Finished cycle {}\n\n", cyclesRun));
+        ++cyclesRun;
 
         // Log the signals that this simulations set (ready to predecessor, valid to successor)
         // TODO: Collect signals in vectors and only write to file after the sim for speedup
@@ -220,12 +218,15 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     /// Write the results of the simulation as a JSON file
     void writeResults(std::filesystem::path& path) {
         json j;
-        j["maxOccupation"] = 0;
-        j["cyclesSimulated"] = 0;
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
+            j["maxOccupation"][std::to_string(i)] = toConsumerInterface[i].getLargestOccupation();
+        }
+        j["cyclesRun"] = cyclesRun;
         std::ofstream file(path);
         file << j;
         file.close();
     }
 };
+
 
 #endif /* SIMULATION */

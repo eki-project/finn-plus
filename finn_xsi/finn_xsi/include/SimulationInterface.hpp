@@ -75,6 +75,7 @@ class SimulationInterface {
 
     SharedData* sharedData = nullptr;
     boost::ipc_atomic<int>* refCount = nullptr;
+    std::atomic<std::size_t> largestOccupation;
     ipc::managed_shared_memory shmem;
     const std::string shmIdentifier;
 
@@ -91,7 +92,7 @@ class SimulationInterface {
         // Uninitialized - will be move-assigned later
     }
 
-    SimulationInterface(const char* _shmIdentifier, unsigned int initialMaxDepth = 2) : shmIdentifier(_shmIdentifier) {
+    SimulationInterface(const char* _shmIdentifier, unsigned int initialMaxDepth = 2) : shmIdentifier(_shmIdentifier), largestOccupation(0) {
         simInterfaceDebug(std::format("Creating simulation interface with {} depth.", initialMaxDepth));
         if (T == SimulationInterfaceType::PRODUCING) {
             ipc::shared_memory_object::remove(_shmIdentifier);
@@ -171,6 +172,11 @@ class SimulationInterface {
         }
     }
 
+    /// Return the largest occupation that this FIFO has had so far
+    std::size_t getLargestOccupation() {
+        return largestOccupation;
+    }
+
     /// Set the max fifo depth in this interface.
     void setMaxFifoDepth(unsigned int depth) {
         simInterfaceDebug(std::format("Setting max FIFO depth to {}", depth));
@@ -180,6 +186,7 @@ class SimulationInterface {
     /// Reset all interface data fields to their defaults
     void reset(unsigned int newMaxFifoDepth = 2) {
         simInterfaceDebug(std::format("Resetting simulation interface (with max FIFO depth {})", newMaxFifoDepth));
+        largestOccupation = 0;
         sharedData->fifoOccupation.store(0, boost::memory_order_release);
         sharedData->maxFifoDepth.store(newMaxFifoDepth, boost::memory_order_release);
         sharedData->iReady.store(true, boost::memory_order_release);
@@ -216,6 +223,9 @@ class SimulationInterface {
         while (sharedData->oCycle != sharedData->iCycle) {}
         sharedData->iReady = sharedData->fifoOccupation < sharedData->maxFifoDepth;
         sharedData->fifoOccupation += static_cast<unsigned int>(sharedData->iReady && producerValid);
+        if (sharedData->iReady && producerValid) {
+            ++largestOccupation;
+        }
         ++(sharedData->iCycle);
         return sharedData->iReady;
     }
