@@ -315,19 +315,40 @@ def _infer_qonnx_datatypes(model: ModelWrapper):
     return model
 
 
-def export(model: ModelWrapper, _: DataflowBuildConfig) -> ModelWrapper:
+def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Converts the model back to the FINN compatible format."""
 
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
+    # Create configuration for all passes and assume initially empty state
+    cfg, state = _make_pass_config(cfg), {}
+
+    # Cleanup passes ensuring threshold compatibility with the FINN format
+    passes = [
+        # Before exporting back to the FINN format, try to make all thresholds
+        # per-channel at the expense of extra per-element additions
+        "decompose-thresholds",
+        # One more time cleanup the model and fill in missing shape annotations,
+        # also make sure the model is still valid ONNX at this point
+        "shape-inference",
+        "fold-constants",
+        "eliminate",
+        "cleanup",
+        "checker",
+        "verify"
+    ]
+
+    # Apply passes sequence with configuration and global state, stay within
+    # ONNX IR format here
+    model = _apply_passes(model, passes, cfg, state)
+
     # Export custom operators to the FINN representation
     model = _export_thresholds_to_finn(model)
     model = _export_im2col_to_finn(model)
 
-    # Finalize the data layout annotations and get rid of remaining functions
-    # TODO: Inlining is more of a workaround as qonnx execution does not really
-    #  understand the LayoutConverter operator...
+    # Finalize the data layout annotations and get rid of custom functions:
+    # more of a workaround as qonnx execution does not understand these...
     model = _apply_passes(model, ["absorb-layouts", "inline-functions"], {}, {})
 
     # Serialize the resulting ONNX IR format back to ONNX proto wrapped by QONNX
