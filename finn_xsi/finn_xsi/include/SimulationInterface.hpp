@@ -75,9 +75,9 @@ class SimulationInterface {
 
     SharedData* sharedData = nullptr;
     boost::ipc_atomic<int>* refCount = nullptr;
+    const std::string shmIdentifier;
     std::atomic<std::size_t> largestOccupation;
     ipc::managed_shared_memory shmem;
-    const std::string shmIdentifier;
 
 #ifdef NDEBUG
     [[maybe_unused]] void simInterfaceDebug([[maybe_unused]] std::string_view s) {}
@@ -126,7 +126,7 @@ class SimulationInterface {
 
     // Move constructor
     SimulationInterface(SimulationInterface&& other) noexcept
-        : sharedData(other.sharedData), refCount(other.refCount), shmem(std::move(other.shmem)), shmIdentifier(std::move(other.shmIdentifier)) {
+        : sharedData(other.sharedData), refCount(other.refCount), shmIdentifier(std::move(other.shmIdentifier)), shmem(std::move(other.shmem)) {
         // Mark other as moved-from
         other.sharedData = nullptr;
         other.refCount = nullptr;

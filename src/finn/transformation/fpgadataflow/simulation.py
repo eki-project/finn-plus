@@ -18,8 +18,9 @@ from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNode
 from qonnx.transformation.infer_shapes import InferShapes
 from random import Random
 from subprocess import CalledProcessError
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
@@ -33,10 +34,6 @@ try:
     import finn_xsi.adapter as finnxsi
 except ModuleNotFoundError:
     finnxsi = None
-
-
-if TYPE_CHECKING:
-    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 
 class Simulation:
