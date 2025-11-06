@@ -5,37 +5,60 @@
 #include <Kernel.h>
 #include <Port.h>
 #include <SharedLibrary.h>
+#include <boost/program_options/options_description.hpp>
 #include <iostream>
+#include <boost/program_options.hpp>
 #include <chrono>
-#include <rtlsim_config.hpp>
 
 #define NDEBUG
+#include <rtlsim_config.hpp>
 #include <Simulation.hpp>
 
-int main(){
-    // TODO: Give proper names for previous and name
-    constexpr bool communicateWithPredecessor = (NodeIndex != 0);
-    constexpr bool communicateWithSuccessor = (NodeIndex != TotalNodes - 1);
-    SingleNodeSimulation<1, 1, false, NodeIndex, TotalNodes, communicateWithPredecessor, communicateWithSuccessor> sim(
-        kernel_libname,
-        design_libname,
+namespace po = boost::program_options;
+
+constexpr bool CommunicateWithPredecessor = (RTLSimConfig::NodeIndex != 0);
+constexpr bool CommunicateWithSuccessor = (RTLSimConfig::NodeIndex != RTLSimConfig::TotalNodes - 1);
+constexpr std::size_t InstreamCount = RTLSimConfig::istream_descs.size();
+constexpr std::size_t OutstreamCount = RTLSimConfig::ostream_descs.size();
+
+int main(int argc, const char* argv[]) {
+    // Parse CLI options
+    po::options_description desc{"Options"};
+    desc.add_options()
+        ("depth,d", po::value<unsigned int>()->required(), "FIFO Depth")
+        ("output,o", po::value<std::string>()->default_value("simulation_data.json"), "Simulation Data Output");
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc, argv, desc), vm);
+    po::notify(vm);
+
+    // Construct simulation
+    SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex,
+        RTLSimConfig::TotalNodes, CommunicateWithPredecessor, CommunicateWithSuccessor> sim(
+        RTLSimConfig::kernel_libname,
+        RTLSimConfig::design_libname,
         "xsim_log_file.txt",
         "trace_file.txt",
-        std::array<StreamDescriptor, 1>{StreamDescriptor{istream_descs[0].name, istream_descs[0].job_size, istream_descs[0].job_ticks}},
-        std::array<StreamDescriptor, 1>{StreamDescriptor{ostream_descs[0].name, ostream_descs[0].job_size, ostream_descs[0].job_ticks}},
-        previousNodeName,
-        currentNodeName
+        RTLSimConfig::istream_descs,
+        RTLSimConfig::ostream_descs,
+        RTLSimConfig::previousNodeName,
+        RTLSimConfig::currentNodeName,
+        vm["depth"].as<unsigned int>()
     );
 
-    // TODO: Run correct frames
-
+    /** SECTION WIP */
     auto start = std::chrono::high_resolution_clock::now();
     for (std::size_t j = 0; j < 100000; ++j) {
         sim.runSingleCycle();
     }
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
-    if constexpr(NodeIndex == 0) {
+    if constexpr(RTLSimConfig::NodeIndex == 0) {
         std::cout << duration << " ms" << std::endl;
     }
+    /***********/
+
+    // Write results as JSON
+    auto outputPath = std::filesystem::path(vm["output"].as<std::string>());
+    sim.writeResults(outputPath);
+
     return 0;
 }

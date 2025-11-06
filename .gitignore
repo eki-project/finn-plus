@@ -54,6 +54,7 @@ tags
 poetry.lock
 *.code-workspace
 .env
+*.vim
 
 # Cmake files
 **/CMakeFiles
@@ -99,6 +100,9 @@ MANIFEST
 /dataset/
 /data/
 *.csv
+
+# Mock templated simulation config
+finn_xsi/finn_xsi/rtlsim_config.hpp
 
 # Google Drive key for dashboard
 /gdrive-key/

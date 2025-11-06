@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.11)
 project(LayerSimulationBackend)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -72,15 +72,17 @@ list(APPEND CMAKE_MESSAGE_INDENT "  ") #indent +1
 check_include(FIFOSIM_IPO          "InterproceduralOptimization" InterproceduralOptimization.cmake)
 list(POP_BACK CMAKE_MESSAGE_INDENT)    #indent -1
 
-# Write configuration header
-#configure_file("${CMAKE_BINARY_DIR}/simulation_config.hpp.in" "${CMAKE_BINARY_DIR}/simulation_config.hpp")
-
 # Main
 file(GLOB_RECURSE CORE_SRC src/*.cpp)
 add_executable(LayerSimulationBackend LayerSimulationBackend.cpp ${CORE_SRC})
 
+# For JSON writing
+include(FetchContent)
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
+FetchContent_MakeAvailable(json)
+
 # Add boost for IPC
-find_package(Boost REQUIRED)
+find_package(Boost COMPONENTS program_options REQUIRED)
 target_include_directories(LayerSimulationBackend SYSTEM PUBLIC ${Boost_INCLUDE_DIRS})
 
 # Include the rtlsim wrapper directory itself
@@ -91,4 +93,4 @@ target_include_directories(LayerSimulationBackend PUBLIC "$ENV{XILINX_VIVADO}/da
 target_include_directories(LayerSimulationBackend PUBLIC "include")
 
 # Link libraries
-target_link_libraries(LayerSimulationBackend fifosim::options Threads::Threads OpenMP::OpenMP_CXX -ldl -lrt)
+target_link_libraries(LayerSimulationBackend fifosim::options nlohmann_json::nlohmann_json Threads::Threads OpenMP::OpenMP_CXX  Boost::program_options -ldl -lrt)

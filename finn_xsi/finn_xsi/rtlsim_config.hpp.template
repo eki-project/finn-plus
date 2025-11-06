@@ -15,43 +15,43 @@
 #include <initializer_list>
 #include <string>
 #include <optional>
+#include <helper.h>
 
-/**** General RTLSIM Configuration Parameters ****/
-const std::optional<std::string> currentNodeName = "@NODE_NAME@";
-const std::optional<std::string> previousNodeName = @PREVIOUS_NODE_NAME@;
+namespace RTLSimConfig {
+	// Log during simulation. Turned off by default. Might increase runtime if used.
+	constexpr bool LoggingEnabled = false;
 
-// Which index node this simulation executes
-// In a complete design simulation this is 0
-constexpr size_t NodeIndex = @NODE_INDEX@;
+	/**** General RTLSIM Configuration Parameters ****/
+	const std::optional<std::string> currentNodeName = "@NODE_NAME@";
+	const std::optional<std::string> previousNodeName = @PREVIOUS_NODE_NAME@;
 
-// Number of total nodes in the simulation (over all processes)
-// In a complete design simulation this is 1
-constexpr size_t TotalNodes = @TOTAL_NODES@;
+	// Which index node this simulation executes
+	// In a complete design simulation this is 0
+	constexpr size_t NodeIndex = @NODE_INDEX@;
 
-struct stream_desc {
-	char const *name;
-	size_t      job_size;
-	// Next job can only start this many clock ticks after start of predecessor.
-	size_t      job_ticks;
-};
+	// Number of total nodes in the simulation (over all processes)
+	// In a complete design simulation this is 1
+	constexpr size_t TotalNodes = @TOTAL_NODES@;
 
-// sim kernel .so to use (depends on Vivado version)
-static char const  kernel_libname[] = "@SIMKERNEL_SO@";
+	// sim kernel .so to use (depends on Vivado version)
+	static char const  kernel_libname[] = "@SIMKERNEL_SO@";
 
-// design library .so to use (important to use this relative path here,
-// due to how XSI looks for certain files)
-static char const  design_libname[] = "xsim.dir/@TOP_MODULE_NAME@/xsimk.so";
+	// design library .so to use (important to use this relative path here,
+	// due to how XSI looks for certain files)
+	static char const  design_libname[] = "xsim.dir/@TOP_MODULE_NAME@/xsimk.so";
 
-// AXI stream descriptors {stream_name, transactions_per_inference}
-// input AXI stream descriptors
-std::array<stream_desc, @ISTREAM_LEN@> istream_descs { @ISTREAM_DESC@ };
+	// AXI stream descriptors {stream_name, transactions_per_inference}
+	// input AXI stream descriptors
+	std::array<StreamDescriptor, @ISTREAM_LEN@> istream_descs { @ISTREAM_DESC@ };
 
-// output AXI stream descriptors
-std::array<stream_desc, @OSTREAM_LEN@> ostream_descs { @OSTREAM_DESC@ };
+	// output AXI stream descriptors
+	std::array<StreamDescriptor, @OSTREAM_LEN@> ostream_descs { @OSTREAM_DESC@ };
 
-// max number of cycles to wait for output activity on any stream before timeout
-constexpr unsigned max_iters = @TIMEOUT_CYCLES@;
+	// max number of cycles to wait for output activity on any stream before timeout
+	constexpr unsigned max_iters = @TIMEOUT_CYCLES@;
 
-// filename for trace and debug, if enabled. This needs xelab -debug option too.
-static const std::optional<std::string> trace_filename = @TRACE_FILE@;
-static const std::string xsim_log_filename = @XSIM_LOG_FILE@;
+	// filename for trace and debug, if enabled. This needs xelab -debug option too.
+	static const std::optional<std::string> trace_filename = @TRACE_FILE@;
+	static const std::string xsim_log_filename = @XSIM_LOG_FILE@;
+
+}
