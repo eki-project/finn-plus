@@ -32,11 +32,6 @@ This module provides the HWCustomOp base class for custom operations that can be
 implemented using HLS or RTL backends in FPGA dataflow architectures.
 """
 
-try:
-    import finn_xsi.adapter as finnxsi
-except ModuleNotFoundError:
-    finnxsi = None
-
 import numpy as np
 import numpy.typing as npt
 import os
@@ -50,7 +45,8 @@ from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, cast
 
-from finn.util.basic import get_liveness_threshold_cycles, is_versal
+from finn.util.basic import get_liveness_threshold_cycles
+from finn.util.deprecated import deprecated
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
@@ -187,6 +183,10 @@ class HWCustomOp(CustomOp):
 
     def get_rtlsim(self) -> SimEngine:
         """Return a xsi wrapper for the emulation library for this node."""
+        import finn_xsi.adapter as finnxsi
+
+        # without finnxsi dependency
+
         rtlsim_so = self.get_nodeattr("rtlsim_so")
         if type(rtlsim_so) is not str:
             raise FINNInternalError(
@@ -216,6 +216,9 @@ class HWCustomOp(CustomOp):
             sim: The RTL simulation object to close.
 
         """
+        import finn_xsi.adapter as finnxsi
+
+        # without finnxsi dependency
         finnxsi.close_rtlsim(sim)
 
     def node_res_estimation(self, fpgapart: str) -> dict[str, int | float]:
@@ -302,10 +305,16 @@ class HWCustomOp(CustomOp):
 
     def reset_rtlsim(self, sim: SimEngine) -> None:
         """Set reset input in finnxsi to zero, toggle the clock and set it back to one."""
+        import finn_xsi.adapter as finnxsi
+
+        # without finnxsi dependency
         finnxsi.reset_rtlsim(sim)
 
     def rtlsim_multi_io(self, sim: SimEngine, io_dict: dict[str, Any], sname: str = "_V") -> None:
         """Run rtlsim for this node, supports multiple i/o streams."""
+        import finn_xsi.adapter as finnxsi
+
+        # without finnxsi dependency
         num_out_values = self.get_number_output_values()
         total_cycle_count = finnxsi.rtlsim_multi_io(
             sim,
@@ -340,7 +349,13 @@ class HWCustomOp(CustomOp):
         Member function of HWCustomOp class that must be implemented by every node.
 
         """
-        return np.prod(self.get_folded_output_shape()[:-1])
+        folded_oshape = self.get_folded_output_shape()
+        if folded_oshape is None:
+            raise FINNInternalError(
+                f"Cannot get number of output values for {self.onnx_node.name} "
+                "since folded output shape is not defined."
+            )
+        return int(np.prod(folded_oshape[:-1]))
 
     @abstractmethod
     def get_input_datatype(self, ind: int = 0) -> BaseDataType:
@@ -351,19 +366,19 @@ class HWCustomOp(CustomOp):
         """Return FINN DataType of output stream ind."""
 
     @abstractmethod
-    def get_normal_input_shape(self, ind: int = 0) -> Sequence[int] | npt.NDArray[np.int_] | None:
+    def get_normal_input_shape(self, ind: int = 0) -> Sequence[int] | npt.NDArray[np.int_]:
         """Return normal input shape if implemented."""
 
     @abstractmethod
-    def get_normal_output_shape(self, ind: int = 0) -> Sequence[int] | npt.NDArray[np.int_] | None:
+    def get_normal_output_shape(self, ind: int = 0) -> Sequence[int] | npt.NDArray[np.int_]:
         """Return folded output shape if implemented."""
 
     @abstractmethod
-    def get_folded_input_shape(self, ind: int = 0) -> Sequence[int] | npt.NDArray[np.int_] | None:
+    def get_folded_input_shape(self, ind: int = 0) -> Sequence[int] | npt.NDArray[np.int_]:
         """Return folded input shape (according to synapse folding), if implemented."""
 
     @abstractmethod
-    def get_folded_output_shape(self, ind: int = 0) -> Sequence[int] | npt.NDArray[np.int_] | None:
+    def get_folded_output_shape(self, ind: int = 0) -> Sequence[int] | npt.NDArray[np.int_]:
         """Return folded output shape (according to neuron folding), if implemented."""
 
     @abstractmethod
@@ -399,52 +414,6 @@ class HWCustomOp(CustomOp):
         """
         out_width = self.get_outstream_width(ind=ind)
         return roundup_to_integer_multiple(out_width, 8)
-
-    def generate_hdl_memstream(self, fpgapart: str, pumped_memory: int = 0) -> None:
-        """Generate verilog code for memstream component.
-
-        Currently utilized by MVAU, VVAU and HLS Thresholding layer.
-
-        Args:
-            fpgapart: Target FPGA part string.
-            pumped_memory: Whether to use pumped memory (default: 0).
-
-        """
-        ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls"]
-        if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
-            template_path = (
-                Path(os.environ["FINN_RTLLIB"]) / "memstream/hdl/memstream_wrapper_template.v"
-            )
-            mname = self.onnx_node.name
-            if self.onnx_node.op_type.startswith("Thresholding"):
-                depth = self.calc_tmem()
-            else:
-                depth = self.calc_wmem()
-            padded_width = self.get_instream_width_padded(1)
-            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
-
-            ram_style = cast("str", self.get_nodeattr("ram_style"))
-            init_file = str(Path(code_gen_dir) / "memblock.dat")
-            if ram_style == "ultra" and not is_versal(fpgapart):
-                init_file = ""
-            code_gen_dict = {
-                "$MODULE_NAME$": [mname],
-                "$DEPTH$": [str(depth)],
-                "$WIDTH$": [str(padded_width)],
-                "$INIT_FILE$": [init_file],
-                "$RAM_STYLE$": [ram_style],
-                "$PUMPED_MEMORY$": [str(pumped_memory)],
-            }
-            # apply code generation to template
-            with template_path.open() as f:
-                template_wrapper = f.read()
-            for key in code_gen_dict:
-                # transform list into long string separated by '\n'
-                code_gen_line = "\n".join(code_gen_dict[key])
-                template_wrapper = template_wrapper.replace(key, code_gen_line)
-            output_path = Path(code_gen_dir) / f"{mname}_memstream_wrapper.v"
-            with output_path.open("w") as f:
-                f.write(template_wrapper)
 
     def generate_hdl_dynload(self) -> None:
         """Generate HDL for dynamic load wrapper."""
@@ -484,6 +453,7 @@ class HWCustomOp(CustomOp):
         with output_path.open("w") as f:
             f.write(template_wrapper)
 
+    @deprecated
     def derive_characteristic_fxns(
         self, period: int, override_rtlsim_dict: dict | None = None
     ) -> None:
@@ -499,7 +469,7 @@ class HWCustomOp(CustomOp):
         """
         # ensure rtlsim is ready
         assert self.get_nodeattr("rtlsim_so") != "", "rtlsim not ready for " + self.onnx_node.name
-        if self.get_nodeattr("io_chrc_period") > 0:
+        if cast("int | float", self.get_nodeattr("io_chrc_period")) > 0:
             log.warning(f"Skipping node {self.onnx_node.name}: already has FIFO characteristic")
             return
         exp_cycles = self.get_exp_cycles()
@@ -533,11 +503,11 @@ class HWCustomOp(CustomOp):
         self.reset_rtlsim(sim)
         # create stream tracers for all input and output streams
         for k in txns_in.keys():
-            txns_in[k] = sim.trace_stream(k + sname)
+            txns_in[k] = sim.trace_stream(k + sname)  # type: ignore
         for k in txns_out.keys():
-            txns_out[k] = sim.trace_stream(k + sname)
+            txns_out[k] = sim.trace_stream(k + sname)  # type: ignore
         self.rtlsim_multi_io(sim, io_dict)
-        total_cycle_count = self.get_nodeattr("cycles_rtlsim")
+        total_cycle_count = cast("int", self.get_nodeattr("cycles_rtlsim"))
         assert (
             total_cycle_count <= period
         ), f"""Total cycle count from rtl simulation is higher than

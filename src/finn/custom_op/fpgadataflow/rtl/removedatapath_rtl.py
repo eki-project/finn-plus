@@ -166,7 +166,7 @@ class RemoveDataPath_rtl(RTLBackend):
 
     def get_normal_input_shape(
         self, ind: int = 0  # noqa: ARG002
-    ) -> Sequence[int] | npt.NDArray[np.int_] | None:
+    ) -> Sequence[int] | npt.NDArray[np.int_]:
         """Return the normal (unfolded) input shape.
 
         Args:
@@ -203,7 +203,7 @@ class RemoveDataPath_rtl(RTLBackend):
 
     def get_normal_output_shape(
         self, ind: int = 0  # noqa: ARG002
-    ) -> Sequence[int] | npt.NDArray[np.int_] | None:
+    ) -> Sequence[int] | npt.NDArray[np.int_]:
         """Return the normal (unfolded) output shape.
 
         Args:
@@ -217,7 +217,7 @@ class RemoveDataPath_rtl(RTLBackend):
 
     def get_folded_input_shape(
         self, ind: int = 0  # noqa: ARG002
-    ) -> Sequence[int] | npt.NDArray[np.int_] | None:
+    ) -> Sequence[int] | npt.NDArray[np.int_]:
         """Return the folded input shape.
 
         Args:
@@ -251,7 +251,7 @@ class RemoveDataPath_rtl(RTLBackend):
 
     def get_folded_output_shape(
         self, ind: int = 0  # noqa: ARG002
-    ) -> Sequence[int] | npt.NDArray[np.int_] | None:
+    ) -> Sequence[int] | npt.NDArray[np.int_]:
         """Return the folded output shape.
 
         Args:
