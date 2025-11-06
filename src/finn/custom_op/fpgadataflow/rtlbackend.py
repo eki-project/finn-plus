@@ -32,10 +32,11 @@ except ModuleNotFoundError:
     finnxsi = None
 
 import numpy as np
+import numpy.typing as npt
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List
+from typing import cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.basic import make_build_dir
@@ -49,7 +50,21 @@ class RTLBackend(HWCustomOp, ABC):
     custom node should have. Some as abstract methods, these have to be filled
     when writing a new RTL custom op node."""
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(
+        self,
+    ) -> dict[
+        str,
+        tuple[str, bool, int | float | str | bool | npt.ArrayLike | list]
+        | tuple[str, bool, int | float | str | bool | npt.ArrayLike | list, set | None],
+    ]:
+        """Return 4-tuple (dtype, required, default_val, allowed_values) for attribute
+        with name. allowed_values will be None if not specified.
+
+        Returns:
+            dict[ str, tuple[str, bool, int | float | str | bool | npt.ArrayLike | list] | tuple[
+                str, bool, int | float | str | bool | npt.ArrayLike | list, set | None]]:
+                Dictionary of node attribute types
+        """
         super_attrs = super().get_nodeattr_types()
         super_attrs.update(
             {
@@ -77,25 +92,25 @@ class RTLBackend(HWCustomOp, ABC):
         # save generated lib filename in attribute
         self.set_nodeattr("rtlsim_so", ret[0] + "/" + ret[1])
 
-    def get_verilog_paths(self):
+    def get_verilog_paths(self) -> list[str]:
         """Returns path to code gen directory. Can be overwritten to
         return additional paths to relevant verilog files"""
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        return [code_gen_dir]
+        return [cast("str", code_gen_dir)]
 
     @abstractmethod
-    def get_rtl_file_list(self, abspath=False) -> List[str] | List[Path]:
+    def get_rtl_file_list(self, abspath=False) -> list[str] | list[Path]:
         """Returns list of rtl files. Needs to be filled by each node."""
         pass
 
     @abstractmethod
-    def code_generation_ipi(self) -> List[str]:
+    def code_generation_ipi(self) -> list[str]:
         pass
 
-    def code_generation_ipgen(self, model, fpgapart, clk):
+    def code_generation_ipgen(self, model, fpgapart, clk) -> None:
         self.generate_hdl(model, fpgapart, clk)
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context, graph) -> None:
         mode = self.get_nodeattr("exec_mode")
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
