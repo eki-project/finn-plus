@@ -146,8 +146,10 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
         "inline-batchnorm",
         # Expresses Gemm as MatMul (+ bias and transposes)
         "inline-gemm",
-        # Expresses Conv as Im2Col + MatMul (+ bias and transpose)
+        # Expresses Conv as Im2Col + MatMul (+ bias and transposes)
         "lower-conv",
+        # Expresses pooling as Im2Col + Reshape + Reduce* (+ transposes)
+        "lower-pooling",
         # Adds shape annotations
         "shape-inference",
         # Make sure the model is still valid
