@@ -228,11 +228,15 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
         # Create a new constant operator for the squeezed thresholds input
         thresholds = op.Constant(value=ir.tensor(thresholds))
 
+        # Generate daty layouts with unknows up to the final axis, which is the
+        # known channel axis
+        layout = (len(x.shape) - 1) * "." + "C"
+
         # Custom operator attributes according to QONNX: currently QONNX
         # defaults to NCHW layout and converts later, while the new flow
         # already exports NHWC layout (not entirely true, appropriate layout
         # conversion needs to be inserted)
-        attributes = {"out_dtype": out_dtype, "data_layout": "NHWC"}
+        attributes = {"out_dtype": out_dtype, "data_layout": layout}
 
         # Replacement pattern: MultiThreshold operator in QONNX domain without
         # weights and with explicit datatype attribute
