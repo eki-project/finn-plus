@@ -78,7 +78,26 @@ class Pool_hls(Pool, HLSBackend):
 
         self.code_gen_dict["$DOCOMPUTE$"] = []
         if fxn == "MaxPool":
-            self.code_gen_dict["$DOCOMPUTE$"] += ["MaxPoolFunction<{}> pool_fxn;".format(o_hls_dt)]
+            self.code_gen_dict["$DOCOMPUTE$"] += [
+                "MaxPoolFunction<{}> pool_fxn;".format(o_hls_dt)
+            ]
+        elif fxn == "AccPool":
+            self.code_gen_dict["$DOCOMPUTE$"] += [
+                "AccPoolFunction<{}> pool_fxn;".format(o_hls_dt)
+            ]
+        elif fxn == "AvgPool":
+            n = np.prod(self.get_nodeattr("KernelSize"))
+            accum_bits = self.get_nodeattr("AccumBits")
+            act_hls_dt = "hls::vector<ap_%sint<%d>, %d>" % (
+                "" if idt.signed() else "u",
+                accum_bits,
+                pe,
+            )
+            self.code_gen_dict["$DOCOMPUTE$"] += [
+                "AvgPoolFunction<{},{},{}> pool_fxn;".format(
+                    o_hls_dt, act_hls_dt, n
+                )
+            ]
         elif fxn == "QuantAvgPool":
             shift = self.get_nodeattr("Size")
             accum_bits = self.get_nodeattr("AccumBits")

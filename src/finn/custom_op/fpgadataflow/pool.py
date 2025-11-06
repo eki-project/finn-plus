@@ -56,11 +56,10 @@ class Pool(HWCustomOp):
             "Channels": ("i", True, 0),
             "PE": ("i", True, 1),
             "KernelSize": ("ints", True, []),
-            # Function:
-            #  - MaxPool
-            #  - QuantAvgPool
-            # TODO add support for AvgPool and AccPool
-            "Function": ("s", True, "", {"MaxPool", "QuantAvgPool"}),
+            # Pooling function to use corresponding to hlslib functions
+            "Function": ("s", True, "", {
+                "MaxPool", "AvgPool", "AccPool", "QuantAvgPool"
+            }),
             "OutImgDims": ("ints", True, []),
             # FINN DataTypes for inputs/outputs
             "InputDataType": ("s", True, ""),
@@ -86,6 +85,10 @@ class Pool(HWCustomOp):
             # Same as input
             idt = DataType[self.get_nodeattr("InputDataType")]
             assert odt == idt, "In datatype must be equal to out datatype for Maxpool"
+        elif fxn == "AccPool":
+            pass
+        elif fxn == "AvgPool":
+            pass
         elif fxn == "QuantAvgPool":
             idt = DataType[self.get_nodeattr("InputDataType")]
             assert (
@@ -177,7 +180,7 @@ class Pool(HWCustomOp):
 
         # check supported function
         fnx = self.get_nodeattr("Function")
-        if fnx in ["MaxPool", "QuantAvgPool"]:
+        if fnx in ["MaxPool", "AvgPool", "AccPool", "QuantAvgPool"]:
             info_messages.append("Attribute Function contains a supported pool function")
         else:
             info_messages.append("Attribute Function contains an unsupported pool function")
@@ -198,6 +201,10 @@ class Pool(HWCustomOp):
         tmp_values = inp_values.reshape(tmp_shape)
         if fnx == "MaxPool":
             result = np.max(tmp_values, axis=3)
+        elif fnx == "AccPool":
+            result = np.sum(tmp_values, axis=3)
+        elif fnx == "AvgPool":
+            result  = np.mean(tmp_values, axis=3)
         elif fnx == "QuantAvgPool":
             # determine bits to shift
             ibits = self.get_input_datatype().bitwidth()
