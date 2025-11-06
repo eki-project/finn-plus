@@ -34,26 +34,33 @@ except ModuleNotFoundError:
 import numpy as np
 import os
 from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import List
 
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.basic import make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.logging import log
 
 
-class RTLBackend(ABC):
+class RTLBackend(HWCustomOp, ABC):
     """RTLBackend class all custom ops that correspond to a module in finn-rtllib
     are using functionality of. Contains different functions every RTL
     custom node should have. Some as abstract methods, these have to be filled
     when writing a new RTL custom op node."""
 
     def get_nodeattr_types(self):
-        return {
-            # attribute to save top module name - not user configurable
-            "gen_top_module": ("s", False, ""),
-        }
+        super_attrs = super().get_nodeattr_types()
+        super_attrs.update(
+            {
+                # attribute to save top module name - not user configurable
+                "gen_top_module": ("s", False, ""),
+            }
+        )
+        return super_attrs
 
     @abstractmethod
-    def generate_hdl(self, model, fpgapart, clk):
+    def generate_hdl(self, model, fpgapart, clk) -> None:
         pass
 
     def prepare_rtlsim(self):
@@ -77,12 +84,12 @@ class RTLBackend(ABC):
         return [code_gen_dir]
 
     @abstractmethod
-    def get_rtl_file_list(self, abspath=False):
+    def get_rtl_file_list(self, abspath=False) -> List[str] | List[Path]:
         """Returns list of rtl files. Needs to be filled by each node."""
         pass
 
     @abstractmethod
-    def code_generation_ipi(self):
+    def code_generation_ipi(self) -> List[str]:
         pass
 
     def code_generation_ipgen(self, model, fpgapart, clk):

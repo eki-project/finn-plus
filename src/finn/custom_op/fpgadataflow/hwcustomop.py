@@ -34,10 +34,14 @@ except ModuleNotFoundError:
 import numpy as np
 import os
 from abc import abstractmethod
+from onnx import NodeProto
+from qonnx.core.datatype import BaseDataType
 from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
+from typing import Optional, Sequence, Union
 
 from finn.util.basic import get_liveness_threshold_cycles, is_versal
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
 
@@ -47,11 +51,19 @@ class HWCustomOp(CustomOp):
     custom node should have. Some as abstract methods, these have to be filled
     when writing a new fpgadataflow custom op node."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node, **kwargs) -> None:
         super().__init__(onnx_node, **kwargs)
         self.code_gen_dict = {}
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(
+        self,
+    ) -> dict[
+        str,
+        Union[
+            tuple[str, bool, Union[int, float, str, bool, np.ndarray, list]],
+            tuple[str, bool, Union[int, float, str, bool, np.ndarray, list], Optional[set]],
+        ],
+    ]:
         return {
             "backend": ("s", True, "fpgadataflow"),
             "preferred_impl_style": ("s", False, "", {"", "hls", "rtl"}),
@@ -97,12 +109,17 @@ class HWCustomOp(CustomOp):
             "io_chrc_pads_out": ("ints", False, []),
         }
 
-    def make_shape_compatible_op(self, model):
+    def make_shape_compatible_op(self, model) -> NodeProto:
         oshape = self.get_normal_output_shape()
+        if oshape is None:
+            raise FINNInternalError(
+                f"Cannot make shape compatible op for {self.onnx_node.name} "
+                "since normal output shape is not defined."
+            )
         # implement tensor with correct shape
         return super().make_const_shape_op(oshape)
 
-    def get_verilog_top_module_name(self):
+    def get_verilog_top_module_name(self) -> str:
         "Return the Verilog top module name for this node."
 
         node = self.onnx_node
@@ -155,11 +172,11 @@ class HWCustomOp(CustomOp):
 
         return sim
 
-    def close_rtlsim(self, sim):
+    def close_rtlsim(self, sim) -> None:
         "Close and free up resources for rtlsim."
         finnxsi.close_rtlsim(sim)
 
-    def node_res_estimation(self, fpgapart):
+    def node_res_estimation(self, fpgapart) -> dict[str, Union[int, float]]:
         """Returns summarized resource estimation of BRAMs and LUTs
         of the node as a dictionary."""
         ret = dict()
@@ -251,38 +268,38 @@ class HWCustomOp(CustomOp):
         return np.prod(self.get_folded_output_shape()[:-1])
 
     @abstractmethod
-    def get_input_datatype(self, ind=0):
+    def get_input_datatype(self, ind=0) -> BaseDataType:
         """Returns FINN DataType of input stream ind."""
 
     @abstractmethod
-    def get_output_datatype(self, ind=0):
+    def get_output_datatype(self, ind=0) -> BaseDataType:
         """Returns FINN DataType of output stream ind."""
 
     @abstractmethod
-    def get_normal_input_shape(self, ind=0):
+    def get_normal_input_shape(self, ind=0) -> Sequence[int] | None:
         """Returns normal input shape if implemented."""
 
     @abstractmethod
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind=0) -> Sequence[int] | None:
         """Returns folded output shape if implemented."""
 
     @abstractmethod
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind=0) -> Sequence[int] | None:
         """Returns folded input shape (according to synapse folding), if implemented."""
 
     @abstractmethod
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind=0) -> Sequence[int] | None:
         """Returns folded output shape (according to neuron folding), if implemented."""
 
     @abstractmethod
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind=0) -> int:
         """Returns input stream width, if implemented."""
 
     @abstractmethod
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind=0) -> int:
         """Returns output stream width, if implemented."""
 
-    def get_instream_width_padded(self, ind=0):
+    def get_instream_width_padded(self, ind=0) -> int:
         """Returns input stream width padded to a multiple of 8. This is required
         by the AXI Stream spec."""
         in_width = self.get_instream_width(ind=ind)
@@ -291,7 +308,7 @@ class HWCustomOp(CustomOp):
         else:
             return 0
 
-    def get_outstream_width_padded(self, ind=0):
+    def get_outstream_width_padded(self, ind=0) -> int:
         """Returns output stream width padded to a multiple of 8. This is required
         by the AXI Stream spec."""
         out_width = self.get_outstream_width(ind=ind)

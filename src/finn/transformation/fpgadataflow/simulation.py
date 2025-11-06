@@ -3,6 +3,7 @@ import multiprocessing
 import numpy as np
 import onnx
 import os
+import psutil
 import shlex
 import subprocess
 import sys
@@ -13,11 +14,17 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
+from qonnx.transformation.infer_shapes import InferShapes
 from random import Random
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Any, cast
 
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
+from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
+from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
+from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
+from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import get_vivado_root, launch_process_helper, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
@@ -85,23 +92,59 @@ class Simulation:
         for i, node in enumerate(self.model.graph.node):
             if i != index:
                 node_model.graph.node.remove(node)
-        target_op: HWCustomOp = getCustomOp(self.model.graph.node[0])
+        target_op = getCustomOp(node_model.graph.node[0])
+        if not isinstance(target_op, HWCustomOp):
+            raise FINNInternalError(
+                f"Node {node_model.graph.node[0].name} is not a HWCustomOp, cannot "
+                f"isolate for simulation."
+            )
         inp = onnx.helper.make_tensor_value_info(
             "inp", TensorProto.FLOAT, target_op.get_folded_input_shape()
         )
-        outp = onnx.helper.make_tensor_value_info(
+        inp_dummy_out = onnx.helper.make_tensor_value_info(  # noqa
+            "inp_dummy_out", TensorProto.FLOAT, target_op.get_folded_input_shape()
+        )
+        outp = onnx.helper.make_tensor_value_info(  # noqa
             "outp", TensorProto.FLOAT, target_op.get_normal_output_shape()
         )
+        outp_dummy_out = onnx.helper.make_tensor_value_info(
+            "outp_dummy_out", TensorProto.FLOAT, target_op.get_normal_output_shape()
+        )
+        input_dummy_node = onnx.helper.make_node(
+            "RemoveDataPath_rtl",
+            inputs=["inp"],
+            outputs=["inp_dummy_out"],
+            domain="finn.custom_op.fpgadataflow.rtl",
+            backend="fpgadataflow",
+            folded_shape=target_op.get_folded_input_shape(),
+            normal_shape=target_op.get_normal_input_shape(),
+            dataType=target_op.get_input_datatype().name,
+            name=node_model.graph.node[0].name + "_input_dummy",
+        )
+        output_dummy_node = onnx.helper.make_node(
+            "RemoveDataPath_rtl",
+            inputs=["outp"],
+            outputs=["outp_dummy_out"],
+            domain="finn.custom_op.fpgadataflow.rtl",
+            backend="fpgadataflow",
+            folded_shape=target_op.get_folded_output_shape(),
+            normal_shape=target_op.get_normal_output_shape(),
+            dataType=target_op.get_output_datatype().name,
+            name=node_model.graph.node[0].name + "_output_dummy",
+        )
+
+        node_model.graph.node.insert(0, input_dummy_node)
+        node_model.graph.node.append(output_dummy_node)
 
         # Remove old io
-        for _ in range(len(node_model.graph.node[0].input)):
-            node_model.graph.node[0].input.pop()
-        for _ in range(len(node_model.graph.node[0].output)):
-            node_model.graph.node[0].output.pop()
+        for _ in range(len(node_model.graph.node[1].input)):
+            node_model.graph.node[1].input.pop()
+        for _ in range(len(node_model.graph.node[1].output)):
+            node_model.graph.node[1].output.pop()
 
         # Set new io
-        node_model.graph.node[0].input.append("inp")
-        node_model.graph.node[0].output.append("outp")
+        node_model.graph.node[1].input.append("inp_dummy_out")
+        node_model.graph.node[1].output.append("outp")
 
         # Remove graph io
         for _ in range(len(node_model.graph.input)):
@@ -111,7 +154,7 @@ class Simulation:
 
         # Set new graph io
         node_model.graph.input.append(inp)
-        node_model.graph.output.append(outp)
+        node_model.graph.output.append(outp_dummy_out)
 
         return node_model
 
@@ -350,8 +393,8 @@ class Simulation:
         # TODO: Check if something is an output node instead of checking the node index
         # TODO: Requires changes in the C++ code as well
 
-        # Sanity checks
-        if len(node_model.graph.node) > 1:
+        # Sanity checks (2 Dummy nodes + 1 target node)
+        if len(node_model.graph.node) != 3:
             raise FINNUserError(
                 "Cannot create single-node simulation for a model with more than "
                 "1 node. Make sure to pass the ModelWrapper containing only"
@@ -362,7 +405,9 @@ class Simulation:
         wrapper_filename = node_model.get_metadata_prop("wrapper_filename")
         if wrapper_filename is None or not Path(wrapper_filename).exists():
             raise FINNUserError(
-                f"Call CreateStitchedIP prior to building " f"the simulation for {node_name}"
+                f"Call CreateStitchedIP prior to building "
+                f"the simulation for {node_name}."
+                f"wrapper_filename is set to {wrapper_filename}!"
             )
 
         vivado_stitched_proj = node_model.get_metadata_prop("vivado_stitch_proj")
@@ -415,7 +460,11 @@ class Simulation:
             build_dir: Path,
         ) -> Any:
             nodemodel = self._isolated_node_model(node_index)
-            nodemodel = nodemodel.transform(CreateStitchedIP(self.fpgapart, self.clk_ns))
+            nodemodel = nodemodel.transform(InferShapes())
+            nodemodel = nodemodel.transform(PrepareIP(self.fpgapart, self.clk_ns))
+            nodemodel = nodemodel.transform(
+                CreateStitchedIP(self.fpgapart, self.clk_ns, functional_simulation=True)
+            )
             return self._build_single_node_simulation(
                 node_name, nodemodel, node_index, total_nodes, prev_node_name, build_dir
             )
@@ -446,7 +495,16 @@ class Simulation:
         total_nodes = len(self.model.graph.node)
         futures: dict[int, Future] = {}
         binaries: dict[int, Path] = {}
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        self.model = self.model.transform(InsertDWC())
+        self.model = self.model.transform(SpecializeLayers(self.fpgapart))
+        self.model = self.model.transform(GiveUniqueNodeNames())
+        self.model = self.model.transform(GiveReadableTensorNames())
+        self.model = self.model.transform(PrepareIP(self.fpgapart, self.clk_ns))
+        self.model = self.model.transform(HLSSynthIP())
+        synth_workers = max(
+            1, cast(int, (psutil.virtual_memory().free / 1024 / 1024 / 1024) // 16)
+        )  # 16GB per synthesis
+        with ThreadPoolExecutor(max_workers=synth_workers) as pool:
             for i in range(total_nodes):
                 futures[i] = pool.submit(
                     _build_simulation,

@@ -159,7 +159,7 @@ def get_liveness_threshold_cycles():
     return int(os.getenv("LIVENESS_THRESHOLD", 1000000))
 
 
-def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path:
+def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str:
     """Creates a folder with given prefix to be used as a build dir.
     Use this function instead of tempfile.mkdtemp to ensure any generated files
     will survive on the host after the FINN Docker container exits."""
