@@ -79,7 +79,8 @@ def _make_pass_config(cfg: DataflowBuildConfig):
             # Tolerance-based verification, parameters passed to
             # np.allclose(...)
             "tolerance": {
-                "atol": 1.0e-6
+                "atol": cfg.verification_atol,
+                "rtol": cfg.verification_rtol
             }
         },
         # Configuration of the model checker pass: Options according to the ONNX
@@ -145,8 +146,10 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
         "inline-batchnorm",
         # Expresses Gemm as MatMul (+ bias and transposes)
         "inline-gemm",
-        # Expresses Conv as Im2Col + MatMul (+ bias and transpose)
+        # Expresses Conv as Im2Col + MatMul (+ bias and transposes)
         "lower-conv",
+        # Expresses pooling as Im2Col + Reshape + Reduce* (+ transposes)
+        "lower-pooling",
         # Adds shape annotations
         "shape-inference",
         # Make sure the model is still valid
@@ -225,11 +228,15 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
         # Create a new constant operator for the squeezed thresholds input
         thresholds = op.Constant(value=ir.tensor(thresholds))
 
+        # Generate daty layouts with unknows up to the final axis, which is the
+        # known channel axis
+        layout = (len(x.shape) - 1) * "." + "C"
+
         # Custom operator attributes according to QONNX: currently QONNX
         # defaults to NCHW layout and converts later, while the new flow
         # already exports NHWC layout (not entirely true, appropriate layout
         # conversion needs to be inserted)
-        attributes = {"out_dtype": out_dtype, "data_layout": "NHWC"}
+        attributes = {"out_dtype": out_dtype, "data_layout": layout}
 
         # Replacement pattern: MultiThreshold operator in QONNX domain without
         # weights and with explicit datatype attribute
@@ -314,19 +321,40 @@ def _infer_qonnx_datatypes(model: ModelWrapper):
     return model
 
 
-def export(model: ModelWrapper, _: DataflowBuildConfig) -> ModelWrapper:
+def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Converts the model back to the FINN compatible format."""
 
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
+    # Create configuration for all passes and assume initially empty state
+    cfg, state = _make_pass_config(cfg), {}
+
+    # Cleanup passes ensuring threshold compatibility with the FINN format
+    passes = [
+        # Before exporting back to the FINN format, try to make all thresholds
+        # per-channel at the expense of extra per-element additions
+        "decompose-thresholds",
+        # One more time cleanup the model and fill in missing shape annotations,
+        # also make sure the model is still valid ONNX at this point
+        "shape-inference",
+        "fold-constants",
+        "eliminate",
+        "cleanup",
+        "checker",
+        "verify"
+    ]
+
+    # Apply passes sequence with configuration and global state, stay within
+    # ONNX IR format here
+    model = _apply_passes(model, passes, cfg, state)
+
     # Export custom operators to the FINN representation
     model = _export_thresholds_to_finn(model)
     model = _export_im2col_to_finn(model)
 
-    # Finalize the data layout annotations and get rid of remaining functions
-    # TODO: Inlining is more of a workaround as qonnx execution does not really
-    #  understand the LayoutConverter operator...
+    # Finalize the data layout annotations and get rid of custom functions:
+    # more of a workaround as qonnx execution does not understand these...
     model = _apply_passes(model, ["absorb-layouts", "inline-functions"], {}, {})
 
     # Serialize the resulting ONNX IR format back to ONNX proto wrapped by QONNX
