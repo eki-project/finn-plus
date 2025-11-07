@@ -189,8 +189,8 @@ class SetFolding(Transformation):
                 # NumChannels attribute
                 except AttributeError:
                     # We can extract the channels from the normal, i.e., not
-                    # folded, shape of the input in these cases
-                    max_pe = node_inst.get_normal_input_shape()[-1]
+                    # folded, shape of the output in these cases
+                    max_pe = node_inst.get_normal_output_shape()[-1]
                 self.optimize_attribute_val(node_inst, max_pe, "PE")
             elif op_type == "LabelSelect_hls":
                 max_pe = node_inst.get_nodeattr("Labels")
