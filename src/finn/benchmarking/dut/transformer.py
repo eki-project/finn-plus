@@ -909,6 +909,8 @@ class bench_transformer(bench):
                 # Enables RTL simulation of default steps contained in the flow:
                 build_cfg.VerificationStepType.NODE_BY_NODE_RTLSIM,  # after step_hw_ipgen
                 build_cfg.VerificationStepType.STITCHED_IP_RTLSIM,  # after step_create_stitched_ip
+                # Enables onnxruntime verification in new front-end
+                build_cfg.VerificationStepType.PASSES_FRONTEND,
             ],
             # File with test inputs for verification
             verify_input_npy=self._build_inputs["input_npy_path"],
