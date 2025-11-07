@@ -1,0 +1,9 @@
+{
+    "status": "failed",
+    "time": {
+        "add_postproc_top1": 0,
+        "step_passes_frontend": 652,
+        "step_convert_to_hw": 0,
+        "total_build_time": 652
+    }
+}
