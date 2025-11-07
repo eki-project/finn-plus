@@ -1781,7 +1781,7 @@ class InferQuantizedMatrixVectorActivation(Transformation):
     MatrixVectorActivation layers."""
 
     def apply(self, model):
-        """Apply the transformation to the entire model graph."""
+        """Apply transformation to convert MatMul to MVAU nodes."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -2181,13 +2181,11 @@ class InferElementwiseBinaryOperation(Transformation):
         return model, graph_modified
 
 
-# Converts the Squeeze operation to the corresponding FINN custom operation
 class InferSqueeze(Transformation):
-    """Convert Squeeze layers to the FINN equivalent of the same name."""
-
+    """Converts the Squeeze operation to the corresponding FINN custom operation."""
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
-        """Apply the transformation to the entire model graph."""
+        """Apply the transform to convert Squeeze operations to FINN custom ops."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
