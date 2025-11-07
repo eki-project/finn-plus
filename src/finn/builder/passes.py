@@ -30,7 +30,9 @@ from qonnx.core.datatype import DataType
 
 # FINN steps are configured via a global configuration object passed into each
 # step
-from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.builder.build_dataflow_config import (
+    DataflowBuildConfig, VerificationStepType
+)
 
 # ONNX Passes and ONNX Script infrastructure is based on ONNX IR to interact
 # with the model, graph, nodes and values
@@ -82,7 +84,8 @@ def _make_pass_config(cfg: DataflowBuildConfig):
                 "atol": cfg.verification_atol,
                 "rtol": cfg.verification_rtol
             }
-        },
+        } if VerificationStepType.PASSES_FRONTEND in
+             cfg._resolve_verification_steps() else {},  # noqa: protected
         # Configuration of the model checker pass: Options according to the ONNX
         # IR reference: https://onnx.ai/ir-py/api/ir_passes_common.html
         "model_checker": {

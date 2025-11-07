@@ -139,6 +139,8 @@ class VerificationStepType(str, Enum):
     NODE_BY_NODE_RTLSIM = "node_by_node_rtlsim"
     #: verify after step_create_stitched_ip, using stitched-ip Verilog
     STITCHED_IP_RTLSIM = "stitched_ip_rtlsim"
+    #: verify during step_passes_frontend using ONNX Runtime execution
+    PASSES_FRONTEND = "passes_frontend"
 
 
 #: List of steps that will be run as part of the standard dataflow build, in the
