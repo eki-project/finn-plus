@@ -72,10 +72,15 @@ class RoundAndClipThresholds(Transformation):
                 # that is one bit bigger than the input datatype
                 # Determine new max_value
                 max_val = dtype.max() + 1
-                if not dtype.signed():
-                    tdt = DataType.get_smallest_possible(max_val)
+                # Do not go above 64-bit integers for now as these are not fully
+                # supported by QONNX
+                if dtype in {"INT64", "UNIT64"}:
+                    tdt = dtype
                 else:
-                    tdt = DataType.get_smallest_possible(-(max_val) - 1)
+                    if not dtype.signed():
+                        tdt = DataType.get_smallest_possible(max_val)
+                    else:
+                        tdt = DataType.get_smallest_possible(-(max_val) - 1)
                 model.set_tensor_datatype(node.input[1], tdt)
                 # If hw op we need to set the weight data type attribute as well
                 if op_type.startswith("Thresholding"):
