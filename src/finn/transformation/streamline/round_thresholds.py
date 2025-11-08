@@ -26,6 +26,7 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""Rounding and clipping of thresholds to integer representations."""
 
 import numpy as np
 from qonnx.core.datatype import DataType
@@ -44,6 +45,7 @@ class RoundAndClipThresholds(Transformation):
     quantization data types."""
 
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the rounding and clipping to all thresholds in the model."""
         graph = model.graph
         graph_modified = False
         for index, node in enumerate(graph.node):
