@@ -627,9 +627,9 @@ class ScaledDotProductAttention(HWCustomOp):
         AType = DataType[self.get_nodeattr("AType")]  # noqa
 
         # Compute the worst-case upper and lower bounds of the accumulator range
-        lower_worst = QType.min() * np.ones(self.get_normal_input_shape(0))
+        lower_worst = QType.min() * np.ones(self.get_normal_input_shape(0)[-2:])
         lower_range = calculate_matvec_accumulator_range(lower_worst, KType)
-        upper_worst = QType.max() * np.ones(self.get_normal_input_shape(0))
+        upper_worst = QType.max() * np.ones(self.get_normal_input_shape(0)[-2:])
         upper_range = calculate_matvec_accumulator_range(  # noqa: Duplicate
             upper_worst, KType
         )
@@ -662,9 +662,11 @@ class ScaledDotProductAttention(HWCustomOp):
             self.set_nodeattr("OutQKMatMul", AccQKMatMul.name)
 
         # Compute the worst-case upper and lower bounds of the accumulator range
-        lower_worst = AType.min() * np.ones(self.get_normal_attention_shape(0))
+        lower_worst = AType.min() * np.ones(
+            self.get_normal_attention_shape(0)[-2:])
         lower_range = calculate_matvec_accumulator_range(lower_worst, VType)
-        upper_worst = AType.max() * np.ones(self.get_normal_attention_shape(0))
+        upper_worst = AType.max() * np.ones(
+            self.get_normal_attention_shape(0)[-2:])
         upper_range = calculate_matvec_accumulator_range(  # noqa: Duplicate
             upper_worst, VType
         )
