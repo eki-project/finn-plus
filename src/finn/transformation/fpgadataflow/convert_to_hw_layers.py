@@ -2384,3 +2384,6 @@ class InferReshape(Transformation):
         # Return the transformed model and indicate whether the graph actually
         # has been transformed
         return model, graph_modified
+
+from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
+from finn.transformation.fpgadataflow.attention import InferScaledDotProductAttention
