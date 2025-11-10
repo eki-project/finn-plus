@@ -156,8 +156,7 @@ default_build_dataflow_steps = [
     "step_minimize_bit_width",
     "step_generate_estimate_reports",
     "step_set_fifo_depths",
-    "step_hw_codegen",
-    "step_hw_ipgen",
+    "step_ip_generation",
     "step_create_stitched_ip",
     "step_measure_rtlsim_performance",
     "step_out_of_context_synthesis",
@@ -347,6 +346,25 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: e.g. `hls_clk_period_ns=5.0` will target a 200 MHz clock.
     #: If not specified it will default to synth_clk_period_ns
     hls_clk_period_ns: Optional[float] = None
+
+    #: Use an IP Cache to re-use code-gen (PrepareIP) and HLS (HLSSynthIP)
+    #: artifacts from previous runs to speed up the build process.
+    use_ip_caching: bool = True
+
+    #: (Only relevant if use_ip_caching is enabled)
+    #: Hash function to be used when caching the IP cores.
+    ip_cache_hashfunction: str = "sha256"
+
+    #: (Only relevant if use_ip_caching is enabled)
+    #: Whether the value of _resolve_hls_clk_period() is used as part of
+    #: the cached key. Can be turned off for more cache hits, but
+    #: then delivers an IP with an outdated constraints file. This
+    #: might affect OOC Synthesis and other parts of the design, use
+    #: at your own risk.
+    cache_hls_clk_period: bool = True
+
+    #: The same as `cache_hls_clk_period`, but for the passed FPGA part.
+    cache_fpgapart: bool = True
 
     #: (Optional, only relevant when shell_flow_type = VITIS_ALVEO)
     #: Which Vitis platform will be used, e.g. "xilinx_u250_xdma_201830_2".

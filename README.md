@@ -34,7 +34,7 @@ FINN+ incorporates all upstream FINN development while adding significant enhanc
 ### Developer Experience
 
 - **Better Diagnostics** - Improved logging and error handling throughout the framework
-- **Type Safety** - Comprehensive type hinting and checking for better code quality
+- **IP Caching** - IP Caching between builds for faster design iteration
 - **YAML Configuration** - Alternative YAML-based build configuration system
 - **Simplified Setup** - Containerless installation and setup process
 

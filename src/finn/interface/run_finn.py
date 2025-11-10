@@ -22,6 +22,7 @@ from finn.interface.interface_utils import (
     assert_path_valid,
     error,
     resolve_build_dir,
+    resolve_cache_path,
     resolve_deps_path,
     resolve_num_workers,
     set_synthesis_tools_paths,
@@ -52,16 +53,20 @@ def _resolve_module_path(name: str) -> str:
 
 def prepare_finn(
     deps: Path | None,
+    cache_path: Path | None,
     flow_config: Path,
     build_dir: Path | None,
     num_workers: int,
     is_test_run: bool = False,
     skip_dep_update: bool = False,
 ) -> None:
-    """Prepare a FINN environment by:
+    """Prepare a FINN environment. Leaves this process ready to run any FINN related script.
+
+    This is done by:
     0. Reading all settings and environment vars
     1. Updating all dependencies
     2. Setting all environment vars
+    3. Installing depdendencies
     """
     # Resolve settings and dependencies, error if this doesnt work
     if not settings_found():
@@ -70,6 +75,8 @@ def prepare_finn(
         sp = _resolve_settings_path()
         status(f"Using settings file at {sp}")
     settings = get_settings(force_update=True)
+
+    # Set deps envvar
     deps_path = resolve_deps_path(deps, settings)
     if deps_path is None:
         error("Dependency location could not be resolved!")
@@ -78,6 +85,12 @@ def prepare_finn(
         status(f"Using dependency path: {deps_path}")
     os.environ["FINN_DEPS"] = str(deps_path.absolute())
 
+    # Set cache envvar
+    resolved_cache_path = str(resolve_cache_path(cache_path, settings).absolute())
+    os.environ["FINN_IP_CACHE"] = resolved_cache_path
+    status(f"IP Cache set to: {resolved_cache_path}")
+
+    # Clear PYTHONPATH
     if "PYTHONPATH" not in os.environ.keys():
         os.environ["PYTHONPATH"] = ""
 
@@ -132,6 +145,7 @@ def main_group() -> None:
 @click.command(help="Build a hardware design")
 @click.option("--dependency-path", "-d", default="")
 @click.option("--build-path", "-b", help="Specify a build temp path of your choice", default="")
+@click.option("--ip-cache-path", "-c", help="Path to the FINN IP Cache directory", default="")
 @click.option(
     "--num-workers",
     "-n",
@@ -163,6 +177,7 @@ def main_group() -> None:
 def build(
     dependency_path: str,
     build_path: str,
+    ip_cache_path: str,
     num_workers: int,
     skip_dep_update: bool,
     start: str,
@@ -176,9 +191,11 @@ def build(
     assert_path_valid(config_path)
     assert_path_valid(model_path)
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
+    cache_path = Path(ip_cache_path).expanduser() if ip_cache_path != "" else None
     status(f"Starting FINN build with config {config_path.name} and model {model_path.name}!")
     prepare_finn(
         dep_path,
+        cache_path,
         config_path,
         build_dir,
         num_workers,
@@ -234,6 +251,7 @@ def build(
 @click.command(help="Run a script in a FINN environment")
 @click.option("--dependency-path", "-d", default="")
 @click.option("--build-path", "-b", help="Specify a build temp path of your choice", default="")
+@click.option("--ip-cache-path", "-c", help="Path to the FINN IP Cache directory", default="")
 @click.option(
     "--skip-dep-update",
     "-s",
@@ -250,14 +268,21 @@ def build(
 )
 @click.argument("script")
 def run(
-    dependency_path: str, build_path: str, skip_dep_update: bool, num_workers: int, script: str
+    dependency_path: str,
+    build_path: str,
+    ip_cache_path: str,
+    skip_dep_update: bool,
+    num_workers: int,
+    script: str,
 ) -> None:
     script_path = Path(script).expanduser()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     assert_path_valid(script_path)
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
+    cache_path = Path(ip_cache_path).expanduser() if ip_cache_path != "" else None
     prepare_finn(
         dep_path,
+        cache_path,
         script_path,
         build_dir,
         num_workers,
@@ -286,7 +311,7 @@ def bench(bench_config: str, dependency_path: str, num_workers: int, build_path:
     console = Console()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    prepare_finn(dep_path, Path(), build_dir, num_workers)
+    prepare_finn(dep_path, None, Path(), build_dir, num_workers)
     console.rule("RUNNING BENCHMARK")
 
     # Late import because we need prepare_finn to setup remaining dependencies first
@@ -319,7 +344,7 @@ def test(
     console = Console()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
-    prepare_finn(dep_path, Path(), build_dir, num_workers, is_test_run=True)
+    prepare_finn(dep_path, None, Path(), build_dir, num_workers, is_test_run=True)
     status(f"Using {num_test_workers} test workers")
     console.rule("RUNNING TESTS")
     run_test(variant, num_test_workers)
@@ -340,7 +365,7 @@ def deps() -> None:
 )
 def update(path: str) -> None:
     dep_path = Path(path).expanduser() if path != "" else None
-    prepare_finn(dep_path, Path(), None, 1)
+    prepare_finn(deps=dep_path, cache_path=None, flow_config=Path(), build_dir=None, num_workers=1)
 
 
 @click.group(help="Manage FINN settings")
@@ -395,7 +420,7 @@ def config_set(key: str, value: str) -> None:
 @click.command(
     "create",
     help="Create a template settings file. If one exists at the given path, "
-    "its overwritten. Please enter a directory, no filename",
+    "its overwritten. Please enter a directory, not a filename",
 )
 @click.argument("path", default="~/.finn/")
 def config_create(path: str) -> None:

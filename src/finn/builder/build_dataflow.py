@@ -54,6 +54,7 @@ from rich.traceback import Traceback
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
+from finn.transformation.fpgadataflow.ip_cache import CACHE_IP_DEFINITIONS
 from finn.util.exception import (
     FINNConfigurationError,
     FINNDataflowError,
@@ -349,6 +350,18 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     print(f"Intermediate outputs will be generated in {os.environ['FINN_BUILD_DIR']}")
     print(f"Final outputs will be generated in {cfg.output_dir}")
     print(f"Build log is at {logfile}")
+
+    # Printing all cached IPs
+    if cfg.use_ip_caching:
+        log.info("IP Caching enabled.")
+        if cfg.verbose:
+            log.info("Caching enabled for operators: ")
+            for k, v in CACHE_IP_DEFINITIONS.items():
+                log.info(f"Operator: {k}:")
+                if "use" in v.keys():
+                    log.info("\tuse: " + ", ".join(v["use"]))
+                if "ignore" in v.keys():
+                    log.info("\nignore: " + ", ".join(v["ignore"]))
 
     # Setup done, start build flow
     try:

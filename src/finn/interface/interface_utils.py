@@ -133,6 +133,27 @@ def resolve_deps_path(deps: Path | None, settings: dict) -> Path | None:
     return None
 
 
+def resolve_cache_path(cache: Path | None, settings: dict) -> Path:
+    """Resolve the path to the IP cache. Always returns a valid Path.
+
+    Resolution order is:
+    Command Line Argument -> Environment var -> Settings -> Default (finn-plus/FINN_IP_CACHE)
+    """
+    if cache is not None:
+        return cache
+    if "FINN_IP_CACHE" in os.environ.keys():
+        p = Path(os.environ["FINN_IP_CACHE"])
+        if p.is_absolute():
+            return p
+        return Path(__file__).parent.parent.parent.parent / p
+    if "FINN_IP_CACHE" in settings.keys():
+        p = Path(settings["FINN_IP_CACHE"])
+        if p.is_absolute():
+            return p
+        return Path(__file__).parent.parent.parent.parent / p
+    return Path(__file__).parent.parent.parent.parent / "FINN_IP_CACHE"
+
+
 def resolve_num_workers(num: int, settings: dict) -> int:
     """Resolve the number of workers to use. Uses 75% of cores available as default fallback"""
     if num > -1:
