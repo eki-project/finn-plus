@@ -45,6 +45,7 @@ int main(int argc, const char* argv[]) {
         vm["depth"].as<unsigned int>()
     );
 
+
     /** SECTION WIP */
     auto start = std::chrono::high_resolution_clock::now();
     for (std::size_t j = 0; j < 100000; ++j) {

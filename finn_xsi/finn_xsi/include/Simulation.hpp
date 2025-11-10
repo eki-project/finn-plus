@@ -3,12 +3,13 @@
 #include <AXIS_Control.h>
 #include <Clock.h>
 #include <Design.h>
+#include <FIFO.h>
 #include <Kernel.h>
 #include <Port.h>
 #include <SharedLibrary.h>
 #include <helper.h>
-#include <SimulationInterface.hpp>
 
+#include <SimulationInterface.hpp>
 #include <boost/asio.hpp>
 #include <boost/asio/thread_pool.hpp>
 #include <boost/atomic/ipc_atomic.hpp>
@@ -24,11 +25,10 @@
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
-
-#include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
 
@@ -41,19 +41,12 @@ class Simulation {
      public:
     xsi::Kernel kernel;
     xsi::Design top;
+    // S_AXIS_Control goes into the simulated layer
     std::array<S_AXIS_Control, IStreamsSize> istreams;
+    // M_AXIS_Control comes from the simulated layer
     std::array<M_AXIS_Control, OStreamsSize> ostreams;
     Clock clk;
 
-    /// Initialize streams to the correct valid and ready states.
-    void initStreams() {
-        for (auto&& s : istreams) {
-            s.valid();
-        }
-        for (auto&& s : ostreams) {
-            s.ready();
-        }
-    }
 
     Simulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file, std::array<StreamDescriptor, IStreamsSize> _istream_descs,
                std::array<StreamDescriptor, OStreamsSize> _ostream_descs)
@@ -79,7 +72,6 @@ class Simulation {
         // Find Global Control & Run Startup Sequence
         clearPorts();
         reset();
-        initStreams();
     }
 
     void clearPorts() noexcept {
@@ -102,8 +94,15 @@ class Simulation {
     }
 };
 
-
-
+// Communication Flow:
+//
+//           valid      ┌──────────────────────────────────────┐     valid            valid
+//   SHM   ─────────>   │         valid            valid       │    ─────────>  FIFO  ─────>   SHM
+//  (pred) <───────── istream  ─────────>  xsim  ─────────> ostream <─────────        <─────  (succ)
+//           ready      │      <─────────        <─────────    │     ready            ready
+//                      │         ready            ready       │
+//                      │                  (sim)               │
+//                      └──────────────────────────────────────┘
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes, bool CommunicatesWithPredecessor, bool CommunicatesWithSuccessor>
 class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
      private:
@@ -111,12 +110,12 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     using ProducingInterface = SimulationInterface<SimulationInterfaceType::PRODUCING>;
     std::array<ConsumingInterface, IStreamsSize> fromProducerInterface;
     std::array<ProducingInterface, OStreamsSize> toConsumerInterface;
+    std::array<FIFO, OStreamsSize> fifo;
     std::size_t cyclesRun = 0;
 
      public:
     SingleNodeSimulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file, std::array<StreamDescriptor, IStreamsSize> _istream_descs,
-                         std::array<StreamDescriptor, OStreamsSize> _ostream_descs, std::optional<std::string> prevNodeName = std::nullopt, std::optional<std::string> nodeName = std::nullopt,
-                         unsigned int initialFIFODepth = 2)
+                         std::array<StreamDescriptor, OStreamsSize> _ostream_descs, std::optional<std::string> prevNodeName = std::nullopt, std::optional<std::string> nodeName = std::nullopt, unsigned int initialFIFODepth = 2)
         : Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs) {
         if (CommunicatesWithPredecessor && !prevNodeName) {
             throw std::runtime_error("Cannot communicate with predecessor because previous node name was not given!");
@@ -128,18 +127,16 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         } else if (!CommunicatesWithSuccessor && nodeName) {
             std::cout << "Simulation was passed the current nodes name but is NOT marked for communication with successor node. No shared memory will be created." << std::endl;
         }
-
-        // Set valid and ready
-        // TODO: Currently uses NodeIndex to check if we are input or output or neither
-        // This is unstable because other nodes with neither last nor first index might
-        // also be inputs or outputs.
-        initStreams();
+        // Create FIFO buffer
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
+            fifo[i] = FIFO(initialFIFODepth);
+        }
 
         // Create consumer facing interfaces
         debug(std::format("Creating {} interfaces for communication with successors.", OStreamsSize));
         if (NodeIndex != TotalNodes - 1 && nodeName && CommunicatesWithSuccessor) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                toConsumerInterface[i] = std::move(ProducingInterface(std::format("{}_{}", *nodeName, i).c_str(), initialFIFODepth));
+                toConsumerInterface[i] = std::move(ProducingInterface(std::format("{}_{}", *nodeName, i).c_str()));
             }
         }
 
@@ -147,9 +144,15 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         debug(std::format("Creating {} interfaces for communication with predecessors.", IStreamsSize));
         if (NodeIndex != 0 && prevNodeName && CommunicatesWithPredecessor) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                fromProducerInterface[i] = std::move(ConsumingInterface(std::format("{}_{}", *prevNodeName, i).c_str(), initialFIFODepth));
+                fromProducerInterface[i] = std::move(ConsumingInterface(std::format("{}_{}", *prevNodeName, i).c_str()));
             }
         }
+
+        // Set valid and ready
+        // TODO: Currently uses NodeIndex to check if we are input or output or neither
+        // This is unstable because other nodes with neither last nor first index might
+        // also be inputs or outputs.
+        initStreams();
 
         debug("Finished initializing simulation.\n------------------------------\n");
     }
@@ -159,29 +162,45 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     [[gnu::hot]] void communicate() {
         if constexpr (NodeIndex != TotalNodes - 1 && CommunicatesWithSuccessor) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                this->ostreams[i].ready(toConsumerInterface[i].communicate(this->ostreams[i].is_valid()));
+                // Interface sim <-> FIFO
+                this->fifo[i].write(this->ostreams[i].is_valid());
+                this->ostreams[i].ready(this->fifo[i].is_ready());
+                // Interface FIFO <-> SHM
+                this->fifo[i].ready(toConsumerInterface[i].writeToNextNode(this->fifo[i].is_valid()));
             }
         }
         if constexpr (NodeIndex != 0 && CommunicatesWithPredecessor) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                this->istreams[i].valid(fromProducerInterface[i].communicate(this->istreams[i].is_ready()));
+                // Interface SHM <-> sim
+                this->istreams[i].valid(fromProducerInterface[i].readFromLastNode(this->istreams[i].is_ready()));
             }
         }
     }
 
      public:
-    /// Init streams according to nodeindex
+    /**
+     * Initialize streams according to nodeindex
+     */
     void initStreams() {
-        if constexpr (NodeIndex == 0) {
-            for (auto&& s : this->istreams) {
+        if constexpr (NodeIndex == 0) {        // First Node; no predecessor
+            for (auto&& s : this->istreams) {  // Input into sim valid
                 s.valid();
             }
-        } else if constexpr (NodeIndex == TotalNodes - 1) {
-            for (auto&& s : this->ostreams) {
+        } else if constexpr (NodeIndex == TotalNodes - 1) {  // Last Node; no successor
+            for (auto&& s : this->ostreams) {                // Output from sim ready
                 s.ready();
             }
+            for (std::size_t i = 0; i < IStreamsSize; ++i) {  // Relay ready from sim to predecessor
+                fromProducerInterface[i].readFromLastNode(this->istreams[i].is_ready());
+            }
+        } else {                                              // Intermediate Node; has both predecessor and successor
+            for (std::size_t i = 0; i < OStreamsSize; ++i) {  // Relay ready from FIFO to sim
+                this->ostreams[i].ready(this->fifo[i].is_ready());
+            }
+            for (std::size_t i = 0; i < IStreamsSize; ++i) {  // Relay valid from sim to predecessor
+                fromProducerInterface[i].readFromLastNode(this->istreams[i].is_ready());
+            }
         }
-        // Middle nodes don't initialize any streams
     }
 
     /// Reset simulation (stream and current FIFO depth)
@@ -189,6 +208,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>::reset();
         for (std::size_t i = 0; i < OStreamsSize; ++i) {
             toConsumerInterface[i].reset();
+            fifo[i].reset();
         }
         for (std::size_t i = 0; i < IStreamsSize; ++i) {
             fromProducerInterface[i].reset();
@@ -196,6 +216,11 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     }
 
     [[gnu::hot]] void runSingleCycle() {
+        static bool firstCycle = true;
+        if (firstCycle) {
+            firstCycle = false;
+            communicate();  // Initial communication before first cycle
+        }
         this->clk.toggle_clk();
         communicate();
         debug(std::format("Finished cycle {}\n\n", cyclesRun));
@@ -219,7 +244,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     void writeResults(std::filesystem::path& path) {
         json j;
         for (std::size_t i = 0; i < OStreamsSize; ++i) {
-            j["maxOccupation"][std::to_string(i)] = toConsumerInterface[i].getLargestOccupation();
+            j["maxOccupation"][std::to_string(i)] = fifo[i].get_largest_occupation();
         }
         j["cyclesRun"] = cyclesRun;
         std::ofstream file(path);

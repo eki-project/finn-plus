@@ -1,4 +1,5 @@
 """Manage FINN simulation variants."""
+import finn_xsi.adapter as finnxsi
 import multiprocessing
 import numpy as np
 import onnx
@@ -18,7 +19,7 @@ from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNode
 from qonnx.transformation.infer_shapes import InferShapes
 from random import Random
 from subprocess import CalledProcessError
-from typing import Any, cast
+from typing import Any, Sequence, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
@@ -29,11 +30,6 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import get_vivado_root, launch_process_helper, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
-
-try:
-    import finn_xsi.adapter as finnxsi
-except ModuleNotFoundError:
-    finnxsi = None
 
 
 class Simulation:
@@ -96,16 +92,20 @@ class Simulation:
                 f"isolate for simulation."
             )
         inp = onnx.helper.make_tensor_value_info(
-            "inp", TensorProto.FLOAT, target_op.get_folded_input_shape()
+            "inp", TensorProto.FLOAT, cast("Sequence[int]", target_op.get_folded_input_shape())
         )
         inp_dummy_out = onnx.helper.make_tensor_value_info(  # noqa
-            "inp_dummy_out", TensorProto.FLOAT, target_op.get_folded_input_shape()
+            "inp_dummy_out",
+            TensorProto.FLOAT,
+            cast("Sequence[int]", target_op.get_folded_input_shape()),
         )
         outp = onnx.helper.make_tensor_value_info(  # noqa
-            "outp", TensorProto.FLOAT, target_op.get_normal_output_shape()
+            "outp", TensorProto.FLOAT, cast("Sequence[int]", target_op.get_normal_output_shape())
         )
         outp_dummy_out = onnx.helper.make_tensor_value_info(
-            "outp_dummy_out", TensorProto.FLOAT, target_op.get_normal_output_shape()
+            "outp_dummy_out",
+            TensorProto.FLOAT,
+            cast("Sequence[int]", target_op.get_normal_output_shape()),
         )
         input_dummy_node = onnx.helper.make_node(
             "RemoveDataPath_rtl",
@@ -243,7 +243,7 @@ class Simulation:
             )
             sim_base, sim_rel = finnxsi.compile_sim_obj(
                 top_module_name, all_verilog_srcs, str(sim_dir), debug=debug
-            )  # noqa # type: ignore
+            )
             rtlsim_so = Path(sim_base) / Path(sim_rel)
             model.set_metadata_prop("rtlsim_so", str(rtlsim_so))
         else:
@@ -442,7 +442,7 @@ class Simulation:
         # Building the whole simulation
         return self._compile_simulation(sim_base).absolute()
 
-    def run_sim_node_parallel_isolated(self, inputs: int) -> None:
+    def run_sim_node_parallel_isolated(self, inputs: int) -> None:  # noqa: ARG002
         """Simulate the given number of inputs for every layer. Layers are completely isolated
         and simulated in parallel.
         """
@@ -499,7 +499,7 @@ class Simulation:
         self.model = self.model.transform(PrepareIP(self.fpgapart, self.clk_ns))
         self.model = self.model.transform(HLSSynthIP())
         synth_workers = max(
-            1, cast(int, (psutil.virtual_memory().free / 1024 / 1024 / 1024) // 16)
+            1, cast("int", (psutil.virtual_memory().free / 1024 / 1024 / 1024) // 16)
         )  # 16GB per synthesis
         with ThreadPoolExecutor(max_workers=synth_workers) as pool:
             for i in range(total_nodes):
