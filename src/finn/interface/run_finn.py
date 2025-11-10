@@ -158,6 +158,24 @@ def main_group() -> None:
     help="If no stop_step is given in the dataflow build config, "
     "this stops the flow at the given step.",
 )
+@click.option(
+    "--verify-input",
+    default=None,
+    help="Path to .npy  file that will be used as the input for verification."
+)
+@click.option(
+    "--verify-output",
+    default=None,
+    help="Path to .npy file that will be used as the expected output for "
+    "verification."
+)
+@click.option(
+    "--output",
+    "-o",
+    default=None,
+    help="Directory where the final build outputs will be written into, "
+    "overrides output_dir from the config if present."
+)
 @click.argument("config")
 @click.argument("model")
 def build(
@@ -169,6 +187,9 @@ def build(
     stop: str,
     config: str,
     model: str,
+    verify_input: str | None = None,
+    verify_output: str | None = None,
+    output: str | None = None
 ) -> None:
     config_path = Path(config).expanduser()
     model_path = Path(model).expanduser()
@@ -222,6 +243,17 @@ def build(
 
     # Add path of config to sys.path so that custom steps can be found
     sys.path.append(str(config_path.parent.absolute()))
+
+    # Override paths to verification input/output if specified
+    if verify_input is not None:
+        dfbc.verify_input_npy = verify_input
+
+    if verify_output is not None:
+        dfbc.verify_expected_output_npy = verify_output
+
+    # Override the output directory if specified
+    if output is not None:
+        dfbc.output_dir = output
 
     Console().rule(
         f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
