@@ -27,16 +27,16 @@ void AXIS_Control::inititialized_or_throw() {
 
 void AXIS_Control::valid(bool value) { port_vld->set(static_cast<unsigned int>(value)).write_back(); }
 
-bool AXIS_Control::is_valid() const noexcept { return port_vld->read().as_bool(); }
+bool AXIS_Control::isValid() const noexcept { return port_vld->read().as_bool(); }
 
 void AXIS_Control::ready(bool value) { port_rdy->set(static_cast<unsigned int>(value)).write_back(); }
 
-bool AXIS_Control::is_ready() const noexcept { return port_rdy->read().as_bool(); }
+bool AXIS_Control::isReady() const noexcept { return port_rdy->read().as_bool(); }
 
 // Deferred write functions
-std::reference_wrapper<xsi::Port> AXIS_Control::set_valid(bool value) { return std::ref(port_vld->set(value ? 1 : 0)); }
+std::reference_wrapper<xsi::Port> AXIS_Control::setValid(bool value) { return std::ref(port_vld->set(value ? 1 : 0)); }
 
-std::reference_wrapper<xsi::Port> AXIS_Control::set_ready(bool value) { return std::ref(port_rdy->set(value ? 1 : 0)); }
+std::reference_wrapper<xsi::Port> AXIS_Control::setReady(bool value) { return std::ref(port_rdy->set(value ? 1 : 0)); }
 
 S_AXIS_Control::S_AXIS_Control(xsi::Design& des, Clock& clock, size_t job_sz, size_t job_tks, const std::string& prefix) : AXIS_Control(des, clock, job_sz, prefix), job_ticks(job_tks), await_iter(job_tks) {
     if (job_sz < 1 || job_tks < 1) {
@@ -44,7 +44,7 @@ S_AXIS_Control::S_AXIS_Control(xsi::Design& des, Clock& clock, size_t job_sz, si
     }
 }
 
-M_AXIS_Control::M_AXIS_Control(xsi::Design& des, Clock& clock, size_t job_sz, const std::string& prefix) : AXIS_Control(des, clock, job_sz, prefix), last_complete(0), interval(0) {
+M_AXIS_Control::M_AXIS_Control(xsi::Design& des, Clock& clock, size_t job_sz, const std::string& prefix) : AXIS_Control(des, clock, job_sz, prefix), lastComplete(0), interval(0) {
     if (job_sz < 1) {
         throw std::invalid_argument("Job size must be greater than 0.");
     }

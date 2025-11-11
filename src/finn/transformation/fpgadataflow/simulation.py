@@ -9,6 +9,7 @@ import shlex
 import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import nullcontext
 from copy import deepcopy
 from enum import Enum
 from onnx import NodeProto, TensorProto
@@ -20,8 +21,9 @@ from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNode
 from qonnx.transformation.infer_shapes import InferShapes
 from random import Random
 from subprocess import CalledProcessError
-from typing import Any, Sequence, cast
+from typing import TYPE_CHECKING, Any, cast
 
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -32,6 +34,9 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import launch_process_helper, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import DisabledLoggingConsole, ThreadsafeProgressDisplay, log
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class SimulationType(str, Enum):
@@ -473,7 +478,7 @@ class SimulationBuilder:
         }
 
     def _build_simulation_node_connected(
-        self, workers: int, with_live_display: bool
+        self, workers: int, with_live_display: bool, functional_sim: bool
     ) -> dict[int, Path]:
         """Build all nodes in the model in parallel, as isolated simulations, ready for usage in
         an IPC connected simulation chain.
@@ -499,7 +504,7 @@ class SimulationBuilder:
             nodemodel = nodemodel.transform(InferShapes())
             nodemodel = nodemodel.transform(PrepareIP(self.fpgapart, self.clk_ns))
             nodemodel = nodemodel.transform(
-                CreateStitchedIP(self.fpgapart, self.clk_ns, functional_simulation=False)
+                CreateStitchedIP(self.fpgapart, self.clk_ns, functional_simulation=functional_sim)
             )
             self.progress_bar.update("StitchedIP")
             return self.build_single_node_simulation(
@@ -512,17 +517,6 @@ class SimulationBuilder:
                 silent=with_live_display,
             )
 
-        # Prepare the model
-        self.model = self.model.transform(InsertDWC())
-        self.model = self.model.transform(SpecializeLayers(self.fpgapart))
-        self.model = self.model.transform(GiveUniqueNodeNames())
-        self.model = self.model.transform(GiveReadableTensorNames())
-        self.model = self.model.transform(PrepareIP(self.fpgapart, self.clk_ns))
-        self.model = self.model.transform(HLSSynthIP())
-        synth_workers = max(
-            1, cast("int", (psutil.virtual_memory().free / 1024 / 1024 / 1024) // 16)
-        )  # 16GB per synthesis
-
         # Create randomized names to avoid clashes with old IPC shared memory
         randomized_names = self._get_randomized_names(self.model)
 
@@ -530,32 +524,35 @@ class SimulationBuilder:
         total_nodes = len(self.model.graph.node)
         futures: dict[int, Future] = {}
 
-        # TODO: Add synthesis to status bars
-        if with_live_display:
-            log.disabled = True
-            self.progress_bar.start()
-        with ThreadPoolExecutor(max_workers=synth_workers) as pool:
-            for i in range(total_nodes):
-                futures[i] = pool.submit(
-                    _build,
-                    randomized_names[i],
-                    i,
-                    total_nodes,
-                    randomized_names[i - 1] if i >= 1 else None,  # type: ignore
-                    Path(make_build_dir(f"rtlsim_{randomized_names[i]}_")),
-                )
+        # Build sims in parallel
+        synth_workers = max(
+            1, cast("int", (psutil.virtual_memory().free / 1024 / 1024 / 1024) // 16)
+        )  # 16GB per synthesis
+        if not functional_sim:
+            # When not having to do synthesis, the build is not memory bottlenecked and
+            # can be executed as parallel as possible
+            synth_workers = int(os.environ.get("NUM_DEFAULT_WORKERS", len(self.model.graph.node)))
 
-        binaries = {i: future.result() for i, future in futures.items()}
-        if with_live_display:
-            self.progress_bar.stop()
-            log.disabled = False
-
-        # Create a script to build and run the entire simulation again
-        # TODO
-        return binaries
+        # Build (stitched IP, cmake, make) all sims in parallel and return paths to
+        # the compiled executables
+        with DisabledLoggingConsole(), self.progress_bar if with_live_display else nullcontext():
+            self.progress_bar.progress.console.log(
+                f"Building simulations " f"using {synth_workers} workers.."
+            )
+            with ThreadPoolExecutor(max_workers=synth_workers) as pool:
+                for i in range(total_nodes):
+                    futures[i] = pool.submit(
+                        _build,
+                        randomized_names[i],
+                        i,
+                        total_nodes,
+                        randomized_names[i - 1] if i >= 1 else None,  # type: ignore
+                        Path(make_build_dir(f"rtlsim_{randomized_names[i]}_")),
+                    )
+                return {i: future.result() for i, future in futures.items()}
 
     def build_simulation(
-        self, simtype: SimulationType, workers: int, with_live_display: bool
+        self, simtype: SimulationType, workers: int, with_live_display: bool, functional_sim: bool
     ) -> dict[int, Path]:
         """Build a simulation of the given type, return the resulting executable.
 
@@ -564,6 +561,7 @@ class SimulationBuilder:
             workers: Number of workers to use in parallel.
                 Normally set by the Simulation() class automatically.
             with_live_display: If True, display a live progress-bar.
+            functional_sim: If True, use functional simulation (faster but takes some time to build)
         """
         match simtype:
             case SimulationType.NODE_BASED_CONNECTED:
@@ -577,7 +575,9 @@ class SimulationBuilder:
                         "[bold blue](3)[/bold blue] Building simulation binaries",
                     ],
                 )
-                return self._build_simulation_node_connected(workers, with_live_display)
+                return self._build_simulation_node_connected(
+                    workers, with_live_display, functional_sim
+                )
             case SimulationType.NODE_BASED_ISOLATED:
                 raise NotImplementedError()
             case SimulationType.COMPLETE_DESIGN:
@@ -591,21 +591,44 @@ class Simulation:
     """
 
     def __init__(
-        self, model: ModelWrapper, fpgapart: str, clk_ns: float, workers: int | None = None
+        self,
+        model: ModelWrapper,
+        fpgapart: str,
+        clk_ns: float,
+        functional_sim: bool,
+        workers: int | None = None,
     ) -> None:
         """Create a new simulation instance. If workers is None, NUM_DEFAULT_WORKERS are used."""
         self.model = model
-        self.builder = SimulationBuilder(model, fpgapart, clk_ns)
         self.workers = int(os.environ["NUM_DEFAULT_WORKERS"]) if workers is None else workers
-
+        self.functional_sim = functional_sim
+        self.fpgapart = fpgapart
+        self.clk_ns = clk_ns
         # TODO: Caching of existing simulations
+        # Prepare the model for simulation
+        with DisabledLoggingConsole() as console:  # noqa
+            with console.status("Preparing model for the simulation step..."):
+                self._prepare_model()
+        self.builder = SimulationBuilder(self.model, fpgapart, clk_ns)
+
+    def _prepare_model(self) -> None:
+        """Execute some preparation transformations on the model."""
+        self.model = self.model.transform(InsertDWC())
+        self.model = self.model.transform(SpecializeLayers(self.fpgapart))
+        self.model = self.model.transform(GiveUniqueNodeNames())
+        self.model = self.model.transform(GiveReadableTensorNames())
+        self.model = self.model.transform(PrepareIP(self.fpgapart, self.clk_ns))
+        self.model = self.model.transform(HLSSynthIP())
 
     def simulate_node_connected(self, samples: int, depth: int) -> dict[int, dict]:
         """Simulate the given number of samples for every layer. Layers are completely isolated
         and simulated in parallel. Simulation data is returned as a dict (by node name as index).
         """
         binaries = self.builder.build_simulation(
-            SimulationType.NODE_BASED_CONNECTED, self.workers, with_live_display=True
+            SimulationType.NODE_BASED_CONNECTED,
+            self.workers,
+            with_live_display=True,
+            functional_sim=self.functional_sim,
         )
         names = [node.name for node in self.model.graph.node]
 
@@ -628,13 +651,14 @@ class Simulation:
 
 # TODO: Just a test transformation. Will be integrated properly later
 class RunLayerParallelSimulation(Transformation):  # noqa
-    def __init__(self, fpgapart: str, clk_ns: float) -> None:  # noqa
+    def __init__(self, fpgapart: str, clk_ns: float, cfg: DataflowBuildConfig) -> None:  # noqa
         super().__init__()
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
+        self.cfg = cfg
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        sim = Simulation(model, self.fpgapart, self.clk_ns)
+        sim = Simulation(model, self.fpgapart, self.clk_ns, self.cfg.functional_simulation)
         sys.stdout = sys.stdout.console
         sys.stderr = sys.stderr.console
         sim.simulate_node_connected(5, 1024)

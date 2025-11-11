@@ -26,13 +26,13 @@ class AXIS_Control {
 
     // Core functions - immediate writes
     void valid(bool value = true);
-    bool is_valid() const noexcept;
+    bool isValid() const noexcept;
     void ready(bool value = true);
-    bool is_ready() const noexcept;
+    bool isReady() const noexcept;
 
     // Deferred write functions
-    std::reference_wrapper<xsi::Port> set_valid(bool value = true);
-    std::reference_wrapper<xsi::Port> set_ready(bool value = true);
+    std::reference_wrapper<xsi::Port> setValid(bool value = true);
+    std::reference_wrapper<xsi::Port> setReady(bool value = true);
 
     // Job Size and Transaction Statistics
     size_t job_size;
@@ -75,10 +75,10 @@ class M_AXIS_Control : public AXIS_Control {
     M_AXIS_Control(M_AXIS_Control&& other) = default;
     M_AXIS_Control& operator=(M_AXIS_Control&& other) = default;
 
-    size_t last_complete = 0;
+    size_t lastComplete = 0;
     size_t interval;
     size_t latency = 0;
-    size_t min_latency = std::numeric_limits<size_t>::max();  // Minimum latency observed
+    size_t minLatency = std::numeric_limits<size_t>::max();  // Minimum latency observed
 };
 
 #endif /* AXIS_CONTROL */

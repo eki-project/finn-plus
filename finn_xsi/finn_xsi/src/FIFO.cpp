@@ -1,13 +1,13 @@
 #include <FIFO.h>
 #include <algorithm>
 
-FIFO::FIFO(std::size_t max_size) : util(0), max_util(0), max_size(max_size) {}
+FIFO::FIFO(std::size_t max_size) : currentUtil(0), maxUtil(0), maxSize(max_size) {}
 
 FIFO::~FIFO() {}
 
-bool FIFO::is_valid() {
-    if (sucReady && util > 0) {
-        --util;
+bool FIFO::isValid() {
+    if (sucReady && currentUtil > 0) {
+        --currentUtil;
         return true;
     }
     return false;
@@ -15,18 +15,22 @@ bool FIFO::is_valid() {
 
 void FIFO::ready(bool ready) { sucReady = ready; }
 
-bool FIFO::is_ready() const { return util < max_size; }
+bool FIFO::isReady() const { return currentUtil < maxSize; }
 
 void FIFO::write(bool valid) {
-    if (valid && util < max_size) {
-        max_util = std::max(max_util, ++util);
+    if (valid && currentUtil < maxSize) {
+        maxUtil = std::max(maxUtil, ++currentUtil);
     }
 }
 
-std::size_t FIFO::get_largest_occupation() const { return max_util; }
+std::size_t FIFO::getLargestOccupation() const { return maxUtil; }
+
+void FIFO::setMaxSize(size_t newSize) {
+    maxSize = newSize;
+}
 
 void FIFO::reset() {
-    util = 0;
-    max_util = 0;
+    currentUtil = 0;
+    maxUtil = 0;
     sucReady = false;
 }

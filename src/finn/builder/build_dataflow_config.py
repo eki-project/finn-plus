@@ -318,6 +318,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Enables experimental live FIFO sizing on the FPGA.
     live_fifo_sizing: bool = False
 
+    #: Whether to use functional simulation when available. Takes some time
+    #: to synthesize, but results in much faster simulations.
+    functional_simulation: bool = True
+
     #: Whether FIFO nodes with depth larger than 32768 will be split.
     #: Allow to configure very large FIFOs in the folding_config_file.
     split_large_fifos: bool = False

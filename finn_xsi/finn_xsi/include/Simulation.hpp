@@ -97,7 +97,7 @@ class Simulation {
         // Reset all Inputs, Wait for Reset Period
         rst_n.set(0).write_back();
         for (unsigned i = 0; i < 16; i++) {
-            clk.toggle_clk();
+            clk.toggleClk();
         }
         rst_n.set(1).write_back();
     }
@@ -173,16 +173,16 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
         if constexpr (NodeIndex != TotalNodes - 1 && CommunicatesWithSuccessor) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
                 // Interface sim <-> FIFO
-                this->fifo[i].write(this->ostreams[i].is_valid());
-                this->ostreams[i].ready(this->fifo[i].is_ready());
+                this->fifo[i].write(this->ostreams[i].isValid());
+                this->ostreams[i].ready(this->fifo[i].isReady());
                 // Interface FIFO <-> SHM
-                this->fifo[i].ready(toConsumerInterface[i].writeToNextNode(this->fifo[i].is_valid()));
+                this->fifo[i].ready(toConsumerInterface[i].writeToNextNode(this->fifo[i].isValid()));
             }
         }
         if constexpr (NodeIndex != 0 && CommunicatesWithPredecessor) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
                 // Interface SHM <-> sim
-                this->istreams[i].valid(fromProducerInterface[i].readFromLastNode(this->istreams[i].is_ready()));
+                this->istreams[i].valid(fromProducerInterface[i].readFromLastNode(this->istreams[i].isReady()));
             }
         }
     }
@@ -201,14 +201,14 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
                 s.ready();
             }
             for (std::size_t i = 0; i < IStreamsSize; ++i) {  // Relay ready from sim to predecessor
-                fromProducerInterface[i].readFromLastNode(this->istreams[i].is_ready());
+                fromProducerInterface[i].readFromLastNode(this->istreams[i].isReady());
             }
         } else {                                              // Intermediate Node; has both predecessor and successor
             for (std::size_t i = 0; i < OStreamsSize; ++i) {  // Relay ready from FIFO to sim
-                this->ostreams[i].ready(this->fifo[i].is_ready());
+                this->ostreams[i].ready(this->fifo[i].isReady());
             }
             for (std::size_t i = 0; i < IStreamsSize; ++i) {  // Relay valid from sim to predecessor
-                fromProducerInterface[i].readFromLastNode(this->istreams[i].is_ready());
+                fromProducerInterface[i].readFromLastNode(this->istreams[i].isReady());
             }
         }
     }
@@ -218,11 +218,11 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
         // Log the signals that this simulations set (ready to predecessor, valid to successor)
         // TODO: Collect signals in vectors and only write to file after the sim for speedup
         for (S_AXIS_Control& stream : this->istreams) {
-            this->readyLog << stream.is_ready() << " ";
+            this->readyLog << stream.isReady() << " ";
         }
         this->readyLog << "\n";
         for (M_AXIS_Control& stream : this->ostreams) {
-            this->validLog << stream.is_valid() << " ";
+            this->validLog << stream.isValid() << " ";
         }
         this->validLog << "\n";
     }
@@ -243,7 +243,7 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
 
     /// Return the largest occupation the specified output stream / FIFO has seen
     std::size_t getLargestOccupation(std::size_t outputIndex) {
-        return toConsumerInterface[outputIndex].getLargestOccupation();
+        return fifo[outputIndex].getLargestOccupation();
     }
 
     [[gnu::hot]] void runSingleCycle() {
@@ -252,7 +252,7 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
             firstCycle = false;
             communicate();  // Initial communication before first cycle
         }
-        this->clk.toggle_clk();
+        this->clk.toggleClk();
         communicate();
         if constexpr (LoggingEnabled) {
            logReadyValidState();
@@ -262,12 +262,9 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
     }
 
     /// Set the max FIFO depth of all interfaces
-    void setMaxFIFODepth(unsigned int depth) {
-        for (ProducingInterface& prod : toConsumerInterface) {
-            prod.setMaxFifoDepth(depth);
-        }
-        for (ConsumingInterface& cons : fromProducerInterface) {
-            cons.setMaxFifoDepth(depth);
+    void setMaxFIFODepth(std::size_t depth) {
+        for (FIFO& f : fifo) {
+            f.setMaxSize(depth);
         }
     }
 
@@ -333,7 +330,7 @@ class SingleNodeSimulation {
     void writeResults() {
         json j;
         for (std::size_t i = 0; i < OStreamsSize; ++i) {
-            j["maxOccupation"][std::to_string(i)] = fifo[i].get_largest_occupation();
+            j["maxOccupation"][std::to_string(i)] = sim.getLargestOccupation(i);
         }
         j["cyclesRun"] = cyclesRun;
         std::ofstream file(simulationDataPath);

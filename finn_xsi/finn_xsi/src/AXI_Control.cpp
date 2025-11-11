@@ -24,7 +24,7 @@ AXI_Control::AXI_Control(xsi::Design& des, Clock& clock, const std::string& axi_
 }
 
 // Helper functions for multi-bit signal handling
-void AXI_Control::write_addr(const std::string& signal, uint32_t addr) {
+void AXI_Control::writeAddr(const std::string& signal, uint32_t addr) {
     // Convert addr to binary string
     std::string addr_bin = std::bitset<32>(addr).to_string();
 
@@ -46,7 +46,7 @@ void AXI_Control::write_addr(const std::string& signal, uint32_t addr) {
     port.set_binstr(addr_bin).write_back();
 }
 
-void AXI_Control::write_data(const std::string& signal, uint32_t data) {
+void AXI_Control::writeData(const std::string& signal, uint32_t data) {
     // Similar to write_addr
     std::string data_bin = std::bitset<32>(data).to_string();
 
@@ -63,7 +63,7 @@ void AXI_Control::write_data(const std::string& signal, uint32_t data) {
     port.set_binstr(data_bin).write_back();
 }
 
-void AXI_Control::write_strb(const std::string& signal, uint32_t strb) {
+void AXI_Control::writeStrb(const std::string& signal, uint32_t strb) {
     // Similar to write_addr
     std::string strb_bin = std::bitset<4>(strb).to_string();
 
@@ -85,56 +85,56 @@ uint32_t AXI_Control::read(const std::string& signal) {
     return port.read().as_unsigned();
 }
 
-void AXI_Control::set_bool(const std::string& signal) {
+void AXI_Control::setBool(const std::string& signal) {
     Port& port = design.getPort(signal);
     port.set(1).write_back();
 }
 
-void AXI_Control::clear_bool(const std::string& signal) {
+void AXI_Control::clearBool(const std::string& signal) {
     Port& port = design.getPort(signal);
     port.set(0).write_back();
 }
 
-bool AXI_Control::chk_bool(const std::string& signal) {
+bool AXI_Control::chkBool(const std::string& signal) {
     Port& port = design.getPort(signal);
     return port.read().as_bool();
 }
 
-void AXI_Control::write_register(uint32_t addr, uint32_t data) {
+void AXI_Control::writeRegister(uint32_t addr, uint32_t data) {
     // Assert BREADY to receive response
-    set_bool(prefix + "bready");
+    setBool(prefix + "bready");
     // Set address
-    write_addr(prefix + "awaddr", addr);
+    writeAddr(prefix + "awaddr", addr);
     // Set data and strobe (full 32-bit word)
-    write_data(prefix + "wdata", data);
-    write_strb(prefix + "wstrb", 0xF);  // All bytes enabled
+    writeData(prefix + "wdata", data);
+    writeStrb(prefix + "wstrb", 0xF);  // All bytes enabled
 
     // Assert AWVALID
-    set_bool(prefix + "awvalid");
+    setBool(prefix + "awvalid");
 
     // Assert WVALID
-    set_bool(prefix + "wvalid");
+    setBool(prefix + "wvalid");
 
     // Wait for AWREADY
-    while (!chk_bool(prefix + "awready")) {
-        clk.toggle_clk();
+    while (!chkBool(prefix + "awready")) {
+        clk.toggleClk();
     }
 
     // Wait for WREADY
-    while (!chk_bool(prefix + "wready")) {
-        clk.toggle_clk();
+    while (!chkBool(prefix + "wready")) {
+        clk.toggleClk();
     }
 
-    clk.toggle_clk();  // Make sure that for at least one cycle the signals were set
+    clk.toggleClk();  // Make sure that for at least one cycle the signals were set
 
     // Deassert AWVALID and WVALID
-    clear_bool(prefix + "awvalid");
-    clear_bool(prefix + "wvalid");
+    clearBool(prefix + "awvalid");
+    clearBool(prefix + "wvalid");
 
 
     // Wait for BVALID
-    while (!chk_bool(prefix + "bvalid")) {
-        clk.toggle_clk();
+    while (!chkBool(prefix + "bvalid")) {
+        clk.toggleClk();
     }
 
     // Check BRESP (optional, could add error handling)
@@ -144,32 +144,32 @@ void AXI_Control::write_register(uint32_t addr, uint32_t data) {
     }
 
     // Deassert BREADY
-    clear_bool(prefix + "bready");
+    clearBool(prefix + "bready");
 
-    clk.toggle_clk();
+    clk.toggleClk();
 }
 
-uint32_t AXI_Control::read_register(uint32_t addr) {
+uint32_t AXI_Control::readRegister(uint32_t addr) {
     // Assert RREADY to receive data
-    set_bool(prefix + "rready");
+    setBool(prefix + "rready");
     // Set address
-    write_addr(prefix + "araddr", addr);
+    writeAddr(prefix + "araddr", addr);
 
     // Assert ARVALID
-    set_bool(prefix + "arvalid");
+    setBool(prefix + "arvalid");
 
     // Wait for ARREADY
-    while (!chk_bool(prefix + "arready")) {
-        clk.toggle_clk();
+    while (!chkBool(prefix + "arready")) {
+        clk.toggleClk();
     }
 
     // Wait for RVALID
-    while (!chk_bool(prefix + "rvalid")) {
-        clk.toggle_clk();
+    while (!chkBool(prefix + "rvalid")) {
+        clk.toggleClk();
     }
 
     // Deassert ARVALID
-    clear_bool(prefix + "arvalid");
+    clearBool(prefix + "arvalid");
 
     // Read data
     uint32_t data = read(prefix + "rdata");
@@ -181,8 +181,8 @@ uint32_t AXI_Control::read_register(uint32_t addr) {
     }
 
     // Deassert RREADY
-    clear_bool(prefix + "rready");
-    clk.toggle_clk();
+    clearBool(prefix + "rready");
+    clk.toggleClk();
 
     return data;
 }

@@ -5,22 +5,23 @@
 #include <limits>
 
 class FIFO {
-    std::size_t util = 0;
-    std::size_t max_util = 0;
-    std::size_t max_size = 0;
+    std::size_t currentUtil = 0;
+    std::size_t maxUtil = 0;
+    std::size_t maxSize = 0;
     bool sucReady = false;
 
      public:
-    FIFO(std::size_t max_size = std::numeric_limits<std::size_t>::max());
+    FIFO(std::size_t maxSize = std::numeric_limits<std::size_t>::max());
     ~FIFO();
 
     // Add FIFO methods and members as needed
-    bool is_valid();
+    bool isValid();
     void ready(bool ready);
-    bool is_ready() const;
+    bool isReady() const;
     void write(bool valid);
-    std::size_t get_largest_occupation() const;
+    std::size_t getLargestOccupation() const;
     void reset();
+    void setMaxSize(std::size_t newSize);
 };
 
 #endif /* FIFO_H */

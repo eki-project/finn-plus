@@ -80,3 +80,9 @@ class ThreadsafeProgressDisplay:
     def stop(self) -> None:
         """Stop the display."""
         self.progress.stop()
+
+    def __enter__(self) -> None:
+        self.start()
+
+    def __exit__(self, tp, vl, tb) -> None:
+        self.stop()

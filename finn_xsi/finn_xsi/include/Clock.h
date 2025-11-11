@@ -25,7 +25,7 @@ class Clock {
     std::function<void(bool)> cycle;
 
 
-    void toggle_clk() noexcept;
+    void toggleClk() noexcept;
 };
 
 #endif /* CLOCK */
