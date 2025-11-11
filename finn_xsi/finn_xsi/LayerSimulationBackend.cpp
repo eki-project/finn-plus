@@ -9,6 +9,7 @@
 #include <iostream>
 #include <boost/program_options.hpp>
 #include <chrono>
+#include <format>
 
 #define NDEBUG
 #include <rtlsim_config.hpp>
@@ -25,7 +26,6 @@ int main(int argc, const char* argv[]) {
     // Parse CLI options
     po::options_description desc{"Options"};
     desc.add_options()
-        ("depth,d", po::value<unsigned int>()->required(), "FIFO Depth")
         ("output,o", po::value<std::string>()->default_value("simulation_data.json"), "Simulation Data Output");
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -42,23 +42,10 @@ int main(int argc, const char* argv[]) {
         RTLSimConfig::ostream_descs,
         RTLSimConfig::previousNodeName,
         RTLSimConfig::currentNodeName,
-        vm["depth"].as<unsigned int>()
+        2,
+        vm["output"].as<std::string>()
     );
-
-    /** SECTION WIP */
-    auto start = std::chrono::high_resolution_clock::now();
-    for (std::size_t j = 0; j < 100000; ++j) {
-        sim.runSingleCycle();
-    }
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
-    if constexpr(RTLSimConfig::NodeIndex == 0) {
-        std::cout << duration << " ms" << std::endl;
-    }
-    /***********/
-
-    // Write results as JSON
-    auto outputPath = std::filesystem::path(vm["output"].as<std::string>());
-    sim.writeResults(outputPath);
-
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    sim.start();
     return 0;
 }

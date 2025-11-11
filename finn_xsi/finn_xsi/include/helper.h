@@ -19,7 +19,7 @@ struct StreamDescriptor {
 #ifdef NDEBUG
 [[maybe_unused]] inline void debug([[maybe_unused]] std::string_view s) {}
 #else
-inline void debug(std::string_view s) { std::cout << "[DBG] " << s << "\n"; }
+inline void debug(std::string_view s) { std::cout << "log [DBG] " << s << "\n"; }
 #endif
 
 #endif /* HELPER_H_ */

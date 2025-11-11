@@ -40,7 +40,7 @@ constexpr std::string_view to_string(SimulationInterfaceType t) {
     return "UNKNOWN SIMULATION INTERFACE TYPE";
 }
 
-template<SimulationInterfaceType T, std::size_t ShmemSize = 2048>
+template<SimulationInterfaceType T, bool IsIOInterface, std::size_t ShmemSize = 2048>
 class SimulationInterface {
      private:
     // Shared memory structure with proper cache-line alignment
@@ -52,9 +52,14 @@ class SimulationInterface {
         alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool> iReady;
         alignas(hardware_destructive_interference_size) boost::ipc_atomic<bool> oValid;
 
+
         SharedData() : fifoOccupation(0), maxFifoDepth(0), iCycle(0), oCycle(0), iReady(false), oValid(false) {}
+
+
         SharedData(unsigned int fifoOcc, unsigned int maxDepth, unsigned int inCycle, unsigned int outCycle, bool inReady, bool outValid)
             : fifoOccupation(fifoOcc), maxFifoDepth(maxDepth), iCycle(inCycle), oCycle(outCycle), iReady(inReady), oValid(outValid) {}
+
+
         SharedData(const SharedData& other)
             : fifoOccupation(other.fifoOccupation.load()),
               maxFifoDepth(other.maxFifoDepth.load()),
@@ -62,6 +67,8 @@ class SimulationInterface {
               oCycle(other.oCycle.load()),
               iReady(other.iReady.load()),
               oValid(other.oValid.load()) {}
+
+
         SharedData& operator=(const SharedData& other) {
             fifoOccupation.store(other.fifoOccupation.load());
             maxFifoDepth.store(other.maxFifoDepth.load());
@@ -75,15 +82,15 @@ class SimulationInterface {
 
     SharedData* sharedData = nullptr;
     boost::ipc_atomic<int>* refCount = nullptr;
-    std::atomic<std::size_t> largestOccupation;
     ipc::managed_shared_memory shmem;
     const std::string shmIdentifier;
+    std::atomic<std::size_t> largestOccupation;
 
 #ifdef NDEBUG
     [[maybe_unused]] void simInterfaceDebug([[maybe_unused]] std::string_view s) {}
 #else
     /// Log the given text with a header identifying the shared memory region and the interface type
-    void simInterfaceDebug(std::string_view s) { debug(std::format("{} ({}): {}", shmIdentifier, to_string(T), s)); }
+    void simInterfaceDebug(std::string_view s) { debug(std::format("log {} ({}): {}", shmIdentifier, to_string(T), s)); }
 #endif
 
      public:
@@ -94,7 +101,7 @@ class SimulationInterface {
 
     SimulationInterface(const char* _shmIdentifier, unsigned int initialMaxDepth = 2) : shmIdentifier(_shmIdentifier), largestOccupation(0) {
         simInterfaceDebug(std::format("Creating simulation interface with {} depth.", initialMaxDepth));
-        if (T == SimulationInterfaceType::PRODUCING) {
+        if (T == SimulationInterfaceType::PRODUCING || IsIOInterface) {
             ipc::shared_memory_object::remove(_shmIdentifier);
             simInterfaceDebug("Removed previous shared memory objects.");
             shmem = ipc::managed_shared_memory(ipc::create_only, _shmIdentifier, ShmemSize);
@@ -179,7 +186,6 @@ class SimulationInterface {
 
     /// Set the max fifo depth in this interface.
     void setMaxFifoDepth(unsigned int depth) {
-        simInterfaceDebug(std::format("Setting max FIFO depth to {}", depth));
         sharedData->maxFifoDepth.store(depth, boost::memory_order_release);
     }
 

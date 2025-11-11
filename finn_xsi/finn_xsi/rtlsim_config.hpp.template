@@ -19,7 +19,7 @@
 
 namespace RTLSimConfig {
 	// Log during simulation. Turned off by default. Might increase runtime if used.
-	constexpr bool LoggingEnabled = false;
+	constexpr bool LoggingEnabled = true;
 
 	/**** General RTLSIM Configuration Parameters ****/
 	const std::optional<std::string> currentNodeName = "@NODE_NAME@";

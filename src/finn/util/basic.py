@@ -180,7 +180,7 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
     return str(tmpdir)
 
 
-def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
+def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True, print_stderr=True):
     """Helper function to launch a process in a way that facilitates logging
     stdout/stderr with Python loggers.
     Returns (cmd_out, cmd_err) if successful, raises CalledProcessError otherwise."""
@@ -199,7 +199,7 @@ def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
     # Handle stderr, depending on return code
     if process.returncode == 0:
         # Process completed successfully, log stderr only as WARNING
-        if cmd_err:
+        if cmd_err and print_stderr:
             log.warning(cmd_err)
     else:
         # Process failed, log stderr as ERROR

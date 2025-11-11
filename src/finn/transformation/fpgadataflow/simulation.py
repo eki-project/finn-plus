@@ -1,13 +1,14 @@
 """Manage FINN simulation variants."""
-import multiprocessing
+import json
 import numpy as np
 import onnx
 import os
 import shlex
-import subprocess
 import sys
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
+from enum import Enum
 from onnx import NodeProto, TensorProto
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
@@ -18,9 +19,10 @@ from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Any, cast
 
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
-from finn.util.basic import get_vivado_root, launch_process_helper, make_build_dir
+from finn.transformation.fpgadataflow.simulation_controller import NodeConnectedSimulationController
+from finn.util.basic import launch_process_helper, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
-from finn.util.logging import log
+from finn.util.logging import DisabledLoggingConsole, ThreadsafeProgressDisplay, log
 
 try:
     import finn_xsi.adapter as finnxsi
@@ -32,14 +34,26 @@ if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 
-class Simulation:
-    """Manage simulations in FINN."""
+class SimulationType(str, Enum):
+    # Individual node simulations connected by IPC
+    NODE_BASED_CONNECTED = "NODE_BASED_CONNECTED"
+
+    # Individual node simulations, isolated. E.g. for analysis purposes
+    NODE_BASED_ISOLATED = "NODE_BASED_ISOLATED"
+
+    # Legacy method (deprecated)
+    COMPLETE_DESIGN = "COMPLETE_DESIGN"
+
+
+class SimulationBuilder:
+    """Build simulations in FINN."""
 
     def __init__(self, model: ModelWrapper, fpgapart: str, clk_ns: float) -> None:
         """Create a new simulation instance."""
         self.model = model
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
+        self.progress_bar = ThreadsafeProgressDisplay([], [], [])
 
     def _isolated_node_model(self, by_node: int | str | NodeProto) -> ModelWrapper:
         """Return a modelwrapper that has only the specified node.
@@ -211,7 +225,7 @@ class Simulation:
             sim_rel = "xsim.dir" + sim_rel
         return Path(sim_base), Path(sim_rel)
 
-    def _compile_simulation(self, sim_base: Path) -> Path:
+    def _compile_simulation(self, sim_base: Path, silent: bool = False) -> Path:
         """Compile an existing RTLSIM directory. Requires _create_sim_so to be run before. Expects
         rtlsim_config.hpp to be templated already.
 
@@ -226,18 +240,26 @@ class Simulation:
             launch_process_helper(
                 shlex.split(cmake_call),
                 cwd=finnxsi_dir,
-                print_stdout=True,
+                print_stdout=not silent,
+                print_stderr=not silent,
                 proc_env=os.environ.copy(),
             )
         except CalledProcessError as e:
             raise FINNUserError(f"Failed to run cmake in {sim_base}") from e
+        self.progress_bar.update("CMake")
 
         # Calling make to actually build the simulation
         makefile = Path(sim_base) / "Makefile"
         if not makefile.exists():
             raise FINNUserError(f"Failed to create Makefile in {sim_base}!")
         try:
-            launch_process_helper(["make"], proc_env=os.environ.copy(), cwd=sim_base)
+            launch_process_helper(
+                ["make"],
+                proc_env=os.environ.copy(),
+                cwd=sim_base,
+                print_stdout=not silent,
+                print_stderr=not silent,
+            )
         except CalledProcessError as e:
             raise FINNUserError(f"Failed to create executable in {sim_base}!") from e
 
@@ -245,15 +267,8 @@ class Simulation:
         simulation_executable = Path(sim_base) / "LayerSimulationBackend"
         if not simulation_executable.exists():
             raise FINNUserError(f"Make call in {sim_base} failed!")
-
-        # Prepare the script to run the simulation
-        # (important to specify LD_LIBRARY_PATH here for XSI to work correctly)
-        runsim = Path(sim_base) / "run_fifosim.sh"
-        ld_library_path = get_vivado_root() + "/lib/lnx64.o"
-        runsim.write_text(
-            f"LD_LIBRARY_PATH={ld_library_path}:$LD_LIBRARY_PATH {simulation_executable} --depth 2"
-        )
-        return runsim
+        self.progress_bar.update("Make")
+        return simulation_executable
 
     def _template_rtlsim_config(
         self,
@@ -313,7 +328,7 @@ class Simulation:
         rtlsim_config.write_text(fsim_config)
         return rtlsim_config
 
-    def _build_single_node_simulation(
+    def build_single_node_simulation(
         self,
         node_name: str,
         node_model: ModelWrapper,
@@ -322,6 +337,7 @@ class Simulation:
         previous_node_name: str | None,
         build_dir: Path | None,
         timeout_cycles: int = 0,
+        silent: bool = False,
     ) -> Path:
         """Build the simulation binary for a single node.
 
@@ -343,6 +359,7 @@ class Simulation:
                         created from the nodes name.
             timeout_cycles: Number of cycles until simulation timeout. When set to 0 (default), no
                             timeout is given.
+            silent: If True, silences the Cmake and make output (including stderr)
 
         Returns:
             Path: The path to the simulation binary (shell script).
@@ -398,16 +415,38 @@ class Simulation:
         )
 
         # Building the whole simulation
-        return self._compile_simulation(sim_base).absolute()
+        return self._compile_simulation(sim_base, silent).absolute()
 
-    def run_sim_node_parallel_isolated(self, inputs: int) -> None:
-        """Simulate the given number of inputs for every layer. Layers are completely isolated
-        and simulated in parallel.
+    def _get_randomized_names(self, model: ModelWrapper, suffix_length: int = 5) -> dict[int, str]:
+        """Add a randomized suffix to every name in the model. Used to avoid interference with
+        previous or parallel running IPC simulations."""
+        rand = Random()
+        rand.seed()
+        return {
+            i: model.graph.node[i].name
+            + "".join(
+                rand.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(suffix_length)
+            )
+            for i in range(len(model.graph.node))
+        }
+
+    def _build_simulation_node_connected(
+        self, workers: int, with_live_display: bool
+    ) -> dict[int, Path]:
+        """Build all nodes in the model in parallel, as isolated simulations, ready for usage in
+        an IPC connected simulation chain.
+
+        Args:
+            workers: Number of parallel workers to use.
+            with_live_display: If True, display the building progress in a rich progress bar.
+
+        Returns:
+            Dict of executables that start the simulation of the given nodes,
+            indexed by the node-index. These are in their respective FINN_TMP
+            directories.
         """
-        for i, node in enumerate(self.model.graph.node):
-            print(f"{i}: {node.name}")
 
-        def _build_simulation(
+        def _build(
             node_name: str,
             node_index: int,
             total_nodes: int,
@@ -416,93 +455,117 @@ class Simulation:
         ) -> Any:
             nodemodel = self._isolated_node_model(node_index)
             nodemodel = nodemodel.transform(CreateStitchedIP(self.fpgapart, self.clk_ns))
-            return self._build_single_node_simulation(
-                node_name, nodemodel, node_index, total_nodes, prev_node_name, build_dir
-            )
-
-        def _run_simulation(binary: Path, cpu: int | None) -> None:
-            command = ""
-            if cpu is not None:
-                command += f"taskset --cpu-list {cpu} "
-                # TODO: numactl
-            command += f"bash {binary}"
-            subprocess.run(
-                shlex.split(command), stdout=sys.stdout, stderr=sys.stderr, cwd=binary.parent
+            self.progress_bar.update("StitchedIP")
+            return self.build_single_node_simulation(
+                node_name,
+                nodemodel,
+                node_index,
+                total_nodes,
+                prev_node_name,
+                build_dir,
+                silent=with_live_display,
             )
 
         # Create randomized names to avoid clashing with old IPC shared memory segments.
-        rand = Random()
-        rand.seed()
-        randomized_names = {
-            i: self.model.graph.node[i].name
-            + "".join(rand.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(5))
-            for i in range(len(self.model.graph.node))
-        }
+        randomized_names = self._get_randomized_names(self.model)
 
         # Build simulations in parallel
-        # TODO: Change to info when done
-        log.warning("BUILDING NODE SIMULATIONS")
         workers = int(os.environ["NUM_DEFAULT_WORKERS"])
         total_nodes = len(self.model.graph.node)
         futures: dict[int, Future] = {}
-        binaries: dict[int, Path] = {}
+        if with_live_display:
+            log.disabled = True
+            self.progress_bar.start()
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for i in range(total_nodes):
                 futures[i] = pool.submit(
-                    _build_simulation,
+                    _build,
                     randomized_names[i],
                     i,
                     total_nodes,
                     randomized_names[i - 1] if i >= 1 else None,  # type: ignore
                     Path(make_build_dir(f"rtlsim_{randomized_names[i]}_")),
                 )
-            pool.shutdown(wait=True)
-            for i, future in futures.items():
-                binaries[i] = future.result()
+
+        binaries = {i: future.result() for i, future in futures.items()}
+        if with_live_display:
+            self.progress_bar.stop()
+            log.disabled = False
 
         # Create a script to build and run the entire simulation again
-        run_simulation = make_build_dir("run_simulation")
-        run_all_simulations = Path(run_simulation) / "run.sh"
-        build_all_simulations = Path(run_simulation) / "build.sh"
-        log.info(f"Storing run-all-simulations script in {run_simulation}")
-        with (run_all_simulations).open("w+") as f:
-            f.write("#!/bin/bash\n")
-            f.write('echo "Running simulation"\n')
-            for binary in binaries.values():
-                f.write(f"bash {binary} &\n")
-            f.write("wait\n")
-        with build_all_simulations.open("w+") as f:
-            f.write("#!/bin/bash\n")
-            for binary in binaries.values():
-                # Build each binary new. Done in parallel in the background
-                f.write(f"{{ cd {binary.parent};cmake . && make; }} &\n")
-            f.write("wait\n")
+        # TODO
+        return binaries
 
-        # TODO: Change to info when done
-        log.warning("RUNNING NODE SIMULATIONS")
-        # TODO: Might be unnecessary. Remove later
-        sys.stdout = sys.stdout.console
-        sys.stderr = sys.stderr.console
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for i, binary in binaries.items():
-                print(
-                    f"Submitting thread for running simulation {i} / {total_nodes} "
-                    f"({self.model.graph.node[i].name})"
+    def build_simulation(
+        self, simtype: SimulationType, workers: int, with_live_display: bool
+    ) -> dict[int, Path]:
+        """Build a simulation of the given type, return the resulting executable.
+
+        Args:
+            simtype: Simulation type to build.
+            workers: Number of workers to use in parallel.
+                Normally set by the Simulation() class automatically.
+            with_live_display: If True, display a live progress-bar.
+        """
+        match simtype:
+            case SimulationType.NODE_BASED_CONNECTED:
+                node_count = len(self.model.graph.node)
+                self.progress_bar = ThreadsafeProgressDisplay(
+                    ["StitchedIP", "CMake", "Make"],
+                    [node_count] * 3,
+                    [
+                        "[bold blue](1)[/bold blue] Creating stitched IPs",
+                        "[bold blue](2)[/bold blue] Configuring project with CMake",
+                        "[bold blue](3)[/bold blue] Building simulation binaries",
+                    ],
                 )
-                # TODO: If more processes than CPU cores, group processes to their adjacent nodes
-                pool.submit(_run_simulation, binary, i % multiprocessing.cpu_count())
-            pool.shutdown(wait=True)
+                return self._build_simulation_node_connected(workers, with_live_display)
+            case SimulationType.NODE_BASED_ISOLATED:
+                raise NotImplementedError()
+            case SimulationType.COMPLETE_DESIGN:
+                raise FINNUserError(f"Simulation method {simtype} is deprecated!")
 
-    def run_sim_node_parallel_connected(self, inputs: int) -> Any:
-        """Simulate a whole model, with all layers simulated in parallel."""
-        # TODO: Enable control through either Python or a seperate C++ driver
-        raise NotImplementedError()
 
-    def run_sim_complete(self) -> Any:
-        raise NotImplementedError()
+class Simulation:
+    """Manage simulation (runs) in FINN.
 
-    def run_sim_single_node(self, node: Any) -> Any:
-        raise NotImplementedError()
+    IMPORTANT: If the modelwrapper was somehow changed, create a NEW simulation object!
+    """
+
+    def __init__(
+        self, model: ModelWrapper, fpgapart: str, clk_ns: float, workers: int | None = None
+    ) -> None:
+        """Create a new simulation instance. If workers is None, NUM_DEFAULT_WORKERS are used."""
+        self.model = model
+        self.builder = SimulationBuilder(model, fpgapart, clk_ns)
+        self.workers = int(os.environ["NUM_DEFAULT_WORKERS"]) if workers is None else workers
+
+        # TODO: Caching of existing simulations
+
+    def simulate_node_connected(self, samples: int, depth: int) -> dict[int, dict]:
+        """Simulate the given number of samples for every layer. Layers are completely isolated
+        and simulated in parallel. Simulation data is returned as a dict (by node name as index).
+        """
+        binaries = self.builder.build_simulation(
+            SimulationType.NODE_BASED_CONNECTED, self.workers, with_live_display=True
+        )
+        names = [node.name for node in self.model.graph.node]
+
+        # Run simulation
+        start = time.time()
+        with DisabledLoggingConsole() as console:
+            controller = NodeConnectedSimulationController(
+                len(binaries), names, list(binaries.values()), console, 0.1, False
+            )
+            controller.run(depth, samples)
+        end = time.time()
+        log.warning(f"Simulation took {end-start} seconds!")
+        # Return the collected data
+        data = {}
+        for i, binary in binaries.items():
+            with (binary.parent / "simulation_data.json").open() as f:
+                data[i] = json.load(f)
+        return data
 
 
 # TODO: Just a test transformation. Will be integrated properly later
@@ -514,5 +577,10 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         sim = Simulation(model, self.fpgapart, self.clk_ns)
-        sim.run_sim_node_parallel_isolated(1)
+        sys.stdout = sys.stdout.console
+        sys.stderr = sys.stderr.console
+        sim.simulate_node_connected(5, 1024)
+        sim.simulate_node_connected(1, 2)
+        sim.simulate_node_connected(1, 20000)
+        sim.simulate_node_connected(10, 20000)
         return model, False

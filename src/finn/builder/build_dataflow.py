@@ -26,8 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""
-FINN dataflow build system.
+"""FINN dataflow build system.
 
 This module provides the main build infrastructure for converting ONNX models
 to FINN dataflow accelerators. It handles step resolution, logging, error handling,
@@ -40,8 +39,8 @@ import importlib
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import pdb  # isort: split
 import sys
@@ -52,6 +51,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.traceback import Traceback
 
+import finn.util.logging
 from finn.builder.build_dataflow_config import DataflowBuildConfig, default_build_dataflow_steps
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
 from finn.util.exception import (
@@ -285,8 +285,7 @@ def setup_logging(cfg: DataflowBuildConfig):
         elif cfg.console_log_level == "CRITICAL":
             consoleHandler.setLevel(logging.CRITICAL)
         logging.getLogger().addHandler(consoleHandler)
-
-    return log
+    return log, console
 
 
 def exit_buildflow(cfg: DataflowBuildConfig, time_per_step: dict = None, exit_code: int = 0):
@@ -344,7 +343,8 @@ def build_dataflow_cfg(model_filename, cfg: DataflowBuildConfig):
     # Create the output (report) dir if it doesn't exist
     os.makedirs(os.path.join(cfg.output_dir, "report"), exist_ok=True)
 
-    log = setup_logging(cfg)
+    log, console = setup_logging(cfg)
+    finn.util.logging._RICH_CONSOLE = console
     logfile = get_logfile_path(cfg)
     print(f"Intermediate outputs will be generated in {os.environ['FINN_BUILD_DIR']}")
     print(f"Final outputs will be generated in {cfg.output_dir}")
