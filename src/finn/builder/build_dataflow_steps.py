@@ -441,7 +441,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(InferDataTypes())
     model = model.transform(InferShapes())
     model = model.transform(RoundAndClipThresholds())
-
+    model = model.transform(to_hw.InferReshape())
     return model
 
 
