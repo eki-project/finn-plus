@@ -74,7 +74,7 @@ from finn.util.logging import log
 #       -the folded shape is not defined
 
 
-class IODMA_hls(HWCustomOp, HLSBackend):
+class IODMA_hls(HLSBackend, HWCustomOp):
     """Class that corresponds to finn-hlslib DMA function(s)."""
 
     def __init__(self, onnx_node, **kwargs):
