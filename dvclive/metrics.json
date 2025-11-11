@@ -1,0 +1,7 @@
+{
+    "status": "failed",
+    "time": {
+        "step_passes_frontend": 258,
+        "total_build_time": 258
+    }
+}
