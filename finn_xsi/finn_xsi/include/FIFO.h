@@ -10,6 +10,8 @@ class FIFO {
     std::size_t max_size = 0;
     bool sucReady = false;
 
+    std::size_t readyCtr = 0;
+
      public:
     FIFO(std::size_t max_size = std::numeric_limits<std::size_t>::max());
     ~FIFO();
@@ -20,6 +22,7 @@ class FIFO {
     bool is_ready() const;
     void write(bool valid);
     std::size_t get_largest_occupation() const;
+    std::size_t getReadyCtr() const { return readyCtr; }
     void reset();
 };
 

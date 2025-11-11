@@ -159,14 +159,15 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
 
      private:
     /// Communicate with predecessors and successors and update their values and our own
-    [[gnu::hot]] void communicate() {
+    [[gnu::hot, gnu::flatten, gnu::always_inline]] void communicate() {
         if constexpr (NodeIndex != TotalNodes - 1 && CommunicatesWithSuccessor) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
                 // Interface sim <-> FIFO
                 this->fifo[i].write(this->ostreams[i].is_valid());
                 this->ostreams[i].ready(this->fifo[i].is_ready());
                 // Interface FIFO <-> SHM
-                this->fifo[i].ready(toConsumerInterface[i].writeToNextNode(this->fifo[i].is_valid()));
+                this->fifo[i].ready(toConsumerInterface[i].writeToNextNode(this->fifo[i].is_valid(), static_cast<unsigned int>(cyclesRun)));
+
             }
         }
         if constexpr (NodeIndex != 0 && CommunicatesWithPredecessor) {
@@ -215,16 +216,24 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         }
     }
 
-    [[gnu::hot]] void runSingleCycle() {
-        static bool firstCycle = true;
-        if (firstCycle) {
-            firstCycle = false;
-            communicate();  // Initial communication before first cycle
+    std::size_t getReadyCtr() const {
+        std::size_t totalReadyCtr = 0;
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
+            totalReadyCtr += fifo[i].getReadyCtr();
         }
-        this->clk.toggle_clk();
+        return totalReadyCtr;
+    }
+
+    void initializeCommunication() {
         communicate();
-        debug(std::format("Finished cycle {}\n\n", cyclesRun));
+    }
+
+    [[gnu::hot, gnu::always_inline]] void runSingleCycle() {
+        this->clk.toggle_clk();
         ++cyclesRun;
+        communicate();
+        debug(std::format("Finished cycle {}\n\n", cyclesRun-1));
+
 
         // Log the signals that this simulations set (ready to predecessor, valid to successor)
         // TODO: Collect signals in vectors and only write to file after the sim for speedup

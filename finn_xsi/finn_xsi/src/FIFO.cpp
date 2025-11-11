@@ -1,7 +1,8 @@
 #include <FIFO.h>
+
 #include <algorithm>
 
-FIFO::FIFO(std::size_t max_size) : util(0), max_util(0), max_size(max_size) {}
+FIFO::FIFO(std::size_t p_max_size) : util(0), max_util(0), max_size(p_max_size) {}
 
 FIFO::~FIFO() {}
 
@@ -10,10 +11,13 @@ bool FIFO::is_valid() {
         --util;
         return true;
     }
-    return false;
+    return util > 0;
 }
 
-void FIFO::ready(bool ready) { sucReady = ready; }
+void FIFO::ready(bool ready) {
+    sucReady = ready;
+    readyCtr = ready ? readyCtr + 1 : readyCtr;
+}
 
 bool FIFO::is_ready() const { return util < max_size; }
 

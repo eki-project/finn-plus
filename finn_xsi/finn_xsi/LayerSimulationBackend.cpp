@@ -45,6 +45,7 @@ int main(int argc, const char* argv[]) {
         vm["depth"].as<unsigned int>()
     );
 
+    sim.initializeCommunication();
 
     /** SECTION WIP */
     auto start = std::chrono::high_resolution_clock::now();
@@ -52,6 +53,7 @@ int main(int argc, const char* argv[]) {
         sim.runSingleCycle();
     }
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count();
+    std::cout << "Ready Counter: " << sim.getReadyCtr() << std::endl;
     if constexpr(RTLSimConfig::NodeIndex == 0) {
         std::cout << duration << " ms" << std::endl;
     }

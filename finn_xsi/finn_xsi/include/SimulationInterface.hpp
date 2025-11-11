@@ -1,5 +1,5 @@
-#ifndef SIMULATION_INTERFACE
-#define SIMULATION_INTERFACE
+#ifndef SIMULATIONINTERFACE
+#define SIMULATIONINTERFACE
 #include <AXIS_Control.h>
 #include <Clock.h>
 #include <Design.h>
@@ -10,6 +10,7 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/thread_pool.hpp>
+#include <boost/atomic.hpp>
 #include <boost/atomic/ipc_atomic.hpp>
 #include <boost/interprocess/creation_tags.hpp>
 #include <boost/interprocess/detail/os_file_functions.hpp>
@@ -176,12 +177,20 @@ class SimulationInterface {
     bool readFromLastNode(bool consumerReady)
         requires(T == SimulationInterfaceType::CONSUMING)
     {
-        // The predecessor must always be one cycle ahead of the successor side
-        // Wait until predecessor catches up (and overtakes)
-        while (sharedData->predCycle <= sharedData->succCycle) {}
-        sharedData->ready = consumerReady;
-        ++(sharedData->succCycle);
-        return sharedData->valid;
+        // Use relaxed loads in the spin loop, acquire only when exiting
+        while (sharedData->predCycle.load(boost::memory_order_relaxed) <= sharedData->succCycle.load(boost::memory_order_relaxed)) {
+// CPU hint for spin-wait
+#if defined(__x86_64__) || defined(_M_X64)
+            __builtin_ia32_pause();
+#elif defined(__aarch64__)
+            asm volatile("yield" ::: "memory");
+#endif
+        }
+        boost::atomic_thread_fence(boost::memory_order_acquire);
+
+        sharedData->ready.store(consumerReady, boost::memory_order_release);
+        sharedData->succCycle.fetch_add(1, boost::memory_order_release);
+        return sharedData->valid.load(boost::memory_order_acquire);
     }
 
     /**
@@ -189,15 +198,24 @@ class SimulationInterface {
      * Returns the ready signal read from shm.
      * Called on producer side.
      */
-    bool writeToNextNode(bool producerValid)
+    bool writeToNextNode(bool producerValid, unsigned int cycle)
         requires(T == SimulationInterfaceType::PRODUCING)
     {
         // The predecessor side must always be at least one cycle ahead of the output side
         // Wait until output catches up
-        while (sharedData->succCycle != sharedData->predCycle) {}
-        sharedData->valid = producerValid;
-        ++(sharedData->predCycle);
-        return sharedData->ready;
+        while (sharedData->succCycle.load(boost::memory_order_relaxed) != sharedData->predCycle.load(boost::memory_order_relaxed)) {
+            // CPU hint for spin-wait
+#if defined(__x86_64__) || defined(_M_X64)
+            __builtin_ia32_pause();
+#elif defined(__aarch64__)
+            asm volatile("yield" ::: "memory");
+#endif
+        }
+        boost::atomic_thread_fence(boost::memory_order_acquire);
+
+        sharedData->valid.store(producerValid, boost::memory_order_release);
+        sharedData->predCycle.store(cycle, boost::memory_order_release);
+        return sharedData->ready.load(boost::memory_order_acquire);
     }
 };
-#endif
+#endif /* SIMULATIONINTERFACE */
