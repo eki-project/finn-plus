@@ -34,7 +34,7 @@ from finn.interface.manage_tests import run_test
 
 
 # Resolves the path to modules which are not part of the FINN package hierarchy
-def _resolve_module_path(name: str) -> str:
+def _resolve_module_path(name: str, prefix="finn.") -> str:
     # Try to import the module via importlib - allows "-" in names and resolve
     # the absolute path to the first candidate location as a string
     try:
@@ -43,7 +43,7 @@ def _resolve_module_path(name: str) -> str:
         # Try a different location if notebooks have not been found, maybe we
         # are in the Git repository root and should look there as well...
         try:
-            return str(importlib.import_module(f"finn.{name}").__path__[0])
+            return str(importlib.import_module(f"{prefix}{name}").__path__[0])
         except ModuleNotFoundError:
             warning(f"Could not resolve {name}. FINN might not work properly.")
     # Return the empty string as a default...
@@ -112,8 +112,8 @@ def prepare_finn(
     os.environ["FINN_RTLLIB"] = _resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = _resolve_module_path("custom_hls")
     os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
-    os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks")
-    os.environ["FINN_TESTS"] = _resolve_module_path("tests")
+    os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks", prefix="")
+    os.environ["FINN_TESTS"] = _resolve_module_path("tests", prefix="")
 
     # Install FINN XSI
     finnxsi_status = install_finnxsi()
