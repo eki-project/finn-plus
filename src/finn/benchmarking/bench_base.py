@@ -388,6 +388,10 @@ class bench:
 
         cfg.experiments_config_path = self.experiments_config
 
+        # disable verification if live FIFO-sizing is on
+        if cfg.live_fifo_sizing:
+            cfg.verify_steps = None
+
         # Overwrite build config settings with run-specific parameters
         # Filter to only valid DataflowBuildConfig attributes to avoid errors
         valid_params = {k: v for k, v in self._params.items() if hasattr(cfg, k)}
