@@ -34,7 +34,7 @@ def softmax(x, axis):
     # Count the occurrences of the maximum along the normalization axis
     max_counts = np.sum(max_ones, axis=axis, keepdims=True)
     # Exponential of the input
-    exp = np.exp(x - np.max(x, axis=axis)[:, np.newaxis])
+    exp = np.exp(x - np.max(x, axis=axis, keepdims=True))
     # Compute the total along axis
     total = np.sum(exp, axis=axis, keepdims=True)
     # Detect overflow of the summation
@@ -45,7 +45,6 @@ def softmax(x, axis):
 
 
 # Scaled Dot-Product Attention Custom Operator
-#   Note: Single head attention
 class ScaledDotProductAttention(HWCustomOp):
     # Initializes the operator given an onnx graph node
     def __init__(self, onnx_node, **kwargs):
@@ -66,6 +65,10 @@ class ScaledDotProductAttention(HWCustomOp):
             "VDim": ("i", True, 0),
             # Length of the key and value sequence
             "KVLen": ("i", True, 0),
+
+            # NUmber of attention heads computed by this operator (packed into
+            # first dimension, does not distinguish from batch dimension)
+            "Heads": ("i", False, 1),
 
             # Folding along the embedding dimensions
             "EmbFold": ("i", True, 0),
@@ -138,7 +141,7 @@ class ScaledDotProductAttention(HWCustomOp):
 
             # FPGA resource type for memories/internal buffers of the operator
             # Note: Currently only used for StreamTile buffers
-            "ram_style":  (
+            "ram_style": (
                 "s", False, "auto", {"auto", "block", "distributed", "ultra"}
             ),
             # FPGA resource type for memories of the thresholds parameters
@@ -189,6 +192,15 @@ class ScaledDotProductAttention(HWCustomOp):
         embfold, seqfold = self.folds
         # All shapes must be multiples of their corresponding fold
         return not ((qkdim % embfold) or (vdim % embfold) or (kvlen % seqfold))
+
+    # Number of iterations of the attention operator - this can be both, a batch
+    # dimension and repetition over packed attention heads.
+    @property
+    def iterations(self):
+        try:
+            return self.get_nodeattr("Heads")
+        except AttributeError:
+            return 1
 
     # Returns an ONNX node that has the same shape inference behavior
     def make_shape_compatible_op(self, model):
@@ -340,7 +352,7 @@ class ScaledDotProductAttention(HWCustomOp):
 
         # 1. Queries and keys multiplication followed by quantizing activation
         # function
-        qk = act_qk_matmul(np.matmul(q, k.T))
+        qk = act_qk_matmul(np.matmul(q, k.swapaxes(-2, -1)))
 
         # Load or create the attention mask for mutually exclusive mask modes
 
@@ -382,7 +394,7 @@ class ScaledDotProductAttention(HWCustomOp):
         a = act_a_softmax(
             # Note: Reshape after masking, as the mask might broadcast messing
             # with the shape
-            softmax((dequant * qk + mask).reshape(qk.shape), axis=1)
+            softmax((dequant * qk + mask).reshape(qk.shape), axis=-1)
         )
         # 2. Attention weights and values matmul followed by quantization
         # activation function
@@ -475,11 +487,14 @@ class ScaledDotProductAttention(HWCustomOp):
         # List shapes of inputs in order
         inputs_shapes = [
             # Query input sequence
-            (self.get_nodeattr("QLen"), self.get_nodeattr("QKDim")),
+            (self.iterations, self.get_nodeattr("QLen"),
+             self.get_nodeattr("QKDim")),
             # Key input sequence
-            (self.get_nodeattr("KVLen"), self.get_nodeattr("QKDim")),
+            (self.iterations, self.get_nodeattr("KVLen"),
+             self.get_nodeattr("QKDim")),
             # Value input sequence
-            (self.get_nodeattr("KVLen"), self.get_nodeattr("VDim")),
+            (self.iterations, self.get_nodeattr("KVLen"),
+             self.get_nodeattr("VDim")),
         ]
 
         # If the attention mask is provided as input, it has a shape as well
@@ -520,18 +535,20 @@ class ScaledDotProductAttention(HWCustomOp):
     def get_normal_output_shape(self, ind=0):  # noqa, there is just one output
         # The output shape is inferred from the length of the query sequence and
         # the embedding dimension of the values
-        return tuple((self.get_nodeattr("QLen"), self.get_nodeattr("VDim")))
+        return (self.iterations, self.get_nodeattr("QLen"),
+                self.get_nodeattr("VDim"))
 
     # Gets the shape of the attention weights at index ind (there is just one)
     # without folding
     def get_normal_attention_shape(self, ind=0):  # noqa, there is just one
         # The attention weights have shape covering both sequence dimensions
-        return tuple((self.get_nodeattr("QLen"), self.get_nodeattr("KVLen")))
+        return (self.iterations, self.get_nodeattr("QLen"),
+                self.get_nodeattr("KVLen"))
 
     # Gets the shape of the input at index ind with folding
     def get_folded_input_shape(self, ind=0):
         # Get the unfolded size of the input
-        ilen, idim = self.get_normal_input_shape(ind)
+        *num, idim = self.get_normal_input_shape(ind)
         # Get the folding configuration specifying the amount of parallelism
         embfold, seqfold = self.folds
 
@@ -540,14 +557,14 @@ class ScaledDotProductAttention(HWCustomOp):
         if ind in (0, 1, 2):
             # Note: Embedding dimension is always assumed to be the second
             # dimension, any transpose is handled implicitly by the operator
-            return ilen, embfold, idim // embfold
+            return *num, embfold, idim // embfold
 
         # If the mask is provided as input, it is folded along the second
         # sequence dimension
         if ind == 3 and self.get_nodeattr("mask_mode") in {"input", "const"}:
             # Note: Both dimensions are sequence dimension, the second
             # corresponds to the KVLen
-            return ilen, seqfold, idim // seqfold
+            return *num, seqfold, idim // seqfold
 
         # If this point is reached, probably something went wrong
         # TODO: Requesting the folded shape of thresholds will reach here. Can
@@ -558,28 +575,28 @@ class ScaledDotProductAttention(HWCustomOp):
         #  indices to optional inputs to correctly associate the folding
         #  dimensions.
         # TODO: This is just a dummy shape
-        return 0, 0, 0
+        return *num, idim, 1
 
     # Gets the shape of the output at index ind (there is just one) with folding
     def get_folded_output_shape(self, ind=0):  # noqa, there is just one output
         # Get the unfolded size of the output
-        olen, odim = self.get_normal_output_shape(ind)
+        *num, odim = self.get_normal_output_shape(ind)
         # Get the folding configuration specifying the amount of parallelism
         embfold, seqfold = self.folds
         # The output is always folded along the embedding dimension, which is
         # assumed to be the second dimension
-        return olen, embfold, odim // embfold
+        return *num, embfold, odim // embfold
 
     # Gets the shape of the attention weights at index ind (there is just one)
     # with folding
     def get_folded_attention_shape(self, ind=0):  # noqa, there is just one
         # Get the unfolded size of the attention weights
-        alen, adim = self.get_normal_attention_shape(ind)
+        *num, adim = self.get_normal_attention_shape(ind)
         # Get the folding configuration specifying the amount of parallelism
         embfold, seqfold = self.folds
         # The attention weights are always folded along the sequence dimension,
         # which is assumed to be the second dimension
-        return alen, seqfold, adim // seqfold
+        return *num, seqfold, adim // seqfold
 
     # Widths of the input data stream of the input at index ind
     def get_instream_width(self, ind=0):
@@ -587,7 +604,7 @@ class ScaledDotProductAttention(HWCustomOp):
         i_bits = self.get_input_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
         # folded input
-        _, _, elems = self.get_folded_input_shape(ind)
+        *_, elems = self.get_folded_input_shape(ind)
         # Width of a stream receiving input elements in parallel
         return elems * i_bits
 
@@ -597,7 +614,7 @@ class ScaledDotProductAttention(HWCustomOp):
         o_bits = self.get_output_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
         # folded output
-        _, _, elems = self.get_folded_output_shape(ind)
+        *_, elems = self.get_folded_output_shape(ind)
         # Width of a stream producing output elements in parallel
         return elems * o_bits
 
@@ -610,9 +627,9 @@ class ScaledDotProductAttention(HWCustomOp):
         AType = DataType[self.get_nodeattr("AType")]  # noqa
 
         # Compute the worst-case upper and lower bounds of the accumulator range
-        lower_worst = QType.min() * np.ones(self.get_normal_input_shape(0))
+        lower_worst = QType.min() * np.ones(self.get_normal_input_shape(0)[-2:])
         lower_range = calculate_matvec_accumulator_range(lower_worst, KType)
-        upper_worst = QType.max() * np.ones(self.get_normal_input_shape(0))
+        upper_worst = QType.max() * np.ones(self.get_normal_input_shape(0)[-2:])
         upper_range = calculate_matvec_accumulator_range(  # noqa: Duplicate
             upper_worst, KType
         )
@@ -645,9 +662,11 @@ class ScaledDotProductAttention(HWCustomOp):
             self.set_nodeattr("OutQKMatMul", AccQKMatMul.name)
 
         # Compute the worst-case upper and lower bounds of the accumulator range
-        lower_worst = AType.min() * np.ones(self.get_normal_attention_shape(0))
+        lower_worst = AType.min() * np.ones(
+            self.get_normal_attention_shape(0)[-2:])
         lower_range = calculate_matvec_accumulator_range(lower_worst, VType)
-        upper_worst = AType.max() * np.ones(self.get_normal_attention_shape(0))
+        upper_worst = AType.max() * np.ones(
+            self.get_normal_attention_shape(0)[-2:])
         upper_range = calculate_matvec_accumulator_range(  # noqa: Duplicate
             upper_worst, VType
         )
@@ -756,7 +775,7 @@ class ScaledDotProductAttention(HWCustomOp):
         # the buffering, both matmul and the softmax, then the expected cycles
         # is the maximum over these operators
         #   Overall worst case cycles without any parallelization: ~ T x T x d
-        return max(
+        return self.iterations * max(
             # Transposed keys buffer cycles
             #   Worst case: kv_len * qk_dim, ~ T x d
             kv_len * emb_fold,
