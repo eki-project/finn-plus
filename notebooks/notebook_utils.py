@@ -33,18 +33,23 @@ This module contains functions that are commonly used in FINN notebooks
 for loading test models, generating example inputs, and other utilities.
 """
 
-import importlib_resources as importlib
 import inspect
 import netron
 import numpy as np
 import onnx
 import onnx.numpy_helper as nph
 import os
+import pathlib
 import torch
 from brevitas_examples import bnn_pynq, imagenet_classification
 from IPython.display import IFrame
 from pkgutil import get_data
 from torch.nn import Module, Sequential
+
+
+def get_notebooks_folder() -> pathlib.Path:
+    return pathlib.Path(__file__).parent
+
 
 # map of (wbits,abits) -> model
 example_map = {
@@ -90,10 +95,11 @@ def get_example_input(topology):
         onnx_tensor = onnx.load_tensor_from_string(raw_i)
         return nph.to_array(onnx_tensor)
     elif topology == "cnv":
-        ref = importlib.files("finn.qnn-data") / "cifar10/cifar10-test-data-class3.npz"
-        with importlib.as_file(ref) as fn:
-            input_tensor = np.load(fn)["arr_0"].astype(np.float32)
-        return input_tensor
+        cifar_path = (
+            get_notebooks_folder() / "example_data" / "cifar10" / "cifar10-test-data-class3.npz"
+        )
+        x = np.load(cifar_path)["arr_0"].astype(np.float32)
+        return x
     else:
         raise Exception("Unknown topology, can't return example input")
 

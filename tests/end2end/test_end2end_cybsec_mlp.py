@@ -38,6 +38,7 @@ import torch.nn as nn
 from brevitas.core.quant import QuantType
 from brevitas.export import export_qonnx
 from brevitas.nn import QuantIdentity, QuantLinear, QuantReLU
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
@@ -81,7 +82,7 @@ class CybSecMLPForExport(nn.Module):
 @pytest.mark.end2end
 class Test_end2end_cybsec_mlp:
     def test_end2end_cybsec_mlp_export(self):
-        assets_dir = os.path.join(os.environ["FINN_QNN_DATA"], "cybsec-mlp")
+        assets_dir = Path(__file__).parent.parent / "example_data" / "cybsec-mlp"
         # load up trained net in Brevitas
         input_size = 593
         hidden1 = 64

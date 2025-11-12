@@ -111,7 +111,6 @@ def prepare_finn(
     os.environ["FINN_XSI"] = _resolve_module_path("finn_xsi")
     os.environ["FINN_RTLLIB"] = _resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = _resolve_module_path("custom_hls")
-    os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
     os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks", prefix="")
     os.environ["FINN_TESTS"] = _resolve_module_path("tests", prefix="")
 

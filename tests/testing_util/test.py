@@ -28,7 +28,6 @@
 
 import pytest
 
-import importlib_resources as importlib
 import numpy as np
 import onnx
 import onnx.numpy_helper as nph
@@ -36,6 +35,7 @@ import os
 import torchvision.transforms.functional as torchvision_util
 import warnings
 from brevitas_examples import bnn_pynq, imagenet_classification
+from pathlib import Path
 from pkgutil import get_data
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -136,9 +136,13 @@ def get_example_input(topology):
         onnx_tensor = onnx.load_tensor_from_string(raw_i)
         return nph.to_array(onnx_tensor)
     elif topology == "cnv":
-        ref = importlib.files("finn.qnn-data") / "cifar10/cifar10-test-data-class3.npz"
-        with importlib.as_file(ref) as fn:
-            input_tensor = np.load(fn)["arr_0"].astype(np.float32)
+        cifar_path = (
+            Path(__file__).parent.parent
+            / "example_data"
+            / "cifar10"
+            / "cifar10-test-data-class3.npz"
+        )
+        input_tensor = np.load(cifar_path)["arr_0"].astype(np.float32)
         return input_tensor
     else:
         raise Exception("Unknown topology, can't return example input")

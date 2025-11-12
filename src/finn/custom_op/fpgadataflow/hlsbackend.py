@@ -38,6 +38,7 @@ from abc import ABC, abstractmethod
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow import templates
+from finn.templates import get_templates_folder
 from finn.util.basic import CppBuilder, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.deps import get_deps_path
@@ -262,7 +263,7 @@ class HLSBackend(ABC):
         builder = CppBuilder()
         # to enable additional debug features please uncommand the next line
         # builder.append_includes("-DDEBUG")
-        builder.append_includes("-I$FINN_QNN_DATA/cpp")
+        builder.append_includes(f"-I{get_templates_folder()}/npy2stream")
         builder.append_includes("-I" + str(get_deps_path() / "cnpy"))
         builder.append_includes("-I" + str(get_deps_path() / "finn-hlslib"))
         # TODO: Is it ok to add this here? Add some specialization to the

@@ -43,6 +43,7 @@ from typing import Dict, List, Optional, Tuple
 
 import finn.util
 from finn.builder.build_dataflow_config import FpgaMemoryType
+from finn.templates import get_templates_folder
 from finn.util.basic import make_build_dir
 from finn.util.data_packing import get_driver_shapes, to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -476,9 +477,8 @@ class MakePYNQDriverIODMA(Transformation):
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
 
         # create the base FINN driver -- same for all accels
-        driver_base_template = os.path.join(
-            os.environ["FINN_QNN_DATA"], "templates/driver/driver_base.py"
-        )
+        driver_base_template = get_templates_folder() / "python_driver/driver_base.py"
+
         driver_base_py = pynq_driver_dir + "/driver_base.py"
         shutil.copy(driver_base_template, driver_base_py)
         # driver depends on qonnx and finn packages
@@ -578,9 +578,7 @@ class MakePYNQDriverIODMA(Transformation):
 
         # add validate.py to run full top-1 test (only for suitable networks)
         validate_py = pynq_driver_dir + "/validate.py"
-        validate_template = os.path.join(
-            os.environ["FINN_QNN_DATA"], "templates/driver/validate.py"
-        )
+        validate_template = get_templates_folder() / "python_driver/validate.py"
         shutil.copy(validate_template, validate_py)
 
         # generate settings.json for generated driver
@@ -640,9 +638,7 @@ class MakePYNQDriverInstrumentation(Transformation):
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
 
         # create (copy) the static instrumentation driver
-        driver_template = (
-            os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_instrumentation.py"
-        )
+        driver_template = get_templates_folder() / "python_driver/driver_instrumentation.py"
         if self.live_fifo_sizing:
             driver_py = pynq_driver_dir + "/driver_instrumentation.py"
         else:
@@ -651,7 +647,7 @@ class MakePYNQDriverInstrumentation(Transformation):
 
         # add-on driver for live fifosizing
         if self.live_fifo_sizing:
-            driver_template = os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_fifosizing.py"
+            driver_template = get_templates_folder() / "python_driver/driver_fifosizing.py"
             driver_py = pynq_driver_dir + "/driver.py"
             shutil.copy(driver_template, driver_py)
 
