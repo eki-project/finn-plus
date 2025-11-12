@@ -8,7 +8,7 @@ deps:
     rev_lock: ca64a44e9cc4d56df870b6f8cf4d5f3791e770a7
 outs:
 - md5: 5ae4a15dfac0e2af0952023d2148f413.dir
-  size: 19287653
+  size: 19279333
   nfiles: 48
   hash: md5
   path: finn-transformers

@@ -1,0 +1,13 @@
+params:
+  dut: transformer
+  model_dir: models/transformer/finn-transformers/vision
+  live_fifo_sizing: true
+  generate_outputs:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
