@@ -18,14 +18,15 @@ import yaml
 from finn.benchmarking.bench_base import bench
 from finn.benchmarking.dut.mvau import bench_mvau
 from finn.benchmarking.dut.synthetic_nonlinear import bench_synthetic_nonlinear
-from finn.benchmarking.dut.transformer import bench_transformer
+
+# from finn.benchmarking.dut.transformer import bench_transformer
 from finn.benchmarking.util import delete_dir_contents
 
 # Register custom bench subclasses that offer more control than YAML-based flow
 dut = dict()
 dut["mvau"] = bench_mvau
 dut["synthetic_nonlinear"] = bench_synthetic_nonlinear
-dut["transformer"] = bench_transformer
+# dut["transformer"] = bench_transformer # TODO: delete old transformer.py and custom steps
 
 
 class PrefixPrinter(object):

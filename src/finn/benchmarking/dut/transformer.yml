@@ -1,0 +1,71 @@
+# Custom fixed folding and specialization configs, currently located next to this file
+folding_config_file: src/finn/benchmarking/dut/transformer_folding.yml
+specialize_layers_config_file: src/finn/benchmarking/dut/transformer_specialization.json
+
+# Sequence of steps to transform, optimize and build the accelerator
+steps:
+  - step_passes_frontend
+  # Default FINN frontend step sequence (TODO: remove after new frontend is complete)
+  - step_qonnx_to_finn
+  - step_tidy_up
+  - step_streamline
+  # Customized adhoc hardware conversion step: Includes inferring the fused
+  # operator for scaled dot-product attention
+  - finn.builder.custom_step_library.transformer_adhoc.step_convert_to_hw
+  # Default FINN partitioning and specialization steps
+  - step_create_dataflow_partition
+  - step_minimize_bit_width
+  - step_specialize_layers
+  # Customized adhoc folding configuration: Tries to meet the throughput target
+  # with each attention operator via semi-automatic folding and then hands over
+  # to FINN auto-folding to configure all other operators before loading folding
+  # configuration from a YAML file.
+  - finn.builder.custom_step_library.transformer_adhoc.step_set_folding
+  # Default FINN backend step sequence: Minimizing bit-width setting FIFOs, code
+  # generation and synthesis
+  - step_minimize_bit_width
+  - step_generate_estimate_reports
+#  - step_insert_dwc
+  - step_set_fifo_depths
+  - step_hw_codegen
+  - step_hw_ipgen
+  - step_create_stitched_ip
+  - step_measure_rtlsim_performance
+  - step_out_of_context_synthesis
+  - step_synthesize_bitfile
+  - step_make_driver
+  - step_deployment_package
+
+# Select build steps at which the model should be executed on test inputs to
+# verify correctness
+verify_steps:
+  - passes_frontend
+  - finn_onnx_python
+  - initial_python
+  - streamlined_python
+  - folded_hls_cppsim
+  - node_by_node_rtlsim
+# Disabled due to missing FIFO sizing:
+#  - stitched_ip_rtlsim
+
+# Additional debugging/artifact saving:
+verify_save_rtlsim_waveforms: false
+stitched_ip_gen_dcp: false
+
+target_fps: 1000
+
+# Relax verification tolerance
+verification_atol: 0.5
+
+# Force the implementation of standalone thresholds to be able to use RTL
+# implementation of the MVU
+standalone_thresholds: true
+# Maximum bit-width of quantizers converted to multi-thresholds
+# Note: Irrelevant for already converted and streamlined models
+max_multithreshold_bit_width: 16
+# Maximum width of MVAU stream per PE
+mvau_wwidth_max: 2048
+# FIFO nodes with depth larger than 32768 will be split
+split_large_fifos: true
+# Disable automatic FIFO-sizing (rely on live FIFO-sizing for now)
+auto_fifo_depths: false

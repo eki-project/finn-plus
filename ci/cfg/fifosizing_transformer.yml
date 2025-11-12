@@ -4,27 +4,31 @@
     {
         "dut": ["transformer"],
         "model_dir": ["models/transformer/finn-transformers/benchmark"],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
     },
 
     # language model
     {
         "dut": ["transformer"],
         "model_dir": ["models/transformer/finn-transformers/language"],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
     },
 
     # radioml model
     {
         "dut": ["transformer"],
         "model_dir": ["models/transformer/finn-transformers/radioml"],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
     },
 
     # vision model
     {
         "dut": ["transformer"],
         "model_dir": ["models/transformer/finn-transformers/vision"],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
     },
 ]
