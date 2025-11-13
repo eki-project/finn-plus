@@ -1,5 +1,7 @@
 """Integrates ONNX Passes and ONNX Script passes into the FINN build steps."""
 
+import onnxruntime as ort
+
 # Transformation bases from ONNX Passes to simplify setup and configuration of
 # transformation passes
 from onnx_passes.passes.base import Transformation, RewriteRulePass
@@ -368,6 +370,19 @@ def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
 def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Meta build step calling the ONNX Passes steps in the expected order."""
+
+    # Attempt to work around onnxruntime issue on Slurm-managed clusters:
+    # See https://github.com/microsoft/onnxruntime/issues/8313
+    # This seems to happen only when assigned CPU cores are not contiguous
+    _default_session_options = ort.capi._pybind_state.get_default_session_options()
+
+    def get_default_session_options_new():
+        """Return specific default session options for onnxruntime."""
+        _default_session_options.inter_op_num_threads = 1
+        _default_session_options.intra_op_num_threads = 1
+        return _default_session_options
+
+    ort.capi._pybind_state.get_default_session_options = get_default_session_options_new
 
     model = prepare(model, cfg)
     model = inline(model, cfg)
