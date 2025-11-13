@@ -94,7 +94,8 @@ def _make_pass_config(cfg: DataflowBuildConfig):
         # Configuration of logging and verbosity
         "logging": {
             # Enable all passes to print a message when entering/leaving
-            "verbose": cfg.verbose
+            # TODO: control from build config or logging level
+            "verbose": False
         },
         # Forward layout configuration loaded from file
         "layouts": layouts,
