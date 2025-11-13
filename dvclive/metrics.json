@@ -1,0 +1,12 @@
+{
+    "status": "failed",
+    "verification": "success",
+    "time": {
+        "step_passes_frontend": 341,
+        "step_qonnx_to_finn": 0,
+        "step_tidy_up": 2,
+        "step_streamline": 10,
+        "step_convert_to_hw": 2,
+        "total_build_time": 355
+    }
+}
