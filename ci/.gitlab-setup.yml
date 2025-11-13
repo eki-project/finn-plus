@@ -2,6 +2,7 @@
 
 .n2_setup_general:
   before_script:
+    - lang/Python/3.11.5-GCCcore-13.2.0
     - ml compiler/GCC/14.2.0 devel/Boost/1.88.0-GCC-14.2.0
     - ulimit -s unlimited # Increase stack size limit
 
