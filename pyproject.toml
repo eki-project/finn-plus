@@ -40,7 +40,7 @@ finn = "finn.interface.run_finn:main"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
-pybind11 = "3.0.1"
+pybind11 = "3.0.1"                              # pybind11==3.0.1 already for FIFO sim rework, after rework remove module
 bitstring = "~4.3.1"
 numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
 # Cannot upgrade onnx and onnxruntime any further. For now this seems to be the
