@@ -3,15 +3,13 @@
 .n2_setup_general:
   before_script:
     - ml compiler/GCCcore/14.2.0 compiler/GCC/14.2.0 devel/Boost/1.88.0-GCC-14.2.0
-    - ml fpga xilinx/xrt/2.14
-    - module swap xilinx/u280 xilinx/u55c
-    - ml fpga/xilinx/vitis_hls_xcd_fix
     - ulimit -s unlimited # Increase stack size limit
 
 .n2_setup_xilinx_2022_2:
   before_script:
     - module load fpga
     - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    - ml fpga/xilinx/vitis_hls_xcd_fix
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
 
@@ -20,6 +18,7 @@
     - module load fpga
     - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
     - module swap xilinx/vitis/24.2 # switch to Vitis/Vivado 2024.2
+    - ml fpga/xilinx/vitis_hls_xcd_fix
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
 
