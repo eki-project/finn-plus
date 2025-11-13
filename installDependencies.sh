@@ -4,34 +4,10 @@ XRT_DEB_VERSION="xrt_202220.2.14.354_22.04-amd64-xrt"
 
 sudo apt-get update && sudo apt-get install -y \
     build-essential \
-    libc6-dev-i386 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
     zip \
-    perl \
     make \
-    autoconf \
     g++ \
-    flex \
-    bison \
-    ccache \
-    libgoogle-perftools-dev \
-    numactl \
-    perl-doc \
-    libfl2 \
-    libfl-dev \
-    zlib1g \
     zlib1g-dev \
-    pybind11-dev \
-    libfmt-dev \
-    libboost-dev \
-    libjansson-dev \
-    libgetdata-dev \
-    g++-10 \
-    libpython3.10-dev \
-    python3.10-dev \
     libboost-all-dev
 
 xrt_found=$(dpkg -l | grep xrt | wc -l)
