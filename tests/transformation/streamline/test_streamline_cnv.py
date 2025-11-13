@@ -77,7 +77,10 @@ def test_streamline_cnv(size, wbits, abits):
     model = model.transform(RemoveStaticGraphInputs())
     # load one of the test vectors
     cifar_path = (
-        Path(__file__).parent.parent / "example_data" / "cifar10" / "cifar10-test-data-class3.npz"
+        Path(__file__).parent.parent.parent
+        / "example_data"
+        / "cifar10"
+        / "cifar10-test-data-class3.npz"
     )
     input_tensor = np.load(cifar_path)["arr_0"].astype(np.float32).astype(np.float32)
     input_tensor = input_tensor / 255
