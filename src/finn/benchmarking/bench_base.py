@@ -392,6 +392,11 @@ class bench:
         if cfg.live_fifo_sizing:
             cfg.verify_steps = None
 
+        # Set verification i/o paths if available
+        if "input_npy_path" in self._build_inputs and "output_npy_path" in self._build_inputs:
+            cfg.verify_input_npy = self._build_inputs["input_npy_path"]
+            cfg.verify_expected_output_npy = self._build_inputs["output_npy_path"]
+
         # Overwrite build config settings with run-specific parameters
         # Filter to only valid DataflowBuildConfig attributes to avoid errors
         valid_params = {k: v for k, v in self._params.items() if hasattr(cfg, k)}
