@@ -1,8 +1,7 @@
 [project]
 name = "finn-plus"
 description = "Fork of FINN, a QNN dataflow compiler for AMD/Xilinx FPGAs"
-#dynamic = ["version"]
-version = "1.0.2"
+dynamic = ["version"]
 maintainers = [
     { name = "Felix Jentzsch", email = "felix.jentzsch@upb.de" },
     { name = "Christoph Berganski", email = "christoph.berganski@upb.de" },
@@ -40,7 +39,7 @@ finn = "finn.interface.run_finn:main"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
-pybind11 = "3.0.1"                              # pybind11==3.0.1 already for FIFO sim rework, after rework remove module
+pybind11 = "3.0.1"                              # pybind11==3.0.1 already for FIFO sim rework, after rework remove module load
 bitstring = "~4.3.1"
 numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
 # Cannot upgrade onnx and onnxruntime any further. For now this seems to be the

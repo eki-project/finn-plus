@@ -1,6 +1,6 @@
 [project]
 name = "finn-plus-notebooks"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Notebooks and tutorials for finn-plus"
 requires-python = ">=3.10,<3.12"
 maintainers = [
@@ -10,13 +10,19 @@ maintainers = [
     { name = "Bjarne Wintermann", email = "bjarne.wintermann@upb.de" },
 ]
 
+[tool.poetry.requires-plugins]
+poetry-dynamic-versioning = { version = ">=1.0.0,<2.0.0", extras = ["plugin"] }
+
+[tool.poetry-dynamic-versioning]
+enable = true
+
 [project.urls]
 "GitHub" = "https://github.com/eki-project/finn-plus"
 "EKI Project" = "https://www.eki-project.tech/"
 
 [tool.poetry]
 name = "finn-plus-notebooks"
-version = "0.1.0"
+version = "0.0.0"
 description = "Notebooks and tutorials for finn-plus"
 packages = [{ include = "notebooks", from = ".." }]
 
