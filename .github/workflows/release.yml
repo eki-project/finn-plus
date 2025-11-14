@@ -22,7 +22,7 @@ jobs:
           cd tests
           poetry install
           poetry build
-          VERSION=$(poetry version -s)
+          export VERSION=$(poetry version -s)
           cd ..
 
           # Build notebooks subpackage
