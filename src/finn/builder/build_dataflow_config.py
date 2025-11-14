@@ -45,8 +45,8 @@ This configuration system allows users to customize the entire FINN dataflow
 build process through a single, serializable configuration object.
 """
 from __future__ import annotations
-import logging
 
+import logging
 import numpy as np
 import os
 from dataclasses import dataclass, field
@@ -56,6 +56,8 @@ from mashumaro.mixins.yaml import DataClassYAMLMixin
 from typing import Any, Literal, Optional
 
 from finn.util.basic import alveo_default_platform, part_map
+
+from pathlib import Path  # noqa
 
 
 class LogLevel(str, Enum):
@@ -211,6 +213,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     serialized into or de-serialized from JSON files for persistence.
     See list of attributes below for more information on the build configuration.
     """
+
+    #: Path to the model. This CAN be set by the startup, but must not necessarily.
+    model_path: Path | None = None
 
     #: Directory where the final build outputs will be written into
     output_dir: str = "finn_build_output"

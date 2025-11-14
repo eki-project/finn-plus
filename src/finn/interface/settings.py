@@ -50,7 +50,6 @@ class FINNSettings(BaseModel):
     _num_default_workers: int = PrivateAttr(-1)
     automatic_dependency_updates: bool = True
     deps_git_timeout: int = 100
-    finn_qnn_data = ""
 
     # TODO: resolve_module_path should return Path. Also need to fix usage then
     # TODO: MISSING FIELDS: RTLSIM_TRACE_DEPTH, LIVENESS_THRESHOLD, XILINX_VIVADO

@@ -1,6 +1,7 @@
 """Contains a decorator to snapshot FINN+ when it crashes for debugging purposes."""
 from __future__ import annotations
 
+import contextlib
 import functools
 import inspect
 import os
@@ -132,10 +133,8 @@ def snapshot_on_exception(
                     dataflow_log += traceback.format_exc()
                     (path / "build_dataflow.log").write_text(dataflow_log)
                 if snapshot_finn_envvars:
-                    try:
+                    with contextlib.suppress(Exception):
                         (path / "saved_settings.txt").write_text(str(get_settings()))
-                    except Exception:
-                        pass
                     env: dict[str, str] = {}
                     non_finn_envvars: list[str] = [*additional_envvars, "NUM_DEFAULT_WORKERS"]
                     for key in non_finn_envvars:

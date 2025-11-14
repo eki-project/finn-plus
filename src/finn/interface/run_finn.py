@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import click
 import inspect
+import json
 import os
 import rich
 import shlex
 import subprocess
 import sys
+import yaml
 from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm, IntPrompt, Prompt
@@ -86,6 +88,7 @@ def model(f: Callable) -> Callable[..., Any]:
     """Add a click parameter named model (type pathlib.Path)."""
     return click.argument(
         "model",
+        required=False,
         type=click.Path(
             exists=True, file_okay=True, dir_okay=False, resolve_path=True, path_type=Path
         ),
@@ -167,7 +170,7 @@ def run_flow_wizard() -> None:
         "1) Run until nodes are folded and first estimates are available\n"
         "2) Run until a stitched IP of synthesized cores is available\n"
         "3) Run until a full accelerator bitstream is available. (This will take "
-        "a significant amount of time",
+        "a significant amount of time)",
         default=3,
         choices=["1", "2", "3"],
     )
@@ -273,7 +276,7 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "path is searched for from the provided "
         "model path.\n"
     )
-    settings.finn_build_dir = Prompt.ask("FINN_BUILD_DIR", default=str(settings.finn_build_dir))
+    settings.finn_build_dir = Prompt.ask("FINN_BUILD_DIR", default="./FINN_TMP")
     console.clear()
     console.print(
         "[bold]FINN_DEPS[/bold] points to the location of the FINN dependency "
@@ -425,7 +428,24 @@ def get_function_args() -> dict:
     return d
 
 
-# The build function is seperated from its command so that it can be reused
+def read_model_path(flowconfig: Path) -> Path | None:
+    """Try to read the model path from the flow config."""
+    if flowconfig.suffix in [".yaml", ".yml"]:
+        with flowconfig.open() as f:
+            data: dict = yaml.load(f, yaml.Loader)
+    elif flowconfig.suffix == ".json":
+        data: dict = json.loads(flowconfig.read_text())
+    else:
+        raise FINNUserError(
+            "Pass the flowconfig either as a YAML " "(.yaml, .yml) or JSON (.json) file!"
+        )
+    p = Path(data.get("model_path"))
+    if p.is_absolute():
+        return p
+    return Path.cwd() / p
+
+
+# The build function is separated from its command so that it can be reused
 # without decorators in other commands
 def _build(
     output: Path | None,
@@ -440,9 +460,19 @@ def _build(
     start: str,
     stop: str,
     flow_config: Path,
-    model: Path,
+    model: Path | None,
 ) -> None:
     """Click command line option to build a FINN flow from a YAML config and an ONNX model."""
+    # Check for the model path in the DFBC in case we dont pass one over CLI
+    if model is None:
+        mp = read_model_path(flow_config)
+        if mp is None:
+            error(
+                "Please pass the model either via CLI "
+                "or by setting model_path in your flow config!"
+            )
+            sys.exit(1)
+        model = mp
     status(f"Starting FINN build with config {config.name} and model {model.name}!")
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
@@ -471,6 +501,9 @@ def _build(
     if dfbc is None:
         error("Failed to generate dataflow build config!")
         sys.exit(1)
+
+    # Append the model path
+    dfbc.model_path = model
 
     # Set start and stop steps
     if dfbc.start_step is None and start != "":
@@ -541,7 +574,7 @@ def build(
     start: str,
     stop: str,
     flow_config: Path,
-    model: Path,
+    model: Path | None,
 ) -> None:
     """Launch a FINN hardware build."""
     _build(
@@ -561,7 +594,7 @@ def build(
     )
 
 
-@click.command(help="Run a script in a FINN environment")
+@click.command(help="Run a script in a FINN environment", deprecated=True)
 @accept_defaults
 @finn_deps
 @finn_deps_definitions
@@ -618,23 +651,13 @@ def flow_wizard() -> None:
 
 
 @click.command(name="config")
-@finn_deps
-@finn_deps_definitions
-@finn_build_dir
-@flow_config
-@num_default_workers
-@skip_dep_update
-def config_wizard(
-    finn_deps: Path | None,
-    finn_deps_definitions: Path | None,
-    finn_build_dir: Path | None,
-    num_default_workers: int,
-    skip_dep_update: bool,
-) -> None:
+def config_wizard() -> None:
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
         **get_function_args(),
+        flow_config=Path(),
+        finn_build_dir=Path("FINN_TMP"),
     )
     run_setup_wizard(settings)
 

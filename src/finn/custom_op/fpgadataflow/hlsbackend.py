@@ -42,10 +42,10 @@ from qonnx.core.datatype import DataType
 from finn.custom_op.fpgadataflow import templates
 from finn.util.basic import CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.deps import get_deps_path
 from finn.util.exception import FINNError, FINNUserError
 from finn.util.hls import CallHLS
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 
 class HLSBackend(ABC):
@@ -154,8 +154,10 @@ class HLSBackend(ABC):
         self.code_gen_dict["$CLKPERIOD$"] = [str(clk)]
         self.code_gen_dict["$DEFAULT_DIRECTIVES$"] = self.ipgen_default_directives()
         self.code_gen_dict["$EXTRA_DIRECTIVES$"] = self.ipgen_extra_directives()
-        self.code_gen_dict["$FINNHLSLIB$"] = [str(get_deps_path() / "finn-hlslib")]
-        self.code_gen_dict["$ATTENTIONHLSLIB$"] = [str(get_deps_path() / "attention-hlslib")]
+        self.code_gen_dict["$FINNHLSLIB$"] = [str(get_settings().finn_deps / "finn-hlslib")]
+        self.code_gen_dict["$ATTENTIONHLSLIB$"] = [
+            str(get_settings().finn_deps / "attention-hlslib")
+        ]
 
         template = templates.ipgentcl_template
 
@@ -276,17 +278,17 @@ class HLSBackend(ABC):
         # to enable additional debug features please uncommand the next line
         # builder.append_includes("-DDEBUG")
         builder.append_includes("-I$FINN_QNN_DATA/cpp")
-        builder.append_includes("-I" + str(get_deps_path() / "cnpy"))
-        builder.append_includes("-I" + str(get_deps_path() / "finn-hlslib"))
+        builder.append_includes("-I" + str(get_settings().finn_deps / "cnpy"))
+        builder.append_includes("-I" + str(get_settings().finn_deps / "finn-hlslib"))
         # TODO: Is it ok to add this here? Add some specialization to the
         #  attention operator? Eventually integrate this into the finn-hlslib?
-        builder.append_includes("-I" + str(get_deps_path() / "attention-hlslib"))
+        builder.append_includes("-I" + str(get_settings().finn_deps / "attention-hlslib"))
         builder.append_includes("-I$FINN_CUSTOM_HLS")
         builder.append_includes("-I{}/include".format(os.environ["XILINX_HLS"]))
         builder.append_includes("--std=c++14")
         builder.append_includes("-O3")
         builder.append_sources(code_gen_dir + "/*.cpp")
-        builder.append_sources(str(get_deps_path() / "cnpy" / "cnpy.cpp"))
+        builder.append_sources(str(get_settings().finn_deps / "cnpy" / "cnpy.cpp"))
         builder.append_includes("-lz")
         builder.set_executable_path(code_gen_dir + "/node_model")
         builder.build(code_gen_dir)
