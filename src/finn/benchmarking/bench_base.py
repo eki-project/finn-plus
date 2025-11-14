@@ -369,10 +369,6 @@ class bench:
         # cfg.default_swg_exception
         # cfg.large_fifo_mem_style
 
-        # disable verification if live FIFO-sizing is on
-        if cfg.live_fifo_sizing:
-            cfg.verify_steps = None
-
         # Set verification i/o paths if available
         if "input_npy_path" in self._build_inputs and "output_npy_path" in self._build_inputs:
             cfg.verify_input_npy = self._build_inputs["input_npy_path"]
@@ -391,6 +387,10 @@ class bench:
             # Only apply values that were explicitly specified in params (not defaults)
             for param_key in valid_params.keys():
                 setattr(cfg, param_key, getattr(updated_cfg, param_key))
+
+        # disable verification if live FIFO-sizing is on
+        if cfg.live_fifo_sizing:
+            cfg.verify_steps = None
 
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?
