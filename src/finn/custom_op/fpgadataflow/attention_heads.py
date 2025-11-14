@@ -1,3 +1,5 @@
+"""Multi-head attention split and merge operators."""
+
 # fmt: off
 # Disable formatter. This is deliberately formatted to stay within 80 characters
 # per line. Black, however, formats some lines going beyond this.
@@ -27,10 +29,16 @@ from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.logging import log
 
 
-# Splitting of attention heads (after input projections) custom operator
 class SplitMultiHeads(HWCustomOp):
-    # Initializes the operator given an onnx graph node
+    """Split input tensor into multiple attention heads.
+
+    This operator splits the input tensor after input projections to create
+    separate attention heads for multi-head attention mechanisms. The output
+    can be either packed as a single tensor or split into multiple output tensors.
+    """
+
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the SplitMultiHeads operator."""
         # Just forward all arguments to the init method of the CustomOp base
         super().__init__(onnx_node, **kwargs)
 
@@ -40,8 +48,16 @@ class SplitMultiHeads(HWCustomOp):
         if not self.get_nodeattr("outFIFODepths"):
             self.set_nodeattr("outFIFODepths", [2 for _ in range(self.heads)])
 
-    # Defines attributes which must be present on this node
     def get_nodeattr_types(self):
+        """Get node attribute types for the SplitMultiHeads operator.
+
+        Defines the attributes that must be present on this node, including
+        the number of attention heads, packing mode, data type, and other
+        configuration parameters inherited from the parent HWCustomOp class.
+
+        Returns:
+            dict: Dictionary mapping attribute names to their type specifications
+        """
         # Start from parent operator class attributes
         attrs = HWCustomOp.get_nodeattr_types(self)
         # Update attributes dictionary for new custom operator
@@ -71,37 +87,40 @@ class SplitMultiHeads(HWCustomOp):
         # Return updated attribute dictionary
         return attrs
 
-    # Number of attention heads attribute as property for convenience
     @property
     def heads(self):
+        """Get number of attention heads."""
         return self.get_nodeattr("heads")
 
-    # Packed attribute as property for convenience
     @property
     def packed(self):
+        """Get packed attribute."""
         # Note: Converts from int to bool
         return bool(self.get_nodeattr("packed"))
 
-    # Datatype attribute as property for convenience
     @property
     def dtype(self):
+        """Get data type attribute."""
         # Note: Converts from string to QONNX data type
         return DataType[self.get_nodeattr("dtype")]
 
-    # Number of elements attribute as property for convenience
     @property
     def num_elems(self):
+        """Get number of elements attribute."""
         return self.get_nodeattr("num_elems")
 
-    # Number of inputs attribute as property for convenience
     @property
     def num_inputs(self):
+        """Get number of inputs attribute."""
         return self.get_nodeattr("num_inputs")
 
-    # Makes an operation compatible with the output shape for shape inference
-    #   Note: Propagates shape forward, i.e., never asks for the shape of the
-    #   output, even if it seems easier.
+
     def make_shape_compatible_op(self, model: ModelWrapper):  # noqa
+        """
+        Make an operation compatible with the output shape for shape inference
+        Note: Propagates shape forward, i.e., never asks for the shape of the output,
+        even if it seems easier.
+        """
         # Get the node wrapped by this custom op
         node = self.onnx_node
         # Determine the rank of the input tensor to support batched and
@@ -136,8 +155,8 @@ class SplitMultiHeads(HWCustomOp):
             "Split", [mock_input], node.output, num_outputs=self.heads, axis=-1
         )
 
-    # Infers the datatype of the node output
     def infer_node_datatype(self, model: ModelWrapper):  # noqa
+        """Infer the datatype of the node output."""
         # Get the node wrapped by this custom op  # noqa Duplicate
         node = self.onnx_node
         # Test for changing input datatype
@@ -155,8 +174,18 @@ class SplitMultiHeads(HWCustomOp):
             # Slicing simply propagates the dtype to the output
             model.set_tensor_datatype(o, self.dtype)
 
-    # Executes multi-head slicing in python
     def _execute_node_python(self, context, graph):  # noqa: graph unused
+        """Execute multi-head splitting operation in Python mode.
+
+        Performs the multi-head attention splitting either as a packed operation
+        (single input to single output with reshape and transpose) or as a split
+        operation (single input to multiple outputs). Input shape must be either
+        seq x 1 x dim or seq x dim format.
+
+        Args:
+            context: Execution context containing input/output tensors
+            graph: ONNX graph (unused but required by interface)
+        """
         # Get the node wrapped by this custom op
         node = self.onnx_node
         # Get the input out of the execution context
@@ -179,15 +208,15 @@ class SplitMultiHeads(HWCustomOp):
                 # Write the output into the execution context
                 context[o] = out
 
-    # Executes multi-head splitting in C++ simulation
     def _execute_node_cppsim(self, context, graph):  # noqa: graph unused
+        """Execute node in C++ simulation mode."""
         # C++ Simulation needs to be implemented in HLS backend specialization
         raise NotImplementedError(
             f"exec_mode cppsim of {self.__class__.__name__} is not implemented!"
         )
 
-    # Executes multi-head slicing in RTL simulation
     def _execute_node_rtlsim(self, context, graph):  # noqa: graph unused
+        """Execute node in RTL simulation mode."""
         # Get the node wrapped by this custom op    # noqa Duplicate
         node = self.onnx_node
         # Input data is stored in numpy files in the code generation dictionary
@@ -241,8 +270,8 @@ class SplitMultiHeads(HWCustomOp):
             # Reshape the folded output and insert into the execution context
             context[name] = out.reshape(self.get_normal_output_shape(ind=i))
 
-    # Executes multi-head slicing in simulation (either python c++ or rtl sim)
     def execute_node(self, context, graph):
+        """Execute the node."""
         # Get the configured execution mode
         mode = self.get_nodeattr("exec_mode")
         # Lookup table mapping execution modes to implementing methods
@@ -254,31 +283,31 @@ class SplitMultiHeads(HWCustomOp):
         # Select and execute the function by mode string
         exec_fns[mode](context, graph)
 
-    # Verifies the node attributes, inputs and outputs
     def verify_node(self):
+        """Verify node attribute/input/output correctness."""
         # TODO: Implement
         return []
 
     # Note: End of QONNX CustomOp region, below is FINN HWCustomOp stuff
 
-    # Gets the datatype of input at index ind
     def get_input_datatype(self, ind=0):
+        """Get input data type."""
         # All inputs (there should only be one) have the same type
         return self.dtype
 
-    # Gets the datatype of the output at index ind
     def get_output_datatype(self, ind=0):
+        """Get output data type."""
         # All outputs will hae the same type, which is the same as the input
         return self.dtype
 
-    # Gets the shape of the input at index ind without folding
     def get_normal_input_shape(self, ind=0):
+        """Get normal input shape."""
         # There is only one input with shape configured as attributes
         #   Unpack multi-axis inputs list to yield a flat tuple as shape
         return *self.num_inputs, self.num_elems
 
-    # Gets the shape of the output at index ind without folding
     def get_normal_output_shape(self, ind=0):
+        """Get normal output shape."""
         # Packed layout is currently not implemented
         assert not self.packed, "Packed multi-heads are not implemented yet"
         # All output have the same shape, which correspond to distributing the
@@ -286,18 +315,18 @@ class SplitMultiHeads(HWCustomOp):
         #   Unpack multi-axis inputs list to yield a flat tuple as shape
         return *self.num_inputs, self.num_elems // self.heads
 
-    # Gets the shape of the input at index ind with folding
     def get_folded_input_shape(self, ind=0):
+        """Get folded input shape."""
         # No folding for now, normal and folded shape are the same
         return self.get_normal_input_shape(ind=ind)
 
-    # Gets the shape of the output at index ind with folding
     def get_folded_output_shape(self, ind=0):
+        """Get folded output shape."""
         # No folding for now, normal and folded shape are the same
         return self.get_normal_output_shape(ind=ind)
 
-    # Widths of the input data stream of the input at index ind
     def get_instream_width(self, ind=0):
+        """Get input stream width."""
         # Get the number of bits used to represent the input
         i_bits = self.get_input_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
@@ -306,8 +335,8 @@ class SplitMultiHeads(HWCustomOp):
         # Width of a stream receiving input elements in parallel
         return elems * i_bits
 
-    # Widths of the output data stream of the output at index ind
     def get_outstream_width(self, ind=0):
+        """Get output stream width."""
         # Get the number of bits used to represent the output
         o_bits = self.get_output_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
@@ -319,6 +348,9 @@ class SplitMultiHeads(HWCustomOp):
     # Gets the number of expected output values, i.e. how many times read()
     # could/should be called on any output stream of this operator
     def get_number_output_values(self):
+        """Get the number of expected output values, i.e. how many times read()
+        could/should be called on any output stream of this operator
+        """
         # Elements over all but the last dimension of the output folded along
         # the embedding dimension.
         # In case of multiple outputs, the new FINN XSI simulation back-end requires
@@ -329,18 +361,18 @@ class SplitMultiHeads(HWCustomOp):
         else:
             return num_outputs_per_stream
 
-    # Derives the expected cycles for the attention head splitting operation
-    # given the folding configuration
     def get_exp_cycles(self):
+        """Derive the expected cycles of the operator given the folding configuration."""
         # Currently, this implicitly assumes fully parallelized processing
         # along the embedding dimension, i.e., always max PE
         return np.prod(self.num_inputs)
 
 
-# Merging of attention heads (before output projections) custom operator
 class MergeMultiHeads(HWCustomOp):
+    """Merging of attention heads (before output projections) custom operator."""
     # Initializes the operator given an onnx graph node
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the operator."""
         # Just forward all arguments to the init method of the CustomOp base
         super().__init__(onnx_node, **kwargs)
 
@@ -350,8 +382,8 @@ class MergeMultiHeads(HWCustomOp):
         if not self.get_nodeattr("inFIFODepths"):
             self.set_nodeattr("inFIFODepths", [2 for _ in range(self.heads)])
 
-    # Defines attributes which must be present on this node
     def get_nodeattr_types(self):
+        """Define attributes which must be present on this node"""
         # Start from parent operator class attributes
         attrs = HWCustomOp.get_nodeattr_types(self)
         # Update attributes dictionary for new custom operator
@@ -383,43 +415,44 @@ class MergeMultiHeads(HWCustomOp):
         # Return updated attribute dictionary
         return attrs
 
-    # Number of attention heads attribute as property for convenience
     @property
     def heads(self):
+        """Get number of attention heads."""
         return self.get_nodeattr("heads")
 
-    # Packed attribute as property for convenience
     @property
     def packed(self):
+        """Get packed attribute."""
         # Note: Converts from int to bool
         return bool(self.get_nodeattr("packed"))
 
-    # Datatype attribute as property for convenience
     @property
     def dtype(self):
+        """Get data type."""
         # Note: Converts from string to QONNX data type
         return DataType[self.get_nodeattr("dtype")]
 
-    # Number of elements attribute as property for convenience
     @property
     def num_elems(self):
+        """Get number of elements."""
         return self.get_nodeattr("num_elems")
 
-    # Number of inputs attribute as property for convenience
     @property
     def num_inputs(self):
+        """Get number of inputs."""
         return self.get_nodeattr("num_inputs")
 
-    # Squeezed output attribute as property for convenience
     @property
     def squeezed(self):
+        """Get squeezed attribute."""
         # Note: Converts from int to bool
         return bool(self.get_nodeattr("squeezed"))
 
-    # Makes an operation compatible with the output shape for shape inference
-    #   Note: Propagates shape forward, i.e., never asks for the shape of the
-    #   output, even if it seems easier.
     def make_shape_compatible_op(self, model: ModelWrapper):  # noqa
+        """Makes an operation compatible with the output shape for shape inference
+        Note: Propagates shape forward, i.e., never asks for the shape of the
+        output, even if it seems easier.
+        """
         # Squeeze single-element batch dimension from the output?
         squeezed = self.squeezed
         # Assume unpacked inputs by default, here seq sill be the number of
@@ -437,8 +470,8 @@ class MergeMultiHeads(HWCustomOp):
             [*seq, dim] if squeezed else [*seq, 1, dim]
         )
 
-    # Infers the datatype of the node output
     def infer_node_datatype(self, model: ModelWrapper):  # noqa
+        """Infer the datatype of the node output."""
         # Get the node wrapped by this custom op
         node = self.onnx_node  # noqa Duplicate
         # Test for changing input datatype
@@ -458,8 +491,8 @@ class MergeMultiHeads(HWCustomOp):
         # Merging simply propagates the datatype to the output
         model.set_tensor_datatype(node.output[0], self.dtype)
 
-    # Executes multi-head merging in python
     def _execute_node_python(self, context, graph):  # noqa: graph unused
+        """Execute node in Python mode."""
         # Get the node wrapped by this custom op
         node = self.onnx_node
         # Get the input out of the execution context
@@ -488,15 +521,15 @@ class MergeMultiHeads(HWCustomOp):
         # which might be squeezed
         context[node.output[0]] = out
 
-    # Executes multi-head merging in C++ simulation
     def _execute_node_cppsim(self, context, graph):  # noqa: graph unused
+        """Execute node in C++ simulation mode."""
         # C++ Simulation needs to be implemented in HLS backend specialization
         raise NotImplementedError(
             f"exec_mode cppsim of {self.__class__.__name__} is not implemented!"
         )
 
-    # Executes multi-head slicing in RTL simulation
     def _execute_node_rtlsim(self, context, graph):  # noqa: graph unused
+        """Execute node in RTL simulation mode."""
         # Get the node wrapped by this custom op
         node = self.onnx_node
         # Input data is stored in numpy files in the code generation dictionary
@@ -556,8 +589,8 @@ class MergeMultiHeads(HWCustomOp):
             self.get_normal_output_shape(ind=0)
         )
 
-    # Executes multi-head slicing in simulation (either python c++ or rtl sim)
     def execute_node(self, context, graph):
+        """Executes multi-head slicing in simulation (either python c++ or rtl sim)."""
         # Get the configured execution mode
         mode = self.get_nodeattr("exec_mode")
         # Lookup table mapping execution modes to implementing methods
@@ -569,50 +602,50 @@ class MergeMultiHeads(HWCustomOp):
         # Select and execute the function by mode string
         exec_fns[mode](context, graph)
 
-    # Verifies the node attributes, inputs and outputs
     def verify_node(self):
+        """Verify node attribute/input/output correctness."""
         # TODO: Implement
         return []
 
     # Note: End of QONNX CustomOp region, below is FINN HWCustomOp stuff
 
-    # Gets the datatype of input at index ind
     def get_input_datatype(self, ind=0):
+        """Get input data type."""
         # All inputs (there should only be one) have the same type
         return self.dtype
 
-    # Gets the datatype of the output at index ind
     def get_output_datatype(self, ind=0):
+        """Get output data type."""
         # All outputs will have the same type, which is the same as the input
         return self.dtype
 
-    # Gets the shape of the input at index ind without folding
     def get_normal_input_shape(self, ind=0):
+        """Get normal input shape."""
         # Packed layout is currently not implemented
         assert not self.packed, "Packed multi-heads are not implemented yet"
         # There is only one input with shape configured as attributes
         #   Unpack multi-axis inputs list to yield a flat tuple as shape
         return *self.num_inputs, self.num_elems
 
-    # Gets the shape of the output at index ind without folding
     def get_normal_output_shape(self, ind=0):
+        """Get normal output shape."""
         # All output have the same shape, which correspond to collecting the
         # number of input elements from the heads specified as attributes
         #   Unpack multi-axis inputs list to yield a flat tuple as shape
         return *self.num_inputs, self.num_elems * self.heads
 
-    # Gets the shape of the input at index ind with folding
     def get_folded_input_shape(self, ind=0):
+        """Get folded input shape."""
         # No folding for now, normal and folded shape are the same
         return self.get_normal_input_shape(ind=ind)
 
-    # Gets the shape of the output at index ind with folding
     def get_folded_output_shape(self, ind=0):
+        """Get folded output shape."""
         # No folding for now, normal and folded shape are the same
         return self.get_normal_output_shape(ind=ind)
 
-    # Widths of the input data stream of the input at index ind
     def get_instream_width(self, ind=0):
+        """Get input stream width."""
         # Get the number of bits used to represent the input
         i_bits = self.get_input_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
@@ -621,8 +654,8 @@ class MergeMultiHeads(HWCustomOp):
         # Width of a stream receiving input elements in parallel
         return elems * i_bits
 
-    # Widths of the output data stream of the output at index ind
     def get_outstream_width(self, ind=0):
+        """Get output stream width."""
         # Get the number of bits used to represent the output
         o_bits = self.get_output_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
@@ -631,16 +664,16 @@ class MergeMultiHeads(HWCustomOp):
         # Width of a stream producing output elements in parallel
         return elems * o_bits
 
-    # Gets the number of expected output values, i.e. how many times read()
-    # could/should be called on any output stream of this operator
     def get_number_output_values(self):
+        """Gets the number of expected output values, i.e. how many times read()
+        could/should be called on any output stream of this operator.
+        """
         # Elements over all but the last dimension of the output folded along
         # the embedding dimension
         return np.prod(self.get_folded_output_shape()[:-1])
 
-    # Derives the expected cycles for the attention head merging operation given
-    # the folding configuration
     def get_exp_cycles(self):
+        """Derive the expected cycles of the operator given the folding configuration."""
         # Currently, this implicitly assumes fully parallelized processing
         # along the embedding dimension, i.e., always max PE
         return np.prod(self.num_inputs)

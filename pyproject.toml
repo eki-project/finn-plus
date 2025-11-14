@@ -158,3 +158,43 @@ loaders = [
 type = "markdown"
 filename = "docs/api.md"
 classdef_with_decorators = true
+
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "F", # Pyflakes
+    "E", # pycodestyle (errors)
+    "W", # pycodestyle (warnings)
+    "N", # pep8-naming
+    "ANN", # flake8-annotations
+    "ISC", # flake8-implicit-str-concat
+    "FA", # flake8-future-annotations
+    "PYI", # flake8-pyi
+    "SLF", # flake8-self
+    "RET", # flake8-return
+    "I002", # Isort (missing required import)
+    "UP", # pyupgrade
+    "B", # flake8-bugbear
+    "A", # flake8-builtins
+    "C4", # flake8-comprehensions
+    "PIE", # flake8-pie
+    "SIM", # flake8-simplify
+    "TC", # flake8-type-checking
+    "ARG", # flake8-unused-arguments
+    "PTH", # flake8-use-pathlib
+    "NPY", # numpy specific rules
+    "PERF", # Perflint
+    "RUF", # Ruff specific rules
+    "D" # pydocstyle
+]
+ignore = [
+    "RET504",   # Assign to var before return
+    "PERF401",  # Replace for-loop with list comprehension
+    "SIM118",   # Using "a in b" instead of "a in b.keys()"
+    "ANN401",   # Don't use the "Any" type
+    "D413",     # Blank lines at docstring end
+    "D205",     # Blank line after summary (enables multiline summaries)
+]

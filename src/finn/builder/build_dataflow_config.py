@@ -281,12 +281,26 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: (Only relevant if verify_steps is set)
     #: Save full execution context for each of the verify_steps.
     #: By default, only the top-level graph output is saved.
+    #: This option also enables detailed activation tensor statistics logging.
     verify_save_full_context: bool = False
 
     #: (Only relevant if verify_steps is set or RTLSIM_PERFORMANCE output product is enabled)
     #: Save .vcd waveforms from rtlsim under reports.
     #: By default, waveforms won't be saved.
     verify_save_rtlsim_waveforms: bool = False
+
+    #: Set verification tolerance: absolute error per output element.
+    verification_atol: float = 1e-3
+
+    #: Set verification tolerance: relative error per output element.
+    #: This is added to the absolute tolerance (as computed by numpy.isclose).
+    verification_rtol: float = 1e-5
+
+    #: Set verification tolerance: mean absolute error over output elements of each frame.
+    verification_mean_atol: float = 1e-3
+
+    #: Set verification tolerance: mean relative error over output elements of each frame.
+    verification_mean_rtol: float = 1e-1
 
     #: Run synthesis to generate a .dcp for the stitched-IP output product.
     #: This can make it easier to treat it as a standalone artifact without requiring

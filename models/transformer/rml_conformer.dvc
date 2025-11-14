@@ -1,0 +1,6 @@
+outs:
+- md5: fc6c817931f2513a4ce9a96f7cf2d7e8.dir
+  size: 871868
+  nfiles: 3
+  hash: md5
+  path: rml_conformer

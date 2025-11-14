@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Transformations to map ONNX operators to FINN hardware layers."""
 
 import numpy as np
 import qonnx.core.data_layout as DataLayout
@@ -37,7 +38,7 @@ from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import SortGraph
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
-from qonnx.util.basic import get_by_name
+from qonnx.util.basic import get_by_name, remove_by_name
 from qonnx.util.onnx import nchw_to_nhwc
 
 # Module containing specializations of elementwise binary operations
@@ -52,9 +53,11 @@ class InferConvInpGen(Transformation):
     """Convert Im2Col layers to ConvolutionInputGenerator layers."""
 
     def __init__(self):
+        """Initialize the transformation."""
         super().__init__()
 
     def apply(self, model):
+        """Apply the transformation to infer ConvolutionInputGenerator layers."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -158,12 +161,14 @@ class InferConvInpGen(Transformation):
 
 
 class InferThresholdingLayer(Transformation):
-    """Convert any MultiThreshold into a standalone thresholding HLS layer."""
+    """Convert any MultiThreshold into a standalone thresholding layer."""
 
     def __init__(self):
+        """Initialize the transformation."""
         super().__init__()
 
     def apply(self, model):
+        """Apply the transformation to infer standalone thresholding layers."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -259,9 +264,10 @@ class InferThresholdingLayer(Transformation):
 
 
 class InferUpsample(Transformation):
-    """Convert Upsample and Resize nodes to layers to UpsampleNearestNeighbour nodes."""
+    """Convert Upsample and Resize nodes to UpsampleNearestNeighbour nodes."""
 
     def apply(self, model):
+        """Apply the transformation to infer UpsampleNearestNeighbour nodes."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -370,6 +376,7 @@ class InferAddStreamsLayer(Transformation):
     """Convert any Add into a AddStreams HW layer."""
 
     def apply(self, model):
+        """Apply the transformation to convert Add operations into AddStreams HW layers."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -452,9 +459,10 @@ class InferAddStreamsLayer(Transformation):
 
 
 class InferDuplicateStreamsLayer(Transformation):
-    """Insert a DuplicateStreams HW layer for any tensor with fanout == 2"""
+    """Insert a DuplicateStreams HW layer for any tensor with fanout >= 2."""
 
     def apply(self, model):
+        """Apply the transformation to insert DuplicateStreams HW layers where needed."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -583,8 +591,10 @@ class InferChannelwiseLinearLayer(Transformation):
     """Convert any channel-wise Add/Mul into a HW layer."""
 
     def get_smallest_possible(self, vals):
-        """Returns smallest (fewest bits) possible DataType that can represent
-        value. Prefers unsigned integers where possible."""
+        """Return smallest (fewest bits) possible DataType that can represent value.
+
+        Prefers unsigned integers where possible.
+        """
         vals = np.array(vals, dtype=np.float64)
         for v in vals:
             assert int(v) == v, "Error float value"
@@ -613,6 +623,11 @@ class InferChannelwiseLinearLayer(Transformation):
             return DataType["INT64"]
 
     def apply(self, model):
+        """Apply transformation to convert channel-wise Add/Mul operations to ChannelwiseOp nodes.
+
+        This transformation identifies Add and Mul operations that operate channel-wise
+        and converts them to FINN's custom ChannelwiseOp nodes for hardware acceleration.
+        """
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -737,6 +752,11 @@ class InferLabelSelectLayer(Transformation):
     """Convert any TopK into a LabelSelect HW layer."""
 
     def apply(self, model):
+        """Apply transformation to convert TopK nodes to LabelSelect hardware layers.
+
+        This transformation identifies TopK operations and converts them to FINN's
+        custom LabelSelect nodes for hardware acceleration.
+        """
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -795,6 +815,7 @@ class InferGlobalAccPoolLayer(Transformation):
     """Convert any GlobalAveragePool into a GlobalAccPool HW layer and a scalar Mul."""
 
     def apply(self, model):
+        """Apply transformation to infer GlobalAccPool hardware layers."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -881,11 +902,15 @@ class InferGlobalAccPoolLayer(Transformation):
 
 
 class InferPool(Transformation):
-    """If kernel_shape > strides, replace Pool layer with  with of Im2col
-    + pool(with kernel_shape == strides), plus Transpose layers to keep the original
-    data layout."""
+    """If kernel_shape > strides, replace Pool layer with Im2col + pool combination.
+
+    When kernel_shape > strides, replaces Pool layer with Im2col followed by
+    pool (with kernel_shape == strides), plus Transpose layers to keep the
+    original data layout.
+    """
 
     def apply(self, model):
+        """Apply transformation to convert Pool operations with kernel_shape > strides."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1071,6 +1096,11 @@ class InferLookupLayer(Transformation):
     """Convert Gather nodes with constant op0 into Lookup HW layers."""
 
     def apply(self, model):
+        """Apply transformation to convert Gather operations to Lookup hardware layers.
+
+        This transformation identifies Gather operations with constant first operand
+        and converts them to FINN's custom Lookup nodes for hardware acceleration.
+        """
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1121,10 +1151,14 @@ class InferLookupLayer(Transformation):
 
 
 class InferConcatLayer(Transformation):
-    """Convert suitable Concat nodes (operating on last/-1 axis)
-    into StreamingConcat HW layers."""
+    """Convert suitable Concat nodes (operating on last/-1 axis) into StreamingConcat HW layers."""
 
     def apply(self, model):
+        """Apply transformation to convert Concat operations to StreamingConcat hardware layers.
+
+        This transformation identifies Concat operations operating on the last axis
+        and converts them to FINN's custom StreamingConcat nodes.
+        """
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1187,10 +1221,14 @@ class InferConcatLayer(Transformation):
 
 
 class InferSplitLayer(Transformation):
-    """Convert suitable Split nodes (operating on last/-1 axis)
-    into StreamingConcat HW layers."""
+    """Convert suitable Split nodes (operating on last/-1 axis) into StreamingSplit HW layers."""
 
     def apply(self, model):
+        """Apply transformation to convert Split operations to StreamingSplit hardware layers.
+
+        This transformation identifies Split operations operating on the last axis
+        and converts them to FINN's custom StreamingSplit nodes.
+        """
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1256,10 +1294,13 @@ class InferSplitLayer(Transformation):
 
 
 class InferStreamingEltwise(Transformation):
-    """Convert eltwise Add, Sub or Sub -> Abs to StreamingEltwise layer
-    with AddEltwise, SubEltwise or AbsDiffEltwise op."""
+    """Convert eltwise Add, Sub or Sub -> Abs to StreamingEltwise layer.
+
+    Converts element-wise operations with AddEltwise, SubEltwise or AbsDiffEltwise op.
+    """
 
     def apply(self, model):
+        """Apply transformation to convert element-wise operations to StreamingEltwise layers."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1352,14 +1393,22 @@ class InferStreamingEltwise(Transformation):
 
 
 class InferBinaryMatrixVectorActivation(Transformation):
-    """Convert XnorPopcountMatMul layers to
-    MatrixVectorActivation layers. Any immediately following MultiThreshold
-    layers will also be absorbed into the MVTU."""
+    """Convert XnorPopcountMatMul layers to MatrixVectorActivation layers.
+
+    Any immediately following MultiThreshold layers will also be absorbed into the MVTU.
+    """
 
     def __init__(self):
+        """Initialize the transformation."""
         super().__init__()
 
     def apply(self, model):
+        """Apply transformation to convert XnorPopcountMatMul to MVAU nodes.
+
+        This transformation identifies XnorPopcountMatMul operations and converts them
+        to FINN's custom MVAU (Matrix Vector Activation Unit) nodes, potentially
+        absorbing following MultiThreshold layers.
+        """
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1490,10 +1539,8 @@ class InferQuantizedMatrixVectorActivation(Transformation):
     """Convert MatMul layers with quantized inputs and weights to
     MatrixVectorActivation layers."""
 
-    def __init__(self):
-        super().__init__()
-
     def apply(self, model):
+        """Apply transformation to convert MatMul to MVAU nodes."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1635,16 +1682,20 @@ class InferQuantizedMatrixVectorActivation(Transformation):
 
 
 class InferVectorVectorActivation(Transformation):
-    """Convert MatMul layers with quantized inputs and weights to
-    VectorVectorActivation layers, if the sparsity annotation
-    of the weight matrix indicates that the MatMul layer belongs to
-    a depthwise convolution. Any immediately following MultiThreshold
-    layers will also be absorbed into the VVAU."""
+    """Convert MatMul layers to VectorVectorActivation layers for depthwise convolutions.
+
+    Converts MatMul layers with quantized inputs and weights to VectorVectorActivation
+    layers, if the sparsity annotation of the weight matrix indicates that the MatMul
+    layer belongs to a depthwise convolution. Any immediately following MultiThreshold
+    layers will also be absorbed into the VVAU.
+    """
 
     def __init__(self):
+        """Initialize the transformation."""
         super().__init__()
 
     def apply(self, model):
+        """Apply transformation to convert MatMul to VVAU nodes for depthwise convolutions."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1781,8 +1832,11 @@ class InferVectorVectorActivation(Transformation):
         return (model, graph_modified)
 
 
-# Lifts scalar to rank-1 tensor
 def lift_to_rank1(name: str, model: ModelWrapper):
+    """Lift scalar to rank-1 tensor.
+
+    Converts scalar tensors (shape []) to rank-1 tensors with a single element (shape [1]).
+    """
     # Scalars have a shape of lengths zero
     if len(model.get_tensor_shape(name)) == 0:
         # Lift shape to rank-1 tensor with single element
@@ -1793,14 +1847,15 @@ def lift_to_rank1(name: str, model: ModelWrapper):
             model.set_initializer(name, tensor.reshape(1))
 
 
-# Converts supported elementwise binary operations to their FINN custom
-# operation
 class InferElementwiseBinaryOperation(Transformation):
-    # Filter function to filter out the last elementwise Mul operation,
-    # typically corresponding to output de-quantization, which should happen
-    # off-chip
+    """Convert supported elementwise binary operations to their FINN custom operation."""
+
     @staticmethod
     def reject_output_dequant(model: ModelWrapper, node: NodeProto):
+        """Filter function to filter out the last elementwise Mul operation.
+
+        Typically filters output de-quantization operations which should happen off-chip.
+        """
         # The operator must be a Mul and have no successor nodes
         if node.op_type == "Mul" and not model.find_direct_successors(node):
             # If the output is a floating-point tensors, reject this
@@ -1810,15 +1865,15 @@ class InferElementwiseBinaryOperation(Transformation):
         # Filter True accepts this node
         return True
 
-    # Initializes the transformation method with an optional filter function
     def __init__(self, _filter=None):
+        """Initialize the transformation method with an optional filter function."""
         # Initialize the base class Transformation object
         super().__init__()
         # Register the filter function as attribute
         self._filter = _filter if _filter is not None else lambda *_: True
 
-    # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transform to convert elementwise binary operations to FINN custom ops."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -1885,10 +1940,11 @@ class InferElementwiseBinaryOperation(Transformation):
         return model, graph_modified
 
 
-# Converts the Squeeze operation to the corresponding FINN custom operation
 class InferSqueeze(Transformation):
+    """Converts the Squeeze operation to the corresponding FINN custom operation."""
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transform to convert Squeeze operations to FINN custom ops."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -1917,6 +1973,15 @@ class InferSqueeze(Transformation):
                 inst.set_nodeattr("inp_shape", model.get_tensor_shape(inp))
                 inst.set_nodeattr("out_dtype", str(model.get_tensor_datatype(out)))
                 inst.set_nodeattr("out_shape", model.get_tensor_shape(out))
+                if len(node.input) > 1:
+                    axes = model.get_initializer(node.input[1])
+                    if np.ndim(axes) == 0:
+                        # Fix axes input initializer by converting from scalar (0D) to 1D array
+                        axes = np.array([axes])
+                        model.set_initializer(node.input[1], axes)
+                        model.set_tensor_shape(node.input[1], axes.shape)
+                    # Set axes attribute (used by older opsets) even if axes is provided as input
+                    inst.set_nodeattr("axes", list(axes))
                 # Consider the graph to be modified, triggering exhaustive
                 # re-application of this transformation
                 graph_modified = True
@@ -1933,10 +1998,11 @@ class InferSqueeze(Transformation):
         return model, graph_modified
 
 
-# Converts the Unsqueeze operation to the corresponding FINN custom operation
 class InferUnsqueeze(Transformation):
-    # Applies the transform to a whole model graph
+    """Convert the Unsqueeze operation to the corresponding FINN custom operation."""
+
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transform to convert Unsqueeze operations to FINN custom ops."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -1965,6 +2031,15 @@ class InferUnsqueeze(Transformation):
                 inst.set_nodeattr("inp_shape", model.get_tensor_shape(inp))
                 inst.set_nodeattr("out_dtype", str(model.get_tensor_datatype(out)))
                 inst.set_nodeattr("out_shape", model.get_tensor_shape(out))
+                if len(node.input) > 1:
+                    axes = model.get_initializer(node.input[1])
+                    if np.ndim(axes) == 0:
+                        # Fix axes input initializer by converting from scalar (0D) to 1D array
+                        axes = np.array([axes])
+                        model.set_initializer(node.input[1], axes)
+                        model.set_tensor_shape(node.input[1], axes.shape)
+                    # Set axes attribute (used by older opsets) even if axes is provided as input
+                    inst.set_nodeattr("axes", list(axes))
                 # Consider the graph to be modified, triggering exhaustive
                 # re-application of this transformation
                 graph_modified = True
@@ -1976,6 +2051,95 @@ class InferUnsqueeze(Transformation):
         # model graph
         model = model.transform(InferShapes())
         model = model.transform(InferDataTypes())
+        # Return the transformed model and indicate whether the graph actually
+        # has been transformed
+        return model, graph_modified
+
+
+class InferReshape(Transformation):
+    """Converts ONNX Reshape operator to the corresponding HWCustomOp."""
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Apply the transform to convert Reshape operations hardware."""
+        # Get the model graph out of the model wrapper object
+        graph = model.graph
+        # Keep track of whether the graph has been modified
+        graph_modified = False
+
+        # Transplant each Reshape operator into the custom domain
+        for index, node in enumerate(graph.node):
+            if node.op_type == "Reshape":
+                # Skip already converted nodes
+                if node.domain == "finn.custom_op.fpgadataflow":
+                    continue
+
+                # Skip if this is not a static-shape reshape operation
+                if (out_shape := model.get_initializer(node.input[1])) is None:
+                    continue
+
+                # Skip if any of the axes is set to 0 to avoid handling
+                # differences between allowzero=0 and allowzero=1...
+                # TODO: This could be supported by implementing simple shape
+                #  inference logic here or by normalizing shapes via streamline
+                if np.any(out_shape == 0):
+                    continue
+
+                # Skip if the input shape is not statically known
+                if (inp_shape := model.get_tensor_shape(node.input[0])) is None:
+                    continue
+
+                # Skip if there are more than one axes set to -1
+                if list(out_shape).count(-1) > 1:
+                    continue
+
+                # The shape is allowed to contain at most one -1, in which case
+                # the value is inferred from the size of the tensor and the
+                # remaining dimensions
+                if list(out_shape).count(-1) == 1:
+                    # The following expression assumes target to be a list which
+                    # allows item assignment (might be a tuple depending on the
+                    # origin of target)
+                    out_shape = list(out_shape)
+                    # Replace the inferred dimension by the number of elements
+                    # missing from the target dimension compared to the input
+                    # dimension
+                    out_shape[out_shape.index(-1)] = int(
+                        np.prod(inp_shape) / np.abs(np.prod(out_shape))
+                    )
+
+                # Transplant from the standard ONNX domain into the FINN domain
+                node.domain = "finn.custom_op.fpgadataflow"
+                # Now we can get the CustomOp wrapper instance providing easier
+                # attribute access
+                reshape: HWCustomOp = getCustomOp(node)
+                # Set the backend attribute to mark this an operation supported
+                # to be implemented on an FPGA by FINN
+                reshape.set_nodeattr("backend", "fpgadataflow")
+
+                # Remove the old allowzero attribute which is not handled by the
+                # hardware operator
+                remove_by_name(node.attribute, "allowzero")
+
+                # The reshape hardware operator statically annotates both, the
+                # input and output shape, as node attributes
+                reshape.set_nodeattr("inp_shape", list(inp_shape))
+                reshape.set_nodeattr("out_shape", list(out_shape))
+
+                # The input and output type of the reshaped tensor is the same
+                # and needs to be statically annotated as an attribute
+                reshape.set_nodeattr(
+                    "dtype", model.get_tensor_datatype(node.input[0]).name
+                )
+
+                # Finally, there is no second shape input to the hardware
+                # operator, thus delete this from the node input list
+                node.input.pop(1)
+
+        # Re-do shape and data type annotations after potential changes to the
+        # model graph
+        model = model.transform(InferShapes())
+        model = model.transform(InferDataTypes())
+
         # Return the transformed model and indicate whether the graph actually
         # has been transformed
         return model, graph_modified
