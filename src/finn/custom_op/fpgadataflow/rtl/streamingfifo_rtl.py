@@ -33,6 +33,7 @@ import shutil
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 
 class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
@@ -84,7 +85,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         return is_depth_monitor and is_rtl
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "fifo/hdl")
+        rtlsrc = os.path.join(get_settings().finn_rtllib, "fifo/hdl")
         template_path = rtlsrc + "/fifo_template.v"
 
         # save top module name so we can refer to it after this node has been renamed
@@ -217,7 +218,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "fifo/hdl/")
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "fifo/hdl/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""

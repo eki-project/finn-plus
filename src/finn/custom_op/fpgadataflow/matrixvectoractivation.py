@@ -42,6 +42,7 @@ from qonnx.util.basic import (
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 # ONNX i/o tensor shape assumptions for MatrixVectorActivation:
 # input 0 is the input tensor, shape (.., i_size) = (..., MW)
@@ -987,7 +988,7 @@ class MVAU(HWCustomOp):
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
             if dyn_input:
                 # dynamic loader
-                dynld_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "dynload/hdl/")
+                dynld_rtllib_dir = os.path.join(get_settings().finn_rtllib, "dynload/hdl/")
                 file_suffix = "_dynamic_load_wrapper.v"
                 # automatically find memstream verilog component in code generation directory
                 for fname in os.listdir(code_gen_dir):
@@ -1035,8 +1036,8 @@ class MVAU(HWCustomOp):
             else:
                 # memstream
                 runtime_writable = self.get_nodeattr("runtime_writeable_weights") == 1
-                axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
-                ms_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
+                axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
+                ms_rtllib_dir = os.path.join(get_settings().finn_rtllib, "memstream/hdl/")
                 file_suffix = "_memstream_wrapper.v"
                 # automatically find memstream verilog component in code generation directory
                 for fname in os.listdir(code_gen_dir):

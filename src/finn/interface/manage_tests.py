@@ -7,6 +7,7 @@ from pathlib import Path
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import status
+from finn.util.settings import get_settings
 
 
 def run_test(variant: str, num_workers: str) -> None:
@@ -17,7 +18,7 @@ def run_test(variant: str, num_workers: str) -> None:
     if "CI_PROJECT_DIR" in os.environ.keys():
         ci_project_dir = os.environ["CI_PROJECT_DIR"]
     else:
-        ci_project_dir = os.environ["FINN_BUILD_DIR"]
+        ci_project_dir = str(get_settings().finn_build_dir)
     status(f"Putting test reports into {ci_project_dir}")
 
     os.chdir(os.environ["FINN_TESTS"])

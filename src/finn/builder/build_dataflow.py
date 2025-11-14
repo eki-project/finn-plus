@@ -51,6 +51,7 @@ from rich.logging import RichHandler
 from rich.traceback import Traceback
 from typing import Any, TextIO
 
+import finn.util.logging
 from finn.builder import build_dataflow_config
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
@@ -62,6 +63,7 @@ from finn.util.basic import get_vivado_root
 from finn.util.exception import FINNConfigurationError, FINNDataflowError, FINNError, FINNUserError
 from finn.util.exception_snapshot import snapshot_on_exception
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 
 def get_logfile_path(cfg: DataflowBuildConfig) -> str:
@@ -260,6 +262,7 @@ def setup_logging(cfg: DataflowBuildConfig) -> logging.Logger:
         sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
         sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
     console = Console(file=sys.stdout.console)
+    finn.util.logging._RICH_CONSOLE = console
 
     # Mirror a configurable log level to console (default = ERROR)
     if cfg.console_log_level != LogLevel.NONE:
@@ -346,7 +349,7 @@ def build_dataflow_cfg(model_filename: str, cfg: DataflowBuildConfig) -> int:  #
     # Initialize logger
     log = setup_logging(cfg)
     logfile = get_logfile_path(cfg)
-    print(f"Intermediate outputs will be generated in {os.environ['FINN_BUILD_DIR']}")
+    print(f"Intermediate outputs will be generated in {get_settings().finn_build_dir}")
     print(f"Final outputs will be generated in {cfg.output_dir}")
     print(f"Build log is at {logfile}")
 

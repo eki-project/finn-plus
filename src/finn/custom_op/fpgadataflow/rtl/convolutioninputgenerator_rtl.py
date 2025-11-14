@@ -37,6 +37,7 @@ from qonnx.util.basic import roundup_to_integer_multiple
 
 from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.util.settings import get_settings
 
 # RTL Convolution Input Generator / Sliding Window Generator (SWG)
 # Matches and extends the functionality of all ConvolutionInputGenerator_* functions
@@ -305,7 +306,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             template_select = "swg/swg_template_default_dynamic.sv"
         else:
             template_select = "swg/swg_template_default.sv"
-        template_path = os.path.join(os.environ["FINN_RTLLIB"], template_select)
+        template_path = os.path.join(get_settings().finn_rtllib, template_select)
         code_gen_dict = {}
 
         ifm_ch = self.get_nodeattr("IFMChannels")
@@ -484,7 +485,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         the loop controller configuration and partitioning the fixed buffer into
         shift-registers (for parallel read access) and line buffers (for efficient
         LUTRAM/BRAM/URAM implementation)."""
-        template_path = os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_template_parallel.sv")
+        template_path = os.path.join(get_settings().finn_rtllib, "swg/swg_template_parallel.sv")
         code_gen_dict = {}
 
         ifm_ch = self.get_nodeattr("IFMChannels")
@@ -824,9 +825,9 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             template_select = "swg/swg_template_wrapper_dynamic.v"
         else:
             template_select = "swg/swg_template_wrapper.v"
-        with open(os.path.join(os.environ["FINN_RTLLIB"], template_select), "r") as f:
+        with open(os.path.join(get_settings().finn_rtllib, template_select), "r") as f:
             template_wrapper = f.read()
-        with open(os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_template_axilite.v"), "r") as f:
+        with open(os.path.join(get_settings().finn_rtllib, "swg/swg_template_axilite.v"), "r") as f:
             template_axilite = f.read()
         for key in code_gen_dict:
             # transform list into long string separated by '\n'
@@ -854,8 +855,8 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
                 f.write(template_axilite)
 
         # Copy static source file for common core components
-        shutil.copy2(os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_common.sv"), code_gen_dir)
-        shutil.copy2(os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_pkg.sv"), code_gen_dir)
+        shutil.copy2(os.path.join(get_settings().finn_rtllib, "swg/swg_common.sv"), code_gen_dir)
+        shutil.copy2(os.path.join(get_settings().finn_rtllib, "swg/swg_pkg.sv"), code_gen_dir)
 
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
@@ -865,7 +866,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "swg/")
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "swg/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""

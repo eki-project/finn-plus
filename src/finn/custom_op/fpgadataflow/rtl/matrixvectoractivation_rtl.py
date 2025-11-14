@@ -33,6 +33,7 @@ from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import get_dsp_block, is_versal
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.util.settings import get_settings
 
 # ONNX i/o tensor shape assumptions for MatrixVectorActivation_rtl:
 # input 0 is the input tensor, shape (.., i_size) = (..., MW)
@@ -161,7 +162,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         # instantiate the RTL IP
         node_name = self.onnx_node.name
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "mvu/")
+        rtllib_dir = os.path.join(get_settings().finn_rtllib, "mvu/")
         sourcefiles = [
             "mvu_pkg.sv",
             "mvu_vvu_axi.sv",
@@ -322,7 +323,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def prepare_codegen_default(self, fpgapart, clk):
-        template_path = os.path.join(os.environ["FINN_RTLLIB"], "mvu/mvu_vvu_axi_wrapper.v")
+        template_path = os.path.join(get_settings().finn_rtllib, "mvu/mvu_vvu_axi_wrapper.v")
 
         # check if settings are valid
         pumped_compute = self.get_nodeattr("pumpedCompute")
@@ -353,7 +354,7 @@ class MVAU_rtl(MVAU, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "mvu/")
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "mvu/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
@@ -374,5 +375,5 @@ class MVAU_rtl(MVAU, RTLBackend):
 
     def get_verilog_paths(self):
         verilog_paths = super().get_verilog_paths()
-        verilog_paths.append(os.path.join(os.environ["FINN_RTLLIB"], "mvu"))
+        verilog_paths.append(os.path.join(get_settings().finn_rtllib, "mvu"))
         return verilog_paths

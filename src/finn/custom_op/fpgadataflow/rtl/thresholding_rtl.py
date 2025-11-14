@@ -41,6 +41,7 @@ from finn.util.data_packing import (
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
+from finn.util.settings import get_settings
 
 
 class Thresholding_rtl(Thresholding, RTLBackend):
@@ -235,8 +236,8 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         """Thresholding binary search RTL file list"""
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "thresholding/hdl/")
-            axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "thresholding/hdl/")
+            axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
@@ -261,8 +262,8 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         # Set the 'gen_top_module' attribute for use later
         # by xsi and IPI generation
         self.set_nodeattr("gen_top_module", code_gen_dict["$TOP_MODULE$"][0])
-        axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
-        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "thresholding/hdl")
+        axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
+        rtlsrc = os.path.join(get_settings().finn_rtllib, "thresholding/hdl")
         template_path = rtlsrc + "/thresholding_template_wrapper.v"
         with open(template_path, "r") as f:
             template_wrapper = f.read()

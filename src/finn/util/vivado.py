@@ -30,6 +30,7 @@ import os
 
 from finn.util.basic import launch_process_helper, which
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 
 def out_of_context_synth(
@@ -44,7 +45,7 @@ def out_of_context_synth(
     if which("vivado") is None:
         raise Exception("vivado is not in PATH, ensure settings64.sh is sourced.")
 
-    script_path = os.path.join(os.environ["FINN_QNN_DATA"], "vivado_scripts", "vivadocompile.sh")
+    script_path = os.path.join(get_settings().finn_qnn_data, "vivado_scripts", "vivadocompile.sh")
     # vivadocompile.sh <top-level-entity> <clock-name (optional)> <fpga-part (optional)>
     call_omx = "zsh %s %s %s %s %f" % (
         script_path,

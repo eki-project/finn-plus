@@ -11,8 +11,16 @@ import subprocess
 import sys
 from pathlib import Path
 from rich.console import Console
+from rich.prompt import Confirm, IntPrompt, Prompt
 from typing import TYPE_CHECKING, Any
 
+import finn.util.settings
+from finn.builder.build_dataflow_config import (
+    DataflowBuildConfig,
+    LogLevel,
+    ShellFlowType,
+    default_build_dataflow_steps,
+)
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import (
     NullablePath,
@@ -29,6 +37,12 @@ from finn.util.exception import FINNUserError, FINNValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+def output(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter named --output (-o) that defaults to
+    None if the param is empty, and a path otherwise."""  # noqa
+    return click.option("--output", "-o", "output", default="", type=NullablePath())(f)
 
 
 def finn_deps(f: Callable) -> Callable[..., Any]:
@@ -78,6 +92,26 @@ def model(f: Callable) -> Callable[..., Any]:
     )(f)
 
 
+def verify_input(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter named verify_input (type NullablePath)."""
+    return click.option(
+        "--verify-input",
+        default="",
+        help="Path to .npy  file that will be used as the input for verification.",
+        type=NullablePath(),
+    )(f)
+
+
+def verify_output(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter named verify_output (type NullablePath)."""
+    return click.option(
+        "--verify-output",
+        default="",
+        help="Path to .npy  file that will be used as the expected output for verification.",
+        type=NullablePath(),
+    )(f)
+
+
 def num_default_workers(f: Callable) -> Callable[..., Any]:
     """Add a click parameter called --num-workers (-n) (num_default_workers). Defaults to -1."""
     return click.option(
@@ -101,13 +135,234 @@ def skip_dep_update(f: Callable) -> Callable[..., Any]:
     )(f)
 
 
-def prepare_finn(settings: FINNSettings) -> None:
+def accept_defaults(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter called --accept-defaults. Defaults to False."""
+    return click.option(
+        "--accept-defaults",
+        is_flag=True,
+        help="If set, skip the setup wizard in case that no settings files were found.",
+    )(f)
+
+
+def run_flow_wizard() -> None:
+    """Interactively create a flow config with the user and save it."""
+    dfbc = DataflowBuildConfig()
+    console = Console()
+    console.clear()
+    console.print("[bold green]Welcome to FINN+s configuration wizard.[/bold green]\n")
+    console.print("[bold]Core[/bold]")
+    console.rule()
+    output_path = Prompt.ask(
+        "Where do you want to store the results of the flow, "
+        "relative to the configuration file?",
+        default="build_output",
+    )
+    dfbc.output_dir = output_path
+    if dfbc.output_dir == "":
+        console.print("[red]Please specify a valid path for the output directory[/red]")
+        sys.exit(1)
+    console.print()
+    flow = IntPrompt.ask(
+        "How much of the flow do you want to execute?\n"
+        "1) Run until nodes are folded and first estimates are available\n"
+        "2) Run until a stitched IP of synthesized cores is available\n"
+        "3) Run until a full accelerator bitstream is available. (This will take "
+        "a significant amount of time",
+        default=3,
+        choices=["1", "2", "3"],
+    )
+    final_step_lookup = {
+        1: "step_generate_estimate_reports",
+        2: "step_measure_rtlsim_performance",
+        3: "step_deployment_package",
+    }
+    dfbc.steps = default_build_dataflow_steps[
+        : default_build_dataflow_steps.index(final_step_lookup[flow]) + 1
+    ]
+    console.print()
+    loglevel = Prompt.ask(
+        "What log level do you want to see during execution? (every log level "
+        "includes all previous levels, for example DEBUG includes INFO)? ",
+        default="WARNING",
+        choices=["ERROR", "WARNING", "INFO", "DEBUG"],
+    )
+    dfbc.console_log_level = LogLevel(loglevel)
+    console.print()
+    dfbc.verbose = Confirm.ask("Do you want verbose output?", default=False)
+    console.print()
+    console.print("[bold]FPGA Settings[/bold]")
+    console.rule()
+    select_board = Confirm.ask(
+        "Do you want to specify a board, or the FPGA part directly? (yes=board)"
+    )
+    if select_board:
+        dfbc.board = Prompt.ask("Board")
+    else:
+        dfbc.fpga_part = Prompt.ask("FPGA Part")
+    console.print()
+    shell = Prompt.ask(
+        "Which shell type would you like to use? (can be left empty, "
+        "if no bitstream will be generated)",
+        choices=["alveo", "zynq"] + ([""] if flow != 3 else []),
+    )
+    if shell == "alveo":
+        dfbc.shell_flow_type = ShellFlowType.VITIS_ALVEO
+    elif shell == "zynq":
+        dfbc.shell_flow_type = ShellFlowType.VIVADO_ZYNQ
+    console.print()
+
+    clk_ns_str = Prompt.ask(
+        "What clock frequency should Vivado target? (specify in ns or MHz: e.g. 7.0ns or 125mhz)"
+    )
+    if "ns" in clk_ns_str:
+        dfbc.synth_clk_period_ns = float(clk_ns_str.replace("ns", ""))
+    elif "mhz" in clk_ns_str:
+        dfbc.synth_clk_period_ns = 1000.0 / float(clk_ns_str.replace("mhz", ""))
+    else:
+        console.print(
+            "[red]Unknown unit. Please specify according to the instructions above![/red]"
+        )
+        sys.exit(1)
+    console.print("\n[bold]Accelerator Settings[/bold]")
+    console.rule()
+    fps = IntPrompt.ask(
+        "What target FPS should the accelerator achieve? (Leave at 0 to omit)", default=0
+    )
+    if fps != 0:
+        dfbc.target_fps = fps
+    console.print()
+    dfbc.mvau_wwidth_max = IntPrompt.ask(
+        "What mvau_wwidth_max value should the accelerator have?", default=dfbc.mvau_wwidth_max
+    )
+    console.print()
+    console.print()
+    console.rule()
+    path = Path(
+        Prompt.ask("Where do you want to save this flow configuration?", default="cfg.yaml")
+    )
+    with path.open("w+") as f:
+        f.write(dfbc.to_yaml())
+    console.print(
+        "[green]You flow configuration has been saved. There are many more options to be set, "
+        "this was just the minimal setup. Feel free to adjust the config further.[/green]"
+    )
+
+
+def run_setup_wizard(settings: FINNSettings) -> None:
+    """Interactively ask the user to confirm / change / reject the default settings if no
+    settings file was found. Saves the edited settings.
+    IMPORTANT: This method does not check whether the file exists, or if the passed settings
+    contain the default values. It simply runs the wizard without questions."""
+    console = Console()
+    console.clear()
+    console.print(
+        "[bold green]Welcome to FINN+.\nIt seems that you don't have a "
+        "settings.yaml file yet. If this "
+        "is on purpose, restart FINN+ with --accept-defaults to skip the "
+        "wizard and use the predefined "
+        "default values. Otherwise follow the next instructions.[/bold green]\n"
+    )
+    do_setup = Confirm.ask("Continue?")
+    if not do_setup:
+        return
+    console.clear()
+    console.print(
+        "[bold]FINN_BUILD_DIR[/bold] stores the location of the path at "
+        "which FINN puts temporary files "
+        "generated during the build. If a relative path is given, the "
+        "path is searched for from the provided "
+        "model path.\n"
+    )
+    settings.finn_build_dir = Prompt.ask("FINN_BUILD_DIR", default=str(settings.finn_build_dir))
+    console.clear()
+    console.print(
+        "[bold]FINN_DEPS[/bold] points to the location of the FINN dependency "
+        "directory. If relative, this path is "
+        "searched for from the root of the used FINN repository / installation.\n"
+    )
+    settings.finn_deps = Prompt.ask("FINN_DEPS", default=str(settings.finn_deps))
+    console.clear()
+    console.print(
+        "[bold]FINN_DEPS_DEFINITIONS[/bold] points to the YAML file "
+        "containing the dependency definitions. These are "
+        "normally placed as external_dependencies.yaml in the FINN+ root.\n"
+    )
+    settings.finn_deps_definitions = Prompt.ask(
+        "FINN_DEPS_DEFINITIONS", default=str(settings.finn_deps_definitions)
+    )
+    console.clear()
+    console.print(
+        "[bold]NUM_DEFAULT_WORKERS[/bold] specifies the number of "
+        "workers to use in multithreaded contexts. By default "
+        "this is set to 75% of your available CPU cores.\n"
+    )
+    settings.num_default_workers = IntPrompt.ask(
+        "NUM_DEFAULT_WORKERS", default=settings.num_default_workers
+    )
+    console.clear()
+    console.print(
+        "[bold]AUTOMATIC_DEPENDENCY_UPDATES[/bold] specifies whether FINN+ "
+        "will try to update the dependencies every time "
+        "it is run. For fast iteration it is recommended to be turned off, but on otherwise.\n"
+    )
+    settings.automatic_dependency_updates = Confirm.ask(
+        "AUTOMATIC_DEPENDENCY_UPDATES?", default=settings.automatic_dependency_updates
+    )
+    console.clear()
+    console.print(
+        "[bold]DEPS_GIT_TIMEOUT[/bold] specifies how many seconds the "
+        "update waits until a Git dependency is fetched.\n"
+    )
+    settings.deps_git_timeout = IntPrompt.ask("DEPS_GIT_TIMEOUT", default=settings.deps_git_timeout)
+    console.clear()
+    console.print(
+        "[italic]Some other settings were automatically inferred from your setup. "
+        "They are listed below. Please check if they are correct. "
+        "If not, these can be modified in the afterwards generated settings file\n"
+    )
+    console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
+    console.print(f"[bold]FINN_NOTEBOOKS[/bold]: {settings.finn_notebooks}")
+    console.print(f"[bold]FINN_RTLLIB[/bold]: {settings.finn_rtllib}")
+    console.print(f"[bold]FINN_QNNDATA[/bold]: {settings.finn_qnn_data}")
+    console.print(f"[bold]FINN_TESTS[/bold]: {settings.finn_tests}")
+    console.print(
+        "\n\n[bold green]Please check your edited settings and confirm them.[/bold green]"
+    )
+    console.print(f"[bold]FINN_BUILD_DIR[/bold]: {settings.finn_build_dir}")
+    console.print(f"[bold]FINN_DEPS[/bold]: {settings.finn_deps}")
+    console.print(f"[bold]FINN_DEPS_DEFINITIONS[/bold]: {settings.finn_deps_definitions}")
+    console.print(f"[bold]NUM_DEFAULT_WORKERS[/bold]: {settings.num_default_workers}")
+    console.print(
+        f"[bold]AUTOMATIC_DEPENDENCY_UPDATES[/bold]: {settings.automatic_dependency_updates}"
+    )
+    console.print(f"[bold]DEPS_GIT_TIMEOUT[/bold]: {settings.deps_git_timeout}")
+    console.print()
+    do_save = Confirm.ask(f"Do you want to save these settings (at {settings._settings_path})? ")
+    if not do_save:
+        console.print(
+            "[bold orange3]The settings were not saved. Either restart the wizard,"
+            " or pass --accept-defaults to FINN.[/bold orange3]"
+        )
+        return
+    settings.save()
+    console.print(
+        "[bold green]Settings written. Please restart FINN+ for the changes "
+        "to take effect.[/bold green]"
+    )
+    console.rule()
+
+
+def prepare_finn(settings: FINNSettings, accept_defaults: bool) -> None:
     """Prepare FINN to run."""
+    if not settings.settingsfile_exists() and not accept_defaults:
+        run_setup_wizard(settings)
+        sys.exit(0)
     status(f"[SETTINGS FILE] {settings._settings_path.absolute()}")  # noqa
     status(f"[FINN BUILD DIRECTORY] {settings.finn_build_dir}")
     status(f"[DEPDENDENCY PATH] {settings.finn_deps}")
     status(f"[DEPDENDENCY DEFINITIONS PATH] {settings.finn_deps_definitions}")
     status(f"[NUM WORKERS] {settings.num_default_workers}")
+    finn.util.settings._SETTINGS = settings
     if not settings.settingsfile_exists():
         warning("Settings file does not exist yet. Creating file now.")
         settings.save()
@@ -133,7 +388,6 @@ def prepare_finn(settings: FINNSettings) -> None:
     # Check synthesis tools
     set_synthesis_tools_paths()
 
-    # Resolve paths to some not properly packaged components...
     os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
     os.environ["FINN_QNN_DATA"] = resolve_module_path("qnn-data")
@@ -141,7 +395,10 @@ def prepare_finn(settings: FINNSettings) -> None:
     os.environ["FINN_TESTS"] = resolve_module_path("tests")
 
 
-@click.group()
+@click.group(
+    help='Produce hardware designs from ONNX models. To get started use "finn build" '
+    "(or run or auto) to start a FINN flow."
+)
 def main_group() -> None:
     """Main click group."""  # noqa
     pass
@@ -168,30 +425,16 @@ def get_function_args() -> dict:
     return d
 
 
-@click.command(help="Build a hardware design")
-@finn_deps
-@finn_deps_definitions
-@finn_build_dir
-@flow_config
-@model
-@num_default_workers
-@skip_dep_update
-@click.option(
-    "--start",
-    default="",
-    help="If no start_step is given in the dataflow build config, "
-    "this starts the flow from the given step.",
-)
-@click.option(
-    "--stop",
-    default="",
-    help="If no stop_step is given in the dataflow build config, "
-    "this stops the flow at the given step.",
-)
-def build(
+# The build function is seperated from its command so that it can be reused
+# without decorators in other commands
+def _build(
+    output: Path | None,
+    accept_defaults: bool,
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     finn_build_dir: Path | None,
+    verify_input: Path | None,
+    verify_output: Path | None,
     num_default_workers: int,
     skip_dep_update: bool,
     start: str,
@@ -206,7 +449,7 @@ def build(
         automatic_dependency_updates=not skip_dep_update,
         **get_function_args(),
     )
-    prepare_finn(settings)
+    prepare_finn(settings, accept_defaults)
 
     # Can import from finn now, since all deps are installed
     # and all environment variables are set correctly
@@ -236,9 +479,19 @@ def build(
         dfbc.stop_step = stop
 
     # Set output directory to where the config lies, not where FINN lies
+    if output is not None:
+        dfbc.output_dir = output
     if not Path(dfbc.output_dir).is_absolute():
         dfbc.output_dir = str((flow_config.parent / dfbc.output_dir).absolute())
     status(f"Output directory is {dfbc.output_dir}")
+
+    # Set verification steps
+    # Override paths to verification input/output if specified
+    if verify_input is not None:
+        dfbc.verify_input_npy = verify_input
+
+    if verify_output is not None:
+        dfbc.verify_expected_output_npy = verify_output
 
     # Add path of config to sys.path so that custom steps can be found
     sys.path.append(str(flow_config.parent.absolute()))
@@ -251,7 +504,65 @@ def build(
     build_dataflow_cfg(str(model), dfbc)
 
 
+@click.command(help="Build a hardware design")
+@output
+@accept_defaults
+@finn_deps
+@finn_deps_definitions
+@finn_build_dir
+@flow_config
+@model
+@verify_input
+@verify_output
+@num_default_workers
+@skip_dep_update
+@click.option(
+    "--start",
+    default="",
+    help="If no start_step is given in the dataflow build config, "
+    "this starts the flow from the given step.",
+)
+@click.option(
+    "--stop",
+    default="",
+    help="If no stop_step is given in the dataflow build config, "
+    "this stops the flow at the given step.",
+)
+def build(
+    output: Path | None,
+    accept_defaults: bool,
+    finn_deps: Path | None,
+    finn_deps_definitions: Path | None,
+    finn_build_dir: Path | None,
+    verify_input: Path | None,
+    verify_output: Path | None,
+    num_default_workers: int,
+    skip_dep_update: bool,
+    start: str,
+    stop: str,
+    flow_config: Path,
+    model: Path,
+) -> None:
+    """Launch a FINN hardware build."""
+    _build(
+        output,
+        accept_defaults,
+        finn_deps,
+        finn_deps_definitions,
+        finn_build_dir,
+        verify_input,
+        verify_output,
+        num_default_workers,
+        skip_dep_update,
+        start,
+        stop,
+        flow_config,
+        model,
+    )
+
+
 @click.command(help="Run a script in a FINN environment")
+@accept_defaults
 @finn_deps
 @finn_deps_definitions
 @finn_build_dir
@@ -262,6 +573,7 @@ def build(
     type=click.Path(exists=True, file_okay=True, dir_okay=False, executable=True, path_type=Path),
 )
 def run(
+    accept_defaults: bool,
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     finn_build_dir: Path | None,
@@ -280,13 +592,51 @@ def run(
         flow_config=script,
         **get_function_args(),
     )
-    prepare_finn(settings)
+    prepare_finn(settings, accept_defaults)
     Console().rule(
         f"[bold cyan]Starting script [/bold cyan][bold orange1]{script.name}[/bold orange1]"
     )
     subprocess.run(
         shlex.split(f"{sys.executable} {script.name}", posix=IS_POSIX), cwd=script.parent
     )
+
+
+@click.command(help="Best effort to automatically start FINN without further configuration.")
+def auto() -> None:
+    # TODO
+    raise NotImplementedError()
+
+
+@click.group(help="Run setup wizards for various tasks.")
+def wizard() -> None:
+    pass
+
+
+@click.command(name="flow")
+def flow_wizard() -> None:
+    run_flow_wizard()
+
+
+@click.command(name="config")
+@finn_deps
+@finn_deps_definitions
+@finn_build_dir
+@flow_config
+@num_default_workers
+@skip_dep_update
+def config_wizard(
+    finn_deps: Path | None,
+    finn_deps_definitions: Path | None,
+    finn_build_dir: Path | None,
+    num_default_workers: int,
+    skip_dep_update: bool,
+) -> None:
+    settings = FINNSettings.init(
+        auto_set_environment_vars=True,
+        automatic_dependency_updates=not skip_dep_update,
+        **get_function_args(),
+    )
+    run_setup_wizard(settings)
 
 
 @click.command(help="Run a given benchmark configuration.")
@@ -308,7 +658,7 @@ def bench(
         automatic_dependency_updates=not skip_dep_update,
         **get_function_args(),
     )
-    prepare_finn(settings)
+    prepare_finn(settings, True)
     Console().rule("RUNNING BENCHMARK")
 
     # Late import because we need prepare_finn to setup remaining dependencies first
@@ -348,7 +698,7 @@ def test(
     )
     if not settings.finn_build_dir.exists():
         settings.finn_build_dir = Path("/tmp/FINN_TEST_BUILD_DIR")
-    prepare_finn(settings)
+    prepare_finn(settings, True)
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
     run_test(variant, num_test_workers)
@@ -361,9 +711,12 @@ def deps() -> None:
 
 
 @click.command(help="Update or install dependencies to the given path")
+@accept_defaults
 @finn_deps
 @finn_deps_definitions
-def update(finn_deps: Path | None, finn_deps_definitions: Path | None) -> None:
+def update(
+    accept_defaults: bool, finn_deps: Path | None, finn_deps_definitions: Path | None
+) -> None:
     """Update all FINN+ dependencies and then exit."""
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
@@ -371,7 +724,7 @@ def update(finn_deps: Path | None, finn_deps_definitions: Path | None) -> None:
         flow_config=Path(),
         **get_function_args(),
     )
-    prepare_finn(settings)
+    prepare_finn(settings, accept_defaults)
 
 
 @click.group(help="Manage FINN settings")
@@ -386,7 +739,7 @@ def _command_get_settings() -> FINNSettings:
     settings = FINNSettings.init(
         auto_set_environment_vars=True, automatic_dependency_updates=False, flow_config=Path()
     )
-    prepare_finn(settings)
+    prepare_finn(settings, True)
     if not settings.settingsfile_exists():
         warning("Could not resolve settings file.")
         sys.exit(1)
@@ -463,6 +816,10 @@ def main() -> None:
     config.add_command(config_set)
     config.add_command(config_help)
     deps.add_command(update)
+    wizard.add_command(flow_wizard)
+    wizard.add_command(config_wizard)
+    main_group.add_command(auto)
+    main_group.add_command(wizard)
     main_group.add_command(config)
     main_group.add_command(deps)
     main_group.add_command(build)

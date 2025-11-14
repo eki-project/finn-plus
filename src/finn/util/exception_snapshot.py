@@ -15,6 +15,7 @@ from qonnx.custom_op.registry import getCustomOp
 import finn
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.util.basic import make_build_dir
+from finn.util.settings import get_settings
 
 # Alias for a build flow step function apply function
 StepFunction = Callable[[ModelWrapper, DataflowBuildConfig], ModelWrapper]
@@ -131,6 +132,10 @@ def snapshot_on_exception(
                     dataflow_log += traceback.format_exc()
                     (path / "build_dataflow.log").write_text(dataflow_log)
                 if snapshot_finn_envvars:
+                    try:
+                        (path / "saved_settings.txt").write_text(str(get_settings()))
+                    except Exception:
+                        pass
                     env: dict[str, str] = {}
                     non_finn_envvars: list[str] = [*additional_envvars, "NUM_DEFAULT_WORKERS"]
                     for key in non_finn_envvars:

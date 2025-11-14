@@ -6,9 +6,10 @@ import os
 import psutil
 import yaml
 from pathlib import Path
-from pydantic import BaseModel, PrivateAttr, ValidationError, computed_field
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, computed_field
 from typing import Any
 
+from finn.interface.interface_utils import resolve_module_path
 from finn.util.exception import FINNUserError, FINNValidationError
 
 
@@ -49,6 +50,15 @@ class FINNSettings(BaseModel):
     _num_default_workers: int = PrivateAttr(-1)
     automatic_dependency_updates: bool = True
     deps_git_timeout: int = 100
+    finn_qnn_data = ""
+
+    # TODO: resolve_module_path should return Path. Also need to fix usage then
+    # TODO: MISSING FIELDS: RTLSIM_TRACE_DEPTH, LIVENESS_THRESHOLD, XILINX_VIVADO
+    finn_rtllib: str = Field(default=resolve_module_path("finn-rtllib"))
+    finn_custom_hls: str = Field(default=resolve_module_path("custom_hls"))
+    finn_qnn_data: str = Field(default=resolve_module_path("qnn-data"))
+    finn_notebooks: str = Field(default=resolve_module_path("notebooks"))
+    finn_tests: str = Field(default=resolve_module_path("tests"))
 
     @computed_field
     @property

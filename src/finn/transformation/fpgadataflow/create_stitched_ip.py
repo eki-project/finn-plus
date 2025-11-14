@@ -43,6 +43,7 @@ from finn.util.basic import launch_process_helper, make_build_dir
 from finn.util.exception import FINNError, FINNUserError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 
 def is_external_input(model, node, i):
@@ -543,7 +544,7 @@ class CreateStitchedIP(Transformation):
                 "[ipx::get_file_groups xilinx_simulationcheckpoint]" % block_name
             )
         # add a rudimentary driver mdd to get correct ranges in xparameters.h later on
-        example_data_dir = os.path.join(os.environ["FINN_QNN_DATA"], "mdd-data")
+        example_data_dir = os.path.join(get_settings().finn_qnn_data, "mdd-data")
         copytree(example_data_dir, vivado_stitch_proj_dir + "/data")
 
         #####

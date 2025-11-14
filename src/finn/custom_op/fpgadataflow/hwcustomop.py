@@ -39,6 +39,7 @@ from qonnx.util.basic import roundup_to_integer_multiple
 
 from finn.util.basic import get_liveness_threshold_cycles, is_versal
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 
 class HWCustomOp(CustomOp):
@@ -303,7 +304,7 @@ class HWCustomOp(CustomOp):
         ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls"]
         if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
             template_path = os.path.join(
-                os.environ["FINN_RTLLIB"] + "/memstream/hdl/memstream_wrapper_template.v"
+                get_settings().finn_rtllib + "/memstream/hdl/memstream_wrapper_template.v"
             )
             mname = self.onnx_node.name
             if self.onnx_node.op_type.startswith("Thresholding"):
@@ -341,7 +342,7 @@ class HWCustomOp(CustomOp):
             pass
 
     def generate_hdl_dynload(self):
-        template_path = os.environ["FINN_RTLLIB"] + "/dynload/hdl/dynamic_load_wrapper_template.v"
+        template_path = get_settings().finn_rtllib + "/dynload/hdl/dynamic_load_wrapper_template.v"
         mname = self.onnx_node.name
         pe = self.get_nodeattr("PE")
         simd = self.get_nodeattr("SIMD")

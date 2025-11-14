@@ -47,6 +47,7 @@ from finn.util.basic import make_build_dir
 from finn.util.data_packing import get_driver_shapes, to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 from . import template_driver
 
@@ -477,7 +478,7 @@ class MakePYNQDriverIODMA(Transformation):
 
         # create the base FINN driver -- same for all accels
         driver_base_template = os.path.join(
-            os.environ["FINN_QNN_DATA"], "templates/driver/driver_base.py"
+            get_settings().finn_qnn_data, "templates/driver/driver_base.py"
         )
         driver_base_py = pynq_driver_dir + "/driver_base.py"
         shutil.copy(driver_base_template, driver_base_py)
@@ -579,7 +580,7 @@ class MakePYNQDriverIODMA(Transformation):
         # add validate.py to run full top-1 test (only for suitable networks)
         validate_py = pynq_driver_dir + "/validate.py"
         validate_template = os.path.join(
-            os.environ["FINN_QNN_DATA"], "templates/driver/validate.py"
+            get_settings().finn_qnn_data, "templates/driver/validate.py"
         )
         shutil.copy(validate_template, validate_py)
 
@@ -641,7 +642,7 @@ class MakePYNQDriverInstrumentation(Transformation):
 
         # create (copy) the static instrumentation driver
         driver_template = (
-            os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_instrumentation.py"
+            get_settings().finn_qnn_data + "/templates/driver/driver_instrumentation.py"
         )
         if self.live_fifo_sizing:
             driver_py = pynq_driver_dir + "/driver_instrumentation.py"
@@ -651,7 +652,9 @@ class MakePYNQDriverInstrumentation(Transformation):
 
         # add-on driver for live fifosizing
         if self.live_fifo_sizing:
-            driver_template = os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_fifosizing.py"
+            driver_template = (
+                get_settings().finn_qnn_data + "/templates/driver/driver_fifosizing.py"
+            )
             driver_py = pynq_driver_dir + "/driver.py"
             shutil.copy(driver_template, driver_py)
 

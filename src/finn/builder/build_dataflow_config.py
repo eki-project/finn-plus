@@ -49,7 +49,7 @@ import logging
 
 import numpy as np
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
@@ -222,7 +222,18 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: Which output(s) to generate from the build flow.  See documentation of
     #: DataflowOutputType for available options.
-    generate_outputs: Optional[list[DataflowOutputType]] = None
+    generate_outputs: Optional[list[DataflowOutputType]] = field(
+        default_factory=lambda: [
+            DataflowOutputType.STITCHED_IP,
+            DataflowOutputType.ESTIMATE_REPORTS,
+            DataflowOutputType.OOC_SYNTH,
+            DataflowOutputType.RTLSIM_PERFORMANCE,
+            DataflowOutputType.BITFILE,
+            DataflowOutputType.PYNQ_DRIVER,
+            DataflowOutputType.CPP_DRIVER,
+            DataflowOutputType.DEPLOYMENT_PACKAGE,
+        ]
+    )
 
     #: (Optional) Path to configuration JSON file in which user can specify
     #: a preferred implementation style (HLS or RTL) for each node.

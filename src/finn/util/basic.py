@@ -51,6 +51,7 @@ from pathlib import Path
 from qonnx.util.basic import roundup_to_integer_multiple
 
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 # test boards used for bnn pynq tests
 test_board_map = ["Pynq-Z1", "KV260_SOM", "ZCU104", "U55C"]
@@ -164,7 +165,7 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
     Use this function instead of tempfile.mkdtemp to ensure any generated files
     will survive on the host after the FINN Docker container exits."""
     try:
-        build_dir = Path(os.environ["FINN_BUILD_DIR"])
+        build_dir = get_settings().finn_build_dir
     except KeyError as keyerror:
         raise Exception("""Environment variable FINN_BUILD_DIR is missing!""") from keyerror
 

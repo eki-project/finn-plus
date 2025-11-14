@@ -42,6 +42,7 @@ from finn.util.data_packing import (
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
+from finn.util.settings import get_settings
 
 # Mapping of memory resource attributes to the corresponding C++ HLS
 # pragma directives
@@ -656,8 +657,8 @@ class ElementwiseBinaryOperation_hls(
             )
             # instantiate a streamer and connect it to the IP
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-            axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
-            ms_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
+            axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
+            ms_rtllib_dir = os.path.join(get_settings().finn_rtllib, "memstream/hdl/")
             file_suffix = "_memstream_wrapper.v"
             # automatically find memstream verilog component in code generation directory
             for fname in os.listdir(code_gen_dir):
