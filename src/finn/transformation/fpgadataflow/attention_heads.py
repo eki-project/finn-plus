@@ -14,6 +14,8 @@ from onnx import helper as oh
 
 # QONNX wrapper of ONNX model graphs
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.base import CustomOp
+from qonnx.custom_op.registry import getCustomOp
 
 # QONNX graph transformation base class
 from qonnx.transformation.base import Transformation
@@ -812,6 +814,9 @@ class UnrollMultiHeadAttention(Transformation):
                     attention.output[0] = merge0.input[i]
                     # Insert the new node into the graph
                     graph.node.insert(index + i + 1, attention)
+                    # Each unrolled attention operator implements one attention
+                    # head
+                    getCustomOp(attention).set_nodeattr("Heads", 1)
                 # Insert the new slice and merge nodes into the graph
                 for i, n in enumerate([split0, split1, split2, merge0]):
                     # Insert the new node into the graph at index offset by
