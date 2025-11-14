@@ -14,7 +14,7 @@ import yaml
 from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm, IntPrompt, Prompt
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import finn.util.settings
 from finn.builder.build_dataflow_config import (
@@ -439,7 +439,10 @@ def read_model_path(flowconfig: Path) -> Path | None:
         raise FINNUserError(
             "Pass the flowconfig either as a YAML " "(.yaml, .yml) or JSON (.json) file!"
         )
-    p = Path(data.get("model_path"))
+    np = data.get("model_path")
+    if np is None:
+        return None
+    p = Path(np)
     if p.is_absolute():
         return p
     return Path.cwd() / p
@@ -636,8 +639,44 @@ def run(
 
 @click.command(help="Best effort to automatically start FINN without further configuration.")
 def auto() -> None:
-    # TODO
-    raise NotImplementedError()
+    flow_config: Path | None = None
+    model: Path | None = None
+
+    # Search a configuration
+    files: list[Path] = list(Path.cwd().iterdir())
+    potential_configs = [p for p in files if p.suffix in [".yaml", ".yml", ".json"]]
+    if len(potential_configs) == 0:
+        error("Could not find a suitable configuration file (YAML or JSON).")
+        sys.exit(1)
+    for candidate in [
+        "cfg.yaml",
+        "cfg.yml",
+        "cfg.json",
+        "config.yaml",
+        "config.yml",
+        "config.json",
+    ]:
+        if candidate in [p.name for p in potential_configs]:
+            flow_config = cast("Path", Path.cwd() / candidate)
+    if flow_config is None:
+        flow_config = potential_configs[0]
+    status(f"Trying to use {flow_config} as a flow configuration file")
+
+    # Search the model
+    mp = read_model_path(flow_config)  # type: ignore
+    if mp is not None:
+        model = mp
+    else:
+        potential_models: list[Path] = [p for p in files if p.suffix == ".onnx"]
+        if len(potential_models) == 0:
+            error("No ONNX files found in this directory.")
+            sys.exit(1)
+        if "model.onnx" in [p.name for p in potential_models]:
+            model = Path.cwd() / "model.onnx"
+        else:
+            model = potential_models[0]
+    status(f"Trying to use {model} as a model file\n\n")
+    _build(None, False, None, None, None, None, None, -1, False, "", "", flow_config, model)
 
 
 @click.group(help="Run setup wizards for various tasks.")

@@ -95,7 +95,7 @@ class FINNSettings(BaseModel):
         """Set the FINN_BUILD_DIR."""
         if new_path is None:
             return
-        self._finn_build_dir = str(new_path)
+        self._finn_build_dir = str(Path(new_path).expanduser())
         if self._auto_set_envvars:
             os.environ["FINN_BUILD_DIR"] = str(self.finn_build_dir)
 
@@ -110,7 +110,7 @@ class FINNSettings(BaseModel):
         """Set the FINN_DEPS dir."""
         if new_path is None:
             return
-        self._finn_deps = str(new_path)
+        self._finn_deps = str(Path(new_path).expanduser())
         if self._auto_set_envvars:
             os.environ["FINN_DEPS"] = str(self.finn_deps)
 
@@ -125,7 +125,7 @@ class FINNSettings(BaseModel):
         """Set the FINN_DEPS_DEFINITIONS."""
         if new_path is None:
             return
-        self._finn_deps_definitions = str(new_path)
+        self._finn_deps_definitions = str(Path(new_path).expanduser())
         if self._auto_set_envvars:
             os.environ["FINN_DEPS_DEFINITIONS"] = str(self.finn_deps_definitions)
 
