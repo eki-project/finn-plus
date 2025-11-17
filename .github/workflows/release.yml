@@ -32,8 +32,8 @@ jobs:
           cd ..
 
           # Update main pyproject.toml with the correct version
-          sed -i "s/finn-plus-tests = { version = \"0.0.0\", optional = true }/finn-plus-tests = { version = \"$VERSION\", optional = true }/" pyproject.toml
-          sed -i "s/finn-plus-notebooks = { version = \"0.0.0\", optional = true }/finn-plus-notebooks = { version = \"$VERSION\", optional = true }/" pyproject.toml
+          sed -i "s/finn-plus-tests = { version = \"\*\", optional = true }/finn-plus-tests = { version = \"$VERSION\", optional = true }/" pyproject.toml
+          sed -i "s/finn-plus-notebooks = { version = \"\*\", optional = true }/finn-plus-notebooks = { version = \"$VERSION\", optional = true }/" pyproject.toml
       - name: Build main package
         run: |
           poetry install

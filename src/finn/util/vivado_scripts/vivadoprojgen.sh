@@ -8,16 +8,23 @@
 
 # test if we're passing argument to script..
 if [ $# -eq 0 ]; then
-	echo "Usage: vivadocompile.sh <top-level-entity-name> <clk-name (optional)> <fpga-part (optional)> <clk-period-ns (optional)> <gen-postsynth-verilog (optional)>";
+	echo "Usage: vivadocompile.sh <top-level-entity-name> <fp-tcl-scripts (optional)> <clk-name (optional)> <fpga-part (optional)> <clk-period-ns (optional)> <gen-postsynth-verilog (optional)>";
 	echo "<top-level-entity-name> should not contain the .v or .vhd extension";
+	echo "<fp-tcl-scripts> should be a string of TCL scripts separated by #: (e.g. 'script1.tcl#:script2.tcl')";
 	exit 1;
 fi
 
+# the tcl scripts to instantiate the floating point ip come as a string
+# we need to split the string and load it into an array
+FP_TCL_SCRIPTS="$2"
+# Remove leading and trailing quotes if present
+FP_TCL_SCRIPTS=$(echo "$FP_TCL_SCRIPTS" | sed -e 's/^["\x27]//' -e 's/["\x27]$//')
+
 # use clk as default name for clock signal if not supplied.
-CLK_NAME=${2:-clk}
-FPGA_PART=${3:-xc7z020clg400-1}
-CLK_PERIOD=${4:-2.0}
-GEN_VERILOG=${5:-0}
+CLK_NAME=${3:-clk}
+FPGA_PART=${4:-xc7z020clg400-1}
+CLK_PERIOD=${5:-2.0}
+GEN_VERILOG=${6:-0}
 echo $1
 echo $CLK_NAME
 echo $FPGA_PART
@@ -59,6 +66,18 @@ done
 
 echo "]" >> sources.tcl
 echo "add_files -norecurse -fileset \$obj \$files" >> sources.tcl
+
+# Add floating point IP TCL scripts if provided
+if [ -n "$FP_TCL_SCRIPTS" ]; then
+  # Split the string by #: delimiter
+  IFS='#:'
+  for element in $FP_TCL_SCRIPTS; do
+    if [ -n "$element" ]; then
+      echo "source $element" >> sources.tcl
+    fi
+  done
+  unset IFS
+fi
 
 # Handle headers with find
 touch headers.tcl

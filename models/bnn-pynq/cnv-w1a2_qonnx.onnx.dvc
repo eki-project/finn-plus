@@ -1,0 +1,5 @@
+outs:
+- md5: 898af53d55e7f8790da7282363b1a70b
+  size: 6217920
+  hash: md5
+  path: cnv-w1a2_qonnx.onnx

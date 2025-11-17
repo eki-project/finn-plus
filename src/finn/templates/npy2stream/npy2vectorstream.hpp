@@ -20,7 +20,7 @@ void npy2vectorstream(const char * npy_path, hls::stream<hls::vector<ElemT,N>> &
     cnpy::NpyArray arr = cnpy::npy_load(npy_path);
     DEBUG_NPY2VECTORSTREAM("word_size " << arr.word_size << " num_vals " << arr.num_vals)
     if (arr.word_size != sizeof(NpyT)) {
-      throw "Npy array word size and specified NpyT size do not match";
+      throw std::runtime_error("Npy array word size and specified NpyT size do not match");
     }
     NpyT* loaded_data = arr.data<NpyT>();
     size_t outer_dim_elems = 1;

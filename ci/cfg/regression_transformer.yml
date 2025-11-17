@@ -1,0 +1,83 @@
+[
+    # Transformer Dummy
+    {
+        "dut": ["transformer"],
+        "seed": [12],
+
+        "calibration_passes": [32],
+
+        "model_num_heads": [1, 2],
+        "model_num_layers": [1],
+        "model_bias":[true],
+        "model_emb_dim": [32],
+        "model_mlp_dim": [192],
+        "model_seq_len": [64],
+        "model_bits": [2],
+        "model_norm": ["none"],
+        "model_mask": ["none"],
+        "model_positional_encoding": ["binary"],
+
+        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+
+    # NEW Transformer benchmark model (dvc-imported from finn-transformers repo)
+    {
+        "dut": ["transformer"],
+        "seed": [12],
+        "model_dir": ["models/transformer/finn-transformers/benchmark"],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+
+    # 4x GPT Transformer models
+    {
+        "dut": ["transformer"],
+        "seed": [12],
+        "model_dir": ["models/transformer/gpt_a_6b_gpt2-s256-t2048-l2-h4-e256"],
+        # Increase verification error tolerance due to worse than usual scale aggregation errors
+        "verification_atol": [1e0],
+        "verification_mean_atol": [1e-2],
+        "board": ["U250"],
+        "synth_clk_period_ns": [10],
+        "enable_instrumentation": [False],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+    {
+        "dut": ["transformer"],
+        "seed": [12],
+        "model_dir": [
+                      "models/transformer/gpt_b_4b_gpt2-s256-t2048-l2-h4-e256",
+                      #"models/transformer/gpt_c_gpt2-s512-t2048-l2-h4-e512", # disabled to save time
+                      "models/transformer/gpt_d_gpt2-s256-t2048-l1-h2-e256"
+                      ],
+        "board": ["U250"],
+        "synth_clk_period_ns": [10],
+        "enable_instrumentation": [False],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
+    },
+
+    # 5x RadioML Transformer models
+    {
+        "dut": ["transformer"],
+        "seed": [12],
+        "model_dir": [
+                      "models/transformer/rml_transformer_0",
+                      "models/transformer/rml_transformer_a",
+                      #"models/transformer/rml_transformer_b", # disabled due to URAM over-utilization
+                      #"models/transformer/rml_transformer_c", # disabled to save time
+                      #"models/transformer/rml_transformer_d", # disabled due to URAM over-utilization
+                      ],
+        "board": ["RFSoC2x2"],
+        "synth_clk_period_ns": [10],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+
+    # 1x RadioML Conformer model
+    {
+        "dut": ["transformer"],
+        "seed": [12],
+        "model_dir": ["models/transformer/rml_conformer"],
+        "board": ["RFSoC2x2"],
+        "synth_clk_period_ns": [10],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+    }
+]

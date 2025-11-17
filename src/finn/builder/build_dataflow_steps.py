@@ -27,12 +27,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""
-Dataflow build steps for FINN.
-
-This module contains utility functions and build steps for the FINN dataflow
-compiler, including verification, IP stitching preparation, and other build-related
-functionalities.
+"""Collection of default build steps for building and verifying a dataflow
+accelerator from an ONNX model.
 """
 
 import json
@@ -146,6 +142,10 @@ def verify_step(
     log.info(f"Running verification for {step_name}")
     verify_out_dir = cfg.output_dir + "/verification_output"
     intermediate_models_dir = cfg.output_dir + "/intermediate_models"
+    # Ensure tensor names are sorted and readable for easier debugging
+    model = model.transform(SortGraph())
+    model = model.transform(GiveUniqueNodeNames())
+    model = model.transform(GiveReadableTensorNames())
     os.makedirs(verify_out_dir, exist_ok=True)
     (in_npy_all, exp_out_npy_all) = cfg._resolve_verification_io_pair()
     bsize_in = in_npy_all.shape[0]
@@ -195,7 +195,20 @@ def verify_step(
             log.info("Attempting to force model shape on verification input")
             out_npy = out_npy.reshape(exp_oshape)
 
-        res = np.isclose(exp_out_npy, out_npy, atol=1e-3).all()
+        # Check 1: Element-wise closeness between output and expected output
+        res1 = np.isclose(
+            out_npy, exp_out_npy, atol=cfg.verification_atol, rtol=cfg.verification_rtol
+        ).all()
+        # Check 2 and 3: Mean absolute and relative error over all output elements
+        num_elements = out_npy.size
+        abs_error = np.abs(out_npy - exp_out_npy)
+        # Avoid division by zero for relative error
+        exp_out_npy_safe = np.where(exp_out_npy == 0, np.finfo(float).eps, exp_out_npy)
+        rel_error = np.abs((out_npy - exp_out_npy) / exp_out_npy_safe)
+        res2 = np.mean(abs_error) <= cfg.verification_mean_atol
+        res3 = np.mean(rel_error) <= cfg.verification_mean_rtol
+
+        res = res1 and res2 and res3
         all_res = all_res and res
         res_to_str = {True: "SUCCESS", False: "FAIL"}
         res_str = res_to_str[res]
@@ -204,6 +217,74 @@ def verify_step(
                 verify_out_dir, f"verify_{step_name}_{b}_{res_str}.npz"
             )
             np.savez(verification_output_fn, **out_dict)
+
+            # Log tensor statistics for debugging (only output tensors, in topological order)
+            tensors_to_log = ["global_in"]
+            if need_parent:
+                for node in parent_model.graph.node:
+                    for output in node.output:
+                        tensors_to_log.append(output)
+                sdp_node = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
+                sdp_prefix = sdp_node.name + "_"
+            else:
+                sdp_prefix = ""
+            for node in model.graph.node:
+                for output in node.output:
+                    tensors_to_log.append(sdp_prefix + output)
+
+            tensor_stats = []
+            for key in tensors_to_log:
+                if key in out_dict:
+                    stat_dict = {
+                        "tensor": key,
+                        "shape": list(out_dict[key].shape),
+                        "mean": float(np.mean(out_dict[key])),
+                        "std": float(np.std(out_dict[key])),
+                        "min": float(np.min(out_dict[key])),
+                        "max": float(np.max(out_dict[key])),
+                    }
+                    tensor_stats.append(stat_dict)
+
+            # Write tensor statistics in compact human-readable table format
+            with open(
+                os.path.join(verify_out_dir, f"verify_{step_name}_{b}_{res_str}_stats.txt"), "w"
+            ) as f:
+                # Write header
+                f.write(
+                    f"{'Tensor':<40} {'Shape':<20} {'Mean':<12} "
+                    f"{'Std':<12} {'Min':<12} {'Max':<12}\n"
+                )
+                f.write("-" * 108 + "\n")
+
+                # Write data rows
+                for stat in tensor_stats:
+                    # Shorten/truncate long names and shapes
+                    tensor_name = stat["tensor"].replace("GenericPartition", "GP")[:39]
+                    shape_str = str(stat["shape"])[:19]
+                    f.write(
+                        f"{tensor_name:<40} {shape_str:<20} {stat['mean']:<12.6f} "
+                        f"{stat['std']:<12.6f} {stat['min']:<12.6f} {stat['max']:<12.6f}\n"
+                    )
+
+                # Add output error analysis
+                f.write("\n" + "=" * 108 + "\n")
+                f.write("OUTPUT ERROR ANALYSIS\n")
+                f.write("=" * 108 + "\n")
+
+                f.write(f"Number of elements:           {num_elements}\n")
+                f.write(f"Min absolute error:           {np.min(abs_error):.6e}\n")
+                f.write(f"Max absolute error:           {np.max(abs_error):.6e}\n")
+                f.write(f"Mean absolute error:          {np.mean(abs_error):.6e}\n")
+                f.write(f"Min relative error:           {np.min(rel_error):.6e}\n")
+                f.write(f"Max relative error:           {np.max(rel_error):.6e}\n")
+                f.write(f"Mean relative error:          {np.mean(rel_error):.6e}\n")
+                f.write(
+                    f"Tolerance per element:        atol={cfg.verification_atol:.6e} + "
+                    f"rtol={cfg.verification_rtol:.6e}\n"
+                )
+                f.write(f"Tolerance for mean abs. err:  {cfg.verification_mean_atol:.6e}\n")
+                f.write(f"Tolerance for mean rel. err:  {cfg.verification_mean_rtol:.6e}\n")
+                f.write(f"Verification result:          {res_str}\n")
         else:
             verification_output_fn = os.path.join(
                 verify_out_dir, f"verify_{step_name}_{b}_{res_str}.npy"
@@ -371,7 +452,10 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(absorb.AbsorbConsecutiveTransposes())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(InferDataLayouts())
-
+    model = model.transform(InferDataTypes())
+    model = model.transform(InferShapes())
+    model = model.transform(RoundAndClipThresholds())
+    model = model.transform(to_hw.InferReshape())
     return model
 
 
@@ -380,23 +464,27 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
     nodes, which point to a separate ONNX file. Dataflow accelerator synthesis
     can only be performed on those HWCustomOp sub-graphs."""
 
+    unmapped_layers = [
+        node.name
+        for node in model.graph.node
+        if not node.domain.startswith("finn.custom_op.fpgadataflow")
+    ]
     # Check if there are unsupported layers somewhere between supported layers
     # This would cause a "cyclic-free graph partitioning violated" error otherwise
-    # TODO: print list of all offending layer's names
     results = model.analysis(unsupported_layers)
     if not results[0]:
-        raise FINNUserError(f"Unsupported combination of layers found after node {results[1].name}")
+        raise FINNUserError(
+            f"Unsupported/unmapped layer(s) found in between FINN operators, "
+            f"starting with node {results[1].name}. "
+            "Complete list of unmapped nodes: " + ", ".join(unmapped_layers)
+        )
 
     # Warn if unsupported layers remain at the start or end of the graph
-    # This is allowed but they will need to be implemented separately (e.g., in custom software)
-    warnlist = [
-        node.name for node in model.graph.node if node.domain != "finn.custom_op.fpgadataflow"
-    ]
-    if warnlist:
+    if unmapped_layers:
         log.warning(
             "The following nodes at the start/end of the graph will not be mapped to the "
             "accelerator, so they will need to be implemented manually (e.g., in software): "
-            + ", ".join(warnlist)
+            + ", ".join(unmapped_layers)
         )
 
     parent_model = model.transform(
@@ -796,21 +884,26 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
         # prepare ip-stitched rtlsim
         verify_model = deepcopy(model)
         verify_model = prepare_for_stitched_ip_rtlsim(verify_model, cfg)
-        # use critical path estimate to set rtlsim liveness threshold
-        # (very conservative)
+
+        # Use critical path estimate to set rtlsim liveness threshold
+        # TODO: This is a heuristic which usually overestimates the maximum
+        #  cycles (by a lot), but can actually also underestimate causing
+        #  incorrect detection of timeouts. In these cases, this estimation can
+        #  be overwritten by setting LIVENESS_THRESHOLD to a very large value.
         verify_model = verify_model.transform(AnnotateCycles())
-        estimate_network_performance = verify_model.analysis(dataflow_performance)
-        prev_liveness = get_liveness_threshold_cycles()
-        os.environ["LIVENESS_THRESHOLD"] = str(
-            int(estimate_network_performance["critical_path_cycles"] * 1.1)
-        )
+        liveness = get_liveness_threshold_cycles()
+        perf = verify_model.analysis(dataflow_performance)
+        latency = perf["critical_path_cycles"]
+        max_iters = max(liveness, int(np.ceil(latency * 1.1 + 20)))
+        os.environ["LIVENESS_THRESHOLD"] = str(max_iters)
+
         if cfg.verify_save_rtlsim_waveforms:
             verify_out_dir = cfg.output_dir + "/verification_output"
             os.makedirs(verify_out_dir, exist_ok=True)
             abspath = os.path.abspath(verify_out_dir)
             verify_model.set_metadata_prop("rtlsim_trace", abspath + "/verify_rtlsim.wdb")
         verify_step(verify_model, cfg, "stitched_ip_rtlsim", need_parent=True)
-        os.environ["LIVENESS_THRESHOLD"] = str(prev_liveness)
+        os.environ["LIVENESS_THRESHOLD"] = str(liveness)
     return model
 
 
@@ -835,11 +928,18 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
                 "rtlsim_trace",
                 "%s/rtlsim_perf_batch_%d.wdb" % (os.path.abspath(report_dir), rtlsim_bs),
             )
-        # use the critical_path_cycles estimate to set the timeout limit for FIFO sim
+
+        # Use critical path estimate to set the timeout limit for FIFO sim
+        # TODO: This is a heuristic which usually overestimates the maximum
+        #  cycles (by a lot), but can actually also underestimate causing
+        #  incorrect detection of timeouts. In these cases, this estimation can
+        #  be overwritten by setting LIVENESS_THRESHOLD to a very large value.
         model = model.transform(AnnotateCycles())
+        liveness = get_liveness_threshold_cycles()
         perf = model.analysis(dataflow_performance)
         latency = perf["critical_path_cycles"]
-        max_iters = latency * 1.1 + 20
+        max_iters = max(liveness, int(np.ceil(latency * 1.1 + 20)))
+
         rtlsim_perf_dict = xsi_fifosim(model, rtlsim_bs, max_iters=max_iters)
         # keep keys consistent between the Python and C++-styles
         cycles = rtlsim_perf_dict["cycles"]

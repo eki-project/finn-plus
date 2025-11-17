@@ -1,0 +1,5 @@
+outs:
+- md5: 781aaa4542eb9f2d618a5b8da56ed590
+  size: 17788787
+  hash: md5
+  path: mobilenetv1-w4a4_pre_post_tidy_opset-11.onnx

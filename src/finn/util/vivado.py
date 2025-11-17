@@ -26,8 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""
-Vivado-related utility functions for FINN.
+"""Vivado-related utility functions for FINN.
 
 This module provides utilities for working with Xilinx Vivado, including
 out-of-context synthesis, project creation, and other Vivado-related operations.
@@ -42,14 +41,15 @@ from finn.util.logging import log
 
 
 def out_of_context_synth(
-    verilog_dir,
-    top_name,
-    fpga_part="xczu3eg-sbva484-1-e",
-    clk_name="ap_clk_0",
-    clk_period_ns=5.0,
-    post_synth_verilog=False,
-):
-    "Run out-of-context Vivado synthesis, return resources and slack."
+    verilog_dir: str | Path,
+    top_name: str,
+    float_ip_tcl: list[str],
+    fpga_part: str = "xczu3eg-sbva484-1-e",
+    clk_name: str = "ap_clk_0",
+    clk_period_ns: float = 5.0,
+    post_synth_verilog: bool = False,
+) -> dict[str, str | float]:
+    """Run out-of-context Vivado synthesis, return resources and slack."""
     # ensure that vivado is in PATH: source VIVADO_INSTALLATION/settings64.sh
     if which("vivado") is None:
         raise FINNUserError("vivado is not in PATH, ensure settings64.sh is sourced.")
@@ -58,17 +58,18 @@ def out_of_context_synth(
     script_path = file_dir / "vivado_scripts" / "vivadocompile.sh"
     # vivadocompile.sh <top-level-entity> <clock-name (optional)> <fpga-part (optional)>
     flag_post_synth_verilog = 0 if post_synth_verilog else 1
+    float_ip_string = '"{}"'.format("#".join(float_ip_tcl))
     call = (
-        f"{script_path} {top_name} {clk_name} {fpga_part} {float(clk_period_ns)}"
+        f"{script_path} {top_name} {float_ip_string} {clk_name} {fpga_part} {float(clk_period_ns)}"
         f"{flag_post_synth_verilog}"
     )
     call = call.split()
     launch_process_helper(call, proc_env=os.environ.copy(), cwd=verilog_dir)
 
-    vivado_proj_folder = "%s/results_%s" % (verilog_dir, top_name)
-    res_counts_path = vivado_proj_folder + "/res.txt"
+    vivado_proj_folder = f"{verilog_dir}/results_{top_name}"
+    res_counts_path = f"{vivado_proj_folder}/res.txt"
 
-    with open(res_counts_path, "r") as myfile:
+    with Path(res_counts_path).open() as myfile:
         res_data = myfile.read().split("\n")
     ret = {}
     ret["vivado_proj_folder"] = vivado_proj_folder

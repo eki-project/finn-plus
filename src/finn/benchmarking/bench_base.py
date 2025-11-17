@@ -322,7 +322,7 @@ class bench:
         The method handles three model input scenarios:
         - model_dir: Pre-existing ONNX model with verification I/O pairs
         - model_path: Path to existing ONNX model file
-        - Generated: ONNX model created by step_export_onnx()
+        - Generated: ONNX model created by _step_export_onnx()
 
         Configuration management includes:
         - Loading base configuration from DUT YAML file
@@ -343,7 +343,7 @@ class bench:
             self._build_inputs["onnx_path"] = os.path.join(
                 self._build_inputs["build_dir"], "model_export.onnx"
             )
-            if self.step_export_onnx(self._build_inputs["onnx_path"]) == "skipped":
+            if self._step_export_onnx(self._build_inputs["onnx_path"]) == "skipped":
                 # microbenchmarks might skip because no model can be generated for given params
                 return "skipped"
 
