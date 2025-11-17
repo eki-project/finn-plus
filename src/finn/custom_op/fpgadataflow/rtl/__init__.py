@@ -27,8 +27,8 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """RTLBackend specializations of HWCustomOps."""
 
-from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 
 custom_op = dict()
 
@@ -50,6 +50,7 @@ def register_custom_op(cls):
 # flake8: noqa
 # Disable linting from here, as all import will be flagged E402 and maybe F401
 
+import finn.custom_op.fpgadataflow.rtl.reshape_rtl
 from finn.custom_op.fpgadataflow.rtl.convolutioninputgenerator_rtl import (
     ConvolutionInputGenerator_rtl,
 )
@@ -61,8 +62,6 @@ from finn.custom_op.fpgadataflow.rtl.streamingdatawidthconverter_rtl import (
 from finn.custom_op.fpgadataflow.rtl.streamingfifo_rtl import StreamingFIFO_rtl
 from finn.custom_op.fpgadataflow.rtl.thresholding_rtl import Thresholding_rtl
 from finn.custom_op.fpgadataflow.rtl.vectorvectoractivation_rtl import VVAU_rtl
-
-import finn.custom_op.fpgadataflow.rtl.reshape_rtl
 
 # make sure new HLSCustomOp subclasses are imported here so that they get
 # registered and plug in correctly into the infrastructure
