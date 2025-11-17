@@ -26,8 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""
-Utility functions for FINN notebooks.
+"""Utility functions for FINN notebooks.
 
 This module contains functions that are commonly used in FINN notebooks
 for loading test models, generating example inputs, and other utilities.
@@ -45,9 +44,15 @@ from brevitas_examples import bnn_pynq, imagenet_classification
 from IPython.display import IFrame
 from pkgutil import get_data
 from torch.nn import Module, Sequential
+from typing import Any
 
 
 def get_notebooks_folder() -> pathlib.Path:
+    """Get the path to the notebooks folder.
+
+    Returns:
+        Path to the notebooks directory
+    """
     return pathlib.Path(__file__).parent
 
 
@@ -68,45 +73,47 @@ example_map = {
 }
 
 
-def get_test_model(netname, wbits, abits, pretrained):
-    """Returns the model specified by input arguments from the Brevitas BNN-PYNQ
-    test networks. Pretrained weights loaded if pretrained is True."""
+def get_test_model(netname: str, wbits: int, abits: int, pretrained: bool) -> Module:
+    """Return the model specified by input arguments from the Brevitas BNN-PYNQ
+    test networks. Pretrained weights loaded if pretrained is True.
+    """
     model_cfg = (netname, wbits, abits)
     model_def_fxn = example_map[model_cfg]
     fc = model_def_fxn(pretrained)
     return fc.eval()
 
 
-def get_test_model_trained(netname, wbits, abits):
-    "get_test_model with pretrained=True"
+def get_test_model_trained(netname: str, wbits: int, abits: int) -> Module:
+    """Get test model with pretrained=True."""
     return get_test_model(netname, wbits, abits, pretrained=True)
 
 
-def get_topk(vec, k):
-    "Return indices of the top-k values in given array vec (treated as 1D)."
+def get_topk(vec: np.ndarray, k: int) -> np.ndarray:
+    """Return indices of the top-k values in given array vec (treated as 1D)."""
     return np.flip(vec.flatten().argsort())[:k]
 
 
-def get_example_input(topology):
-    "Get example numpy input tensor for given topology."
-
+def get_example_input(topology: str) -> np.ndarray:
+    """Get example numpy input tensor for given topology."""
     if "fc" in topology:
         raw_i = get_data("qonnx.data", "onnx/mnist-conv/test_data_set_0/input_0.pb")
+        if raw_i is None:
+            raise ValueError("Could not load test data")
         onnx_tensor = onnx.load_tensor_from_string(raw_i)
         return nph.to_array(onnx_tensor)
-    elif topology == "cnv":
+    if topology == "cnv":
         cifar_path = (
             get_notebooks_folder() / "example_data" / "cifar10" / "cifar10-test-data-class3.npz"
         )
         x = np.load(cifar_path)["arr_0"].astype(np.float32)
         return x
-    else:
-        raise Exception("Unknown topology, can't return example input")
+    raise Exception("Unknown topology, can't return example input")
 
 
-def get_trained_network_and_ishape(topology, wbits, abits):
-    "Return (trained_model, shape) for given BNN-PYNQ test config."
-
+def get_trained_network_and_ishape(
+    topology: str, wbits: int, abits: int
+) -> tuple[Module, tuple[int, int, int, int]]:
+    """Return (trained_model, shape) for given BNN-PYNQ test config."""
     topology_to_ishape = {
         "tfc": (1, 1, 28, 28),
         "lfc": (1, 1, 28, 28),
@@ -123,7 +130,7 @@ def get_trained_network_and_ishape(topology, wbits, abits):
 class Normalize(Module):
     """PyTorch module for normalizing input tensors with given mean and standard deviation."""
 
-    def __init__(self, mean, std, channels):
+    def __init__(self, mean: float, std: float, channels: int) -> None:
         """Initialize the Normalize module.
 
         Args:
@@ -131,13 +138,13 @@ class Normalize(Module):
             std: Standard deviation values for normalization
             channels: Number of channels in the input tensor
         """
-        super(Normalize, self).__init__()
+        super().__init__()
 
         self.mean = mean
         self.std = std
         self.channels = channels
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply normalization to input tensor.
 
         Args:
@@ -154,11 +161,11 @@ class Normalize(Module):
 class ToTensor(Module):
     """PyTorch module that converts input values from [0, 255] range to [0, 1] range."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the ToTensor module."""
-        super(ToTensor, self).__init__()
+        super().__init__()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Convert input tensor from [0, 255] range to [0, 1] range.
 
         Args:
@@ -174,7 +181,7 @@ class ToTensor(Module):
 class NormalizePreProc(Module):
     """PyTorch module that combines ToTensor scaling and normalization preprocessing."""
 
-    def __init__(self, mean, std, channels):
+    def __init__(self, mean: float, std: float, channels: int) -> None:
         """Initialize the NormalizePreProc module.
 
         Args:
@@ -182,14 +189,14 @@ class NormalizePreProc(Module):
             std: Standard deviation values for normalization
             channels: Number of channels in the input tensor
         """
-        super(NormalizePreProc, self).__init__()
+        super().__init__()
         self.features = Sequential()
         scaling = ToTensor()
         self.features.add_module("scaling", scaling)
         normalize = Normalize(mean, std, channels)
         self.features.add_module("normalize", normalize)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply scaling and normalization preprocessing to input tensor.
 
         Args:
@@ -204,13 +211,15 @@ class NormalizePreProc(Module):
 # Visualization utility functions for notebooks
 
 
-def showSrc(what):
+def showSrc(what: Any) -> None:  # noqa: N802
     """Display the source code of a function or class."""
     print("".join(inspect.getsourcelines(what)[0]))
 
 
-def showInNetron(model_filename: str, localhost_url: str = None, port: int = None):
-    """Shows a ONNX model file in the Jupyter Notebook using Netron.
+def showInNetron(  # noqa: N802
+    model_filename: str, localhost_url: str | None = None, port: int | None = None
+) -> IFrame:
+    """Show an ONNX model file in the Jupyter Notebook using Netron.
 
     :param model_filename: The path to the ONNX model file.
     :type model_filename: str
