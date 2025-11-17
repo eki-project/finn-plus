@@ -155,6 +155,17 @@ def run_flow_wizard() -> None:
     console.print("[bold green]Welcome to FINN+s configuration wizard.[/bold green]\n")
     console.print("[bold]Core[/bold]")
     console.rule()
+    modelpath = Prompt.ask(
+        "What is the path to your ONNX model?\n"
+        "[italic grey46](You can leave this blank for a more compiler style "
+        "interface or if you want to avoid hardcoding the model for a certain "
+        "configruation. In this case you'd pass the model "
+        "when calling FINN+: 'finn build cfg.yaml model.onnx')[/italic grey46] "
+        "\nModel"
+    )
+    if modelpath != "":
+        dfbc.model_path = Path(modelpath)
+    console.print()
     output_path = Prompt.ask(
         "Where do you want to store the results of the flow, "
         "relative to the configuration file?",
@@ -255,12 +266,13 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     """Interactively ask the user to confirm / change / reject the default settings if no
     settings file was found. Saves the edited settings.
     IMPORTANT: This method does not check whether the file exists, or if the passed settings
-    contain the default values. It simply runs the wizard without questions."""
+    contain the default values. It simply runs the wizard without questions.
+    """
     console = Console()
     console.clear()
     console.print(
         "[bold green]Welcome to FINN+.\nIt seems that you don't have a "
-        "settings.yaml file yet. If this "
+        "settings.yaml file yet (or you started this wizard manually). If this "
         "is on purpose, restart FINN+ with --accept-defaults to skip the "
         "wizard and use the predefined "
         "default values. Otherwise follow the next instructions.[/bold green]\n"
@@ -321,7 +333,7 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     console.print(
         "[italic]Some other settings were automatically inferred from your setup. "
         "They are listed below. Please check if they are correct. "
-        "If not, these can be modified in the afterwards generated settings file\n"
+        "If not, these can be modified in the afterwards generated settings file.\n"
     )
     console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
     console.print(f"[bold]FINN_NOTEBOOKS[/bold]: {settings.finn_notebooks}")
@@ -329,7 +341,9 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     console.print(f"[bold]FINN_QNNDATA[/bold]: {settings.finn_qnn_data}")
     console.print(f"[bold]FINN_TESTS[/bold]: {settings.finn_tests}")
     console.print(
-        "\n\n[bold green]Please check your edited settings and confirm them.[/bold green]"
+        "\n\n[bold green]Please check your edited settings and confirm them "
+        "(Relative paths will be displayed as the absolute paths they would be "
+        "extended to when starting FINN+ from here).[/bold green]"
     )
     console.print(f"[bold]FINN_BUILD_DIR[/bold]: {settings.finn_build_dir}")
     console.print(f"[bold]FINN_DEPS[/bold]: {settings.finn_deps}")
@@ -340,14 +354,20 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     )
     console.print(f"[bold]DEPS_GIT_TIMEOUT[/bold]: {settings.deps_git_timeout}")
     console.print()
-    do_save = Confirm.ask(f"Do you want to save these settings (at {settings._settings_path})? ")
+    do_save = Confirm.ask("Do you want to save these settings ")
     if not do_save:
         console.print(
             "[bold orange3]The settings were not saved. Either restart the wizard,"
             " or pass --accept-defaults to FINN.[/bold orange3]"
         )
         return
-    settings.save()
+    where = Path(
+        Prompt.ask(
+            "Where do you want to save these settings?",
+            default=str(settings._settings_path.absolute()),
+        )
+    )  # noqa
+    settings.save(where)
     console.print(
         "[bold green]Settings written. Please restart FINN+ for the changes "
         "to take effect.[/bold green]"
@@ -365,7 +385,7 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool) -> None:
     status(f"[DEPDENDENCY PATH] {settings.finn_deps}")
     status(f"[DEPDENDENCY DEFINITIONS PATH] {settings.finn_deps_definitions}")
     status(f"[NUM WORKERS] {settings.num_default_workers}")
-    finn.util.settings._SETTINGS = settings
+    finn.util.settings._SETTINGS = settings  # noqa
     if not settings.settingsfile_exists():
         warning("Settings file does not exist yet. Creating file now.")
         settings.save()
@@ -437,7 +457,7 @@ def read_model_path(flowconfig: Path) -> Path | None:
         data: dict = json.loads(flowconfig.read_text())
     else:
         raise FINNUserError(
-            "Pass the flowconfig either as a YAML " "(.yaml, .yml) or JSON (.json) file!"
+            "Pass the flowconfig either as a YAML (.yaml, .yml) or JSON (.json) file!"
         )
     np = data.get("model_path")
     if np is None:
@@ -475,8 +495,9 @@ def _build(
                 "or by setting model_path in your flow config!"
             )
             sys.exit(1)
-        model = mp
-    status(f"Starting FINN build with config {config.name} and model {model.name}!")
+        else:
+            model = mp
+    status(f"Starting FINN build with config {config.name} and model {model.name}!")  # type: ignore
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
@@ -535,7 +556,7 @@ def _build(
     Console().rule(
         f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
         f"{config.name}[/bold orange1][bold cyan] on model [/bold cyan]"
-        f"[bold orange1]{model.name}[/bold orange1]"
+        f"[bold orange1]{model.name}[/bold orange1]"  # type: ignore
     )
     build_dataflow_cfg(str(model), dfbc)
 
@@ -639,6 +660,7 @@ def run(
 
 @click.command(help="Best effort to automatically start FINN without further configuration.")
 def auto() -> None:
+    """Try to run FINN guessing which files to use for config and model."""
     flow_config: Path | None = None
     model: Path | None = None
 
@@ -681,16 +703,19 @@ def auto() -> None:
 
 @click.group(help="Run setup wizards for various tasks.")
 def wizard() -> None:
+    """Command group for wizards that help setup FINN."""
     pass
 
 
 @click.command(name="flow")
 def flow_wizard() -> None:
+    """Run the wizard helping to setup a flow config."""
     run_flow_wizard()
 
 
 @click.command(name="config")
 def config_wizard() -> None:
+    """Run the wizard helping to set up the FINN+ settings."""
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,

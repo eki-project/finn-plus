@@ -291,11 +291,21 @@ class FINNSettings(BaseModel):
         return self._settings_path.exists()
 
     def save(self, path: Path | None = None) -> None:
-        """Save settings. If None is given saves to resolved path."""
+        """Save settings. If None is given saves to resolved path.
+
+        Important:
+            Although the getter methods of the settings path return the resolved absolute paths,
+            this method saves the relative path originally given. This is so that we don't switch
+            from a relative path to an absolute one on saving and restoring.
+        """
         if path is None:
             path = self._settings_path
+        data = self.model_dump()
+        data["finn_build_dir"] = self._finn_build_dir
+        data["finn_deps"] = self._finn_deps
+        data["finn_deps_definitions"] = self._finn_deps_definitions
         with path.open("w+") as f:
-            yaml.dump(self.model_dump(), f, yaml.Dumper)
+            yaml.dump(data, f, yaml.Dumper)
 
     @staticmethod
     def get_settings_keys() -> list[str]:
