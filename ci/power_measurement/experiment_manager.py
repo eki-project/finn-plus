@@ -139,6 +139,7 @@ class Experiment:
         self.ex_config = ex_config
 
     def load_experiment_overlay(self):
+        """Load and initialize the experiment overlay."""
         PL.reset()  # See https://github.com/Xilinx/PYNQ/issues/1409
 
         if self.insert_kwargs:

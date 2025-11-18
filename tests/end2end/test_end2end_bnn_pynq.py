@@ -483,6 +483,8 @@ def pytest_generate_tests(metafunc):
 @pytest.mark.bnn_kv260
 @pytest.mark.bnn_u250
 class TestEnd2End:
+    """End-to-end test for BNN."""
+
     def test_export(self, topology, wbits, abits, board):
         """Export trained QONNX model."""
         if wbits > abits:
