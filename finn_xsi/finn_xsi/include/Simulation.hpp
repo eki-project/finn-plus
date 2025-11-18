@@ -9,16 +9,7 @@
 #include <SharedLibrary.h>
 #include <helper.h>
 
-#include <SimulationInterface.hpp>
-#include <boost/asio.hpp>
-#include <boost/asio/thread_pool.hpp>
-#include <boost/atomic/ipc_atomic.hpp>
-#include <boost/interprocess/creation_tags.hpp>
-#include <boost/interprocess/detail/os_file_functions.hpp>
-#include <boost/interprocess/exceptions.hpp>
-#include <boost/interprocess/interprocess_fwd.hpp>
-#include <boost/interprocess/managed_shared_memory.hpp>
-#include <boost/interprocess/shared_memory_object.hpp>
+#include <InterSimulationInterface.hpp>
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
@@ -106,8 +97,8 @@ class Simulation {
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes, bool CommunicatesWithPredecessor, bool CommunicatesWithSuccessor>
 class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
      private:
-    using ConsumingInterface = SimulationInterface<SimulationInterfaceType::CONSUMING>;
-    using ProducingInterface = SimulationInterface<SimulationInterfaceType::PRODUCING>;
+    using ConsumingInterface = InterSimulationInterface<true>;
+    using ProducingInterface = InterSimulationInterface<false>;
     std::array<ConsumingInterface, IStreamsSize> fromProducerInterface;
     std::array<ProducingInterface, OStreamsSize> toConsumerInterface;
     std::array<FIFO, OStreamsSize> fifo;
@@ -166,14 +157,14 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 this->fifo[i].write(this->ostreams[i].is_valid());
                 this->ostreams[i].ready(this->fifo[i].is_ready());
                 // Interface FIFO <-> SHM
-                this->fifo[i].ready(toConsumerInterface[i].writeToNextNode(this->fifo[i].is_valid(), static_cast<unsigned int>(cyclesRun)));
+                this->fifo[i].ready(toConsumerInterface[i].exchange(this->fifo[i].is_valid()));
 
             }
         }
         if constexpr (NodeIndex != 0 && CommunicatesWithPredecessor) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
                 // Interface SHM <-> sim
-                this->istreams[i].valid(fromProducerInterface[i].readFromLastNode(this->istreams[i].is_ready()));
+                this->istreams[i].valid(fromProducerInterface[i].exchange(this->istreams[i].is_ready()));
             }
         }
     }
