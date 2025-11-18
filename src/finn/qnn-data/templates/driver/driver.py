@@ -1,7 +1,11 @@
+"""FINN driver for PYNQ."""
+
+import click
 import json
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import sys
 import time
 from dataset_loading import FileQueue, ImgQueue
 from PIL import Image
@@ -18,6 +22,8 @@ from finn.util.data_packing import finnpy_to_packed_bytearray, packed_bytearray_
 
 
 class FINNDMAOverlay(Overlay):
+    """FINN overlay for DMA."""
+
     def __init__(
         self,
         bitfile_name,
@@ -185,59 +191,72 @@ class FINNDMAOverlay(Overlay):
             self.execute_on_buffers()
 
     def idt(self, ind=0):
+        """Get input data type for specified index."""
         return self.io_shape_dict["idt"][ind]
 
     def odt(self, ind=0):
+        """Get output data type for specified index."""
         return self.io_shape_dict["odt"][ind]
 
     def ishape_normal(self, ind=0):
+        """Get normal input shape with current batch size."""
         ret = list(self.io_shape_dict["ishape_normal"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
     def oshape_normal(self, ind=0):
+        """Get normal output shape with current batch size."""
         ret = list(self.io_shape_dict["oshape_normal"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
     def ishape_folded(self, ind=0):
+        """Get folded input shape with current batch size."""
         ret = list(self.io_shape_dict["ishape_folded"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
     def oshape_folded(self, ind=0):
+        """Get folded output shape with current batch size."""
         ret = list(self.io_shape_dict["oshape_folded"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
     def ishape_packed(self, ind=0):
+        """Get packed input shape with current batch size."""
         ret = list(self.io_shape_dict["ishape_packed"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
     def oshape_packed(self, ind=0):
+        """Get packed output shape with current batch size."""
         ret = list(self.io_shape_dict["oshape_packed"][ind])
         ret[0] = self.batch_size
         return tuple(ret)
 
     @property
     def num_inputs(self):
+        """Number of accelerator inputs."""
         return self.io_shape_dict["num_inputs"]
 
     @property
     def num_outputs(self):
+        """Number of accelerator outputs."""
         return self.io_shape_dict["num_outputs"]
 
     @property
     def batch_size(self):
+        """Current batch size."""
         return self._batch_size
 
     @property
     def io_shape_dict(self):
+        """Dictionary of I/O shapes and data types."""
         return self._io_shape_dict
 
     @io_shape_dict.setter
     def io_shape_dict(self, value):
+        """Set I/O shape dictionary and convert data types."""
         idt = value.get("idt", None)
         if all(isinstance(element, str) for element in idt):
             idt_new = []
@@ -258,6 +277,7 @@ class FINNDMAOverlay(Overlay):
 
     @batch_size.setter
     def batch_size(self, value):
+        """Set batch size and reallocate buffers."""
         self._batch_size = value
         # free the old buffers by setting to None
         # (reference counting should care of it)
@@ -496,7 +516,8 @@ class FINNDMAOverlay(Overlay):
         return res
 
     def validate(self, *args, **kwargs):
-        print("TODO FIX")
+        """Validate accelerator accuracy on dataset."""
+        print("Validate is currently not implemented")
         return
         report_dir = kwargs.get("report_dir")
         dataset = kwargs.get("validation_dataset")
@@ -504,6 +525,7 @@ class FINNDMAOverlay(Overlay):
         bsize = self.batch_size
 
         def img_resize(img, size):
+            """Resize image to specified size."""
             w, h = img.size
             if (w <= h and w == size) or (h <= w and h == size):
                 return img
@@ -517,6 +539,7 @@ class FINNDMAOverlay(Overlay):
                 return img.resize((ow, oh), Image.BILINEAR)
 
         def img_center_crop(img, size):
+            """Center crop image to specified size."""
             crop_height, crop_width = (size, size)
             image_width, image_height = img.size
             crop_top = int(round((image_height - crop_height) / 2.0))
@@ -524,6 +547,7 @@ class FINNDMAOverlay(Overlay):
             return img.crop((crop_left, crop_top, crop_left + crop_width, crop_top + crop_height))
 
         def pre_process(img_np):
+            """Preprocess image for validation."""
             img = Image.fromarray(img_np.astype(np.uint8))
             img = img_resize(img, 256)
             img = img_center_crop(img, 224)
@@ -531,6 +555,7 @@ class FINNDMAOverlay(Overlay):
             return img
 
         def setup_dataloader(val_path, label_file_path=None, batch_size=100, n_images=50000):
+            """Setup dataloader for validation dataset."""
             if label_file_path is None:
                 val_folders = [f.name for f in os.scandir(val_path) if f.is_dir()]
                 val_folders = sorted(val_folders)
@@ -640,12 +665,14 @@ class FINNDMAOverlay(Overlay):
             json.dump(report, f, indent=2)
 
     def idle(self, *args, **kwargs):
+        """Run idle for specified time."""
         runtime = kwargs.get("time")
         print("Running idle for %d seconds.." % runtime)
         time.sleep(runtime)
         print("Done.")
 
     def run_throughput_test(self, *args, **kwargs):
+        """Run throughput test and save report."""
         report_dir = kwargs.get("report_dir")
         res = self.throughput_test()
         print(res)
@@ -655,6 +682,8 @@ class FINNDMAOverlay(Overlay):
 
 
 class FINNInstrumentationOverlay(Overlay):
+    """FINN overlay for instrumentation."""
+
     def __init__(
         self,
         bitfile_name,
@@ -665,6 +694,7 @@ class FINNInstrumentationOverlay(Overlay):
         seed=1,
         **kwargs,
     ):
+        """Initialize instrumentation overlay."""
         super().__init__(bitfile_name, download=download, device=device)
 
         self.platform = platform
@@ -678,26 +708,31 @@ class FINNInstrumentationOverlay(Overlay):
                 self.fclk_mhz_actual = Clocks.fclk0_mhz
 
     def instrumentation_read(self, name):
+        """Read instrumentation register."""
         return self.instrumentation_wrap_0.read(
             offset=self.ip_dict["instrumentation_wrap_0"]["registers"][name]["address_offset"]
         )
 
     def instrumentation_write(self, name, value):
+        """Write instrumentation register."""
         return self.instrumentation_wrap_0.write(
             offset=self.ip_dict["instrumentation_wrap_0"]["registers"][name]["address_offset"],
             value=value,
         )
 
     def reset_accelerator(self):
+        """Reset the accelerator."""
         self.axi_gpio_0.write(
             offset=self.ip_dict["axi_gpio_0"]["registers"]["GPIO_DATA"]["address_offset"], value=0
         )
 
     def start_accelerator(self):
+        """Start the accelerator."""
         lfsr_seed = (self.seed << 16) & 0xFFFF0000  # upper 16 bits
         self.instrumentation_write("cfg", lfsr_seed + 1)  # start operation
 
     def observe_instrumentation(self, debug_print=True):
+        """Read and report instrumentation metrics."""
         status_reg = self.instrumentation_read("status")
         chksum_reg = self.instrumentation_read("checksum")
         min_latency = self.instrumentation_read("min_latency")
@@ -727,6 +762,7 @@ class FINNInstrumentationOverlay(Overlay):
         return (overflow_err, underflow_err, frame, checksum, min_latency, latency, interval)
 
     def experiment_instrumentation(self, *args, **kwargs):
+        """Run instrumentation experiment and save report."""
         runtime = kwargs.get("runtime")
         report_dir = kwargs.get("report_dir")
 
@@ -769,6 +805,7 @@ class FINNInstrumentationOverlay(Overlay):
         print("Done.")
 
     def idle(self, *args, **kwargs):
+        """Run idle for specified time."""
         runtime = kwargs.get("time")
         print("Running idle for %d seconds.." % runtime)
         time.sleep(runtime)
@@ -776,6 +813,8 @@ class FINNInstrumentationOverlay(Overlay):
 
 
 class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
+    """FINN overlay for live FIFO sizing."""
+
     def __init__(
         self,
         bitfile_name,
@@ -787,6 +826,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         fifo_widths=dict(),
         **kwargs,
     ):
+        """Initialize live FIFO overlay."""
         super().__init__(
             bitfile_name,
             platform=platform,
@@ -816,6 +856,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             self.error = True
 
     def configure_fifo(self, i, mode, depth=2):
+        """Configure virtual FIFO mode and depth."""
         # Virtual FIFO register map
         mode_offset = 0x10
         depth_offset = 0x18
@@ -829,6 +870,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         getattr(self, ip_name).write(offset=depth_offset, value=depth)
 
     def total_fifo_size(self, depths):
+        """Calculate total FIFO size in kB."""
         # Assuming FIFO SDP/AXI-Lite interfaces are ordered consistently with FIFO IDs
         total_size_bits = 0
         for i, depth in enumerate(depths):
@@ -837,7 +879,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         return total_size_kB
 
     def size_iteratively(self, start_depth, iteration_runtime, reduction_factor=0.5):
-        # Iterative FIFO-sizing function
+        """Iteratively reduce FIFO depths to find minimum."""
         fifo_minimum_reached = [False] * self.num_fifos
 
         if isinstance(start_depth, list):
@@ -941,9 +983,11 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
     def determine_start_depth(
         self,
     ):
-        # Attempt to determine start depth for all FIFOs automatically.
-        # If it doesn't find a working setting start depth must be set manually,
-        # potentially on per-FIFO basis.
+        """
+        Attempt to determine start depth for all FIFOs automatically.
+        If it doesn't find a working setting start depth must be set manually,
+        potentially on per-FIFO basis.
+        """
         start_depth = 1
         last_start_depth = 1
         last_interval = 0
@@ -1000,6 +1044,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         return (start_depth, iteration_runtime)
 
     def experiment_fifosizing(self, *args, **kwargs):
+        """Run live FIFO sizing experiment and save report."""
         report_dir = kwargs.get("report_dir")
 
         # For live FIFO-sizing, we also expect the FIFO widths (in bits) exported by FINN, e.g.,
@@ -1137,6 +1182,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
 
 class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
+    """FINN overlay for DMA and instrumentation (with Switch Block)."""
+
     def __init__(
         self,
         bitfile_name,
@@ -1150,6 +1197,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         seed=1,
         **kwargs,
     ):
+        """Initialize DMA instrumentation overlay."""
         super().__init__(
             bitfile_name,
             io_shape_dict=io_shape_dict,
@@ -1163,6 +1211,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         )
 
     def set_current_mode(self, mode):
+        """Set accelerator mode ('dma' or 'instr')."""
         if self.get_current_mode() != mode:
             self.reset_accelerator()
             val = 1 if mode == "instr" else 0
@@ -1172,19 +1221,119 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             )
 
     def get_current_mode(self):
+        """Get accelerator mode."""
         val = self.axi_gpio_0.read(
             offset=self.ip_dict["axi_gpio_0"]["registers"]["GPIO2_DATA"]["address_offset"]
         )
         return "instr" if val == 1 else "dma"
 
     def throughput_test(self, **kwargs):
+        """Run throughput test (DMA mode)."""
         self.set_current_mode("dma")
         return super().throughput_test(**kwargs)
 
     def execute(self, input_npy):
+        """Execute (DMA mode)."""
         self.set_current_mode("dma")
         return super().execute(input_npy)
 
     def experiment_instrumentation(self, **kwargs):
+        """Run instrumentation experiment (instrumentation mode)."""
         self.set_current_mode("instr")
         return super().experiment_instrumentation(**kwargs)
+
+
+def parse_kv(ctx, self, value):
+    """Parse key-value pairs from CLI arguments."""
+    result = {}
+    for item in value:
+        if len(item) != 2:
+            print(item)
+            raise click.UsageError(
+                "Items must be in form: key=val TYPE. "
+                'With datatypes ["Str", "Int", "Bool", "Float"] being supported'
+            )
+        if item[0].count("=") != 1:
+            raise click.BadParameter("Items must be key=value")
+        k, v = item[0].split("=", 1)
+
+        data_type = item[1]
+        if data_type == "Str":
+            v = v
+        elif data_type == "Int":
+            v = int(v)
+        elif data_type == "Bool":
+            v = bool(v)
+        elif data_type == "Float":
+            v = float(v)
+        else:
+            raise click.BadParameter(
+                f'Only datatypes ["Str", "Int", "Bool", "Float"] '
+                f"are supported. Used datatype: {data_type}"
+            )
+
+        result[k] = v
+    return result
+
+
+@click.command(
+    "Example: python driver.py -b ../bitfile/finn-accel.bit "
+    "-s ./settings.json -f experiment_instrumentation "
+    "-ck seed=42 Int -fk runtime=10 Int "
+    "-fk report_dir='./report_dir/' Str"
+)
+@click.option("--bitfile_name", "-b", help="Path to the Bitstream")
+@click.option("--settings", "-s", help="Path to the settings.json")
+@click.option("--function", "-f", help="Function to be executed")
+@click.option(
+    "--ckwarg",
+    "-ck",
+    multiple=True,
+    callback=parse_kv,
+    nargs=2,
+    help=("Keyword argument for the class instance: " "... -ck key1=val1 TYPE -ck key2=val2 TYPE"),
+)
+@click.option(
+    "--fkwarg",
+    "-fk",
+    multiple=True,
+    callback=parse_kv,
+    nargs=2,
+    help=("Keyword argument for the called function: " "... -fk key1=val1 TYPE -fk key2=val2 TYPE"),
+)
+def driver_cli(bitfile_name, settings, function, ckwarg, fkwarg):
+    """
+    CLI tool to instantiate driver and execute functions.
+
+    Instantiates a driver class and executes a member function.
+    The instantiation implicitly loads a bitstream to the FPGA.
+    Requires FINN generated bitstream file and settings.json.
+    Driver class is inferred from settings.json, while the called
+    member function must be chosen via the function option.
+    Kwargs for class instantiation or function call can be input
+    via --ckwarg or --fkwarg options respectively.
+    Class Kwargs take precedence over settings.json Kwargs.
+    """
+
+    with open(settings, "r", encoding="utf-8") as f:
+        driver_settings = json.load(f)["driver_information"]
+
+    if ckwarg is None:
+        ckwarg = {}
+    if fkwarg is None:
+        fkwarg = {}
+
+    driver_type = driver_settings["driver_type"]
+    input_kwargs = {
+        **driver_settings,
+        **ckwarg,
+    }  # ckwarg has precedence when a key conflict happens
+
+    cla = getattr(sys.modules[__name__], driver_type)
+    inst = cla(bitfile_name, **input_kwargs)
+    func = getattr(inst, function)
+    print(func(**fkwarg))
+
+
+if __name__ == "__main__":
+    driver_cli()

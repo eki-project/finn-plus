@@ -27,6 +27,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""End-to-end tests for BNN models on PYNQ platforms."""
+
 import pytest
 
 import itertools
@@ -104,6 +106,7 @@ rtlsim_trace = False
 
 
 def get_checkpoint_name(board, topology, wbits, abits, step):
+    """Generate checkpoint filename for a specific build step."""
     build_dir = os.environ["FINN_BUILD_DIR"]
     return build_dir + "/end2end_%s_%s_w%da%d_%s.onnx" % (
         board,
@@ -115,6 +118,7 @@ def get_checkpoint_name(board, topology, wbits, abits, step):
 
 
 def fold_tfc(model):
+    """Apply folding configuration for TFC topology."""
     fc_layers = model.get_nodes_by_op_type("MVAU_hls")
     # (PE, SIMD, ramstyle) for each layer
     config = [(16, 49, "block"), (8, 8, "auto"), (8, 8, "auto"), (10, 8, "distributed")]
@@ -134,6 +138,7 @@ def fold_tfc(model):
 
 
 def fold_lfc(model):
+    """Apply folding configuration for LFC topology."""
     fc_layers = model.get_nodes_by_op_type("MVAU_hls")
     # (PE, SIMD, ramstyle) for each layer
     config = [
@@ -158,6 +163,7 @@ def fold_lfc(model):
 
 
 def fold_cnv_large(model):
+    """Apply large folding configuration for CNV topology."""
     fc_layers = model.get_nodes_by_op_type("MVAU_hls")
     # each tuple is (PE, SIMD) for a layer
     folding = [
@@ -189,6 +195,7 @@ def fold_cnv_large(model):
 
 
 def fold_cnv_small(model):
+    """Apply small folding configuration for CNV topology."""
     fc_layers = model.get_nodes_by_op_type("MVAU_hls")
     # each tuple is (PE, SIMD) for a layer
     folding = [
@@ -225,6 +232,7 @@ def fold_cnv_small(model):
 
 
 def get_folding_function(topology, wbits, abits):
+    """Get appropriate folding function for topology and quantization."""
     if "tfc" in topology:
         return fold_tfc
     elif "lfc" in topology:
@@ -239,6 +247,7 @@ def get_folding_function(topology, wbits, abits):
 
 
 def get_golden_io_pair(topology, wbits, abits, preproc=ToTensor(), return_topk=None):
+    """Generate golden input/output pair for testing."""
     (model, ishape) = get_trained_network_and_ishape(topology, wbits, abits)
     input_tensor_npy = get_example_input(topology)
     input_tensor_torch = torch.from_numpy(input_tensor_npy).float()
@@ -251,6 +260,7 @@ def get_golden_io_pair(topology, wbits, abits, preproc=ToTensor(), return_topk=N
 
 
 def measure_top1_accuracy(model_chkpt, dataset, parent_chkpt=None):
+    """Measure top-1 accuracy on test dataset."""
     if dataset == "cifar10":
         trainx, trainy, testx, testy, valx, valy = cifar.load_cifar_data(
             "dataset", download=True, one_hot=False
@@ -295,6 +305,7 @@ def measure_top1_accuracy(model_chkpt, dataset, parent_chkpt=None):
 
 
 def topology2dataset(topology):
+    """Map topology name to dataset name."""
     if "fc" in topology:
         return "mnist"
     elif "cnv" in topology:
@@ -304,6 +315,7 @@ def topology2dataset(topology):
 
 
 def deploy_based_on_board(model, model_title, topology, wbits, abits, board):
+    """Create deployment directory with all necessary files."""
     # Check if a deployment directory for this board type already exists
     if ("FINN_DEPLOY_DIR" in os.environ) and (board in os.environ["FINN_DEPLOY_DIR"]):
         deploy_dir_root = os.environ["FINN_DEPLOY_DIR"]
@@ -362,6 +374,7 @@ def deploy_based_on_board(model, model_title, topology, wbits, abits, board):
 
 # parameters that make up inputs to test case(s)
 def get_full_parameterized_test_list(marker, wbits_list, abits_list, topology_list, board_list):
+    """Generate parameterized test cases from parameter lists."""
     test_cases = [
         (
             f"{marker}_w{param1}_a{param2}_{param3}_{param4}",
@@ -383,6 +396,7 @@ def get_full_parameterized_test_list(marker, wbits_list, abits_list, topology_li
 
 
 def pytest_generate_tests(metafunc):
+    """Generate test cases."""
     idlist = []
     argvalues = []
     scenarios = []
@@ -470,6 +484,7 @@ def pytest_generate_tests(metafunc):
 @pytest.mark.bnn_u250
 class TestEnd2End:
     def test_export(self, topology, wbits, abits, board):
+        """Export trained QONNX model."""
         if wbits > abits:
             pytest.skip("No wbits > abits end2end network configs for now")
         if topology == "lfc" and not (wbits == 1 and abits == 1):
@@ -484,6 +499,7 @@ class TestEnd2End:
         assert os.path.isfile(chkpt_name)
 
     def test_import_and_tidy(self, topology, wbits, abits, board):
+        """Import and tidy up exported model."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "export")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         model = model.transform(InferShapes())
@@ -496,6 +512,7 @@ class TestEnd2End:
         model.save(chkpt)
 
     def test_add_pre_and_postproc(self, topology, wbits, abits, board):
+        """Add preprocessing and postprocessing layers."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "import_and_tidy")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         global_inp_name = model.graph.input[0].name
@@ -531,6 +548,7 @@ class TestEnd2End:
         assert os.path.isfile(chkpt_name)
 
     def test_streamline(self, topology, wbits, abits, board):
+        """Apply streamlining transformations."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "pre_post")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         model = model.transform(absorb.AbsorbSignBiasIntoMultiThreshold())
@@ -550,6 +568,7 @@ class TestEnd2End:
         model.save(get_checkpoint_name(board, topology, wbits, abits, "streamline"))
 
     def test_convert_to_hw_layers(self, topology, wbits, abits, board):
+        """Convert to hardware layers."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "streamline")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         if topology == "tfc" and wbits == 1 and abits == 1:
@@ -610,6 +629,7 @@ class TestEnd2End:
             assert len(model.get_nodes_by_op_type(op_type)) == exp_count
 
     def test_specialize_layers(self, topology, wbits, abits, board):
+        """Specialize layers for target FPGA."""
         build_data = get_build_env(board, target_clk_ns)
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "convert_to_hw_layers")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
@@ -653,6 +673,7 @@ class TestEnd2End:
             assert len(model.get_nodes_by_op_type(op_type)) == exp_count
 
     def test_create_dataflow_partition(self, topology, wbits, abits, board):
+        """Create dataflow partition."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "specialize_layers")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         parent_model = model.transform(CreateDataflowPartition())
@@ -666,6 +687,7 @@ class TestEnd2End:
         dataflow_model.save(dataflow_model_chkpt)
 
     def test_fold(self, topology, wbits, abits, board):
+        """Apply folding configuration."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "dataflow_model")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         folding_fxn = get_folding_function(topology, wbits, abits)
@@ -673,6 +695,7 @@ class TestEnd2End:
         model.save(get_checkpoint_name(board, topology, wbits, abits, "fold"))
 
     def test_minimize_bit_width(self, topology, wbits, abits, board):
+        """Minimize accumulator and weight bit widths."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "fold")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         model = model.transform(MinimizeAccumulatorWidth())
@@ -684,6 +707,7 @@ class TestEnd2End:
     @pytest.mark.slow
     @pytest.mark.vivado
     def test_cppsim(self, topology, wbits, abits, board):
+        """Test with C++ simulation."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "minimize_bit_width")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         model = model.transform(PrepareCppSim())
@@ -701,6 +725,7 @@ class TestEnd2End:
     @pytest.mark.slow
     @pytest.mark.vivado
     def test_ipgen(self, topology, wbits, abits, board):
+        """Generate IP blocks with HLS synthesis."""
         build_data = get_build_env(board, target_clk_ns)
         if build_data["kind"] == "alveo" and ("XILINX_VITIS" not in os.environ):
             pytest.skip("XILINX_VITIS not set")
@@ -714,6 +739,7 @@ class TestEnd2End:
     @pytest.mark.slow
     @pytest.mark.vivado
     def test_set_fifo_depths(self, topology, wbits, abits, board):
+        """Set FIFO depths between layers."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "ipgen")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         test_fpga_part = get_build_env(board, target_clk_ns)["part"]
@@ -734,6 +760,7 @@ class TestEnd2End:
     @pytest.mark.slow
     @pytest.mark.vivado
     def test_ipstitch_rtlsim(self, topology, wbits, abits, board):
+        """Stitch IP blocks and test with RTL simulation."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "fifodepth")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         test_fpga_part = get_build_env(board, target_clk_ns)["part"]
@@ -768,6 +795,7 @@ class TestEnd2End:
     @pytest.mark.slow
     @pytest.mark.vivado
     def test_throughput_rtlsim(self, topology, wbits, abits, board):
+        """Measure throughput with RTL simulation."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "ipstitch_rtlsim")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         n_nodes = len(model.graph.node)
@@ -784,6 +812,7 @@ class TestEnd2End:
     @pytest.mark.slow
     @pytest.mark.vivado
     def test_validate_top1(self, topology, wbits, abits, board):
+        """Validate top-1 accuracy at various stages."""
         if "TEST_END2END_VALIDATE_TOP1" not in os.environ:
             pytest.skip("TEST_END2END_VALIDATE_TOP1 not set")
         prepostproc_chkpt = get_checkpoint_name(board, topology, wbits, abits, "pre_post")
@@ -801,6 +830,7 @@ class TestEnd2End:
     @pytest.mark.vivado
     @pytest.mark.vitis
     def test_build(self, topology, wbits, abits, board):
+        """Build bitstream for target board."""
         build_data = get_build_env(board, target_clk_ns)
         if build_data["kind"] == "alveo" and ("XILINX_VITIS" not in os.environ):
             pytest.skip("XILINX_VITIS not set")
@@ -814,6 +844,7 @@ class TestEnd2End:
     @pytest.mark.vivado
     @pytest.mark.vitis
     def test_make_driver(self, topology, wbits, abits, board):
+        """Generate driver for target platform."""
         build_data = get_build_env(board, target_clk_ns)
         if build_data["kind"] == "alveo" and ("XILINX_VITIS" not in os.environ):
             pytest.skip("XILINX_VITIS not set")
@@ -829,6 +860,7 @@ class TestEnd2End:
         model.save(get_checkpoint_name(board, topology, wbits, abits, "driver"))
 
     def test_deploy(self, topology, wbits, abits, board):
+        """Create deployment package."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "driver")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         model_title = "%s_w%d_a%d_%s" % ("bnn", wbits, abits, topology)

@@ -1,3 +1,5 @@
+"""CI measurement script for FINN deployment packages."""
+
 import os
 import shutil
 import subprocess
@@ -5,6 +7,7 @@ import sys
 
 
 def delete_dir_contents(dir):
+    """Delete all contents of a directory."""
     for filename in os.listdir(dir):
         file_path = os.path.join(dir, filename)
         try:
@@ -18,7 +21,7 @@ def delete_dir_contents(dir):
 
 if __name__ == "__main__":
     exit_code = 0
-    print(f"SCANNING DEPLOYMENT PACKAGES IN BUILD ARTIFACTS {os.getcwd()}..")
+    print("SCANNING DEPLOYMENT PACKAGES IN BUILD ARTIFACTS..")
     # Find deployment packages from artifacts
     artifacts_in_dir = os.path.join("build_artifacts", "runs_output")
     artifacts_out_dir = os.path.join("measurement_artifacts", "runs_output")
@@ -35,7 +38,6 @@ if __name__ == "__main__":
             os.makedirs(extract_dir, exist_ok=True)
             delete_dir_contents(extract_dir)
             shutil.unpack_archive(deploy_archive, extract_dir)
-            print(f"extract_dir: {extract_dir}")
 
             # Prefix stdout to make it easier to identify the run in the console output
             print(
@@ -48,7 +50,7 @@ if __name__ == "__main__":
             result = subprocess.run(
                 [
                     sys.executable,
-                    "ci/power_measurement/expirment_manager.py",
+                    "ci/power_measurement/experiment_manager.py",
                     os.path.join(extract_dir, "driver/settings.json"),
                     extract_dir,
                 ],
@@ -57,9 +59,9 @@ if __name__ == "__main__":
             )
 
             for line in result.stdout.splitlines():
-                print(f"{line}")
+                print(f"[{os.path.basename(run_in_dir)}] {line}")
             for line in result.stderr.splitlines():
-                print(f"{line}")
+                print(f"[{os.path.basename(run_in_dir)}] {line}")
             if result.returncode != 0:
                 print("ERROR: MEASUREMENT MANAGER NON-ZERO EXIT CODE!")
                 exit_code = 1

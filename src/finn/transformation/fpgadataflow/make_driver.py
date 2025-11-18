@@ -26,6 +26,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Transformations for generating C++ and PYNQ drivers."""
+
 import json
 import multiprocessing
 import numpy as np
@@ -90,6 +92,7 @@ class MakeCPPDriver(Transformation):
 
     # TODO: Enable multiple input types! Now only assumes the first one
     def resolve_dt_name(s: str) -> str:
+        """Convert FINN DataType string to C++ type name."""
         s = s.replace("DataType[", "").replace("]", "")
         if s in ["BINARY", "TERNARY", "BIPOLAR"]:
             return "Datatype" + s[0] + s[1:].lower()
@@ -110,6 +113,7 @@ class MakeCPPDriver(Transformation):
         version: str,
         host_mem: str,
     ):
+        """Initialize C++ driver generation with platform and version settings."""
         super().__init__()
         self.platform: str = platform
 
@@ -132,6 +136,7 @@ class MakeCPPDriver(Transformation):
             self.host_memory = False
 
     def apply(self, model: ModelWrapper) -> Tuple[ModelWrapper, bool]:
+        """Generate C++ driver for the model."""
         driver_shapes: Dict = get_driver_shapes(model)
         ext_weight_dma_cnt: int  # noqa
         weights_dir: str  # noqa
@@ -148,8 +153,8 @@ class MakeCPPDriver(Transformation):
         json_path = os.path.join(cpp_driver_dir, "acceleratorconfig.json")
         header_path = os.path.join(cpp_driver_dir, "AcceleratorDatatypes.h")
 
-        # Helper function to execute shell commands safely with error handling
         def run_command(command, cwd=None, debug=False):
+            """Helper function to execute shell commands safely with error handling"""
             try:
                 result = subprocess.run(
                     shlex.split(command), cwd=cwd, check=True, text=True, capture_output=True
@@ -235,9 +240,10 @@ class MakeCPPDriver(Transformation):
         idmas = [x["m_name"] for x in ips if isIO(x) and "idma" in x["m_name"]]
         odmas = [x["m_name"] for x in ips if isIO(x) and "odma" in x["m_name"]]
 
-        # Helper function to format kernel names for the driver configuration
-        # Converts "kernelName:instance" to "kernelName:{instance}" format
         def formatKernelName(kname: str):
+            """Helper function to format kernel names for the driver configuration
+            Converts "kernelName:instance" to "kernelName:{instance}" format
+            """
             kparts = kname.split(":")
             return kparts[0] + ":{" + kparts[1] + "}"
 
@@ -292,7 +298,6 @@ class MakeCPPDriver(Transformation):
 
         log.info("Created runtime json config file")
 
-        # Helper function to configure CMake build system
         def configure_cmake(
             source_dir: str,  # Directory containing CMakeLists.txt
             build_dir: str,  # Directory where build files will be generated
@@ -301,6 +306,7 @@ class MakeCPPDriver(Transformation):
             # Command to invoke CMake
             cmake_executable: str = f"{sys.executable} -m cmake",
         ):
+            """Helper function to configure CMake build system."""
             # Create build directory if it doesn't exist
             os.makedirs(build_dir, exist_ok=True)
             # Split the cmake executable command into arguments
@@ -322,7 +328,6 @@ class MakeCPPDriver(Transformation):
                     result.returncode, args, result.stdout, result.stderr
                 )
 
-        # Helper function to build the configured CMake project
         def build_cmake(
             build_dir: str,  # Directory containing the configured build files
             # Build tool to use (default: make)
@@ -332,6 +337,7 @@ class MakeCPPDriver(Transformation):
             # Additional build arguments
             build_args: Optional[List[str]] = None,
         ):
+            """Helper function to build the configured CMake project."""
             # Prepare the build command with the executable
             args = [cmake_executable]
             # Add optional build target if specified
@@ -374,8 +380,8 @@ class MakeCPPDriver(Transformation):
             build_dir=os.path.join(cpp_driver_dir, "build"), build_args=["-j", str(num_cores)]
         )
 
-        # Helper function to verify that the built driver uses the correct datatypes
         def check_finn_types(bin_dir: str, expectedInputType: str, expectedOutputType: str) -> None:
+            """Helper function to verify that the built driver uses the correct datatypes."""
             # Run the built finnhpc executable with the --check flag to output datatype information
             result = subprocess.run(
                 "./finnhpc --check".split(), cwd=bin_dir, capture_output=True, text=True
@@ -449,6 +455,8 @@ class MakeCPPDriver(Transformation):
 
 
 class MakePYNQDriver(Transformation):
+    """Generate PYNQ driver for FINN accelerator."""
+
     def __init__(
         self,
         platform,
@@ -457,6 +465,7 @@ class MakePYNQDriver(Transformation):
         validation_datset=None,
         experiment_info=None,
     ):
+        """Initialize PYNQ driver generation."""
         super().__init__()
         self.platform = platform
         self.driver_type = driver_type
@@ -465,6 +474,7 @@ class MakePYNQDriver(Transformation):
         self.experiment_info = experiment_info
 
     def _generate_driver_files(self, model):
+        """Generate PYNQ driver base files."""
         # create a temporary folder for the generated driver
         pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
@@ -497,6 +507,7 @@ class MakePYNQDriver(Transformation):
             shutil.copy(src_file, target_file)
 
     def _generate_weight_files(self, model):
+        """Generate weight files for external and runtime-writable weights."""
         pynq_driver_dir = model.get_metadata_prop("pynq_driver_dir")
 
         external_weights = False
@@ -575,8 +586,8 @@ class MakePYNQDriver(Transformation):
         return external_weights, runtime_weights
 
     def _write_fifo_widths(self, model):
-        # export FIFO widths to the settings file as well
-        # at this stage, the FIFOs are already wrapped in StreamingDataflowPartitions
+        """Export FIFO widths to the settings file as well.
+        At this stage, the FIFOs are already wrapped in StreamingDataflowPartitions."""
         settings = {}
         fifo_widths = {}
         for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
@@ -601,6 +612,7 @@ class MakePYNQDriver(Transformation):
         return settings
 
     def apply(self, model):
+        """Generate PYNQ driver for the model."""
         # TODO: support runtime-writable and external weights (instr)
         # TODO: support Alveo and Versal platforms (instr)
 

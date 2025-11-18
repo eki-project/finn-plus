@@ -1,3 +1,5 @@
+"""Experiment manager for measurement workflows."""
+
 import importlib.util
 import inspect
 import json
@@ -5,15 +7,18 @@ import multiprocessing
 import os
 import sys
 import time
-from measurment_util import PAF, Recorder
+from measurement_util import PAF, Recorder
 from pynq import PL
 
 
-class ExpiermentManager:
-    # Information Important for ExpiermentManager
-    #   driver (path)   -> Expriment Info
+class ExperimentManager:
+    """Manages multiple experiments."""
+
+    # Information Important for ExperimentManager
+    #   driver (path)   -> Experiment Info
     #   driver_type     -> Driver Info
     def __init__(self, config_path, working_dir):
+        """Initialize experiment manager with configuration."""
         # TODO: add default config
         self._experiments = []
         config = None
@@ -78,12 +83,20 @@ class ExpiermentManager:
 
         Each experiement specified in the configuratin gets executed after another.
         """
+        exit_code = 0
         for experiment in self._experiments:
-            experiment.start_experiment()
+            e = experiment.start_experiment()
+            if e != 0:
+                exit_code = 1
+                print(f"[EM] EXPERIMENT {experiment._name} EXITED WITH ERROR: {e}")
+        sys.exit(exit_code)
 
 
 class Experiment:
+    """Represents a single experiment."""
+
     def __init__(self, **ex_config):
+        """Initialize experiment with configuration parameters."""
         # Experiment Meta Information (e.g. warmup)
         self._functions = ex_config.get("functions", [])
         self._name = ex_config.get("name", "")
@@ -121,12 +134,17 @@ class Experiment:
                 else:
                     raise ValueError(f"Variable {param.name} has no (default) value!!")
 
+        self.insert_kwargs = insert_kwargs
+        self.params_dict = params_dict
+        self.ex_config = ex_config
+
+    def load_experiment_overlay(self):
         PL.reset()  # See https://github.com/Xilinx/PYNQ/issues/1409
 
-        if insert_kwargs:
-            self._driver_inst = self._driver_class(**params_dict, **ex_config)
+        if self.insert_kwargs:
+            self._driver_inst = self._driver_class(**self.params_dict, **self.ex_config)
         else:
-            self._driver_inst = self._driver_class(**params_dict)
+            self._driver_inst = self._driver_class(**self.params_dict)
 
     def start_experiment(self):
         """Main method to start an experiment.
@@ -137,6 +155,7 @@ class Experiment:
         print(f"[EM] SETTING UP EXPERIMENT: {self._name}")
         print(f"[EM] MONITORING RAILS: {self._rails}")
         print(f"[EM] MONITORING SENSORS: {self._sensors}")
+        self.load_experiment_overlay()
         if self._power_supply_ip is not None:
             print(f"[EM] POWER SUPPLY IP: {self._power_supply_ip}")
 
@@ -169,7 +188,7 @@ class Experiment:
                     p.start()
                 else:
                     print("[EM]ERROR: Timeout not supported")
-                    return
+                    return 1
 
                 time.sleep(self._warmup)
 
@@ -185,12 +204,19 @@ class Experiment:
             self._recorder.save_dfs_to_xlsx(experiment_path, f"{self._name}_run_{i}")
             self._recorder.reset()
 
+            if (
+                p.exitcode != 0
+            ):  # If the process exit code is not 0 return with nonzero. This cancels the experiment
+                return p.exitcode
+        return 0
+
 
 if __name__ == "__main__":
     if len(sys.argv) == 3:
         json_path = os.path.abspath(sys.argv[1])
-        working_dir = os.path.abspath(sys.argv[2])
-        ex_flow = ExpiermentManager(json_path, working_dir)
+        working_dir = sys.argv[2]
+
+        ex_flow = ExperimentManager(json_path, working_dir)
         ex_flow.start_experiments()
     else:
         print("[EM] ERROR: Provide settings.json path and working directory as argument")

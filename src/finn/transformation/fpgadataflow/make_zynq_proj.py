@@ -46,7 +46,7 @@ from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
-from finn.transformation.fpgadataflow.instrumentation import GenerateInstrumentationIP, InsertSwitch
+from finn.transformation.fpgadataflow.instrumentation import GenerateInstrumentationIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import (
@@ -97,14 +97,14 @@ class MakeZYNQProject(Transformation):
     value.
     """
 
-    def __init__(self, platform, period_ns, enable_debug=False):
+    def __init__(self, platform, period_ns, enable_debug=False, enable_finn_switch=False):
         """Initialize MakeZYNQProject with platform settings."""
         super().__init__()
         self.platform = platform
         self.period_ns = period_ns
+        self.enable_finn_switch = enable_finn_switch
         self.enable_debug = 1 if enable_debug else 0
         self.enable_gpio_reset = 0
-        self.enable_finn_switch = 0
 
     def apply(self, model):
         """Apply the transformation to create a Zynq project."""
@@ -120,18 +120,18 @@ class MakeZYNQProject(Transformation):
 
         # instantiate instrumentation IP if it was generated
         instr_ip_dir = model.get_metadata_prop("instrumentation_ipgen")
-        switch_ip_dir = model.get_metadata_prop("switch_module")
 
-        if switch_ip_dir is not None and os.path.isdir(switch_ip_dir):
-            config.append("add_files -norecurse %s/switch.v" % switch_ip_dir)
+        if self.enable_finn_switch:
+            # TODO: Add ‑copy_to
+            module_dir = os.environ["FINN_RTLLIB"] + "/finn_switch/hdl/switch.v"
+            config.append(
+                "add_files -copy_to [get_property DIRECTORY [current_project]] -norecurse %s"
+                % module_dir
+            )
             config.append("create_bd_cell -type module -reference finn_switch finn_switch")
-            self.enable_finn_switch = True
-        else:
-            self.enable_finn_switch = False
 
-        if instr_ip_dir is not None and os.path.isdir(instr_ip_dir):
-            use_instrumentation = True
-
+        use_instrumentation = instr_ip_dir is not None and os.path.isdir(instr_ip_dir)
+        if use_instrumentation:
             # instantiate GPIO IP to trigger reset
             self.enable_gpio_reset = 1
             # in the template this will connect to first port of interconnect_0
@@ -165,8 +165,6 @@ class MakeZYNQProject(Transformation):
             )
             config.append("assign_axi_addr_proc instrumentation_wrap_0/s_axi_ctrl")
             master_axilite_idx += 1
-        else:
-            use_instrumentation = False
 
         # instantiate nested AXI interconnects if required
         # only the nested interconnects and all interfaces connected before this line
@@ -344,10 +342,15 @@ class MakeZYNQProject(Transformation):
                     if producer is not None:
                         producer = model.find_producer(node.input[i])
                         j = list(producer.output).index(node.input[i])
-                        if not (
-                            instance_names[producer.name].startswith("idma")
-                            or instance_names[node.name].startswith("odma")
-                        ):
+                        producer_model = ModelWrapper(getCustomOp(producer).get_nodeattr("model"))
+                        producer_idma = any(
+                            s.name.startswith("IODMA") for s in producer_model.graph.output
+                        )
+                        # node_model = ModelWrapper(getCustomOp(node).get_nodeattr("model"))
+                        node_odma = any(
+                            s.name.startswith("TLastMarker") for s in kernel_model.graph.input
+                        )
+                        if not (producer_idma or node_odma):
                             config.append(
                                 "connect_bd_intf_net [get_bd_intf_pins %s/s_axis_%d] "
                                 "[get_bd_intf_pins %s/m_axis_%d]"
@@ -358,7 +361,7 @@ class MakeZYNQProject(Transformation):
                                     j,
                                 )
                             )
-                        elif instance_names[producer.name].startswith("idma"):
+                        elif producer_idma:
                             config.append(
                                 "connect_bd_intf_net [get_bd_intf_pins %s/m_axis_%d] "
                                 "[get_bd_intf_pins finn_switch/A_IN0]"
@@ -563,6 +566,11 @@ class ZynqBuild(Transformation):
         """Apply the ZynqBuild transformation to create a complete Zynq accelerator."""
         model = model.transform(InferDataLayouts())
         # prepare at global level, then break up into kernels
+        enable_finn_switch = (
+            self.enable_instrumentation
+            and (not self.instrumentation_no_dma)
+            and (not self.live_fifo_sizing)
+        )
         if self.enable_instrumentation:
             if self.instrumentation_no_dma is True or self.live_fifo_sizing is True:
                 prep_transforms = [
@@ -577,7 +585,6 @@ class ZynqBuild(Transformation):
                     InsertIODMA(self.axi_port_width),
                     InsertDWC(),
                     SpecializeLayers(self.fpga_part),
-                    InsertSwitch(),
                     Floorplan(),
                     CreateDataflowPartition(partition_model_dir=self.partition_model_dir),
                 ]
@@ -602,7 +609,7 @@ class ZynqBuild(Transformation):
             kernel_model = ModelWrapper(dataflow_model_filename)
             # InsertFIFO at this stage interferes with tLastMarker
             # TODO: is this really needed here at all?
-            if not self.enable_instrumentation:  # or self.instrumentation_no_dma == False
+            if not self.enable_instrumentation:
                 kernel_model = kernel_model.transform(InsertFIFO())
             kernel_model = kernel_model.transform(SpecializeLayers(self.fpga_part))
             kernel_model = kernel_model.transform(GiveUniqueNodeNames(prefix))
@@ -616,7 +623,12 @@ class ZynqBuild(Transformation):
             kernel_model.save(dataflow_model_filename)
         # Assemble design from IPs
         model = model.transform(
-            MakeZYNQProject(self.platform, self.period_ns, enable_debug=self.enable_debug)
+            MakeZYNQProject(
+                self.platform,
+                self.period_ns,
+                enable_debug=self.enable_debug,
+                enable_finn_switch=enable_finn_switch,
+            )
         )
 
         # set platform attribute for correct remote execution

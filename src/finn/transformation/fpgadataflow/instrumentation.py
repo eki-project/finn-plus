@@ -2,7 +2,6 @@
 
 import numpy as np
 import os
-import shutil
 import subprocess
 from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
@@ -221,31 +220,4 @@ class RunInstrumentationSim(Transformation):
         sub_proc = subprocess.Popen(["bash", bash_script])
         sub_proc.communicate()
 
-        return (model, False)
-
-
-class InsertSwitch(Transformation):
-    def __init__(self):
-        super().__init__()
-
-    def apply(self, model):
-        instr_ip_dir = model.get_metadata_prop("instrumentation_ipgen")
-        if instr_ip_dir is None or (not os.path.isdir(instr_ip_dir)):
-            raise Exception(
-                "Instrumentation IP not generated, run GenerateInstrumentationIP first."
-            )
-
-        dma_enabled = False
-        for node in model.graph.node:
-            if node.op_type == "IODMA_hls":
-                dma_enabled = True
-
-        if dma_enabled is not True:
-            raise Exception("No DMA at input and/or outputs, run InsertIODMA first")
-
-        # Assume DMA + Instrumentation
-        module_dir = os.environ["FINN_RTLLIB"] + "/finn_switch/hdl/switch.v"
-        wrapper_output_dir = make_build_dir(prefix="switch_module_")
-        shutil.copy(module_dir, wrapper_output_dir)
-        model.set_metadata_prop("switch_module", wrapper_output_dir)
         return (model, False)

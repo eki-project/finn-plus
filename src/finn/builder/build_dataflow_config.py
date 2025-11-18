@@ -387,7 +387,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: instrumentation wrapper attached to accurately measure performance.
     enable_instrumentation: bool = False
 
-    #: If enable_instrumentation is false, one can disable the DMA with this flag
+    #: If enable_instrumentation is True, one can disable the DMA with this flag
     instrumentation_no_dma: Optional[bool] = False
 
     #: Whether pdb postmortem debugging will be launched when the build fails.

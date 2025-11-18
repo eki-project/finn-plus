@@ -26,6 +26,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Template strings for FPGA dataflow build scripts."""
+
 # flake8: noqa
 
 call_pynqshell_makefile_template = """
@@ -187,10 +189,11 @@ if { $enable_gpio_reset == 1 || $enable_finn_switch == 1 } {
     assign_axi_addr_proc axi_gpio_0/S_AXI
     connect_bd_net [get_bd_pins axi_gpio_0/s_axi_aresetn] [get_bd_pins axi_interconnect_0/ARESETN]
     connect_bd_net [get_bd_pins axi_gpio_0/s_axi_aclk] [get_bd_pins axi_interconnect_0/ACLK]
+    connect_bd_intf_net [get_bd_intf_pins axi_gpio_0/S_AXI] -boundary_type upper [get_bd_intf_pins axi_interconnect_0/M00_AXI]
 }
 
+# Connect GPIO1 to
 if { $enable_gpio_reset == 1 } {
-    connect_bd_intf_net [get_bd_intf_pins axi_gpio_0/S_AXI] -boundary_type upper [get_bd_intf_pins axi_interconnect_0/M00_AXI]
     connect_bd_net [get_bd_pins axi_gpio_0/gpio_io_o] [get_bd_pins rst_zynq_ps_*/aux_reset_in]
 }
 
