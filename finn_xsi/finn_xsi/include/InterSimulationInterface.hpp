@@ -3,7 +3,6 @@
 
 #include <atomic>
 #include <boost/interprocess/managed_shared_memory.hpp>
-#include <cstdlib>
 #include <new>
 #include <thread>
 
