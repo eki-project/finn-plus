@@ -8,6 +8,7 @@ import json
 import os
 import rich
 import shlex
+import shutil
 import subprocess
 import sys
 import yaml
@@ -39,6 +40,23 @@ from finn.util.exception import FINNUserError, FINNValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+def edit_file(p: Path) -> None:
+    """Try to open the given file in the editor of choice. If none is found exit."""
+    editor = None
+    if "EDITOR" in os.environ:
+        editor = os.environ["EDITOR"]
+    else:
+        rich.print("[italic grey46]You have no $EDITOR defined. Trying fallbacks.[/italic grey46]")
+        for candidate in ["nano", "vim", "nvim", "emacs"]:
+            if shutil.which(candidate) is not None:
+                editor = candidate
+                break
+    if editor is None:
+        rich.print("No editor found. Please edit the file manually: " + str(p))
+        sys.exit(1)
+    subprocess.run(shlex.split(f"{editor} {p}"))
 
 
 def output(f: Callable) -> Callable[..., Any]:
@@ -118,11 +136,11 @@ def verify_output(f: Callable) -> Callable[..., Any]:
 def num_default_workers(f: Callable) -> Callable[..., Any]:
     """Add a click parameter called --num-workers (-n) (num_default_workers). Defaults to -1."""
     return click.option(
-        "--num-workers",
+        "--num-default-workers",
         "-n",
         "num_default_workers",
         help="Number of parallel workers for FINN to use. When -1, automatically use 75% of cores",
-        default=-1,
+        default="",
         show_default=True,
     )(f)
 
@@ -288,14 +306,14 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "path is searched for from the provided "
         "model path.\n"
     )
-    settings.finn_build_dir = Prompt.ask("FINN_BUILD_DIR", default="./FINN_TMP")
+    settings.finn_build_dir = Prompt.ask("FINN_BUILD_DIR", default="FINN_TMP")
     console.clear()
     console.print(
         "[bold]FINN_DEPS[/bold] points to the location of the FINN dependency "
         "directory. If relative, this path is "
         "searched for from the root of the used FINN repository / installation.\n"
     )
-    settings.finn_deps = Prompt.ask("FINN_DEPS", default=str(settings.finn_deps))
+    settings.finn_deps = Prompt.ask("FINN_DEPS", default="deps")
     console.clear()
     console.print(
         "[bold]FINN_DEPS_DEFINITIONS[/bold] points to the YAML file "
@@ -303,7 +321,7 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "normally placed as external_dependencies.yaml in the FINN+ root.\n"
     )
     settings.finn_deps_definitions = Prompt.ask(
-        "FINN_DEPS_DEFINITIONS", default=str(settings.finn_deps_definitions)
+        "FINN_DEPS_DEFINITIONS", default="external_dependencies.yaml"
     )
     console.clear()
     console.print(
@@ -332,13 +350,13 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     console.clear()
     console.print(
         "[italic]Some other settings were automatically inferred from your setup. "
-        "They are listed below. Please check if they are correct. "
-        "If not, these can be modified in the afterwards generated settings file.\n"
+        "They are listed below. These are generated when starting FINN and depdendent on "
+        "the current running installation and will thus not be saved into your (global) settings."
     )
     console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
     console.print(f"[bold]FINN_NOTEBOOKS[/bold]: {settings.finn_notebooks}")
     console.print(f"[bold]FINN_RTLLIB[/bold]: {settings.finn_rtllib}")
-    console.print(f"[bold]FINN_QNNDATA[/bold]: {settings.finn_qnn_data}")
+    console.print(f"[bold]FINN_QNN_DATA[/bold]: {settings.finn_qnn_data}")
     console.print(f"[bold]FINN_TESTS[/bold]: {settings.finn_tests}")
     console.print(
         "\n\n[bold green]Please check your edited settings and confirm them "
@@ -364,10 +382,10 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     where = Path(
         Prompt.ask(
             "Where do you want to save these settings?",
-            default=str(settings._settings_path.absolute()),
+            default=str(settings.get_path()),
         )
     )  # noqa
-    settings.save(where)
+    settings.save(True, where)
     console.print(
         "[bold green]Settings written. Please restart FINN+ for the changes "
         "to take effect.[/bold green]"
@@ -380,15 +398,15 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool) -> None:
     if not settings.settingsfile_exists() and not accept_defaults:
         run_setup_wizard(settings)
         sys.exit(0)
-    status(f"[SETTINGS FILE] {settings._settings_path.absolute()}")  # noqa
+    if not settings.finn_deps_definitions.exists():
+        error(f"FINN dependency definition file does not exist: {settings.finn_deps_definitions}")
+        sys.exit(1)
+    status(f"[SETTINGS FILE] {settings.get_path()}")
     status(f"[FINN BUILD DIRECTORY] {settings.finn_build_dir}")
     status(f"[DEPDENDENCY PATH] {settings.finn_deps}")
     status(f"[DEPDENDENCY DEFINITIONS PATH] {settings.finn_deps_definitions}")
     status(f"[NUM WORKERS] {settings.num_default_workers}")
     finn.util.settings._SETTINGS = settings  # noqa
-    if not settings.settingsfile_exists():
-        warning("Settings file does not exist yet. Creating file now.")
-        settings.save()
     if "PYTHONPATH" not in os.environ:
         os.environ["PYTHONPATH"] = ""
 
@@ -443,6 +461,8 @@ def get_function_args() -> dict:
     ]
     keys = list(d.keys())
     for key in keys:
+        if key == "num_default_workers" and d[key] == "":
+            del d[key]
         if key not in allowed:
             del d[key]
     return d
@@ -680,9 +700,14 @@ def auto() -> None:
     ]:
         if candidate in [p.name for p in potential_configs]:
             flow_config = cast("Path", Path.cwd() / candidate)
+            break
     if flow_config is None:
         flow_config = potential_configs[0]
-    status(f"Trying to use {flow_config} as a flow configuration file")
+    status(
+        f"Trying to use {flow_config} as a flow configuration file. "
+        "If the file is not a FINN+ configuration, the tool will fall back "
+        "to the default settings."
+    )
 
     # Search the model
     mp = read_model_path(flow_config)  # type: ignore
@@ -713,9 +738,8 @@ def flow_wizard() -> None:
     run_flow_wizard()
 
 
-@click.command(name="config")
-def config_wizard() -> None:
-    """Run the wizard helping to set up the FINN+ settings."""
+def _config_wizard_wrapper() -> None:
+    """Used both by 'finn wizard config' and 'finn config create'."""
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
@@ -724,6 +748,12 @@ def config_wizard() -> None:
         finn_build_dir=Path("FINN_TMP"),
     )
     run_setup_wizard(settings)
+
+
+@click.command(name="config")
+def config_wizard() -> None:
+    """Run the wizard helping to set up the FINN+ settings."""
+    _config_wizard_wrapper()
 
 
 @click.command(help="Run a given benchmark configuration.")
@@ -814,6 +844,53 @@ def update(
     prepare_finn(settings, accept_defaults)
 
 
+@click.command("edit", help="Edit the dependency definition file.")
+@finn_deps_definitions
+def deps_edit(finn_deps_definitions: Path | None) -> None:
+    """Edit the dependency definition file."""
+    settings = FINNSettings.init(
+        auto_set_environment_vars=True,
+        automatic_dependency_updates=True,
+        flow_config=Path(),
+        **get_function_args(),
+    )
+    edit_file(settings.finn_deps_definitions)
+
+
+@click.command(name="show", help="Show the dependencies")
+@finn_deps_definitions
+def deps_show(finn_deps_definitions: Path | None) -> None:
+    """Show the dependencies."""
+    settings = FINNSettings.init(
+        auto_set_environment_vars=True,
+        automatic_dependency_updates=True,
+        flow_config=Path(),
+        **get_function_args(),
+    )
+    if not settings.finn_deps_definitions.exists():
+        error(f"FINN dependency definition file does not exist: {settings.finn_deps_definitions}")
+        sys.exit(1)
+    with settings.finn_deps_definitions.open() as f:
+        data = yaml.load(f, yaml.Loader)
+        for dep, depdata in data.get("git_deps", {}).items():
+            rich.print(
+                f"[bold green]{dep:<20}[/bold green] "
+                f"{depdata['url']:<60} ({depdata['commit']:>30})"
+            )
+        for dep, depdata in data.get("boardfile_deps", {}).items():
+            rich.print(
+                f"[bold green]{dep:<20}[/bold green] "
+                f"{depdata['url']:<60} ({depdata['commit']:>30})"
+            )
+        for dep, depdata in data.get("direct_download_deps", {}).items():
+            rich.print(f"[bold green]{dep:<20}[/bold green] {depdata['url']:<60}")
+        for dep, depdata in data.get("custom_deps", {}).items():
+            rich.print(
+                f"[bold green]{dep:<20}[/bold green] "
+                f"{depdata['installation_function']:<30} {depdata['outdated_function']:<30}"
+            )
+
+
 @click.group(help="Manage FINN settings")
 def config() -> None:
     """Click group for config related commands."""
@@ -833,76 +910,45 @@ def _command_get_settings() -> FINNSettings:
     return settings
 
 
-@click.command("list", help="List the settings files contents")
-def config_list() -> None:
+@click.command("show", help="List the settings files contents")
+def config_show() -> None:
     """List all settings found in the current settings file."""
-    rich.print(_command_get_settings())
+    settings = FINNSettings.init(None, False, Path(), True)
+    rich.print(
+        "[italic grey46]Paths are shown already resolved. "
+        "The underlying settings might specify a relative path![/italic grey46]"
+    )
+    if not settings.settingsfile_exists():
+        rich.print(
+            "[orange3]The settingsfile does not exist. "
+            "The shown values are the defaults that would be used."
+        )
+    else:
+        rich.print(f"Settings location: {settings.get_path()}")
+    rich.print(settings)
 
 
-@click.command("get", help="Get a specific key from the settings")
-@click.argument("key")
-def config_get(key: str) -> None:
-    """Get the value of a settings key."""
-    settings = _command_get_settings().model_dump()
-    if key not in settings.keys():
-        error(f"Key {key} could not be found in the settings file!")
-        sys.exit(1)
-    Console().print(f"[blue]{key}[/blue]: {settings[key]}")
+@click.command(name="edit", help="Open the settings in your default editor.")
+def config_edit() -> None:
+    """Edit the settings in an editor."""
+    settings = FINNSettings.init(None, False, Path(), True)
+    edit_file(settings.get_path().absolute())
 
 
-@click.command("set", help="Set a key to a given value")
-@click.argument("key")
-@click.argument("value")
-def config_set(key: str, value: str) -> None:
-    """Set a setting key to a given value."""
-    # settings_original = _command_get_settings()
-    # TODO: Fix
-    # settings_original.model_copy(update={key: value}, deep=True)
-    # settings_original.save()
-
-
-@click.command("help", help="List all known settings fields and their purpose")
-def config_help() -> None:
-    """Print a table with all known settings keys and their purpose."""
-    # TODO
-    rich.print(_command_get_settings().get_settings_keys())
-
-
-@click.command(
-    "create",
-    help="Create a template settings file. If one exists at the given path, "
-    "its overwritten. Please enter a directory, no filename",
-)
-@click.argument("path", default="~/.finn/")
-def config_create(path: str) -> None:
-    """Create a template config at the `<given path>/settings.yaml`. Uses the default values."""
-    p = Path(path).expanduser().absolute()
-    if not p.exists():
-        error("The given path does not seem to exist!")
-        sys.exit(1)
-    if p.suffix != "":
-        error("Please specify a path to a directory, not a file!")
-        sys.exit(1)
-    p = p / "settings.yaml"
-    if p.exists():
-        status(f"A settings file already exists at {p}")
-        return
-    settings = FINNSettings.init(override_settings_path=p, flow_config=Path())
-    settings.save()
-    if not p.exists():
-        error(f"Failed to create config template at {p}!")
-        sys.exit(1)
-    status(f"File written to {p}")
+@click.command("create", help="Create a configuration. Same as 'finn wizard config'.")
+def config_create() -> None:
+    """Run the configuration wizard."""
+    _config_wizard_wrapper()
 
 
 def main() -> None:
     """Clicks entrypoint function."""
-    config.add_command(config_list)
+    config.add_command(config_show)
+    config.add_command(config_edit)
     config.add_command(config_create)
-    config.add_command(config_get)
-    config.add_command(config_set)
-    config.add_command(config_help)
     deps.add_command(update)
+    deps.add_command(deps_edit)
+    deps.add_command(deps_show)
     wizard.add_command(flow_wizard)
     wizard.add_command(config_wizard)
     main_group.add_command(auto)

@@ -290,8 +290,13 @@ class FINNSettings(BaseModel):
         """Return whether the settings file exists."""
         return self._settings_path.exists()
 
-    def save(self, path: Path | None = None) -> None:
+    def save(self, installation_independent: bool, path: Path | None = None) -> None:
         """Save settings. If None is given saves to resolved path.
+
+        Args:
+            installation_independent: If True, remove attributes specific to the installation
+            calling this command. This refers to the modules resolved when creating the settings.
+            path: Where to store the settings. If None, saves at the initially resolved path.
 
         Important:
             Although the getter methods of the settings path return the resolved absolute paths,
@@ -304,6 +309,12 @@ class FINNSettings(BaseModel):
         data["finn_build_dir"] = self._finn_build_dir
         data["finn_deps"] = self._finn_deps
         data["finn_deps_definitions"] = self._finn_deps_definitions
+        if installation_independent:
+            del data["finn_rtllib"]
+            del data["finn_custom_hls"]
+            del data["finn_qnn_data"]
+            del data["finn_notebooks"]
+            del data["finn_tests"]
         with path.open("w+") as f:
             yaml.dump(data, f, yaml.Dumper)
 
@@ -313,3 +324,7 @@ class FINNSettings(BaseModel):
         computed_fields = list(FINNSettings.model_computed_fields.keys())
         normal_fields = list(FINNSettings.model_fields.keys())
         return computed_fields + normal_fields
+
+    def get_path(self) -> Path:
+        """Get the settings file path."""
+        return self._settings_path
