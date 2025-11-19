@@ -15,11 +15,18 @@ else
 	exit;
 fi
 
+# the tcl scripts to instantiate the floating point ip come as a string
+# we need to split the string and load it into an array
+string=$2
+trimmed_string=${string#[\'\"]}  # Removes leading quote
+trimmed_string=${trimmed_string%[\'\"]} # Removes trailing quote
+fp_tcl_array=(${(@s:#:)trimmed_string})
+
 # use clk as default name for clock signal if not supplied.
-echo ${2:=clk}
-echo ${3:=xc7z020clg400-1}
-echo ${4:=2.0}
-echo ${5:=0}
+echo ${3:=clk}
+echo ${4:=xc7z020clg400-1}
+echo ${5:=2.0}
+echo ${6:=0}
 
 # clean results..
 rm -rf results_$1
@@ -34,9 +41,9 @@ cp ../*.xdc .
 cp ../*.vh .
 cp ../*.sv .
 #put FPGA part to be used into the project compile tcl script
-echo "set fpga_part \"$3\"" > $1.tcl
+echo "set fpga_part \"$4\"" > $1.tcl
 cat $FINN_QNN_DATA/vivado_scripts/vivadocompile.tcl >> $1.tcl
-if [ $5  = 1 ]; then
+if [ $6  = 1 ]; then
 	echo "write_verilog -mode funcsim ${1}_post_synth.v" >> $1.tcl
 fi
 echo "exit" >> $1.tcl
@@ -64,6 +71,12 @@ done
 echo "]" >> sources.tcl
 echo "add_files -norecurse -fileset \$obj \$files" >> sources.tcl
 
+if [[ ! -z $fp_tcl_array ]]; then
+  for element in $fp_tcl_array; do
+    echo "source $element" >> sources.tcl
+  done
+fi
+
 for i in *.h
 do
 	echo "set file \"\$origin_dir/$i\"" >> headers.tcl
@@ -75,8 +88,8 @@ done
 
 # caution: this overwrites the local $1.xdc file if that exists
 cat $FINN_QNN_DATA/vivado_scripts/vivadocompile.xdc >> $1.xdc
-sed -i "s/clk/$2/g" $1.xdc
-sed -i "s/CLK_PERIOD_NS/$4/g" $1.xdc
+sed -i "s/clk/$3/g" $1.xdc
+sed -i "s/CLK_PERIOD_NS/$5/g" $1.xdc
 
 for i in *.xdc
 do

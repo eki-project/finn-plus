@@ -177,6 +177,9 @@ class Squeeze(Transformation):
                 shape = model.get_tensor_shape(node.input[0])
                 # Subtract the number of squeezed, i.e, size=1, axes before axis
                 axis = axis - sum(size == 1 for size in shape[:axis])
+                # Normalize the axis input: Turn negative counting axis to positive index
+                if axis < 0:
+                    axis = axis + len(shape)
                 # Update the attribute by removing and reinserting
                 remove_by_name(node.attribute, "axis")
                 node.attribute.append(oh.make_attribute("axis", axis))

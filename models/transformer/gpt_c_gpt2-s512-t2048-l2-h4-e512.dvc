@@ -1,0 +1,6 @@
+outs:
+- md5: 4bd9b6590a50c91c7ec1c5de89546468.dir
+  size: 41013547
+  nfiles: 3
+  hash: md5
+  path: gpt_c_gpt2-s512-t2048-l2-h4-e512

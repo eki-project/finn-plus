@@ -1,0 +1,5 @@
+outs:
+- md5: ac52f67f7fc4834bf925d7f2e9c3c799
+  size: 341751
+  hash: md5
+  path: radioml_w4a4_small_tidy.onnx

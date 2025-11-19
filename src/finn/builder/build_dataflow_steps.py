@@ -435,7 +435,10 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(absorb.AbsorbConsecutiveTransposes())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(InferDataLayouts())
-
+    model = model.transform(InferDataTypes())
+    model = model.transform(InferShapes())
+    model = model.transform(RoundAndClipThresholds())
+    model = model.transform(to_hw.InferReshape())
     return model
 
 
@@ -444,23 +447,27 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
     nodes, which point to a separate ONNX file. Dataflow accelerator synthesis
     can only be performed on those HWCustomOp sub-graphs."""
 
+    unmapped_layers = [
+        node.name
+        for node in model.graph.node
+        if not node.domain.startswith("finn.custom_op.fpgadataflow")
+    ]
     # Check if there are unsupported layers somewhere between supported layers
     # This would cause a "cyclic-free graph partitioning violated" error otherwise
-    # TODO: print list of all offending layer's names
     results = model.analysis(unsupported_layers)
     if not results[0]:
-        raise FINNUserError(f"Unsupported combination of layers found after node {results[1].name}")
+        raise FINNUserError(
+            f"Unsupported/unmapped layer(s) found in between FINN operators, "
+            f"starting with node {results[1].name}. "
+            "Complete list of unmapped nodes: " + ", ".join(unmapped_layers)
+        )
 
     # Warn if unsupported layers remain at the start or end of the graph
-    # This is allowed but they will need to be implemented separately (e.g., in custom software)
-    warnlist = [
-        node.name for node in model.graph.node if node.domain != "finn.custom_op.fpgadataflow"
-    ]
-    if warnlist:
+    if unmapped_layers:
         log.warning(
             "The following nodes at the start/end of the graph will not be mapped to the "
             "accelerator, so they will need to be implemented manually (e.g., in software): "
-            + ", ".join(warnlist)
+            + ", ".join(unmapped_layers)
         )
 
     parent_model = model.transform(

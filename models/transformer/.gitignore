@@ -1,0 +1,11 @@
+/gpt_a_6b_gpt2-s256-t2048-l2-h4-e256
+/gpt_b_4b_gpt2-s256-t2048-l2-h4-e256
+/gpt_c_gpt2-s512-t2048-l2-h4-e512
+/gpt_d_gpt2-s256-t2048-l1-h2-e256
+/rml_conformer
+/rml_transformer_0
+/rml_transformer_a
+/rml_transformer_b
+/rml_transformer_c
+/rml_transformer_d
+/finn-transformers
