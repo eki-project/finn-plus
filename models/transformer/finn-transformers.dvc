@@ -1,14 +1,14 @@
-md5: 9ea0300ad7dcba99419205533a85da38
+md5: c555539d9961d7b57a9a52ee0e4c9ba8
 frozen: true
 deps:
 - path: outputs
   repo:
     url: https://github.com/iksnagreb/finn-transformers.git
-    rev: ca64a44
-    rev_lock: ca64a44e9cc4d56df870b6f8cf4d5f3791e770a7
+    rev: c7052a1
+    rev_lock: c7052a17d7be97b666da938263bc89832c6480ab
 outs:
-- md5: 5ae4a15dfac0e2af0952023d2148f413.dir
-  size: 19287653
+- md5: 9ab396c49d670d7fe28a1851f42363f4.dir
+  size: 19344996
   nfiles: 48
   hash: md5
   path: finn-transformers
