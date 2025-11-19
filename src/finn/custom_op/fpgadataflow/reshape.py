@@ -135,7 +135,7 @@ class Reshape(HWCustomOp):
             # Issue a warning message
             log.warning(f"{node.name}: inp_dtype changing from" f" {self.dtype} to {new_dtype}")
             # Set the new datatype attribute
-            self.set_nodeattr("inp_dtype", new_dtype.name)
+            self.set_nodeattr("dtype", new_dtype.name)
         # Force the output data type stored as a node attribute
         model.set_tensor_datatype(node.output[0], self.dtype)
 
