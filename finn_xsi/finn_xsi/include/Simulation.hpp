@@ -9,16 +9,7 @@
 #include <SharedLibrary.h>
 #include <helper.h>
 
-#include <SimulationInterface.hpp>
-#include <boost/asio.hpp>
-#include <boost/asio/thread_pool.hpp>
-#include <boost/atomic/ipc_atomic.hpp>
-#include <boost/interprocess/creation_tags.hpp>
-#include <boost/interprocess/detail/os_file_functions.hpp>
-#include <boost/interprocess/exceptions.hpp>
-#include <boost/interprocess/interprocess_fwd.hpp>
-#include <boost/interprocess/managed_shared_memory.hpp>
-#include <boost/interprocess/shared_memory_object.hpp>
+#include <InterSimulationInterface.hpp>
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
@@ -114,9 +105,8 @@ class Simulation {
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes, bool CommunicatesWithPredecessor, bool CommunicatesWithSuccessor>
 class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
      private:
-    // Interface members
-    using ConsumingInterface = SimulationInterface<SimulationInterfaceType::CONSUMING, NodeIndex == 0 || NodeIndex == TotalNodes - 1>;
-    using ProducingInterface = SimulationInterface<SimulationInterfaceType::PRODUCING, NodeIndex == 0 || NodeIndex == TotalNodes - 1>;
+    using ConsumingInterface = InterSimulationInterface<true>;
+    using ProducingInterface = InterSimulationInterface<false>;
     std::array<ConsumingInterface, IStreamsSize> fromProducerInterface;
     std::array<ProducingInterface, OStreamsSize> toConsumerInterface;
     std::size_t cyclesRun = 0;
@@ -151,11 +141,11 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
 
         // Create consumer facing interfaces
         for (std::size_t i = 0; i < OStreamsSize; ++i) {
-            toConsumerInterface[i] = std::move(ProducingInterface(std::format("{}_{}", *nodeName, i).c_str(), initialFIFODepth));
+            toConsumerInterface[i] = std::move(ProducingInterface(std::format("{}_{}", *nodeName, i)));
         }
         if constexpr (NodeIndex != 0) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                fromProducerInterface[i] = std::move(ConsumingInterface(std::format("{}_{}", *prevNodeName, i).c_str(), initialFIFODepth));
+                fromProducerInterface[i] = std::move(ConsumingInterface(std::format("{}_{}", *prevNodeName, i)));
             }
         }
 
@@ -166,18 +156,18 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
 
      private:
     /// Communicate with predecessors and successors and update their values and our own
-    [[gnu::hot]] void communicate() {
+    [[gnu::hot, gnu::flatten, gnu::always_inline]] void communicate() {
         if constexpr (NodeIndex != 0) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
                 // Interface SHM <-> sim
-                this->istreams[i].valid(fromProducerInterface[i].readFromLastNode(this->istreams[i].isReady()));
+                this->istreams[i].valid(fromProducerInterface[i].exchange(this->istreams[i].isReady()));
             }
         }
         if constexpr (NodeIndex != TotalNodes - 1) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
                 this->fifo[i].update(
                     this->ostreams[i].isValid(),
-                    toConsumerInterface[i].writeToNextNode(this->fifo[i].isOutputValid())
+                    toConsumerInterface[i].exchange(this->fifo[i].isOutputValid())
                 );
                 this->fifo[i].toggleClock();
             }
@@ -233,19 +223,14 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
        }
     }
 
-    [[gnu::hot]] void runSingleCycle() {
-        static bool firstCycle = true;
-        if (firstCycle) {
-            firstCycle = false;
-            communicate();  // Initial communication before first cycle
-        }
+    [[gnu::hot, gnu::always_inline]] void runSingleCycle() {
+        ++cyclesRun;
         this->clk.toggleClk();
         communicate();
         if constexpr (LoggingEnabled) {
            logReadyValidState();
         }
         debug(std::format("Finished cycle {}\n\n", cyclesRun));
-        ++cyclesRun;
     }
 
     /// Set the max FIFO depth of all interfaces

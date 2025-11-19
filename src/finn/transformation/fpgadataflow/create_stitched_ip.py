@@ -1,3 +1,9 @@
+"""Create stitched IP from FINN dataflow graph.
+
+This module provides transformations to create a Vivado IP Block Design project
+from generated IPs in a FINN dataflow graph.
+"""
+
 # Copyright (c) 2020, Xilinx, Inc.
 # Copyright (C) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -30,48 +36,53 @@
 import json
 import multiprocessing as mp
 import os
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_num_default_workers
 from shutil import copytree
 from subprocess import CalledProcessError
+from typing import TYPE_CHECKING, Literal, cast
+
+if TYPE_CHECKING:
+    from onnx import NodeProto
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
 from finn.util.basic import launch_process_helper, make_build_dir
-from finn.util.exception import FINNError, FINNInternalError, FINNUserError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
 
-def is_external_input(model, node, i):
-    # indicate whether input i of node should be made external
-    # True only if input is unconnected and has no initializer
-    # Only esception is second input of FC layers when mem_mode is external
+def is_external_input(model: ModelWrapper, node: "NodeProto", i: int) -> bool:
+    """Check if input i of node should be made external.
+
+    Returns True only if input is unconnected and has no initializer.
+    Exception: second input of FC layers when mem_mode is external.
+    """
     node_inst = getCustomOp(node)
     op_type = node.op_type
     producer = model.find_producer(node.input[i])
     if producer is None:
         if model.get_initializer(node.input[i]) is None:
             return True
-        else:
-            if op_type.startswith("MVAU"):
-                if node_inst.get_nodeattr("mem_mode") == "external":
-                    return True
+        if op_type.startswith("MVAU") and node_inst.get_nodeattr("mem_mode") == "external":
+            return True
     return False
 
 
-def is_external_output(model, node, i):
-    # indicate whether output i of node should be made external
-    # True only if output is unconnected
+def is_external_output(model: ModelWrapper, node: "NodeProto", i: int) -> bool:
+    """Check if output i of node should be made external.
+
+    Returns True only if output is unconnected.
+    """
+    # TODO should ideally check if tensor is in top-level outputs
     consumers = model.find_consumers(node.output[i])
-    if consumers == []:
-        # TODO should ideally check if tensor is in top-level
-        # outputs
-        return True
-    return False
+    return consumers == []
 
 
 class CreateStitchedIP(Transformation):
@@ -90,13 +101,25 @@ class CreateStitchedIP(Transformation):
 
     def __init__(
         self,
-        fpgapart,
-        clk_ns,
-        ip_name="finn_design",
-        vitis=False,
-        signature=[],
-        functional_simulation=False,
-    ):
+        fpgapart: str,
+        clk_ns: float,
+        ip_name: str = "finn_design",
+        vitis: bool = False,
+        signature: list | None = None,
+        functional_simulation: bool = False,
+    ) -> None:
+        """Initialize CreateStitchedIP transformation.
+
+        Args:
+            fpgapart: FPGA part identifier
+            clk_ns: Clock period in nanoseconds
+            ip_name: Name for the IP design
+            vitis: Whether to target Vitis
+            signature: Optional signature list [customer, application, version]
+            functional_simulation: Whether to generate functional simulation wrapper
+        """
+        if signature is None:
+            signature = []
         super().__init__()
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
@@ -123,16 +146,19 @@ class CreateStitchedIP(Transformation):
             "axilite": [],
         }
 
-    def is_double_pumped(self, node):
+    def is_double_pumped(self, node: "NodeProto") -> bool:
+        """Check if node uses double-pumped compute or memory."""
         if node.op_type.startswith("MVAU"):
             inst = getCustomOp(node)
             try:
-                pumped_compute = inst.get_nodeattr("pumpedCompute")
+                pumped_compute = cast("int", inst.get_nodeattr("pumpedCompute"))
             except AttributeError:
                 pumped_compute = 0
-            return pumped_compute or inst.get_nodeattr("pumpedMemory")
+            return bool(pumped_compute or cast("int", inst.get_nodeattr("pumpedMemory")))
+        return False
 
-    def connect_clk_rst(self, node):
+    def connect_clk_rst(self, node: "NodeProto") -> None:
+        """Connect clock and reset signals for a node."""
         inst_name = node.name
         node_inst = getCustomOp(node)
         if not isinstance(node_inst, HWCustomOp):
@@ -186,7 +212,8 @@ class CreateStitchedIP(Transformation):
                         f"[get_bd_pins {inst_name}/{clock2x_intf_name}]"
                     )
 
-    def connect_axi(self, node):
+    def connect_axi(self, node: "NodeProto") -> None:
+        """Connect AXI-Lite and AXI-MM interfaces for a node."""
         inst_name = node.name
         node_inst = getCustomOp(node)
         if not isinstance(node_inst, HWCustomOp):
@@ -198,8 +225,7 @@ class CreateStitchedIP(Transformation):
 
         if len(axilite_intf_name) != 0:
             self.connect_cmds.append(
-                f"make_bd_intf_pins_external "
-                f"[get_bd_intf_pins {inst_name}/{axilite_intf_name[0]}]"
+                f"make_bd_intf_pins_external [get_bd_intf_pins {inst_name}/{axilite_intf_name[0]}]"
             )
             ext_if_name = f"{axilite_intf_name[0]}_{len(self.intf_names['axilite'])}"
             self.intf_names["axilite"].append(ext_if_name)
@@ -222,7 +248,8 @@ class CreateStitchedIP(Transformation):
             self.intf_names["aximm"] = [(ext_if_name, aximm_intf_name[0][1])]
             self.has_aximm = True
 
-    def connect_m_axis_external(self, node, idx=None):
+    def connect_m_axis_external(self, node: "NodeProto", idx: int | None = None) -> None:
+        """Make AXI Stream master interface(s) external."""
         inst_name = node.name
         node_inst = getCustomOp(node)
         if not isinstance(node_inst, HWCustomOp):
@@ -249,7 +276,8 @@ class CreateStitchedIP(Transformation):
             self.intf_names["m_axis"].append((f"m_axis_{self.m_axis_idx}", output_intf_names[i][1]))
             self.m_axis_idx += 1
 
-    def connect_s_axis_external(self, node, idx=None):
+    def connect_s_axis_external(self, node: "NodeProto", idx: int | None = None) -> None:
+        """Make AXI Stream slave interface(s) external."""
         inst_name = node.name
         node_inst = getCustomOp(node)
         if not isinstance(node_inst, HWCustomOp):
@@ -276,7 +304,8 @@ class CreateStitchedIP(Transformation):
             self.intf_names["s_axis"].append((f"s_axis_{self.s_axis_idx}", input_intf_names[i][1]))
             self.s_axis_idx += 1
 
-    def connect_ap_none_external(self, node):
+    def connect_ap_none_external(self, node: "NodeProto") -> None:
+        """Make ap_none interfaces external."""
         inst_name = node.name
         node_inst = getCustomOp(node)
         if not isinstance(node_inst, HWCustomOp):
@@ -295,7 +324,8 @@ class CreateStitchedIP(Transformation):
                 ]
             )
 
-    def insert_signature(self, checksum_count):
+    def insert_signature(self, checksum_count: int) -> None:
+        """Insert AXI info signature component into the design."""
         signature_vlnv = "AMD:user:axi_info_top:1.0"
         signature_name = "axi_info_top0"
         fclk_mhz = 1 / (self.clk_ns * 0.001)
@@ -329,7 +359,8 @@ class CreateStitchedIP(Transformation):
             ]
         )
 
-    def apply(self, model):
+    def apply(self, model: "ModelWrapper") -> tuple[ModelWrapper, Literal[False]]:
+        """Apply the CreateStitchedIP transformation to the model."""
         # ensure non-relative readmemh .dat files
         model = model.transform(ReplaceVerilogRelPaths())
         ip_dirs = ["list"]
@@ -337,7 +368,10 @@ class CreateStitchedIP(Transformation):
         ip_dirs.append("$::env(FINN_RTLLIB)/memstream")
         if self.signature:
             ip_dirs.append("$::env(FINN_RTLLIB)/axi_info")
-        if model.graph.node[0].op_type not in ["StreamingFIFO_rtl", "IODMA_hls"]:
+        if (
+            model.graph.node[0].op_type not in ["StreamingFIFO_rtl", "IODMA_hls"]
+            and self.functional_simulation is False
+        ):
             log.warning(
                 """First node is not StreamingFIFO or IODMA.
                 You may experience incorrect stitched-IP rtlsim or hardware
@@ -367,7 +401,7 @@ class CreateStitchedIP(Transformation):
             ip_dir_value = node_inst.get_nodeattr("ip_path")
             if type(ip_dir_value) is not str or ip_dir_value == "":
                 raise FINNInternalError(f"ip_path has the wrong type in node {node.name}.")
-            if not os.path.isdir(ip_dir_value):
+            if not Path(ip_dir_value).is_dir():
                 raise FINNInternalError(
                     f"IP generation directory doesn't exist in node {node.name}."
                 )
@@ -396,8 +430,8 @@ class CreateStitchedIP(Transformation):
                     )
 
         # process external inputs and outputs in top-level graph input order
-        for input in model.graph.input:
-            inp_name = input.name
+        for graph_input in model.graph.input:
+            inp_name = graph_input.name
             inp_cons = model.find_consumers(inp_name)
             assert inp_cons != [], f"No consumer for input {inp_name}"
             assert len(inp_cons) == 1, f"Multiple consumers for input {inp_name}"
@@ -593,7 +627,7 @@ class CreateStitchedIP(Transformation):
                 ]
             )
         # add a rudimentary driver mdd to get correct ranges in xparameters.h later on
-        example_data_dir = os.path.join(os.environ["FINN_QNN_DATA"], "mdd-data")
+        example_data_dir = Path(os.environ["FINN_QNN_DATA"]) / "mdd-data"
         copytree(example_data_dir, f"{vivado_stitch_proj_dir}/data")
 
         #####
@@ -678,8 +712,8 @@ close $ofile
         tcl.extend(
             [
                 "set all_v_files [get_files -filter {USED_IN_SYNTHESIS == 1 "
-                + "&& (FILE_TYPE == Verilog || FILE_TYPE == SystemVerilog "
-                + '|| FILE_TYPE =="Verilog Header")}]',
+                "&& (FILE_TYPE == Verilog || FILE_TYPE == SystemVerilog "
+                '|| FILE_TYPE =="Verilog Header")}]',
                 f"set fp [open {v_file_list} w]",
                 "foreach vf $all_v_files {puts $fp $vf}",
                 "close $fp",
@@ -687,12 +721,12 @@ close $ofile
         )
         # write the project creator tcl script
         tcl_string = "\n".join(tcl) + "\n"
-        with open(f"{vivado_stitch_proj_dir}/make_project.tcl", "w") as f:
+        with Path(f"{vivado_stitch_proj_dir}/make_project.tcl").open("w") as f:
             f.write(tcl_string)
         # create a shell script and call Vivado
         make_project_sh = f"{vivado_stitch_proj_dir}/make_project.sh"
-        working_dir = os.getcwd()
-        with open(make_project_sh, "w") as f:
+        working_dir = Path.cwd()
+        with Path(make_project_sh).open("w") as f:
             f.write("#!/bin/bash \n")
             f.write(f"cd {vivado_stitch_proj_dir}\n")
             f.write("vivado -mode batch -source make_project.tcl\n")
@@ -701,23 +735,26 @@ close $ofile
 
         try:
             launch_process_helper(bash_command, print_stdout=False)
-        except CalledProcessError:
-            # Check success manually by looking for wrapper HDL
-            pass
+        except CalledProcessError as e:
+            raise FINNUserError(
+                f"CreateStitchedIP: make_project.sh failed with a non-zero "
+                f"exit code. Check previous logs and logs in "
+                f"{vivado_stitch_proj_dir} to find out why it failed."
+            ) from e
 
         if self.functional_simulation:
-            with open(v_file_list, "a") as f:
+            with Path(v_file_list).open("a") as f:
                 f.write(f"{fifosim_wrapper_filename}\n")
 
         # wrapper may be created in different location depending on Vivado version
-        if not os.path.isfile(wrapper_filename):
+        if not Path(wrapper_filename).is_file():
             # check in alternative location (.gen instead of .srcs)
             wrapper_filename_alt = wrapper_filename.replace(".srcs", ".gen")
-            if os.path.isfile(wrapper_filename_alt):
+            if Path(wrapper_filename_alt).is_file():
                 if not self.functional_simulation:
                     model.set_metadata_prop("wrapper_filename", wrapper_filename_alt)
             else:
-                raise FINNError(
+                raise FINNUserError(
                     f"""CreateStitchedIP failed, no wrapper HDL found \
                         under {wrapper_filename} or {wrapper_filename_alt}.
                     Please check logs under the parent directory."""

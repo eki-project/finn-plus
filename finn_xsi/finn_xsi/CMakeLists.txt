@@ -33,7 +33,28 @@ if(${FIFOSIM_ENABLE_ALLOPT})
   message(STATUS "All optimizations are enabled")
   target_compile_options(
     fifosim_options
-    INTERFACE -Ofast -ffast-math -march=native -mtune=native -fstack-protector-strong -fopenmp -ffunction-sections -fdata-sections -pipe -funroll-loops -shared -fPIC)
+    INTERFACE -Ofast -ffast-math -march=native -mtune=native -fstack-protector-strong -fopenmp -ffunction-sections -fdata-sections -pipe -funroll-loops -shared -fPIC -Wno-interference-size
+    # Additional performance options:
+    -flto=auto                    # Link-time optimization (auto-detect thread count)
+    -fno-plt                      # Avoid PLT for better performance with shared libs
+    -fno-semantic-interposition   # Allow more aggressive optimization in shared libs
+    -ftree-vectorize              # Enable auto-vectorization (usually on with -O3)
+    -fvect-cost-model=dynamic     # Better vectorization cost model
+    -fprefetch-loop-arrays        # Prefetch arrays in loops
+    -fno-math-errno               # Don't set errno for math functions (covered by -ffast-math mostly)
+    -fno-trapping-math            # Allow optimizations that may trap (part of -ffast-math)
+    -ffinite-math-only            # Assume no NaN/Inf (part of -ffast-math)
+    -fassociative-math            # Allow reassociation (part of -ffast-math)
+    )
+    target_link_options(
+    fifosim_options
+    INTERFACE
+    -flto=auto                    # LTO at link time
+    -Wl,--gc-sections             # Remove unused sections
+    -Wl,--as-needed               # Only link needed libraries
+    -Wl,-O3                       # Linker optimization level
+    -Wl,--hash-style=gnu          # Faster symbol lookup
+)
   #target_link_options(fifosim_options INTERFACE -fsanitize=undefined,address)
 endif()
 
@@ -49,7 +70,14 @@ if (FIFOSIM_ENABLE_WARNINGS)
     ""
     "")
 endif (FIFOSIM_ENABLE_WARNINGS)
-target_compile_options(fifosim_options INTERFACE -Wno-interference-size)
+
+# Use ccache if available
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    message(STATUS "Using ccache for builds")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+endif()
 
 #
 # Create options for including cmake files from the cmake folder with a bit of output.

@@ -1,52 +1,5 @@
 #include <FIFO.h>
-#include <algorithm>
 #include <optional>
-
-/*
-FIFO::FIFO(std::size_t max_size) : currentUtil(0), maxUtil(0), maxSize(max_size) {}
-
-FIFO::~FIFO() {}
-
-bool FIFO::isEmpty() const {
-    return currentUtil == 0;
-}
-
-void FIFO::tryPushPop(bool incomingValid, bool successorReady) {
-    int diff = static_cast<int>(incomingValid) - static_cast<int>(successorReady);
-    if (diff == 1 && currentUtil < maxSize) {
-        ++currentUtil;
-        maxUtil = std::max(maxUtil, ++currentUtil);
-    } else if (diff == -1 && currentUtil > 0) {
-        --currentUtil;
-    }
-    // Otherwise do nothing
-}
-
-void FIFO::tryPop(bool successorReady) {
-    if (successorReady && currentUtil > 0) {
-        --currentUtil;
-    }
-}
-
-bool FIFO::isOutputValid() const { return currentUtil > 0; }
-
-bool FIFO::isInputReady() const { return currentUtil < maxSize; }
-
-void FIFO::tryPush(bool incomingValid) {
-    if (incomingValid && currentUtil < maxSize) {
-        maxUtil = std::max(maxUtil, ++currentUtil);
-    }
-}
-
-void FIFO::setMaxSize(size_t newSize) {
-    maxSize = newSize;
-}
-
-void FIFO::reset() {
-    currentUtil = 0;
-    maxUtil = 0;
-}
-*/
 
 FIFO::FIFO(int size) : maxSize(size) {}
 FIFO::~FIFO() {}

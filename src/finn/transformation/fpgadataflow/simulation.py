@@ -425,7 +425,7 @@ class SimulationBuilder:
         if wrapper_filename is None or not Path(wrapper_filename).exists():
             raise FINNUserError(
                 f"Call CreateStitchedIP prior to building "
-                f"the simulation for {node_name}."
+                f"the simulation for {node_name}. "
                 f"wrapper_filename is set to {wrapper_filename}!"
             )
 
