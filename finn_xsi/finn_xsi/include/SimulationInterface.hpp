@@ -83,7 +83,7 @@ class SimulationInterface {
 
     SimulationInterface(const char* _shmIdentifier, unsigned int initialMaxDepth = 2) : shmIdentifier(_shmIdentifier), largestOccupation(0) {
         simInterfaceDebug(std::format("Creating simulation interface with {} depth.", initialMaxDepth));
-        if (T == SimulationInterfaceType::PRODUCING || IsIOInterface) {
+        if (T == SimulationInterfaceType::PRODUCING) {
             ipc::shared_memory_object::remove(_shmIdentifier);
             simInterfaceDebug("Removed previous shared memory objects.");
             shmem = ipc::managed_shared_memory(ipc::create_only, _shmIdentifier, ShmemSize);
@@ -205,7 +205,7 @@ class SimulationInterface {
     {
         // The predecessor side must always be at least one cycle ahead of the output side
         // Wait until output catches up
-        while (sharedData->succCycle != sharedData->predCycle) {}
+        while (sharedData->succCycle < sharedData->predCycle) {}
         sharedData->valid = producerValid;
         ++(sharedData->predCycle);
         return sharedData->ready;

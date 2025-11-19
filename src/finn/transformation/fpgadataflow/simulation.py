@@ -661,7 +661,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         sim = Simulation(model, self.fpgapart, self.clk_ns, self.cfg.functional_simulation)
         sys.stdout = sys.stdout.console
         sys.stderr = sys.stderr.console
-        sim.simulate_node_connected(5, 1024)
+        sim.simulate_node_connected(2, 65556)
         sim.simulate_node_connected(1, 2)
         sim.simulate_node_connected(1, 20000)
         sim.simulate_node_connected(10, 20000)
