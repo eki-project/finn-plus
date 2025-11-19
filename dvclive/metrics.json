@@ -1,0 +1,32 @@
+{
+    "status": "failed",
+    "verification": "success",
+    "estimate": {
+        "resources": {
+            "LUT": 18557.0,
+            "DSP": 50.0,
+            "BRAM_18K": 14.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 501213,
+            "max_cycles": 65536,
+            "max_cycles_node_name": "MVAU_rtl_0",
+            "estimated_throughput_fps": 1525.87890625,
+            "estimated_latency_ns": 5012130.0
+        }
+    },
+    "time": {
+        "export": 2,
+        "step_qonnx_to_finn": 0,
+        "step_tidy_up": 4,
+        "step_streamline": 12,
+        "step_convert_to_hw": 1,
+        "step_create_dataflow_partition": 0,
+        "step_minimize_bit_width": 1,
+        "step_specialize_layers": 5,
+        "step_set_folding": 0,
+        "step_generate_estimate_reports": 0,
+        "total_build_time": 25
+    }
+}
