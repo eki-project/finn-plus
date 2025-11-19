@@ -280,21 +280,26 @@ class InferThresholdingLayer(Transformation):
                 # NOTE: careful, this requires proper layout annotation for input AND output,
                 #  otherwise the graph could break because only one of two Transpose gets inserted
 
-                # check layout of inputs/outputs, and convert if needed
-                # check layout and convert if necessary
-                thl_in_layout = model.get_tensor_layout(thl_input)
-                if thl_in_layout == DataLayout.NCHW:
-                    thl_input = nchw_to_nhwc(thl_input, model, node_ind)
-                    node_ind += 1
-                    thl_in_shape = model.get_tensor_shape(thl_input)
+                # TODO: Removed this to prevent the fallback layout annotations
+                #  messing with models which are already correct by using the
+                #  newly proposed layout mechanism. This of course breaks models
+                #  relying on the existing layout mechanism...
 
+                # # check layout of inputs/outputs, and convert if needed
+                # # check layout and convert if necessary
+                # thl_in_layout = model.get_tensor_layout(thl_input)
+                # if thl_in_layout == DataLayout.NCHW:
+                #     thl_input = nchw_to_nhwc(thl_input, model, node_ind)
+                #     node_ind += 1
+                #     thl_in_shape = model.get_tensor_shape(thl_input)
+                #
                 # keep track of where we need to insert the HLS Op
                 # it has to be ahead of the output transform
                 insert_point = node_ind
-                thl_output_layout = model.get_tensor_layout(thl_output)
-                if thl_output_layout == DataLayout.NCHW:
-                    thl_output = nchw_to_nhwc(thl_output, model, node_ind, reverse=True)
-                    node_ind += 1
+                # thl_output_layout = model.get_tensor_layout(thl_output)
+                # if thl_output_layout == DataLayout.NCHW:
+                #     thl_output = nchw_to_nhwc(thl_output, model, node_ind, reverse=True)
+                #     node_ind += 1
 
                 # now safe to assume number of channels is in last dimension
                 ifc = int(thl_in_shape[-1])
