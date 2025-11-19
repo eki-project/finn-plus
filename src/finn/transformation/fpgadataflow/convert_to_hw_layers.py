@@ -1942,6 +1942,7 @@ class InferElementwiseBinaryOperation(Transformation):
 
 class InferSqueeze(Transformation):
     """Converts the Squeeze operation to the corresponding FINN custom operation."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
         """Apply the transform to convert Squeeze operations to FINN custom ops."""
@@ -2127,9 +2128,7 @@ class InferReshape(Transformation):
 
                 # The input and output type of the reshaped tensor is the same
                 # and needs to be statically annotated as an attribute
-                reshape.set_nodeattr(
-                    "dtype", model.get_tensor_datatype(node.input[0]).name
-                )
+                reshape.set_nodeattr("dtype", model.get_tensor_datatype(node.input[0]).name)
 
                 # Finally, there is no second shape input to the hardware
                 # operator, thus delete this from the node input list
