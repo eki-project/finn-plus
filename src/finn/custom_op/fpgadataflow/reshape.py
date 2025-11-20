@@ -28,16 +28,18 @@ class Reshape(HWCustomOp):
         # Start from parent operator class attributes  # noqa: Duplicate
         attrs = HWCustomOp.get_nodeattr_types(self)
         # Update attributes dictionary for new custom operator
-        attrs.update({
-            # Shape of the input
-            "inp_shape": ("ints", True, [1]),
-            # Shape of the output
-            "out_shape": ("ints", True, [1]),
-            # Datatype of input and output elements
-            "dtype": ("s", True, ""),
-            # Number of parallel elements in the last dimension of the output
-            "PE": ("i", False, 1),
-        })
+        attrs.update(
+            {
+                # Shape of the input
+                "inp_shape": ("ints", True, [1]),
+                # Shape of the output
+                "out_shape": ("ints", True, [1]),
+                # Datatype of input and output elements
+                "dtype": ("s", True, ""),
+                # Number of parallel elements in the last dimension of the output
+                "PE": ("i", False, 1),
+            }
+        )
         # Return updated attribute dictionary
         return attrs
 
@@ -131,12 +133,9 @@ class Reshape(HWCustomOp):
             # Get the new datatype
             new_dtype = model.get_tensor_datatype(node.input[0])
             # Issue a warning message
-            log.warning(
-                f"{node.name}: inp_dtype changing from"
-                f" {self.dtype} to {new_dtype}"
-            )
+            log.warning(f"{node.name}: inp_dtype changing from" f" {self.dtype} to {new_dtype}")
             # Set the new datatype attribute
-            self.set_nodeattr("inp_dtype", new_dtype.name)
+            self.set_nodeattr("dtype", new_dtype.name)
         # Force the output data type stored as a node attribute
         model.set_tensor_datatype(node.output[0], self.dtype)
 

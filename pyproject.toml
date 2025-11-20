@@ -3,10 +3,10 @@ name = "finn-plus"
 description = "Fork of FINN, a QNN dataflow compiler for AMD/Xilinx FPGAs"
 dynamic = ["version"]
 maintainers = [
-  {name = "Felix Jentzsch", email = "felix.jentzsch@upb.de"},
-  {name = "Christoph Berganski", email = "christoph.berganski@upb.de"},
-  {name = "Linus Jungemann", email = "linus.jungemann@upb.de"},
-  {name = "Bjarne Wintermann", email = "bjarne.wintermann@upb.de"}
+    { name = "Felix Jentzsch", email = "felix.jentzsch@upb.de" },
+    { name = "Christoph Berganski", email = "christoph.berganski@upb.de" },
+    { name = "Linus Jungemann", email = "linus.jungemann@upb.de" },
+    { name = "Bjarne Wintermann", email = "bjarne.wintermann@upb.de" },
 ]
 readme = "README.md"
 
@@ -20,8 +20,11 @@ packages = [
     { include = "finn_xsi", from = "finn_xsi" },
     { include = "finn-rtllib", to = "finn" },
     { include = "custom_hls", to = "finn" },
-    { include = "notebooks", to = "finn" },
-    { include = "tests", to = "finn" }
+]
+include = [
+    "src/finn/util/vivado_scripts/*.sh",
+    "src/finn/util/vivado_scripts/*.tcl",
+    "src/finn/util/vivado_scripts/*.xdc",
 ]
 version = "0.0.0"
 
@@ -36,12 +39,9 @@ finn = "finn.interface.run_finn:main"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
+pybind11 = "3.0.1"                              # pybind11==3.0.1 already for FIFO sim rework, after rework remove module load
 bitstring = "~4.3.1"
-clize = "~5.0.2"
-gspread = "~3.6.0"
-importlib-resources = "~6.5.2"
-ipython = "~8.37.0"  # ipython>=9.0.0 requires python>=3.11
-numpy = "1.26.4"  # numpy<=1.24.4 required by brevitas
+numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
 # Cannot upgrade onnx and onnxruntime any further. For now this seems to be the
 # last compatible pair which is also consistent with qonnx.
 # Upgrading onnx will result in model IR version not supported by onnxruntime
@@ -50,109 +50,93 @@ numpy = "1.26.4"  # numpy<=1.24.4 required by brevitas
 # due to the model IR version support issue...
 onnx = "1.17.0"
 onnxruntime = "1.20.1"
-pre-commit = "~4.2.0"
-protobuf = "3.20.3"  # protobuf==3.20.3 required by qonnx
-psutil = "~5.9.4"
-pyscaffold = "~4.6"
-scipy = "~1.15.0"  # scipy>=1.16.0 requires python>=3.11
-setupext-janitor = "^1.1.2"
-sigtools = "~4.0.1"
-toposort = "~1.7.0"
-vcdvcd = "~1.0.5"
-wget = "~3.2"
-pygments = "~2.19.2"
-torch = "~2.7.1"
-torchvision = "~0.22.1"
-ipykernel = "~6.29.5"
-jupyter = "~1.1.1"
-markupsafe = "~3.0.2"
-matplotlib = "~3.10.3"
-pytest-dependency = "~0.6.0"
-pytest-parallel = "~0.1.1"
-# Beyond version 8.5.0, subsequent Netron calls in a Jupyter notebook cause "Address already in use" errors
-netron = ">5.0.0,<=8.5.0"
-pandas = "~2.3.1"
-scikit-learn = "~1.7.0"
-tqdm = "~4.67.1"
-pytest = "~8.4.1"
-pytest-metadata = "~3.1.1"
-pytest-html = "~4.1.1"
-pytest-html-merger = "~0.1.0"
-pytest-cov = "~6.2.1"
-pytest-forked = "~1.6.0"
-pytest-rerunfailures = "~15.1"
-dvc = { version = " ~3.59.1", extras = ["webdav"] }
-dvclive = {version = "~3.48.2", extras = ["image"] }
-deap = "~1.4.3"
+protobuf = "3.20.3"                                   # protobuf==3.20.3 required by qonnx
+scipy = "~1.15.0"                                     # scipy>=1.16.0 requires python>=3.11, required by brevitas
 pyyaml = "~6.0.2"
 mip = "~1.13.0"
-networkx = "~3.4.2"
-dependencies = "2.0.1"  # dependencies==2.0.1 required by brvitas
-tokenize-rt = "~4.2.1"
-tclwrapper = "0.0.1"
-setuptools = ">40.8.0,<70.0.0"  # setuptools<70.0.0 required by brevitas
-pytest-xdist = {version = "~3.6.1", extras = ["setproctitle"]}
+dependencies = "2.0.1"                                # dependencies==2.0.1 required by brevitas
+setuptools = ">40.8.0,<70.0.0"                        # setuptools<70.0.0 required by brevitas
 cmake = "~4.0.3"
 
 termcolor = "^2.5.0"
 rich = "^13.9.4"
 click = "^8.1.8"
 onnxoptimizer = "^0.3.13"
-mashumaro = {extras = ["yaml"], version = "^3.15"}
-pydantic = "2.*"
+pydantic = ">2.0"
+mashumaro = { extras = ["yaml"], version = "^3.15" }
+
+finn-plus-tests = { version = "*", optional = true }
+finn-plus-notebooks = { version = "*", optional = true }
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "~4.2.0"
+finn-plus-tests = { path = "./tests", develop = true }
+finn-plus-notebooks = { path = "./notebooks", develop = true }
+pygments = "~2.19.2"
+torch = "~2.7.1"                                      # required by CI
+torchvision = "~0.22.1"                               # required by CI
+dvc = { version = " ~3.59.1", extras = ["webdav"] }   # required by CI
+dvclive = { version = "~3.48.2", extras = ["image"] } # required by CI
+
+[tool.poetry.extras]
+tests = ["finn-plus-tests"]
+notebooks = ["finn-plus-notebooks"]
+all = ["finn-plus-tests", "finn-plus-notebooks"]
+
 
 [build-system]
 requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
 build-backend = "poetry_dynamic_versioning.backend"
 
 [tool.pytest.ini_options]
-addopts = [ "--verbose" ]
+addopts = ["--verbose"]
 markers = [
-   "slow: marks tests as slow",
-   "infrastructure: marks tests that refer to infrastructure functionality",
-   "vivado: mark tests that require Vivado or Vivado HLS",
-   "vitis: mark tests that require Vitis",
-   "board: mark tests that require a PYNQ board",
-   "brevitas_export : mark tests that test brevitas export functionality",
-   "streamline: mark tests that test streamlining functionality",
-   "util: mark tests that test util functions",
-   "transform: mark tests that test transformations (before hls layers)",
-   "fpgadataflow: mark tests related to hls layers",
-   "end2end: mark tests that run the end2end flow",
-   "notebooks: mark tests that execute all Jupyter notebooks",
-   "sanity_bnn: mark tests that execute the sanity BNN test",
-   "bnn_u250: mark tests that execute U250 BNN tests",
-   "bnn_kv260: mark tests that execute KV260 BNN tests",
-   "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
-   "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
-   "analysis: mark tests that run analysis tests",
+    "slow: marks tests as slow",
+    "infrastructure: marks tests that refer to infrastructure functionality",
+    "vivado: mark tests that require Vivado or Vivado HLS",
+    "vitis: mark tests that require Vitis",
+    "board: mark tests that require a PYNQ board",
+    "brevitas_export : mark tests that test brevitas export functionality",
+    "streamline: mark tests that test streamlining functionality",
+    "util: mark tests that test util functions",
+    "transform: mark tests that test transformations (before hls layers)",
+    "fpgadataflow: mark tests related to hls layers",
+    "end2end: mark tests that run the end2end flow",
+    "notebooks: mark tests that execute all Jupyter notebooks",
+    "sanity_bnn: mark tests that execute the sanity BNN test",
+    "bnn_u250: mark tests that execute U250 BNN tests",
+    "bnn_kv260: mark tests that execute KV260 BNN tests",
+    "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
+    "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
+    "analysis: mark tests that run analysis tests",
 ]
-norecursedirs = [
-    "dist",
-    "build",
-    ".tox"
-]
+norecursedirs = ["dist", "build", ".tox"]
 testpaths = "tests"
 
 [tool.isort]
-line_length=100
-indent='    '
-skip=[".tox",".venv","build","dist"]
-known_standard_library="setuptools"
-known_test="pytest"
-known_first_party="finn"
-sections=["FUTURE","STDLIB","TEST","THIRDPARTY","FIRSTPARTY","LOCALFOLDER"]
-default_section="THIRDPARTY"
-multi_line_output=3
-profile="black"
-ignore_comments=true
-ignore_whitespace=true
-honor_noqa=true
+line_length = 100
+indent = '    '
+skip = [".tox", ".venv", "build", "dist"]
+known_standard_library = "setuptools"
+known_test = "pytest"
+known_first_party = "finn"
+sections = [
+    "FUTURE",
+    "STDLIB",
+    "TEST",
+    "THIRDPARTY",
+    "FIRSTPARTY",
+    "LOCALFOLDER",
+]
+default_section = "THIRDPARTY"
+multi_line_output = 3
+profile = "black"
+ignore_comments = true
+ignore_whitespace = true
+honor_noqa = true
 
 [tool.pydoc-markdown]
-loaders = [
-    { type = "python", search_path = ["src"] }
-]
+loaders = [{ type = "python", search_path = ["src"] }]
 
 [tool.pydoc-markdown.renderer]
 type = "markdown"

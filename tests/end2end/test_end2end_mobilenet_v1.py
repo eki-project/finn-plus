@@ -82,8 +82,8 @@ from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.collapse_repeated import CollapseRepeatedMul
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.util.pytorch import NormalizePreProc
-from finn.util.test import (
+from tests.testing_util.pytorch import NormalizePreProc
+from tests.testing_util.test import (
     crop_center,
     get_test_model_trained,
     load_test_checkpoint_or_skip,

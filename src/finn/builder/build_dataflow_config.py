@@ -44,20 +44,21 @@ The module also defines various enumerations for build options such as:
 This configuration system allows users to customize the entire FINN dataflow
 build process through a single, serializable configuration object.
 """
+
+# ruff: noqa: UP045
 from __future__ import annotations
 
 import logging
 import numpy as np
-import os
 from dataclasses import dataclass, field
 from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
+from pathlib import Path
 from typing import Any, Literal, Optional
 
 from finn.util.basic import alveo_default_platform, part_map
-
-from pathlib import Path  # noqa
+from finn.util.exception import FINNConfigurationError
 
 
 class LogLevel(str, Enum):
@@ -204,7 +205,7 @@ estimate_only_dataflow_steps = [
 
 #: List of steps to run for a dataflow build including HW code generation, but
 #: without any synthesis.
-hw_codegen_dataflow_steps = estimate_only_dataflow_steps + ["step_hw_codegen"]
+hw_codegen_dataflow_steps = [*estimate_only_dataflow_steps, "step_hw_codegen"]
 
 
 @dataclass
@@ -218,7 +219,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     model_path: Path | None = None
 
     #: Directory where the final build outputs will be written into
-    output_dir: str = "finn_build_output"
+    output_dir: str | Path = "finn_build_output"
 
     #: Target clock frequency (in nanoseconds) for Vivado synthesis.
     #: e.g. synth_clk_period_ns=5.0 will target a 200 MHz clock.
@@ -277,11 +278,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: (Only relevant if verify_steps is set)
     #: Name of .npy file that will be used as the input for verification.
-    verify_input_npy: str = "input.npy"
+    verify_input_npy: str | Path = "input.npy"
 
     #: (Only relevant if verify_steps is set)
     #: Name of .npy file that will be used as the expected output for verification.
-    verify_expected_output_npy: str = "expected_output.npy"
+    verify_expected_output_npy: str | Path = "expected_output.npy"
 
     #: (Only relevant if verify_steps is set)
     #: Save full execution context for each of the verify_steps.
@@ -483,8 +484,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     vivado_power_simulation_type: Literal["timing", "functional"] = "functional"
 
     def _resolve_hls_clk_period(self) -> float:
-        """
-        Resolve the HLS clock period, falling back to synthesis clock period if not set.
+        """Resolve the HLS clock period, falling back to synthesis clock period if not set.
 
         Returns:
             float: The HLS clock period in nanoseconds. If hls_clk_period_ns is not
@@ -493,12 +493,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         if self.hls_clk_period_ns is None:
             # use same clk for synth and hls if not explicitly specified
             return self.synth_clk_period_ns
-        else:
-            return self.hls_clk_period_ns
+        return self.hls_clk_period_ns
 
     def _resolve_driver_platform(self) -> Literal["zynq-iodma", "alveo"]:
-        """
-        Resolve the driver platform based on the shell flow type.
+        """Resolve the driver platform based on the shell flow type.
 
         Returns:
             str: The driver platform identifier. Returns "zynq-iodma" for Vivado Zynq
@@ -509,14 +507,12 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """
         if self.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
             return "zynq-iodma"
-        elif self.shell_flow_type == ShellFlowType.VITIS_ALVEO:
+        if self.shell_flow_type == ShellFlowType.VITIS_ALVEO:
             return "alveo"
-        else:
-            raise Exception("Couldn't resolve driver platform for " + str(self.shell_flow_type))
+        raise Exception("Couldn't resolve driver platform for " + str(self.shell_flow_type))
 
     def _resolve_fpga_part(self) -> str:
-        """
-        Resolve the FPGA part identifier.
+        """Resolve the FPGA part identifier.
 
         If fpga_part is explicitly specified in the configuration, it is returned as-is.
         If not specified, attempts to look up the part from the board name using the
@@ -535,14 +531,15 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
                 fpga_part = part_map[self.board]
                 return fpga_part
             except KeyError:
-                raise Exception("Couldn't resolve fpga_part for " + self.board)
+                raise FINNConfigurationError(
+                    "Couldn't resolve fpga_part for " + self.board
+                ) from None
         else:
             # return as-is when explicitly specified
             return self.fpga_part
 
     def _resolve_cycles_per_frame(self) -> None | int:
-        """
-        Calculate the number of clock cycles available per frame based on target FPS.
+        """Calculate the number of clock cycles available per frame based on target FPS.
 
         Uses the target_fps and synth_clk_period_ns to compute how many clock cycles
         are available for processing each frame to achieve the target frame rate.
@@ -553,14 +550,12 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """
         if self.target_fps is None:
             return None
-        else:
-            n_clock_cycles_per_sec = 10**9 / self.synth_clk_period_ns
-            n_cycles_per_frame = n_clock_cycles_per_sec / self.target_fps
-            return int(n_cycles_per_frame)
+        n_clock_cycles_per_sec = 10**9 / self.synth_clk_period_ns
+        n_cycles_per_frame = n_clock_cycles_per_sec / self.target_fps
+        return int(n_cycles_per_frame)
 
     def _resolve_vitis_platform(self) -> str:
-        """
-        Resolve the Vitis platform identifier for Alveo board builds.
+        """Resolve the Vitis platform identifier for Alveo board builds.
 
         If vitis_platform is explicitly specified, it is returned as-is. If not specified
         but a board is given, attempts to look up the default Vitis platform for that
@@ -575,16 +570,14 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """
         if self.vitis_platform is not None:
             return self.vitis_platform
-        elif (self.vitis_platform is None) and (self.board is not None):
+        if (self.vitis_platform is None) and (self.board is not None):
             return alveo_default_platform[self.board]
-        else:
-            raise Exception(
-                "Could not resolve Vitis platform:" " need either board or vitis_platform specified"
-            )
+        raise FINNConfigurationError(
+            "Could not resolve Vitis platform: need either board or vitis_platform specified"
+        )
 
     def _resolve_verification_steps(self) -> list[VerificationStepType]:
-        """
-        Resolve the list of verification steps to be performed during the build.
+        """Resolve the list of verification steps to be performed during the build.
 
         Returns:
             List[VerificationStepType]: A list of verification steps to perform.
@@ -592,12 +585,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """
         if self.verify_steps is None:
             return []
-        else:
-            return self.verify_steps
+        return self.verify_steps
 
     def _resolve_verification_io_pair(self) -> None | tuple[Any, Any]:
-        """
-        Load and validate the input/output numpy arrays for verification.
+        """Load and validate the input/output numpy arrays for verification.
 
         Loads the verification input and expected output arrays from the files
         specified in verify_input_npy and verify_expected_output_npy. Validates
@@ -612,16 +603,15 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """
         if self.verify_steps is None:
             return None
-        else:
-            assert os.path.isfile(self.verify_input_npy), (
-                "verify_input_npy not found: " + self.verify_input_npy
-            )
-            verify_input_npy = np.load(self.verify_input_npy)
-            assert os.path.isfile(self.verify_expected_output_npy), (
+        if not Path.is_file(self.verify_input_npy):
+            raise FINNConfigurationError("verify_input_npy not found: " + self.verify_input_npy)
+        verify_input_npy = np.load(self.verify_input_npy)
+        if not Path.is_file(self.verify_expected_output_npy):
+            raise FINNConfigurationError(
                 "verify_expected_output_npy not found: " + self.verify_expected_output_npy
             )
-            verify_expected_output_npy = np.load(self.verify_expected_output_npy)
-            return (
-                verify_input_npy,
-                verify_expected_output_npy,
-            )
+        verify_expected_output_npy = np.load(self.verify_expected_output_npy)
+        return (
+            verify_input_npy,
+            verify_expected_output_npy,
+        )

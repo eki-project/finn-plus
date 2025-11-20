@@ -52,11 +52,11 @@ from rich.traceback import Traceback
 from typing import Any, TextIO
 
 import finn.util.logging
-from finn.builder import build_dataflow_config
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     LogLevel,
     default_build_dataflow_steps,
+    to_logging_level,
 )
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
 from finn.util.basic import get_vivado_root
@@ -97,7 +97,7 @@ class PrintLogger:
 BuildStep = Callable[[ModelWrapper, DataflowBuildConfig], ModelWrapper]
 
 
-def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[BuildStep]:  # noqa
+def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[BuildStep]:
     """Resolve build step names to callable functions.
 
     Converts string step names to callable functions by looking up in the step registry,
@@ -262,15 +262,15 @@ def setup_logging(cfg: DataflowBuildConfig) -> logging.Logger:
         sys.stdout = PrintLogger(log, logging.INFO, sys.stdout)
         sys.stderr = PrintLogger(log, logging.ERROR, sys.stderr)
     console = Console(file=sys.stdout.console)
-    finn.util.logging._RICH_CONSOLE = console
+    finn.util.logging.set_console(console)
 
     # Mirror a configurable log level to console (default = ERROR)
     if cfg.console_log_level != LogLevel.NONE:
-        consoleHandler = RichHandler(
+        consolehandler = RichHandler(
             show_time=True, log_time_format="[%Y-%m-%d %H:%M:%S]", show_path=False, console=console
         )
-        consoleHandler.setLevel(build_dataflow_config.to_logging_level(cfg.console_log_level))
-        logging.getLogger().addHandler(consoleHandler)
+        consolehandler.setLevel(to_logging_level(cfg.console_log_level))
+        logging.getLogger().addHandler(consolehandler)
     return log
 
 
@@ -326,7 +326,7 @@ def create_model_wrapper(model_filename: str, cfg: DataflowBuildConfig) -> Model
     return ModelWrapper(intermediate_model_filename)
 
 
-def build_dataflow_cfg(model_filename: str, cfg: DataflowBuildConfig) -> int:  # noqa
+def build_dataflow_cfg(model_filename: str, cfg: DataflowBuildConfig) -> int:
     """Build a dataflow accelerator using the given configuration.
 
     Main entry point for building FINN dataflow accelerators. Handles step execution,

@@ -1,3 +1,5 @@
+"""Create C++ and PYNQ drivers for FINN-generated accelerators."""
+
 # Copyright (c) 2020, Xilinx
 # All rights reserved.
 #
@@ -43,11 +45,11 @@ from typing import Dict, List, Optional, Tuple
 
 import finn.util
 from finn.builder.build_dataflow_config import FpgaMemoryType
+from finn.templates import get_templates_folder
 from finn.util.basic import make_build_dir
 from finn.util.data_packing import get_driver_shapes, to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
-from finn.util.settings import get_settings
 
 from . import template_driver
 
@@ -94,6 +96,17 @@ class MakeCPPDriver(Transformation):
 
     # TODO: Enable multiple input types! Now only assumes the first one
     def resolve_dt_name(s: str) -> str:
+        """Resolve datatype name for C++ driver code generation.
+
+        Args:
+            s: Datatype string to resolve
+
+        Returns:
+            Resolved C++ datatype name
+
+        Raises:
+            FINNInternalError: If datatype is unknown
+        """
         s = s.replace("DataType[", "").replace("]", "")
         if s in ["BINARY", "TERNARY", "BIPOLAR"]:
             return "Datatype" + s[0] + s[1:].lower()
@@ -114,6 +127,16 @@ class MakeCPPDriver(Transformation):
         version: str,
         host_mem: str,
     ):
+        """Initialize MakeCPPDriver transformation.
+
+        Args:
+            platform: Target platform (must be "alveo")
+            version: Version of finn-cpp-driver to use ("latest" or commit hash)
+            host_mem: Memory type (FpgaMemoryType.HOST_MEM or FpgaMemoryType.DEVICE_MEM)
+
+        Raises:
+            FINNUserError: If platform is not "alveo"
+        """
         super().__init__()
         self.platform: str = platform
 
@@ -136,6 +159,14 @@ class MakeCPPDriver(Transformation):
             self.host_memory = False
 
     def apply(self, model: ModelWrapper) -> Tuple[ModelWrapper, bool]:
+        """Apply the MakeCPPDriver transformation to generate C++ driver code.
+
+        Args:
+            model: ONNX model wrapper
+
+        Returns:
+            Tuple of (modified model, transformation success flag)
+        """
         driver_shapes: Dict = get_driver_shapes(model)
         ext_weight_dma_cnt: int  # noqa
         weights_dir: str  # noqa
@@ -154,6 +185,16 @@ class MakeCPPDriver(Transformation):
 
         # Helper function to execute shell commands safely with error handling
         def run_command(command, cwd=None, debug=False):
+            """Execute a shell command with error handling.
+
+            Args:
+                command: Shell command string to execute.
+                cwd: Working directory for command execution. Defaults to None (current directory).
+                debug: If True, print command output for debugging. Defaults to False.
+
+            Raises:
+                subprocess.CalledProcessError: If the command returns a non-zero exit code.
+            """
             try:
                 result = subprocess.run(
                     shlex.split(command), cwd=cwd, check=True, text=True, capture_output=True
@@ -242,6 +283,14 @@ class MakeCPPDriver(Transformation):
         # Helper function to format kernel names for the driver configuration
         # Converts "kernelName:instance" to "kernelName:{instance}" format
         def formatKernelName(kname: str):
+            """Format kernel name into Vitis-compatible format.
+
+            Args:
+                kname: Kernel name string in "name:instance" format.
+
+            Returns:
+                Formatted kernel name as "name:{instance}".
+            """
             kparts = kname.split(":")
             return kparts[0] + ":{" + kparts[1] + "}"
 
@@ -305,6 +354,14 @@ class MakeCPPDriver(Transformation):
             # Command to invoke CMake
             cmake_executable: str = f"{sys.executable} -m cmake",
         ):
+            """Configure CMake build system for the C++ driver.
+
+            Args:
+                source_dir: Directory containing the CMakeLists.txt file.
+                build_dir: Directory where CMake build files will be generated.
+                cmake_args: Additional CMake configuration arguments. Defaults to None.
+                cmake_executable: Command to invoke CMake. Defaults to Python's cmake module.
+            """
             # Create build directory if it doesn't exist
             os.makedirs(build_dir, exist_ok=True)
             # Split the cmake executable command into arguments
@@ -336,6 +393,17 @@ class MakeCPPDriver(Transformation):
             # Additional build arguments
             build_args: Optional[List[str]] = None,
         ):
+            """Build the configured CMake project.
+
+            Args:
+                build_dir: Directory containing the configured build files.
+                cmake_executable: Build tool to use. Defaults to "make".
+                build_target: Specific target to build. Defaults to None (builds all).
+                build_args: Additional build arguments. Defaults to None.
+
+            Raises:
+                subprocess.CalledProcessError: If the build fails.
+            """
             # Prepare the build command with the executable
             args = [cmake_executable]
             # Add optional build target if specified
@@ -380,6 +448,17 @@ class MakeCPPDriver(Transformation):
 
         # Helper function to verify that the built driver uses the correct datatypes
         def check_finn_types(bin_dir: str, expectedInputType: str, expectedOutputType: str) -> None:
+            """Verify that compiled driver's datatypes match expected types.
+
+            Args:
+                bin_dir: Directory containing the finnhpc executable.
+                expectedInputType: Expected input datatype string.
+                expectedOutputType: Expected output datatype string.
+
+            Raises:
+                subprocess.CalledProcessError: If the datatype check command fails.
+                RuntimeError: If the actual datatypes don't match expected types.
+            """
             # Run the built finnhpc executable with the --check flag to output datatype information
             result = subprocess.run(
                 "./finnhpc --check".split(), cwd=bin_dir, capture_output=True, text=True
@@ -467,19 +546,35 @@ class MakePYNQDriverIODMA(Transformation):
     """
 
     def __init__(self, platform, validation_datset=None):
+        """Initialize MakePYNQDriverIODMA transformation.
+
+        Args:
+            platform: Target platform, one of ["zynq-iodma", "alveo"].
+            validation_datset: Optional validation dataset. Defaults to None.
+        """
         super().__init__()
         self.platform = platform
         self.validation_datset = validation_datset
 
     def apply(self, model):
+        """Apply the MakePYNQDriverIODMA transformation.
+
+        Creates a PYNQ Python driver package for interfacing with the generated
+        accelerator, including data packing/unpacking and runtime weight handling.
+
+        Args:
+            model: The ONNX model to generate a driver for.
+
+        Returns:
+            Tuple of (modified model, False) indicating transformation applied.
+        """
         # create a temporary folder for the generated driver
         pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
 
         # create the base FINN driver -- same for all accels
-        driver_base_template = os.path.join(
-            get_settings().finn_qnn_data, "templates/driver/driver_base.py"
-        )
+        driver_base_template = get_templates_folder() / "python_driver/driver_base.py"
+
         driver_base_py = pynq_driver_dir + "/driver_base.py"
         shutil.copy(driver_base_template, driver_base_py)
         # driver depends on qonnx and finn packages
@@ -579,9 +674,7 @@ class MakePYNQDriverIODMA(Transformation):
 
         # add validate.py to run full top-1 test (only for suitable networks)
         validate_py = pynq_driver_dir + "/validate.py"
-        validate_template = os.path.join(
-            get_settings().finn_qnn_data, "templates/driver/validate.py"
-        )
+        validate_template = get_templates_folder() / "python_driver/validate.py"
         shutil.copy(validate_template, validate_py)
 
         # generate settings.json for generated driver
@@ -626,13 +719,37 @@ class MakePYNQDriverIODMA(Transformation):
 
 
 class MakePYNQDriverInstrumentation(Transformation):
+    """Create PYNQ Python driver with instrumentation for performance analysis.
+
+    Generates a Python driver for PYNQ platforms that includes instrumentation
+    capabilities for measuring performance metrics like throughput and latency.
+    """
+
     def __init__(self, platform, clk_period_ns, live_fifo_sizing):
+        """Initialize MakePYNQDriverInstrumentation transformation.
+
+        Args:
+            platform: Target platform identifier.
+            clk_period_ns: Clock period in nanoseconds for performance calculations.
+            live_fifo_sizing: Whether to include live FIFO sizing information.
+        """
         super().__init__()
         self.platform = platform
         self.clk_period_ns = clk_period_ns
         self.live_fifo_sizing = live_fifo_sizing
 
     def apply(self, model: ModelWrapper):
+        """Apply the MakePYNQDriverInstrumentation transformation.
+
+        Generates a PYNQ driver with instrumentation capabilities for measuring
+        performance metrics and analyzing FIFO sizing.
+
+        Args:
+            model: The ONNX model to generate an instrumented driver for.
+
+        Returns:
+            Tuple of (modified model, False) indicating transformation applied.
+        """
         # TODO: support runtime-writable and external weights
         # TODO: support Alveo and Versal platforms
 
@@ -641,9 +758,7 @@ class MakePYNQDriverInstrumentation(Transformation):
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
 
         # create (copy) the static instrumentation driver
-        driver_template = (
-            get_settings().finn_qnn_data + "/templates/driver/driver_instrumentation.py"
-        )
+        driver_template = get_templates_folder() / "python_driver/driver_instrumentation.py"
         if self.live_fifo_sizing:
             driver_py = pynq_driver_dir + "/driver_instrumentation.py"
         else:
@@ -652,9 +767,7 @@ class MakePYNQDriverInstrumentation(Transformation):
 
         # add-on driver for live fifosizing
         if self.live_fifo_sizing:
-            driver_template = (
-                get_settings().finn_qnn_data + "/templates/driver/driver_fifosizing.py"
-            )
+            driver_template = get_templates_folder() / "python_driver/driver_fifosizing.py"
             driver_py = pynq_driver_dir + "/driver.py"
             shutil.copy(driver_template, driver_py)
 

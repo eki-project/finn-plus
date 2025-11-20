@@ -273,7 +273,7 @@ def run_flow_wizard() -> None:
         Prompt.ask("Where do you want to save this flow configuration?", default="cfg.yaml")
     )
     with path.open("w+") as f:
-        f.write(dfbc.to_yaml())
+        f.write(cast("str", dfbc.to_yaml()))
     console.print(
         "[green]You flow configuration has been saved. There are many more options to be set, "
         "this was just the minimal setup. Feel free to adjust the config further.[/green]"
@@ -384,7 +384,7 @@ def run_setup_wizard(settings: FINNSettings) -> None:
             "Where do you want to save these settings?",
             default=str(settings.get_path()),
         )
-    )  # noqa
+    )
     settings.save(True, where)
     console.print(
         "[bold green]Settings written. Please restart FINN+ for the changes "
@@ -431,7 +431,6 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool) -> None:
 
     os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
-    os.environ["FINN_QNN_DATA"] = resolve_module_path("qnn-data")
     os.environ["FINN_NOTEBOOKS"] = resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = resolve_module_path("tests")
 
@@ -739,7 +738,7 @@ def flow_wizard() -> None:
 
 
 def _config_wizard_wrapper() -> None:
-    """Used both by 'finn wizard config' and 'finn config create'."""
+    """Use both by 'finn wizard config' and 'finn config create'."""
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
@@ -895,7 +894,6 @@ def deps_show(finn_deps_definitions: Path | None) -> None:
 def config() -> None:
     """Click group for config related commands."""
     # TODO: Config remove?
-    pass
 
 
 def _command_get_settings() -> FINNSettings:
