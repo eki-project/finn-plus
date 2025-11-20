@@ -25,6 +25,14 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+"""Matrix-Vector-Activation Unit (MVAU) hardware implementation.
+
+This module implements the MVAU operation for FPGA deployment, which performs
+matrix-vector multiplication optionally followed by activation/thresholding.
+Supports various memory modes, parallelization strategies, and quantized datatypes.
+"""
+
 import math
 import numpy as np
 import onnx.numpy_helper as np_helper
@@ -56,9 +64,25 @@ class MVAU(HWCustomOp):
     """Abstraction layer for HW implementation of MatrixVectorActivation layers."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the MVAU custom operation.
+
+        Parameters
+        ----------
+        onnx_node : NodeProto
+            ONNX node to wrap
+        **kwargs : dict
+            Additional arguments passed to parent class
+        """
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Get dictionary of attribute names and their types for this node.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping attribute names to type specifications
+        """
         my_attrs = {
             "PE": ("i", True, 0),
             "SIMD": ("i", True, 0),
@@ -132,6 +156,17 @@ class MVAU(HWCustomOp):
         return my_attrs
 
     def execute_node(self, context, graph):
+        """Execute this MVAU node.
+
+        Performs matrix-vector multiplication and optional activation/thresholding.
+
+        Parameters
+        ----------
+        context : dict
+            Dictionary mapping tensor names to numpy arrays
+        graph : GraphProto
+            ONNX graph containing this node
+        """
         node = self.onnx_node
         in_act = context[node.input[0]]
         # ensure that shape is compatible
@@ -174,6 +209,13 @@ class MVAU(HWCustomOp):
         context[node.output[0]] = result.reshape(oshape)
 
     def verify_node(self):
+        """Verify that this node has valid attributes and configuration.
+
+        Returns
+        -------
+        list of str
+            List of verification messages/warnings
+        """
         info_messages = []
         # verify that "backend" is set to "fpgadataflow"
         backend_value = self.get_nodeattr("backend")
@@ -229,6 +271,13 @@ class MVAU(HWCustomOp):
         return info_messages
 
     def infer_node_datatype(self, model):
+        """Infer and set output datatype based on input datatype and node attributes.
+
+        Parameters
+        ----------
+        model : ModelWrapper
+            FINN ModelWrapper containing this node
+        """
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype(0):
@@ -263,6 +312,18 @@ class MVAU(HWCustomOp):
         return DataType[self.get_nodeattr("outputDataType")]
 
     def get_instream_width(self, ind=0):
+        """Get width of input stream in bits.
+
+        Parameters
+        ----------
+        ind : int
+            Input stream index (0=activations, 1=weights, 2=thresholds)
+
+        Returns
+        -------
+        int
+            Bit width of the specified input stream
+        """
         if ind == 0:
             i_bits = self.get_input_datatype(0).bitwidth()
             width = i_bits * self.get_nodeattr("SIMD")
@@ -296,11 +357,35 @@ class MVAU(HWCustomOp):
         return width
 
     def get_outstream_width(self, ind=0):
+        """Get width of output stream in bits.
+
+        Parameters
+        ----------
+        ind : int
+            Output stream index
+
+        Returns
+        -------
+        int
+            Bit width of the output stream
+        """
         o_bits = self.get_output_datatype().bitwidth()
         out_width = o_bits * self.get_nodeattr("PE")
         return out_width
 
     def get_folded_input_shape(self, ind=0):
+        """Get shape of folded (parallelized) input tensor.
+
+        Parameters
+        ----------
+        ind : int
+            Input index (0=activations, 1=weights)
+
+        Returns
+        -------
+        tuple of int
+            Shape of folded input tensor
+        """
         mw = self.get_nodeattr("MW")
         mh = self.get_nodeattr("MH")
         simd = self.get_nodeattr("SIMD")
@@ -327,6 +412,18 @@ class MVAU(HWCustomOp):
         return folded_input_shape
 
     def get_folded_output_shape(self, ind=0):
+        """Get shape of folded (parallelized) output tensor.
+
+        Parameters
+        ----------
+        ind : int
+            Output index
+
+        Returns
+        -------
+        tuple of int
+            Shape of folded output tensor
+        """
         mh = self.get_nodeattr("MH")
         pe = self.get_nodeattr("PE")
         nf = mh // pe
@@ -335,6 +432,18 @@ class MVAU(HWCustomOp):
         return folded_output_shape
 
     def get_normal_input_shape(self, ind=0):
+        """Get normal (non-folded) input shape.
+
+        Parameters
+        ----------
+        ind : int
+            Input index (0=activations, 1=weights)
+
+        Returns
+        -------
+        tuple of int
+            Normal input shape
+        """
         mw = self.get_nodeattr("MW")
         if ind == 0:
             vecs = list(self.get_nodeattr("numInputVectors"))
@@ -347,6 +456,18 @@ class MVAU(HWCustomOp):
         return shape
 
     def get_normal_output_shape(self, ind=0):
+        """Get normal (non-folded) output shape.
+
+        Parameters
+        ----------
+        ind : int
+            Output index
+
+        Returns
+        -------
+        tuple of int
+            Normal output shape
+        """
         mh = self.get_nodeattr("MH")
         vecs = list(self.get_nodeattr("numInputVectors"))
         normal_output_shape = tuple(vecs + [mh])
@@ -373,6 +494,13 @@ class MVAU(HWCustomOp):
             return mh // pe
 
     def uram_estimation(self):
+        """Estimate UltraRAM (URAM) resource usage.
+
+        Returns
+        -------
+        int
+            Estimated number of URAMs needed
+        """
         P = self.get_nodeattr("PE")
         Q = self.get_nodeattr("SIMD")
         wdt = self.get_input_datatype(1)
@@ -435,6 +563,13 @@ class MVAU(HWCustomOp):
             return (math.ceil(omega / 512)) * (math.ceil(mem_width / 36))
 
     def bram_efficiency_estimation(self):
+        """Estimate BRAM utilization efficiency.
+
+        Returns
+        -------
+        float
+            Efficiency ratio (actual bits used / total BRAM capacity allocated)
+        """
         wdt = self.get_input_datatype(1)
         W = wdt.bitwidth()
         D_in = self.get_nodeattr("MW")
@@ -461,6 +596,13 @@ class MVAU(HWCustomOp):
         return wbits / uram_est_capacity
 
     def get_exp_cycles(self):
+        """Get expected number of clock cycles for one inference.
+
+        Returns
+        -------
+        int
+            Number of clock cycles
+        """
         pe = self.get_nodeattr("PE")
         simd = self.get_nodeattr("SIMD")
         num_inp_vec = self.get_nodeattr("numInputVectors")
@@ -785,6 +927,15 @@ class MVAU(HWCustomOp):
             raise Exception("Unknown weight_file_mode")
 
     def generate_params(self, model, path):
+        """Generate parameter files (weights and thresholds) for hardware generation.
+
+        Parameters
+        ----------
+        model : ModelWrapper
+            FINN ModelWrapper containing this node
+        path : str
+            Output directory path for generated files
+        """
         mem_mode = self.get_nodeattr("mem_mode")
         code_gen_dir = path
         if not self.get_nodeattr("dynamic_input"):
@@ -860,6 +1011,13 @@ class MVAU(HWCustomOp):
                 f_thresh.close()
 
     def get_op_and_param_counts(self):
+        """Get dictionary of operations and parameter counts for this layer.
+
+        Returns
+        -------
+        dict
+            Dictionary with operation types and counts as key-value pairs
+        """
         in_features = self.get_nodeattr("MW")
         out_features = self.get_nodeattr("MH")
         weight_bits = self.get_input_datatype(1).bitwidth()
@@ -884,6 +1042,13 @@ class MVAU(HWCustomOp):
         return ret_dict
 
     def derive_characteristic_fxns(self, period):
+        """Derive characteristic performance functions for this node.
+
+        Parameters
+        ----------
+        period : float
+            Clock period in nanoseconds
+        """
         n_inps = np.prod(self.get_folded_input_shape()[:-1])
         io_dict = {
             "inputs": {
@@ -899,6 +1064,13 @@ class MVAU(HWCustomOp):
         super().derive_characteristic_fxns(period, override_rtlsim_dict=io_dict)
 
     def get_verilog_top_module_intf_names(self):
+        """Get Verilog top module interface names for this node.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping interface types to port names
+        """
         intf_names = super().get_verilog_top_module_intf_names()
         try:
             pumped_compute = self.get_nodeattr("pumpedCompute")
@@ -925,6 +1097,13 @@ class MVAU(HWCustomOp):
         return intf_names
 
     def code_generation_ipi(self):
+        """Generate TCL commands for IP integrator (IPI) block design.
+
+        Returns
+        -------
+        list of str
+            List of TCL commands for Vivado IP integrator
+        """
         source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
         cmd = ["file mkdir %s" % source_target]
         dyn_input = self.get_nodeattr("dynamic_input")

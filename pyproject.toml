@@ -181,4 +181,5 @@ ignore = [
     "ANN401",   # Don't use the "Any" type
     "D413",     # Blank lines at docstring end
     "D205",     # Blank line after summary (enables multiline summaries)
+    "N801",     # Class names should use CapWords convention
 ]

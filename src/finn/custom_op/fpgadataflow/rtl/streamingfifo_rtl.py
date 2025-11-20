@@ -26,6 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""RTL implementation of streaming FIFO.
+
+This module provides an RTL-based implementation of streaming FIFOs for buffering
+data between layers, with support for both RTL and Vivado IP implementations.
+"""
+
 import numpy as np
 import os
 import shutil
@@ -37,10 +43,29 @@ from finn.util.settings import get_settings
 
 
 class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
+    """RTL implementation of streaming FIFO for data buffering."""
+
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the RTL streaming FIFO.
+
+        Parameters
+        ----------
+        onnx_node : NodeProto
+            ONNX node to wrap
+        **kwargs : dict
+            Additional arguments passed to parent class
+        """
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Get dictionary of attribute names and their types for this node.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping attribute names to type specifications,
+            including impl_style for choosing between RTL and Vivado implementations
+        """
         my_attrs = {
             # Toggle between rtl or IPI implementation
             # rtl - use the rtl generated IP during stitching
@@ -53,6 +78,15 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         return my_attrs
 
     def get_adjusted_depth(self):
+        """Get FIFO depth adjusted for implementation requirements.
+
+        For Vivado implementation, rounds up depth to nearest power-of-2.
+
+        Returns
+        -------
+        int
+            Adjusted FIFO depth
+        """
         impl = self.get_nodeattr("impl_style")
         depth = self.get_nodeattr("depth")
         if impl == "vivado":
@@ -69,6 +103,14 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         return depth
 
     def get_verilog_top_module_intf_names(self):
+        """Get Verilog top module interface names for this node.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping interface types to port names,
+            including optional maxcount output for depth monitoring
+        """
         ret = super().get_verilog_top_module_intf_names()
         is_rtl = self.get_nodeattr("impl_style") == "rtl"
         is_depth_monitor = self.get_nodeattr("depth_monitor") == 1
@@ -77,6 +119,16 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         return ret
 
     def is_sim_fifo_gauge(self):
+        """Check if this FIFO should use simulation gauge implementation.
+
+        Returns True for RTL FIFOs with depth monitoring enabled, which use
+        an infinite Verilog queue for simulation instead of Q_srl.
+
+        Returns
+        -------
+        bool
+            True if using simulation gauge, False otherwise
+        """
         # special case: a StreamingFIFO layer with impl_style=rtl
         # depth_monitor=1 is implemented using a Verilog infite
         # queue sim instead of Q_srl
@@ -85,6 +137,17 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         return is_depth_monitor and is_rtl
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Generate HDL code from templates for this node.
+
+        Parameters
+        ----------
+        model : ModelWrapper
+            ONNX model wrapper
+        fpgapart : str
+            Target FPGA part number
+        clk : float
+            Target clock frequency in ns
+        """
         rtlsrc = os.path.join(get_settings().finn_rtllib, "fifo/hdl")
         template_path = rtlsrc + "/fifo_template.v"
 
@@ -136,6 +199,13 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def code_generation_ipi(self):
+        """Generate TCL commands for instantiating this IP in Vivado IPI.
+
+        Returns
+        -------
+        list of str
+            List of TCL commands for IP instantiation
+        """
         impl_style = self.get_nodeattr("impl_style")
         if impl_style == "rtl":
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
@@ -216,6 +286,18 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             )
 
     def get_rtl_file_list(self, abspath=False):
+        """Get list of RTL files required for this node.
+
+        Parameters
+        ----------
+        abspath : bool
+            If True, return absolute file paths; otherwise return relative paths
+
+        Returns
+        -------
+        list of str
+            List of RTL file paths
+        """
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
             rtllib_dir = os.path.join(get_settings().finn_rtllib, "fifo/hdl/")
@@ -230,6 +312,13 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         return verilog_files
 
     def prepare_rtlsim(self):
+        """Prepare this node for RTL simulation.
+
+        Raises
+        ------
+        NotImplementedError
+            If impl_style is 'vivado' (not supported for simulation)
+        """
         # TODO: Support simulation of vivado-style FIFOs,
         # or ensure node-by-node rtlsim is always skipped for FIFOs in general
         if self.get_nodeattr("impl_style") == "vivado":
@@ -242,6 +331,18 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         return super().prepare_rtlsim()
 
     def execute_node(self, context, graph):
+        """Execute this FIFO node.
+
+        Performs buffering using Python simulation for cppsim mode or Vivado FIFOs,
+        and RTL simulation for rtlsim mode with RTL-style FIFOs.
+
+        Parameters
+        ----------
+        context : dict
+            Dictionary mapping tensor names to numpy arrays
+        graph : GraphProto
+            ONNX graph containing this node
+        """
         mode = self.get_nodeattr("exec_mode")
         impl_style = self.get_nodeattr("impl_style")
         if mode == "cppsim" or impl_style == "vivado":

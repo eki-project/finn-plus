@@ -26,6 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""RTL implementation of Matrix Vector Activation Unit (MVAU).
+
+This module provides an RTL-based implementation of the Matrix Vector Activation
+Unit for FPGA acceleration, supporting features like double-pumped DSPs and
+various weight memory modes.
+"""
+
 import numpy as np
 import os
 
@@ -46,9 +53,26 @@ class MVAU_rtl(MVAU, RTLBackend):
     """Class that corresponds to finn-rtl Matrix Vector Unit."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the RTL Matrix Vector Activation Unit.
+
+        Parameters
+        ----------
+        onnx_node : NodeProto
+            ONNX node to wrap
+        **kwargs : dict
+            Additional arguments passed to parent class
+        """
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Get dictionary of attribute names and their types for this node.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping attribute names to type specifications,
+            including pumpedCompute for double-pumped DSP operation
+        """
         my_attrs = {
             # Double-pumped DSPs enabled
             "pumpedCompute": ("i", False, 0, {0, 1}),
@@ -58,6 +82,18 @@ class MVAU_rtl(MVAU, RTLBackend):
         return my_attrs
 
     def execute_node(self, context, graph):
+        """Execute this MVAU node.
+
+        Performs matrix-vector multiplication with optional activation using
+        C++ or RTL simulation.
+
+        Parameters
+        ----------
+        context : dict
+            Dictionary mapping tensor names to numpy arrays
+        graph : GraphProto
+            ONNX graph containing this node
+        """
         mode = self.get_nodeattr("exec_mode")
         dynamic_input = self.get_nodeattr("dynamic_input")
         mem_mode = self.get_nodeattr("mem_mode")
@@ -145,9 +181,28 @@ class MVAU_rtl(MVAU, RTLBackend):
             )
 
     def lut_estimation(self):
+        """Estimate LUT resource usage.
+
+        Returns
+        -------
+        int
+            Estimated number of LUTs needed (currently returns 0)
+        """
         return 0
 
     def dsp_estimation(self, fpgapart):
+        """Estimate DSP resource usage based on target FPGA.
+
+        Parameters
+        ----------
+        fpgapart : str
+            Target FPGA part number
+
+        Returns
+        -------
+        int
+            Estimated number of DSP blocks needed
+        """
         # multiplication
         P = self.get_nodeattr("PE")
         Q = self.get_nodeattr("SIMD")
@@ -159,6 +214,13 @@ class MVAU_rtl(MVAU, RTLBackend):
         return int(mult_dsp)
 
     def instantiate_ip(self, cmd):
+        """Instantiate the RTL IP in Vivado IPI.
+
+        Parameters
+        ----------
+        cmd : list
+            List of TCL commands to which instantiation commands are appended
+        """
         # instantiate the RTL IP
         node_name = self.onnx_node.name
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
@@ -226,6 +288,20 @@ class MVAU_rtl(MVAU, RTLBackend):
                 )
 
     def _resolve_segment_len(self, clk):
+        """Resolve DSP chain segment length based on target clock frequency.
+
+        Inserts pipeline registers in the DSP chain to meet timing requirements.
+
+        Parameters
+        ----------
+        clk : float
+            Target clock period in nanoseconds
+
+        Returns
+        -------
+        int
+            Maximum DSP chain length for the target frequency
+        """
         # Insert pipeline registers in the DSP58 chain to meet target clock frequency
         # ~0.741 ns seems the worst-case delay through first DSP
         # ~0.605 ns seems to be (on average) delay for all subsequent DSPs
@@ -249,6 +325,20 @@ class MVAU_rtl(MVAU, RTLBackend):
         return dsp_chain_len
 
     def _resolve_dsp_version(self, dsp_block):
+        """Resolve DSP version based on target FPGA device.
+
+        Selects the appropriate RTL compute core version for the target DSP type.
+
+        Parameters
+        ----------
+        dsp_block : str
+            DSP block type (e.g., 'DSP58', 'DSP48E2')
+
+        Returns
+        -------
+        int
+            DSP version number (1, 2, or 3)
+        """
         # Based on target device and activation/weight-width, choose the
         # supported RTL compute core
         assert (
@@ -267,6 +357,17 @@ class MVAU_rtl(MVAU, RTLBackend):
                 return 1
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Generate HDL code from templates for this node.
+
+        Parameters
+        ----------
+        model : ModelWrapper
+            ONNX model wrapper
+        fpgapart : str
+            Target FPGA part number
+        clk : float
+            Target clock frequency in ns
+        """
         # Generate params as part of IP preparation
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         self.generate_params(model, code_gen_dir)
@@ -323,6 +424,20 @@ class MVAU_rtl(MVAU, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def prepare_codegen_default(self, fpgapart, clk):
+        """Prepare code generation dictionary for default implementation.
+
+        Parameters
+        ----------
+        fpgapart : str
+            Target FPGA part number
+        clk : float
+            Target clock frequency in ns
+
+        Returns
+        -------
+        tuple of (str, dict)
+            Template file path and code generation dictionary
+        """
         template_path = os.path.join(get_settings().finn_rtllib, "mvu/mvu_vvu_axi_wrapper.v")
 
         # check if settings are valid
@@ -352,6 +467,18 @@ class MVAU_rtl(MVAU, RTLBackend):
         return template_path, code_gen_dict
 
     def get_rtl_file_list(self, abspath=False):
+        """Get list of RTL files required for this node.
+
+        Parameters
+        ----------
+        abspath : bool
+            If True, return absolute file paths; otherwise return relative paths
+
+        Returns
+        -------
+        list of str
+            List of RTL file paths
+        """
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
             rtllib_dir = os.path.join(get_settings().finn_rtllib, "mvu/")
@@ -374,6 +501,13 @@ class MVAU_rtl(MVAU, RTLBackend):
         return verilog_files
 
     def get_verilog_paths(self):
+        """Get list of Verilog include paths for this node.
+
+        Returns
+        -------
+        list of str
+            List of directory paths containing Verilog source files
+        """
         verilog_paths = super().get_verilog_paths()
         verilog_paths.append(os.path.join(get_settings().finn_rtllib, "mvu"))
         return verilog_paths

@@ -26,6 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""RTL implementation of streaming data width converter.
+
+This module provides an RTL-based implementation for converting between
+different stream data widths while maintaining throughput.
+"""
+
 import os
 import shutil
 
@@ -36,7 +42,8 @@ from finn.util.settings import get_settings
 
 class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
     """Class that corresponds to finn-rtllib datawidth converter
-    module."""
+    module.
+    """
 
     def get_nodeattr_types(self):
         my_attrs = {}
@@ -45,6 +52,16 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         return my_attrs
 
     def check_divisible_iowidths(self):
+        """Check that input and output widths are divisible.
+
+        Ensures that the stream width conversion has an integer ratio,
+        which is required for proper operation.
+
+        Returns
+        -------
+        bool
+            True if widths are properly divisible, False otherwise
+        """
         iwidth = self.get_nodeattr("inWidth")
         owidth = self.get_nodeattr("outWidth")
         # the rtl module only supports
@@ -111,6 +128,18 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Get list of RTL files required for this node.
+
+        Parameters
+        ----------
+        abspath : bool
+            If True, return absolute file paths; otherwise return relative paths
+
+        Returns
+        -------
+        list of str
+            List of RTL file paths
+        """
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
             rtllib_dir = os.path.join(get_settings().finn_rtllib, "dwc/hdl/")

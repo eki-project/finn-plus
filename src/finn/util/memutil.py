@@ -1,3 +1,9 @@
+"""Memory utility functions for FPGA memory primitives.
+
+This module provides functions for calculating memory primitive utilization
+on Versal FPGAs, including URAM and BRAM configurations.
+"""
+
 from qonnx.util.basic import roundup_to_integer_multiple
 
 mem_primitives_versal = {
@@ -13,9 +19,11 @@ mem_primitives_versal = {
 
 
 def get_memutil_alternatives(
-    req_mem_spec, mem_primitives=mem_primitives_versal, sort_min_waste=True
-):
-    """Computes how many instances of a memory primitive are necessary to
+    req_mem_spec: tuple[int, int],
+    mem_primitives: dict[str, tuple[int, int]] = mem_primitives_versal,
+    sort_min_waste: bool = True,
+) -> list[tuple[str, tuple[int, float, int]]]:
+    """Compute how many instances of a memory primitive are necessary to
     implement a desired memory size, where req_mem_spec is the desired
     size and the primitive_spec is the primitve size. The sizes are expressed
     as tuples of (mem_width, mem_depth). Returns a list of tuples of the form
@@ -33,14 +41,16 @@ def get_memutil_alternatives(
     return ret
 
 
-def memutil(req_mem_spec, primitive_spec):
-    """Computes how many instances of a memory primitive are necessary to
+def memutil(
+    req_mem_spec: tuple[int, int], primitive_spec: tuple[int, int]
+) -> tuple[int, float, int]:
+    """Compute how many instances of a memory primitive are necessary to
     implemented a desired memory size, where req_mem_spec is the desired
     size and the primitive_spec is the primitve size. The sizes are expressed
     as tuples of (mem_width, mem_depth). Returns (primitive_count, efficiency, waste)
     where efficiency in range [0,1] indicates how much of the total capacity is
-    utilized, and waste indicates how many bits of storage are wasted."""
-
+    utilized, and waste indicates how many bits of storage are wasted.
+    """
     req_width, req_depth = req_mem_spec
     prim_width, prim_depth = primitive_spec
 

@@ -26,6 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""RTL implementation of FMPadding for feature map padding.
+
+This module provides an RTL-based implementation of feature map padding using the
+finn-rtllib fmpadding_axi component. Supports runtime reconfiguration of padding
+amounts and spatial feature sizes via optional AXI-Lite interface.
+"""
+
 import math
 import os
 import shutil
@@ -37,14 +44,32 @@ from finn.util.settings import get_settings
 
 
 class FMPadding_rtl(FMPadding, RTLBackend):
-    """CustomOp wrapper for the finn-rtllib fmpadding_axi component
-    Supports adjusting the padding amount and spatial feature sizes at
-    runtime."""
+    """CustomOp wrapper for the finn-rtllib fmpadding_axi component.
 
-    def __init__(self, onnx_node, **kwargs):
+    Supports adjusting the padding amount and spatial feature sizes at runtime.
+    """
+
+    def __init__(self, onnx_node, **kwargs) -> None:
+        """Initialize the RTL FMPadding component.
+
+        Parameters
+        ----------
+        onnx_node : NodeProto
+            ONNX node to wrap
+        **kwargs : dict
+            Additional arguments passed to parent class
+        """
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Get dictionary of attribute names and their types for this node.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping attribute names to type specifications,
+            including dynamic_mode for runtime reconfiguration
+        """
         my_attrs = {
             # Enable reprogrammable implementation to change FM dimensions,
             # stride, or dilation during runtime
@@ -55,6 +80,14 @@ class FMPadding_rtl(FMPadding, RTLBackend):
         return my_attrs
 
     def get_verilog_top_module_intf_names(self):
+        """Get Verilog top module interface names.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping interface types to interface names,
+            including optional AXI-Lite interface if dynamic_mode is enabled
+        """
         # Overload default HLSCustomOp implementation to add axilite control IF
         intf_names = super().get_verilog_top_module_intf_names()
         if self.get_nodeattr("dynamic_mode"):
@@ -62,6 +95,26 @@ class FMPadding_rtl(FMPadding, RTLBackend):
         return intf_names
 
     def get_template_values(self, ifm_dims, pads, chans, simd, idt):
+        """Calculate template parameter values for HDL generation.
+
+        Parameters
+        ----------
+        ifm_dims : list
+            Input feature map dimensions [H, W]
+        pads : list
+            Padding amounts [top, left, bottom, right]
+        chans : int
+            Number of channels
+        simd : int
+            SIMD parallelism factor
+        idt : DataType
+            Input data type
+
+        Returns
+        -------
+        dict
+            Dictionary of template substitution values for HDL generation
+        """
         dimY, dimX = ifm_dims
         padT, padL, padB, padR = pads
         y_counter_bits = int(math.ceil(math.log2(padT + dimY + padB + 1)))
@@ -87,9 +140,9 @@ class FMPadding_rtl(FMPadding, RTLBackend):
         return code_gen_dict
 
     def get_dynamic_config(self, ifm_dims=None, pads=None):
-        """Returns a configuration dict to re-configure FM dimension and
-        padding amounts during runtime."""
-
+        """Return a configuration dict to re-configure FM dimension and
+        padding amounts during runtime.
+        """
         if ifm_dims is None:
             ifm_dims = self.get_nodeattr("ImgDim")
         if pads is None:
@@ -109,6 +162,17 @@ class FMPadding_rtl(FMPadding, RTLBackend):
         return config
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Generate HDL code from templates for this node.
+
+        Parameters
+        ----------
+        model : ModelWrapper
+            ONNX model wrapper
+        fpgapart : str
+            Target FPGA part number
+        clk : float
+            Target clock frequency in ns
+        """
         rtlsrc = os.path.join(get_settings().finn_rtllib, "fmpadding/hdl")
         template_path = rtlsrc + "/fmpadding_template.v"
         dims = self.get_nodeattr("ImgDim")
@@ -144,6 +208,19 @@ class FMPadding_rtl(FMPadding, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Get list of RTL files required for this node.
+
+        Parameters
+        ----------
+        abspath : bool
+            If True, return absolute file paths; otherwise return relative paths
+
+        Returns
+        -------
+        list of str
+            List of RTL file paths (4 files: fmpadding_axi.sv, fmpadding.sv,
+            axi2we.sv, generated .v file)
+        """
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
             rtllib_dir = os.path.join(get_settings().finn_rtllib, "fmpadding/hdl/")
@@ -160,7 +237,7 @@ class FMPadding_rtl(FMPadding, RTLBackend):
         return verilog_files
 
     def code_generation_ipi(self):
-        """Constructs and returns the TCL for node instantiation in Vivado IPI."""
+        """Construct and returns the TCL for node instantiation in Vivado IPI."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
         sourcefiles = [
@@ -182,6 +259,17 @@ class FMPadding_rtl(FMPadding, RTLBackend):
         return cmd
 
     def execute_node(self, context, graph):
+        """Execute this FMPadding node.
+
+        Performs feature map padding using C++ or RTL simulation.
+
+        Parameters
+        ----------
+        context : dict
+            Dictionary mapping tensor names to numpy arrays
+        graph : GraphProto
+            ONNX graph containing this node
+        """
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             FMPadding.execute_node(self, context, graph)
