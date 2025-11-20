@@ -46,6 +46,7 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
     """
 
     def get_nodeattr_types(self):
+        """Get the attribute types for this node."""
         my_attrs = {}
         my_attrs.update(StreamingDataWidthConverter.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
@@ -80,6 +81,7 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         )
 
     def execute_node(self, context, graph):
+        """Execute the node in the given context and graph for simulation."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             StreamingDataWidthConverter.execute_node(self, context, graph)
@@ -87,6 +89,7 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
             RTLBackend.execute_node(self, context, graph)
 
     def get_template_values(self):
+        """Get the code generation template values for this node."""
         topname = self.get_verilog_top_module_name()
         ibits = self.get_instream_width()
         obits = self.get_outstream_width()
@@ -98,6 +101,7 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         return code_gen_dict
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Generate the HDL code for this node."""
         rtlsrc = os.path.join(get_settings().finn_rtllib, "dwc/hdl")
         template_path = rtlsrc + "/dwc_template.v"
         code_gen_dict = self.get_template_values()

@@ -522,6 +522,7 @@ class HWCustomOp(CustomOp):
             txns_out[k] = [int(c) for c in str(txns_out[k])]
 
         def accumulate_char_fxn(chrc: list) -> npt.NDArray[np.int32]:
+            """Accumulate characteristic function over two periods."""
             p = len(chrc)
             ret = []
             for t in range(2 * p):

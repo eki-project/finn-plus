@@ -447,7 +447,8 @@ class VVAU_rtl(VVAU, RTLBackend):
 
         return verilog_files
 
-    def get_verilog_paths(self):
+    def get_verilog_paths(self) -> list[str]:
+        """Get list of Verilog paths required for this node."""
         verilog_paths = super().get_verilog_paths()
         verilog_paths.append(os.path.join(get_settings().finn_rtllib, "mvu"))
         return verilog_paths
