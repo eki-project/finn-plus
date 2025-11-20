@@ -53,11 +53,11 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
 import finn.transformation.streamline.absorb as absorb
-import finn.util.imagenet as imagenet_util
+import tests.testing_util.imagenet as imagenet_util
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.util.basic import make_build_dir
-from finn.util.pytorch import NormalizePreProc
-from finn.util.test import get_test_model_trained
+from tests.testing_util.pytorch import NormalizePreProc
+from tests.testing_util.test import get_test_model_trained
 
 # normalization (preprocessing) settings for MobileNet-v1 w4a4
 mean = [0.485, 0.456, 0.406]

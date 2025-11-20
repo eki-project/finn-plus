@@ -31,6 +31,7 @@ import pytest
 
 import numpy as np
 import os
+from pathlib import Path
 from shutil import copytree
 
 from finn.builder.build_dataflow import build_dataflow_directory
@@ -41,9 +42,10 @@ from finn.util.basic import make_build_dir
 @pytest.mark.vivado
 @pytest.mark.end2end
 def test_end2end_build_dataflow_directory():
+    base_test_folder = Path(__file__).parent.parent.resolve()
+    example_data_dir = base_test_folder / "example_data" / "build_dataflow"
     test_dir = make_build_dir("test_build_dataflow_directory_")
     target_dir = test_dir + "/build_dataflow"
-    example_data_dir = os.path.join(os.environ["FINN_QNN_DATA"], "build_dataflow")
     copytree(example_data_dir, target_dir)
     build_dataflow_directory(target_dir)
     # check the generated files

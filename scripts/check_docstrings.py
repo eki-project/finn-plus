@@ -8,9 +8,11 @@ to identify functions, classes, and modules that are missing docstrings.
 Usage:
     python check_docstrings.py <file1.py> [file2.py] ...
     python check_docstrings.py --changed-files
+    python check_docstrings.py --changed-files --include-tests
 
 Options:
     --changed-files: Automatically check all changed Python files in the git repository
+    --include-tests: Include files in the tests folder (excluded by default)
 
 Exit codes:
     0: All checked files have proper docstrings
@@ -128,13 +130,16 @@ class DocstringChecker(ast.NodeVisitor):
             self.missing_docstrings.append({"type": node_type, "name": name, "line": node.lineno})
 
 
-def get_changed_python_files() -> List[str]:
+def get_changed_python_files(include_tests: bool = False) -> List[str]:
     """
     Get a list of changed Python files in the git repository.
 
     This function runs git commands to identify Python files that have been
     modified, staged, or are untracked. It combines both staged and unstaged
     changes to provide a comprehensive list.
+
+    Args:
+        include_tests: Whether to include files in the tests folder
 
     Returns:
         List of file paths to changed Python files
@@ -183,6 +188,10 @@ def get_changed_python_files() -> List[str]:
         all_files = set(staged_files + unstaged_files + untracked_files)
         python_files = [f for f in all_files if f and f.endswith(".py") and os.path.exists(f)]
 
+        # Filter out test files if include_tests is False
+        if not include_tests:
+            python_files = [f for f in python_files if not f.startswith("tests/")]
+
         return python_files
 
     except subprocess.CalledProcessError as e:
@@ -225,6 +234,22 @@ def check_file_docstrings(filepath: str) -> List[Dict[str, Union[str, int]]]:
         return []
 
 
+def filter_files(files: List[str], include_tests: bool = False) -> List[str]:
+    """
+    Filter a list of files, optionally excluding test files.
+
+    Args:
+        files: List of file paths to filter
+        include_tests: Whether to include files in the tests folder
+
+    Returns:
+        Filtered list of file paths
+    """
+    if include_tests:
+        return files
+    return [f for f in files if not f.startswith("tests/")]
+
+
 def main() -> None:
     """
     Main function to check docstrings in specified files.
@@ -232,11 +257,13 @@ def main() -> None:
     Processes command-line arguments to get a list of Python files,
     checks each file for missing docstrings, and reports the results.
     Supports both explicit file specification and automatic detection
-    of changed files in the git repository.
+    of changed files in the git repository. By default, files in the
+    tests folder are excluded unless --include-tests is specified.
 
     Command-line usage:
         python check_docstrings.py <file1.py> [file2.py] ...
         python check_docstrings.py --changed-files
+        python check_docstrings.py --changed-files --include-tests
 
     Exit behavior:
         - Exits with code 0 if all files have proper docstrings
@@ -250,8 +277,10 @@ def main() -> None:
         description="Check for missing docstrings in Python files.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  %(prog)s file1.py file2.py        # Check specific files
-  %(prog)s --changed-files          # Check all changed Python files in git repo
+  %(prog)s file1.py file2.py        # Check specific files (excluding tests folder)
+  %(prog)s --changed-files          # Check all changed Python files (excluding tests folder)
+  %(prog)s --changed-files --include-tests  # Check all changed Python files including tests
+  %(prog)s --include-tests file1.py # Check specific files including those in tests folder
         """,
     )
     parser.add_argument("files", nargs="*", help="Python files to check for docstrings")
@@ -260,6 +289,11 @@ def main() -> None:
         action="store_true",
         help="Automatically check all changed Python files in the git repository",
     )
+    parser.add_argument(
+        "--include-tests",
+        action="store_true",
+        help="Include files in the tests folder (excluded by default)",
+    )
 
     args = parser.parse_args()
 
@@ -267,17 +301,32 @@ def main() -> None:
     if args.changed_files:
         if args.files:
             print("Warning: --changed-files option ignores explicitly specified files")
-        files_to_check = get_changed_python_files()
+        files_to_check = get_changed_python_files(include_tests=args.include_tests)
         if not files_to_check:
-            print("✅ No changed Python files found in git repository!")
+            test_status = "including" if args.include_tests else "excluding"
+            print(
+                f"✅ No changed Python files found in git repository ({test_status} tests folder)!"
+            )
             sys.exit(0)
-        print(f"Checking {len(files_to_check)} changed Python file(s):")
+        test_status = "including" if args.include_tests else "excluding"
+        print(
+            f"Checking {len(files_to_check)} changed Python file(s) ({test_status} tests folder):"
+        )
         for f in files_to_check:
             print(f"  - {f}")
         print()
     elif args.files:
-        files_to_check = args.files
-        print(f"Checking {len(files_to_check)} changed Python file(s):")
+        files_to_check = filter_files(args.files, include_tests=args.include_tests)
+        if not files_to_check:
+            print("No files to check after filtering (use --include-tests to include test files)")
+            sys.exit(0)
+        test_status = "including" if args.include_tests else "excluding"
+        print(
+            f"Checking {len(files_to_check)} specified Python file(s) ({test_status} tests folder):"
+        )
+        for f in files_to_check:
+            print(f"  - {f}")
+        print()
     else:
         parser.print_help()
         sys.exit(1)

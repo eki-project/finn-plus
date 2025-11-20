@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import os
-import psutil
 import sys
 import yaml
 from pathlib import Path
@@ -141,7 +141,7 @@ def resolve_num_workers(num: int, settings: dict) -> int:
         return int(os.environ["NUM_DEFAULT_WORKERS"])
     if "NUM_DEFAULT_WORKERS" in settings.keys():
         return int(settings["NUM_DEFAULT_WORKERS"])
-    cpus = psutil.cpu_count()
+    cpus = multiprocessing.cpu_count()
     if cpus is None or cpus == 1:
         return 1
     return int(cpus * 0.75)

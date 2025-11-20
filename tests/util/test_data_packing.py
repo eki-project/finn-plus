@@ -35,6 +35,7 @@ import subprocess
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import gen_finn_dt_tensor
 
+from finn.templates import get_templates_folder
 from finn.util.basic import make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, numpy_to_hls_code
 from finn.util.deps import get_deps_path
@@ -98,12 +99,10 @@ def test_npy2apintstream(test_shape, dtype):
     test_app_string += ["}"]
     with open(test_dir + "/test.cpp", "w") as f:
         f.write("\n".join(test_app_string))
-    cmd_compile = """
-g++ -o test_npy2apintstream test.cpp {}/cnpy/cnpy.cpp \
--I{}/cnpy/ -I{}/include -I$FINN_QNN_DATA/cpp \
---std=c++11 -lz""".format(
-        get_deps_path(), get_deps_path(), os.environ["XILINX_HLS"]
-    )
+    cmd_compile = f"""
+g++ -o test_npy2apintstream test.cpp {get_deps_path()}/cnpy/cnpy.cpp \
+-I{get_deps_path()}/cnpy/ -I{os.environ["XILINX_HLS"]}/include \
+    -I{get_templates_folder()}/npy2stream --std=c++11 -lz """
     with open(test_dir + "/compile.sh", "w") as f:
         f.write(cmd_compile)
     compile = subprocess.Popen(["sh", "compile.sh"], stdout=subprocess.PIPE, cwd=test_dir)

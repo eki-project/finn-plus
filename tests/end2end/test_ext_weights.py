@@ -33,11 +33,12 @@ import os
 import shutil
 import subprocess
 import wget
+from pathlib import Path
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.util.basic import make_build_dir
-from finn.util.test import load_test_checkpoint_or_skip
+from tests.testing_util.test import load_test_checkpoint_or_skip
 
 
 def get_checkpoint_name(step):
@@ -73,9 +74,9 @@ class Test_end2end_ext_weights:
     def test_end2end_ext_weights_build(self):
         model_file = get_checkpoint_name("download")
         load_test_checkpoint_or_skip(model_file)
-        test_data = os.path.join(os.environ["FINN_QNN_DATA"], "test_ext_weights")
-        folding_config_file = test_data + "/tfc-w2a2-extw.json"
-        specialize_layers_config_file = test_data + "/specialize_layers_config.json"
+        test_data = Path(__file__).parent.parent / "example_data" / "test_ext_weights"
+        folding_config_file = test_data / "tfc-w2a2-extw.json"
+        specialize_layers_config_file = test_data / "specialize_layers_config.json"
         output_dir = make_build_dir("test_end2end_ext_weights_build")
         cfg = build.DataflowBuildConfig(
             output_dir=output_dir,

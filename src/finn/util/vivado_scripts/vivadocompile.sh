@@ -1,6 +1,11 @@
-#!/bin/zsh
+#!/bin/sh
 
-source $FINN_QNN_DATA/vivado_scripts/vivadoprojgen.sh
+set -e
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+source "$SCRIPT_DIR/vivadoprojgen.sh"
 
 # compile and map through the steps of xilinx flow..
 # my Ubuntu install doesn't like this
