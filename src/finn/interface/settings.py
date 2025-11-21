@@ -55,7 +55,6 @@ class FINNSettings(BaseModel):
     # TODO: MISSING FIELDS: RTLSIM_TRACE_DEPTH, LIVENESS_THRESHOLD, XILINX_VIVADO
     finn_rtllib: str = Field(default=resolve_module_path("finn-rtllib"))
     finn_custom_hls: str = Field(default=resolve_module_path("custom_hls"))
-    finn_qnn_data: str = Field(default=resolve_module_path("qnn-data"))
     finn_notebooks: str = Field(default=resolve_module_path("notebooks"))
     finn_tests: str = Field(default=resolve_module_path("tests"))
 
@@ -312,7 +311,6 @@ class FINNSettings(BaseModel):
         if installation_independent:
             del data["finn_rtllib"]
             del data["finn_custom_hls"]
-            del data["finn_qnn_data"]
             del data["finn_notebooks"]
             del data["finn_tests"]
         with path.open("w+") as f:

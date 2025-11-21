@@ -164,7 +164,7 @@ class DependencyData(BaseModel):
         dep_data = self.get_dependency_data(package_name)
         if dep_data is None:
             raise FINNUserError(
-                f"Cannot request dependency data for " f"non-existing dependency {package_name}!"
+                f"Cannot request dependency data for non-existing dependency {package_name}!"
             )
 
         try:
@@ -479,7 +479,7 @@ class DependencyUpdater:
         data = self.deps.get_dependency_data(package_name)
         if data is None:
             raise FINNUserError(
-                f"Cannot check if non-existing " f"dependency {package_name} is outdated."
+                f"Cannot check if non-existing dependency {package_name} is outdated."
             )
         if package_name in self.deps.custom_deps:
             function_name = cast("CustomDependency", data).outdated_function

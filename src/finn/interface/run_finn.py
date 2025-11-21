@@ -356,7 +356,6 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
     console.print(f"[bold]FINN_NOTEBOOKS[/bold]: {settings.finn_notebooks}")
     console.print(f"[bold]FINN_RTLLIB[/bold]: {settings.finn_rtllib}")
-    console.print(f"[bold]FINN_QNN_DATA[/bold]: {settings.finn_qnn_data}")
     console.print(f"[bold]FINN_TESTS[/bold]: {settings.finn_tests}")
     console.print(
         "\n\n[bold green]Please check your edited settings and confirm them "
@@ -804,7 +803,7 @@ def test(
     finn_deps_definitions: Path | None,
     num_default_workers: int,
     num_test_workers: str,
-    build_path: Path | None,
+    finn_build_dir: Path | None,
 ) -> None:
     """Run a selected subset of the FINN(+) testsuite."""
     settings = FINNSettings.init(
