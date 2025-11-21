@@ -1,20 +1,34 @@
 #include <FIFO.h>
-#include <optional>
 
-FIFO::FIFO(int size) : maxSize(size) {}
+#include <algorithm>
+
+FIFO::FIFO(uint64_t size) : maxSize(size) {}
 FIFO::~FIFO() {}
 
 /// Prepare update for the next clock cycle.
-void FIFO::update(bool incomingValid, bool outgoingReady) {
-    int diff = static_cast<int>(incomingValid) - static_cast<int>(outgoingReady);
-    if ((currentUtil > 0 && currentUtil < maxSize) || (currentUtil == 0 && diff > 0) || (currentUtil == maxSize && diff < 0)) {
-        nextUtil = currentUtil += diff;
-    }
+/// This models Q_srl behavior where:
+/// - When empty: only accepts input (ignores output ready), transitions to size 1
+/// - When non-empty: can consume, produce, or both
+/// With bounded maxSize, this models a real FIFO with backpressure.
+void FIFO::update(bool incomingValid, bool incomingReady) {
+
+    // When empty: only push if valid (ignoring ready)
+    // When non-empty: push if valid AND space available
+    uint64_t canPush = incomingValid & (currentUtil < maxSize);
+
+    // Q_srl behavior: when empty, only check input valid (ignore output ready)
+    // Only pop if was non-empty at start AND output ready
+    uint64_t canPop = incomingReady & (currentUtil != 0);
+
+    nextUtil = nextUtil + canPush - canPop;
 }
 
 /// Toggle the clock cycle, and update the previously set values.
+/// nextUtil is guaranteed to be in [0, maxSize] by all operations.
 void FIFO::toggleClock() {
     currentUtil = nextUtil;
+    maxUtil = std::max(maxUtil, currentUtil);
+    nextUtil = currentUtil;
 }
 
 /// Return whether the FIFO can accept inputs (for the current utilization)
@@ -26,17 +40,48 @@ bool FIFO::isOutputValid() const { return currentUtil > 0; }
 /// Return whether the FIFO is empty (for the current utilization)
 bool FIFO::isEmpty() const { return currentUtil == 0; }
 
-/// Reset the FIFOs internal state. If size is given, also set maxSize, otherwise keep it.
-void FIFO::reset(std::optional<int> size) {
+/// Reset the FIFOs internal state. If size is given, also set maxSize,
+/// otherwise keep it.
+void FIFO::reset(uint64_t size) {
     currentUtil = 0;
     maxUtil = 0;
-    if (size) {
-        maxSize = *size;
-    }
+    maxSize = size;
     nextUtil = 0;
 }
 
 /// Set the FIFOs max size
-void FIFO::setMaxSize(int size) {
-    maxSize = size;
+void FIFO::setMaxSize(const uint64_t size) { maxSize = size; }
+
+uint64_t FIFO::getSpaceLeft() const { return maxSize - currentUtil; }
+
+uint64_t FIFO::getMaxUtil() const { return maxUtil; }
+
+void FIFO::increaseCounter(const uint64_t count) {
+    // Branchless: compute new value and saturate at maxSize
+    uint64_t newUtil = nextUtil + count;
+    uint64_t overflow = newUtil > maxSize;
+    nextUtil = overflow ? maxSize : newUtil;
 }
+
+/// If incomingValid is true and FIFO has space, increment nextUtil
+/// Matches Q_srl: when empty, always accepts input
+/// When using tryPush/tryPop separately, ALWAYS call tryPush BEFORE tryPop!
+void FIFO::tryPush(bool incomingValid) {
+    // When empty: accept input unconditionally (like Q_srl state_empty)
+    // When non-empty: accept if space available
+    nextUtil += incomingValid & (nextUtil < maxSize);
+}
+
+/// If incomingReady is true and FIFO has data, decrement nextUtil
+/// Matches Q_srl: only pops if data available
+/// When using tryPush/tryPop separately, ALWAYS call tryPush BEFORE tryPop!
+/// Note: If FIFO was empty and tryPush just added data, tryPop will NOT pop it
+/// (matching Q_srl where state_empty ignores output ready)
+void FIFO::tryPop(bool incomingReady) {
+    // Check currentUtil (state at cycle start) not nextUtil (after tryPush)
+    // This ensures empty->tryPush->tryPop results in size=1, matching Q_srl
+    nextUtil -= incomingReady & (currentUtil > 0);
+}
+
+/// Return the current number of elements in the FIFO
+uint64_t FIFO::size() const { return currentUtil; }

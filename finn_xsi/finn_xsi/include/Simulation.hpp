@@ -16,12 +16,12 @@
 #include <format>
 #include <fstream>
 #include <iostream>
-#include <thread>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 using json = nlohmann::json;
 
 
@@ -41,8 +41,8 @@ class Simulation {
     Clock clk;
 
 
-    Simulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file, std::array<StreamDescriptor, IStreamsSize> _istream_descs,
-               std::array<StreamDescriptor, OStreamsSize> _ostream_descs)
+    Simulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file,
+               std::array<StreamDescriptor, IStreamsSize> _istream_descs, std::array<StreamDescriptor, OStreamsSize> _ostream_descs)
         : kernel(kernel_lib), top(kernel, design_lib, xsim_log_file, trace_file), clk(top) {
         if (trace_file) {
             top.trace_all();
@@ -69,7 +69,7 @@ class Simulation {
 
     template<std::size_t Index>
     bool hasValidOutput() {
-        //static_assert(Index < ostreams.size(), "Cannot request valid status of unknown output stream index");
+        // static_assert(Index < ostreams.size(), "Cannot request valid status of unknown output stream index");
         return ostreams[Index].is_valid();
     }
 
@@ -116,23 +116,27 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
     // TODO: Move to private, currently only here for debugging purposes
     std::array<FIFO, static_cast<int>(OStreamsSize)> fifo;
 
-    _SingleNodeSimulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file, std::array<StreamDescriptor, IStreamsSize> _istream_descs,
-                         std::array<StreamDescriptor, OStreamsSize> _ostream_descs, std::optional<std::string> prevNodeName = std::nullopt, std::optional<std::string> nodeName = std::nullopt, unsigned int initialFIFODepth = 2)
+    _SingleNodeSimulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file,
+                          std::array<StreamDescriptor, IStreamsSize> _istream_descs, std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
+                          std::optional<std::string> prevNodeName = std::nullopt, std::optional<std::string> nodeName = std::nullopt, unsigned int initialFIFODepth = 2)
         : Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs) {
         if (CommunicatesWithPredecessor && !prevNodeName) {
             throw std::runtime_error("Cannot communicate with predecessor because previous node name was not given!");
         } else if (!CommunicatesWithPredecessor && prevNodeName) {
             std::cout << "log Simulation was passed the previous nodes name but is "
                          "NOT marked for communication with predecessor node. No "
-                         "shared memory will be created." << std::endl;
+                         "shared memory will be created."
+                      << std::endl;
         }
         if (CommunicatesWithSuccessor && !nodeName) {
-            throw std::runtime_error("Cannot communicate with successor because "
-                                     "current node name was not given!");
+            throw std::runtime_error(
+                "Cannot communicate with successor because "
+                "current node name was not given!");
         } else if (!CommunicatesWithSuccessor && nodeName) {
             std::cout << "log Simulation was passed the current nodes name but is NOT "
                          "marked for communication with successor node. No shared "
-                         "memory will be created." << std::endl;
+                         "memory will be created."
+                      << std::endl;
         }
         // Create FIFO buffer
         for (std::size_t i = 0; i < OStreamsSize; ++i) {
@@ -165,10 +169,11 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
         }
         if constexpr (NodeIndex != TotalNodes - 1) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                this->fifo[i].update(
-                    this->ostreams[i].isValid(),
-                    toConsumerInterface[i].exchange(this->fifo[i].isOutputValid())
-                );
+                // Interface sim -valid-> FIFO <-> SHM
+                this->fifo[i].update(this->ostreams[i].isValid(), toConsumerInterface[i].exchange(this->fifo[i].isOutputValid()));
+                // FIFO -ready-> sim
+                this->ostreams[i].ready(this->fifo[i].isInputReady());
+                // Toggle FIFO clock
                 this->fifo[i].toggleClock();
             }
         }
@@ -191,20 +196,22 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
     }
 
     /// Write the current ready and valid states into the filestreams
-    void logReadyValidState() requires LoggingEnabled { /* TODO: Match the new extra FIFO implementation*/ }
+    void logReadyValidState()
+        requires LoggingEnabled
+    { /* TODO: Match the new extra FIFO implementation*/ }
 
     /// Reset simulation (stream and current FIFO depth, as well as cycle counter)
     void reset() {
         Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>::reset();
-        for (std::size_t i = 0; i < OStreamsSize; ++i) {
-            toConsumerInterface[i].reset();
-            fifo[i].reset();
-        }
-        if constexpr (NodeIndex != 0) {
-            for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                fromProducerInterface[i].reset();
-            }
-        }
+        // for (std::size_t i = 0; i < OStreamsSize; ++i) {
+        //     toConsumerInterface[i].reset();
+        //     fifo[i].reset();
+        // }
+        // if constexpr (NodeIndex != 0) {
+        //     for (std::size_t i = 0; i < IStreamsSize; ++i) {
+        //         fromProducerInterface[i].reset();
+        //     }
+        // }
     }
 
     /// Return whether all connected FIFOs are empty
@@ -215,20 +222,20 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
     /// Finish communication by exchanging FIFO contents with the successor, but not
     /// interacting with the predecessor anymore. Runs until the FIFO is empty
     [[gnu::hot]] void finishCommunication() {
-       while (!allFIFOsEmpty()) {
+        while (!allFIFOsEmpty()) {
             // for (std::size_t i = 0; i < toConsumerInterface.size(); ++i) {
             //     this->fifo[i].tryPop(toConsumerInterface[i].writeToNextNode(this->fifo[i].isOutputValid()));
             // }
             runSingleCycle();
-       }
+        }
     }
 
     [[gnu::hot, gnu::always_inline]] void runSingleCycle() {
         ++cyclesRun;
-        this->clk.toggleClk();
         communicate();
+        this->clk.toggleClk();
         if constexpr (LoggingEnabled) {
-           logReadyValidState();
+            logReadyValidState();
         }
         debug(std::format("Finished cycle {}\n\n", cyclesRun));
     }
@@ -241,22 +248,17 @@ class _SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Logg
     }
 
     /// Get the job size of the specified output stream
-    std::size_t getOutputJobSize(std::size_t outputIndex = 0) {
-        return this->ostreams[outputIndex].job_size;
-    }
+    std::size_t getOutputJobSize(std::size_t outputIndex = 0) { return this->ostreams[outputIndex].job_size; }
 
     /// Get the job size of the specified input stream
-    std::size_t getInputJobSize(std::size_t inputIndex = 0) {
-        return this->istreams[inputIndex].job_size;
-    }
+    std::size_t getInputJobSize(std::size_t inputIndex = 0) { return this->istreams[inputIndex].job_size; }
 };
-
 
 
 /// Single Node Simulation, thread controlled
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes, bool CommunicatesWithPredecessor, bool CommunicatesWithSuccessor>
 class SingleNodeSimulation {
-    private:
+     private:
     std::jthread simulator;
     std::jthread communicator;
 
@@ -277,26 +279,19 @@ class SingleNodeSimulation {
     // The simulation itself
     _SingleNodeSimulation<IStreamsSize, OStreamsSize, LoggingEnabled, NodeIndex, TotalNodes, CommunicatesWithPredecessor, CommunicatesWithSuccessor> sim;
 
-    public:
-    SingleNodeSimulation(
-            const std::string& kernel_lib,
-            const std::string& design_lib,
-            const char* xsim_log_file,
-            const char* trace_file,
-            std::array<StreamDescriptor, IStreamsSize> _istream_descs,
-            std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
-            std::optional<std::string> prevNodeName = std::nullopt,
-            std::optional<std::string> nodeName = std::nullopt,
-            unsigned int initialFIFODepth = 2,
-            std::string simulationDataFilename = "simulation_data.json"
-    ) : running(false),
-        samplesProduced(0),
-        samplesTarget(0),
-        validCyclesProduced(0),
-        cyclesRun(0),
-        cyclesTarget(0),
-        simulationDataPath(simulationDataFilename),
-        sim(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs, prevNodeName, nodeName, initialFIFODepth) {}
+     public:
+    SingleNodeSimulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file,
+                         std::array<StreamDescriptor, IStreamsSize> _istream_descs, std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
+                         std::optional<std::string> prevNodeName = std::nullopt, std::optional<std::string> nodeName = std::nullopt, unsigned int initialFIFODepth = 2,
+                         std::string simulationDataFilename = "simulation_data.json")
+        : running(false),
+          samplesProduced(0),
+          samplesTarget(0),
+          validCyclesProduced(0),
+          cyclesRun(0),
+          cyclesTarget(0),
+          simulationDataPath(simulationDataFilename),
+          sim(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs, prevNodeName, nodeName, initialFIFODepth) {}
 
 
     /// Stop and reset the simulation, reset cycle counter, target cycle counter, log queue.
@@ -315,7 +310,7 @@ class SingleNodeSimulation {
         // for (std::size_t i = 0; i < OStreamsSize; ++i) {
         //     j["maxOccupation"][std::to_string(i)] = sim.getLargestOccupation(i);
         // }
-        //j["cyclesRun"] = outValidCycles;
+        // j["cyclesRun"] = outValidCycles;
         std::ofstream file(simulationDataPath);
         file << j.dump(4);
         file.close();
@@ -334,7 +329,7 @@ class SingleNodeSimulation {
     /// Read from std::cin if possible, otherwise
     /// return immediately.
     void getlineIfAvailable(std::string& buffer) {
-        //std::cin.exceptions(std::istream::failbit | std::istream::badbit);
+        // std::cin.exceptions(std::istream::failbit | std::istream::badbit);
         if (std::cin.eof() || std::cin.rdbuf()->in_avail() == -1) {
             buffer = "";
             return;
@@ -363,7 +358,7 @@ class SingleNodeSimulation {
 
             /// Run the simulation
             sendStarted();
-            if constexpr(NodeIndex == TotalNodes - 1) {
+            if constexpr (NodeIndex == TotalNodes - 1) {
                 while ((samplesTarget != 0 && samplesProduced < samplesTarget) || (cyclesTarget != 0 && cyclesRun < cyclesTarget)) {
                     if (!running) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));

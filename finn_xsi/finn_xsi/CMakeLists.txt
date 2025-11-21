@@ -122,3 +122,8 @@ target_include_directories(LayerSimulationBackend PUBLIC "include")
 
 # Link libraries
 target_link_libraries(LayerSimulationBackend fifosim::options nlohmann_json::nlohmann_json Threads::Threads OpenMP::OpenMP_CXX  Boost::program_options -ldl -lrt)
+
+OPTION(ENABLE_UNITTESTS "Enable unittests" OFF)
+if(${ENABLE_UNITTESTS})
+add_subdirectory(unittests)
+endif()

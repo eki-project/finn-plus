@@ -74,7 +74,7 @@ class InterSimulationInterface {
                 try {
                     shmem = bip::managed_shared_memory(bip::open_only, sharedMemoryName.c_str());
                     break;
-                } catch (const bip::interprocess_exception& e) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
+                } catch (const bip::interprocess_exception& e) { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
             }
         }
 
@@ -82,7 +82,7 @@ class InterSimulationInterface {
         refCount = shmem.find_or_construct<std::atomic<int>>("refCount")(0);
 
         // Increment reference count atomically
-        int currentRefCount = refCount->fetch_add(1, std::memory_order_acq_rel) + 1;
+        refCount->fetch_add(1, std::memory_order_acq_rel);
 
         // Construct the halo exchange object in shared memory
         halo = shmem.find_or_construct<SharedHaloExchange>("HaloExchange")();
@@ -121,15 +121,32 @@ class InterSimulationInterface {
             return;
         }
 
-        // Decrement reference count atomically
-        int remainingRefs = refCount->fetch_sub(1, std::memory_order_acq_rel) - 1;
+        // Clear our local pointers before decrementing (safety)
+        halo = nullptr;
+        refCount = nullptr;
+
+        // Get a raw pointer to refCount for the atomic operation
+        // (we need this because we just nulled our member pointer)
+        std::atomic<int>* ref_ptr = shmem.find<std::atomic<int>>("refCount").first;
+        if (!ref_ptr) {
+            return;  // Already destroyed somehow
+        }
+
+        // Decrement reference count atomically and get the value BEFORE decrement
+        int remainingRefs = ref_ptr->fetch_sub(1, std::memory_order_acq_rel) - 1;
 
         // If we're the last process, clean up the shared memory
         if (remainingRefs == 0) {
+            // Destroy all objects first
             shmem.destroy<SharedHaloExchange>("HaloExchange");
             shmem.destroy<std::atomic<int>>("refCount");
 
-            // Remove the shared memory segment completely
+            // Close our handle to the shared memory
+            // This doesn't delete it yet if other processes have it mapped
+            shmem = bip::managed_shared_memory();
+
+            // Now remove the shared memory segment completely
+            // This is safe even if other processes still have stale mappings
             bip::shared_memory_object::remove(sharedMemoryName.c_str());
         }
     }

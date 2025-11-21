@@ -62,6 +62,7 @@ poetry.lock
 **/CMakeCache.txt
 **/compile_commands.json
 **/.cache
+**/build
 
 # Package files
 *.egg

@@ -192,14 +192,14 @@ class SimulationBuilder:
             assert first_node is not None, "Failed to find consumer for " + iname
             top_ind = list(first_node.input).index(iname)
             ishape_folded = getCustomOp(first_node).get_folded_input_shape(ind=top_ind)
-            instream_iters.append(np.prod(ishape_folded[:-1]))
+            instream_iters.append(int(np.prod(ishape_folded[:-1])))
         for top_out in model.graph.output:
             oname = top_out.name
             last_node = model.find_producer(oname)
             assert last_node is not None, "Failed to find producer for " + oname
             top_ind = list(last_node.output).index(oname)
             oshape_folded = getCustomOp(last_node).get_folded_output_shape(ind=top_ind)
-            outstream_iters.append(np.prod(oshape_folded[:-1]))
+            outstream_iters.append(int(np.prod(oshape_folded[:-1])))
         interface_names = model.get_metadata_prop("vivado_stitch_ifnames")
         if interface_names is None:
             raise FINNUserError(
@@ -290,6 +290,8 @@ class SimulationBuilder:
                 proc_env=os.environ.copy(),
             )
         except CalledProcessError as e:
+            print(e.stdout)
+            print(e.stderr)
             raise FINNUserError(f"Failed to run cmake in {sim_base}") from e
         self.progress_bar.update("CMake")
 
