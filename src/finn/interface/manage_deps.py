@@ -474,7 +474,7 @@ class DependencyUpdater:
             return self._install_custom(package_name)
         return False
 
-    def is_outdated(self, package_name: str) -> bool:
+    def is_outdated(self, package_name: str, installed: bool = False) -> bool:
         """Return whether the a package is outdated. If no such package exist return False too."""
         data = self.deps.get_dependency_data(package_name)
         if data is None:
@@ -525,6 +525,10 @@ class DependencyUpdater:
         if data.commit != has_hash:
             return True
 
+        # In some cases we do not want to check if the dependency is installed
+        if not installed:
+            return False
+
         # For pip-installable dependencies, also check if the package is accessible
         # in the current Python process
         if package_name in self.deps.git_deps and data.pip_install:
@@ -538,14 +542,22 @@ class DependencyUpdater:
 
         return False
 
-    def get_oudated_dependencies(self) -> list[str]:
+    def get_outdated_dependencies(self) -> list[str]:
         """Return a list of the names of all outdated packages. For Git dependencies this means
         an outdated commit hash, for the others a different URL or target directory."""  # noqa
-        return list(map(str, filter(self.is_outdated, self.deps.get_all_dependencies())))
+        return list(
+            map(
+                str,
+                filter(
+                    lambda pkg: self.is_outdated(pkg, installed=True),
+                    self.deps.get_all_dependencies(),
+                ),
+            )
+        )
 
     def update(self) -> None:
         """With a live display and multithreading update all dependencies that are outdated."""
-        deps_outdated = self.get_oudated_dependencies()
+        deps_outdated = self.get_outdated_dependencies()
 
         # Function passed to threadpool
         def install_wrapper(package_name: str, status: _StatusTracker) -> bool:
