@@ -1,4 +1,5 @@
 """Run FINN+."""
+
 # ruff: noqa: PIE790, ARG001
 from __future__ import annotations
 
@@ -185,8 +186,7 @@ def run_flow_wizard() -> None:
         dfbc.model_path = Path(modelpath)
     console.print()
     output_path = Prompt.ask(
-        "Where do you want to store the results of the flow, "
-        "relative to the configuration file?",
+        "Where do you want to store the results of the flow, relative to the configuration file?",
         default="build_output",
     )
     dfbc.output_dir = output_path
@@ -509,8 +509,7 @@ def _build(
         mp = read_model_path(flow_config)
         if mp is None:
             error(
-                "Please pass the model either via CLI "
-                "or by setting model_path in your flow config!"
+                "Please pass the model either via CLI or by setting model_path in your flow config!"
             )
             sys.exit(1)
         else:
@@ -783,7 +782,9 @@ def bench(
     sys.exit(exit_code)
 
 
-@click.command(help="Run a given test. Uses /tmp/FINN_TMP as the temporary file location")
+@click.command(
+    help="Run a given test. Uses /tmp/FINN_TEST_BUILD_DIR as the temporary file location"
+)
 @finn_deps
 @finn_deps_definitions
 @finn_build_dir
@@ -806,13 +807,17 @@ def test(
     finn_build_dir: Path | None,
 ) -> None:
     """Run a selected subset of the FINN(+) testsuite."""
+    if finn_build_dir is None or not finn_build_dir.exists():
+        finn_build_dir = Path("/tmp/FINN_TEST_BUILD_DIR")
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
+        flow_config=finn_build_dir / "dummy.yaml",
         **get_function_args(),
     )
-    if not settings.finn_build_dir.exists():
-        settings.finn_build_dir = Path("/tmp/FINN_TEST_BUILD_DIR")
+    # if finn_build_dir is None or not finn_build_dir.exists():
+    #     settings.finn_build_dir = Path("/tmp/FINN_TEST_BUILD_DIR")
+
     prepare_finn(settings, True)
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
@@ -872,13 +877,11 @@ def deps_show(finn_deps_definitions: Path | None) -> None:
         data = yaml.load(f, yaml.Loader)
         for dep, depdata in data.get("git_deps", {}).items():
             rich.print(
-                f"[bold green]{dep:<20}[/bold green] "
-                f"{depdata['url']:<60} ({depdata['commit']:>30})"
+                f"[bold green]{dep:<20}[/bold green] {depdata['url']:<60} ({depdata['commit']:>30})"
             )
         for dep, depdata in data.get("boardfile_deps", {}).items():
             rich.print(
-                f"[bold green]{dep:<20}[/bold green] "
-                f"{depdata['url']:<60} ({depdata['commit']:>30})"
+                f"[bold green]{dep:<20}[/bold green] {depdata['url']:<60} ({depdata['commit']:>30})"
             )
         for dep, depdata in data.get("direct_download_deps", {}).items():
             rich.print(f"[bold green]{dep:<20}[/bold green] {depdata['url']:<60}")
