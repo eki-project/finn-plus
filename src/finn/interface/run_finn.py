@@ -515,6 +515,13 @@ def _build(
         else:
             model = mp
     status(f"Starting FINN build with config {config.name} and model {model.name}!")  # type: ignore
+    if finn_build_dir is not None:
+        finn_build_dir = finn_build_dir.expanduser().absolute()
+        finn_build_dir.mkdir(parents=True, exist_ok=True)
+    if finn_deps is not None:
+        finn_deps = finn_deps.expanduser().absolute()
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
@@ -660,6 +667,13 @@ def run(
     Can be used for backwards compability with old FINN build flows.
     """
     script = script.expanduser()
+    if finn_build_dir is not None:
+        finn_build_dir = finn_build_dir.expanduser().absolute()
+        finn_build_dir.mkdir(parents=True, exist_ok=True)
+    if finn_deps is not None:
+        finn_deps = finn_deps.expanduser().absolute()
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
@@ -767,6 +781,13 @@ def bench(
     finn_build_dir: Path | None,
 ) -> None:
     """Run a benchmark."""
+    if finn_build_dir is not None:
+        finn_build_dir = finn_build_dir.expanduser().absolute()
+        finn_build_dir.mkdir(parents=True, exist_ok=True)
+    if finn_deps is not None:
+        finn_deps = finn_deps.expanduser().absolute()
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
@@ -807,16 +828,21 @@ def test(
     finn_build_dir: Path | None,
 ) -> None:
     """Run a selected subset of the FINN(+) testsuite."""
-    if finn_build_dir is None or not finn_build_dir.exists():
+    if finn_build_dir is None:
         finn_build_dir = Path("/tmp/FINN_TEST_BUILD_DIR")
+    finn_build_dir = finn_build_dir.expanduser().absolute()
+    if finn_deps is not None:
+        finn_deps = finn_deps.expanduser().absolute()
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
+    if not finn_build_dir.exists():
+        finn_build_dir.mkdir(parents=True, exist_ok=True)
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
         flow_config=finn_build_dir / "dummy.yaml",
         **get_function_args(),
     )
-    # if finn_build_dir is None or not finn_build_dir.exists():
-    #     settings.finn_build_dir = Path("/tmp/FINN_TEST_BUILD_DIR")
 
     prepare_finn(settings, True)
     status(f"Using {num_test_workers} test workers")
@@ -838,6 +864,10 @@ def update(
     accept_defaults: bool, finn_deps: Path | None, finn_deps_definitions: Path | None
 ) -> None:
     """Update all FINN+ dependencies and then exit."""
+    if finn_deps is not None:
+        finn_deps = finn_deps.expanduser().absolute()
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=True,
@@ -851,6 +881,8 @@ def update(
 @finn_deps_definitions
 def deps_edit(finn_deps_definitions: Path | None) -> None:
     """Edit the dependency definition file."""
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=True,
@@ -864,6 +896,8 @@ def deps_edit(finn_deps_definitions: Path | None) -> None:
 @finn_deps_definitions
 def deps_show(finn_deps_definitions: Path | None) -> None:
     """Show the dependencies."""
+    if finn_deps_definitions is not None:
+        finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=True,

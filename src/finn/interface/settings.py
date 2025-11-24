@@ -1,10 +1,13 @@
 """Manage settings for FINN+."""
+
 # ruff: noqa: SLF001
 from __future__ import annotations
 
+import json
 import os
 import psutil
 import yaml
+from importlib.metadata import distribution
 from pathlib import Path
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, computed_field
 from typing import Any
@@ -22,8 +25,42 @@ def path_repr(dumper, data):  # noqa
 
 yaml.add_multi_representer(Path, path_repr)
 
-# Assumes we are in finn-plus/src/finn/interface/settings.py
-FINN_ROOT = Path(__file__).parent.parent.parent.parent
+
+def _get_finn_root() -> Path:
+    """Get FINN_ROOT for both editable and normal installations.
+
+    For editable installs, this returns the repository root.
+    For normal installs, this returns the site-packages installation location.
+    """
+    try:
+        dist = distribution("finn-plus")
+        # Check if it's an editable install
+        try:
+            direct_url_text = dist.read_text("direct_url.json")
+            if direct_url_text:
+                direct_url = json.loads(direct_url_text)
+                if direct_url.get("dir_info", {}).get("editable", False):
+                    # Editable install - return the source directory
+                    url = direct_url.get("url", "")
+                    if url.startswith("file://"):
+                        return Path(url[7:]).resolve()
+        except Exception:
+            pass
+
+        # Normal install - use the location of this file's parent directories
+        # In a normal install, we're in site-packages/finn/interface/settings.py
+        # so go up to site-packages
+        this_file = Path(__file__).resolve()
+        return this_file.parent.parent.parent
+    except Exception:
+        pass
+
+    # Fallback: assume editable install structure
+    # We are in finn-plus/src/finn/interface/settings.py
+    return Path(__file__).parent.parent.parent.parent
+
+
+FINN_ROOT = _get_finn_root()
 
 
 def resolve_relative(path: Path | str, to: Path | str | None) -> Path:
@@ -86,7 +123,8 @@ class FINNSettings(BaseModel):
                 f"{self._finn_build_dir} without a flow config path."
             )
         return resolve_relative(
-            self._finn_build_dir, Path(self._flow_config).parent  # type:ignore
+            self._finn_build_dir,
+            Path(self._flow_config).parent,  # type:ignore
         )
 
     @finn_build_dir.setter
@@ -215,14 +253,11 @@ class FINNSettings(BaseModel):
             with settings_path.open() as f:
                 settings_data = yaml.load(f, yaml.Loader)
 
-        # Keep track of which fields have been set.
-        set_fields = []
-
-        # Sources for the settings (in order of priority)
+        # Sources for the settings (in order of priority; lowest first)
         data = {
-            "CLI Arguments": kwargs,
-            "Environment Variables": os.environ.copy(),
             "Settings File": settings_data,
+            "Environment Variables": os.environ.copy(),
+            "CLI Arguments": kwargs,
         }
 
         # Init settings with defaults
@@ -234,19 +269,16 @@ class FINNSettings(BaseModel):
 
         # Update settings values from various sources
         for name, data_source in data.items():
-            settings = settings.update_from(data_source, name, ignore=set_fields)
+            settings = settings.update_from(data_source, name)
             settings._flow_config = flow_config
             settings._auto_set_envvars = False
             settings._settings_path = settings_path
-            set_fields += [k.lower() for k in data_source.keys()]
         settings._auto_set_envvars = auto_set_environment_vars
         if auto_set_environment_vars:
             settings.update_environment()
         return settings
 
-    def update_from(
-        self, data: dict[str, Any], update_type: str | None = None, ignore: list[str] | None = None
-    ) -> FINNSettings:
+    def update_from(self, data: dict[str, Any], update_type: str | None = None) -> FINNSettings:
         """Update the model from the given data (Environment, custom dict, ...) and return it.
 
         Args:
@@ -262,14 +294,8 @@ class FINNSettings(BaseModel):
         for key in data.keys():
             lkey = key.lower()
             if lkey in modified_data:
-                if ignore is not None and lkey in ignore:
-                    continue
                 modified_data[lkey] = data[key]
         try:
-            new_model = FINNSettings()
-            new_model._settings_path = self._settings_path
-            new_model._auto_set_envvars = False
-            new_model._flow_config = self._flow_config
             new_model = FINNSettings.model_validate(modified_data)
             new_model._settings_path = self._settings_path
             new_model._auto_set_envvars = False

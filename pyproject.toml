@@ -22,10 +22,10 @@ packages = [
     { include = "custom_hls", to = "finn" },
 ]
 include = [
-    "src/finn/util/vivado_scripts/*.sh",
-    "src/finn/util/vivado_scripts/*.tcl",
-    "src/finn/util/vivado_scripts/*.xdc",
-    "external_dependencies.yaml"
+    {path = "src/finn/util/vivado_scripts/*.sh", format = ["sdist", "wheel"]},
+    {path = "src/finn/util/vivado_scripts/*.tcl", format = ["sdist", "wheel"]},
+    {path = "src/finn/util/vivado_scripts/*.xdc", format = ["sdist", "wheel"]},
+    {path = "external_dependencies.yaml", format = ["sdist", "wheel"]}
 ]
 version = "0.0.0"
 

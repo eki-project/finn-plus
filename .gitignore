@@ -43,6 +43,7 @@ __pycache__/*
 *.sif
 .DS_Store
 *.idx
+**/build/*
 
 # Project files
 .vscode
