@@ -1,4 +1,5 @@
 """Manage dependencies. Called by run_finn.py."""
+
 from __future__ import annotations
 
 import os
@@ -206,8 +207,7 @@ class _StatusTracker:
             table = Table(
                 title="Dependency Updates",
                 caption=(
-                    f"Installed: [cyan]{self.done}[/cyan] / "
-                    f"[cyan bold]{self.total}[/cyan bold]."
+                    f"Installed: [cyan]{self.done}[/cyan] / [cyan bold]{self.total}[/cyan bold]."
                 ),
                 box=box.SIMPLE,
                 expand=True,
@@ -522,7 +522,21 @@ class DependencyUpdater:
 
         # Compare hashes
         data = cast("GitDependency", data)
-        return data.commit != has_hash
+        if data.commit != has_hash:
+            return True
+
+        # For pip-installable dependencies, also check if the package is accessible
+        # in the current Python process
+        if package_name in self.deps.git_deps and data.pip_install:
+            import importlib.util
+
+            # Try to find the package in the current Python environment
+            spec = importlib.util.find_spec(package_name.replace("-", "_"))
+            if spec is None:
+                # Package is not importable, mark as outdated
+                return True
+
+        return False
 
     def get_oudated_dependencies(self) -> list[str]:
         """Return a list of the names of all outdated packages. For Git dependencies this means

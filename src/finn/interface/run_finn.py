@@ -350,7 +350,7 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     console.clear()
     console.print(
         "[italic]Some other settings were automatically inferred from your setup. "
-        "They are listed below. These are generated when starting FINN and depdendent on "
+        "They are listed below. These are generated when starting FINN and dependent on "
         "the current running installation and will thus not be saved into your (global) settings."
     )
     console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
@@ -402,8 +402,8 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool) -> None:
         sys.exit(1)
     status(f"[SETTINGS FILE] {settings.get_path()}")
     status(f"[FINN BUILD DIRECTORY] {settings.finn_build_dir}")
-    status(f"[DEPDENDENCY PATH] {settings.finn_deps}")
-    status(f"[DEPDENDENCY DEFINITIONS PATH] {settings.finn_deps_definitions}")
+    status(f"[DEPENDENCY PATH] {settings.finn_deps}")
+    status(f"[DEPENDENCY DEFINITIONS PATH] {settings.finn_deps_definitions}")
     status(f"[NUM WORKERS] {settings.num_default_workers}")
     finn.util.settings._SETTINGS = settings  # noqa
     if "PYTHONPATH" not in os.environ:
