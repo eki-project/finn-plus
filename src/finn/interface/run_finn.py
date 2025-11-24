@@ -790,7 +790,7 @@ def bench(
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=not skip_dep_update,
+        automatic_dependency_updates=True,
         **get_function_args(),
     )
     prepare_finn(settings, True)
@@ -839,7 +839,7 @@ def test(
         finn_build_dir.mkdir(parents=True, exist_ok=True)
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=not skip_dep_update,
+        automatic_dependency_updates=True,
         flow_config=finn_build_dir / "dummy.yaml",
         **get_function_args(),
     )
