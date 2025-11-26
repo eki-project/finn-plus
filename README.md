@@ -2,6 +2,8 @@
 
 # Dataflow Compiler for Fast, Scalable Quantized Neural Network Inference on FPGAs
 
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/finn-plus?period=total&units=ABBREVIATION&left_color=GREY&right_color=GREEN&left_text=Downloads)](https://pepy.tech/projects/finn-plus) [![PyPI version](https://badge.fury.io/py/finn-plus.svg)](https://badge.fury.io/py/finn-plus)
+
 **FINN+** is a fork of **FINN**, an experimental framework from the Integrated Communications and AI Lab of AMD Research & Advanced Development to explore deep neural network inference on FPGAs.
 It specifically targets quantized neural networks, with emphasis on generating dataflow-style architectures customized for each network.
 The resulting FPGA accelerators are highly efficient and can yield high throughput and low latency.
