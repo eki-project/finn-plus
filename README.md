@@ -2,7 +2,7 @@
 
 # Dataflow Compiler for Fast, Scalable Quantized Neural Network Inference on FPGAs
 
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/finn-plus?period=total&units=ABBREVIATION&left_color=GREY&right_color=GREEN&left_text=Downloads)](https://pepy.tech/projects/finn-plus) 
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/finn-plus?period=total&units=ABBREVIATION&left_color=GREY&right_color=GREEN&left_text=Downloads)](https://pepy.tech/projects/finn-plus)
 [![PyPI version](https://img.shields.io/pypi/v/finn-plus?logo=pypi&logoColor=white&color=brightgreen)](https://badge.fury.io/py/finn-plus)
 [![GitHub license](https://img.shields.io/badge/License-BSD-purple.svg)](https://raw.githubusercontent.com/eki-project/finn-plus/refs/heads/main/LICENSE.txt)
 [![Documentation](https://img.shields.io/badge/Documentation-Wiki-blue)](https://github.com/eki-project/finn-plus/wiki)
