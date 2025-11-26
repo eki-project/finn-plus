@@ -8,7 +8,6 @@
 [![Documentation](https://img.shields.io/badge/Documentation-Wiki-blue)](https://github.com/eki-project/finn-plus/wiki)
 ![GitHub branch status](https://img.shields.io/github/checks-status/eki-project/finn-plus/main?label=CI)
 [![Go to Python website](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Feki-project%2Ffinn-plus%2Frefs%2Fheads%2Fmain%2Fpyproject.toml&query=tool.poetry.dependencies.python&label=python&logo=python&logoColor=white)](https://python.org)
-[![Go to Python website](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Feki-project%2Ffinn-plus%2Frefs%2Fheads%2Fmain%2Fpyproject.toml&query=tool.poetry.dependencies.onnx&label=QONNX&logo=onnx&logoColor=white&color=orange)](https://github.com/fastmachinelearning/qonnx)
 ![GitHub Issues or Pull Requests](https://img.shields.io/github/issues-pr/eki-project/finn-plus?label=Pull%20Requests&color=green)
 [![GitLab CI](https://img.shields.io/badge/GitLab%20CI-FC6D26?logo=gitlab&logoColor=fff)](#)
 [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](#)
