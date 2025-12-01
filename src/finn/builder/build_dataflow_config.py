@@ -411,9 +411,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: When set to true, decorates every step in the build flow with a function
     #: that catches exceptions, snapshots the ONNX model, the config and the build log,
-    #: saves them into the location of FINN_BUILD_DIR, and re-raises the exception for
+    #: saves them into the crash_reports directory in output_dir, and re-raises the exception for
     #: further error handling. By default this does _not_ save FINN itself; however
-    #: any step can still be manually decorated to do so (see finn/utils/exception.py).
+    #: any step can still be manually decorated to do so (see finn/utils/exception_snapshot.py).
     enable_exception_snapshots: bool = False
 
     #: Whether hardware debugging will be enabled (e.g. ILA cores inserted to
