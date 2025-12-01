@@ -2,8 +2,9 @@
 #define AXIS_CONTROL
 
 #include <functional>
-#include <limits>
 #include <string>
+
+#include <StableStateTracker.hpp>
 
 // Fwd declarations
 namespace xsi {
@@ -77,8 +78,7 @@ class M_AXIS_Control : public AXIS_Control {
 
     size_t lastComplete = 0;
     size_t interval;
-    size_t latency = 0;
-    size_t minLatency = std::numeric_limits<size_t>::max();  // Minimum latency observed
+    StableStateTracker<> stableState;
 };
 
 #endif /* AXIS_CONTROL */

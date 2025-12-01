@@ -93,7 +93,8 @@ class InterSimulationInterface {
     InterSimulationInterface& operator=(const InterSimulationInterface&) = delete;
 
     // Move constructor
-    InterSimulationInterface(InterSimulationInterface&& other) noexcept : halo(other.halo), refCount(other.refCount), sharedMemoryName(std::move(other.sharedMemoryName)), shmem(std::move(other.shmem)) {
+    InterSimulationInterface(InterSimulationInterface&& other) noexcept
+        : halo(other.halo), refCount(other.refCount), sharedMemoryName(std::move(other.sharedMemoryName)), shmem(std::move(other.shmem)) {
         // Mark other as moved-from
         other.halo = nullptr;
         other.refCount = nullptr;
@@ -153,15 +154,18 @@ class InterSimulationInterface {
 
     // ===== EXCHANGE FUNCTION =====
     // This function runs in each process
-    bool exchange(bool send_value) {
+    bool exchange(bool send_value, std::stop_token stoken = {}) {
         constexpr int neighbor_id = 1 - this->local.process_id;
 
         // Wait for previous buffer flip (latency hiding)
         if (!local.first_call) {
-            while (this->halo->current_buffer.load(std::memory_order_acquire) % 2 == local.expected_buf) {
+            while (this->halo->current_buffer.load(std::memory_order_acquire) % 2 == local.expected_buf && !stoken.stop_requested()) {
 #if defined(__x86_64__) || defined(_M_X64)
                 __builtin_ia32_pause();
 #endif
+            }
+            if (stoken.stop_requested()) {
+                return false;  // Early termination
             }
         }
         local.first_call = false;
@@ -177,10 +181,13 @@ class InterSimulationInterface {
         int neighbor_idx = SharedHaloExchange::idx(neighbor_id, buf_id);
         bool neighbor_ready = this->halo->buffers[neighbor_idx].ready.load(std::memory_order_acquire);
         if (!neighbor_ready) {
-            while (!this->halo->buffers[neighbor_idx].ready.load(std::memory_order_acquire)) {
+            while (!this->halo->buffers[neighbor_idx].ready.load(std::memory_order_acquire) && !stoken.stop_requested()) {
 #if defined(__x86_64__) || defined(_M_X64)
                 __builtin_ia32_pause();
 #endif
+            }
+            if (stoken.stop_requested()) {
+                return false;  // Early termination
             }
         }
 

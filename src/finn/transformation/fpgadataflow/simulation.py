@@ -1,4 +1,5 @@
 """Manage FINN simulation variants."""
+
 import finn_xsi.adapter as finnxsi
 import json
 import numpy as np
@@ -290,8 +291,6 @@ class SimulationBuilder:
                 proc_env=os.environ.copy(),
             )
         except CalledProcessError as e:
-            print(e.stdout)
-            print(e.stderr)
             raise FINNUserError(f"Failed to run cmake in {sim_base}") from e
         self.progress_bar.update("CMake")
 
@@ -539,7 +538,7 @@ class SimulationBuilder:
         # the compiled executables
         with DisabledLoggingConsole(), self.progress_bar if with_live_display else nullcontext():
             self.progress_bar.progress.console.log(
-                f"Building simulations " f"using {synth_workers} workers.."
+                f"Building simulations using {int(synth_workers)} workers.."
             )
             with ThreadPoolExecutor(max_workers=synth_workers) as pool:
                 for i in range(total_nodes):
@@ -636,18 +635,28 @@ class Simulation:
 
         # Run simulation
         start = time.time()
+        output_json = Path(make_build_dir("simulation_results_")) / "simulation_data.json"
         with DisabledLoggingConsole() as console:
             controller = NodeConnectedSimulationController(
                 len(binaries), names, list(binaries.values()), console, 0.1, False
             )
-            controller.run(depth, samples)
+            controller.run(depth, samples, output_json)
         end = time.time()
-        log.warning(f"Simulation took {end-start} seconds!")
-        # Return the collected data
+        log.info(f"Simulation took {end - start} seconds!")
+
+        # Load the merged data from JSON
+        merged_data = json.loads(output_json.read_text())
+
+        # Return the collected data indexed by node index
         data = {}
-        for i, binary in binaries.items():
-            with (binary.parent / "simulation_data.json").open() as f:
-                data[i] = json.load(f)
+        for i, sim_entry in enumerate(merged_data["simulations"]):
+            data[i] = {
+                "name": sim_entry["name"],
+                "fifo_utilization": sim_entry["fifo_utilization"],
+                "cycles": sim_entry["cycles"],
+                "samples": sim_entry["samples"],
+            }
+        json.dump(data, output_json.open("w"), indent=4)
         return data
 
 
@@ -663,8 +672,8 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         sim = Simulation(model, self.fpgapart, self.clk_ns, self.cfg.functional_simulation)
         sys.stdout = sys.stdout.console
         sys.stderr = sys.stderr.console
-        sim.simulate_node_connected(2, 65556)
-        sim.simulate_node_connected(1, 2)
-        sim.simulate_node_connected(1, 20000)
-        sim.simulate_node_connected(10, 20000)
+        sim.simulate_node_connected(3, 100000000)
+        # sim.simulate_node_connected(1, 2)
+        # sim.simulate_node_connected(1, 20000)
+        # sim.simulate_node_connected(10, 20000)
         return model, False
