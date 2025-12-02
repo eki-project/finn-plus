@@ -1,0 +1,88 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 10628.0,
+            "DSP": 1080.0,
+            "BRAM_18K": 379.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 23362,
+            "max_cycles": 1028,
+            "max_cycles_node_name": "ConvolutionInputGenerator_rtl_0",
+            "estimated_throughput_fps": 97276.26459143969,
+            "estimated_latency_ns": 233620.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 5915.0,
+            "FF": 2065.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 2
+    },
+    "synth": {
+        "resources": {
+            "LUT": 81977,
+            "FF": 130590,
+            "SRL": 899,
+            "DSP": 1098,
+            "BRAM_18K": 17,
+            "BRAM_36K": 6,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "performance": {
+            "error": false,
+            "checksum": 17,
+            "min_latency_cycles": 2957,
+            "latency_cycles": 2960,
+            "interval_cycles": 1027,
+            "frequency_mhz": 100,
+            "min_latency_ms": 0.02957,
+            "latency_ms": 0.0296,
+            "throughput_fps": 97370,
+            "min_pipeline_depth": 2.88,
+            "pipeline_depth": 2.88
+        },
+        "power": {
+            "power_pl_ps_load": 4.014,
+            "power_pl_ps_idle": 2.448,
+            "power_pl_ps_dyn": 1.566,
+            "power_total_load": 8.687,
+            "power_total_idle": 7.143,
+            "power_total_dyn": 1.544
+        }
+    },
+    "time": {
+        "step_tidy_up": 0,
+        "step_pre_streamline": 0,
+        "step_streamline": 6,
+        "step_convert_to_hw": 0,
+        "step_convert_final_layers": 0,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 5,
+        "step_target_fps_parallelization": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 1,
+        "step_generate_estimate_reports": 0,
+        "step_set_fifo_depths": 488,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 0,
+        "step_create_stitched_ip": 40,
+        "step_measure_rtlsim_performance": 0,
+        "step_out_of_context_synthesis": 0,
+        "step_synthesize_bitfile": 1893,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 2433
+    }
+}
