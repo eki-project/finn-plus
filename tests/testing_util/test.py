@@ -28,7 +28,6 @@
 
 import pytest
 
-import importlib_resources as importlib
 import numpy as np
 import onnx
 import onnx.numpy_helper as nph
@@ -36,6 +35,7 @@ import os
 import torchvision.transforms.functional as torchvision_util
 import warnings
 from brevitas_examples import bnn_pynq, imagenet_classification
+from pathlib import Path
 from pkgutil import get_data
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -136,9 +136,13 @@ def get_example_input(topology):
         onnx_tensor = onnx.load_tensor_from_string(raw_i)
         return nph.to_array(onnx_tensor)
     elif topology == "cnv":
-        ref = importlib.files("finn.qnn-data") / "cifar10/cifar10-test-data-class3.npz"
-        with importlib.as_file(ref) as fn:
-            input_tensor = np.load(fn)["arr_0"].astype(np.float32)
+        cifar_path = (
+            Path(__file__).parent.parent
+            / "example_data"
+            / "cifar10"
+            / "cifar10-test-data-class3.npz"
+        )
+        input_tensor = np.load(cifar_path)["arr_0"].astype(np.float32)
         return input_tensor
     else:
         raise Exception("Unknown topology, can't return example input")
@@ -155,24 +159,6 @@ def get_trained_network_and_ishape(topology, wbits, abits):
     ishape = topology_to_ishape[topology]
     model = get_test_model_trained(topology.upper(), wbits, abits)
     return (model, ishape)
-
-
-def execute_parent(parent_path, child_path, input_tensor_npy, return_full_ctx=False):
-    """Execute parent model containing a single StreamingDataflowPartition by
-    replacing it with the model at child_path and return result."""
-
-    parent_model = load_test_checkpoint_or_skip(parent_path)
-    iname = parent_model.graph.input[0].name
-    oname = parent_model.graph.output[0].name
-    sdp_node = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
-    sdp_node = getCustomOp(sdp_node)
-    sdp_node.set_nodeattr("model", child_path)
-    sdp_node.set_nodeattr("return_full_exec_context", 1 if return_full_ctx else 0)
-    ret = execute_onnx(parent_model, {iname: input_tensor_npy}, True)
-    if return_full_ctx:
-        return ret
-    else:
-        return ret[oname]
 
 
 def resize_smaller_side(target_pixels, img):

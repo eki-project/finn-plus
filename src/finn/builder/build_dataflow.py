@@ -34,7 +34,6 @@ to FINN dataflow accelerators. It handles step resolution, logging, error handli
 and the complete build pipeline from ONNX input to hardware accelerator output.
 """
 
-import clize
 import datetime
 import importlib
 import json
@@ -461,12 +460,3 @@ def build_dataflow_directory(path_to_cfg_dir: str):
     ret = build_dataflow_cfg(onnx_filename, build_cfg)
     os.chdir(old_wd)
     return ret
-
-
-def main():
-    """Entry point for dataflow builds using command line arguments."""
-    clize.run(build_dataflow_directory)
-
-
-if __name__ == "__main__":
-    main()

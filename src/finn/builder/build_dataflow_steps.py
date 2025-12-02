@@ -28,7 +28,8 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Collection of default build steps for building and verifying a dataflow
- accelerator from an ONNX model."""
+accelerator from an ONNX model.
+"""
 
 import json
 import numpy as np
@@ -117,8 +118,8 @@ from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth
 from finn.util.exception import FINNUserError
+from finn.util.execution import execute_parent
 from finn.util.logging import log
-from finn.util.test import execute_parent
 
 
 def verify_step(
@@ -128,8 +129,15 @@ def verify_step(
     need_parent: bool,
     rtlsim_pre_hook=None,
 ):
-    """Runs verification of the model after a build step by executing the ONNX
-    model a sample inputs and checking against known target outputs."""
+    """Verify a build step by running simulation and comparing results.
+
+    Args:
+        model: The ONNX model to verify
+        cfg: Build configuration object
+        step_name: Name of the build step being verified
+        need_parent: Whether parent model execution is needed for comparison
+        rtlsim_pre_hook: Optional pre-hook function for RTL simulation
+    """
     log.info(f"Running verification for {step_name}")
     verify_out_dir = cfg.output_dir + "/verification_output"
     intermediate_models_dir = cfg.output_dir + "/intermediate_models"
@@ -292,7 +300,15 @@ def verify_step(
 
 
 def prepare_for_stitched_ip_rtlsim(verify_model, cfg):
-    """Prepares the model for execution via RTL simulation as a stitched IP."""
+    """Prepare model for stitched IP RTL simulation.
+
+    Switches implementation styles from Vivado components to RTL where needed
+    and ensures proper configuration for RTL simulation.
+
+    Args:
+        verify_model: The model to prepare for RTL simulation
+        cfg: Build configuration object
+    """
     if not cfg.rtlsim_use_vivado_comps:
         need_restitch = False
         # switch impl_style=vivado components to rtl

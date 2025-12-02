@@ -1,3 +1,5 @@
+"""Create C++ and PYNQ drivers for FINN-generated accelerators."""
+
 # Copyright (c) 2020, Xilinx
 # All rights reserved.
 #
@@ -26,8 +28,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Transformations for generating C++ and PYNQ drivers."""
-
 import json
 import multiprocessing
 import numpy as np
@@ -44,6 +44,7 @@ from typing import Dict, List, Optional, Tuple
 
 import finn.util
 from finn.builder.build_dataflow_config import FpgaMemoryType
+from finn.templates import get_templates_folder
 from finn.util.basic import make_build_dir
 from finn.util.data_packing import get_driver_shapes, to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -92,7 +93,17 @@ class MakeCPPDriver(Transformation):
 
     # TODO: Enable multiple input types! Now only assumes the first one
     def resolve_dt_name(s: str) -> str:
-        """Convert FINN DataType string to C++ type name."""
+        """Resolve datatype name for C++ driver code generation.
+
+        Args:
+            s: Datatype string to resolve
+
+        Returns:
+            Resolved C++ datatype name
+
+        Raises:
+            FINNInternalError: If datatype is unknown
+        """
         s = s.replace("DataType[", "").replace("]", "")
         if s in ["BINARY", "TERNARY", "BIPOLAR"]:
             return "Datatype" + s[0] + s[1:].lower()
@@ -113,7 +124,16 @@ class MakeCPPDriver(Transformation):
         version: str,
         host_mem: str,
     ):
-        """Initialize C++ driver generation with platform and version settings."""
+        """Initialize MakeCPPDriver transformation.
+
+        Args:
+            platform: Target platform (must be "alveo")
+            version: Version of finn-cpp-driver to use ("latest" or commit hash)
+            host_mem: Memory type (FpgaMemoryType.HOST_MEM or FpgaMemoryType.DEVICE_MEM)
+
+        Raises:
+            FINNUserError: If platform is not "alveo"
+        """
         super().__init__()
         self.platform: str = platform
 
@@ -136,7 +156,14 @@ class MakeCPPDriver(Transformation):
             self.host_memory = False
 
     def apply(self, model: ModelWrapper) -> Tuple[ModelWrapper, bool]:
-        """Generate C++ driver for the model."""
+        """Apply the MakeCPPDriver transformation to generate C++ driver code.
+
+        Args:
+            model: ONNX model wrapper
+
+        Returns:
+            Tuple of (modified model, transformation success flag)
+        """
         driver_shapes: Dict = get_driver_shapes(model)
         ext_weight_dma_cnt: int  # noqa
         weights_dir: str  # noqa
@@ -154,7 +181,16 @@ class MakeCPPDriver(Transformation):
         header_path = os.path.join(cpp_driver_dir, "AcceleratorDatatypes.h")
 
         def run_command(command, cwd=None, debug=False):
-            """Helper function to execute shell commands safely with error handling"""
+            """Execute a shell command with error handling.
+
+            Args:
+                command: Shell command string to execute.
+                cwd: Working directory for command execution. Defaults to None (current directory).
+                debug: If True, print command output for debugging. Defaults to False.
+
+            Raises:
+                subprocess.CalledProcessError: If the command returns a non-zero exit code.
+            """
             try:
                 result = subprocess.run(
                     shlex.split(command), cwd=cwd, check=True, text=True, capture_output=True
@@ -241,8 +277,13 @@ class MakeCPPDriver(Transformation):
         odmas = [x["m_name"] for x in ips if isIO(x) and "odma" in x["m_name"]]
 
         def formatKernelName(kname: str):
-            """Helper function to format kernel names for the driver configuration
-            Converts "kernelName:instance" to "kernelName:{instance}" format
+            """Format kernel name into Vitis-compatible format.
+
+            Args:
+                kname: Kernel name string in "name:instance" format.
+
+            Returns:
+                Formatted kernel name as "name:{instance}".
             """
             kparts = kname.split(":")
             return kparts[0] + ":{" + kparts[1] + "}"
@@ -306,7 +347,14 @@ class MakeCPPDriver(Transformation):
             # Command to invoke CMake
             cmake_executable: str = f"{sys.executable} -m cmake",
         ):
-            """Helper function to configure CMake build system."""
+            """Configure CMake build system for the C++ driver.
+
+            Args:
+                source_dir: Directory containing the CMakeLists.txt file.
+                build_dir: Directory where CMake build files will be generated.
+                cmake_args: Additional CMake configuration arguments. Defaults to None.
+                cmake_executable: Command to invoke CMake. Defaults to Python's cmake module.
+            """
             # Create build directory if it doesn't exist
             os.makedirs(build_dir, exist_ok=True)
             # Split the cmake executable command into arguments
@@ -337,7 +385,17 @@ class MakeCPPDriver(Transformation):
             # Additional build arguments
             build_args: Optional[List[str]] = None,
         ):
-            """Helper function to build the configured CMake project."""
+            """Build the configured CMake project.
+
+            Args:
+                build_dir: Directory containing the configured build files.
+                cmake_executable: Build tool to use. Defaults to "make".
+                build_target: Specific target to build. Defaults to None (builds all).
+                build_args: Additional build arguments. Defaults to None.
+
+            Raises:
+                subprocess.CalledProcessError: If the build fails.
+            """
             # Prepare the build command with the executable
             args = [cmake_executable]
             # Add optional build target if specified
@@ -381,7 +439,17 @@ class MakeCPPDriver(Transformation):
         )
 
         def check_finn_types(bin_dir: str, expectedInputType: str, expectedOutputType: str) -> None:
-            """Helper function to verify that the built driver uses the correct datatypes."""
+            """Verify that compiled driver's datatypes match expected types.
+
+            Args:
+                bin_dir: Directory containing the finnhpc executable.
+                expectedInputType: Expected input datatype string.
+                expectedOutputType: Expected output datatype string.
+
+            Raises:
+                subprocess.CalledProcessError: If the datatype check command fails.
+                RuntimeError: If the actual datatypes don't match expected types.
+            """
             # Run the built finnhpc executable with the --check flag to output datatype information
             result = subprocess.run(
                 "./finnhpc --check".split(), cwd=bin_dir, capture_output=True, text=True
@@ -455,7 +523,18 @@ class MakeCPPDriver(Transformation):
 
 
 class MakePYNQDriver(Transformation):
-    """Generate PYNQ driver for FINN accelerator."""
+    """Create PYNQ Python code to correctly interface the generated
+    accelerator, including data packing/unpacking. Should be called
+    after conversion to HLS layers, folding and the creation of
+    dataflow partitions for correct operation.
+
+    platform: one of ["zynq-iodma", "alveo"]
+
+    Outcome if successful: sets the pynq_driver_dir attribute in the ONNX
+    ModelProto's metadata_props field, with the created driver dir as the
+    value. If any layers use runtime-writable parameters, those will be gathered
+    under the runtime_weights/ subfolder of the pynq_driver_dir.
+    """
 
     def __init__(
         self,
@@ -465,7 +544,16 @@ class MakePYNQDriver(Transformation):
         validation_datset=None,
         experiment_info=None,
     ):
-        """Initialize PYNQ driver generation."""
+        """Initialize PYNQ driver generation.
+
+        Args:
+            platform: Target platform, one of ["zynq-iodma", "alveo"].
+            driver_type: Type/name of the driver to generate
+                (e.g. "FINNDMAOverlay", "FINNDMAInstrumentationOverlay").
+            clk_period_ns: Clock period in nanoseconds used for performance calculations.
+            validation_datset: Validation dataset path or identifier.
+            experiment_info: Path to a JSON file containing experiment metadata.
+        """
         super().__init__()
         self.platform = platform
         self.driver_type = driver_type
@@ -479,11 +567,11 @@ class MakePYNQDriver(Transformation):
         pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
 
-        # create the base FINN driver -- same for all accels
-        driver_base_template = os.path.join(
-            os.environ["FINN_QNN_DATA"], "templates/driver/driver.py"
-        )
+        # create the FINN driver
+        driver_base_template = get_templates_folder() / "python_driver/driver.py"
+
         driver_base_py = pynq_driver_dir + "/driver.py"
+
         shutil.copy(driver_base_template, driver_base_py)
 
         # TODO: Can we do this without packaging data_packing.py this way?
@@ -612,8 +700,17 @@ class MakePYNQDriver(Transformation):
         return settings
 
     def apply(self, model):
-        """Generate PYNQ driver for the model."""
-        # TODO: support runtime-writable and external weights (instr)
+        """Apply the MakePYNQDriver transformation.
+
+        Creates a PYNQ Python driver package for interfacing with the generated
+        accelerator, including data packing/unpacking and runtime weight handling.
+
+        Args:
+            model: The ONNX model to generate a driver for.
+
+        Returns:
+            Tuple of (modified model, False) indicating transformation applied.
+        """
         # TODO: support Alveo and Versal platforms (instr)
 
         self._generate_driver_files(model)

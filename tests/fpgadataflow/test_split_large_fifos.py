@@ -40,7 +40,7 @@ import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.transformation.fpgadataflow.set_fifo_depths import get_fifo_split_configs
 from finn.util.basic import make_build_dir
-from finn.util.test import get_trained_network_and_ishape
+from tests.testing_util.test import get_trained_network_and_ishape
 
 
 def fetch_test_model(topology, wbits=2, abits=2):
@@ -54,7 +54,7 @@ def fetch_test_model(topology, wbits=2, abits=2):
 def get_folding_cfg(depth=65536):
     cfg = dict()
     cfg["Defaults"] = dict()
-    for i in range(6):
+    for i in range(8):
         key = "StreamingFIFO_rtl_" + str(i)
         cfg[key] = {"depth": depth, "ram_style": "auto", "impl_style": "vivado"}
     return cfg
