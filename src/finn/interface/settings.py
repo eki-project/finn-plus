@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
-import psutil
 import yaml
 from importlib.metadata import distribution
 from pathlib import Path
@@ -101,7 +101,7 @@ class FINNSettings(BaseModel):
         """Number of default parallel workers."""
         if self._num_default_workers > -1:
             return self._num_default_workers
-        cpus = psutil.cpu_count()
+        cpus = multiprocessing.cpu_count()
         if cpus is None or cpus == 1:
             return 1
         return int(cpus * 0.75)

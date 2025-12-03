@@ -117,7 +117,7 @@ Build:
     # Also fetch & checkout DVC-managed data, $CI_DVC_CACHE_DIR persists between jobs
     - |
       source .venv/bin/activate
-      finn deps update --dependency-path ./deps
+      finn deps update --dependency-path ./deps --accept-defaults
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
   artifacts:

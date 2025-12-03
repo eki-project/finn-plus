@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shlex
 import shutil
 import subprocess as sp
 import sys
+import traceback
 import yaml
 from concurrent.futures import Future, ThreadPoolExecutor
 from itertools import chain
@@ -22,7 +24,12 @@ from typing import cast
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import debug, error, resolve_module_path
-from finn.util.exception import FINNConfigurationError, FINNUserError
+from finn.util.exception import (
+    FINNConfigurationError,
+    FINNDependencyInstallationError,
+    FINNUserError,
+)
+
 from pydantic.networks import HttpUrl  # noqa
 
 
@@ -302,9 +309,25 @@ class DependencyUpdater:
     def _git_clone(self, url: str, commit: str, target: Path) -> bool:
         """Try to clone and checkout the git url to the given target directory. If something
         went wrong return False, True otherwise."""  # noqa
-        if self._run_silent(f"git clone {url} {target.absolute()}", timeout=self.git_timeout) != 0:
+        clone_result = sp.run(
+            shlex.split(f"git clone {url} {target.absolute()}"),
+            timeout=self.git_timeout,
+            capture_output=True,
+            text=True,
+        )
+        if clone_result.returncode != 0:
+            debug(f"[{url}] Cloning failed! Output was:\n{clone_result.stderr}", False)
             return False
-        return self._run_silent(f"git checkout {commit}", cwd=target.absolute()) == 0
+        checkout_result = sp.run(
+            shlex.split(f"git checkout {commit}"),
+            cwd=target.absolute(),
+            capture_output=True,
+            text=True,
+        )
+        if checkout_result.returncode != 0:
+            debug(f"[{url}] Checkout failed! Output was:\n{checkout_result.stderr}", False)
+            return False
+        return True
 
     def _get_git_hash(self, package_name: str) -> str | None:
         """Return the hash of the given package_name dependency.
@@ -334,15 +357,24 @@ class DependencyUpdater:
             package_name, "url", "commit", "pip_install", "install_editable"
         )
         target = self.dep_location / package_name
+        if target.exists() and importlib.util.find_spec(package_name.replace("-", "_")) is None:
+            debug(
+                "Git repository seems to exist, but is not installed "
+                "into this environment. Removing dependency and cloning again.",
+                False,
+            )
+            shutil.rmtree(target, ignore_errors=True)
         if not self._git_clone(url, commit, target):
+            debug(f"[{package_name}] Cloning or checkout failed.", False)
             return False
         if self.is_outdated(package_name):
             return False
         if not pip_install:
             return True
-        debug(f"[{package_name}] Running pip install..")
         editable_flag = "" if not install_editable else "-e"
-        self._run_silent(f"{sys.executable} -m pip {editable_flag} install {target}")
+        pip_install_command = f"{sys.executable} -m pip install {editable_flag} {target}"
+        debug(f"[{package_name}] Running pip install: {pip_install_command}")
+        self._run_silent(pip_install_command)
 
         # In editable install cases we need to make the package available in this run
         # otherwise it will only be available on the next start
@@ -431,6 +463,10 @@ class DependencyUpdater:
         """Install FINN XSI bindings and return if installation was successful."""
         debug("[finn_xsi] Preparing LD LIBRARY PATH", False)
         finn_xsi_path = Path(self.finn_xsi_str)
+        if "XILINX_VIVADO" not in os.environ:
+            raise FINNDependencyInstallationError(
+                "Vivado is not available " "(or XILINX_VIVADO is not set in your " "environment)!"
+            )
         vivado_path = os.environ["XILINX_VIVADO"]
         required_paths = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
         if "LD_LIBRARY_PATH" not in os.environ:
@@ -518,11 +554,17 @@ class DependencyUpdater:
 
         # If it doesnt exist yet, its definitely outdated
         if has_hash is None:
+            debug(f"[{package_name}] No commit hash found - outdated.", False)
             return True
 
         # Compare hashes
         data = cast("GitDependency", data)
         if data.commit != has_hash:
+            debug(
+                f"[{package_name}] No matching hash commits: expected "
+                f"{data.commit}, got {has_hash}",
+                False,
+            )
             return True
 
         # In some cases we do not want to check if the dependency is installed
@@ -532,11 +574,10 @@ class DependencyUpdater:
         # For pip-installable dependencies, also check if the package is accessible
         # in the current Python process
         if package_name in self.deps.git_deps and data.pip_install:
-            import importlib.util
-
             # Try to find the package in the current Python environment
             spec = importlib.util.find_spec(package_name.replace("-", "_"))
             if spec is None:
+                debug(f"[{package_name}] is not importable!", False)
                 # Package is not importable, mark as outdated
                 return True
 
@@ -570,8 +611,15 @@ class DependencyUpdater:
                 result = self.install_dependency(package_name)
                 status.set_finish(package_name, result)
                 return result
-            except Exception:
+            except FINNDependencyInstallationError as e:
                 status.set_finish(package_name, False)
+                status.update_status(package_name, f"Error: {e}", "purple")
+                status.update_live()
+                return False
+            except Exception as e:
+                status.set_finish(package_name, False)
+                debug(f"[{package_name}] Exception: {e}", False)
+                debug(f"[{package_name}] {traceback.format_exc()}", False)
                 status.update_status(
                     package_name, "Updated failed! (Internal exception!)", "purple"
                 )

@@ -36,6 +36,14 @@ class FINNUserError(FINNError):
         super().__init__(*args)
 
 
+class FINNDependencyInstallationError(FINNUserError):
+    """Error emitted by the DependencyManager if something fails."""
+
+    def __init__(self, *args: object) -> None:
+        """Create a new FINNValidationError."""
+        super().__init__(*args)
+
+
 class FINNValidationError(FINNUserError):
     """Error emitted if the settings could not be properly parsed by Pydantic."""
 
