@@ -418,13 +418,13 @@ class HWCustomOp(CustomOp):
         out_width = self.get_outstream_width(ind=ind)
         return roundup_to_integer_multiple(out_width, 8)
 
-    @abstractmethod
     def calc_tmem(self) -> int:
-        pass
+        """Calculate and returns the TMEM."""
+        raise NotImplementedError()
 
-    @abstractmethod
     def calc_wmem(self) -> int:
-        pass
+        """Calculate and returns the WMEM."""
+        raise NotImplementedError()
 
     def generate_hdl_memstream(self, fpgapart, pumped_memory=0):
         """Helper function to generate verilog code for memstream component.
