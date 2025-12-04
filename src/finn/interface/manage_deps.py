@@ -478,7 +478,12 @@ class DependencyUpdater:
         debug("[finn_xsi] Calling make..", False)
         res = sp.run(["make"], cwd=finn_xsi_path, capture_output=True, text=True)
         if res.returncode != 0:
-            Console().print(res.stderr)
+            debug("Make returned an error during installation of FINN XSI", False)
+            debug(f"Make stderr output: {res.stderr}", False)
+            if "pybind11.h: No such file or directory" in res.stderr:
+                raise FINNDependencyInstallationError(
+                    "pybind11 seems to be missing " "in your environment!"
+                )
             return False
 
         # Check if .so was created

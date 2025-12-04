@@ -82,7 +82,7 @@ class FINNSettings(BaseModel):
     _auto_set_envvars: bool = PrivateAttr()
     _flow_config: Path | None = PrivateAttr()
     _finn_build_dir: str = PrivateAttr("FINN_TMP")
-    _finn_deps: str = PrivateAttr("deps")
+    _finn_deps: str = PrivateAttr("finn_deps")
     _finn_deps_definitions: str = PrivateAttr("external_dependencies.yaml")
     _num_default_workers: int = PrivateAttr(-1)
     automatic_dependency_updates: bool = True

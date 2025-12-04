@@ -400,7 +400,10 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool) -> None:
     if not settings.finn_deps_definitions.exists():
         error(f"FINN dependency definition file does not exist: {settings.finn_deps_definitions}")
         sys.exit(1)
-    status(f"[SETTINGS FILE] {settings.get_path()}")
+    status(
+        f"[SETTINGS FILE] {settings.get_path()} "
+        f"{'(not written)' if not settings.settingsfile_exists() else ''}"
+    )
     status(f"[FINN BUILD DIRECTORY] {settings.finn_build_dir}")
     status(f"[DEPENDENCY PATH] {settings.finn_deps}")
     status(f"[DEPENDENCY DEFINITIONS PATH] {settings.finn_deps_definitions}")
@@ -784,6 +787,8 @@ def bench(
     if finn_build_dir is not None:
         finn_build_dir = finn_build_dir.expanduser().absolute()
         finn_build_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        finn_build_dir = Path("/tmp/FINN_BENCH_DIR")
     if finn_deps is not None:
         finn_deps = finn_deps.expanduser().absolute()
     if finn_deps_definitions is not None:
@@ -791,6 +796,7 @@ def bench(
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=True,
+        flow_config=finn_build_dir / "dummy.yaml",
         **get_function_args(),
     )
     prepare_finn(settings, True)
@@ -845,6 +851,10 @@ def test(
     )
 
     prepare_finn(settings, True)
+
+    # Save settings so that the test fixture can reload it
+    os.environ["FINN_SETTINGS"] = str(settings.get_path())
+
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
     run_test(variant, num_test_workers)
