@@ -7,7 +7,8 @@
         "model_path": ["models/transformer/finn-transformers/benchmark/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/benchmark/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/benchmark/out.npy"],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1000],
     },
 
     # language model
@@ -17,7 +18,8 @@
         "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1000],
     },
 
     # radioml model
@@ -27,7 +29,8 @@
         "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1000],
     },
 
     # vision model
@@ -37,6 +40,7 @@
         "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
-        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]]
+        "generate_outputs": [["estimate_reports", "stitched_ip", "bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1000],
     },
 ]

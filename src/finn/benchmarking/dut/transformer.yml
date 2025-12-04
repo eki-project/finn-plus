@@ -54,8 +54,6 @@ verify_steps:
 verify_save_rtlsim_waveforms: false
 stitched_ip_gen_dcp: false
 
-target_fps: 1000
-
 # Relax verification tolerance
 verification_atol: 0.5
 
