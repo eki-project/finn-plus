@@ -38,7 +38,7 @@ from qonnx.util.basic import gen_finn_dt_tensor
 from finn.templates import get_templates_folder
 from finn.util.basic import make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, numpy_to_hls_code
-from finn.util.deps import get_deps_path
+from finn.util.settings import get_settings
 
 
 @pytest.mark.util
@@ -100,8 +100,8 @@ def test_npy2apintstream(test_shape, dtype):
     with open(test_dir + "/test.cpp", "w") as f:
         f.write("\n".join(test_app_string))
     cmd_compile = f"""
-g++ -o test_npy2apintstream test.cpp {get_deps_path()}/cnpy/cnpy.cpp \
--I{get_deps_path()}/cnpy/ -I{os.environ["XILINX_HLS"]}/include \
+g++ -o test_npy2apintstream test.cpp {get_settings().finn_deps}/cnpy/cnpy.cpp \
+-I{get_settings().finn_deps}/cnpy/ -I{os.environ["XILINX_HLS"]}/include \
     -I{get_templates_folder()}/npy2stream --std=c++11 -lz """
     with open(test_dir + "/compile.sh", "w") as f:
         f.write(cmd_compile)

@@ -166,6 +166,17 @@ def accept_defaults(f: Callable) -> Callable[..., Any]:
     )(f)
 
 
+def batch(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter called --batch. Defaults to False."""
+    return click.option(
+        "--batch",
+        is_flag=True,
+        help="Use FINN+ in batch mode (non-interactive). Disables live consoles."
+        " This forces --accept defaults"
+        " and disables the wizards!",
+    )(f)
+
+
 def run_flow_wizard() -> None:
     """Interactively create a flow config with the user and save it."""
     dfbc = DataflowBuildConfig()
@@ -392,7 +403,7 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     console.rule()
 
 
-def prepare_finn(settings: FINNSettings, accept_defaults: bool) -> None:
+def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = False) -> None:
     """Prepare FINN to run."""
     if not settings.settingsfile_exists() and not accept_defaults:
         run_setup_wizard(settings)
@@ -401,13 +412,13 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool) -> None:
         error(f"FINN dependency definition file does not exist: {settings.finn_deps_definitions}")
         sys.exit(1)
     status(
-        f"[SETTINGS FILE] {settings.get_path()} "
+        f"{'[SETTINGS FILE]':<32} {settings.get_path()!s:<50} "
         f"{'(not written)' if not settings.settingsfile_exists() else ''}"
     )
-    status(f"[FINN BUILD DIRECTORY] {settings.finn_build_dir}")
-    status(f"[DEPENDENCY PATH] {settings.finn_deps}")
-    status(f"[DEPENDENCY DEFINITIONS PATH] {settings.finn_deps_definitions}")
-    status(f"[NUM WORKERS] {settings.num_default_workers}")
+    status(f"{'[FINN BUILD DIRECTORY]':<32} {settings.finn_build_dir!s:<50}")
+    status(f"{'[DEPENDENCY PATH]':<32} {settings.finn_deps!s:<50}")
+    status(f"{'[DEPENDENCY DEFINITIONS PATH]':<32} {settings.finn_deps_definitions!s:<50}")
+    status(f"{'[NUM WORKERS]':<32} {settings.num_default_workers!s:<50}")
     finn.util.settings._SETTINGS = settings  # noqa
     if "PYTHONPATH" not in os.environ:
         os.environ["PYTHONPATH"] = ""
@@ -419,8 +430,8 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool) -> None:
                 dependency_location=settings.finn_deps,
                 dependency_definition_file=settings.finn_deps_definitions,
                 git_timeout_s=settings.deps_git_timeout,
+                non_interactive=batch,
             )
-            status(f"[EXTERNAL DEPENDENCY DEFINITION FILE] {updater.depfile.absolute()}")
             updater.update()
         except FINNUserError as e:
             error(f"FINN ERROR: {e}")
@@ -503,6 +514,7 @@ def _build(
     skip_dep_update: bool,
     start: str,
     stop: str,
+    batch: bool,
     flow_config: Path,
     model: Path | None,
 ) -> None:
@@ -530,7 +542,7 @@ def _build(
         automatic_dependency_updates=not skip_dep_update,
         **get_function_args(),
     )
-    prepare_finn(settings, accept_defaults)
+    prepare_finn(settings, accept_defaults or batch, batch)
 
     # Can import from finn now, since all deps are installed
     # and all environment variables are set correctly
@@ -612,6 +624,7 @@ def _build(
     help="If no stop_step is given in the dataflow build config, "
     "this stops the flow at the given step.",
 )
+@batch
 def build(
     output: Path | None,
     accept_defaults: bool,
@@ -624,6 +637,7 @@ def build(
     skip_dep_update: bool,
     start: str,
     stop: str,
+    batch: bool,
     flow_config: Path,
     model: Path | None,
 ) -> None:
@@ -640,6 +654,7 @@ def build(
         skip_dep_update,
         start,
         stop,
+        batch,
         flow_config,
         model,
     )
@@ -693,7 +708,8 @@ def run(
 
 
 @click.command(help="Best effort to automatically start FINN without further configuration.")
-def auto() -> None:
+@batch
+def auto(batch: bool) -> None:
     """Try to run FINN guessing which files to use for config and model."""
     flow_config: Path | None = None
     model: Path | None = None
@@ -737,7 +753,7 @@ def auto() -> None:
         else:
             model = potential_models[0]
     status(f"Trying to use {model} as a model file\n\n")
-    _build(None, False, None, None, None, None, None, -1, False, "", "", flow_config, model)
+    _build(None, False, None, None, None, None, None, -1, False, "", "", batch, flow_config, model)
 
 
 @click.group(help="Run setup wizards for various tasks.")
@@ -853,7 +869,9 @@ def test(
     prepare_finn(settings, True)
 
     # Save settings so that the test fixture can reload it
-    os.environ["FINN_SETTINGS"] = str(settings.get_path())
+    if settings.settingsfile_exists():
+        os.environ["FINN_SETTINGS"] = str(settings.get_path())
+        status("Saved settings path in FINN_SETTINGS: " + os.environ["FINN_SETTINGS"])
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
@@ -870,8 +888,9 @@ def deps() -> None:
 @accept_defaults
 @finn_deps
 @finn_deps_definitions
+@batch
 def update(
-    accept_defaults: bool, finn_deps: Path | None, finn_deps_definitions: Path | None
+    accept_defaults: bool, finn_deps: Path | None, finn_deps_definitions: Path | None, batch: bool
 ) -> None:
     """Update all FINN+ dependencies and then exit."""
     if finn_deps is not None:
@@ -884,7 +903,7 @@ def update(
         flow_config=Path(),
         **get_function_args(),
     )
-    prepare_finn(settings, accept_defaults)
+    prepare_finn(settings, accept_defaults or batch, batch)
 
 
 @click.command("edit", help="Edit the dependency definition file.")

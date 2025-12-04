@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import os
 import shlex
@@ -186,7 +187,9 @@ class DependencyData(BaseModel):
 class _StatusTracker:
     """Small helper class to thread-safely organize status data."""
 
-    def __init__(self, names_types: list[tuple[str, str]], live: Live) -> None:
+    def __init__(
+        self, names_types: list[tuple[str, str]], live: Live | contextlib.nullcontext
+    ) -> None:
         """Create a status tracker.
 
         Args:
@@ -194,6 +197,7 @@ class _StatusTracker:
             live: The rich.live.Live object that is used to display the status data.
         """
         # Name: (type, status, color)
+        self.non_interactive = type(live) is contextlib.nullcontext
         self.data = {}
         self.live = live
         self.datalock = RLock()
@@ -204,12 +208,16 @@ class _StatusTracker:
 
     def update_status(self, name: str, status: str, color: str) -> None:
         """Update the status dict. If name doesnt exist, do nothing."""
+        if self.non_interactive:
+            return
         with self.datalock:
             if name in self.data:
                 self.data[name] = (self.data[name][0], status, color)
 
     def _generate_renderable(self) -> Table:
         """Generate a renderable for rich to display in a live context."""
+        if self.non_interactive:
+            return
         with self.datalock:
             table = Table(
                 title="Dependency Updates",
@@ -228,6 +236,8 @@ class _StatusTracker:
 
     def update_live(self) -> None:
         """Update the associated live rich display. Also refreshes it."""
+        if self.non_interactive:
+            return
         with self.datalock:
             self.live.update(self._generate_renderable(), refresh=True)
 
@@ -235,6 +245,8 @@ class _StatusTracker:
         """Set the package to updating and update the live display.
         If name doesnt exist, do nothing.
         """
+        if self.non_interactive:
+            return
         self.update_status(name, "Updating...", "yellow")
         self.update_live()
 
@@ -242,6 +254,9 @@ class _StatusTracker:
         """Set the package to finished and update the live display.
         If name doesnt exist, do nothing.
         """
+        if self.non_interactive:
+            Console().print("✓ " + name)
+            return
         if successful:
             with self.datalock:
                 self.done += 1
@@ -255,7 +270,11 @@ class DependencyUpdater:
     """Manage non-python dependencies."""
 
     def __init__(
-        self, dependency_location: Path, dependency_definition_file: Path, git_timeout_s: float
+        self,
+        dependency_location: Path,
+        dependency_definition_file: Path,
+        git_timeout_s: float,
+        non_interactive: bool = False,
     ) -> None:
         """Create a new updater.
 
@@ -266,7 +285,9 @@ class DependencyUpdater:
             dependency_location: Path to the directory where all files are placed / checked.
             dependency_definition_file: This points to the yaml file containing all dependencies.
             git_timeout_s: Timeout for git requests in seconds.
+            non_interactive: If set, don't generate a live status report.
         """
+        self.non_interactive = non_interactive
         self.git_timeout = git_timeout_s
         self.depfile = dependency_definition_file
         if not self.depfile.exists():
@@ -374,7 +395,16 @@ class DependencyUpdater:
         editable_flag = "" if not install_editable else "-e"
         pip_install_command = f"{sys.executable} -m pip install {editable_flag} {target}"
         debug(f"[{package_name}] Running pip install: {pip_install_command}")
-        self._run_silent(pip_install_command)
+        pip_subprocess_result = sp.run(
+            shlex.split(pip_install_command), capture_output=True, text=True
+        )
+        if pip_subprocess_result.returncode != 0:
+            debug(
+                f"[{package_name}] Error during pip installation: {pip_subprocess_result.stderr}",
+                False,
+            )
+            raise FINNDependencyInstallationError(pip_subprocess_result.stderr)
+            return False
 
         # In editable install cases we need to make the package available in this run
         # otherwise it will only be available on the next start
@@ -632,13 +662,17 @@ class DependencyUpdater:
                 return False
 
         # Keep track of the status of all dependencies
+        if self.non_interactive:
+            live = contextlib.nullcontext()
+            Console().print("Updating dependencies...")
+        else:
+            live = Live(Panel(""), refresh_per_second=0.0001)
         status = _StatusTracker(
-            [(name, self.deps.dependency_type_str(name)) for name in deps_outdated], Live()
+            [(name, self.deps.dependency_type_str(name)) for name in deps_outdated], live
         )
         if len(deps_outdated) > 0:
             # Display live updates of the installation process
             futures: list[Future] = []
-            live = Live(status._generate_renderable(), refresh_per_second=0.0001)
             with live:
                 status.live = live
                 with ThreadPoolExecutor(max_workers=100) as tpe:
