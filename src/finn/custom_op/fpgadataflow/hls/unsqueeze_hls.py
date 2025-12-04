@@ -1,3 +1,4 @@
+"""HLS backend implementation of the Unsqueeze operator."""
 # noqa: Duplicate: The HLS implementation is identical to the Squeeze operator,
 #  maybe these should be unified...
 # fmt: off
@@ -20,10 +21,16 @@ from finn.custom_op.fpgadataflow.unsqueeze import Unsqueeze
 
 # HLS Backend specialization of the unsqueeze operator
 @register_custom_op
-class Unsqueeze_hls(Unsqueeze, HLSBackend):  # noqa: Class name does not follow
+class Unsqueeze_hls(Unsqueeze, HLSBackend):  # noqa: N801
+    """HLS backend implementation of the Unsqueeze operator.
+
+    Inserts single-dimension entries into the shape of a tensor using HLS synthesis.
+    """
+
     # CapWords convention
     # Node attributes matching the HLS operator
     def get_nodeattr_types(self):
+        """Return the dictionary of node attributes for the HLS Unsqueeze operator."""
         # Start from parent operator class attributes
         attrs = Unsqueeze.get_nodeattr_types(self)
         # Add the HLSBackend default attributes on top
@@ -33,21 +40,24 @@ class Unsqueeze_hls(Unsqueeze, HLSBackend):  # noqa: Class name does not follow
         return attrs
 
     # Generates list of C++ includes to be placed at the top of the generated code
-    def global_includes(self):
+    def global_includes(self) -> None:
+        """Generate list of C++ includes for the top of the generated code."""
         # Currently nothing to include
         self.code_gen_dict["$GLOBALS$"] = []
 
     # Generates C++ code of type alias, global constant and macro definitions
-    def defines(self, var):
+    def defines(self, var) -> None:
+        """Generate C++ code for type alias, global constant, and macro definitions."""
         # Currently nothing to define
         self.code_gen_dict["$DEFINES$"] = []
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context, graph) -> None:
         """Execute node via generic HLSBackend implementation (cppsim/rtlsim)."""
         HLSBackend.execute_node(self, context, graph)
 
     # Generates C++ code for calling the computation part of the operator
-    def docompute(self):
+    def docompute(self) -> None:
+        """Generate C++ code for the computation part of the operator."""
         # Number of iterations required to process the whole folded input stream
         #   Note: This is all but the PE (last) dimension
         num_iter = np.prod(self.get_folded_output_shape()[:-1])
@@ -62,12 +72,13 @@ class Unsqueeze_hls(Unsqueeze, HLSBackend):  # noqa: Class name does not follow
             # not contribute to the number and order of elements and thus can
             # simply be ignored.
             "out0_V.write(in0_V.read());",
-            f"}}"  # noqa: f-string symmetry
+            "}"  # noqa: f-string symmetry
         ]
 
     # Generates essentially the head of the C++ function from which the IP block
     # will be generated during ipgen, i.e. actual synthesis
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
+        """Generate the C++ function signature for the IP block generation."""
         # Insert function head describing the top level interface of the
         # squeeze operator
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [

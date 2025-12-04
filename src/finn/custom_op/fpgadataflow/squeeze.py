@@ -1,3 +1,4 @@
+"""FPGA dataflow custom operator for Squeeze operation."""
 # fmt: off
 # Disable formatter. This is deliberately formatted to stay within 80 characters
 # per line. Black, however, formats some lines going beyond this.
@@ -9,7 +10,8 @@ import copy
 import numpy as np
 
 # QONNX/FINN datatypes
-from qonnx.core.datatype import DataType
+from onnx import NodeProto
+from qonnx.core.datatype import BaseDataType, DataType
 
 # QONNX wrapper to ONNX model graphs
 from qonnx.core.modelwrapper import ModelWrapper
@@ -27,13 +29,20 @@ from finn.util.logging import log
 # Squeeze operation: Removes single-dimension entries from the shape of a tensor
 @register_custom_op
 class Squeeze(HWCustomOp):
+    """Hardware custom operator for Squeeze operation.
+
+    Removes single-dimension entries from the shape of a tensor.
+    """
+
     # Initializes the operator given an onnx graph node
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node, **kwargs) -> None:
+        """Initialize the Squeeze operator from an ONNX node."""
         # Just forward all arguments to the init method of the CustomOp base
         super().__init__(onnx_node, **kwargs)
 
     # Defines attributes which must be present on this node
     def get_nodeattr_types(self):
+        """Return the dictionary of node attributes for the Squeeze operator."""
         # Start from parent operator class attributes  # noqa: Duplicate
         attrs = HWCustomOp.get_nodeattr_types(self)
         # Update attributes dictionary for new custom operator
@@ -61,35 +70,44 @@ class Squeeze(HWCustomOp):
 
     # Datatype attribute as property for convenience
     @property
-    def inp_dtype(self):
+    def inp_dtype(self) -> BaseDataType:
+        """Return the input datatype."""
         # Note: Converts from string to QONNX data type
         return DataType[self.get_nodeattr("inp_dtype")]
 
     # Datatype attribute as property for convenience
     @property
-    def out_dtype(self):
+    def out_dtype(self) -> BaseDataType:
+        """Return the output datatype."""
         # Note: Converts from string to QONNX data type
         return DataType[self.get_nodeattr("out_dtype")]
 
     # Shape attribute as property for convenience
     @property
     def inp_shape(self):
+        """Return the input shape."""
         return self.get_nodeattr("inp_shape")
 
     # Shape attribute as property for convenience
     @property
     def out_shape(self):
+        """Return the output shape."""
         return self.get_nodeattr("out_shape")
 
     # Number of parallel processed elements as property for convenience
     @property
     def pe(self):
+        """Return the number of parallel processing elements (PE)."""
         return self.get_nodeattr("PE")
 
     # Makes an operation compatible with the output shape for shape inference
     # Note: Propagates shape forward, i.e., never asks for the shape of the
     # output, even if it seems easier.
-    def make_shape_compatible_op(self, model: ModelWrapper):  # noqa
+    def make_shape_compatible_op(self, model: ModelWrapper) -> NodeProto:  # noqa: ARG002
+        """Create a shape-compatible operation for ONNX shape inference.
+
+        Returns a standard ONNX Squeeze node for shape inference purposes.
+        """
         # Get the node wrapped by this custom op
         node = copy.deepcopy(self.onnx_node)
         # Though providing squeezed axes via a second input is supported by the
@@ -107,8 +125,9 @@ class Squeeze(HWCustomOp):
         return node
 
     # Infers the datatype of the node output
-    def infer_node_datatype(self, model: ModelWrapper):  # noqa
-        # Get the node wrapped by this custom op  # noqa Duplicate
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
+        """Infer and set the datatype of the node output."""
+        # Get the node wrapped by this custom op
         node = self.onnx_node  # noqa: Duplicate
         # Test for changing input datatype
         if model.get_tensor_datatype(node.input[0]) != self.inp_dtype:
@@ -141,7 +160,7 @@ class Squeeze(HWCustomOp):
         # Force the output data type stored as a node attribute
         model.set_tensor_datatype(node.output[0], self.out_dtype)
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context, graph) -> None:
         """Execute unsqueeze operation (Python fallback)."""
         # Get the node wrapped by this custom op
         node = self.onnx_node  # noqa: Duplicate
@@ -164,24 +183,28 @@ class Squeeze(HWCustomOp):
 
     # Verifies the node attributes, inputs and outputs
     def verify_node(self):
+        """Verify the node attributes, inputs and outputs."""
         # TODO: Implement
         return []
 
     # Note: End of QONNX CustomOp region, below is FINN HWCustomOp stuff
 
     # Gets the datatype of input at index ind
-    def get_input_datatype(self, ind=0):
+    def get_input_datatype(self, ind=0) -> BaseDataType:
+        """Return the datatype of the input at the given index."""
         # There is only one proper input (we ignore the optional axes input
         # here)
         return self.inp_dtype
 
     # Gets the datatype of the output at index ind
-    def get_output_datatype(self, ind=0):
+    def get_output_datatype(self, ind=0) -> BaseDataType:
+        """Return the datatype of the output at the given index."""
         # There is only one output, the type is set as an attribute
         return self.out_dtype
 
     # Gets the shape of the input at index ind without folding
     def get_normal_input_shape(self, ind=0):
+        """Return the unfolded input shape at the given index."""
         # Infer shape of axes input
         if ind == 1:
             return (len(self.get_nodeattr("axes")),)
@@ -190,11 +213,16 @@ class Squeeze(HWCustomOp):
 
     # Gets the shape of the output at index ind without folding
     def get_normal_output_shape(self, ind=0):
+        """Return the unfolded output shape at the given index."""
         # The output shape is stored as a node attribute
         return self.out_shape
 
     # Gets the shape of the input at index ind with folding
     def get_folded_input_shape(self, ind=0):
+        """Return the folded input shape at the given index.
+
+        Applies PE-based folding to the last dimension.
+        """
         # Axes input
         if ind == 1:
             return self.get_normal_input_shape(ind=ind)
@@ -207,6 +235,10 @@ class Squeeze(HWCustomOp):
 
     # Gets the shape of the output at index ind with folding
     def get_folded_output_shape(self, ind=0):
+        """Return the folded output shape at the given index.
+
+        Applies PE-based folding to the last dimension.
+        """
         # Get the normal shape before applying folding
         *num_outputs, num_elems = self.get_normal_output_shape(ind=ind)
         # Valid folding requires the PE to divide the number of elements
@@ -216,6 +248,7 @@ class Squeeze(HWCustomOp):
 
     # Widths of the input data stream of the input at index ind
     def get_instream_width(self, ind=0):
+        """Return the width of the input stream in bits at the given index."""
         # Axes input is not exposed:
         if ind == 1:
             return 0
@@ -228,6 +261,7 @@ class Squeeze(HWCustomOp):
 
     # Widths of the output data stream of the output at index ind
     def get_outstream_width(self, ind=0):
+        """Return the width of the output stream in bits at the given index."""
         # Get the number of bits used to represent the output
         o_bits = self.get_output_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
@@ -239,6 +273,7 @@ class Squeeze(HWCustomOp):
     # Gets the number of expected output values, i.e. how many times read()
     # could/should be called on any output stream of this operator
     def get_number_output_values(self):
+        """Return the number of expected output values from the operator."""
         # Elements over all but the last dimension of the output folded along
         # the embedding dimension.
         return np.prod(self.get_folded_output_shape()[:-1])
@@ -246,6 +281,7 @@ class Squeeze(HWCustomOp):
     # Derives the expected cycles for the squeeze operation given the folding
     # configuration
     def get_exp_cycles(self):
+        """Return the expected number of cycles for the squeeze operation."""
         # Number of iterations required to process the whole folded stream
         #   Note: This is all but the PE (last, parallelized) dimension
         return np.prod(self.get_folded_output_shape()[:-1])
