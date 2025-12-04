@@ -576,9 +576,9 @@ def _build(
 
     # Set output directory to where the config lies, not where FINN lies
     if output is not None:
-        dfbc.output_dir = output
+        dfbc.output_dir = str(Path(output).expanduser().absolute())
     if not Path(dfbc.output_dir).is_absolute():
-        dfbc.output_dir = str((flow_config.parent / dfbc.output_dir).absolute())
+        dfbc.output_dir = str((flow_config.parent / Path(dfbc.output_dir).expanduser()).absolute())
     status(f"Output directory is {dfbc.output_dir}")
 
     # Set verification steps
