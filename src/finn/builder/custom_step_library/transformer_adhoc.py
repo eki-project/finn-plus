@@ -170,31 +170,32 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
     # clock and target throughput
     target_cycles_per_frame = cfg._resolve_cycles_per_frame()
 
-    # Skip semi-automatic folding if not target is configured
-    if target_cycles_per_frame is not None:
-        # Set folding to target cycles for all attention operators in the model
-        model = _set_folding_attention(model, target_cycles_per_frame)
+    # Skip entire step if target_fps is not set
+    # In this case the default step_set_fifo_depths will handle applying the given folding cfg
+    if target_cycles_per_frame is None:
+        return model
 
-        # Use FINN auto-folding to configure all other operators to reach the
-        # same target cycles
-        model = model.transform(
-            SetFolding(
-                target_cycles_per_frame, cfg.mvau_wwidth_max, cfg.folding_two_pass_relaxation
-            )
-        )
+    # Set folding to target cycles for all attention operators in the model
+    model = _set_folding_attention(model, target_cycles_per_frame)
 
-        # Two-pass relaxation for attention operators: Redo folding settings
-        # with lower target based on cycles of the slowest operator
-        if cfg.folding_two_pass_relaxation:
-            # Extract dataflow performance from the graph (has been annotated by
-            # SetFolding transformation)
-            perf_dict = model.analysis(dataflow_performance)
-            # Estimated cycles are above the target, so this is bottlenecked by
-            # some operator
-            if perf_dict["max_cycles"] > target_cycles_per_frame:
-                # Set folding to lower target cycles for all attention operators
-                # in the model
-                model = _set_folding_attention(model, perf_dict["max_cycles"])
+    # Use FINN auto-folding to configure all other operators to reach the
+    # same target cycles
+    model = model.transform(
+        SetFolding(target_cycles_per_frame, cfg.mvau_wwidth_max, cfg.folding_two_pass_relaxation)
+    )
+
+    # Two-pass relaxation for attention operators: Redo folding settings
+    # with lower target based on cycles of the slowest operator
+    if cfg.folding_two_pass_relaxation:
+        # Extract dataflow performance from the graph (has been annotated by
+        # SetFolding transformation)
+        perf_dict = model.analysis(dataflow_performance)
+        # Estimated cycles are above the target, so this is bottlenecked by
+        # some operator
+        if perf_dict["max_cycles"] > target_cycles_per_frame:
+            # Set folding to lower target cycles for all attention operators
+            # in the model
+            model = _set_folding_attention(model, perf_dict["max_cycles"])
 
     # Hardware attributes to be extracted from each node
     hw_attrs = {
