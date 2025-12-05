@@ -1263,7 +1263,8 @@ def parse_kv(ctx, self, value):
         elif data_type == "Int":
             v = int(v)
         elif data_type == "Bool":
-            v = bool(v)
+            # Is always True except for v == False
+            v = not (v == "False")
         elif data_type == "Float":
             v = float(v)
         else:
