@@ -405,11 +405,6 @@ class DependencyUpdater:
             )
             raise FINNDependencyInstallationError(pip_subprocess_result.stderr)
             return False
-
-        # In editable install cases we need to make the package available in this run
-        # otherwise it will only be available on the next start
-        if install_editable:
-            sys.path.append(str(target.absolute()))
         return not self.is_outdated(package_name)
 
     def _install_boardfile_dependency(self, package_name: str) -> bool:
@@ -697,3 +692,15 @@ class DependencyUpdater:
                 Panel("[green]All dependencies are already cached and up to date.[/green]"),
                 justify="center",
             )
+
+        # We need to update sys.path with the newly installed packages
+        # Instead of calling importlib.invalidate_caches(), we let the site
+        # package add the site-specific directories. This function is called
+        # implicitly upon interpreter start, and we call it manually again to
+        # update the path.
+        # Updating sys.path _manually_ seems to introduce issues.
+        # https://docs.python.org/3/library/site.html#site.main
+        # https://stackoverflow.com/questions/25384922/how-to-refresh-sys-path
+        import site
+
+        site.main()
