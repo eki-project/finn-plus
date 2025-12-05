@@ -116,8 +116,8 @@ def prep_rtlsim_io_dict(model, execution_context):
 
 def file_to_basename(x: str | Path) -> str:
     """Given a path return it's name (basename), without any symlinks."""
-    return str(Path(x).resolve())
-    # return os.path.basename(os.path.realpath(x))
+    # return str(Path(x).resolve())
+    return os.path.basename(os.path.realpath(x))
 
 
 def rtlsim_exec_cppxsi(

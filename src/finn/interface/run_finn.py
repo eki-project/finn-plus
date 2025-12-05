@@ -844,20 +844,31 @@ def bench(
 @finn_deps_definitions
 @finn_build_dir
 @num_default_workers
+@skip_dep_update
 @click.option(
     "--variant",
     "-v",
     help="Which test to execute (quick, quicktest_ci, full_ci)",
     default="quick",
     show_default=True,
-    type=click.Choice(["quick", "quicktest_ci", "full_ci"]),
+    type=click.Choice(["quick", "quicktest_ci", "full_ci", "custom"]),
+)
+@click.option(
+    "--name",
+    default="",
+    required=False,
+    help="Define the test to run. Only usable in combination with --variant custom. "
+    "Can be passed the same syntax as pytest directly (my_test_module.py "
+    "| my_tests.py::TestClass::myTest | etc.)",
 )
 @click.option("--num-test-workers", "-t", default="auto", show_default=True)
 def test(
     variant: str,
+    name: str,
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     num_default_workers: int,
+    skip_dep_update: bool,
     num_test_workers: str,
     finn_build_dir: Path | None,
 ) -> None:
@@ -873,7 +884,7 @@ def test(
         finn_build_dir.mkdir(parents=True, exist_ok=True)
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
-        automatic_dependency_updates=True,
+        automatic_dependency_updates=not skip_dep_update,
         flow_config=finn_build_dir / "dummy.yaml",
         **get_function_args(),
     )
@@ -887,7 +898,7 @@ def test(
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
-    run_test(variant, num_test_workers)
+    run_test(variant, num_test_workers, name)
 
 
 @click.group(help="Dependency management")

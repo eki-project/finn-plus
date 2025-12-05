@@ -431,13 +431,11 @@ class HWCustomOp(CustomOp):
         Currently utilized by MVAU, VVAU and HLS Thresholding layer."""
         ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls"]
         if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
-            template_path = os.path.join(
-                str(
-                    get_settings().finn_rtllib
-                    / "memstream"
-                    / "hdl"
-                    / "memstream_wrapper_template.v"
-                )
+            template_path = str(
+                Path(get_settings().finn_rtllib)
+                / "memstream"
+                / "hdl"
+                / "memstream_wrapper_template.v"
             )
             mname = self.onnx_node.name
             if self.onnx_node.op_type.startswith("Thresholding"):

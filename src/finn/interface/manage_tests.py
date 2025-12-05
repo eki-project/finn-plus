@@ -7,10 +7,11 @@ from pathlib import Path
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import status
+from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
 
 
-def run_test(variant: str, num_workers: str) -> None:
+def run_test(variant: str, num_workers: str, name: str = "") -> None:
     """Run a given test variant with the given number of workers."""
     original_dir = Path.cwd()
 
@@ -23,6 +24,16 @@ def run_test(variant: str, num_workers: str) -> None:
 
     os.chdir(os.environ["FINN_TESTS"])
     match variant:
+        case "custom":
+            if name == "":
+                raise FINNUserError(
+                    "--variant custom was specified, but no test was "
+                    "given (please additionally pass --name "
+                    "<test-name> in pytest syntax)"
+                )
+            subprocess.run(
+                shlex.split(f"{sys.executable} -m pytest -n {num_workers} {name}", posix=IS_POSIX)
+            )
         case "quick":
             subprocess.run(
                 shlex.split(
