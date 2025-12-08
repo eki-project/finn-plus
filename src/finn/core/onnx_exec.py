@@ -26,6 +26,18 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""ONNX model execution utilities for FINN.
+
+This module provides enhanced ONNX model execution capabilities that extend
+the base QONNX execution functionality with FINN-specific features, including
+RTL simulation support and model debugging utilities.
+
+Key Functions:
+- execute_onnx: Enhanced ONNX execution with RTL simulation support
+- execute_onnx_and_make_model: Create debug models with intermediate activations
+- compare_execution: Compare outputs between two models
+"""
+
 import copy
 import numpy as np
 import qonnx.analysis.topology as ta
@@ -114,7 +126,8 @@ def execute_onnx_and_make_model(model, input_dict):
     new_model = copy.deepcopy(model)
     # create value_info entries and initializers for everything
     for i in execution_context.keys():
-        new_model.set_initializer(i, execution_context[i])
+        if i != "" and execution_context[i] is not None:
+            new_model.set_initializer(i, execution_context[i])
     for vi in new_model.graph.value_info:
         new_model.graph.output.append(vi)
     return new_model

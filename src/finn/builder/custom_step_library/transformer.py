@@ -1,13 +1,16 @@
-# ADAPTED FROM Christoph's radioml-transformer repository, specifically these files:
-# build_steps.py
-# custom/apply_config.py
+"""
+Transformer-specific build steps for FINN.
 
-# Copies (deep-copies) python objects
-import copy
+ADAPTED FROM Christoph's radioml-transformer repository, specifically these files:
+build_steps.py
+custom/apply_config.py
+
+This module contains custom build steps and transformations specifically designed
+for transformer neural network architectures, including attention mechanisms,
+elementwise operations, and various hardware conversion steps.
+"""
+
 import json
-
-# Numpy for loading and comparing the verification input/output
-import numpy as np
 
 # YAML for loading experiment configurations
 import yaml
@@ -105,7 +108,6 @@ from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 # Transformations preparing the operators for synthesis and simulation
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
-from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 
 # Converts fork-nodes to ReplicateStream hardware operator
 from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
@@ -157,9 +159,6 @@ from finn.transformation.streamline.reorder import (
 )
 from finn.transformation.streamline.streamline_plus import StreamlinePlus as Streamline
 
-# Execute onnx model graphs from the dataflow parent for verification
-from finn.util.test import execute_parent
-
 
 # Prepares the graph to be consumed by FINN:
 # 1. Some graph cleanup removing unused tensors, nodes without effect and
@@ -169,8 +168,31 @@ from finn.util.test import execute_parent
 # 3. Converts all QONNX Quant nodes to MultiThreshold operations which can
 #  absorb scales and biases during streamlining
 def prepare_graph(range_info: RangeInfo):
+    """
+    Prepares the graph to be consumed by FINN.
+
+    Performs graph cleanup, lowers complex operations to basic ones, and converts
+    QONNX Quant nodes to MultiThreshold operations.
+
+    Args:
+        range_info: Range information for seeding range analysis.
+
+    Returns:
+        A wrapped transformation step function that performs graph preparation.
+    """
+
     # Wrap the actual transformation/build step function
     def step_prepare_graph(model: ModelWrapper, cfg: DataflowBuildConfig):
+        """
+        The actual transformation/build step function that prepares the graph.
+
+        Args:
+            model: The model wrapper containing the ONNX graph.
+            cfg: The dataflow build configuration.
+
+        Returns:
+            The transformed model with prepared graph.
+        """
         # Exhaustively apply the set of cleanup transformations
         model = model.transform(
             ComposedTransformation(
@@ -255,6 +277,18 @@ def prepare_graph(range_info: RangeInfo):
 # Applies the custom set of exhaustive streamlining transformations, also taking
 # special topology like attention, residuals, splits and transposes into account
 def step_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """
+    Applies custom exhaustive streamlining transformations.
+
+    Takes special topology like attention, residuals, splits and transposes into account.
+
+    Args:
+        model: The model wrapper containing the ONNX graph.
+        cfg: The dataflow build configuration.
+
+    Returns:
+        The streamlined model.
+    """
     # These should not be applied exhaustively with the other streamlining
     # transformations to not end up in cycles.
     # Note: This is essential to allow some Add operations to be
@@ -279,6 +313,19 @@ def step_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
 # Note: This includes some necessary cleanup after converting the pattern, in
 # particular squeezing the data layouts throughout the graph
 def step_convert_attention_to_hw(model: ModelWrapper, _: DataflowBuildConfig):
+    """
+    Converts scaled dot-product attention operations to FINN hardware operations.
+
+    Includes necessary cleanup after converting the pattern, in particular squeezing
+    the data layouts throughout the graph.
+
+    Args:
+        model: The model wrapper containing the ONNX graph.
+        _: The dataflow build configuration (unused).
+
+    Returns:
+        The model with attention and multi-heads mapped to hardware operators.
+    """
     # Try to infer reshaping of attention heads
     model = model.transform(InferMultiHeads())  # noqa: Duplicate
     # Try to mode the mult-head splitting past the multi thresholds
@@ -340,6 +387,16 @@ def step_convert_attention_to_hw(model: ModelWrapper, _: DataflowBuildConfig):
 # Function running the transformations to convert elementwise binary operations
 # to their hardware implementations
 def step_convert_elementwise_binary_to_hw(model: ModelWrapper, _):
+    """
+    Converts elementwise binary operations to their hardware implementations.
+
+    Args:
+        model: The model wrapper containing the ONNX graph.
+        _: The dataflow build configuration (unused).
+
+    Returns:
+        The model with elementwise operations converted to hardware operators.
+    """
     # Convert elementwise operations to hardware operators
     #   Note: Do not convert the final Mul operator at the output
     return model.transform(
@@ -349,18 +406,44 @@ def step_convert_elementwise_binary_to_hw(model: ModelWrapper, _):
 
 # Converts Split and Concat operations to hardware custom operators
 def step_convert_split_concat_to_hw(model: ModelWrapper, _):
+    """
+    Converts Split and Concat operations to hardware custom operators.
+
+    Args:
+        model: The model wrapper containing the ONNX graph.
+        _: The dataflow build configuration (unused).
+
+    Returns:
+        The model with Split and Concat operations converted to hardware layers.
+    """
     return model.transform(InferSplitLayer()).transform(InferConcatLayer())
 
 
 # Function running the transformations to convert Gather, i.e., index lookup,
 # nodes to their hardware implementations
 def step_convert_lookup_to_hw(model: ModelWrapper, _):
+    """
+    Converts Gather (index lookup) nodes to their hardware implementations.
+
+    Args:
+        model: The model wrapper containing the ONNX graph.
+        _: The dataflow build configuration (unused).
+
+    Returns:
+        The model with Gather operations converted to Lookup layers.
+    """
     # Iterate all nodes in the graph keeping track of the index
     for index, node in enumerate(model.graph.node):
         # If this is a Gather node, force the input (index) type annotation
         if node.op_type == "Gather":
-            # Force to unsigned 64-bit integer for now
+            # Force input type to unsigned 64-bit integer for now
             model.set_tensor_datatype(node.input[1], DataType["UINT64"])
+            # Workaround:
+            # Also force global input to UINT64 to avoid type inference to reset it to FLOAT32
+            # TODO: Address properly by either
+            # 1) Annotating the global input with the correct datatype (at export)
+            # 2) Make ModelWrapper.get_tensor_datatype() fall back to container type, not of FP32
+            model.set_tensor_datatype(model.graph.input[0].name, DataType["UINT64"])
             # Get the value info for the input tensor to have access to the ONNX
             # datatype of the tensor
             value_info = model.get_tensor_valueinfo(node.input[1])
@@ -373,11 +456,35 @@ def step_convert_lookup_to_hw(model: ModelWrapper, _):
 # Converts depth-wise convolution to hardware operator calling the
 # InferVectorVectorActivation transformation
 def step_convert_depth_wise_to_hw(model: ModelWrapper, _: DataflowBuildConfig):
+    """
+    Converts depth-wise convolution to hardware operator.
+
+    Calls the InferVectorVectorActivation transformation.
+
+    Args:
+        model: The model wrapper containing the ONNX graph.
+        _: The dataflow build configuration (unused).
+
+    Returns:
+        The model with depth-wise convolutions converted to hardware operators.
+    """
     return model.transform(InferVectorVectorActivation())
 
 
 # Function running the InferReplicateStream transformation
 def step_replicate_streams(model: ModelWrapper, _):
+    """
+    Runs the InferReplicateStream transformation.
+
+    Properly replicates the stream feeding the query, key and value projections.
+
+    Args:
+        model: The model wrapper containing the ONNX graph.
+        _: The dataflow build configuration (unused).
+
+    Returns:
+        The model with replicated streams for attention projections.
+    """
     # Properly replicate the stream feeding the query, key and value projections
     return model.transform(InferReplicateStream())
 
@@ -385,9 +492,30 @@ def step_replicate_streams(model: ModelWrapper, _):
 # Custom step for setting the parallelism to meet the target of T^2 cycles per
 # sequence
 def set_target_parallelization(seq_len: int, emb_dim: int):  # noqa: emb_dim
+    """
+    Custom step for setting the parallelism to meet the target of T^2 cycles per sequence.
+
+    Args:
+        seq_len: The sequence length.
+        emb_dim: The embedding dimension (unused but kept for compatibility).
+
+    Returns:
+        A wrapped transformation step function that configures parallelization.
+    """
+
     # The wrapping function is a generator and this is the actual build step
     # function taking the model and build configuration
     def step_set_target_parallelization(model: ModelWrapper, cfg: DataflowBuildConfig):
+        """
+        The actual build step function that sets target parallelization.
+
+        Args:
+            model: The model wrapper containing the ONNX graph.
+            cfg: The dataflow build configuration.
+
+        Returns:
+            The model with configured parallelization to meet T^2 cycles target.
+        """
         # Run over all nodes in the model graph to look for attention operators,
         # which are currently not handled by the SetFolding transformation
         for index, node in enumerate(model.graph.node):
@@ -416,8 +544,22 @@ def set_target_parallelization(seq_len: int, emb_dim: int):  # noqa: emb_dim
 
 # Applies configuration dictionary to the model graph
 class ApplyConfig(Transformation):
+    """
+    Applies configuration dictionary to the model graph.
+
+    Transformation that applies operator-specific and node-specific configurations
+    from a dictionary to the model graph nodes.
+    """
+
     # Initializes the transformation with the configuration dictionary
+
     def __init__(self, config):
+        """
+        Initializes the transformation with the configuration dictionary.
+
+        Args:
+            config: Configuration dictionary containing default and node-specific settings.
+        """
         # Initialize the transformation base class
         super().__init__()
         # Register the configuration dictionary to be used in apply()
@@ -425,6 +567,15 @@ class ApplyConfig(Transformation):
 
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """
+        Applies the transform to a whole model graph.
+
+        Args:
+            model: The model wrapper containing the ONNX graph.
+
+        Returns:
+            Tuple of (transformed_model, graph_modified_flag).
+        """
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Iterate all nodes in the graph keeping track of the index
@@ -456,9 +607,34 @@ class ApplyConfig(Transformation):
 
 # Custom build step trying to set appropriate FIFO sizes for the transformer
 def set_fifo_depths(seq_len: int, emb_dim: int, uram_threshold: int = 32):  # noqa: emb_dim
+    """
+    Custom build step to set appropriate FIFO sizes for the transformer.
+
+    Args:
+        seq_len: The sequence length.
+        emb_dim: The embedding dimension (unused but kept for compatibility).
+        uram_threshold: Threshold depth for using URAM instead of BRAM (default: 32).
+
+    Returns:
+        A wrapped transformation step function that configures FIFO depths.
+    """
+
     # The wrapping function is a generator and this is the actual build step
     # function taking the model and build configuration
     def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
+        """
+        The actual build step function that sets FIFO depths.
+
+        Configures appropriate FIFO sizes for transformer operations, with special
+        handling for attention and residual branches.
+
+        Args:
+            model: The model wrapper containing the ONNX graph.
+            cfg: The dataflow build configuration.
+
+        Returns:
+            The model with configured FIFO depths and hardware attributes.
+        """
         # Run over all nodes in the model graph
         for index, node in enumerate(model.graph.node):
             # Convert this to the custom-op instance for easy access to node
@@ -653,6 +829,19 @@ def set_fifo_depths(seq_len: int, emb_dim: int, uram_threshold: int = 32):  # no
 
 # Custom step applying our custom format of folding configuration to the graph
 def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """
+    Custom step applying custom format of folding configuration to the graph.
+
+    Loads and applies folding configuration from YAML file if specified in the
+    build configuration.
+
+    Args:
+        model: The model wrapper containing the ONNX graph.
+        cfg: The dataflow build configuration.
+
+    Returns:
+        The model with folding configuration applied.
+    """
     # Only applies if a configuration file is given
     if cfg.folding_config_file is not None:
         # Load the configuration dictionary form YAML file
@@ -677,96 +866,3 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     # Return model with configuration applied
     return model
-
-
-# Runs a node-by-node C++ simulation of the model saving the fill execution
-# context
-def node_by_node_cppsim(model: ModelWrapper, cfg: DataflowBuildConfig):
-    # Save the original model
-    original = model
-    # Copy the model
-    model = copy.deepcopy(model)
-    # Set model execution mode to C++ simulation
-    model = model.transform(SetExecMode("cppsim"))
-    # Generates the C++ source and compiles the C++ simulation
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareCppSim())
-    model = model.transform(CompileCppSim())
-
-    # Load the verification input/output pair
-    inp = np.load(cfg.verify_input_npy)  # noqa
-    out = np.load(cfg.verify_expected_output_npy)
-
-    # Path to the parent model wrapping the streaming dataflow partition and the
-    # wrapped child model, i.e., the inside of the streaming dataflow partition
-    parent = f"{cfg.output_dir}/intermediate_models/dataflow_parent.onnx"
-    child = f"{cfg.output_dir}/intermediate_models/verify_cppsim.onnx"
-    # Save the child model prepared for C++ simulation
-    model.save(child)
-    # Load the parent model to pass to verification execution
-    parent_model = ModelWrapper(parent)
-
-    # Reshape the input/output to match the model
-    inp = inp.reshape(parent_model.get_tensor_shape(model.graph.input[0].name))
-    out = out.reshape(parent_model.get_tensor_shape(model.graph.output[0].name))
-
-    # Execute the onnx model to collect the result
-    # context = execute_onnx(model, context, return_full_exec_context=True)
-    context = execute_parent(parent, child, inp, return_full_ctx=True)
-    # Extract the output tensor from the execution context
-    model_out = context[parent_model.graph.output[0].name]
-    # Compare input to output
-    result = {True: "SUCCESS", False: "FAIL"}[np.allclose(out, model_out)]
-    # Save the verification outputs into the configured build directory
-    verification_output = f"{cfg.output_dir}/verification_output/"
-    # Save the verification execution context
-    np.savez(f"{verification_output}/verify_cppsim_{result}.npz", **context)
-    # Return the original, unmodified model
-    return original
-
-
-# Runs a node-by-node RTL simulation of the model saving the fill execution
-# context
-def node_by_node_rtlsim(model: ModelWrapper, cfg: DataflowBuildConfig):
-    # Save the original model
-    original = model
-    # Copy the model
-    model = copy.deepcopy(model)
-    # Set model execution mode to RTL simulation
-    model = model.transform(SetExecMode("rtlsim"))
-    # Generates the C++ source and compiles the RTL simulation
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareIP(cfg._resolve_fpga_part(), cfg.synth_clk_period_ns))  # noqa
-    model = model.transform(HLSSynthIP())
-    model = model.transform(PrepareRTLSim())
-
-    # Load the verification input/output pair
-    inp = np.load(cfg.verify_input_npy)  # noqa
-    out = np.load(cfg.verify_expected_output_npy)
-
-    # Path to the parent model wrapping the streaming dataflow partition and the
-    # wrapped child model, i.e., the inside of the streaming dataflow partition
-    parent = f"{cfg.output_dir}/intermediate_models/dataflow_parent.onnx"
-    child = f"{cfg.output_dir}/intermediate_models/verify_rtlsim.onnx"
-    # Save the child model prepared for RTL simulation
-    model.save(child)
-    # Load the parent model to pass to verification execution
-    parent_model = ModelWrapper(parent)
-
-    # Reshape the input/output to match the model
-    inp = inp.reshape(parent_model.get_tensor_shape(model.graph.input[0].name))
-    out = out.reshape(parent_model.get_tensor_shape(model.graph.output[0].name))
-
-    # Execute the onnx model to collect the result
-    # context = execute_onnx(model, context, return_full_exec_context=True)
-    context = execute_parent(parent, child, inp, return_full_ctx=True)
-    # Extract the output tensor from the execution context
-    model_out = context[parent_model.graph.output[0].name]
-    # Compare input to output
-    result = {True: "SUCCESS", False: "FAIL"}[np.allclose(out, model_out)]
-    # Save the verification outputs into the configured build directory
-    verification_output = f"{cfg.output_dir}/verification_output/"
-    # Save the verification execution context
-    np.savez(f"{verification_output}/verify_rtlsim_{result}.npz", **context)
-    # Return the original, unmodified model
-    return original

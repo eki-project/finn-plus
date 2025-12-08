@@ -1,0 +1,5 @@
+outs:
+- md5: 2bc9bfbb7e7cae734d0698a3072aa057
+  size: 102819113
+  hash: md5
+  path: resnet50_w1a2_exported.onnx

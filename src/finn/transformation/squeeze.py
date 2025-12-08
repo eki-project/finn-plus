@@ -1,3 +1,5 @@
+"""Transformation to squeeze tensors by removing dimensions of size 1."""
+
 # QONNX wrapper of ONNX model graphs
 # For array handling
 import numpy as np
@@ -10,6 +12,9 @@ from qonnx.core.modelwrapper import ModelWrapper
 
 # QONNX graph transformation base class
 from qonnx.transformation.base import Transformation
+
+# Transformation adding layout annotations to tensors
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
 
 # Transformations running qonnx datatype inference
 from qonnx.transformation.infer_datatypes import InferDataTypes
@@ -27,19 +32,22 @@ from qonnx.util.basic import get_by_name, remove_by_name
 from finn.util.logging import log
 
 # Small utility functions for graph transformations
-from .util import is_threshold
+from .util import is_attention, is_threshold
 
 
-# Squeezes, i.e., removes, dimensions of size 1
-# Note: Use this transformation with great care, it currently serves only the
-# purpose of turning the not well-supported 3d data layouts encountered in
-# transformer models with batch dimension of size 1 into 2d data layouts where
-# the sequence dimension is treated as a batch dimension. Everything else is
-# not tested, it might break the model or simply lack support for certain node
-# op-types.
 class Squeeze(Transformation):
-    # Applies the transform to a whole model graph
+    """
+    Squeezes, i.e., removes, dimensions of size 1
+    Note: Use this transformation with great care, it currently serves only the
+    purpose of turning the not well-supported 3d data layouts encountered in
+    transformer models with batch dimension of size 1 into 2d data layouts where
+    the sequence dimension is treated as a batch dimension. Everything else is
+    not tested, it might break the model or simply lack support for certain node
+    op-types.
+    """
+
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply squeeze transformation to remove size-1 dimensions."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # # Keep track of whether the graph has been modified
@@ -169,6 +177,9 @@ class Squeeze(Transformation):
                 shape = model.get_tensor_shape(node.input[0])
                 # Subtract the number of squeezed, i.e, size=1, axes before axis
                 axis = axis - sum(size == 1 for size in shape[:axis])
+                # Normalize the axis input: Turn negative counting axis to positive index
+                if axis < 0:
+                    axis = axis + len(shape)
                 # Update the attribute by removing and reinserting
                 remove_by_name(node.attribute, "axis")
                 node.attribute.append(oh.make_attribute("axis", axis))
@@ -406,7 +417,13 @@ class Squeeze(Transformation):
                 if any(is_threshold(op) for op in model.find_consumers(name)):
                     # Skip without warning
                     continue
+                # ... same for attention (all parameters are thresholds)
+                if any(is_attention(op) for op in model.find_consumers(name)):
+                    # Skip without warning
+                    continue
                 # First squeeze the actual data of the initializer tensors
+                # TODO: This creates illegal ONNX in certain cases (!), e.g.,
+                # for the axes input to Squeeze/Unsqueeze, which should not be a scalar
                 model.set_initializer(name, np.squeeze(init))
                 # Now also annotate the squeezed shape, otherwise the following
                 # shape inference might fail or break the graph
@@ -421,6 +438,7 @@ class Squeeze(Transformation):
         # model graph
         model = model.transform(InferShapes())
         model = model.transform(InferDataTypes())
+        model = model.transform((InferDataLayouts()))
         # Return the transformed model and indicate whether this transformation
         # needs to be repeated
         # Note: Never repeat this transformation as it might break when

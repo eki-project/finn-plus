@@ -16,12 +16,42 @@ jobs:
         run: pip install poetry poetry-dynamic-versioning
       - name: Config
         run: poetry config repositories.pypi https://upload.pypi.org/legacy/
-      - name: Build
+      - name: Build subpackages
+        run: |
+          # Build tests subpackage
+          cd tests
+          poetry install
+          poetry build
+          export VERSION=$(poetry version -s)
+          cd ..
+
+          # Build notebooks subpackage
+          cd notebooks
+          poetry install
+          poetry build
+          cd ..
+
+          # Update main pyproject.toml with the correct version
+          sed -i "s/finn-plus-tests = { version = \"\*\", optional = true }/finn-plus-tests = { version = \"$VERSION\", optional = true }/" pyproject.toml
+          sed -i "s/finn-plus-notebooks = { version = \"\*\", optional = true }/finn-plus-notebooks = { version = \"$VERSION\", optional = true }/" pyproject.toml
+      - name: Build main package
         run: |
           poetry install
           poetry build
-      - name: Publish
-        run: poetry publish -r pypi -u __token__ -p ${{ secrets.PYPI_TOKEN }}
+      - name: Publish all packages
+        run: |
+          # Publish tests subpackage
+          cd tests
+          poetry publish -r pypi -u __token__ -p ${{ secrets.PYPI_TOKEN }}
+          cd ..
+
+          # Publish notebooks subpackage
+          cd notebooks
+          poetry publish -r pypi -u __token__ -p ${{ secrets.PYPI_TOKEN }}
+          cd ..
+
+          # Publish main package
+          poetry publish -r pypi -u __token__ -p ${{ secrets.PYPI_TOKEN }}
   test:
     runs-on: ubuntu-24.04
     needs: deploy
@@ -33,4 +63,4 @@ jobs:
       - name: Setup
         run: pip install poetry poetry-dynamic-versioning
       - name: Install
-        run: pip install finn-plus==$(poetry version -s)
+        run: pip install finn-plus[all]==$(poetry version -s)

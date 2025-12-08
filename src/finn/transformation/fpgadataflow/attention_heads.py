@@ -1,3 +1,4 @@
+"""Transformations for multi-head attention patterns in FPGA dataflow."""
 # fmt: off
 # Disable formatter. This is deliberately formatted to stay within 80 characters
 # per line. Black, however, formats some lines going beyond this.
@@ -40,8 +41,15 @@ from finn.util.logging import log
 # Infers reshaping of attention heads, i.e., converts the Reshape and transpose
 # patterns to the SplitMultiHeads and MergeMultiHeads hardware custom operators.
 class InferMultiHeads(Transformation):
+    """Infer multi-head attention patterns and convert to custom operators.
+
+    Converts Reshape and Transpose patterns to SplitMultiHeads and
+    MergeMultiHeads hardware custom operators.
+    """
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transformation to infer multi-head patterns in the model graph."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -97,8 +105,8 @@ class InferMultiHeads(Transformation):
 
                 # The intermediate shape must be the same as specified as the
                 # second input to the reshape operation
-                assert (model.get_tensor_shape(mid)  # noqa
-                        == model.get_initializer(node.input[1])).all()  # noqa
+                assert (model.get_tensor_shape(mid)
+                        == model.get_initializer(node.input[1])).all()
                 # Expected layout after reshape is "head last"
                 _, heads, _ = model.get_tensor_shape(mid)
 
@@ -338,14 +346,20 @@ class InferMultiHeads(Transformation):
 # any other operations between splitting and merging the attention heads,
 # besides the actual attention operator.
 class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
+    """Move SplitMultiHeads operation past MultiThreshold operation.
+
+    Required as a precondition for unrolling attention heads.
+    """
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transformation to move SplitMultiHeads past MultiThreshold."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
         graph_modified = False
         # Iterate all nodes in the graph keeping track of the index
-        for index, node in enumerate(graph.node):
+        for _index, node in enumerate(graph.node):
             # Transformation applies to SplitMultiHeads operation (not Merge)
             if node.op_type == "SplitMultiHeads":
                 # Slicing should not fork or join
@@ -362,10 +376,10 @@ class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
                     continue
                 # Now we know there is only one consumer operation following the
                 # slice node
-                thresholds_node = model.find_direct_successors(node)[0]  # noqa
+                thresholds_node = model.find_direct_successors(node)[0]
                 # Successor must actually be a MultiThresholds for this
                 # transform to apply
-                if not thresholds_node.op_type == "MultiThreshold":
+                if thresholds_node.op_type != "MultiThreshold":
                     # Skip transforming this instance, probably no need to warn
                     continue
 
@@ -401,9 +415,11 @@ class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
                 # Convert heads attribute proto to integer
                 heads = heads.i
 
-                # Repeat the thresholds for each head along the channel
-                # dimension
-                thresholds = np.concatenate(heads * [thresholds])
+                # Do not concatenate per-tensor thresholds
+                if thresholds.shape[0] > 1:
+                    # Repeat the thresholds for each head along the channel
+                    # dimension
+                    thresholds = np.concatenate(heads * [thresholds])
                 # Update the thresholds tensor to simply repurpose the existing
                 # node
                 model.set_initializer(thresholds_node.input[1], thresholds)
@@ -451,8 +467,15 @@ class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
 # excessively large streams and maybe even allow absorbing the thresholds into
 # the attention operator.
 class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
+    """Move MergeMultiHeads operation past MultiThreshold operation.
+
+    Avoids merging excessively large streams and potentially allows absorbing
+    thresholds into the attention operator.
+    """
+
     # Applies the transform to a whole model graph
-    def apply(self, model: ModelWrapper):  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Apply the transformation to move MergeMultiHeads past MultiThreshold."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -478,7 +501,7 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                 thresholds_node = model.find_direct_successors(node)[0]  # noqa
                 # Successor must actually be a MultiThresholds for this
                 # transform to apply
-                if not thresholds_node.op_type == "MultiThreshold":
+                if thresholds_node.op_type != "MultiThreshold":
                     # Skip transforming this instance, probably no need to warn
                     continue
 
@@ -514,9 +537,15 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                 # Convert heads attribute proto to integer
                 heads = heads.i
 
-                # Split the thresholds for each head along the channel dimension
-                # Note: This is a list of thresholds per head now
-                thresholds = np.split(thresholds, heads)
+                # Do not split per-tensor thresholds (there is only one set of
+                # thresholds)
+                if thresholds.shape[0] > 1:
+                    # Split the thresholds for each head along the channel
+                    # dimension
+                    thresholds = np.split(thresholds, heads)
+                else:
+                    # Replicate the single per-tensor thresholds
+                    thresholds = [thresholds for _ in range(heads)]
 
                 # Need to insert a new thresholding operation at each input of
                 # the multi-head merging
@@ -572,7 +601,12 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
 
 # Detects multi-head attention pattern, i.e., scaled dot-product attention
 # between head splitting and merging
-def is_multi_head_attention(node: NodeProto, model: ModelWrapper):  # noqa
+def is_multi_head_attention(node: NodeProto, model: ModelWrapper) -> bool:
+    """Detect if a node is part of a multi-head attention pattern.
+
+    Returns True if the node is a ScaledDotProductAttention with proper
+    SplitMultiHeads and MergeMultiHeads operations.
+    """
     # The anchor node must be scaled dot product attention
     if node.op_type == "ScaledDotProductAttention":
         # Get the nodes feeding the attention operation
@@ -603,8 +637,14 @@ def is_multi_head_attention(node: NodeProto, model: ModelWrapper):  # noqa
 # Unrolls multiple attention heads in the onnx graph to be implemented in
 # parallel
 class UnrollMultiHeadAttention(Transformation):
+    """Unroll multiple attention heads for parallel implementation.
+
+    Transforms the ONNX graph to implement attention heads in parallel.
+    """
+
     # Applies the transform to a whole model graph
-    def apply(self, model: ModelWrapper):  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Apply the transformation to unroll multi-head attention."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified

@@ -87,16 +87,15 @@ from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC, MoveScalarLinearPastInvariants
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import make_build_dir, test_board_map
-from finn.util.pytorch import ToTensor
-from finn.util.test import (
-    execute_parent,
+from finn.util.execution import execute_parent
+from tests.testing_util.pytorch import ToTensor
+from tests.testing_util.test import (
     get_build_env,
     get_example_input,
     get_topk,
     get_trained_network_and_ishape,
     load_test_checkpoint_or_skip,
 )
-
 
 target_clk_ns = 20
 mem_mode = "internal_decoupled"
