@@ -1,0 +1,75 @@
+{
+    "status": "ok",
+    "verification": "success",
+    "estimate": {
+        "resources": {
+            "LUT": 22992.0,
+            "DSP": 2816.0,
+            "BRAM_18K": 1056.0,
+            "URAM": 1.0
+        },
+        "performance": {
+            "critical_path_cycles": 1377280,
+            "max_cycles": 65536,
+            "max_cycles_node_name": "Thresholding_rtl_0",
+            "estimated_throughput_fps": 1525.87890625,
+            "estimated_latency_ns": 13772800.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 147320.0,
+            "FF": 17937.0,
+            "DSP": 35.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 183.0,
+            "URAM": 0.0
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 233
+    },
+    "synth(ooc)": {
+        "resources": {
+            "LUT": 255513.0,
+            "LUTRAM": 7839.0,
+            "FF": 226019.0,
+            "DSP": 3363.0,
+            "BRAM": 606.0,
+            "BRAM_18K": 20.0,
+            "BRAM_36K": 596.0,
+            "URAM": 112.0
+        },
+        "timing": {
+            "WNS": 0.5037801265716553,
+            "fmax_mhz": 105.30505962673945
+        }
+    },
+    "time": {
+        "step_prepare_graph": 49,
+        "step_streamline": 93,
+        "step_convert_attention_to_hw": 20,
+        "step_convert_elementwise_binary_to_hw": 0,
+        "step_convert_lookup_to_hw": 0,
+        "step_convert_split_concat_to_hw": 0,
+        "step_convert_depth_wise_to_hw": 0,
+        "step_replicate_streams": 0,
+        "step_convert_to_hw": 0,
+        "step_specialize_layers": 3,
+        "step_create_dataflow_partition": 0,
+        "step_set_target_parallelization": 0,
+        "step_apply_folding_config": 247,
+        "step_minimize_bit_width": 1,
+        "step_generate_estimate_reports": 0,
+        "step_hw_codegen": 26,
+        "step_hw_ipgen": 4201,
+        "step_set_fifo_depths": 29,
+        "step_create_stitched_ip": 7275,
+        "step_measure_rtlsim_performance": 0,
+        "step_out_of_context_synthesis": 4057,
+        "step_synthesize_bitfile": 0,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 16001
+    }
+}
