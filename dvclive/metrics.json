@@ -1,0 +1,17 @@
+{
+    "status": "failed",
+    "verification": "success",
+    "time": {
+        "step_prepare_graph": 12,
+        "step_streamline": 48,
+        "step_convert_attention_to_hw": 10,
+        "step_convert_elementwise_binary_to_hw": 0,
+        "step_convert_lookup_to_hw": 0,
+        "step_convert_split_concat_to_hw": 0,
+        "step_convert_depth_wise_to_hw": 0,
+        "step_replicate_streams": 0,
+        "step_convert_to_hw": 0,
+        "step_specialize_layers": 1,
+        "total_build_time": 71
+    }
+}
