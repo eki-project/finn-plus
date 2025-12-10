@@ -1,0 +1,15 @@
+params:
+  dut: transformer
+  seed: 12
+  model_dir: models/transformer/rml_conformer
+  board: RFSoC2x2
+  synth_clk_period_ns: 10
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
