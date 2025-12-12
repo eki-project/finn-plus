@@ -275,7 +275,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
                 )
                 weight_stream = weight_tensor_pe_flipped.flatten()
                 weight_stream = weight_stream.copy()
-                with Path.open(weight_file_name, "w") as f:
+                with Path(weight_file_name).open("w") as f:
                     for val in weight_stream:
                         f.write(val + "\n")
             elif weight_file_mode == "decoupled_runtime":

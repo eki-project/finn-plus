@@ -475,7 +475,7 @@ class HWCustomOp(CustomOp):
     def generate_hdl_dynload(self) -> None:
         """Generate HDL for dynamic load wrapper."""
         template_path = (
-            Path(os.environ["FINN_RTLLIB"]) / "dynload/hdl/dynamic_load_wrapper_template.v"
+            Path(get_settings().finn_rtllib) / "dynload" / "hdl" / "dynamic_load_wrapper_template.v"
         )
         mname = self.onnx_node.name
         pe = self.get_nodeattr("PE")

@@ -679,6 +679,7 @@ def build(
 @finn_build_dir
 @num_default_workers
 @skip_dep_update
+@batch
 @click.argument(
     "script",
     type=click.Path(exists=True, file_okay=True, dir_okay=False, executable=True, path_type=Path),
@@ -691,6 +692,7 @@ def run(
     skip_dep_update: bool,
     num_workers: int,
     script: Path,
+    batch: bool,
 ) -> None:
     """Click command line option to run a script in a FINN+ context.
 
@@ -710,7 +712,7 @@ def run(
         flow_config=script,
         **get_function_args(),
     )
-    prepare_finn(settings, accept_defaults)
+    prepare_finn(settings, accept_defaults, batch)
     Console().rule(
         f"[bold cyan]Starting script [/bold cyan][bold orange1]{script.name}[/bold orange1]"
     )
@@ -804,12 +806,14 @@ def config_wizard() -> None:
 @finn_deps_definitions
 @finn_build_dir
 @num_default_workers
+@batch
 def bench(
     bench_config: str,
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     num_default_workers: int,
     finn_build_dir: Path | None,
+    batch: bool,
 ) -> None:
     """Run a benchmark."""
     if finn_build_dir is not None:
@@ -827,7 +831,7 @@ def bench(
         flow_config=finn_build_dir / "dummy.yaml",
         **get_function_args(),
     )
-    prepare_finn(settings, True)
+    prepare_finn(settings, True, batch)
     Console().rule("RUNNING BENCHMARK")
 
     # Late import because we need prepare_finn to setup remaining dependencies first
@@ -862,6 +866,7 @@ def bench(
     "| my_tests.py::TestClass::myTest | etc.)",
 )
 @click.option("--num-test-workers", "-t", default="auto", show_default=True)
+@batch
 def test(
     variant: str,
     name: str,
@@ -871,6 +876,7 @@ def test(
     skip_dep_update: bool,
     num_test_workers: str,
     finn_build_dir: Path | None,
+    batch: bool,
 ) -> None:
     """Run a selected subset of the FINN(+) testsuite."""
     if finn_build_dir is None:
@@ -889,7 +895,7 @@ def test(
         **get_function_args(),
     )
 
-    prepare_finn(settings, True)
+    prepare_finn(settings, True, batch)
 
     # Save settings so that the test fixture can reload it
     if settings.settingsfile_exists():
@@ -912,8 +918,18 @@ def deps() -> None:
 @finn_deps
 @finn_deps_definitions
 @batch
+@click.option(
+    "--force",
+    "-f",
+    help="Overwrite any existing dependencies and make a clean install.",
+    is_flag=True,
+)
 def update(
-    accept_defaults: bool, finn_deps: Path | None, finn_deps_definitions: Path | None, batch: bool
+    accept_defaults: bool,
+    finn_deps: Path | None,
+    finn_deps_definitions: Path | None,
+    batch: bool,
+    force: bool,
 ) -> None:
     """Update all FINN+ dependencies and then exit."""
     if finn_deps is not None:
@@ -926,6 +942,8 @@ def update(
         flow_config=Path(),
         **get_function_args(),
     )
+    if force:
+        shutil.rmtree(settings.finn_deps)
     prepare_finn(settings, accept_defaults or batch, batch)
 
 

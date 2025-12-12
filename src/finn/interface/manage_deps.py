@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess as sp
 import sys
+import time
 import traceback
 import yaml
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -629,6 +630,7 @@ class DependencyUpdater:
     def update(self) -> None:
         """With a live display and multithreading update all dependencies that are outdated."""
         deps_outdated = self.get_outdated_dependencies()
+        start = time.time()
 
         # Function passed to threadpool
         def install_wrapper(package_name: str, status: _StatusTracker) -> bool:
@@ -680,7 +682,8 @@ class DependencyUpdater:
                     sys.exit(1)
             Console().print(
                 Panel(
-                    f"Installed [green bold]{status.total}[/green bold] dependencies. "
+                    f"Installed [green bold]{status.total}[/green bold] dependencies "
+                    f"in [green bold]{int(time.time()) - int(start)}s[/green bold].\n"
                     f"(Skipped [orange3 bold]{self.deps.get_dependency_count() - status.total}"
                     f"[/orange3 bold] dependencies "
                     f"due to existing installations.)"

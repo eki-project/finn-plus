@@ -29,6 +29,11 @@ git_deps:
         commit: "afc9720f10e551e1f734e137b21bb6d0a8342177"
         pip_install: False
         install_editable: False
+    dataset_loading:
+        url: "https://github.com/fbcotter/dataset_loading.git"
+        commit: "5b9faa226e5f7c857579d31cdd9acde8cdfb816f"
+        pip_install: True
+        install_editable: False
 
 boardfile_deps:
     avnet-bdf:
