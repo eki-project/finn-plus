@@ -11,7 +11,7 @@ git_deps:
         install_editable: True
     qonnx:
         url: "https://github.com/fpjentzsch/qonnx.git"
-        commit: "fab7dca2e1734cf8767fa3f6161f674aaa26a402"
+        commit: "61863d197f22d893503ba6383ffea8e49b896275"
         pip_install: True
         install_editable: True
     cnpy:
