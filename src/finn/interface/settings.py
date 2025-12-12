@@ -339,6 +339,9 @@ class FINNSettings(BaseModel):
             del data["finn_custom_hls"]
             del data["finn_notebooks"]
             del data["finn_tests"]
+        if self._num_default_workers == -1:
+            # Dont save this if its set to automatic detection
+            del data["num_default_workers"]
         with path.open("w+") as f:
             yaml.dump(data, f, yaml.Dumper)
 

@@ -324,7 +324,7 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "directory. If relative, this path is "
         "searched for from the root of the used FINN repository / installation.\n"
     )
-    settings.finn_deps = Prompt.ask("FINN_DEPS", default="deps")
+    settings.finn_deps = Prompt.ask("FINN_DEPS", default="finn_deps")
     console.clear()
     console.print(
         "[bold]FINN_DEPS_DEFINITIONS[/bold] points to the YAML file "
@@ -338,11 +338,11 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     console.print(
         "[bold]NUM_DEFAULT_WORKERS[/bold] specifies the number of "
         "workers to use in multithreaded contexts. By default "
-        "this is set to 75% of your available CPU cores.\n"
+        "if not set, this is set to 75% of your available CPU cores.\n"
+        "Set this to -1 to leave this to automatic detection for each new run.\n"
+        f"(Automatic detection would have set this to {settings.num_default_workers}).\n"
     )
-    settings.num_default_workers = IntPrompt.ask(
-        "NUM_DEFAULT_WORKERS", default=settings.num_default_workers
-    )
+    settings.num_default_workers = IntPrompt.ask("NUM_DEFAULT_WORKERS", default=-1)
     console.clear()
     console.print(
         "[bold]AUTOMATIC_DEPENDENCY_UPDATES[/bold] specifies whether FINN+ "
@@ -422,6 +422,10 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
     finn.util.settings._SETTINGS = settings  # noqa
     if "PYTHONPATH" not in os.environ:
         os.environ["PYTHONPATH"] = ""
+
+    # Create FINN_BUILD_DIR if it doesnt exist yet
+    if not settings.finn_build_dir.exists():
+        settings.finn_build_dir.mkdir()
 
     # Update / Install all dependencies
     if settings.automatic_dependency_updates:
