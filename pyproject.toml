@@ -42,7 +42,6 @@ finn = "finn.interface.run_finn:main"
 python = ">=3.10,<3.12"
 pybind11 = "3.0.1"                              # pybind11==3.0.1 already for FIFO sim rework, after rework remove module load
 bitstring = "~4.3.1"
-dataset_loading = { git = "https://github.com/fbcotter/dataset_loading.git", rev = "5b9faa226e5f7c857579d31cdd9acde8cdfb816f" }
 numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
 # Cannot upgrade onnx and onnxruntime any further. For now this seems to be the
 # last compatible pair which is also consistent with qonnx.

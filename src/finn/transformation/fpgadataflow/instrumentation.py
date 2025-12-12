@@ -94,10 +94,10 @@ class GenerateInstrumentationIP(Transformation):
         prjname = "project_instrwrap"
         ipgentcl = ipgentcl_template
         ipgentcl = ipgentcl.replace("$PROJECTNAME$", prjname)
-        ipgentcl = ipgentcl.replace("$HWSRCDIR$", wrapper_output_dir)
-        ipgentcl = ipgentcl.replace("$FINNHLSLIB$", get_settings().finn_deps / "finn-hlslib")
+        ipgentcl = ipgentcl.replace("$HWSRCDIR$", str(wrapper_output_dir))
+        ipgentcl = ipgentcl.replace("$FINNHLSLIB$", str(get_settings().finn_deps / "finn-hlslib"))
         ipgentcl = ipgentcl.replace(
-            "$ATTENTIONHLSLIB$", get_settings().finn_deps / "attention-hlslib"
+            "$ATTENTIONHLSLIB$", str(get_settings().finn_deps / "attention-hlslib")
         )
         ipgentcl = ipgentcl.replace("$TOPFXN$", "instrumentation_wrapper")
         ipgentcl = ipgentcl.replace("$FPGAPART$", self.fpga_part)
