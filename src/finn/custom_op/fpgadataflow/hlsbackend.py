@@ -156,6 +156,7 @@ class HLSBackend(ABC):
         self.code_gen_dict["$EXTRA_DIRECTIVES$"] = self.ipgen_extra_directives()
         self.code_gen_dict["$FINNHLSLIB$"] = [str(get_deps_path() / "finn-hlslib")]
         self.code_gen_dict["$ATTENTIONHLSLIB$"] = [str(get_deps_path() / "attention-hlslib")]
+        self.code_gen_dict["$MULTITHRESHOLD_HLS$"] = [str(get_deps_path() / "multithreshold-hls/include")]
 
         template = templates.ipgentcl_template
 
@@ -281,6 +282,7 @@ class HLSBackend(ABC):
         # TODO: Is it ok to add this here? Add some specialization to the
         #  attention operator? Eventually integrate this into the finn-hlslib?
         builder.append_includes("-I" + str(get_deps_path() / "attention-hlslib"))
+        builder.append_includes("-I" + str(get_deps_path() / "multithreshold-hls/include"))
         builder.append_includes("-I$FINN_CUSTOM_HLS")
         builder.append_includes("-I{}/include".format(os.environ["XILINX_HLS"]))
         builder.append_includes("--std=c++14")
@@ -482,7 +484,7 @@ compilation transformations?
                     )
                 )
             else:
-                folded_shape = self.get_folded_input_shape()
+                folded_shape = self.get_folded_input_shape(i)
                 self.code_gen_dict["$READNPYDATA$"].append(
                     'npy2vectorstream<%s, %s, %d>("%s", in%s_V, false);'
                     % (

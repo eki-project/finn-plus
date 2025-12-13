@@ -31,7 +31,7 @@
 import numpy as np
 import qonnx.core.data_layout as DataLayout
 from onnx import NodeProto, TensorProto, helper
-from qonnx.core.datatype import DataType
+from qonnx.core.datatype import DataType, BaseDataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -1830,7 +1830,7 @@ class InferQuantizedMatrixVectorActivation(Transformation):
                     # branch of a forking matmul would lead to detached nodes
                     # breaking the graph.
                     consumer = consumers[0] if len(consumers) == 1 else None
-                    if consumer is not None and consumer.op_type == "MultiThreshold":
+                    if consumer is not None and consumer.op_type == "MultiThreshold" and consumer.domain != "finn.custom_op.fpgadataflow":
                         # TODO ensure integer thresholds?
                         # create MVTU (i.e. including activation)
                         mt_output = consumer.output[0]
@@ -2392,3 +2392,80 @@ class InferReshape(Transformation):
 
 from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
 from finn.transformation.fpgadataflow.attention import InferScaledDotProductAttention
+
+
+class InferMultiThreshold(Transformation):
+    """Converts MultiThreshold operator to the corresponding HWCustomOp."""
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Apply the transform to convert MultiThreshold operation hardware."""
+
+        # Get the model graph out of the model wrapper object
+        graph = model.graph
+        # Keep track of whether the graph has been modified
+        graph_modified = False
+
+        # Transplant each MultiThreshold operator into the custom domain
+        for index, node in enumerate(graph.node):
+            if node.op_type == "MultiThreshold":
+                # Skip already converted nodes
+                if node.domain == "finn.custom_op.fpgadataflow":
+                    continue
+
+                # There must be a constant thresholds tensor as the second input
+                if (thresholds := model.get_initializer(node.input[1])) is None:
+                    continue
+
+                # Transplant this operator into our FINN domain
+                node.domain = "finn.custom_op.fpgadataflow"  # noqa: Duplicate
+                # Now we can get the CustomOp wrapper instance providing easier
+                # attribute access
+                inst: HWCustomOp = getCustomOp(node)
+                # Set the backend attribute to mark this an operation supported
+                # to be implemented on an FPGA by FINN
+                inst.set_nodeattr("backend", "fpgadataflow")
+
+                # There can be optional steps weights as the second input
+                if len(node.input) < 3:
+                    # Explicitly generate monotonic unit step weights
+                    weights = np.ones_like(thresholds)
+                    # Insert a new parameter tensor with the monotonic unit step
+                    # weights as initializer
+                    node.input[:] = [*node.input, f"{node.name}_weights"]
+                    # Set the initializer value
+                    model.set_initializer(f"{node.name}_weights", weights)
+
+                # Collect node attributes required by the FINN HWCustomOp
+                attrs = {
+                    # Shape, type and number of the thresholds parameters
+                    "threshold_shape": thresholds.shape[:-1],
+                    "threshold_type": model.get_tensor_datatype(node.input[1]),
+                    "N": thresholds.shape[-1],
+
+                    # Shape and type of the input and output tensor
+                    "input_shape": model.get_tensor_shape(node.input[0]),
+                    "input_type": model.get_tensor_datatype(node.input[0]),
+                    "output_type": model.get_tensor_datatype(node.output[0]),
+                }
+
+                # Convert all QONNX DataType instances to the string
+                # representation of the datatype name
+                for key, value in attrs.items():
+                    if isinstance(value, BaseDataType):
+                        attrs[key] = value.name
+
+                # Annotate the HWCustomOp instance with the collected attributes
+                for key, value in attrs.items():
+                    inst.set_nodeattr(key, value)
+
+                # Consider the graph to be modified after transplanting the node
+                graph_modified = True
+
+        # Re-do shape and data type annotations after potential changes to the
+        # model graph
+        model = model.transform(InferShapes())
+        model = model.transform(InferDataTypes())
+
+        # Return the transformed model and indicate whether the graph actually
+        # has been transformed
+        return model, graph_modified

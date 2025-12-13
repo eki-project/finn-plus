@@ -418,7 +418,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     if cfg.standalone_thresholds:
         # doing this first causes all threshold layers to be standalone
-        model = model.transform(to_hw.InferThresholdingLayer())
+        model = model.transform(to_hw.InferMultiThreshold())
 
     model = model.transform(to_hw.InferPool())
     model = model.transform(to_hw.InferPoolFromReduce())
@@ -431,7 +431,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     # TopK to LabelSelect
     model = model.transform(to_hw.InferLabelSelectLayer())
     # input quantization (if any) as standalone threshold
-    model = model.transform(to_hw.InferThresholdingLayer())
+    model = model.transform(to_hw.InferMultiThreshold())
     model = model.transform(to_hw.InferFMPadding())
     # get rid of Tranpose -> Tranpose identity seq
     model = model.transform(absorb.AbsorbConsecutiveTransposes())

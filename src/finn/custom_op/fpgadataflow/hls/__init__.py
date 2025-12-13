@@ -61,6 +61,10 @@ import finn.custom_op.fpgadataflow.hls.squeeze_hls
 # Import the submodule containing the specialization of the Unsqueeze operation
 import finn.custom_op.fpgadataflow.hls.unsqueeze_hls
 
+# Import the submodule containing the specialization of the MultiThreshold
+# operation
+import finn.custom_op.fpgadataflow.hls.multithreshold_hls
+
 from finn.custom_op.fpgadataflow.hls.addstreams_hls import AddStreams_hls
 from finn.custom_op.fpgadataflow.hls.attention_heads_hls import (
     MergeMultiHeads_hls,

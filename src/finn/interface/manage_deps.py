@@ -50,9 +50,14 @@ FINN_DEPS = {
     ),
     "attention-hlslib": (
         "https://github.com/iksnagreb/attention-hlslib.git",
-        "afc9720f10e551e1f734e137b21bb6d0a8342177",
+        "29dbd2485b5ff1680b8e857135302ad2d18bb1d0",
         False,
     ),
+    "multithreshold-hls": (
+        "https://github.com/iksnagreb/multithreshold-hls.git",
+        "0e2d70393b64c030f65d8a1e288ea4facdf5672d",
+        False
+    )
 }
 
 FINN_BOARDFILES = {
