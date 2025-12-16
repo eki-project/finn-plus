@@ -574,6 +574,11 @@ class MakePYNQDriver(Transformation):
 
         shutil.copy(driver_base_template, driver_base_py)
 
+        # Copy validate scripts
+        validate_base_template = get_templates_folder() / "validate"
+        validate_target_path = pynq_driver_dir + "/validate"
+        shutil.copytree(validate_base_template, validate_target_path)
+
         # TODO: Can we do this without packaging data_packing.py this way?
         finn_target_path = pynq_driver_dir + "/finn"
         os.makedirs(finn_target_path + "/util", exist_ok=True)
