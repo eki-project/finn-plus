@@ -22,7 +22,6 @@
           {
             "function_name": "validate",
             "kwargs" : {
-              "dataset_root" : "/home/xilinx/datasets",
               "dataset" : "mnist"
             }
           }
