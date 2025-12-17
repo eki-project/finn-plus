@@ -55,7 +55,7 @@ FINN_DEPS = {
     ),
     "multithreshold-hls": (
         "https://github.com/iksnagreb/multithreshold-hls.git",
-        "0e2d70393b64c030f65d8a1e288ea4facdf5672d",
+        "658430ac0337f3215bc5817ba78097be3dde287e",
         False
     )
 }
