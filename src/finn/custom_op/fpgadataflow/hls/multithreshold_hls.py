@@ -6,11 +6,17 @@ from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 # The generic HW custom operator version of the operator as a base class
 from finn.custom_op.fpgadataflow.multithreshold import MultiThreshold
 
+# Packing and unpacking utility to feed data to FINN RTL simulation
+from finn.util.data_packing import rtlsim_output_to_npy, npy_to_rtlsim_input
+
 # QONNX wrapper to ONNX model graphs
 from qonnx.core.modelwrapper import ModelWrapper
 
 # Numpy math and arrays, shape calculations
 import numpy as np
+
+# os.path for assembling filenames
+import os
 
 
 @register_custom_op
@@ -44,7 +50,70 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
         ]
 
     def defines(self, var):
+        """Generate global C++ definitions: types, macros, constants."""
         self.code_gen_dict["$DEFINES$"] = []
+
+    def read_npy_data(self):
+        """Generate commands for reading data from .npy file in C++."""
+
+        # Code generation directory for C++ simulation
+        code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
+        # The HLS operator supports only the hls::vector interface
+        assert self.get_nodeattr("cpp_interface") == "hls_vector"
+
+        # Get the shape and type configuration of the operator to generate the
+        # HLS C++ types and shape containers
+        PE = self.get_nodeattr("PE")
+        XType = self.get_input_datatype(ind=0).get_hls_datatype_str()
+
+        # Insert a single npy to stream into the C++ node execution template
+        self.code_gen_dict["$READNPYDATA$"] = [
+            f'npy2vectorstream<{XType}, float, {PE}>('
+            f'  "{os.path.join(code_gen_dir, "input_0.npy")}", in0_V, false'
+            f');'
+        ]
+
+    def dataoutstrm(self):
+        """Generate commands for reading out data from C++ to npy format."""
+
+        # Code generation directory for C++ simulation
+        code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
+        # The HLS operator supports only the hls::vector interface
+        assert self.get_nodeattr("cpp_interface") == "hls_vector"
+
+        # Get the shape and type configuration of the operator to generate the
+        # HLS C++ types and shape containers
+        *shape, PE = self.get_folded_output_shape()
+        OType = self.get_output_datatype(ind=0).get_hls_datatype_str()
+
+        # Generate C++ array representation of the tensor shape
+        shape = str((*shape, PE)).replace("(", "{").replace(")", "}")
+
+        # Insert a single stream to npy into the C++ node execution template
+        self.code_gen_dict["$DATAOUTSTREAM$"] = [
+            f'vectorstream2npy<{OType}, float, {PE}>('
+            f'  out0_V, {shape}, "{os.path.join(code_gen_dir, "output_0.npy")}"'
+            f');'
+        ]
+
+    def strm_decl(self):
+        """Generate commands for stream declaration in C++."""
+
+        # The HLS operator supports only the hls::vector interface
+        assert self.get_nodeattr("cpp_interface") == "hls_vector"
+
+        # Get the shape and type configuration of the operator to generate the
+        # HLS C++ types and shape containers
+        PE = self.get_nodeattr("PE")
+
+        OType = self.get_output_datatype(ind=0).get_hls_datatype_str()
+        XType = self.get_input_datatype(ind=0).get_hls_datatype_str()
+
+        # Generate a single input and a single output stream
+        self.code_gen_dict["$STREAMDECLARATIONS$"] = [
+            f"Packs<{XType}, {PE}> in0_{self.hls_sname()};",
+            f"Packs<{OType}, {PE}> out0_{self.hls_sname()};",
+        ]
 
     def generate_params(self, model: ModelWrapper, path):
         """Generate C++ parameters file including thresholds parameters."""
@@ -152,8 +221,80 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
         # Add HLS interface directives specifying how to create RTL ports for
         # the top-level function arguments
         self.code_gen_dict["$PRAGMAS$"] = [
-            f"#pragma HLS INTERFACE axis port=in0_{self.hls_sname()}",
-            f"#pragma HLS INTERFACE axis port=out0_{self.hls_sname()}",
+            f"#pragma HLS INTERFACE axis port=in0_V",
+            f"#pragma HLS aggregate variable=in0_V compact=bit",
+            f"#pragma HLS INTERFACE axis port=out0_V",
+            f"#pragma HLS aggregate variable=out0_V compact=bit",
             # No block-level I/O protocol for the function return value
             "#pragma HLS INTERFACE ap_ctrl_none port=return"
         ]
+
+    def execute_node(self, context, graph):
+        """Execute multithreshold operation (C++/RTL simulation)."""
+
+        # Execution mode for simulation and wrapped ONNX node
+        mode = self.get_nodeattr("exec_mode")
+        node = self.onnx_node
+
+        # Execution mode of simulation must be either C++ or RTL simulation
+        assert mode in {"cppsim", "rtlsim"}, f"Invalid exec_mode: {mode}"
+
+        # Load the input tensor from the execution context and reshape into the
+        # folded shape expected by the hardware operator
+        inp = context[node.input[0]].reshape(self.get_folded_input_shape(0))
+
+        # C++ simulation prepares inputs as numpy .npy files, executes
+        # precompiled C++ code and loads results back from .npy files
+        if mode == "cppsim":
+            # Code generation directory depending on simulation mode
+            code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
+
+            # Write the input to the node into numpy .npy file to be read by the
+            # simulation
+            np.save(os.path.join(code_gen_dir, "input_0.npy"), inp)
+
+            # Execute the precompiled node and collect output from .npy into the
+            # execution context
+            super().exec_precompiled_singlenode_model()
+            super().npy_to_dynamic_output(context)
+
+            # Make sure the output has the right type (always use float32 as the
+            # container type) and insert into the execution context
+            context[node.output[0]] = context[node.output[0]].astype(np.float32)
+
+        # RTL simulation converts the .npy to RTL-simulation compatible inputs,
+        # fills the io-dictionary and executes the simulation wrapper
+        elif mode == "rtlsim":
+            # Convert input to format consumed by the RTL simulation: packing
+            # and padding the bits
+            inp = npy_to_rtlsim_input(
+                inp, self.get_input_datatype(0), self.get_instream_width(0)
+            )
+
+            # Prepare inputs and placeholder for the outputs to simulation
+            io_dict = {"inputs": {"in0": inp}, "outputs": {"out0": []}}
+
+            # Get the RTL simulator instance for this operator
+            sim = self.get_rtlsim()
+
+            # Execute node in RTL simulation
+            super().reset_rtlsim(sim)
+            self.rtlsim_multi_io(sim, io_dict)
+            super().close_rtlsim(sim)
+
+            # Extract the output from the simulation: Remove packing and padding
+            output = rtlsim_output_to_npy(
+                io_dict["outputs"]["out0"],
+                None,  # Do not use indirection via .npy file
+                self.get_output_datatype(),
+                self.get_folded_output_shape(0),
+                self.get_outstream_width(0),
+                self.get_output_datatype(0).bitwidth()
+            )
+
+            # Reshape the output to remove folding from the last two dimensions
+            output = output.reshape(self.get_normal_output_shape())
+
+            # Make sure the output has the right type (always use float32 as the
+            # container type) and insert into the execution context
+            context[node.output[0]] = output.astype(np.float32)
