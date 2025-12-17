@@ -174,7 +174,7 @@ class MultiThreshold(HWCustomOp):
         model.set_tensor_datatype(node.output[0], self.get_output_datatype(0))
 
     def execute_node(self, context, graph):
-        """Execute reshape operation (Python fallback)."""
+        """Execute multithreshold operation (Python fallback)."""
         # Get the node wrapped by this custom op
         node = self.onnx_node
         # Get the input, threshold and weights from the execution context
@@ -189,3 +189,61 @@ class MultiThreshold(HWCustomOp):
         # Make sure the output has the right type (always use float32 as the
         # container type) and insert into the execution context
         context[node.output[0]] = out.astype(np.float32)
+
+    def minimize_accumulator_width(self, model: ModelWrapper):
+        """Minimize the accumulator bit width according to the weight values."""
+
+        # Minimization is only implemented for integer types...
+        if not self.get_output_datatype().is_integer():
+            return
+
+        # Get the parameter tensors from the model wrapper
+        weights = model.get_initializer(self.onnx_node.input[2])
+
+        # Get the optional output bias and expand to the weights shape
+        bias = np.full((*weights.shape[:-1], 1), self.get_nodeattr("out_bias"))
+
+        # Multi-threshold hardware uses cumulative weights left-padded by the
+        # optional bias as output values at/between steps
+        weights = np.concatenate((bias, weights), -1)
+        values = np.cumsum(weights, axis=-1)
+
+        # Find the minimum and maximum value produced at the output and,
+        # depending on the sign and magnitude select the smallest possible data
+        # type to represent these values
+        if np.min(values) < 0:
+            if abs(np.min(values)) > np.max(values):
+                dtype = DataType.get_smallest_possible(np.min(values))
+            else:
+                dtype = DataType.get_smallest_possible(-np.max(values) - 1)
+        else:
+            dtype = DataType.get_smallest_possible(np.max(values))
+
+        # Update the node attribute and the output tensor type annotation
+        self.set_nodeattr("output_type", dtype.name)
+        model.set_tensor_datatype(self.onnx_node.output[0], dtype)
+
+    def minimize_weight_bit_width(self, model: ModelWrapper):
+        """Minimize the bit width based on the values of the thresholds"""
+
+        # Minimization is only implemented for integer types...
+        if not self.get_input_datatype(ind=1).is_integer():
+            return
+
+        # Get the parameter tensors from the model wrapper
+        thresholds = model.get_initializer(self.onnx_node.input[1])
+
+        # Find the minimum and maximum threshold parameter and, depending on the
+        # sign and magnitude select the smallest possible data type to represent
+        # these values
+        if np.min(thresholds) < 0:
+            if abs(np.min(thresholds)) > np.max(thresholds):
+                dtype = DataType.get_smallest_possible(np.min(thresholds))
+            else:
+                dtype = DataType.get_smallest_possible(-np.max(thresholds) - 1)
+        else:
+            dtype = DataType.get_smallest_possible(np.max(thresholds))
+
+        # Update the node attribute and the threshold tensor type annotation
+        self.set_nodeattr("threshold_type", dtype.name)
+        model.set_tensor_datatype(self.onnx_node.input[1], dtype)
