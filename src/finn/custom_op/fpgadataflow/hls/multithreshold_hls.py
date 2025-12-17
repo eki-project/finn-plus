@@ -188,9 +188,7 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
             # Apply bind_storage directives to the threshold parameter arrays to
             # instantiate multi-port ROMs in LUTRAM.
             f"bind_storage<ROM_NP, {ram_style}>(thresholds.thresholds);",
-            # f"#pragma HLS bind_storage variable=thresholds.thresholds type=ROM_NP impl={ram_style}",
             f"bind_storage<ROM_NP, {ram_style}>(thresholds.values);",
-            # f"#pragma HLS bind_storage variable=thresholds.values type=ROM_NP impl={ram_style}",
             # Apply multi-threshold operator from input stream to output stream
             f"thresholds.apply<{XShape}>(",
             f"    in0_{self.hls_sname()}, out0_{self.hls_sname()}",
