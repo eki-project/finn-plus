@@ -1,0 +1,72 @@
+{
+    "status": "ok",
+    "hls_estimate": {
+        "resources": {
+            "LUT": 475708.0,
+            "FF": 151375.0,
+            "DSP": 308.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 600.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 48764,
+            "FF": 38356,
+            "SRL": 3410,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 0,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "performance": {
+            "error": false,
+            "checksum": 0,
+            "min_latency_cycles": 295780,
+            "latency_cycles": 1997207,
+            "interval_cycles": 100358,
+            "frequency_mhz": 100,
+            "min_latency_ms": 2.95783,
+            "latency_ms": 19.97227,
+            "throughput_fps": 996,
+            "min_pipeline_depth": 2.95,
+            "pipeline_depth": 19.9
+        },
+        "power": {
+            "power_pl_ps_load": 2.089,
+            "power_pl_ps_idle": 1.988,
+            "power_pl_ps_dyn": 0.101,
+            "power_total_load": 6.851,
+            "power_total_idle": 6.728,
+            "power_total_dyn": 0.123
+        }
+    },
+    "fifosizing": {
+        "live": {
+            "error": false,
+            "fifo_size_total_kB": 25958
+        }
+    },
+    "time": {
+        "step_mobilenet_streamline": 26,
+        "step_mobilenet_lower_convs": 1,
+        "step_mobilenet_convert_to_hw_layers": 1,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 17,
+        "step_target_fps_parallelization": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 1,
+        "step_generate_estimate_reports": 0,
+        "step_set_fifo_depths": 386,
+        "step_hw_codegen": 52,
+        "step_hw_ipgen": 389,
+        "step_create_stitched_ip": 40,
+        "step_synthesize_bitfile": 5365,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 6278
+    }
+}
