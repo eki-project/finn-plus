@@ -197,4 +197,4 @@ if __name__ == "__main__":
         "--settingsfile", help="Name of optional input .json settings file", type=str, default=""
     )
     args = parser.parse_args()
-    main([], vars(args))
+    main(**(vars(args)))
