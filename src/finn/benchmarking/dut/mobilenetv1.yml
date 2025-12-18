@@ -1,13 +1,12 @@
 model_path: models/mobilenetv1/mobilenetv1-w4a4_pre_post_tidy_opset-11.onnx
-folding_config_file: models/mobilenetv1/ZCU102_folding_config_live_fifo.json
-specialize_layers_config_file: models/mobilenetv1/ZCU102_specialize_layers.json
 
 steps:
   - finn.builder.custom_step_library.mobilenet.step_mobilenet_streamline # Custom step
   - finn.builder.custom_step_library.mobilenet.step_mobilenet_lower_convs # Custom step
-  - finn.builder.custom_step_library.mobilenet.step_mobilenet_convert_to_hw_layers_separate_th # Custom step
+  - finn.builder.custom_step_library.mobilenet.step_mobilenet_convert_to_hw_layers # Custom step
   - step_create_dataflow_partition
   - step_specialize_layers
+  - step_target_fps_parallelization
   - step_apply_folding_config
   - step_minimize_bit_width
   - step_generate_estimate_reports
@@ -19,5 +18,8 @@ steps:
   - step_make_driver
   - step_deployment_package
 
-# folding config comes with FIFO sizes
-auto_fifo_depths: False
+mvau_wwidth_max: 512
+target_fps: 1000
+
+# has no effect because of custom HW conversion transformation
+standalone_thresholds: true
