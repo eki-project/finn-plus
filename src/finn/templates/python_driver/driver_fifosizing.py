@@ -226,7 +226,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         # Determine runtime per iteration based on performance, so that stable-state is guaranteed
         # Use a simple overestimation for now to be safe
-        iteration_runtime = max(0.01, (min_latency * 5) * 10 / 1000 / 1000 / 1000)
+        iteration_runtime = max(0.01, (latency * 5) * 10 / 1000 / 1000 / 1000)
 
         print("Determined start depth for all FIFOs: %d" % start_depth)
         print("Determined iteration runtime based on performance: %f s" % iteration_runtime)
