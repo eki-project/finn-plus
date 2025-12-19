@@ -140,7 +140,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                     stream.lastComplete = cyclesRun;
                     stream.job_txns = 0;
                     ++completedMaps;
-                    if (lastComplete != 0){
+                    if (lastComplete != 0) {
                         // Update stable state tracker
                         stream.stableState.update(stream.interval);
                     }
@@ -236,19 +236,54 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         }
     }
 
-    [[gnu::hot, gnu::always_inline]] void runToStableState(std::stop_token stoken = {}) {
-        while (std::all_of(this->ostreams.begin(), this->ostreams.end(),
-                           [](const M_AXIS_Control& stream) { return stream.stableState.is_stable(); }) == false &&
-               !stoken.stop_requested()) {
+    [[gnu::hot, gnu::always_inline]] bool runToStableState(std::stop_token stoken = {}, std::size_t max_cycles = std::numeric_limits<std::size_t>::max()) {
+        while (!std::all_of(this->ostreams.begin(), this->ostreams.end(), [](const M_AXIS_Control& stream) { return stream.stableState.is_stable(); }) &
+               !stoken.stop_requested() & cyclesRun <= max_cycles) {
+            runSingleCycle(stoken);
+            runSingleCycle(stoken);
+            runSingleCycle(stoken);
             runSingleCycle(stoken);
         }
+        return cyclesRun > max_cycles;
+    }
+
+    /// Get the number of FIFOs
+    std::size_t getFIFOCount() const noexcept {
+        if constexpr (LastNode) {
+            return 0;
+        }
+        return OStreamsSize;
+    }
+
+    /// Set the depth of a specific FIFO
+    void setFIFODepth(std::size_t index, std::size_t depth) {
+        if constexpr (LastNode) {
+            throw std::runtime_error("Cannot set FIFO depth on last node (no FIFOs present)");
+        }
+        if (index >= OStreamsSize) {
+            throw std::out_of_range(std::format("FIFO index {} out of range (max: {})", index, OStreamsSize - 1));
+        }
+        fifo[index].setMaxSize(depth);
     }
 
     /// Set the max FIFO depth of all interfaces
     void setMaxFIFODepth(std::size_t depth) {
-        for (FIFO& f : fifo) {
-            f.setMaxSize(depth);
+        if constexpr (!LastNode) {
+            for (FIFO& f : fifo) {
+                f.setMaxSize(depth);
+            }
         }
+    }
+
+    std::array<std::size_t, OStreamsSize> getFIFODepth() const noexcept {
+        if constexpr (LastNode) {
+            return {};
+        }
+        std::array<std::size_t, OStreamsSize> utilizations{};
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
+            utilizations[i] = fifo[i].getMaxSize();
+        }
+        return utilizations;
     }
 
     /// Get the job size of the specified output stream
@@ -273,6 +308,17 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             utilizations[i] = fifo[i].getMaxUtil();
         }
         return utilizations;
+    }
+
+    ///Get the current Ostream stable state intervals
+    std::array<std::size_t, OStreamsSize> getOStreamStableStateIntervals() const noexcept {
+        std::array<std::size_t, OStreamsSize> intervals{};
+        if constexpr (LastNode) {
+            for (std::size_t i = 0; i < OStreamsSize; ++i) {
+            intervals[i] = this->ostreams[i].interval;
+        }
+        }
+        return intervals;
     }
 };
 

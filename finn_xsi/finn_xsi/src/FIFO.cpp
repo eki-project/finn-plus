@@ -1,6 +1,7 @@
 #include <FIFO.h>
 
 #include <algorithm>
+#include <cstdint>
 
 FIFO::FIFO(uint64_t size) : maxSize(size) {}
 FIFO::~FIFO() {}
@@ -51,6 +52,8 @@ void FIFO::reset(uint64_t size) {
 
 /// Set the FIFOs max size
 void FIFO::setMaxSize(const uint64_t size) { maxSize = size; }
+
+uint64_t FIFO::getMaxSize() const { return maxSize; }
 
 uint64_t FIFO::getSpaceLeft() const { return maxSize - currentUtil; }
 

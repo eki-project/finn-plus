@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import socket
 import subprocess
+import threading
 import time
 import traceback
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -75,7 +76,13 @@ class NodeConnectedSimulationController:
         Returns:
             Index of the started process
         """
-        socket_path = Path(f"/tmp/sim_socket_{process_id}.sock")
+        thread_id = threading.get_ident()
+
+        # Create unique socket path which includes thread ID to avoid conflicts
+        # with multiple threads
+        socket_path = Path(f"/tmp/{thread_id}/")
+        socket_path.mkdir(parents=True, exist_ok=True)
+        socket_path = socket_path / f"sim_socket_{process_id}.sock"
 
         # Remove socket if it exists
         if socket_path.exists():
@@ -256,7 +263,10 @@ class NodeConnectedSimulationController:
                 stderr_file.close()
 
     def run(
-        self, depth: int, samples: int, output_json: Path | None = None
+        self,
+        depth: list[list[int]] | None = None,
+        output_json: Path | None = None,
+        max_cycles: int | None = None,
     ) -> dict[str, list[int]]:
         """Run the simulation entirely with the given depth and sample count.
 
@@ -272,21 +282,27 @@ class NodeConnectedSimulationController:
         fifo_results: dict[str, list[int]] = {}
         cycles_results: dict[str, int] = {}
         samples_results: dict[str, int] = {}
+        intervals_results: dict[str, list[int]] = {}
+        timeout_result = False
+        fifo_depths: dict[str, list[int]] = {}
 
         if self.progress is not None:
             self.progress.start()
         try:
             with ThreadPoolExecutor(self.workers) as pool:
                 for i, (name, binary) in enumerate(zip(self.names, self.binaries, strict=True)):
+                    is_last_node = i == len(self.names) - 1
+                    is_special_for_display = i == 0 or is_last_node
                     futures.append(
                         pool.submit(
                             self._run_binary,
                             binary,
                             name,
                             i % multiprocessing.cpu_count(),
-                            depth,
-                            samples,
-                            i == 0 or i == len(self.names) - 1,
+                            depth[i] if depth is not None else None,
+                            is_last_node,  # Only last node has no output FIFOs
+                            is_special_for_display,  # First and last get special coloring
+                            max_cycles,
                         )
                     )
 
@@ -302,10 +318,21 @@ class NodeConnectedSimulationController:
                         try:
                             result = future.result()  # This will raise if there was an exception
                             if result is not None:
-                                sim_name, fifo_util, cycles, samps = result
+                                (
+                                    sim_name,
+                                    fifo_util,
+                                    cycles,
+                                    samps,
+                                    intervals,
+                                    timeout,
+                                    fifo_depth,
+                                ) = result
+                                fifo_depths[sim_name] = fifo_depth
                                 fifo_results[sim_name] = fifo_util
                                 cycles_results[sim_name] = cycles
                                 samples_results[sim_name] = samps
+                                intervals_results[sim_name] = intervals
+                                timeout_result = timeout_result or timeout
                         except Exception as e:  # noqa
                             self.console.log(f"Simulation failed: {e}")
                             # Set stop flag and break
@@ -316,7 +343,6 @@ class NodeConnectedSimulationController:
                     # If we should stop, signal all remaining simulations
                     with self.stop_lock:
                         if self.should_stop:
-                            self.console.log("Stopping all remaining simulations...")
                             # Don't cancel - let them finish with early stop
                             break
 
@@ -328,12 +354,23 @@ class NodeConnectedSimulationController:
                     try:
                         result = future.result()
                         if result is not None:
-                            sim_name, fifo_util, cycles, samps = result
+                            (
+                                sim_name,
+                                fifo_util,
+                                cycles,
+                                samps,
+                                intervals,
+                                timeout,
+                                fifo_depth,
+                            ) = result
                             # Only update if not already collected
                             if sim_name not in fifo_results:
+                                fifo_depths[sim_name] = fifo_depth
                                 fifo_results[sim_name] = fifo_util
                                 cycles_results[sim_name] = cycles
                                 samples_results[sim_name] = samps
+                                intervals_results[sim_name] = intervals
+                                timeout_result = timeout_result or timeout
                     except Exception as e:
                         self.console.log(f"Error collecting result: {e}")
         finally:
@@ -348,13 +385,15 @@ class NodeConnectedSimulationController:
                     {
                         "name": name,
                         "fifo_utilization": fifo_results.get(name, []),
+                        "fifo_depth": fifo_depths.get(name, []),
                         "cycles": cycles_results.get(name, 0),
                         "samples": samples_results.get(name, 0),
+                        "intervals": intervals_results.get(name, []),
                     }
                     for name in self.names
                 ],
                 "depth_configured": depth,
-                "samples_requested": samples,
+                "timeout_occurred": timeout_result,
             }
             output_json.write_text(json.dumps(merged_data, indent=2))
 
@@ -365,14 +404,25 @@ class NodeConnectedSimulationController:
         binary: Path,
         name: str | None,
         _cpu: int | None,
-        depth: int,
-        samples: int,
-        is_end_node: bool = False,
-    ) -> tuple[str, list[int], int, int] | None:
+        depth: list[int] | None = None,
+        is_last_node: bool = False,
+        is_special_for_display: bool = False,
+        max_cycles: int | None = None,
+    ) -> tuple[str, list[int], int, int, list[int], bool, list[int]] | None:
         """Run the specified simulation binary in a new subprocess and communicate with it.
 
+        Args:
+            binary: Path to simulation binary
+            name: Name of simulation node
+            _cpu: CPU affinity (unused)
+            depth: List of FIFO depths for this node's output FIFOs
+            is_last_node: True if this is the last node (no output FIFOs to configure)
+            is_special_for_display: True if this node should get special color in logs
+            max_cycles: Maximum cycles to simulate
+
         Returns:
-            Tuple of (simulation_name, fifo_utilization, cycles, samples) on success,
+            Tuple of (simulation_name, fifo_utilization, cycles, samples, intervals, timeout,
+            fifo_depth) on success,
             None on failure.
         """
         cwd = binary.parent
@@ -385,7 +435,7 @@ class NodeConnectedSimulationController:
 
             def _print(msg: str, color: str = "green") -> None:
                 if self.progress is None:
-                    if is_end_node:
+                    if is_special_for_display:
                         color = "orange3"
                     if "ERROR" in msg:
                         color = "red"
@@ -402,9 +452,14 @@ class NodeConnectedSimulationController:
                 proc_idx = self._start_process(binary, process_index)
 
                 # Send configuration commands
-                response = self._send_and_receive(
-                    proc_idx, "configure", {"fifo_depth": depth, "samples": samples}
-                )
+                # Last node has no output FIFOs, so don't configure FIFO depths
+                config_payload: dict[str, list[int] | int] = {}
+                if not is_last_node and depth is not None:
+                    config_payload["fifo_depth"] = depth
+                if max_cycles is not None:
+                    config_payload["max_cycles"] = max_cycles
+
+                response = self._send_and_receive(proc_idx, "configure", config_payload)
 
                 if not response or response.get("status") != "success":
                     error_msg = (
@@ -423,23 +478,29 @@ class NodeConnectedSimulationController:
                     _print(f"Failed to start simulation: {error_msg}", "red")
                     return None
 
+                cycles = 0
+                samps = 0
+                intervals: list[int] = []
+                timeout = False
+                fifo_util: list[int] = []
+                fifo_depth: list[int] = []
+
                 # Poll for status updates
                 while True:
                     # Check if we should stop early
                     with self.stop_lock:
                         if self.should_stop:
                             stop_response = self._send_and_receive(proc_idx, "stop", {})
-                            fifo_util = []
-                            cycles = 0
-                            samps = 0
                             if stop_response:
-                                fifo_util = stop_response.get("fifo_utilization", [])
                                 cycles = stop_response.get("cycles", 0)
                                 samps = stop_response.get("samples", 0)
+                                fifo_util = stop_response.get("fifo_utilization", [])
+                                intervals = stop_response.get("intervals", [])
+                                fifo_depth = stop_response.get("fifo_depth", [])
+                                timeout = stop_response.get("timeout", False)
                                 if fifo_util:
                                     logfile.write(f"Final FIFO utilization: {fifo_util}\n")
-                            return (name, fifo_util, cycles, samps)
-
+                            return (name, fifo_util, cycles, samps, intervals, timeout, fifo_depth)
                     time.sleep(self.poll_interval)
 
                     response = self._send_and_receive(proc_idx, "status", {})
@@ -452,14 +513,13 @@ class NodeConnectedSimulationController:
 
                     state = response.get("state", "unknown")
 
-                    if state == "finished":
-                        _print("Simulation completed successfully")
+                    if state == "finished" or state == "timeout":
                         cycles = response.get("cycles", 0)
-                        samples_done = response.get("samples", 0)
+                        samps = response.get("samples", 0)
                         fifo_util = response.get("fifo_utilization", [])
-                        if self.progress is not None:
-                            self.progress.update(name, samples_done, samples)
-                        # Signal other simulations to stop
+                        fifo_depth = response.get("fifo_depth", [])
+                        intervals = response.get("intervals", [])
+                        timeout = response.get("timeout", False)
                         with self.stop_lock:
                             self.should_stop = True
                         break
@@ -467,9 +527,6 @@ class NodeConnectedSimulationController:
                     if state == "running":
                         # Update progress if available
                         cycles = response.get("cycles", 0)
-                        samples_done = response.get("samples", 0)
-                        if self.progress is not None and samples_done > 0:
-                            self.progress.update(name, samples_done, samples)
 
                     if state == "error":
                         error_msg = response.get("message", "Unknown error")
@@ -482,16 +539,16 @@ class NodeConnectedSimulationController:
                 # Stop the simulation
                 stop_response = self._send_and_receive(proc_idx, "stop", {})
                 fifo_util = []
-                cycles = 0
-                samps = 0
+
                 if stop_response:
                     fifo_util = stop_response.get("fifo_utilization", [])
+                    fifo_depth = stop_response.get("fifo_depth", [])
                     cycles = stop_response.get("cycles", 0)
                     samps = stop_response.get("samples", 0)
                     if fifo_util:
                         logfile.write(f"Final FIFO utilization: {fifo_util}\n")
 
-                return (name, fifo_util, cycles, samps)
+                return (name, fifo_util, cycles, samps, intervals, timeout, fifo_depth)
 
             except Exception as e:
                 self.console.log(f"Exception caught during simulation execution ({name}): {e}")

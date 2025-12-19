@@ -21,6 +21,7 @@ class FIFO {
     bool isEmpty() const;
     void reset(uint64_t size = std::numeric_limits<uint64_t>::max());
     void setMaxSize(const uint64_t size);
+    uint64_t getMaxSize() const;
     uint64_t getSpaceLeft() const;
     uint64_t getMaxUtil() const;
     void increaseCounter(const uint64_t count);

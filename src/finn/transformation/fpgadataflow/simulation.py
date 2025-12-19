@@ -2,6 +2,7 @@
 
 import finn_xsi.adapter as finnxsi
 import json
+import math
 import numpy as np
 import onnx
 import os
@@ -203,7 +204,7 @@ class SimulationBuilder:
             outstream_iters.append(int(np.prod(oshape_folded[:-1])))
         interface_names = model.get_metadata_prop("vivado_stitch_ifnames")
         if interface_names is None:
-            raise FINNUserError(
+            raise FINNInternalError(
                 f"{model}: Could not find stitched-IP interface names. "
                 f"Did you run IP Stitching first?"
             )
@@ -211,7 +212,7 @@ class SimulationBuilder:
         # TODO: Copied from rtlsim_exec_cppxsi. Remove eval().
         interface_names = eval(interface_names)
         if "aximm" in interface_names.keys() and interface_names["aximm"] != []:
-            raise FINNUserError(
+            raise FINNInternalError(
                 f"{model}: CPP XSI Sim does not know how to handle full "
                 f"AXI MM interfaces: {interface_names['aximm']}"
             )
@@ -291,13 +292,13 @@ class SimulationBuilder:
                 proc_env=os.environ.copy(),
             )
         except CalledProcessError as e:
-            raise FINNUserError(f"Failed to run cmake in {sim_base}") from e
+            raise FINNInternalError(f"Failed to run cmake in {sim_base}") from e
         self.progress_bar.update("CMake")
 
         # Calling make to actually build the simulation
         makefile = Path(sim_base) / "Makefile"
         if not makefile.exists():
-            raise FINNUserError(f"Failed to create Makefile in {sim_base}!")
+            raise FINNInternalError(f"Failed to create Makefile in {sim_base}!")
         try:
             launch_process_helper(
                 ["make"],
@@ -307,12 +308,12 @@ class SimulationBuilder:
                 print_stderr=not silent,
             )
         except CalledProcessError as e:
-            raise FINNUserError(f"Failed to create executable in {sim_base}!") from e
+            raise FINNInternalError(f"Failed to create executable in {sim_base}!") from e
 
         # TODO: Fix name for general rtlsim
         simulation_executable = Path(sim_base) / "LayerSimulationBackend"
         if not simulation_executable.exists():
-            raise FINNUserError(f"Make call in {sim_base} failed!")
+            raise FINNInternalError(f"Make call in {sim_base} failed!")
         self.progress_bar.update("Make")
         return simulation_executable
 
@@ -527,8 +528,8 @@ class SimulationBuilder:
 
         # Build sims in parallel
         synth_workers = max(
-            1, cast("int", (psutil.virtual_memory().free / 1024 / 1024 / 1024) // 16)
-        )  # 16GB per synthesis
+            1, cast("int", (psutil.virtual_memory().free / 1024 / 1024 / 1024) // 20)
+        )  # 20GB per synthesis
         if not functional_sim:
             # When not having to do synthesis, the build is not memory bottlenecked and
             # can be executed as parallel as possible
@@ -612,6 +613,16 @@ class Simulation:
                 self._prepare_model()
         self.builder = SimulationBuilder(self.model, fpgapart, clk_ns)
 
+        sys.stdout = sys.stdout.console
+        sys.stderr = sys.stderr.console
+
+        self.binaries = self.builder.build_simulation(
+            SimulationType.NODE_BASED_CONNECTED,
+            self.workers,
+            with_live_display=True,
+            functional_sim=self.functional_sim,
+        )
+
     def _prepare_model(self) -> None:
         """Execute some preparation transformations on the model."""
         self.model = self.model.transform(InsertDWC())
@@ -621,26 +632,23 @@ class Simulation:
         self.model = self.model.transform(PrepareIP(self.fpgapart, self.clk_ns))
         self.model = self.model.transform(HLSSynthIP())
 
-    def simulate_node_connected(self, samples: int, depth: int) -> dict[int, dict]:
+    def simulate_node_connected(
+        self, depth: int | list[list[int]] | None = None, max_cycles: int | None = None
+    ) -> tuple[dict[int, dict[str, list[int]]], bool]:
         """Simulate the given number of samples for every layer. Layers are completely isolated
         and simulated in parallel. Simulation data is returned as a dict (by node name as index).
         """
-        binaries = self.builder.build_simulation(
-            SimulationType.NODE_BASED_CONNECTED,
-            self.workers,
-            with_live_display=True,
-            functional_sim=self.functional_sim,
-        )
         names = [node.name for node in self.model.graph.node]
+        initial_depth = [[depth]] * len(self.binaries) if isinstance(depth, int) else depth
 
         # Run simulation
         start = time.time()
         output_json = Path(make_build_dir("simulation_results_")) / "simulation_data.json"
         with DisabledLoggingConsole() as console:
             controller = NodeConnectedSimulationController(
-                len(binaries), names, list(binaries.values()), console, 0.1, False
+                len(self.binaries), names, list(self.binaries.values()), console, 0.1, False
             )
-            controller.run(depth, samples, output_json)
+            controller.run(initial_depth, output_json, max_cycles)
         end = time.time()
         log.info(f"Simulation took {end - start} seconds!")
 
@@ -653,27 +661,625 @@ class Simulation:
             data[i] = {
                 "name": sim_entry["name"],
                 "fifo_utilization": sim_entry["fifo_utilization"],
+                "fifo_depth": sim_entry["fifo_depth"],
                 "cycles": sim_entry["cycles"],
                 "samples": sim_entry["samples"],
+                "intervals": sim_entry["intervals"],
             }
         json.dump(data, output_json.open("w"), indent=4)
-        return data
+        return data, merged_data.get("timeout_occurred", False)
 
 
 # TODO: Just a test transformation. Will be integrated properly later
 class RunLayerParallelSimulation(Transformation):  # noqa
-    def __init__(self, fpgapart: str, clk_ns: float, cfg: DataflowBuildConfig) -> None:  # noqa
+    def __init__(
+        self,
+        fpgapart: str,
+        clk_ns: float,
+        cfg: DataflowBuildConfig,
+        max_qsrl_depth: int = 256,
+        vivado_ram_style: str = "auto",
+        quality_of_results: str = "default",
+    ) -> None:
         super().__init__()
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
         self.cfg = cfg
+        self.max_qsrl_depth = max_qsrl_depth
+        self.vivado_ram_style = vivado_ram_style
+        self.quality_of_results = quality_of_results
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         sim = Simulation(model, self.fpgapart, self.clk_ns, self.cfg.functional_simulation)
-        sys.stdout = sys.stdout.console
-        sys.stderr = sys.stderr.console
-        sim.simulate_node_connected(3, 100000000)
-        # sim.simulate_node_connected(1, 2)
-        # sim.simulate_node_connected(1, 20000)
-        # sim.simulate_node_connected(10, 20000)
+        model = sim.model  # TODO:clean up
+
+        initial_fifo_depths, _ = sim.simulate_node_connected()
+
+        fifo_depths = []  # Each entry is a list of fifo sizes for that node
+        for val in initial_fifo_depths.values():
+            fifo_depths.append([v + 1 for v in val["fifo_utilization"]])
+
+        # Max cycles for any simulation
+        sim_cycles = max([val["cycles"] for val in initial_fifo_depths.values()])
+
+        bit_widths = []
+        for i in range(len(fifo_depths)):
+            bit_widths.append([])
+            hw_node = getCustomOp(model.graph.node[i])
+            if isinstance(hw_node, HWCustomOp):
+                for j in range(len(fifo_depths[i])):
+                    bit_widths[i].append(hw_node.get_outstream_width(j))
+            else:
+                raise FINNInternalError("Non-HW node found in dataflow graph during simulation")
+
+        needs_minimization = []
+        for i in range(len(fifo_depths)):
+            needs_minimization.append([True] * len(fifo_depths[i]))
+        for i in range(len(fifo_depths)):
+            for j in range(len(fifo_depths[i])):
+                # Check if we can reduce the fifo size
+
+                used_size = fifo_depths[i][j]
+                bw = bit_widths[i][j]
+
+                needs_minimization[i][j] = self.needs_minimization(used_size, bw)
+
+        # Preserve original baseline depths for testing (deep copy)
+        original_fifo_depths = [row[:] for row in fifo_depths]
+
+        # Minimize FIFO depths using binary search over BRAM block counts
+        for i in range(len(fifo_depths)):
+            for j in range(len(fifo_depths[i])):
+                if not needs_minimization[i][j]:
+                    continue
+
+                minimized_depth = self._minimize_fifo_depth(
+                    i,
+                    j,
+                    fifo_depths,
+                    original_fifo_depths,
+                    bit_widths,
+                    initial_fifo_depths,
+                    sim,
+                    sim_cycles,
+                )
+                fifo_depths[i][j] = minimized_depth
+
+        print("Final FIFO depths:")
+        for i in range(len(fifo_depths)):
+            print(f"{i}: {fifo_depths[i]}")
+            log.info(f"{i}: {fifo_depths[i]}")
+
         return model, False
+
+    def _check_performance(self, new_data: dict, initial_fifo_depths: dict) -> bool:
+        """Check if performance has degraded compared to baseline.
+
+        Args:
+            new_data: Simulation results to check
+            initial_fifo_depths: Baseline performance data
+
+        Returns:
+            True if performance degraded, False otherwise
+        """
+        for k, v in new_data.items():
+            for idx in range(len(v["intervals"])):
+                if v["intervals"][idx] > initial_fifo_depths[k]["intervals"][idx]:
+                    return True
+        return False
+
+    def _test_depth(
+        self,
+        test_depth: int,
+        node_idx: int,
+        fifo_idx: int,
+        baseline_depths: list,
+        initial_fifo_depths: dict,
+        sim,
+        sim_cycles: float,
+    ) -> tuple[bool, bool]:
+        """Test a specific FIFO depth.
+
+        Args:
+            test_depth: Depth to test
+            node_idx: Node index
+            fifo_idx: FIFO index within node
+            baseline_depths: Original baseline FIFO depths (unchanged during minimization)
+            initial_fifo_depths: Baseline performance data
+            sim: Simulation controller
+            sim_cycles: Maximum simulation cycles
+
+        Returns:
+            Tuple of (success, timeout) where success means depth works without degradation
+        """
+        test_depths = [row[:] for row in baseline_depths]  # Deep copy from baseline
+        test_depths[node_idx][fifo_idx] = test_depth
+
+        new_data, timeout = sim.simulate_node_connected(test_depths, max_cycles=sim_cycles * 1.1)
+
+        if timeout:
+            return False, True
+
+        performance_degraded = self._check_performance(new_data, initial_fifo_depths)
+        return not performance_degraded, False
+
+    def _find_valid_block_count(
+        self, target_blocks: int, bitwidth: int, lower_bound: int = 1
+    ) -> tuple[int, int, int]:
+        """Find a valid block count and corresponding depth range.
+
+        Args:
+            target_blocks: Desired number of BRAM blocks
+            bitwidth: Data bitwidth
+            lower_bound: Minimum acceptable block count
+
+        Returns:
+            Tuple of (valid_blocks, min_depth, max_depth)
+        """
+        blocks = target_blocks
+        while blocks >= lower_bound:
+            min_d, max_d = calculate_bram_depth_range(blocks, bitwidth)
+            if max_d > 0:
+                return blocks, min_d, max_d
+            blocks -= 1
+        return 0, 0, 0
+
+    def _minimize_fifo_depth(
+        self,
+        node_idx: int,
+        fifo_idx: int,
+        current_depths: list,
+        baseline_depths: list,
+        bit_widths: list,
+        initial_fifo_depths: dict,
+        sim,
+        sim_cycles: int,
+    ) -> int:
+        """Minimize a single FIFO depth using binary search.
+
+        Args:
+            node_idx: Node index
+            fifo_idx: FIFO index within node
+            current_depths: Current working FIFO depth configuration
+            (may have already-minimized values)
+            baseline_depths: Original baseline FIFO depths (unchanged during minimization)
+            bit_widths: Bitwidths for all FIFOs
+            initial_fifo_depths: Baseline performance data
+            sim: Simulation controller
+            sim_cycles: Maximum simulation cycles
+
+        Returns:
+            Minimized FIFO depth
+        """
+        original_size = baseline_depths[node_idx][fifo_idx]
+        bw = bit_widths[node_idx][fifo_idx]
+
+        print(f"Minimizing Node {node_idx} FIFO {fifo_idx}: original depth {original_size}")
+
+        # Try FIFO depth of 32 first (fits into bitwidth LUTs)
+        success, timeout = self._test_depth(
+            32, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+        )
+
+        if success:
+            # If FIFO depth of 2 works, we dont need FIFOs at all, because AXI buffers some values
+            success, timeout = self._test_depth(
+                2, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+            )
+            if success:
+                return 2
+            return 32
+
+        # Try one BRAM block less than current
+        upper_blocks = calculate_bram_blocks(original_size, bw)
+        blocks, min_d, max_d = self._find_valid_block_count(upper_blocks - 1, bw)
+
+        if max_d == 0:
+            return original_size
+
+        success, timeout = self._test_depth(
+            max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+        )
+
+        if timeout or not success:
+            return original_size
+
+        best_working_depth = max_d
+
+        # Binary search if there's room to search
+        if blocks > 2 and min_d - 1 > 32:
+            best_working_depth = self._binary_search_depth(
+                node_idx,
+                fifo_idx,
+                baseline_depths,
+                bw,
+                initial_fifo_depths,
+                sim,
+                sim_cycles,
+                lower_blocks=1,
+                upper_blocks=blocks,
+            )
+
+        # If we are within reach of the max qsrl depth,
+        # test that as well, so that we can maybe move to LUTRAM
+        if (
+            best_working_depth < self.max_qsrl_depth * 1.1
+            and best_working_depth > self.max_qsrl_depth
+        ):
+            success, timeout = self._test_depth(
+                self.max_qsrl_depth,
+                node_idx,
+                fifo_idx,
+                baseline_depths,
+                initial_fifo_depths,
+                sim,
+                sim_cycles,
+            )
+            if success:
+                best_working_depth = self.max_qsrl_depth
+
+        return best_working_depth
+
+    def _binary_search_depth(
+        self,
+        node_idx: int,
+        fifo_idx: int,
+        baseline_depths: list,
+        bitwidth: int,
+        initial_fifo_depths: dict,
+        sim,
+        sim_cycles: float,
+        lower_blocks: int,
+        upper_blocks: int,
+    ) -> int:
+        """Perform binary search to find minimal working FIFO depth.
+
+        Args:
+            node_idx: Node index
+            fifo_idx: FIFO index within node
+            baseline_depths: Original baseline FIFO depths (unchanged during minimization)
+            bitwidth: Data bitwidth
+            initial_fifo_depths: Baseline performance data
+            sim: Simulation controller
+            sim_cycles: Maximum simulation cycles
+            lower_blocks: Lower bound for block count
+            upper_blocks: Upper bound for block count (known to work)
+
+        Returns:
+            Best working depth found
+        """
+        _, _, max_d = self._find_valid_block_count(upper_blocks, bitwidth)
+        best_working_depth = max_d
+
+        while lower_blocks < upper_blocks:
+            mid_blocks = (lower_blocks + upper_blocks) // 2
+
+            # Prevent infinite loop
+            if mid_blocks == upper_blocks:
+                mid_blocks = upper_blocks - 1
+            if mid_blocks < lower_blocks:
+                break
+
+            # Find valid depth for this block count
+            valid_blocks, _, max_d = self._find_valid_block_count(
+                mid_blocks, bitwidth, lower_blocks
+            )
+
+            if max_d == 0:
+                # No valid configuration, try more blocks
+                lower_blocks = mid_blocks + 1
+                continue
+
+            success, _ = self._test_depth(
+                max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+            )
+
+            if success:
+                # This depth works, try smaller
+                best_working_depth = max_d
+                upper_blocks = valid_blocks
+            else:
+                # This depth doesn't work, need larger
+                lower_blocks = valid_blocks + 1
+
+        return best_working_depth
+
+    def needs_minimization(self, fifo_depth: int, bitwidth: int) -> bool:
+        """Determine whether a FIFO can be minimized further.
+
+        Args:
+            fifo_depth: Current FIFO depth
+            bitwidth: Data bitwidth
+
+        Returns:
+            True if the FIFO can be minimized further, False otherwise.
+        """
+        # TODO: Make sure that the FIFOs are correctly instantiated afterwards.
+        # Everything <= max_qsrl_depth should use rtl fifos.
+        # TODO: Rewrite this method. We should set the FIFO style instead of the user,
+        # also QoR should not be used
+
+        # Qsrl FIFO Formula: LUTs = ⌈depth/32⌉ x ⌈bitwidth/2⌉
+        if fifo_depth <= self.max_qsrl_depth and self.quality_of_results != "best":
+            return False
+        if fifo_depth <= 32:  # FIFOs of depth <=32 fit into bitwidth/2 LUTs
+            return False
+        # possible RAM styles: auto, block, distributed, ultra
+        if self.vivado_ram_style == "block" and calculate_bram_blocks(fifo_depth, bitwidth) == 1:
+            return False
+        if self.vivado_ram_style == "ultra" and calculate_uram_blocks(fifo_depth, bitwidth) == 1:
+            return False
+        if self.vivado_ram_style == "auto":
+            if (
+                self.quality_of_results == "fast"
+                and calculate_uram_blocks(fifo_depth, bitwidth) == 1
+            ):
+                return False
+            if (
+                calculate_bram_blocks(fifo_depth, bitwidth) == 1
+                and fifo_depth > self.max_qsrl_depth * 1.1
+            ):
+                return False
+
+        # Larger FIFOs with style distributed are always optimized further
+        # If more than 1 RAM block is used, we can try to reduce it further
+
+        return True
+
+
+def calculate_bram_blocks(depth: int, bitwidth: int) -> int:
+    """Calculate the number of BRAM blocks required for a BRAM FIFO.
+
+    Args:
+        depth: FIFO depth
+        bitwidth: Data bitwidth
+    """
+    if bitwidth == 1:
+        return math.ceil(depth / 16384)
+    if bitwidth == 2:
+        return math.ceil(depth / 8192)
+    if bitwidth <= 4:
+        return (math.ceil(depth / 4096)) * (math.ceil(bitwidth / 4))
+    if bitwidth <= 9:
+        return (math.ceil(depth / 2048)) * (math.ceil(bitwidth / 9))
+    if bitwidth <= 18 or depth > 512:
+        return (math.ceil(depth / 1024)) * (math.ceil(bitwidth / 18))
+    return (math.ceil(depth / 512)) * (math.ceil(bitwidth / 36))
+
+
+def calculate_bram_depth_range(blocks: int, bitwidth: int) -> tuple[int, int]:
+    """Calculate the range of FIFO depths that use exactly the given number of BRAM blocks.
+
+    Args:
+        blocks: Number of BRAM blocks
+        bitwidth: Data bitwidth
+
+    Returns:
+        Tuple of (min_depth, max_depth) that uses exactly 'blocks' BRAM blocks.
+    """
+    if blocks < 1:
+        raise FINNInternalError("Number of BRAM blocks must be at least 1")
+
+    # Invert the formula from calculate_bram_blocks based on bitwidth
+    if bitwidth == 1:
+        # blocks = ⌈depth/16384⌉
+        # Inversion: (blocks-1)*16384 < depth ≤ blocks*16384
+        min_depth = (blocks - 1) * 16384 + 1 if blocks > 1 else 1
+        max_depth = blocks * 16384
+    elif bitwidth == 2:
+        # blocks = ⌈depth/8192⌉
+        # Inversion: (blocks-1)*8192 < depth ≤ blocks*8192
+        min_depth = (blocks - 1) * 8192 + 1 if blocks > 1 else 1
+        max_depth = blocks * 8192
+    elif bitwidth <= 4:
+        # blocks = ⌈depth/4096⌉ * ⌈bitwidth/4⌉
+        bitwidth_factor = math.ceil(bitwidth / 4)
+        depth_blocks = math.ceil(blocks / bitwidth_factor)
+        min_depth = (depth_blocks - 1) * 4096 + 1 if depth_blocks > 1 else 1
+        max_depth = depth_blocks * 4096
+    elif bitwidth <= 9:
+        # blocks = ⌈depth/2048⌉ * ⌈bitwidth/9⌉
+        bitwidth_factor = math.ceil(bitwidth / 9)
+        depth_blocks = math.ceil(blocks / bitwidth_factor)
+        min_depth = (depth_blocks - 1) * 2048 + 1 if depth_blocks > 1 else 1
+        max_depth = depth_blocks * 2048
+    elif bitwidth <= 18:
+        # blocks = ⌈depth/1024⌉ * ⌈bitwidth/18⌉
+        bitwidth_factor = math.ceil(bitwidth / 18)
+        depth_blocks = math.ceil(blocks / bitwidth_factor)
+        min_depth = (depth_blocks - 1) * 1024 + 1
+        max_depth = depth_blocks * 1024
+    else:
+        # bitwidth > 18, split into two cases from original function
+        # Case 1: depth > 512 uses ⌈depth/1024⌉ * ⌈bitwidth/18⌉
+        # Case 2: depth ≤ 512 uses ⌈depth/512⌉ * ⌈bitwidth/36⌉
+
+        # Try the depth > 512 case first (⌈depth/1024⌉ * ⌈bitwidth/18⌉)
+        bitwidth_factor = math.ceil(bitwidth / 18)
+        depth_blocks = math.ceil(blocks / bitwidth_factor)
+        if depth_blocks <= 1 and bitwidth <= 18:
+            return (1, 1024)
+        min_depth = max((depth_blocks - 1) * 1024 + 1, 513)  # Must be > 512
+        max_depth = depth_blocks * 1024
+        # Check if this range is valid (entirely > 512)
+        if min_depth > 512 and calculate_bram_blocks(min_depth, bitwidth) == blocks:
+            return (min_depth, max_depth)
+
+        # Try the depth ≤ 512 case (⌈depth/512⌉ * ⌈bitwidth/36⌉)
+        bitwidth_factor = math.ceil(bitwidth / 36)
+        depth_blocks = math.ceil(blocks / bitwidth_factor)
+        if depth_blocks <= 1 and bitwidth > 18:
+            return (1, 512)
+        min_depth = (depth_blocks - 1) * 512 + 1
+        max_depth = min(depth_blocks * 512, 512)  # Must be ≤ 512
+        # Check if this range is valid (entirely ≤ 512)
+        if max_depth <= 512 and calculate_bram_blocks(min_depth, bitwidth) == blocks:
+            return (min_depth, max_depth)
+
+        return (0, 0)  # No valid range found
+
+    # Verify the range is valid
+    if calculate_bram_blocks(min_depth, bitwidth) != blocks:
+        raise FINNInternalError("Calculated BRAM depth range is invalid!")
+    return (min_depth, max_depth)
+
+
+def calculate_uram_blocks(depth: int, bitwidth: int) -> int:
+    """Calculate the number of URAM blocks required for a URAM FIFO.
+
+    Args:
+        depth: FIFO depth
+        bitwidth: Data bitwidth
+    """
+    return (math.ceil(depth / 4096)) * (math.ceil(bitwidth / 72))
+
+
+def calculate_uram_depth_range(blocks: int, bitwidth: int) -> tuple[int, int]:
+    """Calculate the range of FIFO depths that use exactly the given number of URAM blocks.
+
+    Args:
+        blocks: Number of URAM blocks
+        bitwidth: Data bitwidth
+
+    Returns:
+        Tuple of (min_depth, max_depth) that uses exactly 'blocks' URAM blocks.
+        Returns (0, 0) if no valid range exists.
+    """
+    if blocks < 1:
+        return (0, 0)
+
+    # URAM formula: blocks = ⌈depth/4096⌉ * ⌈bitwidth/72⌉
+    bitwidth_factor = math.ceil(bitwidth / 72)
+
+    # Calculate depth range
+    # Minimum depth: (blocks / bitwidth_factor - 1) * 4096 + 1
+    # Maximum depth: (blocks / bitwidth_factor) * 4096
+
+    if blocks % bitwidth_factor != 0:
+        return (0, 0)  # Invalid block count for this bitwidth
+
+    depth_blocks = blocks // bitwidth_factor
+    min_depth = (depth_blocks - 1) * 4096 + 1 if depth_blocks > 1 else 1
+    max_depth = depth_blocks * 4096
+
+    # Verify
+    if calculate_uram_blocks(min_depth, bitwidth) != blocks:
+        return (0, 0)
+
+    return (min_depth, max_depth)
+
+
+def calculate_smaller_uram_blocks(depth: int, bitwidth: int, dif: int) -> int:
+    """Calculate the biggest FIFO depth that uses fewer URAM blocks.
+
+    Args:
+        depth: Current FIFO depth
+        bitwidth: Data bitwidth
+        dif: Number of URAM blocks to reduce by (will be clamped to available blocks)
+
+    Returns:
+        Maximum depth that uses at least 'dif' fewer blocks, or uses half the current blocks
+        if dif is too large.
+    """
+    current_uram_blocks = calculate_uram_blocks(depth, bitwidth)
+    if current_uram_blocks <= 1:
+        return depth  # Cannot reduce further
+
+    # If requested reduction is larger than what we have, reduce by half instead
+    target_blocks = current_uram_blocks - dif
+    if target_blocks < 1:
+        target_blocks = max(1, current_uram_blocks // 2)
+
+    # Use the range function to find the maximum depth for target blocks
+    min_d, max_d = calculate_uram_depth_range(target_blocks, bitwidth)
+    if max_d > 0:
+        return max_d
+
+    # Fallback to linear search if range calculation fails
+    for i in range(depth, 0, -1):
+        uram_blocks = calculate_uram_blocks(i, bitwidth)
+        if uram_blocks <= target_blocks:
+            return i
+    return depth - 1  # Fallback, should not happen
+
+
+def calculate_srl16e_luts(depth: int, bitwidth: int) -> int:
+    """Calculate the number of SRL16E LUTs required for a FIFO.
+
+    Args:
+        depth: FIFO depth (must be >= 2)
+        bitwidth: Data bitwidth
+
+    Returns:
+        Number of SRL16E LUTs required without adress LUTs.
+
+    Formula: LUTs = ⌈depth/32⌉ x ⌈bitwidth/2⌉
+    """
+    ram_luts = (math.ceil(depth / 32)) * (math.ceil(bitwidth / 2))
+    return ram_luts
+
+
+def calculate_srl16e_depth_range(luts: int, bitwidth: int) -> tuple[int, int]:
+    """Calculate the range of FIFO depths that use exactly the given number of SRL16E LUTs.
+
+    Args:
+        luts: Number of SRL16E LUTs
+        bitwidth: Data bitwidth
+
+    Returns:
+        Tuple of (min_depth, max_depth) that uses exactly 'luts' LUTs.
+        Returns (0, 0) if no valid range exists.
+    """
+    if luts < 1:
+        return (0, 0)
+
+    # SRL16E formula: luts = ⌈depth/32⌉ * ⌈bitwidth/2⌉
+    bitwidth_factor = math.ceil(bitwidth / 2)
+
+    # Calculate depth range
+    if luts % bitwidth_factor != 0:
+        return (0, 0)  # Invalid LUT count for this bitwidth
+
+    depth_blocks = luts // bitwidth_factor
+    min_depth = (depth_blocks - 1) * 32 + 1 if depth_blocks > 1 else 2
+    max_depth = depth_blocks * 32
+
+    # Verify
+    if calculate_srl16e_luts(min_depth, bitwidth) != luts:
+        return (0, 0)
+
+    return (min_depth, max_depth)
+
+
+def calculate_smaller_srl16e_luts(depth: int, bitwidth: int, dif: int) -> int:
+    """Calculate the biggest FIFO depth that uses fewer SRL16E LUTs.
+
+    Args:
+        depth: Current FIFO depth
+        bitwidth: Data bitwidth
+        dif: Number of LUTs to reduce by (will be clamped to available LUTs)
+
+    Returns:
+        Maximum depth that uses at least 'dif' fewer LUTs, or uses half the current LUTs
+        if dif is too large.
+    """
+    current_luts = calculate_srl16e_luts(depth, bitwidth)
+    if current_luts <= 1:
+        return depth  # Cannot reduce further
+
+    # If requested reduction is larger than what we have, reduce by half instead
+    target_luts = current_luts - dif
+    if target_luts < 1:
+        target_luts = max(1, current_luts // 2)
+
+    # Use the range function to find the maximum depth for target LUTs
+    min_d, max_d = calculate_srl16e_depth_range(target_luts, bitwidth)
+    if max_d > 0:
+        return max_d
+
+    # Fallback to linear search if range calculation fails
+    for i in range(depth, 1, -1):
+        luts = calculate_srl16e_luts(i, bitwidth)
+        if luts <= target_luts:
+            return i
+    return depth - 1  # Fallback, should not happen
