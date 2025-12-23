@@ -105,6 +105,11 @@ class bench:
             # TODO: separate these more cleanly from builder options
         ]
 
+        if "experiments_config" in params:
+            self.experiments_config = params["experiments_config"]
+        else:
+            self.experiments_config = None
+
         dut_yaml_name = self._params["dut"] + ".yml"
         dut_path = os.path.join(os.path.dirname(__file__), "dut", dut_yaml_name)
         if os.path.isfile(dut_path):
@@ -368,6 +373,8 @@ class bench:
         # rtlsim_use_vivado_comps # TODO ?
         # cfg.default_swg_exception
         # cfg.large_fifo_mem_style
+
+        cfg.experiments_config_path = self.experiments_config
 
         # Overwrite build config settings with run-specific parameters
         # Filter to only valid DataflowBuildConfig attributes to avoid errors

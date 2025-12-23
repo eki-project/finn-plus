@@ -1,12 +1,15 @@
+"""Collect and log benchmark results to DVC."""
+
 import json
 import os
 import shutil
 import sys
 from datetime import date
-from dvclive.live import Live
+from dvclive import Live
 
 
 def delete_dir_contents(dir):
+    """Delete all contents of a directory."""
     for filename in os.listdir(dir):
         file_path = os.path.join(dir, filename)
         try:
@@ -19,6 +22,7 @@ def delete_dir_contents(dir):
 
 
 def open_json_report(id, report_name):
+    """Open JSON report from build or measurement artifacts."""
     # look in both, build & measurement, artifacts
     path1 = os.path.join("build_artifacts", "runs_output", "run_%d" % (id), "reports", report_name)
     path2 = os.path.join(
@@ -38,7 +42,10 @@ def open_json_report(id, report_name):
 
 # Wrapper around DVC Live object
 class DVCLoggerHelper:
+    """Wrapper around DVC Live for logging experiments."""
+
     def __init__(self, experiment_name, experiment_msg, id, params):
+        """Initialize DVC logger with experiment details."""
         self.id = id
 
         # extract logging settings from params
@@ -62,20 +69,24 @@ class DVCLoggerHelper:
         self.log_params(params)
 
     def __enter__(self):
+        """Enter context manager."""
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        """Exit context manager and end DVC session."""
         if self.store_as_experiment:
             # End DVC Live experiment session
             self.live.end()
 
     def log_params(self, params):
+        """Log parameters to DVC."""
         if self.store_as_experiment:
             self.live.log_params(params)
         if self.store_as_data:
             self.data_dict.update(params)
 
     def log_metric(self, prefix, name, value):
+        """Log a single metric to DVC."""
         # sanitize '/' in name because DVC uses it to nest metrics (which we do via prefix)
         name = name.replace("/", "-")
 
@@ -95,20 +106,24 @@ class DVCLoggerHelper:
             _dict[name] = value
 
     def log_image(self, image_name, image_path):
+        """Log an image artifact to DVC."""
         if self.store_as_experiment:
             self.live.log_image(image_name, image_path)
 
     def log_artifact(self, artifact_path):
+        """Log an artifact to DVC."""
         if self.store_as_experiment:
             self.live.log_artifact(artifact_path)
 
     def log_all_metrics_from_report(self, report_name, prefix=""):
+        """Log all metrics from a JSON report."""
         report = open_json_report(self.id, report_name)
         if report:
             for key in report:
                 self.log_metric(prefix, key, report[key])
 
     def log_metrics_from_report(self, report_name, keys, prefix=""):
+        """Log specific metrics from a JSON report."""
         report = open_json_report(self.id, report_name)
         if report:
             for key in keys:
@@ -116,6 +131,7 @@ class DVCLoggerHelper:
                     self.log_metric(prefix, key, report[key])
 
     def log_nested_metrics_from_report(self, report_name, key_top, keys, prefix=""):
+        """Log nested metrics from a JSON report."""
         report = open_json_report(self.id, report_name)
         if report:
             if key_top in report:
@@ -125,7 +141,10 @@ class DVCLoggerHelper:
 
 
 if __name__ == "__main__":
-    # Go through all runs found in the artifacts and log their results to DVC
+    """Go through all runs found in the artifacts and log their results to DVC."""
+    print("FIXME: collect.py")
+    sys.exit(0)
+
     run_dir_list = os.listdir(os.path.join("build_artifacts", "runs_output"))
     print("Looking for runs in build artifacts")
     run_ids = []
