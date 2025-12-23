@@ -1,0 +1,6 @@
+outs:
+- md5: e6ab098285598d8521d1b8f94598789a.dir
+  size: 743345
+  nfiles: 3
+  hash: md5
+  path: rml_transformer_b

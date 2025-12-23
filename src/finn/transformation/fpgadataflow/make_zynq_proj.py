@@ -27,6 +27,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Transformation to create Zynq Vivado projects for FINN dataflow designs."""
+
 import math
 import os
 from qonnx.core.modelwrapper import ModelWrapper
@@ -54,13 +56,13 @@ from finn.util.basic import (
     pynq_part_map,
 )
 from finn.util.deps import get_deps_path
-from finn.util.exception import FINNError
+from finn.util.exception import FINNError, FINNUserError
 
 from . import templates
 
 
 def collect_ip_dirs(model, ipstitch_path):
-    # collect list of all IP dirs
+    """Collect list of all IP directories required by the design."""
     ip_dirs = []
     need_memstreamer = False
     for node in model.graph.node:
@@ -96,6 +98,7 @@ class MakeZYNQProject(Transformation):
     """
 
     def __init__(self, platform, period_ns, enable_debug=False):
+        """Initialize MakeZYNQProject with platform settings."""
         super().__init__()
         self.platform = platform
         self.period_ns = period_ns
@@ -103,7 +106,7 @@ class MakeZYNQProject(Transformation):
         self.enable_gpio_reset = 0
 
     def apply(self, model):
-        # create a config file and empty list of xo files
+        """Apply the transformation to create a Zynq project."""
         config = []
         idma_idx = 0
         odma_idx = 0
@@ -406,9 +409,10 @@ class MakeZYNQProject(Transformation):
         bash_command = ["bash", synth_project_sh]
         try:
             launch_process_helper(bash_command, print_stdout=False)
-        except CalledProcessError:
-            # Check success manually by looking for bitfile
-            pass
+        except CalledProcessError as e:
+            raise FINNUserError(
+                f"Synthesis failed. Check " f"{vivado_pynq_proj_dir} for details."
+            ) from e
 
         bitfile_name = vivado_pynq_proj_dir + "/finn_zynq_link.runs/impl_1/top_wrapper.bit"
         if not os.path.isfile(bitfile_name):
@@ -454,6 +458,7 @@ class ZynqBuild(Transformation):
         enable_instrumentation=False,
         partition_model_dir=None,
     ):
+        """Initialize ZynqBuild with platform and build settings."""
         super().__init__()
         self.fpga_part = pynq_part_map[platform]
         self.axi_port_width = pynq_native_port_width[platform]
@@ -464,7 +469,7 @@ class ZynqBuild(Transformation):
         self.partition_model_dir = partition_model_dir
 
     def apply(self, model):
-        # first infer layouts
+        """Apply the ZynqBuild transformation to create a complete Zynq accelerator."""
         model = model.transform(InferDataLayouts())
         # prepare at global level, then break up into kernels
         if self.enable_instrumentation:

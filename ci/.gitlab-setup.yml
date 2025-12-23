@@ -2,30 +2,34 @@
 
 .n2_setup_general:
   before_script:
-    - module load lang/Python/3.10.4-GCCcore-11.3.0
-    - module load devel/Autoconf/2.71-GCCcore-11.3.0
-    - module load lang/Bison/3.8.2-GCCcore-11.3.0
-    - module load lang/flex/2.6.4-GCCcore-11.3.0
-    - module load lib/pybind11/2.9.2-GCCcore-11.3.0
-    - module load devel/Boost/1.79.0-GCC-11.3.0
-    - module load lib/fmt/9.1.0-GCCcore-11.3.0
-    - module load compiler/GCC/11.3.0
+    #TODO: switch to python 3.11 and remove pybing module (use poetry dependency only) after FiFO sim rework is merged
+    - ml lang/Python/3.10.4-GCCcore-11.3.0
+    - ml lib/pybind11/2.9.2-GCCcore-11.3.0
+    - ml compiler/GCC/14.2.0 devel/Boost/1.88.0-GCC-14.2.0
     - ulimit -s unlimited # Increase stack size limit
 
 .n2_setup_xilinx_2022_2:
   before_script:
     - module load fpga
     - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    - ml fpga/xilinx/vitis_hls_xcd_fix
+    - export PLATFORM_PATH=$FINN_CUSTOM_PLATFORM_PATH # override with custom platform path
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
+    # Workaround for https://github.com/eki-project/finn-plus/issues/112
+    - export LD_LIBRARY_PATH=$XILINX_VIVADO/lib/lnx64.o:$XILINX_VITIS/lnx64/tools/fpo_v7_1:$LD_LIBRARY_PATH
 
 .n2_setup_xilinx_2024_2:
   before_script:
     - module load fpga
     - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
     - module swap xilinx/vitis/24.2 # switch to Vitis/Vivado 2024.2
+    - ml fpga/xilinx/vitis_hls_xcd_fix
+    - export PLATFORM_PATH=$FINN_CUSTOM_PLATFORM_PATH # override with custom platform path
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
+    # Workaround for https://github.com/eki-project/finn-plus/issues/112
+    - export LD_LIBRARY_PATH=$XILINX_VIVADO/lib/lnx64.o:$XILINX_VITIS/lnx64/tools/fpo_v7_1:$LD_LIBRARY_PATH
 
 .setup_venv_from_whl:
   before_script:
@@ -34,6 +38,10 @@
     - cd $PATH_WORKDIR
     # Create fresh virtual environment and install finn-plus from .whl (artifact)
     - python3 -m venv finn-plus-venv
+    - finn-plus-venv/bin/pip install 'torch~=2.7.1' 'torchvision~=0.22.1' --extra-index-url https://download.pytorch.org/whl/cu121
+    - finn-plus-venv/bin/pip install 'dvc[webdav]~=3.59.1' 'dvclive[image]~=3.48.2'
+    - finn-plus-venv/bin/pip install tests/dist/*.whl
+    - finn-plus-venv/bin/pip install notebooks/dist/*.whl
     - finn-plus-venv/bin/pip install dist/*.whl
 
 .setup_full_2022_2:
