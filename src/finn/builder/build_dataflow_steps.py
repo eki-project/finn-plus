@@ -703,8 +703,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
         extract_model_config_to_json(model, cfg_path, hw_attrs)
         model.set_metadata_prop("folding_config_before_lfs", cfg_path)
 
-        # Disable runtime-writable weights, external weights, and dynamic mode,
-        # as we don't support additional AXI-lite interfaces next to the FIFOs
+        # Disable runtime-writable weights, external weights, and dynamic mode
         for node in model.graph.node:
             if node.domain.startswith("finn.custom_op.fpgadataflow"):
                 node_inst = getCustomOp(node)
@@ -726,14 +725,14 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                 except AttributeError:
                     pass
 
-        # Specialize FIFOs to HLS back-end instead of default RTL back-end
+        # Specialize FIFOs to RTL back-end
         for node in model.get_nodes_by_op_type("StreamingFIFO"):
             node_inst = getCustomOp(node)
-            node_inst.set_nodeattr("preferred_impl_style", "hls")
+            node_inst.set_nodeattr("preferred_impl_style", "rtl")
         model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
 
         # Fix impl_style attribute
-        for node in model.get_nodes_by_op_type("StreamingFIFO_hls"):
+        for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
             node_inst = getCustomOp(node)
             node_inst.set_nodeattr("impl_style", "virtual")
 
@@ -1086,8 +1085,8 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
                     cfg.synth_clk_period_ns,
                     cfg.enable_hw_debug,
                     cfg.enable_instrumentation,
-                    cfg.live_fifo_sizing,
                     cfg.instrumentation_no_dma,
+                    cfg.live_fifo_sizing,
                     partition_model_dir=partition_model_dir,
                 )
             )

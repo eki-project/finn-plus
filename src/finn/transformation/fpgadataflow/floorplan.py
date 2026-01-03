@@ -170,6 +170,13 @@ class Floorplan(Transformation):
                 partition_cnt += 1
                 continue
 
+            ap_none_intf_names = node_inst.get_verilog_top_module_intf_names()["ap_none"]
+            if "icfg" in ap_none_intf_names:
+                # Also start a new partition for every icfg/ocfg virtual FIFO ring bus interface
+                node_inst.set_nodeattr("partition_id", partition_cnt)
+                partition_cnt += 1
+                continue
+
             # examine all predecessor nodes to determine partition id for this node
             node_slr = node_inst.get_nodeattr("slr")
             slr_mismatch_count = 0

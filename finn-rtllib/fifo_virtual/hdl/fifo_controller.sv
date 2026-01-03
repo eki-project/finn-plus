@@ -5,10 +5,10 @@
  */
 
 module fifo_controller #(
-    localparam int unsigned  ADDR_WIDTH = 32,
-    localparam int unsigned  DATA_WIDTH = 32,
-    localparam int unsigned  IP_ADDR_WIDTH = 30,
-    localparam int unsigned  IP_DATA_WIDTH = 32,
+    int unsigned  ADDR_WIDTH = 32,
+    int unsigned  DATA_WIDTH = 32,
+    int unsigned  IP_ADDR_WIDTH = 30,
+    int unsigned  IP_DATA_WIDTH = 32
 )(
 	// Global Control
 	input	logic  aclk,
@@ -53,7 +53,7 @@ module fifo_controller #(
 	uwire  config_wen;
 	uwire  config_rack;
 	uwire [IP_DATA_WIDTH-1:0]  config_wdata;
-	uwire [IP_DATA_WIDTH-1:0]  config_rdata;
+	logic [IP_DATA_WIDTH-1:0]  config_rdata;
 	axilite #(
 		.ADDR_WIDTH(ADDR_WIDTH),
 		.DATA_WIDTH(DATA_WIDTH),
@@ -120,7 +120,7 @@ module fifo_controller #(
     uwire [7:0] op = instr_addr[7:0];
     uwire [15:0] fifo_id = instr_addr[23:8]; // todo: double-check endianness throughout!
     // Packet size lookup
-    uwire [2:0] packet_size;
+    logic [2:0] packet_size;
     always_comb begin
         unique casex (op)
         M_RUN:         packet_size = 3'd1; // 1 byte packet [OP]
