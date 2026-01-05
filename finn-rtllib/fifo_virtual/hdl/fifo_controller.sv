@@ -118,7 +118,7 @@ module fifo_controller #(
 
     // Decode instruction & FIFO ID from address (29:24 are unused)
     uwire [7:0] op = instr_addr[7:0];
-    uwire [15:0] fifo_id = instr_addr[23:8]; // todo: double-check endianness throughout!
+    uwire [15:0] fifo_id = instr_addr[23:8];
     // Packet size lookup
     logic [2:0] packet_size;
     always_comb begin
@@ -237,16 +237,16 @@ module fifo_controller #(
             READ_STALL: begin // 4 byte packet [OP, 16 bit ID, status byte]
                 unique case (counter)
                 3'd0: ocfg = op;
-                3'd1: ocfg = fifo_id[7:0];
-                3'd2: ocfg = fifo_id[15:8];
+                3'd1: ocfg = fifo_id[15:8];
+                3'd2: ocfg = fifo_id[7:0];
                 3'd3: ocfg = 8'h00;
                 endcase
             end
             READ_FILL: begin // 7 byte packet [OP, 16 bit ID, 32 bit value]
                 unique case (counter)
                 3'd0: ocfg = op;
-                3'd1: ocfg = fifo_id[7:0];
-                3'd2: ocfg = fifo_id[15:8];
+                3'd1: ocfg = fifo_id[15:8];
+                3'd2: ocfg = fifo_id[7:0];
                 3'd3: ocfg = 8'h00;
                 3'd4: ocfg = 8'h00;
                 3'd5: ocfg = 8'h00;
@@ -256,12 +256,12 @@ module fifo_controller #(
             WRITE_FILL: begin // 7 byte packet [OP, 16 bit ID, 32 bit value]
                 unique case (counter)
                 3'd0: ocfg = op;
-                3'd1: ocfg = fifo_id[7:0];
-                3'd2: ocfg = fifo_id[15:8];
-                3'd3: ocfg = wdata[7:0];
-                3'd4: ocfg = wdata[15:8];
-                3'd5: ocfg = wdata[23:16];
-                3'd6: ocfg = wdata[31:24];
+                3'd1: ocfg = fifo_id[15:8];
+                3'd2: ocfg = fifo_id[7:0];
+                3'd3: ocfg = instr_wdata[31:24];
+                3'd4: ocfg = instr_wdata[23:16];
+                3'd5: ocfg = instr_wdata[15:8];
+                3'd6: ocfg = instr_wdata[7:0];
                 endcase
             end
             endcase

@@ -31,7 +31,7 @@ fifo_gauge #(
     .FM_SIZE(FM_SIZE)
 ) fifo_inst (
     .clk(ap_clk),
-    .rst(ap_rst_n),
+    .rst(~ap_rst_n),
     .idat(in0_V_TDATA),
     .ivld(in0_V_TVALID),
     .irdy(in0_V_TREADY),

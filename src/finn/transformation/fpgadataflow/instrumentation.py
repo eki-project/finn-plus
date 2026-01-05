@@ -58,7 +58,9 @@ class GenerateInstrumentationIP(Transformation):
         model.set_metadata_prop("instrumentation_ipgen", wrapper_output_dir)
 
         # conservative max for pending feature maps: number of layers
-        pending = len(model.graph.node)
+        # minimum = 1024 to work around overflow issues
+        # TODO: implement more gradual initial live FIFO sizing to mitigate this
+        pending = max(len(model.graph.node), 1024)
         # query the parallelism-dependent folded input shape from the
         # node consuming the graph input
         inp_name = model.graph.input[0].name
