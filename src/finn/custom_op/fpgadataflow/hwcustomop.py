@@ -534,7 +534,7 @@ class HWCustomOp(CustomOp):
         if exp_cycles == 0:
             # try to come up with an optimistic estimate
             exp_cycles = min(n_inps, n_outs)
-        if exp_cycles < period:
+        if exp_cycles > period:
             raise ValueError(
                 f"Period {period} too short to characterize {self.onnx_node.name} : "
                 f"expects min {n_inps} cycles"
