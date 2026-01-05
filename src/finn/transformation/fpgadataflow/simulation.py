@@ -917,6 +917,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             )
             if success:
                 best_working_depth = self.max_qsrl_depth
+        # TODO: If depth 256 works, try minimize in LUTRAM range
 
         return best_working_depth
 
@@ -994,37 +995,19 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         Returns:
             True if the FIFO can be minimized further, False otherwise.
         """
-        # TODO: Make sure that the FIFOs are correctly instantiated afterwards.
-        # Everything <= max_qsrl_depth should use rtl fifos.
-        # TODO: Rewrite this method. We should set the FIFO style instead of the user,
-        # also QoR should not be used
-
         # Qsrl FIFO Formula: LUTs = ⌈depth/32⌉ x ⌈bitwidth/2⌉
-        if fifo_depth <= self.max_qsrl_depth and self.quality_of_results != "best":
+        if (
+            fifo_depth <= self.max_qsrl_depth
+        ):  # TODO: Later this should not be needed. Binary search over LUTRAM sizes.
             return False
         if fifo_depth <= 32:  # FIFOs of depth <=32 fit into bitwidth/2 LUTs
             return False
-        # possible RAM styles: auto, block, distributed, ultra
-        if self.vivado_ram_style == "block" and calculate_bram_blocks(fifo_depth, bitwidth) == 1:
-            return False
-        if self.vivado_ram_style == "ultra" and calculate_uram_blocks(fifo_depth, bitwidth) == 1:
-            return False
-        if self.vivado_ram_style == "auto":
-            if (
-                self.quality_of_results == "fast"
-                and calculate_uram_blocks(fifo_depth, bitwidth) == 1
-            ):
-                return False
-            if (
-                calculate_bram_blocks(fifo_depth, bitwidth) == 1
-                and fifo_depth > self.max_qsrl_depth * 1.1
-            ):
-                return False
-
-        # Larger FIFOs with style distributed are always optimized further
-        # If more than 1 RAM block is used, we can try to reduce it further
-
-        return True
+        # Return False if exactly 1 BRAM block is used and depth is sufficiently large
+        # that further optimization is unlikely to succeed
+        return not (
+            calculate_bram_blocks(fifo_depth, bitwidth) == 1
+            and fifo_depth > self.max_qsrl_depth * 1.1
+        )
 
 
 def calculate_bram_blocks(depth: int, bitwidth: int) -> int:
@@ -1169,40 +1152,6 @@ def calculate_uram_depth_range(blocks: int, bitwidth: int) -> tuple[int, int]:
     return (min_depth, max_depth)
 
 
-def calculate_smaller_uram_blocks(depth: int, bitwidth: int, dif: int) -> int:
-    """Calculate the biggest FIFO depth that uses fewer URAM blocks.
-
-    Args:
-        depth: Current FIFO depth
-        bitwidth: Data bitwidth
-        dif: Number of URAM blocks to reduce by (will be clamped to available blocks)
-
-    Returns:
-        Maximum depth that uses at least 'dif' fewer blocks, or uses half the current blocks
-        if dif is too large.
-    """
-    current_uram_blocks = calculate_uram_blocks(depth, bitwidth)
-    if current_uram_blocks <= 1:
-        return depth  # Cannot reduce further
-
-    # If requested reduction is larger than what we have, reduce by half instead
-    target_blocks = current_uram_blocks - dif
-    if target_blocks < 1:
-        target_blocks = max(1, current_uram_blocks // 2)
-
-    # Use the range function to find the maximum depth for target blocks
-    min_d, max_d = calculate_uram_depth_range(target_blocks, bitwidth)
-    if max_d > 0:
-        return max_d
-
-    # Fallback to linear search if range calculation fails
-    for i in range(depth, 0, -1):
-        uram_blocks = calculate_uram_blocks(i, bitwidth)
-        if uram_blocks <= target_blocks:
-            return i
-    return depth - 1  # Fallback, should not happen
-
-
 def calculate_srl16e_luts(depth: int, bitwidth: int) -> int:
     """Calculate the number of SRL16E LUTs required for a FIFO.
 
@@ -1249,37 +1198,3 @@ def calculate_srl16e_depth_range(luts: int, bitwidth: int) -> tuple[int, int]:
         return (0, 0)
 
     return (min_depth, max_depth)
-
-
-def calculate_smaller_srl16e_luts(depth: int, bitwidth: int, dif: int) -> int:
-    """Calculate the biggest FIFO depth that uses fewer SRL16E LUTs.
-
-    Args:
-        depth: Current FIFO depth
-        bitwidth: Data bitwidth
-        dif: Number of LUTs to reduce by (will be clamped to available LUTs)
-
-    Returns:
-        Maximum depth that uses at least 'dif' fewer LUTs, or uses half the current LUTs
-        if dif is too large.
-    """
-    current_luts = calculate_srl16e_luts(depth, bitwidth)
-    if current_luts <= 1:
-        return depth  # Cannot reduce further
-
-    # If requested reduction is larger than what we have, reduce by half instead
-    target_luts = current_luts - dif
-    if target_luts < 1:
-        target_luts = max(1, current_luts // 2)
-
-    # Use the range function to find the maximum depth for target LUTs
-    min_d, max_d = calculate_srl16e_depth_range(target_luts, bitwidth)
-    if max_d > 0:
-        return max_d
-
-    # Fallback to linear search if range calculation fails
-    for i in range(depth, 1, -1):
-        luts = calculate_srl16e_luts(i, bitwidth)
-        if luts <= target_luts:
-            return i
-    return depth - 1  # Fallback, should not happen
