@@ -46,6 +46,8 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             # vivado - use the AXI Infrastructure FIFO
             # virtual - use virtual rtl implementation for live fifo-sizing
             "impl_style": ("s", False, "rtl", {"rtl", "vivado", "virtual"}),
+            # Unique FIFO ID for ring bus addressing (only for impl_style=virtual)
+            "fifo_id": ("i", False, 0),
         }
         my_attrs.update(StreamingFIFO.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
@@ -222,7 +224,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
             sourcefiles = self.get_rtl_file_list(abspath=True)
             fifo_name = self.onnx_node.name
-            id = int(fifo_name.split("_")[-1])
+            id = self.get_nodeattr("fifo_id")
             width = int(self.get_instream_width_padded())
             fm_size = int(np.prod(self.get_folded_input_shape()[0:-1]))
 

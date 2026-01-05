@@ -731,15 +731,19 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
             node_inst.set_nodeattr("preferred_impl_style", "rtl")
         model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
 
-        # Fix impl_style attribute
-        for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
-            node_inst = getCustomOp(node)
-            node_inst.set_nodeattr("impl_style", "virtual")
-
         # Clean up model
         model = model.transform(SortGraph())
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(GiveReadableTensorNames())
+
+        # Set impl_style + ID attributes
+        # We can't infer ID from the unique node name at IP instantiation,
+        # because the nodes will be wrapped in SDPs
+        for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
+            node_inst = getCustomOp(node)
+            id = int(node.name.split("_")[-1])
+            node_inst.set_nodeattr("impl_style", "virtual")
+            node_inst.set_nodeattr("fifo_id", id)
 
         return model
 
