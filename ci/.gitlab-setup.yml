@@ -2,9 +2,7 @@
 
 .n2_setup_general:
   before_script:
-    #TODO: switch to python 3.11 and remove pybing module (use poetry dependency only) after FiFO sim rework is merged
     - ml lang/Python/3.10.4-GCCcore-11.3.0
-    - ml lib/pybind11/2.9.2-GCCcore-11.3.0
     - ml compiler/GCC/14.2.0 devel/Boost/1.88.0-GCC-14.2.0
     - ulimit -s unlimited # Increase stack size limit
 
