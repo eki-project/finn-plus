@@ -839,35 +839,64 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.error = False
         self.fifo_widths = fifo_widths
         self.num_fifos = len(self.fifo_widths)
-        # Account for additional FIFO depth and implicit registers introduced by the virtual FIFO
-        # HLS implementation that are not present in real FIFOs. This results in a minimum possible
-        # FIFO depth of 1 + 8 = 9, which should be improved in a future implementation (TODO).
-        self.fifo_depth_offset = 8
+        # Account for additional FIFO depth or implicit registers introduced by the virtual FIFO
+        # implementation that are not present in real FIFOs.
+        # This results in a minimum possible FIFO depth of 1 + 1 = 2.
+        self.fifo_depth_offset = 1
 
         # Sanity check
-        # We expect 3 AXI-Lite peripherals next to the virtual FIFOs:
-        # instrumentation_wrap_0, axi_gpio_0 (for reset), zynq_ps
+        # We expect 4 AXI-Lite peripherals:
+        # fifo_controller_0, instrumentation_wrap_0, axi_gpio_0 (for reset), zynq_ps
         # We expect no additional FINN SDPs with AXI-Lite, such as runtime-writable weights
-        if (len(self.ip_dict.keys()) - 3) != self.num_fifos:
+        if len(self.ip_dict.keys()) != 4:
             print(
-                "Error: # of expected FIFOs (%d) doesn't match # of AXI-Lite interfaces (%d)"
-                % (self.num_fifos, len(self.ip_dict.keys()) - 3)
+                "Error: # of AXI-Lite interfaces (%d) does not match expected number of 4."
+                % (len(self.ip_dict.keys()))
             )
             self.error = True
+        if "fifo_controller_0" not in self.ip_dict.keys():
+            print("Error: fifo_controller_0 AXI-Lite interface not found.")
+            self.error = True
 
-    def configure_fifo(self, i, mode, depth=2):
-        """Configure virtual FIFO mode and depth."""
-        # Virtual FIFO register map
-        mode_offset = 0x10
-        depth_offset = 0x18
-        # occupancy_offset = 0x20
-        # occupancy_ctrl_offset = 0x24
-        # max_occupancy_offset = 0x30
-        # max_occupancy_ctrl_offset = 0x34
+    def ctrl_read(self, opcode=0x00, fifo_id=0x0000):
+        address = (fifo_id << 8) | opcode
+        # Shift by 2 because FIFO controller operates on word addresses
+        return self.fifo_controller_0.read(offset=(address << 2))
 
-        ip_name = "StreamingDataflowPartition_%d" % i
-        getattr(self, ip_name).write(offset=mode_offset, value=mode)
-        getattr(self, ip_name).write(offset=depth_offset, value=depth)
+    def ctrl_write(self, opcode=0x00, fifo_id=0x0000, value=0x00000000):
+        address = (fifo_id << 8) | opcode
+        # Shift by 2 because FIFO controller operates on word addresses
+        self.fifo_controller_0.write(offset=(address << 2), value=value)
+
+    def ctrl_set_depth(self, fifo_id, depth=2):
+        """Set FIFO depth via WRITE_FILL instruction."""
+        # Issue WRITE_FILL instruction (asynchronous, returns immediately)
+        self.ctrl_write(opcode=0x0E, fifo_id=fifo_id, value=depth)
+        # Read to confirm controller has returned to idle state
+        val = self.ctrl_read()
+        if val != 0:
+            print("Error: FIFO controller did not return to idle state after WRITE_FILL.")
+            self.error = True
+
+    def configure_fifos_bounded(self, depths):
+        """
+        Configure all FIFOs with bounded depths.
+        Caller can supply a list of depths or a single depth for all FIFOs.
+        """
+        if isinstance(depths, list):
+            fifo_depths = depths
+        else:
+            fifo_depths = [depths] * self.num_fifos
+
+        # Set depth for each FIFO
+        for i in range(0, self.num_fifos):
+            self.ctrl_set_depth(i, fifo_depths[i])
+
+        # Issue RUN_BOUNDED instruction once all depths have been set
+        val = self.ctrl_read(opcode=0x04)
+        if val != 0x04:
+            print("Error: FIFO controller did not return correctly from RUN_BOUNDED command.")
+            self.error = True
 
     def total_fifo_size(self, depths):
         """Calculate total FIFO size in kB."""
@@ -891,8 +920,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         # Reset accelerator and configure FIFOs
         self.reset_accelerator()
-        for i in range(0, self.num_fifos):
-            self.configure_fifo(i, mode=1, depth=fifo_depths[i])
+        self.configure_fifos_bounded(fifo_depths)
 
         # Run once to determine target interval
         self.start_accelerator()
@@ -919,14 +947,13 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             for fifo_id in range(0, self.num_fifos):
                 if not fifo_minimum_reached[fifo_id]:
                     fifo_depth_before = fifo_depths[fifo_id]
-                    fifo_depths[fifo_id] = int(fifo_depths[fifo_id] * reduction_factor)
+                    fifo_depths[fifo_id] = max(1, int(fifo_depths[fifo_id] * reduction_factor))
 
                     # Reset accelerator
                     self.reset_accelerator()
 
                     # Configure all FIFOs
-                    for i in range(0, self.num_fifos):
-                        self.configure_fifo(i, mode=1, depth=fifo_depths[i])
+                    self.configure_fifos_bounded(fifo_depths)
 
                     # Start accelerator
                     self.start_accelerator()
@@ -998,8 +1025,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             self.reset_accelerator()
 
             # Configure FIFOs
-            for i in range(0, self.num_fifos):
-                self.configure_fifo(i, mode=1, depth=start_depth)
+            self.configure_fifos_bounded(start_depth)
 
             # Start accelerator and let it run for a long time
             self.start_accelerator()
