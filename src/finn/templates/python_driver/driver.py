@@ -726,10 +726,21 @@ class FINNInstrumentationOverlay(Overlay):
             offset=self.ip_dict["axi_gpio_0"]["registers"]["GPIO_DATA"]["address_offset"], value=0
         )
 
-    def start_accelerator(self):
-        """Start the accelerator."""
+    def start_accelerator(self, throttle_interval=0):
+        """
+        Start the accelerator. Input is throttled to the specified interval (in cycles)
+        by pausing after each FM transmission. A throttle_interval of 0 means no throttling.
+        """
+        # Set seed
         lfsr_seed = (self.seed << 16) & 0xFFFF0000  # upper 16 bits
-        self.instrumentation_write("cfg", lfsr_seed + 1)  # start operation
+        self.instrumentation_write("seed", lfsr_seed)
+
+        # Start operation
+        self.instrumentation_write("cfg", (throttle_interval << 1) | 1)  # bit 0 = start
+
+    def stop_accelerator(self):
+        """Stop the accelerator."""
+        self.instrumentation_write("cfg", 0)  # bit 0 = stop
 
     def observe_instrumentation(self, debug_print=True):
         """Read and report instrumentation metrics."""
@@ -824,6 +835,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         download=True,
         seed=1,
         fifo_widths=dict(),
+        folding_config_before_lfs=None,
         **kwargs,
     ):
         """Initialize live FIFO overlay."""
@@ -839,6 +851,11 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.error = False
         self.fifo_widths = fifo_widths
         self.num_fifos = len(self.fifo_widths)
+
+        # The settings can also contain the original folding config,
+        # into which we can insert the live FIFO sizes once we are done
+        self.folding_config_before_lfs = folding_config_before_lfs
+
         # Account for additional FIFO depth or implicit registers introduced by the virtual FIFO
         # implementation that are not present in real FIFOs.
         # This results in a minimum possible FIFO depth of 1 + 1 = 2.
@@ -858,10 +875,17 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             print("Error: fifo_controller_0 AXI-Lite interface not found.")
             self.error = True
 
-    def ctrl_read(self, opcode=0x00, fifo_id=0x0000):
+    def ctrl_read(self, opcode=0x00, fifo_id=0x0000, check_success=False):
         address = (fifo_id << 8) | opcode
         # Shift by 2 because FIFO controller operates on word addresses
-        return self.fifo_controller_0.read(offset=(address << 2))
+        response = self.fifo_controller_0.read(offset=(address << 2))
+        if check_success and response != opcode:
+            print(
+                "Error: FIFO controller returned 0x%02x instead of expected 0x%02x."
+                % (response, opcode)
+            )
+            self.error = True
+        return response
 
     def ctrl_write(self, opcode=0x00, fifo_id=0x0000, value=0x00000000):
         address = (fifo_id << 8) | opcode
@@ -873,10 +897,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # Issue WRITE_FILL instruction (asynchronous, returns immediately)
         self.ctrl_write(opcode=0x0E, fifo_id=fifo_id, value=depth)
         # Read to confirm controller has returned to idle state
-        val = self.ctrl_read()
-        if val != 0:
-            print("Error: FIFO controller did not return to idle state after WRITE_FILL.")
-            self.error = True
+        self.ctrl_read(check_success=True)
 
     def configure_fifos_bounded(self, depths):
         """
@@ -893,10 +914,47 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             self.ctrl_set_depth(i, fifo_depths[i])
 
         # Issue RUN_BOUNDED instruction once all depths have been set
-        val = self.ctrl_read(opcode=0x04)
-        if val != 0x04:
-            print("Error: FIFO controller did not return correctly from RUN_BOUNDED command.")
-            self.error = True
+        self.ctrl_read(opcode=0x04, check_success=True)
+
+    def run_detached(self):
+        """Run FIFOs in detached mode to determine bottleneck period."""
+        self.reset_accelerator()
+
+        # Issue RUN_DETACHED4 instruction
+        self.ctrl_read(opcode=0x07, check_success=True)
+        print("DEBUG: RUN_DETACHED4 completed")
+
+        # Wait on detached run to complete by issuing BARRIER_CLEAN
+        # Internally, the controller will re-issue this instruction until it succeeds
+        # TODO: FIX BARRIER_CLEAN, simply sleep as a workaround
+        time.sleep(5)
+        # self.ctrl_read(opcode=0x08, check_success=True)
+        # print("DEBUG: BARRIER_CLEAN completed")
+
+        # Issue COMP_PERIOD instruction to collect global max period across all FIFOs
+        max_period = self.ctrl_read(opcode=0x0A)
+        print("DEBUG: COMP_PERIOD completed")
+        return max_period
+
+    def run_paced(self, throttle_interval=0, runtime_s=1):
+        """Run FIFOs in paced mode to determine bottleneck period."""
+        self.reset_accelerator()
+
+        # Issue RUN_PACED instruction
+        self.ctrl_read(opcode=0x05, check_success=True)
+
+        # Let accelerator run for specified wallclock time
+        self.start_accelerator(throttle_interval=throttle_interval)
+        time.sleep(runtime_s)
+        self.observe_instrumentation(debug_print=True)
+        self.stop_accelerator()
+
+        # Collect maximum occupancy of all FIFOs by issuing READ_FILL instructions
+        max_occupancy = []
+        for i in range(0, self.num_fifos):
+            max_occupancy.append(self.ctrl_read(opcode=0x0C, fifo_id=i))
+
+        return max_occupancy
 
     def total_fifo_size(self, depths):
         """Calculate total FIFO size in kB."""
@@ -907,13 +965,13 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         total_size_kB = total_size_bits / 8.0 / 1000.0
         return total_size_kB
 
-    def size_iteratively(self, start_depth, iteration_runtime, reduction_factor=0.5):
-        """Iteratively reduce FIFO depths to find minimum."""
+    def size_iteratively_binary_search(self, start_depth, iteration_runtime):
+        """Iteratively reduce FIFO depths using binary search to find minimum for each FIFO."""
         fifo_minimum_reached = [False] * self.num_fifos
 
         if isinstance(start_depth, list):
             # Individual start depth for each FIFO has been supplied
-            fifo_depths = start_depth
+            fifo_depths = start_depth.copy()
         else:
             # Initialize all depths to the same start depth
             fifo_depths = [start_depth] * self.num_fifos
@@ -940,63 +998,82 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         log_latency = [latency]
         target_interval = interval
 
-        # Iteratively reduce FIFO depth until all FIFOs are minimized
+        # Binary search for each FIFO to find minimum depth
         iteration = 0
         start_time = time.time()
-        while not all(fifo_minimum_reached):
-            for fifo_id in range(0, self.num_fifos):
-                if not fifo_minimum_reached[fifo_id]:
-                    fifo_depth_before = fifo_depths[fifo_id]
-                    fifo_depths[fifo_id] = max(1, int(fifo_depths[fifo_id] * reduction_factor))
 
-                    # Reset accelerator
-                    self.reset_accelerator()
+        for fifo_id in range(self.num_fifos):
+            print(f"Binary searching for FIFO {fifo_id}...")
 
-                    # Configure all FIFOs
-                    self.configure_fifos_bounded(fifo_depths)
+            # Binary search bounds
+            low = 1
+            high = fifo_depths[fifo_id]
+            best_working_depth = high
 
-                    # Start accelerator
-                    self.start_accelerator()
+            while low <= high:
+                mid = (low + high) // 2
 
-                    # Let it run
-                    time.sleep(iteration_runtime)
+                # Test with this depth
+                test_depths = fifo_depths.copy()
+                test_depths[fifo_id] = mid
 
-                    # Check if throughput dropped or deadlock occured
-                    (
-                        overflow_err,
-                        underflow_err,
-                        frame,
-                        checksum,
-                        min_latency,
-                        latency,
-                        interval,
-                    ) = self.observe_instrumentation(False)
+                # Reset accelerator
+                self.reset_accelerator()
 
-                    if interval > target_interval or interval == 0 or overflow_err or underflow_err:
-                        # Revert depth reduction and mark FIFO as minimized
-                        fifo_depths[fifo_id] = fifo_depth_before
-                        fifo_minimum_reached[fifo_id] = True
-                    else:
-                        log_total_fifo_size.append(int(self.total_fifo_size(fifo_depths)))
-                        log_interval.append(interval)
-                        log_min_latency.append(min_latency)
-                        log_latency.append(latency)
+                # Configure all FIFOs
+                self.configure_fifos_bounded(test_depths)
 
-                    if fifo_depths[fifo_id] == 1:
-                        fifo_minimum_reached[fifo_id] = True
+                # Start accelerator
+                self.start_accelerator()
 
-            # Report status
-            print("Iteration: %d" % iteration)
-            print("Numer of minimized FIFOs: %d/%d" % (sum(fifo_minimum_reached), self.num_fifos))
-            print("Interval: %d" % log_interval[-1])
-            print("Min. latency / latency: %d/%d" % (log_min_latency[-1], log_latency[-1]))
-            print("Total FIFO Size (kB): %d" % log_total_fifo_size[-1])
+                # Let it run
+                time.sleep(iteration_runtime)
 
-            iteration += 1
+                # Check if throughput dropped or deadlock occurred
+                (
+                    overflow_err,
+                    underflow_err,
+                    frame,
+                    checksum,
+                    min_latency,
+                    latency,
+                    interval,
+                ) = self.observe_instrumentation(False)
+
+                if interval > target_interval or interval == 0 or overflow_err or underflow_err:
+                    # This depth is too small, search higher
+                    low = mid + 1
+                else:
+                    # This depth works, try smaller
+                    best_working_depth = mid
+                    high = mid - 1
+
+                    # Log this successful configuration
+                    log_total_fifo_size.append(int(self.total_fifo_size(test_depths)))
+                    log_interval.append(interval)
+                    log_min_latency.append(min_latency)
+                    log_latency.append(latency)
+
+                iteration += 1
+
+                # Report status
+                result = "PASS" if best_working_depth == mid else "FAIL"
+                print(f"  Iteration {iteration}: Testing depth {mid} - {result}")
+                print(f"    Binary search bounds: [{low}, {high}]")
+                print(f"    Best working depth so far: {best_working_depth}")
+                print(f"    Interval: {interval}, Target: {target_interval}")
+
+            # Set the FIFO to its minimum working depth
+            fifo_depths[fifo_id] = best_working_depth
+            fifo_minimum_reached[fifo_id] = True
+
+            print(f"  FIFO {fifo_id} minimized to depth {best_working_depth}")
+            print(f"  Number of minimized FIFOs: {sum(fifo_minimum_reached)}/{self.num_fifos}")
+            print(f"  Total FIFO Size (kB): {self.total_fifo_size(fifo_depths)}")
 
         end_time = time.time()
         duration = int(end_time - start_time)
-        print("Done (%d seconds)" % duration)
+        print(f"Done ({duration} seconds)")
 
         return (
             fifo_depths,
@@ -1007,89 +1084,34 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             duration,
         )
 
-    def determine_start_depth(
-        self,
-    ):
-        """
-        Attempt to determine start depth for all FIFOs automatically.
-        If it doesn't find a working setting start depth must be set manually,
-        potentially on per-FIFO basis.
-        """
-        start_depth = 1
-        last_start_depth = 1
-        last_interval = 0
-        start_depth_found = False
-
-        while not start_depth_found and not self.error:
-            print("Testing start depth of %d" % start_depth)
-            self.reset_accelerator()
-
-            # Configure FIFOs
-            self.configure_fifos_bounded(start_depth)
-
-            # Start accelerator and let it run for a long time
-            self.start_accelerator()
-            time.sleep(1)
-
-            # Examine performance
-            (
-                overflow_err,
-                underflow_err,
-                frame,
-                checksum,
-                min_latency,
-                latency,
-                interval,
-            ) = self.observe_instrumentation()
-            if (
-                interval > 0
-                and interval == last_interval
-                and not overflow_err
-                and not underflow_err
-            ):
-                # Accelerator runs with stable interval, reset to previous start depth
-                start_depth_found = True
-                start_depth = last_start_depth
-            else:
-                # Start depth is still too small, increase for next try
-                last_start_depth = start_depth
-                start_depth = start_depth * 2
-
-            last_interval = interval
-
-            if start_depth > 1000000:
-                print("Couldn't find a working start depth, please set manually")
-                self.error = True
-
-        # Determine runtime per iteration based on performance, so that stable-state is guaranteed
-        # Use a simple overestimation for now to be safe
-        iteration_runtime = max(0.01, (min_latency * 5) * 10 / 1000 / 1000 / 1000)
-
-        print("Determined start depth for all FIFOs: %d" % start_depth)
-        print("Determined iteration runtime based on performance: %f s" % iteration_runtime)
-        return (start_depth, iteration_runtime)
-
     def experiment_fifosizing(self, *args, **kwargs):
         """Run live FIFO sizing experiment and save report."""
         report_dir = kwargs.get("report_dir")
-
-        # For live FIFO-sizing, we also expect the FIFO widths (in bits) exported by FINN, e.g.,
-        # {'fifo_widths': {"0": 8, "1": 32, "2": 24}}
-        # fifo_widths = kwargs.get("fifo_widths")
-
-        # The settings can also contain the original folding config,
-        # into which we can insert the live FIFO sizes once we are done
-        folding_config_lfs = kwargs.get("folding_config_before_lfs")
-
         reportfile = os.path.join(report_dir, "report_experiment_fifosizing.json")
-        folding_config_lfs = None
+        folding_config_lfs = self.folding_config_before_lfs
 
-        print("Determining start depth..")
-        (start_depth, iteration_runtime) = self.determine_start_depth()
+        print("---PHASE 1: RUN_DETACHED---")
+        max_period = self.run_detached()
+        print("MEASURED MAX PERIOD: %d cycles" % max_period)
 
-        # First pass
-        print("Starting first pass..")
-        pass1_result = self.size_iteratively(start_depth, iteration_runtime)
+        print("---PHASE 2: RUN_PACED---")
+        # TODO: Use better heuristic for runtime here and for initial run in phase 3?
+        max_occupancy = self.run_paced(throttle_interval=max_period, runtime_s=1)
+        print("MEASURED MAX FIFO OCCUPANCIES:")
+        print("FIFO ID | MAX OCCUPANCY")
+        for fifo_id, occupancy in enumerate(max_occupancy):
+            print(f"{fifo_id:7} | {occupancy:13}")
+        print("TOTAL FIFO SIZE @ MAX OCCUPANCY (kB): %f" % self.total_fifo_size(max_occupancy))
+
+        print("---PHASE 3: ITERATIVE MINIMIZATION---")
+        # TODO: Use better heuristic for iteration runtime!
+        # E.g., base on measured peak performance, like we did previously:
+        # iteration_runtime = max(0.01, (min_latency * 5) * 10 / 1000 / 1000 / 1000)
+        iteration_runtime = 0.2
+
+        pass1_result = self.size_iteratively_binary_search(
+            start_depth=max_occupancy, iteration_runtime=iteration_runtime
+        )
         (
             fifo_depths,
             log_total_fifo_size,
@@ -1107,33 +1129,142 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         ax1.set_ylabel("Total FIFO Size [kB]", color=color)
         ax1.plot(range(len(log_total_fifo_size)), log_total_fifo_size, color=color)
         ax1.tick_params(axis="y", labelcolor=color)
+        ax1.set_xlim(left=0)
         ax1.set_ylim(0, max(log_total_fifo_size))
 
         ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
 
         color = "tab:blue"
         ax2.set_ylabel("Latency [cycles]", color=color)
-        ax2.plot(range(len(log_total_fifo_size)), log_latency, color=color)
+        ax2.plot(range(len(log_total_fifo_size)), log_min_latency, color=color, label="Latency")
+        # ax2.plot(range(len(log_total_fifo_size)), log_latency, color="green", label="Latency")
         ax2.tick_params(axis="y", labelcolor=color)
         # ax2.set_ylim(0, max(log_latency))
 
-        ax2.axhline(log_min_latency[0], color="green", label="Minimum (1st frame) Latency")
-        ax2.legend()
+        # Find key points for annotation
+        min_latency_value = min(log_min_latency)
+        last_min_latency_idx = (
+            len(log_min_latency) - 1 - log_min_latency[::-1].index(min_latency_value)
+        )
+
+        key_points = {
+            "first_iteration": {
+                "iteration": 0,
+                "min_latency": log_min_latency[0],
+                "total_fifo_size_kB": log_total_fifo_size[0],
+                "interval": log_interval[0],
+            },
+            "last_min_latency": {
+                "iteration": last_min_latency_idx,
+                "min_latency": log_min_latency[last_min_latency_idx],
+                "total_fifo_size_kB": log_total_fifo_size[last_min_latency_idx],
+                "interval": log_interval[last_min_latency_idx],
+            },
+            "last_iteration": {
+                "iteration": len(log_min_latency) - 1,
+                "min_latency": log_min_latency[-1],
+                "total_fifo_size_kB": log_total_fifo_size[-1],
+                "interval": log_interval[-1],
+            },
+        }
+
+        # Add vertical line at last_min_latency key point
+        ax1.axvline(
+            x=key_points["last_min_latency"]["iteration"],
+            color="green",
+            linestyle="--",
+            linewidth=1.5,
+            alpha=0.7,
+        )
+
+        # Add custom y-axis ticks for key points
+        # Get existing ticks
+        ax1_yticks = list(ax1.get_yticks())
+        ax2_yticks = list(ax2.get_yticks())
+
+        # Define key point values
+        ax1_key_values = [
+            key_points["first_iteration"]["total_fifo_size_kB"],
+            key_points["last_min_latency"]["total_fifo_size_kB"],
+            key_points["last_iteration"]["total_fifo_size_kB"],
+        ]
+        ax2_key_values = [
+            key_points["last_min_latency"]["min_latency"],
+            key_points["last_iteration"]["min_latency"],
+        ]
+
+        # Filter out existing ticks that are too close to key points
+        # Use 5% of range as threshold
+        ax1_range = max(ax1_yticks) - min(ax1_yticks)
+        ax1_threshold = ax1_range * 0.05
+        ax1_yticks_filtered = [
+            tick
+            for tick in ax1_yticks
+            if all(abs(tick - kv) > ax1_threshold for kv in ax1_key_values)
+        ]
+
+        ax2_range = max(ax2_yticks) - min(ax2_yticks)
+        ax2_threshold = ax2_range * 0.05
+        ax2_yticks_filtered = [
+            tick
+            for tick in ax2_yticks
+            if all(abs(tick - kv) > ax2_threshold for kv in ax2_key_values)
+        ]
+
+        # Add key point values to filtered tick lists
+        ax1_yticks = ax1_yticks_filtered + ax1_key_values
+        ax2_yticks = ax2_yticks_filtered + ax2_key_values
+
+        # Set the new ticks
+        ax1.set_yticks(ax1_yticks)
+        ax2.set_yticks(ax2_yticks)
+
+        # Format tick labels - make key points bold and colored
+        ax1_labels = []
+        for tick in ax1_yticks:
+            if tick == key_points["first_iteration"]["total_fifo_size_kB"]:
+                ax1_labels.append(f"$\\mathbf{{{tick:.0f}}}$")
+            elif tick == key_points["last_min_latency"]["total_fifo_size_kB"]:
+                ax1_labels.append(f"$\\mathbf{{{tick:.0f}}}^{{\\dagger}}$")
+            elif tick == key_points["last_iteration"]["total_fifo_size_kB"]:
+                ax1_labels.append(f"$\\mathbf{{{tick:.0f}}}^{{*}}$")
+            else:
+                ax1_labels.append(f"{tick:.0f}")
+
+        ax2_labels = []
+        for tick in ax2_yticks:
+            if tick == key_points["last_min_latency"]["min_latency"]:
+                ax2_labels.append(f"$\\mathbf{{{tick:.0f}}}^{{\\dagger}}$")
+            elif tick == key_points["last_iteration"]["min_latency"]:
+                ax2_labels.append(f"$\\mathbf{{{tick:.0f}}}^{{*}}$")
+            else:
+                ax2_labels.append(f"{tick:.0f}")
+
+        ax1.set_yticklabels(ax1_labels)
+        ax2.set_yticklabels(ax2_labels)
+
+        # Color the specific tick labels
+        for idx, (tick, label) in enumerate(zip(ax1_yticks, ax1.get_yticklabels())):
+            if tick == key_points["first_iteration"]["total_fifo_size_kB"]:
+                label.set_color("tab:red")
+                label.set_weight("bold")
+            elif tick == key_points["last_min_latency"]["total_fifo_size_kB"]:
+                label.set_color("tab:red")
+                label.set_weight("bold")
+            elif tick == key_points["last_iteration"]["total_fifo_size_kB"]:
+                label.set_color("tab:red")
+                label.set_weight("bold")
+
+        for idx, (tick, label) in enumerate(zip(ax2_yticks, ax2.get_yticklabels())):
+            if tick == key_points["last_min_latency"]["min_latency"]:
+                label.set_color("tab:blue")
+                label.set_weight("bold")
+            elif tick == key_points["last_iteration"]["min_latency"]:
+                label.set_color("tab:blue")
+                label.set_weight("bold")
 
         plt.tight_layout()
         plt.savefig(os.path.join(report_dir, "fifo_sizing_graph.png"), dpi=300)
-
-        # Second pass for fine-tuning
-        print("Starting second pass..")
-        pass2_result = self.size_iteratively(fifo_depths, iteration_runtime, reduction_factor=0.95)
-        (
-            fifo_depths,
-            log_total_fifo_size,
-            log_interval,
-            log_min_latency,
-            log_latency,
-            duration,
-        ) = pass2_result
 
         # Generate fifo_sizing_report.json
         fifo_report = {
@@ -1141,19 +1272,13 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             "fifo_size_total_kB": log_total_fifo_size[-1],
             "fifo_depths": {},
             "fifo_sizes": {},
-            "pass_1": {
+            "key_points": key_points,
+            "binary_search": {
                 "duration": pass1_result[5],
                 "log_total_fifo_size": pass1_result[1],
                 "log_interval": pass1_result[2],
                 "log_min_latency": pass1_result[3],
                 "log_latency": pass1_result[4],
-            },
-            "pass_2": {
-                "duration": pass2_result[5],
-                "log_total_fifo_size": pass2_result[1],
-                "log_interval": pass2_result[2],
-                "log_min_latency": pass2_result[3],
-                "log_latency": pass2_result[4],
             },
         }
         for fifo, depth in enumerate(fifo_depths):
