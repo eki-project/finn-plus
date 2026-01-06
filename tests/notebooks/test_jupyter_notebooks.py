@@ -93,6 +93,7 @@ class Test_notebooks:
             flow_config=Path("/tmp/FINN_TEST_BUILD_DIR/dummy.yaml"), auto_set_environmenmt_vars=True
         )
         finn.util.settings._SETTINGS = settings  # noqa
+        os.environ["FINN_SETTINGS"] = str(settings.get_path())
         with open(notebook) as f:
             # Set different NETRON_PORT for each xdist group to avoid conflicts
             xdist_groups = [
