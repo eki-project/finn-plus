@@ -57,9 +57,10 @@ class GenerateInstrumentationIP(Transformation):
         wrapper_output_dir = make_build_dir(prefix="code_gen_ipgen_Instrumentation_")
         model.set_metadata_prop("instrumentation_ipgen", wrapper_output_dir)
 
-        # conservative max for pending feature maps: number of layers
-        # minimum = 1024 to work around overflow issues
-        # TODO: implement more gradual initial live FIFO sizing to mitigate this
+        # Heuristic for setting timestamp buffer size of instrumentation wrapper:
+        # Currently set to minimum of 1024 or number of layers (if larger) to avoid
+        # overflow issues with small designs during (initial) live FIFO sizing.
+        # TODO: Implement a better heuristic.
         pending = max(len(model.graph.node), 1024)
         # query the parallelism-dependent folded input shape from the
         # node consuming the graph input
