@@ -2,32 +2,18 @@
     # VGG-10 (1D CNN) (RadioML)
     {
         "dut": ["vgg10"],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
-        "enable_instrumentation": [False],
-        "board": ["RFSoC2x2"],
-        "experiments_config": ["../experiments/driver_rework_ex_config_dma.json"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
+
+    # MobileNetV1 (ImageNet)
     {
-        "dut": ["vgg10"],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
-        "enable_instrumentation": [True],
-        "instrumentation_no_dma": [True],
-        "board": ["RFSoC2x2"],
-        "experiments_config": ["../experiments/driver_rework_ex_config_instr.json"],
+        "dut": ["mobilenetv1"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
+
+    # Cybersecurity (MLP)
     {
-        "dut": ["vgg10"],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
-        "enable_instrumentation": [True],
-        "live_fifo_sizing": [True],
-        "board": ["RFSoC2x2"],
-        "experiments_config": ["../experiments/driver_rework_ex_config_fifo.json"],
+        "dut": ["cybsec"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
     },
-    {
-        "dut": ["vgg10"],
-        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
-        "enable_instrumentation": [True],
-        "board": ["RFSoC2x2"],
-        "experiments_config": ["../experiments/driver_rework_ex_config_instr_dma.json"]
-    }
 ]
