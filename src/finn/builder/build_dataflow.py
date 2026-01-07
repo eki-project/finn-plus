@@ -201,11 +201,32 @@ def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: 
     step_names = [x.__name__ for x in resolve_build_steps(cfg, partial=False)]
     if step_name not in step_names:
         raise FINNConfigurationError(
-            f"Cannot restart from step {step_name}.Step {step_name} for restarting not found."
+            f"Cannot restart from unknown step '{step_name}'. Your flow configuration "
+            f"contains the following steps: \n\t" + "\n\t".join(step_names)
         )
-    step_no = step_names.index(step_name) + step_delta
+    try:
+        step_index_original = step_names.index(step_name)
+        step_no = step_index_original + step_delta
+    except ValueError:
+        raise FINNUserError(
+            f"Step filename could not be resolved. Step "
+            f"{step_name} was not found in your flow configuration"
+        )
+    if step_no < 0 and step_delta != 0 and step_names.index(step_name) == 0:
+        # We simply assume that --start was given, since this method is only called in that case
+        # TODO: Move the error (check) to the creation of the modelwrapper
+        raise FINNUserError(
+            f"Could not resolve the model filename for a step before "
+            f"'{step_name}' because it is the first step in your flow "
+            f"config. To start FINN from the first step, simply run it "
+            f"without the '--start' parameter."
+        )
     if step_no < 0 or step_no >= len(step_names):
-        raise FINNDataflowError("Invalid step+delta combination")
+        raise FINNDataflowError(
+            f"Invalid combination of step index ({step_index_original}) and "
+            f"delta ({step_delta}): {step_no} (must be in the range from 0 "
+            f"to {len(step_names)-1})"
+        )
 
     # Return if it exists
     filename = Path(cfg.output_dir) / "intermediate_models" / f"{step_names[step_no]}.onnx"
