@@ -424,6 +424,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: instrumentation wrapper attached to accurately measure performance.
     enable_instrumentation: bool = False
 
+    #: If enable_instrumentation is True, one can disable the DMA with this flag
+    instrumentation_no_dma: Optional[bool] = False
+
     #: Whether pdb postmortem debugging will be launched when the build fails.
     enable_build_pdb_debug: bool = False
 
@@ -482,6 +485,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: (Only relevant for step_vivado_power_estimation if vivado_power_simulate_activity is True)
     #: Whether to use "functional" or "timing" simulation for Vivado power estimation.
     vivado_power_simulation_type: Literal["timing", "functional"] = "functional"
+
+    #: If set, appends experiments_config to settings file during driver generation
+    experiments_config_path: Optional[str] = None
 
     def _resolve_hls_clk_period(self) -> float:
         """Resolve the HLS clock period, falling back to synthesis clock period if not set.

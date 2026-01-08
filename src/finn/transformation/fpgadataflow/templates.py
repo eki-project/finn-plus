@@ -26,6 +26,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Template strings for FPGA dataflow build scripts."""
+
 # flake8: noqa
 
 call_pynqshell_makefile_template = """
@@ -178,13 +180,20 @@ if {%d == 1} {
 }
 
 # set up GPIO to trigger reset
-if {%d == 1} {
+set enable_gpio_reset %d
+set enable_finn_switch %d
+
+if { $enable_gpio_reset == 1 || $enable_finn_switch == 1 } {
     create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio:2.0 axi_gpio_0
     set_property -dict [list CONFIG.C_ALL_OUTPUTS {1} CONFIG.C_DOUT_DEFAULT {0x00000001} CONFIG.C_GPIO_WIDTH {1}] [get_bd_cells axi_gpio_0]
     connect_bd_intf_net [get_bd_intf_pins axi_gpio_0/S_AXI] -boundary_type upper [get_bd_intf_pins axi_interconnect_0/M00_AXI]
     assign_axi_addr_proc axi_gpio_0/S_AXI
-    connect_bd_net [get_bd_pins axi_gpio_0/s_axi_aclk] [get_bd_pins axi_interconnect_0/ACLK]
     connect_bd_net [get_bd_pins axi_gpio_0/s_axi_aresetn] [get_bd_pins axi_interconnect_0/ARESETN]
+    connect_bd_net [get_bd_pins axi_gpio_0/s_axi_aclk] [get_bd_pins axi_interconnect_0/ACLK]
+}
+
+# Connect GPIO1 to
+if { $enable_gpio_reset == 1 } {
     connect_bd_net [get_bd_pins axi_gpio_0/gpio_io_o] [get_bd_pins rst_zynq_ps_*/aux_reset_in]
 }
 
@@ -193,6 +202,14 @@ if {$ZYNQ_TYPE == "zynq_us+"} {
     apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} }  [get_bd_pins axi_interconnect_0/M*_ACLK]
 } elseif {$ZYNQ_TYPE == "zynq_7000"} {
     apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/FCLK_CLK0} }  [get_bd_pins axi_interconnect_0/M*_ACLK]
+}
+
+if { $enable_finn_switch == 1 } {
+    set_property -dict [list CONFIG.C_ALL_OUTPUTS_2 {1} CONFIG.C_GPIO2_WIDTH {1} CONFIG.C_IS_DUAL {1}] [get_bd_cells axi_gpio_0]
+    connect_bd_net [get_bd_pins axi_gpio_0/gpio2_io_o] [get_bd_pins finn_switch/sel]
+    # TODO: This is a workaround - FREQ_HZ changes after applying validate_bd_design the first time, which results in an error
+    catch validate_bd_design
+    set_property CONFIG.FREQ_HZ [get_property CONFIG.FREQ_HZ [get_bd_intf_pins /zynq_ps/M_AXI_HPM0_FPD]] [get_bd_intf_pins /finn_switch/*]
 }
 
 save_bd_design

@@ -192,6 +192,12 @@ def start_bench_run(config_name):
 
         log_dict = {"run_id": run_id, "task_id": task_id, "params": params}
 
+        # Make experiments_config path relative to config file path if not absolute
+        if "experiments_config" in params:
+            if not os.path.isabs(params["experiments_config"]):
+                cfg_path = os.path.abspath(os.path.dirname(config_path))
+                params["experiments_config"] = os.path.join(cfg_path, params["experiments_config"])
+
         # Create bench object for respective DUT
         if "dut" in params:
             if params["dut"] in dut:

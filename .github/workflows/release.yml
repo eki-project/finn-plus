@@ -20,14 +20,12 @@ jobs:
         run: |
           # Build tests subpackage
           cd tests
-          poetry install
           poetry build
           export VERSION=$(poetry version -s)
           cd ..
 
           # Build notebooks subpackage
           cd notebooks
-          poetry install
           poetry build
           cd ..
 
@@ -36,7 +34,6 @@ jobs:
           sed -i "s/finn-plus-notebooks = { version = \"\*\", optional = true }/finn-plus-notebooks = { version = \"$VERSION\", optional = true }/" pyproject.toml
       - name: Build main package
         run: |
-          poetry install
           poetry build
       - name: Publish all packages
         run: |

@@ -76,8 +76,8 @@ finn-plus-notebooks = { path = "./notebooks", develop = true }
 pygments = "~2.19.2"
 torch = "~2.7.1"                                      # required by CI
 torchvision = "~0.22.1"                               # required by CI
-dvc = { version = " ~3.59.1", extras = ["webdav"] }   # required by CI
-dvclive = { version = "~3.48.2", extras = ["image"] } # required by CI
+dvc = { version = " ~3.66.0", extras = ["webdav"] }   # required by CI
+dvclive = { version = "~3.49.0", extras = ["image"] } # required by CI
 
 [tool.poetry.extras]
 tests = ["finn-plus-tests"]
