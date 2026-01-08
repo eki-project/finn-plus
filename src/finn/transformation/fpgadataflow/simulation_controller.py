@@ -248,7 +248,7 @@ class NodeConnectedSimulationController:
             sock.close()
             socket_path_obj = Path(socket_path)
             if socket_path_obj.exists():
-                socket_path_obj.unlink()
+                socket_path_obj.unlink(True)
 
         # Terminate processes and close file handles
         for proc, stdout_file, stderr_file in self.processes:

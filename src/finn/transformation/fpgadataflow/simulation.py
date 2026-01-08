@@ -803,26 +803,26 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         performance_degraded = self._check_performance(new_data, initial_fifo_depths)
         return not performance_degraded, False
 
-    def _find_valid_block_count(
-        self, target_blocks: int, bitwidth: int, lower_bound: int = 1
-    ) -> tuple[int, int, int]:
-        """Find a valid block count and corresponding depth range.
+    def _get_valid_block_counts(self, min_blocks: int, max_blocks: int, bitwidth: int) -> list[int]:
+        """Get all valid BRAM block counts in the specified range.
+
+        Some block counts are invalid for certain bitwidths due to quantization.
+        This method returns only the valid configurations.
 
         Args:
-            target_blocks: Desired number of BRAM blocks
+            min_blocks: Minimum block count (inclusive)
+            max_blocks: Maximum block count (inclusive)
             bitwidth: Data bitwidth
-            lower_bound: Minimum acceptable block count
 
         Returns:
-            Tuple of (valid_blocks, min_depth, max_depth)
+            Sorted list of valid block counts
         """
-        blocks = target_blocks
-        while blocks >= lower_bound:
-            min_d, max_d = calculate_bram_depth_range(blocks, bitwidth)
-            if max_d > 0:
-                return blocks, min_d, max_d
-            blocks -= 1
-        return 0, 0, 0
+        valid_blocks = []
+        for blocks in range(min_blocks, max_blocks + 1):
+            _, max_d = calculate_bram_depth_range(blocks, bitwidth)
+            if max_d > 0:  # Valid configuration
+                valid_blocks.append(blocks)
+        return valid_blocks
 
     def _minimize_fifo_depth(
         self,
@@ -856,26 +856,76 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
         print(f"Minimizing Node {node_idx} FIFO {fifo_idx}: original depth {original_size}")
 
-        # Try FIFO depth of 32 first (fits into bitwidth LUTs)
+        # If FIFO depth of 2 works, we dont need FIFOs at all, because AXI buffers some values
         success, timeout = self._test_depth(
-            32, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+            2, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
         )
-
         if success:
-            # If FIFO depth of 2 works, we dont need FIFOs at all, because AXI buffers some values
-            success, timeout = self._test_depth(
-                2, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
-            )
-            if success:
-                return 2
-            return 32
+            return 2
 
+        if original_size <= self.max_qsrl_depth:
+            upper_luts = calculate_srl16e_luts(original_size, bw)
+            # Smallest depth that is reasonable is 32 (Fits into bw LUTRAMs)
+            lower_luts = calculate_srl16e_luts(32, bw)
+
+            # Binary search if there's room to search
+            if upper_luts > lower_luts:
+                best_working_depth = self._binary_search_srl_depth(
+                    node_idx,
+                    fifo_idx,
+                    baseline_depths,
+                    bw,
+                    initial_fifo_depths,
+                    sim,
+                    sim_cycles,
+                    lower_luts=lower_luts,
+                    upper_luts=upper_luts,
+                )
+                return best_working_depth
+            return original_size
+
+        # Try FIFO depth of 256 next (fits into LUTRAM)
+        success, timeout = self._test_depth(
+            self.max_qsrl_depth,
+            node_idx,
+            fifo_idx,
+            baseline_depths,
+            initial_fifo_depths,
+            sim,
+            sim_cycles,
+        )
+        if success:
+            upper_luts = calculate_srl16e_luts(original_size, bw)
+            # Smallest depth that is reasonable is 32 (Fits into bw LUTRAMs)
+            lower_luts = calculate_srl16e_luts(32, bw)
+
+            # Binary search if there's room to search
+            if upper_luts > lower_luts:
+                best_working_depth = self._binary_search_srl_depth(
+                    node_idx,
+                    fifo_idx,
+                    baseline_depths,
+                    bw,
+                    initial_fifo_depths,
+                    sim,
+                    sim_cycles,
+                    lower_luts=lower_luts,
+                    upper_luts=upper_luts,
+                )
+                return best_working_depth
+            return self.max_qsrl_depth
+
+        # We know 256 doesn't work, so we have to use BRAMs
         # Try one BRAM block less than current
         upper_blocks = calculate_bram_blocks(original_size, bw)
-        blocks, min_d, max_d = self._find_valid_block_count(upper_blocks - 1, bw)
-
-        if max_d == 0:
+        # Get all valid block counts in the range
+        valid_blocks = self._get_valid_block_counts(1, upper_blocks - 1, bw)
+        if not valid_blocks:
+            # No valid configurations exist
             return original_size
+        # Test the maximum valid block count first (smallest depth)
+        max_valid_blocks = valid_blocks[-1]
+        _, max_d = calculate_bram_depth_range(max_valid_blocks, bw)
 
         success, timeout = self._test_depth(
             max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
@@ -886,9 +936,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
         best_working_depth = max_d
 
-        # Binary search if there's room to search
-        if blocks > 2 and min_d - 1 > 32:
-            best_working_depth = self._binary_search_depth(
+        # Binary search if there's room to search and multiple valid configs
+        if len(valid_blocks) > 1:
+            best_working_depth = self._exponential_binary_search_depth(
                 node_idx,
                 fifo_idx,
                 baseline_depths,
@@ -896,32 +946,12 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 initial_fifo_depths,
                 sim,
                 sim_cycles,
-                lower_blocks=1,
-                upper_blocks=blocks,
+                valid_blocks=valid_blocks,
             )
-
-        # If we are within reach of the max qsrl depth,
-        # test that as well, so that we can maybe move to LUTRAM
-        if (
-            best_working_depth < self.max_qsrl_depth * 1.1
-            and best_working_depth > self.max_qsrl_depth
-        ):
-            success, timeout = self._test_depth(
-                self.max_qsrl_depth,
-                node_idx,
-                fifo_idx,
-                baseline_depths,
-                initial_fifo_depths,
-                sim,
-                sim_cycles,
-            )
-            if success:
-                best_working_depth = self.max_qsrl_depth
-        # TODO: If depth 256 works, try minimize in LUTRAM range
 
         return best_working_depth
 
-    def _binary_search_depth(
+    def _exponential_binary_search_depth(
         self,
         node_idx: int,
         fifo_idx: int,
@@ -930,10 +960,13 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         initial_fifo_depths: dict,
         sim,
         sim_cycles: float,
-        lower_blocks: int,
-        upper_blocks: int,
+        valid_blocks: list[int],
     ) -> int:
-        """Perform binary search to find minimal working FIFO depth.
+        """Perform exponential + binary search over valid block configurations.
+
+        Uses exponential search to quickly find the range, then binary search within it.
+        This is more efficient when smaller block counts are more likely.
+        Only searches over pre-validated block counts.
 
         Args:
             node_idx: Node index
@@ -943,32 +976,109 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             initial_fifo_depths: Baseline performance data
             sim: Simulation controller
             sim_cycles: Maximum simulation cycles
-            lower_blocks: Lower bound for block count
-            upper_blocks: Upper bound for block count (known to work)
+            valid_blocks: Sorted list of valid block counts to search over
 
         Returns:
             Best working depth found
         """
-        _, _, max_d = self._find_valid_block_count(upper_blocks, bitwidth)
+        if not valid_blocks:
+            raise FINNInternalError("valid_blocks list cannot be empty")
+
+        # Start with the largest valid block count (known to work from caller)
+        _, max_d = calculate_bram_depth_range(valid_blocks[-1], bitwidth)
         best_working_depth = max_d
 
-        while lower_blocks < upper_blocks:
-            mid_blocks = (lower_blocks + upper_blocks) // 2
+        # Exponential search phase: find range where solution exists
+        # Check positions: 0, 1, 2, 4, 8, ... indices in valid_blocks list
+        lower_idx = 0
+        upper_idx = len(valid_blocks) - 1
+        exp_idx = 0
+        last_failed_idx = -1
 
-            # Prevent infinite loop
-            if mid_blocks == upper_blocks:
-                mid_blocks = upper_blocks - 1
-            if mid_blocks < lower_blocks:
-                break
+        while exp_idx < upper_idx:
+            blocks = valid_blocks[exp_idx]
+            _, max_d = calculate_bram_depth_range(blocks, bitwidth)
 
-            # Find valid depth for this block count
-            valid_blocks, _, max_d = self._find_valid_block_count(
-                mid_blocks, bitwidth, lower_blocks
+            success, _ = self._test_depth(
+                max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
             )
 
+            if success:
+                # Found a working depth, now binary search in [last_failed_idx+1, exp_idx]
+                best_working_depth = max_d
+                lower_idx = last_failed_idx + 1
+                upper_idx = exp_idx
+                break
+            # This doesn't work, try exponentially larger index
+            last_failed_idx = exp_idx
+            exp_idx = min(exp_idx * 2 if exp_idx > 0 else 1, upper_idx)
+
+        # Binary search phase: refine the range
+        while lower_idx < upper_idx:
+            mid_idx = (lower_idx + upper_idx) // 2
+            blocks = valid_blocks[mid_idx]
+            _, max_d = calculate_bram_depth_range(blocks, bitwidth)
+
+            success, _ = self._test_depth(
+                max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+            )
+
+            if success:
+                # This depth works, try smaller (lower indices)
+                best_working_depth = max_d
+                upper_idx = mid_idx
+            else:
+                # This depth doesn't work, need larger (higher indices)
+                lower_idx = mid_idx + 1
+
+        return best_working_depth
+
+    def _binary_search_srl_depth(
+        self,
+        node_idx: int,
+        fifo_idx: int,
+        baseline_depths: list,
+        bitwidth: int,
+        initial_fifo_depths: dict,
+        sim,
+        sim_cycles: float,
+        lower_luts: int,
+        upper_luts: int,
+    ) -> int:
+        """Perform binary search to find minimal working FIFO depth in LUTRAM range.
+
+        Args:
+            node_idx: Node index
+            fifo_idx: FIFO index within node
+            baseline_depths: Original baseline FIFO depths (unchanged during minimization)
+            bitwidth: Data bitwidth
+            initial_fifo_depths: Baseline performance data
+            sim: Simulation controller
+            sim_cycles: Maximum simulation cycles
+            lower_luts: Lower bound for LUT count
+            upper_luts: Upper bound for LUT count (known to work)
+
+        Returns:
+            Best working depth found
+        """
+        _, max_d = calculate_srl16e_depth_range(upper_luts, bitwidth)
+        best_working_depth = max_d
+
+        while lower_luts < upper_luts:
+            mid_luts = (lower_luts + upper_luts) // 2
+
+            # Prevent infinite loop
+            if mid_luts == upper_luts:
+                mid_luts = upper_luts - 1
+            if mid_luts < lower_luts:
+                break
+
+            # Find valid depth for this LUT count
+            _, max_d = calculate_srl16e_depth_range(mid_luts, bitwidth)
+
             if max_d == 0:
-                # No valid configuration, try more blocks
-                lower_blocks = mid_blocks + 1
+                # No valid configuration, try more LUTs
+                lower_luts = mid_luts + 1
                 continue
 
             success, _ = self._test_depth(
@@ -978,10 +1088,10 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             if success:
                 # This depth works, try smaller
                 best_working_depth = max_d
-                upper_blocks = valid_blocks
+                upper_luts = mid_luts
             else:
                 # This depth doesn't work, need larger
-                lower_blocks = valid_blocks + 1
+                lower_luts = mid_luts + 1
 
         return best_working_depth
 
@@ -996,17 +1106,14 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             True if the FIFO can be minimized further, False otherwise.
         """
         # Qsrl FIFO Formula: LUTs = ⌈depth/32⌉ x ⌈bitwidth/2⌉
-        if (
-            fifo_depth <= self.max_qsrl_depth
-        ):  # TODO: Later this should not be needed. Binary search over LUTRAM sizes.
-            return False
         if fifo_depth <= 32:  # FIFOs of depth <=32 fit into bitwidth/2 LUTs
             return False
-        # Return False if exactly 1 BRAM block is used and depth is sufficiently large
-        # that further optimization is unlikely to succeed
+        # Return False if exactly the minimum number of possible BRAM blocks is used for this
+        # bitwidth and depth is sufficiently large that further optimization is unlikely to succeed
         return not (
-            calculate_bram_blocks(fifo_depth, bitwidth) == 1
-            and fifo_depth > self.max_qsrl_depth * 1.1
+            calculate_bram_blocks(fifo_depth, bitwidth)
+            <= self._get_valid_block_counts(1, bitwidth, bitwidth)[0]
+            and fifo_depth > math.floor(self.max_qsrl_depth * 1.1)
         )
 
 
@@ -1080,22 +1187,30 @@ def calculate_bram_depth_range(blocks: int, bitwidth: int) -> tuple[int, int]:
         # Try the depth > 512 case first (⌈depth/1024⌉ * ⌈bitwidth/18⌉)
         bitwidth_factor = math.ceil(bitwidth / 18)
         depth_blocks = math.ceil(blocks / bitwidth_factor)
-        if depth_blocks <= 1 and bitwidth <= 18:
-            return (1, 1024)
-        min_depth = max((depth_blocks - 1) * 1024 + 1, 513)  # Must be > 512
-        max_depth = depth_blocks * 1024
-        # Check if this range is valid (entirely > 512)
-        if min_depth > 512 and calculate_bram_blocks(min_depth, bitwidth) == blocks:
-            return (min_depth, max_depth)
+
+        # Check if blocks is achievable with this bitwidth factor
+        if blocks % bitwidth_factor != 0 or depth_blocks < 1:
+            # Try the depth ≤ 512 case instead
+            pass
+        else:
+            min_depth = max((depth_blocks - 1) * 1024 + 1, 513)  # Must be > 512
+            max_depth = depth_blocks * 1024
+            # Check if this range is valid (entirely > 512)
+            if min_depth > 512 and calculate_bram_blocks(min_depth, bitwidth) == blocks:
+                return (min_depth, max_depth)
 
         # Try the depth ≤ 512 case (⌈depth/512⌉ * ⌈bitwidth/36⌉)
         bitwidth_factor = math.ceil(bitwidth / 36)
         depth_blocks = math.ceil(blocks / bitwidth_factor)
-        if depth_blocks <= 1 and bitwidth > 18:
-            return (1, 512)
-        min_depth = (depth_blocks - 1) * 512 + 1
+
+        # Check if blocks is achievable with this bitwidth factor
+        if blocks % bitwidth_factor != 0 or depth_blocks < 1:
+            return (0, 0)  # Invalid block count for this bitwidth
+
+        min_depth = (depth_blocks - 1) * 512 + 1 if depth_blocks > 1 else 1
         max_depth = min(depth_blocks * 512, 512)  # Must be ≤ 512
-        # Check if this range is valid (entirely ≤ 512)
+
+        # Verify the range is valid (entirely ≤ 512 and produces correct block count)
         if max_depth <= 512 and calculate_bram_blocks(min_depth, bitwidth) == blocks:
             return (min_depth, max_depth)
 
