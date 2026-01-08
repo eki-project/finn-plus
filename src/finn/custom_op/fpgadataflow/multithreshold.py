@@ -42,6 +42,11 @@ class MultiThreshold(HWCustomOp):
             # Number of thresholds per element
             "N": ("i", True, 1),
 
+            # Shape of the weights tensor (excluding the number of thresholds)
+            "weights_shape": ("ints", True, [1]),
+            # QONNX data type of the weights values
+            "weights_type": ("s", True, ""),
+
             # Shape of the input tensor (also the output shape as this operator
             # only implements unidirectional broadcasting from the thresholds to
             # the input shape)
@@ -72,7 +77,7 @@ class MultiThreshold(HWCustomOp):
         return [
             DataType[self.get_nodeattr("input_type")],
             DataType[self.get_nodeattr("threshold_type")],
-            DataType[self.get_nodeattr("output_type")],
+            DataType[self.get_nodeattr("weights_type")],
         ][ind]
 
     def get_output_datatype(self, ind=0):
@@ -84,7 +89,7 @@ class MultiThreshold(HWCustomOp):
         return [
             self.get_nodeattr("input_shape"),
             (*self.get_nodeattr("threshold_shape"), self.get_nodeattr("N")),
-            (*self.get_nodeattr("threshold_shape"), self.get_nodeattr("N")),
+            (*self.get_nodeattr("weights_shape"), self.get_nodeattr("N")),
         ][ind]
 
     def get_normal_output_shape(self, ind=0):
@@ -170,6 +175,19 @@ class MultiThreshold(HWCustomOp):
             # Set the new datatype attribute
             self.set_nodeattr("threshold_type", new_dtype.name)
 
+        # Test for changing weights datatype
+        if (model.get_tensor_datatype(node.input[2])
+                != self.get_input_datatype(2)):
+            # Get the new datatype
+            new_dtype = model.get_tensor_datatype(node.input[2])
+            # Issue a warning message
+            log.warning(
+                f"{node.name}: weights_type changing from"
+                f" {self.get_input_datatype(2)} to {new_dtype}"
+            )
+            # Set the new datatype attribute
+            self.set_nodeattr("weights_type", new_dtype.name)
+
         # Force the output data type stored as a node attribute
         model.set_tensor_datatype(node.output[0], self.get_output_datatype(0))
 
@@ -199,6 +217,13 @@ class MultiThreshold(HWCustomOp):
 
         # Get the parameter tensors from the model wrapper
         weights = model.get_initializer(self.onnx_node.input[2])
+
+        # Number of thresholds
+        N =  self.get_nodeattr("N")
+
+        # Broadcasting of weights along the threshold axis must be made explicit
+        if len(weights.shape) < 1 or weights.shape[-1] != N:
+            weights = np.broadcast_to(weights, (weights.shape[:-1], N))
 
         # Get the optional output bias and expand to the weights shape
         bias = np.full((*weights.shape[:-1], 1), self.get_nodeattr("out_bias"))

@@ -129,8 +129,10 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
         # Get the shape and type configuration of the operator to generate the
         # HLS C++ types and shape containers
         *threshold_shape, N = self.get_normal_input_shape(ind=1)
+        *weights_shape, _ = self.get_normal_input_shape(ind=2)
 
         TShape = f"Shape<{','.join((str(dim) for dim in threshold_shape))}>"
+        WShape = f"Shape<{','.join((str(dim) for dim in weights_shape))}>"
 
         OType = self.get_output_datatype(ind=0).get_hls_datatype_str()
         TType = self.get_input_datatype(ind=1).get_hls_datatype_str()
@@ -142,12 +144,16 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
         if self.get_input_datatype(ind=1).is_integer():
             thresholds = thresholds.astype(np.int64)
 
+        # Broadcasting of weights along the threshold axis must be made explicit
+        if len(weights.shape) < 1 or weights.shape[-1] != N:
+            weights = np.broadcast_to(weights, (weights.shape[:-1], N))
+
         # Get the optional output bias and expand to the weights shape
         bias = np.full((*weights.shape[:-1], 1), self.get_nodeattr("out_bias"))
 
         # Multi-threshold hardware uses cumulative weights left-padded by the
         # optional bias as output values at/between steps
-        weights = np.concatenate((bias, weights), -1)
+        weights = np.concatenate((bias, weights), axis=-1)
         values = np.cumsum(weights, axis=-1)
 
         if self.get_output_datatype(ind=0).is_integer():
@@ -158,7 +164,9 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
         with open(f"{path}/params.hpp", "w") as file:
             # Write lines of C++ code separated by newlines to the file
             file.write("\n".join([
-                f"MultiThreshold<{TShape}, {N}, {OType}, {TType}> thresholds {{"
+                f"MultiThreshold<"
+                f"{TShape}, {N}, {OType}, {TType}, {WShape}"
+                f"> thresholds {{"
                 f"{carray(thresholds.reshape(-1, N))},"
                 f"{carray(values.reshape(-1, N + 1))}"
                 f"}};",

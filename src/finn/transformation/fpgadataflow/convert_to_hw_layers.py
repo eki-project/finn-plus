@@ -2435,12 +2435,31 @@ class InferMultiThreshold(Transformation):
                     # Set the initializer value
                     model.set_initializer(f"{node.name}_weights", weights)
 
+                # There must be a constant weights tensor as the third input
+                if (weights := model.get_initializer(node.input[2])) is None:
+                    continue
+
+                # Number of thresholds
+                N = thresholds.shape[-1]
+
+                # Broadcasting of weights along the threshold axis must be made
+                # explicit
+                if len(weights.shape) < 1 or weights.shape[-1] != N:
+                    # Broadcast the numpy array
+                    weights = np.broadcast_to(weights, (weights.shape[:-1], N))
+                    # Update the ONNX initializer
+                    model.set_initializer(node.input[2], weights)
+
                 # Collect node attributes required by the FINN HWCustomOp
                 attrs = {
                     # Shape, type and number of the thresholds parameters
                     "threshold_shape": thresholds.shape[:-1],
                     "threshold_type": model.get_tensor_datatype(node.input[1]),
                     "N": thresholds.shape[-1],
+
+                    # Shape and type of the weights parameters
+                    "weights_shape": weights.shape[:-1],
+                    "weights_type": model.get_tensor_datatype(node.input[2]),
 
                     # Shape and type of the input and output tensor
                     "input_shape": model.get_tensor_shape(node.input[0]),
