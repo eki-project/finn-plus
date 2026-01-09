@@ -247,11 +247,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: (Only relevant if verify_steps is set)
     #: Name of .npy file that will be used as the input for verification.
-    verify_input_npy: str = "input.npy"
+    verify_input_npy: str | np.ndarray = "input.npy"
 
     #: (Only relevant if verify_steps is set)
     #: Name of .npy file that will be used as the expected output for verification.
-    verify_expected_output_npy: str = "expected_output.npy"
+    verify_expected_output_npy: str | np.ndarray = "expected_output.npy"
 
     #: (Only relevant if verify_steps is set)
     #: Save full execution context for each of the verify_steps.
@@ -583,15 +583,15 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         if self.verify_steps is None:
             return None
         else:
-            assert os.path.isfile(self.verify_input_npy), (
-                "verify_input_npy not found: " + self.verify_input_npy
-            )
-            verify_input_npy = np.load(self.verify_input_npy)
-            assert os.path.isfile(self.verify_expected_output_npy), (
-                "verify_expected_output_npy not found: " + self.verify_expected_output_npy
-            )
-            verify_expected_output_npy = np.load(self.verify_expected_output_npy)
+            def _load(file_or_array, what):
+                if isinstance(file_or_array, np.ndarray):
+                    return file_or_array
+                assert os.path.isfile(file_or_array), (
+                    f"{what} not found: " + file_or_array
+                )
+                return np.load(file_or_array)
+
             return (
-                verify_input_npy,
-                verify_expected_output_npy,
+                _load(self.verify_input_npy, "verify_input_npy"),
+                _load(self.verify_expected_output_npy, "verify_expected_output_npy"),
             )
