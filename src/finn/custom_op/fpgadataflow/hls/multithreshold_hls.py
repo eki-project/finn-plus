@@ -146,7 +146,7 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
 
         # Broadcasting of weights along the threshold axis must be made explicit
         if len(weights.shape) < 1 or weights.shape[-1] != N:
-            weights = np.broadcast_to(weights, (weights.shape[:-1], N))
+            weights = np.broadcast_to(weights, (*weights.shape[:-1], N))
 
         # Get the optional output bias and expand to the weights shape
         bias = np.full((*weights.shape[:-1], 1), self.get_nodeattr("out_bias"))

@@ -2446,7 +2446,19 @@ class InferMultiThreshold(Transformation):
                 # explicit
                 if len(weights.shape) < 1 or weights.shape[-1] != N:
                     # Broadcast the numpy array
-                    weights = np.broadcast_to(weights, (weights.shape[:-1], N))
+                    weights = np.broadcast_to(weights, (*weights.shape[:-1], N))
+                    # Update the ONNX initializer
+                    model.set_initializer(node.input[2], weights)
+
+                if len(thresholds.shape) < 2:
+                    # Unsqueeze leading channel dimension
+                    thresholds = thresholds.reshape((1, -1))
+                    # Update the ONNX initializer
+                    model.set_initializer(node.input[1], thresholds)
+
+                if len(weights.shape) < 2:
+                    # Unsqueeze leading channel dimension
+                    weights = weights.reshape((1, -1))
                     # Update the ONNX initializer
                     model.set_initializer(node.input[2], weights)
 
