@@ -37,7 +37,6 @@ import numpy as np
 from onnx import helper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
@@ -311,6 +310,7 @@ class SpecializeLayers(Transformation):
             # remove old nodes
             graph.node.remove(node)
             # update node names to reflect new op types
-            model = model.transform(GiveUniqueNodeNames())
+            # TODO: the following line causes excessive runtime and unexepected node sorting!
+            # model = model.transform(GiveUniqueNodeNames())
             graph_modified = True
         return (model, graph_modified)
