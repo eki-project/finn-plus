@@ -247,11 +247,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: (Only relevant if verify_steps is set)
     #: Name of .npy file that will be used as the input for verification.
-    verify_input_npy: str | np.ndarray = "input.npy"
+    verify_input_npy: str = "input.npy"
 
     #: (Only relevant if verify_steps is set)
     #: Name of .npy file that will be used as the expected output for verification.
-    verify_expected_output_npy: str | np.ndarray = "expected_output.npy"
+    verify_expected_output_npy: str = "expected_output.npy"
 
     #: (Only relevant if verify_steps is set)
     #: Save full execution context for each of the verify_steps.
