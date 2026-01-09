@@ -992,10 +992,19 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             latency,
             interval,
         ) = self.observe_instrumentation(False)
-        log_total_fifo_size = [int(self.total_fifo_size(fifo_depths))]
+        log_total_fifo_size = [self.total_fifo_size(fifo_depths)]
         log_interval = [interval]
         log_min_latency = [min_latency]
         log_latency = [latency]
+        all_iterations = {
+            "0": {
+                "interval": interval,
+                "min_latency": min_latency,
+                "latency": latency,
+                "total_fifo_size_kB": self.total_fifo_size(fifo_depths),
+                "fifo_depths": fifo_depths.copy(),
+            }
+        }
         target_interval = interval
 
         # Binary search for each FIFO to find minimum depth
@@ -1043,21 +1052,37 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                 if interval > target_interval or interval == 0 or overflow_err or underflow_err:
                     # This depth is too small, search higher
                     low = mid + 1
+                    result_status = "FAIL"
                 else:
                     # This depth works, try smaller
                     best_working_depth = mid
                     high = mid - 1
+                    result_status = "PASS"
 
                     # Log this successful configuration
-                    log_total_fifo_size.append(int(self.total_fifo_size(test_depths)))
+                    log_total_fifo_size.append(self.total_fifo_size(test_depths))
                     log_interval.append(interval)
                     log_min_latency.append(min_latency)
                     log_latency.append(latency)
 
                 iteration += 1
 
+                # Log all iterations
+                all_iterations[str(iteration)] = {
+                    "tested_fifo": fifo_id,
+                    "tested_depth": mid,
+                    "status": result_status,
+                    "search_bounds": [low, high],
+                    "best_working_depth": best_working_depth,
+                    "interval": interval,
+                    "min_latency": min_latency,
+                    "latency": latency,
+                    "total_fifo_size_kB": self.total_fifo_size(test_depths),
+                    "fifo_depths": test_depths.copy(),
+                }
+
                 # Report status
-                result = "PASS" if best_working_depth == mid else "FAIL"
+                result = result_status
                 print(f"  Iteration {iteration}: Testing depth {mid} - {result}")
                 print(f"    Binary search bounds: [{low}, {high}]")
                 print(f"    Best working depth so far: {best_working_depth}")
@@ -1075,53 +1100,23 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         duration = int(end_time - start_time)
         print(f"Done ({duration} seconds)")
 
-        return (
-            fifo_depths,
-            log_total_fifo_size,
-            log_interval,
-            log_min_latency,
-            log_latency,
-            duration,
-        )
+        return {
+            "duration": duration,
+            "fifo_depths": fifo_depths,
+            "log_total_fifo_size": log_total_fifo_size,
+            "log_interval": log_interval,
+            "log_min_latency": log_min_latency,
+            "log_latency": log_latency,
+            "all_iterations": all_iterations,
+        }
 
-    def experiment_fifosizing(self, *args, **kwargs):
-        """Run live FIFO sizing experiment and save report."""
-        report_dir = kwargs.get("report_dir")
-        reportfile = os.path.join(report_dir, "report_experiment_fifosizing.json")
-        folding_config_lfs = self.folding_config_before_lfs
+    def generate_fifosizing_graph(
+        self, log_total_fifo_size, log_min_latency, log_interval, report_dir
+    ):
+        """Generate and save FIFO sizing visualization graph."""
+        # Round total FIFO size to integer kB values
+        log_total_fifo_size = [int(round(x)) for x in log_total_fifo_size]
 
-        print("---PHASE 1: RUN_DETACHED---")
-        max_period = self.run_detached()
-        print("MEASURED MAX PERIOD: %d cycles" % max_period)
-
-        print("---PHASE 2: RUN_PACED---")
-        # TODO: Use better heuristic for runtime here and for initial run in phase 3?
-        max_occupancy = self.run_paced(throttle_interval=max_period, runtime_s=1)
-        print("MEASURED MAX FIFO OCCUPANCIES:")
-        print("FIFO ID | MAX OCCUPANCY")
-        for fifo_id, occupancy in enumerate(max_occupancy):
-            print(f"{fifo_id:7} | {occupancy:13}")
-        print("TOTAL FIFO SIZE @ MAX OCCUPANCY (kB): %f" % self.total_fifo_size(max_occupancy))
-
-        print("---PHASE 3: ITERATIVE MINIMIZATION---")
-        # TODO: Use better heuristic for iteration runtime!
-        # E.g., base on measured peak performance, like we did previously:
-        # iteration_runtime = max(0.01, (min_latency * 5) * 10 / 1000 / 1000 / 1000)
-        iteration_runtime = 0.2
-
-        pass1_result = self.size_iteratively_binary_search(
-            start_depth=max_occupancy, iteration_runtime=iteration_runtime
-        )
-        (
-            fifo_depths,
-            log_total_fifo_size,
-            log_interval,
-            log_min_latency,
-            log_latency,
-            duration,
-        ) = pass1_result
-
-        # Visualize results and save as "fifo_sizing_graph.png"
         fig, ax1 = plt.subplots()
 
         color = "tab:red"
@@ -1137,9 +1132,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         color = "tab:blue"
         ax2.set_ylabel("Latency [cycles]", color=color)
         ax2.plot(range(len(log_total_fifo_size)), log_min_latency, color=color, label="Latency")
-        # ax2.plot(range(len(log_total_fifo_size)), log_latency, color="green", label="Latency")
         ax2.tick_params(axis="y", labelcolor=color)
-        # ax2.set_ylim(0, max(log_latency))
 
         # Find key points for annotation
         min_latency_value = min(log_min_latency)
@@ -1266,19 +1259,59 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         plt.tight_layout()
         plt.savefig(os.path.join(report_dir, "fifo_sizing_graph.png"), dpi=300)
 
+        return key_points
+
+    def experiment_fifosizing(self, *args, **kwargs):
+        """Run live FIFO sizing experiment and save report."""
+        report_dir = kwargs.get("report_dir")
+        reportfile = os.path.join(report_dir, "report_experiment_fifosizing.json")
+        folding_config_lfs = self.folding_config_before_lfs
+
+        print("---PHASE 1: RUN_DETACHED---")
+        max_period = self.run_detached()
+        print("MEASURED MAX PERIOD: %d cycles" % max_period)
+
+        print("---PHASE 2: RUN_PACED---")
+        # TODO: Use better heuristic for runtime here and for initial run in phase 3?
+        max_occupancy = self.run_paced(throttle_interval=max_period, runtime_s=1)
+        print("MEASURED MAX FIFO OCCUPANCIES:")
+        print("FIFO ID | MAX OCCUPANCY")
+        for fifo_id, occupancy in enumerate(max_occupancy):
+            print(f"{fifo_id:7} | {occupancy:13}")
+        print("TOTAL FIFO SIZE @ MAX OCCUPANCY (kB): %f" % self.total_fifo_size(max_occupancy))
+
+        print("---PHASE 3: ITERATIVE MINIMIZATION---")
+        # TODO: Use better heuristic for iteration runtime!
+        # E.g., base on measured peak performance, like we did previously:
+        # iteration_runtime = max(0.01, (min_latency * 5) * 10 / 1000 / 1000 / 1000)
+        iteration_runtime = 0.2
+
+        search_log = self.size_iteratively_binary_search(
+            start_depth=max_occupancy, iteration_runtime=iteration_runtime
+        )
+
+        fifo_depths = search_log["fifo_depths"]
+        log_total_fifo_size = search_log["log_total_fifo_size"]
+        log_interval = search_log["log_interval"]
+        log_min_latency = search_log["log_min_latency"]
+        log_latency = search_log["log_latency"]
+
+        # Generate visualization graph
+        key_points = self.generate_fifosizing_graph(
+            log_total_fifo_size, log_min_latency, log_interval, report_dir
+        )
+
         # Generate fifo_sizing_report.json
         fifo_report = {
             "error": self.error,
             "fifo_size_total_kB": log_total_fifo_size[-1],
             "fifo_depths": {},
             "fifo_sizes": {},
-            "key_points": key_points,
+            "detached_max_period_cycles": max_period,
             "binary_search": {
-                "duration": pass1_result[5],
-                "log_total_fifo_size": pass1_result[1],
-                "log_interval": pass1_result[2],
-                "log_min_latency": pass1_result[3],
-                "log_latency": pass1_result[4],
+                "iteration_runtime_s": iteration_runtime,
+                "key_points": key_points,
+                **search_log,
             },
         }
         for fifo, depth in enumerate(fifo_depths):
