@@ -12,7 +12,6 @@ FIFO::~FIFO() {}
 /// - When non-empty: can consume, produce, or both
 /// With bounded maxSize, this models a real FIFO with backpressure.
 void FIFO::update(bool incomingValid, bool incomingReady) {
-
     // When empty: only push if valid (ignoring ready)
     // When non-empty: push if valid AND space available
     uint64_t canPush = incomingValid & (currentUtil < maxSize);
@@ -33,10 +32,10 @@ void FIFO::toggleClock() {
 }
 
 /// Return whether the FIFO can accept inputs (for the current utilization)
-bool FIFO::isInputReady() const { return currentUtil < maxSize; }
+bool FIFO::getInputReady([[maybe_unused]] std::stop_token stoken) noexcept { return currentUtil < maxSize; }
 
 /// Return whether the FIFO can output values (for the current utilization)
-bool FIFO::isOutputValid() const { return currentUtil > 0; }
+bool FIFO::getOutputValid([[maybe_unused]] std::stop_token stoken) noexcept { return currentUtil > 0; }
 
 /// Return whether the FIFO is empty (for the current utilization)
 bool FIFO::isEmpty() const { return currentUtil == 0; }
@@ -69,7 +68,7 @@ void FIFO::increaseCounter(const uint64_t count) {
 /// If incomingValid is true and FIFO has space, increment nextUtil
 /// Matches Q_srl: when empty, always accepts input
 /// When using tryPush/tryPop separately, ALWAYS call tryPush BEFORE tryPop!
-void FIFO::tryPush(bool incomingValid) {
+void FIFO::setInputValid(bool incomingValid, [[maybe_unused]] std::stop_token stoken) {
     // When empty: accept input unconditionally (like Q_srl state_empty)
     // When non-empty: accept if space available
     nextUtil += incomingValid & (nextUtil < maxSize);
@@ -80,7 +79,7 @@ void FIFO::tryPush(bool incomingValid) {
 /// When using tryPush/tryPop separately, ALWAYS call tryPush BEFORE tryPop!
 /// Note: If FIFO was empty and tryPush just added data, tryPop will NOT pop it
 /// (matching Q_srl where state_empty ignores output ready)
-void FIFO::tryPop(bool incomingReady) {
+void FIFO::setOutputReady(bool incomingReady, [[maybe_unused]] std::stop_token stoken) {
     // Check currentUtil (state at cycle start) not nextUtil (after tryPush)
     // This ensures empty->tryPush->tryPop results in size=1, matching Q_srl
     nextUtil -= incomingReady & (currentUtil > 0);

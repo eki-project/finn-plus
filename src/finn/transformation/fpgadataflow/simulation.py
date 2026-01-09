@@ -775,7 +775,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fifo_idx: int,
         baseline_depths: list,
         initial_fifo_depths: dict,
-        sim,
+        sim: Simulation,
         sim_cycles: float,
     ) -> tuple[bool, bool]:
         """Test a specific FIFO depth.
@@ -795,7 +795,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         test_depths = [row[:] for row in baseline_depths]  # Deep copy from baseline
         test_depths[node_idx][fifo_idx] = test_depth
 
-        new_data, timeout = sim.simulate_node_connected(test_depths, max_cycles=sim_cycles * 1.1)
+        new_data, timeout = sim.simulate_node_connected(
+            test_depths, max_cycles=math.ceil(sim_cycles * 1.1)
+        )
 
         if timeout:
             return False, True
@@ -832,7 +834,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         baseline_depths: list,
         bit_widths: list,
         initial_fifo_depths: dict,
-        sim,
+        sim: Simulation,
         sim_cycles: int,
     ) -> int:
         """Minimize a single FIFO depth using binary search.
@@ -958,7 +960,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         baseline_depths: list,
         bitwidth: int,
         initial_fifo_depths: dict,
-        sim,
+        sim: Simulation,
         sim_cycles: float,
         valid_blocks: list[int],
     ) -> int:
@@ -1040,7 +1042,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         baseline_depths: list,
         bitwidth: int,
         initial_fifo_depths: dict,
-        sim,
+        sim: Simulation,
         sim_cycles: float,
         lower_luts: int,
         upper_luts: int,

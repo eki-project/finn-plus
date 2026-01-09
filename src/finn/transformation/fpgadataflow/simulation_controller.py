@@ -228,9 +228,43 @@ class NodeConnectedSimulationController:
 
         Returns:
             Response dictionary
+
+        Raises:
+            RuntimeError: If the subprocess has terminated with an error
         """
-        self._send_command(process_idx, command, payload)
-        return self._receive_response(process_idx)
+        try:
+            self._send_command(process_idx, command, payload)
+            return self._receive_response(process_idx)
+        except (BrokenPipeError, ConnectionResetError):
+            # Connection error means the subprocess has died
+            # Check if it exited with an error and raise that instead
+            proc, stdout_file, stderr_file = self.processes[process_idx]
+            returncode = proc.poll()
+
+            if returncode is not None and returncode != 0:
+                # Process has terminated with an error
+                # Flush and read error logs
+                stdout_file.flush()
+                stderr_file.flush()
+
+                stdout_log = self.logdir / f"{process_idx}_stdout.log"
+                stderr_log = self.logdir / f"{process_idx}_stderr.log"
+
+                stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
+                stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
+
+                # Raise the actual error from the subprocess
+                msg = (
+                    f"Subprocess (process_idx={process_idx}) terminated with"
+                    " exit code {returncode}.\n"
+                    f"Stderr:\n{stderr_output}\n"
+                    f"Stdout:\n{stdout_output}"
+                )
+                raise RuntimeError(msg) from None
+
+            # If process exited cleanly (returncode == 0) or hasn't exited yet,
+            # this is an unexpected connection error
+            return None
 
     def _cleanup_sockets(self) -> None:
         """Close all sockets and terminate all processes."""
@@ -291,8 +325,8 @@ class NodeConnectedSimulationController:
         try:
             with ThreadPoolExecutor(self.workers) as pool:
                 for i, (name, binary) in enumerate(zip(self.names, self.binaries, strict=True)):
-                    is_last_node = i == len(self.names) - 1
-                    is_special_for_display = i == 0 or is_last_node
+                    is_first_node = i == 0
+                    is_special_for_display = is_first_node or i == len(self.names) - 1
                     futures.append(
                         pool.submit(
                             self._run_binary,
@@ -300,7 +334,7 @@ class NodeConnectedSimulationController:
                             name,
                             i % multiprocessing.cpu_count(),
                             depth[i] if depth is not None else None,
-                            is_last_node,  # Only last node has no output FIFOs
+                            is_first_node,  # Only first node has no input FIFOs
                             is_special_for_display,  # First and last get special coloring
                             max_cycles,
                         )
@@ -405,7 +439,7 @@ class NodeConnectedSimulationController:
         name: str | None,
         _cpu: int | None,
         depth: list[int] | None = None,
-        is_last_node: bool = False,
+        is_first_node: bool = False,
         is_special_for_display: bool = False,
         max_cycles: int | None = None,
     ) -> tuple[str, list[int], int, int, list[int], bool, list[int]] | None:
@@ -416,7 +450,7 @@ class NodeConnectedSimulationController:
             name: Name of simulation node
             _cpu: CPU affinity (unused)
             depth: List of FIFO depths for this node's output FIFOs
-            is_last_node: True if this is the last node (no output FIFOs to configure)
+            is_first_node: True if this is the first node (no input FIFOs to configure)
             is_special_for_display: True if this node should get special color in logs
             max_cycles: Maximum cycles to simulate
 
@@ -454,7 +488,7 @@ class NodeConnectedSimulationController:
                 # Send configuration commands
                 # Last node has no output FIFOs, so don't configure FIFO depths
                 config_payload: dict[str, list[int] | int] = {}
-                if not is_last_node and depth is not None:
+                if not is_first_node and depth is not None:
                     config_payload["fifo_depth"] = depth
                 if max_cycles is not None:
                     config_payload["max_cycles"] = max_cycles
@@ -490,7 +524,11 @@ class NodeConnectedSimulationController:
                     # Check if we should stop early
                     with self.stop_lock:
                         if self.should_stop:
-                            stop_response = self._send_and_receive(proc_idx, "stop", {})
+                            try:
+                                stop_response = self._send_and_receive(proc_idx, "stop", {})
+                            except (BrokenPipeError, ConnectionResetError, RuntimeError):
+                                # Process may have already exited - that's ok during shutdown
+                                stop_response = None
                             if stop_response:
                                 cycles = stop_response.get("cycles", 0)
                                 samps = stop_response.get("samples", 0)

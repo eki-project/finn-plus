@@ -1,10 +1,11 @@
 #ifndef AXIS_CONTROL
 #define AXIS_CONTROL
 
+#include <CommunicationChannel.hpp>
+#include <StableStateTracker.hpp>
 #include <functional>
 #include <string>
-
-#include <StableStateTracker.hpp>
+#include <stop_token>
 
 // Fwd declarations
 namespace xsi {
@@ -13,7 +14,7 @@ namespace xsi {
 }  // namespace xsi
 class Clock;
 
-class AXIS_Control {
+class AXIS_Control : public CommunicationChannel {
      public:
     // Constructor/destructor
     AXIS_Control(xsi::Design& design, Clock& clock, size_t job_size, const std::string& prefix = "s_axis_");
@@ -26,10 +27,10 @@ class AXIS_Control {
     void inititialized_or_throw();
 
     // Core functions - immediate writes
-    void valid(bool value = true);
-    bool isValid() const noexcept;
-    void ready(bool value = true);
-    bool isReady() const noexcept;
+    virtual void setInputValid(bool value = true, std::stop_token stoken = {}) override;
+    virtual bool getOutputValid(std::stop_token stoken = {}) noexcept override;
+    virtual void setOutputReady(bool value = true, std::stop_token stoken = {}) override;
+    virtual bool getInputReady(std::stop_token stoken = {}) noexcept override;
 
     // Deferred write functions
     std::reference_wrapper<xsi::Port> setValid(bool value = true);
