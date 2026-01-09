@@ -303,6 +303,11 @@ def _export_im2col_to_finn(model: ir.Model):
     return _ExportIm2ColToFINN(config={}, state={})(model).model
 
 
+# QONNX datatype inference transformation: Adds quantized datatype annotations
+# to tensors
+from qonnx.transformation.infer_datatypes import InferDataTypes
+
+
 def _infer_qonnx_datatypes(model: ModelWrapper):
     """Adds QONNX datatypes to a model by inferring types from values."""
 
@@ -321,7 +326,7 @@ def _infer_qonnx_datatypes(model: ModelWrapper):
 
     # Potentially modified model, still as QONNX ModelWrapper, this step
     # operates in-place modifying the original
-    return model
+    return model.transform(InferDataTypes())
 
 
 def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
