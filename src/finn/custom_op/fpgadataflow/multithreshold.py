@@ -212,7 +212,7 @@ class MultiThreshold(HWCustomOp):
         """Minimize the accumulator bit width according to the weight values."""
 
         # Minimization is only implemented for integer types...
-        if not self.get_output_datatype().is_integer():
+        if not self.get_input_datatype(2).is_integer():
             return
 
         # Get the parameter tensors from the model wrapper
@@ -223,7 +223,7 @@ class MultiThreshold(HWCustomOp):
 
         # Broadcasting of weights along the threshold axis must be made explicit
         if len(weights.shape) < 1 or weights.shape[-1] != N:
-            weights = np.broadcast_to(weights, (weights.shape[:-1], N))
+            weights = np.broadcast_to(weights, (*weights.shape[:-1], N))
 
         # Get the optional output bias and expand to the weights shape
         bias = np.full((*weights.shape[:-1], 1), self.get_nodeattr("out_bias"))
