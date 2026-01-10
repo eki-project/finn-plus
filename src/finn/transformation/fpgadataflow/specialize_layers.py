@@ -310,7 +310,10 @@ class SpecializeLayers(Transformation):
             graph.node.insert(node_ind, new_node)
             # remove old nodes
             graph.node.remove(node)
+            graph_modified = True
+
+        if graph_modified:
             # update node names to reflect new op types
             model = model.transform(GiveUniqueNodeNames())
-            graph_modified = True
+
         return (model, graph_modified)
