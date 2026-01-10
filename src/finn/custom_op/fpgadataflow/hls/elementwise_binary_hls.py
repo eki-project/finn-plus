@@ -871,7 +871,23 @@ class ElementwiseSub_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseSub,
 ):
-    pass
+    # Return pragma for compute op binding
+    def pragma_compute_op_binding(self):
+        res_type = self.get_nodeattr("res_type")
+        is_float = self.get_nodeattr("out_dtype").startswith("FLOAT")
+        lhs_dt = self.get_nodeattr("lhs_dtype")
+        rhs_dt = self.get_nodeattr("rhs_dtype")
+        is_half = (lhs_dt == "FLOAT16") and (rhs_dt == "FLOAT16")
+        float_prefix = "h" if is_half else "f"
+        my_op = f"{float_prefix}sub" if is_float else "sub"
+        if res_type == "auto":
+            return ""
+        elif res_type == "lut":
+            return f"#pragma HLS BIND_OP variable=out op={my_op} impl=fabric"
+        elif res_type == "dsp":
+            return f"#pragma HLS BIND_OP variable=out op={my_op} impl=dsp"
+        else:
+            assert False, "Unknown res_type {res_type} for ElementwiseSub_hls"
 
 
 # Derive a specialization to implement elementwise multiplication of two inputs
