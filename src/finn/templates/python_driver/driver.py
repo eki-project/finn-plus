@@ -1,10 +1,12 @@
 """FINN driver for PYNQ."""
 
 import click
+import copy
 import json
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import random
 import sys
 import time
 from dataset_loading import FileQueue, ImgQueue
@@ -965,8 +967,28 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         total_size_kB = total_size_bits / 8.0 / 1000.0
         return total_size_kB
 
-    def size_iteratively_binary_search(self, start_depth, iteration_runtime):
-        """Iteratively reduce FIFO depths using binary search to find minimum for each FIFO."""
+    def size_iteratively_binary_search(
+        self, start_depth, iteration_runtime, throttle_interval=0, fifo_order_strategy="forward"
+    ):
+        """Iteratively reduce FIFO depths using binary search to find minimum for each FIFO.
+
+        Parameters
+        ----------
+        start_depth : int or list
+            Initial depth(s) for FIFOs
+        iteration_runtime : float
+            Runtime for each test iteration in seconds
+        throttle_interval : int
+            Throttle interval in cycles
+        fifo_order_strategy : str
+            Strategy for ordering FIFO optimization. Options:
+            - "forward": Topological order (FIFO 0 to N-1)
+            - "reverse": Reverse topological order (FIFO N-1 to 0)
+            - "largest_first": Sort by initial size (depth * width)
+            - "deepest_first": Sort by initial depth
+            - "alternating": Ping-pong between first and last FIFOs
+            - "random": Random shuffle order
+        """
         fifo_minimum_reached = [False] * self.num_fifos
 
         if isinstance(start_depth, list):
@@ -981,7 +1003,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.configure_fifos_bounded(fifo_depths)
 
         # Run once to determine target interval
-        self.start_accelerator()
+        self.start_accelerator(throttle_interval=throttle_interval)
         time.sleep(1)
         (
             overflow_err,
@@ -1011,7 +1033,34 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         iteration = 0
         start_time = time.time()
 
-        for fifo_id in range(self.num_fifos):
+        # Determine search order based on strategy
+        if fifo_order_strategy == "forward":
+            fifo_order = list(range(self.num_fifos))
+        elif fifo_order_strategy == "reverse":
+            fifo_order = list(range(self.num_fifos - 1, -1, -1))
+        elif fifo_order_strategy == "largest_first":
+            fifo_order = sorted(
+                range(self.num_fifos), key=lambda i: -fifo_depths[i] * self.fifo_widths[str(i)]
+            )
+        elif fifo_order_strategy == "deepest_first":
+            fifo_order = sorted(range(self.num_fifos), key=lambda i: -fifo_depths[i])
+        elif fifo_order_strategy == "alternating":
+            # Ping-pong between first and last
+            fifo_order = []
+            left, right = 0, self.num_fifos - 1
+            while left <= right:
+                fifo_order.append(left)
+                if left != right:
+                    fifo_order.append(right)
+                left += 1
+                right -= 1
+        elif fifo_order_strategy == "random":
+            fifo_order = list(range(self.num_fifos))
+            random.shuffle(fifo_order)
+        else:
+            raise ValueError(f"Unknown fifo_order_strategy: {fifo_order_strategy}")
+
+        for fifo_id in fifo_order:
             print(f"Binary searching for FIFO {fifo_id}...")
 
             # Binary search bounds
@@ -1033,7 +1082,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                 self.configure_fifos_bounded(test_depths)
 
                 # Start accelerator
-                self.start_accelerator()
+                self.start_accelerator(throttle_interval=throttle_interval)
 
                 # Let it run
                 time.sleep(iteration_runtime)
@@ -1111,7 +1160,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         }
 
     def generate_fifosizing_graph(
-        self, log_total_fifo_size, log_min_latency, log_interval, report_dir
+        self, log_total_fifo_size, log_min_latency, log_latency, log_interval, report_dir
     ):
         """Generate and save FIFO sizing visualization graph."""
         # Round total FIFO size to integer kB values
@@ -1131,8 +1180,20 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         color = "tab:blue"
         ax2.set_ylabel("Latency [cycles]", color=color)
-        ax2.plot(range(len(log_total_fifo_size)), log_min_latency, color=color, label="Latency")
+        ax2.plot(
+            range(len(log_total_fifo_size)),
+            log_min_latency,
+            color=color,
+            label="First-frame latency",
+        )
+        ax2.plot(
+            range(len(log_total_fifo_size)),
+            log_latency,
+            color="tab:green",
+            label="Steady-state latency",
+        )
         ax2.tick_params(axis="y", labelcolor=color)
+        ax2.legend(loc="upper center")
 
         # Find key points for annotation
         min_latency_value = min(log_min_latency)
@@ -1164,7 +1225,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         # Add vertical line at last_min_latency key point
         ax1.axvline(
             x=key_points["last_min_latency"]["iteration"],
-            color="green",
+            color="black",
             linestyle="--",
             linewidth=1.5,
             alpha=0.7,
@@ -1263,9 +1324,13 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
     def experiment_fifosizing(self, *args, **kwargs):
         """Run live FIFO sizing experiment and save report."""
-        report_dir = kwargs.get("report_dir")
+        fifo_search_order = kwargs.get("fifo_search_order", "forward")
+        base_report_dir = kwargs.get("report_dir")
+        # Create subdirectory for this search order strategy
+        report_dir = os.path.join(base_report_dir, fifo_search_order)
+        os.makedirs(report_dir, exist_ok=True)
         reportfile = os.path.join(report_dir, "report_experiment_fifosizing.json")
-        folding_config_lfs = self.folding_config_before_lfs
+        folding_config_lfs = copy.deepcopy(self.folding_config_before_lfs)
 
         print("---PHASE 1: RUN_DETACHED---")
         max_period = self.run_detached()
@@ -1281,13 +1346,17 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         print("TOTAL FIFO SIZE @ MAX OCCUPANCY (kB): %f" % self.total_fifo_size(max_occupancy))
 
         print("---PHASE 3: ITERATIVE MINIMIZATION---")
+        print("FIFO SEARCH ORDER: %s" % fifo_search_order)
         # TODO: Use better heuristic for iteration runtime!
         # E.g., base on measured peak performance, like we did previously:
         # iteration_runtime = max(0.01, (min_latency * 5) * 10 / 1000 / 1000 / 1000)
         iteration_runtime = 0.2
 
         search_log = self.size_iteratively_binary_search(
-            start_depth=max_occupancy, iteration_runtime=iteration_runtime
+            start_depth=max_occupancy,
+            iteration_runtime=iteration_runtime,
+            throttle_interval=max_period,
+            fifo_order_strategy=fifo_search_order,
         )
 
         fifo_depths = search_log["fifo_depths"]
@@ -1298,7 +1367,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         # Generate visualization graph
         key_points = self.generate_fifosizing_graph(
-            log_total_fifo_size, log_min_latency, log_interval, report_dir
+            log_total_fifo_size, log_min_latency, log_latency, log_interval, report_dir
         )
 
         # Generate fifo_sizing_report.json
@@ -1309,6 +1378,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             "fifo_sizes": {},
             "detached_max_period_cycles": max_period,
             "binary_search": {
+                "search_order": fifo_search_order,
                 "iteration_runtime_s": iteration_runtime,
                 "key_points": key_points,
                 **search_log,

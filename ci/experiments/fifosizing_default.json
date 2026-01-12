@@ -21,7 +21,27 @@
         "functions": [
           {
             "function_name": "experiment_fifosizing",
-            "kwargs" : {}
+            "kwargs" : {"fifo_search_order": "forward"}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs" : {"fifo_search_order": "reverse"}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs" : {"fifo_search_order": "largest_first"}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs" : {"fifo_search_order": "deepest_first"}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs" : {"fifo_search_order": "alternating"}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs" : {"fifo_search_order": "random"}
           }
         ]
       }
