@@ -609,10 +609,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """
         if self.verify_steps is None:
             return None
-        if not Path.is_file(self.verify_input_npy):
+        if not Path(self.verify_input_npy).is_file():
             raise FINNConfigurationError("verify_input_npy not found: " + self.verify_input_npy)
         verify_input_npy = np.load(self.verify_input_npy)
-        if not Path.is_file(self.verify_expected_output_npy):
+        if not Path(self.verify_expected_output_npy).is_file():
             raise FINNConfigurationError(
                 "verify_expected_output_npy not found: " + self.verify_expected_output_npy
             )
