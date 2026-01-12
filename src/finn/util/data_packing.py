@@ -148,7 +148,7 @@ def pack_innermost_dim_as_hex_string(
     pack_innermost_dim_as_hex_string(B, DataType["UINT2"], 8) == eB
     """
 
-    if type(ndarray) is not np.ndarray or ndarray.dtype != np.float32:
+    if type(ndarray) is not np.ndarray or ndarray.dtype not in [np.float32, np.float16]:
         # try to convert to a float numpy array (container dtype is float)
         ndarray = np.asarray(ndarray, dtype=np.float32)
 
@@ -206,7 +206,9 @@ def unpack_innermost_dim_from_hex_string(
             elem = ar_elem_bin[lower_limit:upper_limit]
             elem.reverse()
             elem_str = "".join(map(str, elem))
-            if conv_dtype == DataType["FLOAT32"]:
+            if conv_dtype == DataType["FLOAT16"]:
+                ar_list.append(np.float16(BitArray(bin=elem_str).float16))
+            elif conv_dtype == DataType["FLOAT32"]:
                 ar_list.append(BitArray(bin=elem_str).float)
             elif conv_dtype.is_integer():
                 ar_list.append(int(elem_str, 2))
@@ -227,7 +229,8 @@ def unpack_innermost_dim_from_hex_string(
             ar_list = [-(x & mask) + (x & ~mask) for x in ar_list]
 
         array.append(ar_list)
-    array = np.asarray(array, dtype=np.float32).reshape(out_shape)
+    npy_dtype = np.float16 if conv_dtype == DataType["FLOAT16"] else np.float32
+    array = np.asarray(array, dtype=npy_dtype).reshape(out_shape)
     if dtype.is_fixed_point():
         # convert signed integer to fixed point by applying scale
         array = array * dtype.scale_factor()

@@ -24,13 +24,13 @@ FINN_DEPS = {
         False,
     ),
     "brevitas": (
-        "https://github.com/iksnagreb/brevitas.git",
-        "003f9f4070c20639790c7b406a28612a089fc502",
+        "https://github.com/Xilinx/brevitas.git",
+        "b106358c4169d8a9b68cb2a531aa795417d74887",
         True,
     ),
     "qonnx": (
         "https://github.com/fpjentzsch/qonnx.git",
-        "61863d197f22d893503ba6383ffea8e49b896275",
+        "d60ef5bbf155cd29c2d76590c77b3ed8442c437a",
         True,
     ),
     "dataset_loading": (
@@ -39,13 +39,13 @@ FINN_DEPS = {
         True,
     ),
     "cnpy": (
-        "https://github.com/rogersce/cnpy.git",
-        "4e8810b1a8637695171ed346ce68f6984e585ef4",
+        "https://github.com/maltanar/cnpy.git",
+        "8c82362372ce600bbd1cf11d64661ab69d38d7de",
         False,
     ),
     "finn-hlslib": (
         "https://github.com/Xilinx/finn-hlslib.git",
-        "5dde96382b84979c6caa6f34cdad2ac72fa28489",
+        "206e57f5ea993630250f1209dce5a66291210269",
         False,
     ),
     "attention-hlslib": (

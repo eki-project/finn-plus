@@ -228,17 +228,12 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         ]
         return verilog_files
 
-    def prepare_rtlsim(self):
-        # TODO: Support simulation of vivado-style FIFOs,
-        # or ensure node-by-node rtlsim is always skipped for FIFOs in general
-        if self.get_nodeattr("impl_style") == "vivado":
-            log.warning(
-                f"Trying to prepare rtlsim for {self.onnx_node.name}, but impl_style "
-                "is set to vivado, which is not supported for simulation. Skipping. "
-                "Simulation will fall back to Python simulation."
-            )
-            raise NotImplementedError()
-        return super().prepare_rtlsim()
+    def prepare_rtlsim(self, behav=False):
+        assert self.get_nodeattr("impl_style") != "vivado", (
+            "StreamingFIFO impl_style "
+            "cannot be vivado for rtlsim. Only impl_style=rtl supported."
+        )
+        return super().prepare_rtlsim(behav)
 
     def execute_node(self, context, graph):
         mode = self.get_nodeattr("exec_mode")

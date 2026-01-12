@@ -319,6 +319,7 @@ class HWCustomOp(CustomOp):
                 init_file = ""
             code_gen_dict = {
                 "$MODULE_NAME$": [mname],
+                "$SETS$": ["1"],
                 "$DEPTH$": [str(depth)],
                 "$WIDTH$": [str(padded_width)],
                 "$INIT_FILE$": [init_file],
