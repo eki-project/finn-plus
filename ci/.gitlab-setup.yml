@@ -2,9 +2,7 @@
 
 .n2_setup_general:
   before_script:
-    #TODO: switch to python 3.11 and remove pybing module (use poetry dependency only) after FiFO sim rework is merged
     - ml lang/Python/3.10.4-GCCcore-11.3.0
-    - ml lib/pybind11/2.9.2-GCCcore-11.3.0
     - ml compiler/GCC/14.2.0 devel/Boost/1.88.0-GCC-14.2.0
     - ulimit -s unlimited # Increase stack size limit
 
@@ -39,7 +37,7 @@
     # Create fresh virtual environment and install finn-plus from .whl (artifact)
     - python3 -m venv finn-plus-venv
     - finn-plus-venv/bin/pip install 'torch~=2.7.1' 'torchvision~=0.22.1' --extra-index-url https://download.pytorch.org/whl/cu121
-    - finn-plus-venv/bin/pip install 'dvc[webdav]~=3.59.1' 'dvclive[image]~=3.48.2'
+    - finn-plus-venv/bin/pip install 'dvc[webdav]~=3.66.0' 'dvclive[image]~=3.49.0'
     - finn-plus-venv/bin/pip install tests/dist/*.whl
     - finn-plus-venv/bin/pip install notebooks/dist/*.whl
     - finn-plus-venv/bin/pip install dist/*.whl
