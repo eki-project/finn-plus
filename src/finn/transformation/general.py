@@ -17,7 +17,7 @@ import warnings
 
 # Protobuf onnx graph node type
 from onnx import AttributeProto, NodeProto, mapping  # noqa
-from qonnx.transformation.base import Transformation
+from qonnx.transformation.base import Transformation  # noqa
 
 
 class ApplyConfig(Transformation):
