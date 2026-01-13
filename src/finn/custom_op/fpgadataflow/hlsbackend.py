@@ -35,7 +35,6 @@ except ModuleNotFoundError:
 
 import numpy as np
 import os
-import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from qonnx.core.datatype import DataType
@@ -274,14 +273,7 @@ class HLSBackend(ABC):
     def compile_singlenode_code(self):
         """Build bash script for compilation using CppBuilder and execute to produce executable."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
-        vivado_path = os.environ.get("XILINX_VIVADO")
-        # xsi kernel lib name depends on Vivado version (renamed in 2024.2)
-        match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path)
-        year, minor = int(match.group(1)), int(match.group(2))
-        if (year, minor) < (2024, 2):
-            hls_path = os.environ["HLS_PATH"]
-        else:
-            hls_path = os.environ["VITIS_PATH"]
+        hls_path = os.environ.get("XILINX_HLS")
         builder = CppBuilder()
         # to enable additional debug features please uncommand the next line
         # builder.append_includes("-DDEBUG")
@@ -292,7 +284,7 @@ class HLSBackend(ABC):
         #  attention operator? Eventually integrate this into the finn-hlslib?
         builder.append_includes("-I" + str(get_deps_path() / "attention-hlslib"))
         builder.append_includes("-I$FINN_CUSTOM_HLS")
-        builder.append_includes("-I{}/include".format(os.environ["XILINX_HLS"]))
+        builder.append_includes(f"-I{hls_path}/include")
         builder.append_includes("--std=c++14")
         builder.append_includes("-O3")
         builder.append_sources(code_gen_dir + "/*.cpp")
