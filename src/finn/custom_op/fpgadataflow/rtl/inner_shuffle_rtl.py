@@ -76,7 +76,7 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
         return code_gen_dict
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtlsrc = f'{os.environ["FINN_ROOT"]}/finn-rtllib/inner_shuffle'
+        rtlsrc = f'{os.environ["FINN_RTLLIB"]}/inner_shuffle'
         template_path = f"{rtlsrc}/inner_shuffle_template.v"
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         dt = DataType[self.get_nodeattr("data_type")]
@@ -111,7 +111,7 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = f"{self.get_nodeattr('code_gen_dir_ipgen')}/"
-            rtllib_dir = f'{os.environ["FINN_ROOT"]}/finn-rtllib/inner_shuffle'
+            rtllib_dir = f'{os.environ["FINN_RTLLIB"]}/inner_shuffle'
         else:
             code_gen_dir = ""
             rtllib_dir = ""

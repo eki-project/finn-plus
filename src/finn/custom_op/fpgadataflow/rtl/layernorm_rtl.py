@@ -34,7 +34,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
         return my_attrs
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/layernorm/")
+        rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "layernorm/")
         template_path = rtllib_dir + "layernorm_wrapper_template.v"
         simd = self.get_nodeattr("SIMD")
         topname = self.get_verilog_top_module_name()
@@ -78,7 +78,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/layernorm/")
+            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "layernorm/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
