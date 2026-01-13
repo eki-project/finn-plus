@@ -21,27 +21,67 @@
         "functions": [
           {
             "function_name": "experiment_fifosizing",
-            "kwargs" : {"fifo_search_order": "forward"}
+            "kwargs": {"fifo_search_order": "forward", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
           },
           {
             "function_name": "experiment_fifosizing",
-            "kwargs" : {"fifo_search_order": "reverse"}
+            "kwargs": {"fifo_search_order": "forward", "stop_condition": "latency", "relaxation": 0.0, "relaxation_sweep": false}
           },
           {
             "function_name": "experiment_fifosizing",
-            "kwargs" : {"fifo_search_order": "largest_first"}
+            "kwargs": {"fifo_search_order": "forward", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
+          },
+
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs": {"fifo_search_order": "reverse", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
           },
           {
             "function_name": "experiment_fifosizing",
-            "kwargs" : {"fifo_search_order": "deepest_first"}
+            "kwargs": {"fifo_search_order": "reverse", "stop_condition": "latency", "relaxation": 0.0, "relaxation_sweep": false}
           },
           {
             "function_name": "experiment_fifosizing",
-            "kwargs" : {"fifo_search_order": "alternating"}
+            "kwargs": {"fifo_search_order": "reverse", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
+          },
+
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs": {"fifo_search_order": "largest_first", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
           },
           {
             "function_name": "experiment_fifosizing",
-            "kwargs" : {"fifo_search_order": "random"}
+            "kwargs": {"fifo_search_order": "largest_first", "stop_condition": "latency", "relaxation": 0.0, "relaxation_sweep": false}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs": {"fifo_search_order": "largest_first", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": true}
+          },
+
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs": {"fifo_search_order": "deepest_first", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs": {"fifo_search_order": "deepest_first", "stop_condition": "latency", "relaxation": 0.0, "relaxation_sweep": false}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs": {"fifo_search_order": "deepest_first", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
+          },
+
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs": {"fifo_search_order": "alternating", "stop_condition": "interval", "relaxation": 0.0, "relaxation_sweep": false}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs": {"fifo_search_order": "alternating", "stop_condition": "latency", "relaxation": 0.0, "relaxation_sweep": false}
+          },
+          {
+            "function_name": "experiment_fifosizing",
+            "kwargs": {"fifo_search_order": "alternating", "stop_condition": "both", "relaxation": 0.0, "relaxation_sweep": false}
           }
         ]
       }
