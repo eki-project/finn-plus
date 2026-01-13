@@ -248,7 +248,7 @@ class InferThresholdingLayer(Transformation):
         """Initialize the transformation."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper):
         """Apply the transformation to infer standalone thresholding layers."""
         graph = model.graph
         node_ind = 0
@@ -305,6 +305,18 @@ class InferThresholdingLayer(Transformation):
                 ifc = int(thl_in_shape[-1])
                 # create node with no parallelization first
                 pe = 1
+
+
+                # Workaround for exploding resource utilization with per-tensor
+                # thresholds for RTL-Thresholding: Replicate parameters...
+                if np.prod(thl_thres_shape) != ifc * thl_thres_shape[-1]:
+                    thresholds = model.get_initializer(node.input[1])
+                    thresholds = np.broadcast_to(
+                        thresholds, (ifc, thl_thres_shape[-1])
+                    )
+                    model.set_initializer(node.input[1], thresholds)
+                    model.set_tensor_shape(node.input[1], thresholds.shape)
+
 
                 odt = model.get_tensor_datatype(thl_output)
                 scale = getCustomOp(node).get_nodeattr("out_scale")
