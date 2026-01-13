@@ -428,20 +428,28 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
         settings.finn_build_dir.mkdir()
 
     # Update / Install all dependencies
-    if settings.automatic_dependency_updates:
-        try:
-            updater = DependencyUpdater(
-                dependency_location=settings.finn_deps,
-                dependency_definition_file=settings.finn_deps_definitions,
-                git_timeout_s=settings.deps_git_timeout,
-                non_interactive=batch,
-            )
+    try:
+        updater = DependencyUpdater(
+            dependency_location=settings.finn_deps,
+            dependency_definition_file=settings.finn_deps_definitions,
+            git_timeout_s=settings.deps_git_timeout,
+            non_interactive=batch,
+        )
+        if settings.automatic_dependency_updates:
             updater.update()
-        except FINNUserError as e:
-            error(f"FINN ERROR: {e}")
-            sys.exit(1)
-    else:
-        warning("Skipping dependency updates!")
+        else:
+            outdated = updater.get_outdated_dependencies()
+            all_deps = updater.deps.get_all_dependencies()
+            warning(f"Skipping dependency updates! (Outdated dependencies: {', '.join(outdated)})")
+            if set(outdated) == set(all_deps):
+                warning(
+                    "It seems that [italic bold]all[/italic bold] dependencies are oudated. "
+                    "Consider running `finn deps update` before continuing!",
+                    critical=True,
+                )
+    except FINNUserError as e:
+        error(f"FINN ERROR: {e}")
+        sys.exit(1)
 
     # Even if we dont update deps, we still need to make xsi available
     # TODO: Currently finn_xsi is not optional, and we have to error if its not found
@@ -457,6 +465,19 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
 
     # Check synthesis tools
     set_synthesis_tools_paths()
+
+    if "XILINX_LOCAL_USER_DATA" in os.environ and os.environ["XILINX_LOCAL_USER_DATA"] != "no":
+        warning(
+            "It seems that you have set XILINX_LOCAL_USER_DATA to a value other "
+            "than 'no'. In some cases this might cause permission issues with the "
+            "XilinxTclStore during synthesis."
+        )
+    elif "XILINX_LOCAL_USER_DATA" not in os.environ:
+        status(
+            "Setting XILINX_LOCAL_USER_DATA=no to avoid possible issues. "
+            "To overwrite this behaviour, set the variable manually before starting FINN."
+        )
+        os.environ["XILINX_LOCAL_USER_DATA"] = "no"
 
     os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
@@ -1049,6 +1070,15 @@ def config_create() -> None:
     _config_wizard_wrapper()
 
 
+@click.command(
+    "check", help="Check that FINN starts up as expected and exit. Does not update dependencies."
+)
+def finn_check() -> None:
+    settings = FINNSettings.init(auto_set_environment_vars=False, flow_config=Path())
+    prepare_finn(settings, True)
+    Console().print("[bold green]FINN is ready![/bold green]")
+
+
 def main() -> None:
     """Clicks entrypoint function."""
     config.add_command(config_show)
@@ -1067,6 +1097,7 @@ def main() -> None:
     main_group.add_command(bench)
     main_group.add_command(test)
     main_group.add_command(run)
+    main_group.add_command(finn_check)
     try:
         main_group()
     except FINNValidationError as e:

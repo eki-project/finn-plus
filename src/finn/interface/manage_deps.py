@@ -305,6 +305,7 @@ class DependencyUpdater:
         # Load the definitions
         debug("Loading dependency definitions")
         data = {}
+        self.deps: DependencyData
         with self.depfile.open() as f:
             data = yaml.load(f, yaml.Loader)
         try:

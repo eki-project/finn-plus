@@ -58,9 +58,11 @@ def error(msg: str) -> None:
     Console().print(f"[bold red]ERROR: [/bold red][red]{msg}[/red]")
 
 
-def warning(msg: str) -> None:
+def warning(msg: str, critical: bool = False) -> None:
     """Print a warning."""
-    Console().print(f"[bold orange1]WARNING: [/bold orange1][orange3]{msg}[/orange3]")
+    color = "bold orange1" if not critical else "bold orange_red1"
+    prefix = "" if not critical else "CRITICAL "
+    Console().print(f"[{color}]{prefix}WARNING: [/{color}][orange3]{msg}[/orange3]")
 
 
 def status(msg: str) -> None:
