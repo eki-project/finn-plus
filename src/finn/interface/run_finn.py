@@ -1074,6 +1074,7 @@ def config_create() -> None:
     "check", help="Check that FINN starts up as expected and exit. Does not update dependencies."
 )
 def finn_check() -> None:
+    """Start FINN and close it after loading the environment."""
     settings = FINNSettings.init(auto_set_environment_vars=False, flow_config=Path())
     prepare_finn(settings, True)
     Console().print("[bold green]FINN is ready![/bold green]")
