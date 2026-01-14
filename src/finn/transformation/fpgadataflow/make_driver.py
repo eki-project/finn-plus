@@ -97,7 +97,7 @@ class MakeCPPDriver(Transformation):
         if s in ["BINARY", "TERNARY", "BIPOLAR"]:
             return "Datatype" + s[0] + s[1:].lower()
         elif s.startswith("U"):
-            return "DatatypeUint<" + s.replace("UINT", "") + ">"
+            return "DatatypeUInt<" + s.replace("UINT", "") + ">"
         elif s.startswith("I"):
             return "DatatypeInt<" + s.replace("INT", "") + ">"
         elif "FLOAT" in s:

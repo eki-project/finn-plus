@@ -30,6 +30,7 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
+from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.simulation_controller import NodeConnectedSimulationController
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
@@ -39,6 +40,20 @@ from finn.util.logging import DisabledLoggingConsole, ThreadsafeProgressDisplay,
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+
+"""
+Classes in this module:
+    SimulationType: Determines the type of simulation to be executed.
+    SimulationBuilder: Performs multiple steps to build a simulation binary.
+    Simulation: Builds a simulation of the given type and interacts with
+        the binary, returning the results.
+
+    RunLayerParallelSimulation: Create a Simulation object for parallel simulation.
+    ApplyFIFOSizes: Read the output JSON from the simulation and apply the
+        found sizes to the FIFOs in the model.
+
+"""
 
 
 class SimulationType(str, Enum):
@@ -587,7 +602,7 @@ class SimulationBuilder:
 
 
 class Simulation:
-    """Manage simulation (runs) in FINN.
+    """Manage simulation (runs) in FINN. Upon instance creation, the simulation will be built.
 
     IMPORTANT: If the modelwrapper was somehow changed, create a NEW simulation object!
     """
@@ -598,6 +613,7 @@ class Simulation:
         fpgapart: str,
         clk_ns: float,
         functional_sim: bool,
+        simulation_type: SimulationType,
         workers: int | None = None,
     ) -> None:
         """Create a new simulation instance. If workers is None, NUM_DEFAULT_WORKERS are used."""
@@ -616,8 +632,9 @@ class Simulation:
         sys.stdout = sys.stdout.console
         sys.stderr = sys.stderr.console
 
+        self.simulation_type = simulation_type
         self.binaries = self.builder.build_simulation(
-            SimulationType.NODE_BASED_CONNECTED,
+            simulation_type,
             self.workers,
             with_live_display=True,
             functional_sim=self.functional_sim,
@@ -632,12 +649,30 @@ class Simulation:
         self.model = self.model.transform(PrepareIP(self.fpgapart, self.clk_ns))
         self.model = self.model.transform(HLSSynthIP())
 
+    def simulate(self, *args: Any, **kwargs: Any) -> Any:
+        """Run the built simulation and return its results. This function can always be called
+        and will lookup the correct function to use, but consequently
+        cannot provide typing information."""
+        match self.simulation_type:
+            case SimulationType.NODE_BASED_CONNECTED:
+                return self.simulate_node_connected(*args, **kwargs)
+            case SimulationType.NODE_BASED_ISOLATED:
+                return self.simulate_node_isolated(*args, **kwargs)
+            case _:
+                raise FINNUserError(f"Unsupported simulation type {self.simulation_type}")
+
     def simulate_node_connected(
         self, depth: int | list[list[int]] | None = None, max_cycles: int | None = None
     ) -> tuple[dict[int, dict[str, list[int]]], bool]:
         """Simulate the given number of samples for every layer. Layers are completely isolated
         and simulated in parallel. Simulation data is returned as a dict (by node name as index).
         """
+        if self.simulation_type != SimulationType.NODE_BASED_CONNECTED:
+            raise FINNInternalError(
+                f"Called simulation function 'simulate_node_connected' "
+                f"does not match provided simulation type "
+                f"{self.simulation_type}"
+            )
         names = [node.name for node in self.model.graph.node]
         initial_depth = [[depth]] * len(self.binaries) if isinstance(depth, int) else depth
 
@@ -669,8 +704,16 @@ class Simulation:
         json.dump(data, output_json.open("w"), indent=4)
         return data, merged_data.get("timeout_occurred", False)
 
+    def simulate_node_isolated(self) -> None:
+        if self.simulation_type != SimulationType.NODE_BASED_ISOLATED:
+            raise FINNInternalError(
+                f"Called simulation function 'simulate_node_isolated' "
+                f"does not match provided simulation type "
+                f"{self.simulation_type}"
+            )
+        raise NotImplementedError()
 
-# TODO: Just a test transformation. Will be integrated properly later
+
 class RunLayerParallelSimulation(Transformation):  # noqa
     def __init__(
         self,
@@ -690,10 +733,16 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         self.quality_of_results = quality_of_results
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        sim = Simulation(model, self.fpgapart, self.clk_ns, self.cfg.functional_simulation)
+        sim = Simulation(
+            model,
+            self.fpgapart,
+            self.clk_ns,
+            self.cfg.functional_simulation,
+            SimulationType.NODE_BASED_CONNECTED,
+        )
         model = sim.model  # TODO:clean up
 
-        initial_fifo_depths, _ = sim.simulate_node_connected()
+        initial_fifo_depths, _ = sim.simulate()
 
         fifo_depths = []  # Each entry is a list of fifo sizes for that node
         for val in initial_fifo_depths.values():
@@ -749,6 +798,14 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         for i in range(len(fifo_depths)):
             print(f"{i}: {fifo_depths[i]}")
             log.info(f"{i}: {fifo_depths[i]}")
+
+        # Write back results. By default write to output_dir / "fifo_config.json"
+        assert len(fifo_depths) == len(model.graph.node)
+        json_results = {}
+        for i in range(len(fifo_depths)):
+            json_results[i] = {"node": model.graph.node[i].name, "depths": fifo_depths[i]}
+        with (Path(self.cfg.output_dir) / "fifo_config.json").open("w") as f:
+            json.dump(json_results, f)
 
         return model, False
 
@@ -1198,3 +1255,186 @@ def calculate_srl16e_depth_range(luts: int, bitwidth: int) -> tuple[int, int]:
         return (0, 0)
 
     return (min_depth, max_depth)
+
+
+class ApplyFIFOSizes(Transformation):
+    """Apply a FIFO sizing configuration to the model. If not existing, inserts FIFOs beforehand."""
+
+    def __init__(
+        self,
+        cfg: DataflowBuildConfig,
+        fifo_config: Path | None = None,
+        max_qsrl_depth: int = 256,
+        vivado_ram_style: str = "auto",
+    ) -> None:
+        """If given read the config json from the given path.
+        Otherwise check in the output directory.
+        """
+        self.cfg = cfg
+        self.max_qsrl_depth = max_qsrl_depth
+        self.vivado_ram_style = vivado_ram_style
+        if fifo_config is None:
+            self.path = Path(cfg.output_dir) / "fifo_config.json"
+        else:
+            self.path = fifo_config
+
+        FIFODepthConfig = dict[int, dict[str, str | list[int]]]  # noqa
+        self.depth: FIFODepthConfig = {}
+        with self.path.open() as f:
+            self.depth = cast("FIFODepthConfig", json.load(f))
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Apply FIFO Simulation Depths to the model."""
+        # TODO: Better way to check for fifos (op_type for example)
+        if len(list(filter(lambda node: "StreamingFIFO" in node.op_type, model.graph.node))) > 0:
+            log.warning(
+                "It seems that StreamingFIFOs have already "
+                "been inserted into the graph. Skipping insertion of FIFOs."
+            )
+        else:
+            if len(model.graph.node) != len(self.depth):
+                raise FINNUserError(
+                    "There are no StreamingFIFOs in the graph, yet the number "
+                    "of nodes and number of FIFO settings differ. There may be "
+                    "unaccounted for nodes that have not been part of the FIFO "
+                    "simulation. Consider re-running simulation directly before "
+                    "applying the FIFO sizes. It might also be that your model "
+                    "or config is outdated, in which case it is recommended to "
+                    "re-run the entire flow from start to finish."
+                )
+
+            # Inser the FIFOs into the model
+            model = model.transform(InsertFIFO(True, self.max_qsrl_depth, self.vivado_ram_style))
+
+            # Synthesize the nodes (TODO: Remove)
+            model = model.transform(GiveUniqueNodeNames())
+            model: ModelWrapper = model.transform(GiveReadableTensorNames())
+            model = model.transform(SpecializeLayers(self.cfg._resolve_fpga_part()))  # noqa
+            model = model.transform(GiveUniqueNodeNames())
+            model: ModelWrapper = model.transform(GiveReadableTensorNames())
+            model = model.transform(
+                PrepareIP(
+                    fpgapart=self.cfg._resolve_fpga_part(), clk=self.cfg.synth_clk_period_ns  # noqa
+                )
+            )
+            model = model.transform(HLSSynthIP())
+
+            # Sanity check to make sure fifos were inserted
+            inserted_fifo_count = sum(
+                [int("StreamingFIFO" in node.op_type) for node in model.graph.node]
+            )
+            if inserted_fifo_count == 0:
+                raise FINNInternalError(
+                    "No FIFOs were inserted. This may be due to "
+                    "wrong network configuration, step order or "
+                    "a number of other things."
+                )
+            if inserted_fifo_count < int(0.1 * float(len(model.graph.node))):
+                log.warning(
+                    "The number of inserted FIFOs makes up less than 10%"
+                    " of the total number of nodes in the model. This could "
+                    "point to a potential error."
+                )
+
+            # Assign data based on the names of the nodes. Since no FIFOs were in the graph
+            # before, the names should stay the same.
+            # TODO: This currently assumes that the FIFO to be sized comes AFTER the actual node.
+            # TODO: If the simulation code is changed, this needs to be changed as well
+            for i in range(len(model.graph.node)):
+                node: NodeProto = model.graph.node[i]
+                node_inst: HWCustomOp = getCustomOp(model.graph.node[i])
+                if node.op_type.startswith("StreamingFIFO"):
+                    # FIFOs can only have one producer, so this must
+                    # be the node whoose simulated depth we have to get
+                    predecessors: list[NodeProto] | None = model.find_direct_predecessors(node)
+                    if predecessors is not None and len(predecessors) > 1:
+                        raise FINNInternalError(f"FIFO node {node.name} has multiple producers!")
+                    if predecessors is None:
+                        continue
+                    predecessor: NodeProto = predecessors[0]
+
+                    # Check which of the predecessors outputs this FIFO is connected to
+                    # and use the depth at that index from the simulation
+                    for sim_node_name, sim_depths in self.depth.values():
+                        if sim_node_name == predecessor.name:
+                            depth_index = predecessor.output.index(node.input[0])
+                            depth = int(sim_depths[depth_index])
+                            node_inst.set_nodeattr("depth", depth)
+
+                            # TODO: Code copied from old FIFO sizing
+                            # exception for top-level IO FIFOs which cause a bug in simulation
+                            # (top-level IOs should not have impl_style=vivado)
+                            toplevel_in = node.input[0] in [x.name for x in model.graph.input]
+                            toplevel_out = node.output[0] in [x.name for x in model.graph.output]
+                            toplevel_style_exception = toplevel_in or toplevel_out
+                            # Set FIFO implementation/ram styles
+                            if (depth > self.max_qsrl_depth) and (not toplevel_style_exception):
+                                node_inst.set_nodeattr("impl_style", "vivado")
+                                node_inst.set_nodeattr("ram_style", self.vivado_ram_style)
+                            else:
+                                node_inst.set_nodeattr("impl_style", "rtl")
+
+            # TODO: Following code is copied from the old FIFO sizing. Might be shortenable
+            for node in model.graph.node:
+                if not node.op_type.startswith("StreamingFIFO"):
+                    node_inst = getCustomOp(node)
+                    fifodepth_in = []
+                    for node_inp in node.input:
+                        prod = model.find_producer(node_inp)
+                        if prod is None:
+                            # no producer for this input
+                            if node_inp in [x.name for x in model.graph.input]:
+                                # top-level input with no FIFO
+                                fifodepth_in.append(0)
+                            else:
+                                # FIFO depth attr applies only to dynamic attributes
+                                pass
+                        else:
+                            # there is a producer for this input
+                            if prod.op_type.startswith("StreamingFIFO"):
+                                prod_inst = getCustomOp(prod)
+                                fifodepth_in.append(prod_inst.get_nodeattr("depth"))
+                            else:
+                                # explicitly no FIFO on this dynamic input
+                                fifodepth_in.append(0)
+                    fifodepth_out = []
+                    for node_out in node.output:
+                        cons = model.find_consumer(node_out)
+                        if cons is None:
+                            # no consumer for this output
+                            if node_out in [x.name for x in model.graph.output]:
+                                # top-level output with no FIFO
+                                fifodepth_out.append(0)
+                            else:
+                                # FIFO depth attr applies only to dynamic attributes
+                                pass
+                        else:
+                            # there is a consumer for this input
+                            if cons.op_type.startswith("StreamingFIFO"):
+                                cons_inst = getCustomOp(cons)
+                                fifodepth_out.append(cons_inst.get_nodeattr("depth"))
+                            else:
+                                # explicitly no FIFO on this dynamic output
+                                fifodepth_out.append(0)
+                    node_inst.set_nodeattr("inFIFODepths", fifodepth_in)
+                    node_inst.set_nodeattr("outFIFODepths", fifodepth_out)
+
+        # Synthesize with the proper sizes set
+        model = model.transform(SpecializeLayers(self.cfg._resolve_fpga_part()))  # noqa
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
+        model = model.transform(
+            PrepareIP(
+                fpgapart=self.cfg._resolve_fpga_part(), clk=self.cfg.synth_clk_period_ns  # noqa
+            )
+        )
+        model = model.transform(HLSSynthIP())
+        # model.set_metadata_prop("rtlsim_trace", "")
+        # model.set_metadata_prop("rtlsim_so", "")
+        # model.set_metadata_prop("vivado_stitch_proj", "")
+        # model.set_metadata_prop("wrapper_filename", "")
+        # model.set_metadata_prop("vivado_stitch_vlnv", "")
+        # model.set_metadata_prop("vivado_stitch_ifnames", "")
+        # model.set_metadata_prop("exec_mode", "")
+
+        return model, False

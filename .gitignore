@@ -63,6 +63,8 @@ poetry.lock
 **/compile_commands.json
 **/.cache
 **/build
+**/_deps
+
 
 # Package files
 *.egg
