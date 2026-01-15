@@ -144,9 +144,15 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
         if self.get_input_datatype(ind=1).is_integer():
             thresholds = thresholds.astype(np.int64)
 
-        # Broadcasting of weights along the threshold axis must be made explicit
+        # Broadcasting of thresholds and weights along the threshold axis must
+        # be made explicit
         if len(weights.shape) < 1 or weights.shape[-1] != N:
             weights = np.broadcast_to(weights, (*weights.shape[:-1], N))
+
+        if len(thresholds.shape) < 1 or thresholds.shape[-1] != N:
+            thresholds = np.broadcast_to(
+                thresholds, (*thresholds.shape[:-1], N)
+            )
 
         # Get the optional output bias and expand to the weights shape
         bias = np.full((*weights.shape[:-1], 1), self.get_nodeattr("out_bias"))
