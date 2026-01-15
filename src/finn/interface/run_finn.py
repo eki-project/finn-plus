@@ -812,7 +812,7 @@ def flow_wizard() -> None:
     run_flow_wizard()
 
 
-def _config_wizard_wrapper() -> None:
+def _settings_wizard_wrapper() -> None:
     """Use both by 'finn wizard config' and 'finn config create'."""
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
@@ -824,10 +824,10 @@ def _config_wizard_wrapper() -> None:
     run_setup_wizard(settings)
 
 
-@click.command(name="config")
-def config_wizard() -> None:
+@click.command(name="settings")
+def settings_wizard() -> None:
     """Run the wizard helping to set up the FINN+ settings."""
-    _config_wizard_wrapper()
+    _settings_wizard_wrapper()
 
 
 @click.command(help="Run a given benchmark configuration.")
@@ -1072,7 +1072,7 @@ def config_edit() -> None:
 @click.command("create", help="Create a configuration. Same as 'finn wizard config'.")
 def config_create() -> None:
     """Run the configuration wizard."""
-    _config_wizard_wrapper()
+    _settings_wizard_wrapper()
 
 
 @click.command(
@@ -1094,7 +1094,7 @@ def main() -> None:
     deps.add_command(deps_edit)
     deps.add_command(deps_show)
     wizard.add_command(flow_wizard)
-    wizard.add_command(config_wizard)
+    wizard.add_command(settings_wizard)
     main_group.add_command(auto)
     main_group.add_command(wizard)
     main_group.add_command(settings)
