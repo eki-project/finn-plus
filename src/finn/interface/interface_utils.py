@@ -28,7 +28,13 @@ def resolve_module_path(name: str) -> str:
         try:
             return str(importlib.import_module(f"finn.{name}").__path__[0])
         except ModuleNotFoundError:
-            warning(f"Could not resolve {name}. FINN might not work properly.")
+            if name not in ["notebooks", "tests"]:
+                warning(f"Could not resolve {name}. FINN might not work properly.")
+            else:
+                status(
+                    f"FINNs {name} module was not found. "
+                    f"This is normal for pip-installed builds."
+                )
     # Return the empty string as a default...
     return ""
 
