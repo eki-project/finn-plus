@@ -647,6 +647,7 @@ def _build(
     _default_session_options = ort.capi._pybind_state.get_default_session_options()  # type: ignore # noqa
 
     def get_modified_session_options():  # noqa
+        """Return onnxruntime session options with modified thread numbers."""
         _default_session_options.inter_op_num_threads = int(settings.num_default_workers)
         _default_session_options.intra_op_num_threads = int(settings.num_default_workers)
         return _default_session_options
