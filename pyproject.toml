@@ -81,8 +81,8 @@ pytest-html-merger = "~0.1.0"
 pytest-cov = "~6.2.1"
 pytest-forked = "~1.6.0"
 pytest-rerunfailures = "~15.1"
-dvc = { version = " ~3.59.1", extras = ["webdav"] }
-dvclive = {version = "~3.48.2", extras = ["image"] }
+dvc = { version = " ~3.66.0", extras = ["webdav"] }
+dvclive = {version = "~3.49.0", extras = ["image"] }
 deap = "~1.4.3"
 pyyaml = "~6.0.2"
 mip = "~1.13.0"
