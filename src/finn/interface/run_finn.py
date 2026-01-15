@@ -566,7 +566,9 @@ def _build(
             sys.exit(1)
         else:
             model = mp
-    status(f"Starting FINN build with config {config.name} and model {model.name}!")  # type: ignore
+    status(
+        f"Starting FINN build with config {flow_config.name} and model " f"{model.name}!"
+    )  # type: ignore
     if finn_build_dir is not None:
         finn_build_dir = finn_build_dir.expanduser().absolute()
         finn_build_dir.mkdir(parents=True, exist_ok=True)
@@ -596,7 +598,10 @@ def _build(
             with flow_config.open() as f:
                 dfbc = DataflowBuildConfig.from_json(f.read())
         case _:
-            error(f"Unknown config file type: {config.name}. Valid formats are: .json, .yml, .yaml")
+            error(
+                f"Unknown config file type: {flow_config.name}. "
+                f"Valid formats are: .json, .yml, .yaml"
+            )
             sys.exit(1)
     if dfbc is None:
         error("Failed to generate dataflow build config!")
@@ -631,7 +636,7 @@ def _build(
 
     Console().rule(
         f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
-        f"{config.name}[/bold orange1][bold cyan] on model [/bold cyan]"
+        f"{flow_config.name}[/bold orange1][bold cyan] on model [/bold cyan]"
         f"[bold orange1]{model.name}[/bold orange1]"  # type: ignore
     )
     build_dataflow_cfg(str(model), dfbc)
@@ -1022,7 +1027,7 @@ def deps_show(finn_deps_definitions: Path | None) -> None:
 
 
 @click.group(help="Manage FINN settings")
-def config() -> None:
+def settings() -> None:
     """Click group for config related commands."""
     # TODO: Config remove?
 
@@ -1082,9 +1087,9 @@ def finn_check() -> None:
 
 def main() -> None:
     """Clicks entrypoint function."""
-    config.add_command(config_show)
-    config.add_command(config_edit)
-    config.add_command(config_create)
+    settings.add_command(config_show)
+    settings.add_command(config_edit)
+    settings.add_command(config_create)
     deps.add_command(update)
     deps.add_command(deps_edit)
     deps.add_command(deps_show)
@@ -1092,7 +1097,7 @@ def main() -> None:
     wizard.add_command(config_wizard)
     main_group.add_command(auto)
     main_group.add_command(wizard)
-    main_group.add_command(config)
+    main_group.add_command(settings)
     main_group.add_command(deps)
     main_group.add_command(build)
     main_group.add_command(bench)
