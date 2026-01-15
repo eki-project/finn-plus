@@ -639,6 +639,24 @@ def _build(
         f"{flow_config.name}[/bold orange1][bold cyan] on model [/bold cyan]"
         f"[bold orange1]{model.name}[/bold orange1]"  # type: ignore
     )
+    # Attempt to work around onnxruntime issue on Slurm-managed clusters:
+    # See https://github.com/microsoft/onnxruntime/issues/8313
+    # This seems to happen only when assigned CPU cores are not contiguous
+    import onnxruntime as ort
+
+    _default_session_options = ort.capi._pybind_state.get_default_session_options()  # type: ignore # noqa
+
+    def get_modified_session_options():  # noqa
+        _default_session_options.inter_op_num_threads = int(settings.num_default_workers)
+        _default_session_options.intra_op_num_threads = int(settings.num_default_workers)
+        return _default_session_options
+
+    if "SLURM_JOB_ID" in os.environ:
+        status(
+            f"SLURM usage detected. Setting onnxruntime inter/intra-op-num-threads to "
+            f"{settings.num_default_workers}"
+        )
+        ort.capi._pybind_state.get_default_session_options = get_modified_session_options  # type: ignore # noqa
     build_dataflow_cfg(str(model), dfbc)
 
 
