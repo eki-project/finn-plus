@@ -75,6 +75,11 @@ finn build build_config.yaml model.onnx   # Run a FINN+ build defined in a YAML 
 
 For more detailed instructions, like installation for development use, please refer to our [**Wiki**](https://github.com/eki-project/finn-plus/wiki)!
 
+> [!NOTE]
+> Please note, that `finn deps update` (and most other commands) will automatically download and update dependencies required for FINN to work (mostly the same as the original FINN repository).
+> This is done to provide a better user experience and to not require the user to manage a dozen dependencies on their own.
+> If you want to know which dependencies will be installed before continuing, check out `external_dependencies.yaml`.
+
 ## About Us
 
 FINN+ is maintained by researchers from the [Computer Engineering Group](https://en.cs.uni-paderborn.de/ceg) (CEG) and [Paderborn Center for Parallel Computing](https://pc2.uni-paderborn.de/) (PC²) at Paderborn University, Germany as part of the [eki research project](https://www.eki-project.tech/).
