@@ -2472,7 +2472,7 @@ class InferMultiThreshold(Transformation):
                     # Turn into numpy array and unsqueeze a single axis
                     weights = np.reshape(np.asarray(weights), (-1,))
                     # Update the ONNX initializer
-                    model.set_initializer(node.input[1], weights)
+                    model.set_initializer(node.input[2], weights)
 
                 # Number of thresholds
                 N = thresholds.shape[-1]
