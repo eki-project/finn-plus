@@ -306,17 +306,27 @@ class InferThresholdingLayer(Transformation):
                 # create node with no parallelization first
                 pe = 1
 
+                # The following applies only to constant thresholds
+                if model.get_initializer(node.input[1]) is not None:
+                    # Ensure we have a non-empty shape to work with...
+                    if thl_thres_shape is None or len(thl_thres_shape) < 1:
+                        thresholds = model.get_initializer(node.input[1])
+                        # Turn into numpy array and unsqueeze a single axis
+                        thresholds = np.reshape(np.asarray(thresholds), (-1,))
+                        # Update the ONNX initializer
+                        model.set_initializer(node.input[1], thresholds)
+                        model.set_tensor_shape(node.input[1], thresholds.shape)
 
-                # Workaround for exploding resource utilization with per-tensor
-                # thresholds for RTL-Thresholding: Replicate parameters...
-                if np.prod(thl_thres_shape) != ifc * thl_thres_shape[-1]:
-                    thresholds = model.get_initializer(node.input[1])
-                    thresholds = np.broadcast_to(
-                        thresholds, (ifc, thl_thres_shape[-1])
-                    )
-                    model.set_initializer(node.input[1], thresholds)
-                    model.set_tensor_shape(node.input[1], thresholds.shape)
-
+                    # Workaround for exploding resource utilization with
+                    # per-tensor thresholds for RTL-Thresholding: Replicate
+                    # parameters...
+                    if np.prod(thl_thres_shape) != ifc * thl_thres_shape[-1]:
+                        thresholds = model.get_initializer(node.input[1])
+                        thresholds = np.broadcast_to(
+                            thresholds, (ifc, thl_thres_shape[-1])
+                        )
+                        model.set_initializer(node.input[1], thresholds)
+                        model.set_tensor_shape(node.input[1], thresholds.shape)
 
                 odt = model.get_tensor_datatype(thl_output)
                 scale = getCustomOp(node).get_nodeattr("out_scale")
@@ -2450,6 +2460,19 @@ class InferMultiThreshold(Transformation):
                 # There must be a constant weights tensor as the third input
                 if (weights := model.get_initializer(node.input[2])) is None:
                     continue
+
+                # Ensure we have a non-empty shape to work with...
+                if thresholds.shape is None or len(thresholds.shape) < 1:
+                    # Turn into numpy array and unsqueeze a single axis
+                    thresholds = np.reshape(np.asarray(thresholds), (-1,))
+                    # Update the ONNX initializer
+                    model.set_initializer(node.input[1], thresholds)
+
+                if weights.shape is None or len(weights.shape) < 1:
+                    # Turn into numpy array and unsqueeze a single axis
+                    weights = np.reshape(np.asarray(weights), (-1,))
+                    # Update the ONNX initializer
+                    model.set_initializer(node.input[1], weights)
 
                 # Number of thresholds
                 N = thresholds.shape[-1]
