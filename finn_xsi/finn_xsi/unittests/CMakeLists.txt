@@ -14,7 +14,7 @@ FetchContent_MakeAvailable(googletest)
 
 # Add FIFO unit tests
 add_executable(FIFO_test FIFO_test.cpp ${CORE_SRC})
-target_link_libraries(FIFO_test PRIVATE GTest::gtest_main Threads::Threads -ldl -lrt)
+target_link_libraries(FIFO_test PRIVATE nlohmann_json::nlohmann_json GTest::gtest_main Threads::Threads -ldl -lrt)
 target_include_directories(FIFO_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
 target_include_directories(FIFO_test PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include")
 
@@ -25,7 +25,7 @@ target_include_directories(InterSimulationInterface_test PRIVATE ${CMAKE_CURRENT
 
 # Add Integration tests (FIFO + InterSimulationInterface)
 add_executable(Integration_test Integration_test.cpp ${CORE_SRC})
-target_link_libraries(Integration_test PRIVATE GTest::gtest_main Threads::Threads -ldl -lrt)
+target_link_libraries(Integration_test PRIVATE nlohmann_json::nlohmann_json GTest::gtest_main Threads::Threads -ldl -lrt)
 target_include_directories(Integration_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include ${Boost_INCLUDE_DIRS})
 target_include_directories(Integration_test PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include")
 

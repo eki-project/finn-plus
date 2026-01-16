@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
-#include <format>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -203,14 +202,16 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
 
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                fromProducerInterface[i] = std::move(ConsumingInterface(std::format("{}_{}", *prevNodeName, i)));
+                std::string shmName = *prevNodeName + "_" + std::to_string(i);
+                fromProducerInterface[i] = std::move(ConsumingInterface(shmName));
             }
         }
 
         if constexpr (!LastNode) {
             // Create consumer facing interfaces
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                toConsumerInterface[i] = std::move(ProducingInterface(std::format("{}_{}", *nodeName, i)));
+                std::string shmName = *nodeName + "_" + std::to_string(i);
+                toConsumerInterface[i] = std::move(ProducingInterface(shmName));
             }
         }
 
@@ -261,7 +262,11 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             throw std::runtime_error("Cannot set FIFO depth on last node (no FIFOs present)");
         }
         if (index >= OStreamsSize) {
-            throw std::out_of_range(std::format("FIFO index {} out of range (max: {})", index, OStreamsSize - 1));
+            auto error = "FIFO index "
+                + std::to_string(index)
+                + " out of range (max: "
+                + std::to_string(OStreamsSize - 1) + ")";
+            throw std::out_of_range(error);
         }
         fifo[index].setMaxSize(depth);
     }
