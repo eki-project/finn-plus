@@ -11,14 +11,14 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from rich.console import Console
 from threading import Lock
-from typing import Any
+from typing import Any, Literal
 
 from finn.util.basic import make_build_dir
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import ThreadsafeProgressDisplay
 
 
-class NodeConnectedSimulationController:
+class SimulationController:
     """Control a node-node IPC connected simulation in threads."""
 
     def __init__(
@@ -56,7 +56,7 @@ class NodeConnectedSimulationController:
         self.running_lock = Lock()
         self.running = 0
         self.total = len(names)
-        self.logdir = Path(make_build_dir("node_connected_simulation_logfiles_"))
+        self.logdir = Path(make_build_dir("simulation_logfiles_"))
 
         # Socket communication management
         self.processes: list[tuple[subprocess.Popen, Any, Any]] = []
@@ -80,7 +80,7 @@ class NodeConnectedSimulationController:
 
         # Create unique socket path which includes thread ID to avoid conflicts
         # with multiple threads
-        socket_path = Path(f"/tmp/{thread_id}/")
+        socket_path = Path(f"/tmp/fifosim_sockets/{thread_id}/")
         socket_path.mkdir(parents=True, exist_ok=True)
         socket_path = socket_path / f"sim_socket_{process_id}.sock"
 
@@ -92,8 +92,8 @@ class NodeConnectedSimulationController:
         cmd = [str(binary), "--socket", socket_path]
 
         # Create log files for stdout and stderr
-        stdout_log = self.logdir / f"{process_id}_stdout.log"
-        stderr_log = self.logdir / f"{process_id}_stderr.log"
+        stdout_log = self.logdir / f"{process_id}_stdout_cpp.log"
+        stderr_log = self.logdir / f"{process_id}_stderr_cpp.log"
 
         stdout_file = stdout_log.open("w")
         stderr_file = stderr_log.open("w")
@@ -113,6 +113,7 @@ class NodeConnectedSimulationController:
                 f"C++ process exited immediately with code {proc.returncode}\n"
                 f"Stderr: {stderr_output}\nStdout: {stdout_output}"
             )
+            self.console.log(str(process_id) + ": " + msg)
             raise RuntimeError(msg)
 
         # Create Unix socket and connect
@@ -132,6 +133,7 @@ class NodeConnectedSimulationController:
                     f"C++ process died during socket wait with code {proc.returncode}\n"
                     f"Stderr: {stderr_output}\nStdout: {stdout_output}"
                 )
+                self.console.log(str(process_id) + ": " + msg)
                 raise RuntimeError(msg)
 
             try:
@@ -148,6 +150,7 @@ class NodeConnectedSimulationController:
                         f"Failed to connect to socket after {max_retries} retries\n"
                         f"Stderr: {stderr_output}\nStdout: {stdout_output}"
                     )
+                    self.console.log(str(process_id) + ": " + msg)
                     raise RuntimeError(msg) from e
                 time.sleep(0.2)
 
@@ -160,6 +163,7 @@ class NodeConnectedSimulationController:
                 f"Failed to connect to socket {socket_path}\n"
                 f"Stderr: {stderr_output}\nStdout: {stdout_output}"
             )
+            self.console.log(str(process_id) + ": " + msg)
             raise RuntimeError(msg)
 
         self.processes.append((proc, stdout_file, stderr_file))
@@ -262,6 +266,130 @@ class NodeConnectedSimulationController:
                 stdout_file.close()
                 stderr_file.close()
 
+
+class NodeIsolatedSimulationController(SimulationController):
+    """Run simulations for node isolated cases."""
+
+    def __init__(
+        self,
+        parallel_simulations: int,
+        names: list[str],
+        binaries: list[Path],
+        console: Console,
+        poll_interval: float = 1.0,
+        with_progressbar: bool = False,
+    ) -> None:
+        """Set up node isolated simulation."""
+        super().__init__(
+            parallel_simulations, names, binaries, console, poll_interval, with_progressbar
+        )
+        self.console.log("Started simulation controller")
+
+    def _postprocess_logs(
+        self, d: Path, readylog_name: str = "readylog.txt", validlog_name: str = "validlog.txt"
+    ) -> dict[Literal["valid", "ready"], dict[int, tuple[int, int, list[int]]]]:
+        """Recieve the directory containing a binary and the simulation logs.
+        If no logs are found raises an error, otherwise return the postprocessed logs:
+        {<cycle>: (<processed_cycle>, <total_cycles>, [<axi-stream-ready/valid>, ...]), ...}
+        """  # noqa
+        readylog = d / readylog_name
+        validlog = d / validlog_name
+        if not readylog.exists() or not validlog.exists():
+            raise FINNInternalError(f"Could not find simulation logs at {readylog} and {validlog}")
+        readydata = [
+            [int(elem) for elem in line.split(",")] for line in readylog.read_text().split("\n")[1:]
+        ]
+        validdata = [
+            [int(elem) for elem in line.split(",")] for line in validlog.read_text().split("\n")[1:]
+        ]
+        return {
+            "ready": {line[0]: (line[1], line[2], line[3:]) for line in readydata},
+            "valid": {line[0]: (line[1], line[2], line[3:]) for line in validdata},
+        }
+
+    def run(self) -> None:
+        futures: list[Future] = []
+        with self.console.status(f"Running simulation on every node. Log directory: {self.logdir}"):
+            with ThreadPoolExecutor(len(self.binaries)) as tpe:
+                for binary in self.binaries:
+                    futures.append(tpe.submit(self._run_binary, binary))
+            tpe.shutdown(wait=True)
+        self._cleanup_sockets()
+
+        # Read data
+        data = {}
+        invalid = []
+        for i, future in enumerate(futures):
+            data[self.names[i]] = future.result()
+            if data[self.names[i]] is None:
+                invalid.append(self.names[i])
+        if len(invalid) > 0:
+            raise FINNInternalError(
+                f"Lost connection / malformed response " f"from nodes: {', '.join(invalid)}"
+            )
+
+        # TODO: Algorithm
+        raise NotImplementedError()
+
+    IsolatedSimReturnType = dict[Literal["valid", "ready"], dict[int, tuple[int, int, list[int]]]]
+
+    def _run_binary(self, binary: Path) -> IsolatedSimReturnType | None:
+        """Run simulation. Returning None if connection is lost."""
+        process_index = self.binaries.index(binary)
+        with (
+            self.logdir / f"{process_index}_log_isolated_{self.names[process_index]}_python.txt"
+        ).open("w+") as logfile:
+            # Initialize
+            logfile.write("Initializing simulation.\n")
+            proc_idx = self._start_process(binary, process_index)
+            response = self._send_and_receive(proc_idx, "start", {})
+
+            # Main loop
+            logfile.write("Beginning main loop\n")
+            logfile.write(
+                "totalCycles,inputCyclesDone,inputCyclesTarget,"
+                "outputCyclesDone,outputCyclesTarget\n"
+            )
+            logfile.flush()
+            while True:
+                time.sleep(self.poll_interval)
+                logfile.write("Sending status request")
+                response = self._send_and_receive(proc_idx, "status", {})
+                if response is None:
+                    return None
+                state = response["state"]
+                if state == "done":
+                    return self._postprocess_logs(binary.parent)
+                logfile.write(
+                    f"{response['totalCycles']},"
+                    f"{response['inputCyclesDone']},"
+                    f"{response['inputCyclesTarget']}"
+                    f"{response['outputCyclesDone']},"
+                    f"{response['outputCyclesTarget']}\n"
+                )
+
+
+class NodeConnectedSimulationController(SimulationController):
+    """Run simulations for node connected cases."""
+
+    def __init__(
+        self,
+        parallel_simulations: int,
+        names: list[str],
+        binaries: list[Path],
+        console: Console,
+        poll_interval: float = 1.0,
+        with_progressbar: bool = True,
+    ) -> None:
+        """Set up node connected simulation."""
+        super().__init__(
+            parallel_simulations, names, binaries, console, poll_interval, with_progressbar
+        )
+        for binary in binaries:
+            if not binary.exists():
+                console.log(f"Binary {binary} does not exist!")
+                raise FINNUserError(f"Binary {binary} does not exist!")
+
     def run(
         self,
         depth: list[list[int]] | None = None,
@@ -274,6 +402,7 @@ class NodeConnectedSimulationController:
             depth: FIFO depth to configure for simulations.
             samples: Number of samples to simulate.
             output_json: Optional path to write merged simulation data as JSON.
+            max_cycles: Max cycles
 
         Returns:
             Dictionary mapping simulation names to their FIFO utilization arrays.

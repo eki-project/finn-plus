@@ -64,6 +64,8 @@ poetry.lock
 **/.cache
 **/build
 **/_deps
+finn_xsi/finn_xsi/unittests/*.cmake
+finn_xsi/finn_xsi/unittests/Makefile
 
 
 # Package files
