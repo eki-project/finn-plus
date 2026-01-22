@@ -1,4 +1,5 @@
 """Manage FINN simulation variants."""
+
 import json
 import math
 import time
@@ -8,7 +9,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
-from typing import Any, cast
+from typing import Any, TypeAlias, cast
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
@@ -24,6 +25,8 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import DisabledLoggingConsole, log
+
+FIFODepthConfig: TypeAlias = dict[int, dict[str, str | list[int]]]
 
 
 class Simulation:
@@ -61,7 +64,7 @@ class Simulation:
             )
         if any(not p.exists() for p in sim_binaries):
             raise FINNUserError(
-                "Simulation binary data points to invalid paths. " "Please rerun BuildSimulation."
+                "Simulation binary data points to invalid paths. Please rerun BuildSimulation."
             )
         # TODO: Currently we have to recompile even if we just
         # TODO: called BuildSimulation in the step before
@@ -171,7 +174,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             SimulationType.NODE_BASED_CONNECTED,
             self.fpgapart,
             self.clk_ns,
-            self.cfg.functional_sim,
+            self.cfg.functional_simulation,
         )
         model = sim.model  # TODO:clean up
 
@@ -204,7 +207,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 used_size = fifo_depths[i][j]
                 bw = bit_widths[i][j]
 
-                needs_minimization[i][j] = self.needs_minimization(used_size, bw)
+                needs_minimization[i][j] = self._needs_minimization(used_size, bw)
 
         # Preserve original baseline depths for testing (deep copy)
         original_fifo_depths = [row[:] for row in fifo_depths]
@@ -348,17 +351,17 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
         print(f"Minimizing Node {node_idx} FIFO {fifo_idx}: original depth {original_size}")
 
-        # If FIFO depth of 2 works, we dont need FIFOs at all, because AXI buffers some values
+        # If FIFO depth of 32 works, use it because it fits into bw/2 LUTs
         success, timeout = self._test_depth(
-            2, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+            32, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
         )
         if success:
-            return 2
+            return 32
 
         if original_size <= self.max_qsrl_depth:
             upper_luts = calculate_srl16e_luts(original_size, bw)
-            # Smallest depth that is reasonable is 32 (Fits into bw LUTRAMs)
-            lower_luts = calculate_srl16e_luts(32, bw)
+            # LUTRAM based FIFOs have block sizes of 32, so smallest after 32 is 64
+            lower_luts = calculate_srl16e_luts(64, bw)
 
             # Binary search if there's room to search
             if upper_luts > lower_luts:
@@ -388,8 +391,8 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         )
         if success:
             upper_luts = calculate_srl16e_luts(original_size, bw)
-            # Smallest depth that is reasonable is 32 (Fits into bw LUTRAMs)
-            lower_luts = calculate_srl16e_luts(32, bw)
+            # LUTRAM based FIFOs have block sizes of 32, so smallest after 32 is 64
+            lower_luts = calculate_srl16e_luts(64, bw)
 
             # Binary search if there's room to search
             if upper_luts > lower_luts:
@@ -587,7 +590,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
         return best_working_depth
 
-    def needs_minimization(self, fifo_depth: int, bitwidth: int) -> bool:
+    def _needs_minimization(self, fifo_depth: int, bitwidth: int) -> bool:
         """Determine whether a FIFO can be minimized further.
 
         Args:
@@ -807,7 +810,7 @@ def calculate_srl16e_depth_range(luts: int, bitwidth: int) -> tuple[int, int]:
     return (min_depth, max_depth)
 
 
-class RunLayerIsolatedSimulation(Transformation):  # noqa
+class RunLayerIsolatedSimulation(Transformation):
     def __init__(self, fpgapart: str, clk_ns: float, functional_sim: bool) -> None:
         """Run isolated layer simulations."""
         super().__init__()
@@ -850,7 +853,6 @@ class ApplyFIFOSizes(Transformation):
         else:
             self.path = fifo_config
 
-        FIFODepthConfig = dict[int, dict[str, str | list[int]]]  # noqa
         self.depth: FIFODepthConfig = {}
         with self.path.open() as f:
             self.depth = cast("FIFODepthConfig", json.load(f))
@@ -886,7 +888,8 @@ class ApplyFIFOSizes(Transformation):
             model: ModelWrapper = model.transform(GiveReadableTensorNames())
             model = model.transform(
                 PrepareIP(
-                    fpgapart=self.cfg._resolve_fpga_part(), clk=self.cfg.synth_clk_period_ns  # noqa
+                    fpgapart=self.cfg._resolve_fpga_part(),
+                    clk=self.cfg.synth_clk_period_ns,  # noqa
                 )
             )
             model = model.transform(HLSSynthIP())
@@ -997,7 +1000,8 @@ class ApplyFIFOSizes(Transformation):
         model = model.transform(GiveReadableTensorNames())
         model = model.transform(
             PrepareIP(
-                fpgapart=self.cfg._resolve_fpga_part(), clk=self.cfg.synth_clk_period_ns  # noqa
+                fpgapart=self.cfg._resolve_fpga_part(),
+                clk=self.cfg.synth_clk_period_ns,  # noqa
             )
         )
         model = model.transform(HLSSynthIP())

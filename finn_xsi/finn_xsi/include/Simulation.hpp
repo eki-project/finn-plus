@@ -9,7 +9,7 @@
 #include <SharedLibrary.h>
 #include <helper.h>
 
-#include <InterprocessCommunicationChannel.hpp>
+#include <InterprocessCommunicationChannelInterface.hpp>
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
@@ -106,8 +106,8 @@ struct CommData{
 //                      └──────────────────────────────────────┘
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes>
 class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
-    using ConsumingInterface = InterprocessCommunicationChannel<CommData, CommData, false>;
-    using ProducingInterface = InterprocessCommunicationChannel<CommData, CommData, true>;
+    using ConsumingInterface = InterprocessCommunicationChannelInterface<false>;
+    using ProducingInterface = InterprocessCommunicationChannelInterface<true>;
     constexpr static bool FirstNode = NodeIndex == 0;
     constexpr static bool LastNode = NodeIndex == (TotalNodes - 1);
     std::array<ConsumingInterface, IStreamsSize> fromProducerInterface;

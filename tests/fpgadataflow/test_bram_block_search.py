@@ -364,9 +364,9 @@ class TestNeedsMinimization:
         sim.max_qsrl_depth = 256
 
         # Depths <= 32 don't need minimization (fit in bitwidth/2 LUTs)
-        assert not sim.needs_minimization(32, 8)
-        assert not sim.needs_minimization(16, 8)
-        assert not sim.needs_minimization(2, 8)
+        assert not sim._needs_minimization(32, 8)
+        assert not sim._needs_minimization(16, 8)
+        assert not sim._needs_minimization(2, 8)
 
     # TODO: Maybe remove this behavior
     def test_qsrl_range_no_minimization(self):
@@ -377,8 +377,8 @@ class TestNeedsMinimization:
         sim.max_qsrl_depth = 256
 
         # Depths within max_qsrl_depth don't need minimization
-        assert not sim.needs_minimization(128, 8)
-        assert not sim.needs_minimization(256, 8)
+        assert not sim._needs_minimization(128, 8)
+        assert not sim._needs_minimization(256, 8)
 
     def test_large_depths_need_minimization(self):
         """Test that large depths with multiple BRAM blocks need minimization."""
@@ -398,7 +398,7 @@ class TestNeedsMinimization:
         bitwidth = 8
         blocks = calculate_bram_blocks(depth, bitwidth)
         assert blocks > 1, f"depth={depth}, bitwidth={bitwidth} should use >1 BRAM"
-        assert sim.needs_minimization(depth, bitwidth)
+        assert sim._needs_minimization(depth, bitwidth)
 
         # bitwidth=18: 1 BRAM range is (1, 1024)
         # Use depth > 1024 to get multiple blocks
@@ -406,7 +406,7 @@ class TestNeedsMinimization:
         bitwidth = 18
         blocks = calculate_bram_blocks(depth, bitwidth)
         assert blocks > 1, f"depth={depth}, bitwidth={bitwidth} should use >1 BRAM"
-        assert sim.needs_minimization(depth, bitwidth)
+        assert sim._needs_minimization(depth, bitwidth)
 
         # Verify that depth with 1 BRAM doesn't need minimization
         # when it's at minimum block count
@@ -414,7 +414,7 @@ class TestNeedsMinimization:
         bitwidth = 8
         blocks = calculate_bram_blocks(depth, bitwidth)
         assert blocks == 1
-        assert not sim.needs_minimization(depth, bitwidth)
+        assert not sim._needs_minimization(depth, bitwidth)
 
         # Exhaustive test: check that depths with MORE than minimum BRAM blocks
         # need minimization (unless very close to QSRL threshold)
@@ -439,7 +439,7 @@ class TestNeedsMinimization:
 
                 # Only expect minimization if blocks > minimum achievable
                 if blocks > min_blocks and depth > math.floor(sim.max_qsrl_depth * 1.1):
-                    assert sim.needs_minimization(depth, bw), (
+                    assert sim._needs_minimization(depth, bw), (
                         f"depth={depth}, bw={bw}, blocks={blocks}, min_blocks={min_blocks} "
                         f"should need minimization"
                     )
@@ -457,7 +457,7 @@ class TestNeedsMinimization:
         bitwidth = 1
 
         # Verify the method executes without error
-        result = sim.needs_minimization(depth, bitwidth)
+        result = sim._needs_minimization(depth, bitwidth)
         assert isinstance(result, bool)
 
 
