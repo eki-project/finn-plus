@@ -9,7 +9,7 @@
 #include <SharedLibrary.h>
 #include <helper.h>
 
-#include <InterprocessCommunicationChannelInterface.hpp>
+#include <InterprocessCommunicationChannel.hpp>
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
@@ -91,44 +91,48 @@ class Simulation {
     }
 };
 
+//Small struct used for exange. Will be changed later to more complex data structure.
+struct CommData{
+    bool data;
+};
+
 // Communication Flow:
 //
-//           valid            valid      ┌──────────────────────────────────────┐     valid
-//   SHM   ─────────>  FIFO  ─────────>  │         valid            valid       │    ─────────>  SHM
-//  (pred) <─────────        <───────── istream  ─────────>  xsim  ─────────> ostream <─────  (succ)
-//           ready            ready      │      <─────────        <─────────    │     ready
-//                                       │         ready            ready       │
-//                                       │                  (sim)               │
-//                                       └──────────────────────────────────────┘
+//           valid      ┌──────────────────────────────────────┐     valid            valid
+//   SHM   ─────────>   │         valid            valid       │    ─────────>  FIFO  ─────>   SHM
+//  (pred) <───────── istream  ─────────>  xsim  ─────────> ostream <─────────        <─────  (succ)
+//           ready      │      <─────────        <─────────    │     ready            ready
+//                      │         ready            ready       │
+//                      │                  (sim)               │
+//                      └──────────────────────────────────────┘
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes>
 class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
-    using ConsumingInterface = InterprocessCommunicationChannelInterface<false>;
-    using ProducingInterface = InterprocessCommunicationChannelInterface<true>;
+    using ConsumingInterface = InterprocessCommunicationChannel<CommData, CommData, false>;
+    using ProducingInterface = InterprocessCommunicationChannel<CommData, CommData, true>;
     constexpr static bool FirstNode = NodeIndex == 0;
     constexpr static bool LastNode = NodeIndex == (TotalNodes - 1);
     std::array<ConsumingInterface, IStreamsSize> fromProducerInterface;
     std::array<ProducingInterface, OStreamsSize> toConsumerInterface;
     std::size_t cyclesRun = 0;
     std::size_t completedMaps = 0;
-    std::array<FIFO, IStreamsSize> fifo;
+    std::array<FIFO, OStreamsSize> fifo;
 
     /// Communicate with predecessors and successors and update their values and our own
     [[gnu::hot, gnu::flatten, gnu::always_inline]] void communicate(std::stop_token stoken = {}) {
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                // Interface SHM <-> FIFO
+                // Interface SHM <-> SIM
                 fromProducerInterface[i].exchangeDataDownstream(stoken);
-                // FIFO <-> sim
-                this->fifo[i].exchangeDataDownstream(stoken);
-                // Toggle FIFO clock
-                this->fifo[i].toggleClock();
             }
         }
         if constexpr (!LastNode) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                // Interface sim <-> SHM
+                // Interface SIM <-> FIFO
                 this->ostreams[i].exchangeDataDownstream(stoken);
-
+                // Interface FIFO <-> SHM
+                this->fifo[i].exchangeDataDownstream(stoken);
+                // Toggle FIFO clock
+                this->fifo[i].toggleClock();
             }
         }
         if constexpr (LastNode) {
@@ -166,11 +170,11 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
 
     void connectLayers(){
         for (std::size_t i = 0; i < IStreamsSize; ++i) {
-            fromProducerInterface[i].connectDownstream(fifo[i]);
-            fifo[i].connectDownstream(this->istreams[i]);
+            fromProducerInterface[i].connectDownstream(this->istreams[i]);
         }
         for (std::size_t i = 0; i < OStreamsSize; ++i) {
-            this->ostreams[i].connectDownstream(toConsumerInterface[i]);
+            this->ostreams[i].connectDownstream(fifo[i]);
+            fifo[i].connectDownstream(toConsumerInterface[i]);
         }
     }
 
@@ -203,12 +207,16 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                          "memory will be created."
                       << std::endl;
         }
+        if constexpr (!LastNode) {
+            // Create FIFO buffer
+            for (std::size_t i = 0; i < OStreamsSize; ++i) {
+                fifo[i] = FIFO(initialFIFODepth);
+            }
+        }
+
 
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                // Create FIFO buffer
-                fifo[i] = FIFO(initialFIFODepth);
-                // Create producer facing interfaces
                 fromProducerInterface[i] = std::move(ConsumingInterface(std::format("{}_{}", *prevNodeName, i)));
             }
         }
@@ -221,16 +229,15 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         }
 
         initStreams();
-        connectLayers();
         debug("Finished initializing simulation.\nlog ------------------------------\n");
     }
 
     /// Reset simulation (stream and current FIFO depth, as well as cycle counter)
     void reset() {
         Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>::reset();
-        if constexpr (!FirstNode) {
+        if constexpr (!LastNode) {
             // Reset FIFOs
-            for (std::size_t i = 0; i < IStreamsSize; ++i) {
+            for (std::size_t i = 0; i < OStreamsSize; ++i) {
                 fifo[i].reset();
             }
         }
@@ -256,38 +263,38 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
 
     /// Get the number of FIFOs
     std::size_t getFIFOCount() const noexcept {
-        if constexpr (FirstNode) {
+        if constexpr (LastNode) {
             return 0;
         }
-        return IStreamsSize;
+        return OStreamsSize;
     }
 
     /// Set the depth of a specific FIFO
     void setFIFODepth(std::size_t index, std::size_t depth) {
-        if constexpr (FirstNode) {
-            throw std::runtime_error("Cannot set FIFO depth on first node (no FIFOs present)");
+        if constexpr (LastNode) {
+            throw std::runtime_error("Cannot set FIFO depth on last node (no FIFOs present)");
         }
-        if (index >= IStreamsSize) {
-            throw std::out_of_range(std::format("FIFO index {} out of range (max: {})", index, IStreamsSize - 1));
+        if (index >= OStreamsSize) {
+            throw std::out_of_range(std::format("FIFO index {} out of range (max: {})", index, OStreamsSize - 1));
         }
         fifo[index].setMaxSize(depth);
     }
 
     /// Set the max FIFO depth of all interfaces
     void setMaxFIFODepth(std::size_t depth) {
-        if constexpr (!FirstNode) {
+        if constexpr (!LastNode) {
             for (FIFO& f : fifo) {
                 f.setMaxSize(depth);
             }
         }
     }
 
-    std::array<std::size_t, IStreamsSize> getFIFODepth() const noexcept {
-        if constexpr (FirstNode) {
+    std::array<std::size_t, OStreamsSize> getFIFODepth() const noexcept {
+        if constexpr (LastNode) {
             return {};
         }
-        std::array<std::size_t, IStreamsSize> utilizations{};
-        for (std::size_t i = 0; i < IStreamsSize; ++i) {
+        std::array<std::size_t, OStreamsSize> utilizations{};
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
             utilizations[i] = fifo[i].getMaxSize();
         }
         return utilizations;
@@ -306,12 +313,12 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     std::size_t getCompletedMaps() const noexcept { return completedMaps; }
 
     /// Get the maximum FIFO utilization for each output stream
-    std::array<std::size_t, IStreamsSize> getFIFOUtilization() const noexcept {
-        if constexpr (FirstNode) {
+    std::array<std::size_t, OStreamsSize> getFIFOUtilization() const noexcept {
+        if constexpr (LastNode) {
             return {};
         }
-        std::array<std::size_t, IStreamsSize> utilizations{};
-        for (std::size_t i = 0; i < IStreamsSize; ++i) {
+        std::array<std::size_t, OStreamsSize> utilizations{};
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
             utilizations[i] = fifo[i].getMaxUtil();
         }
         return utilizations;

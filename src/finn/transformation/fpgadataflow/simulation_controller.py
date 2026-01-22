@@ -325,8 +325,8 @@ class NodeConnectedSimulationController:
         try:
             with ThreadPoolExecutor(self.workers) as pool:
                 for i, (name, binary) in enumerate(zip(self.names, self.binaries, strict=True)):
-                    is_first_node = i == 0
-                    is_special_for_display = is_first_node or i == len(self.names) - 1
+                    is_last_node = i == len(self.names) - 1
+                    is_special_for_display = i == 0 or is_last_node
                     futures.append(
                         pool.submit(
                             self._run_binary,
@@ -334,7 +334,7 @@ class NodeConnectedSimulationController:
                             name,
                             i % multiprocessing.cpu_count(),
                             depth[i] if depth is not None else None,
-                            is_first_node,  # Only first node has no input FIFOs
+                            is_last_node,  # Only last node has no output FIFOs
                             is_special_for_display,  # First and last get special coloring
                             max_cycles,
                         )
@@ -439,7 +439,7 @@ class NodeConnectedSimulationController:
         name: str | None,
         _cpu: int | None,
         depth: list[int] | None = None,
-        is_first_node: bool = False,
+        is_last_node: bool = False,
         is_special_for_display: bool = False,
         max_cycles: int | None = None,
     ) -> tuple[str, list[int], int, int, list[int], bool, list[int]] | None:
@@ -450,7 +450,7 @@ class NodeConnectedSimulationController:
             name: Name of simulation node
             _cpu: CPU affinity (unused)
             depth: List of FIFO depths for this node's output FIFOs
-            is_first_node: True if this is the first node (no input FIFOs to configure)
+            is_last_node: True if this is the last node (no output FIFOs to configure)
             is_special_for_display: True if this node should get special color in logs
             max_cycles: Maximum cycles to simulate
 
@@ -488,7 +488,7 @@ class NodeConnectedSimulationController:
                 # Send configuration commands
                 # Last node has no output FIFOs, so don't configure FIFO depths
                 config_payload: dict[str, list[int] | int] = {}
-                if not is_first_node and depth is not None:
+                if not is_last_node and depth is not None:
                     config_payload["fifo_depth"] = depth
                 if max_cycles is not None:
                     config_payload["max_cycles"] = max_cycles
