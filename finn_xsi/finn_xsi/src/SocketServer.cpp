@@ -4,7 +4,6 @@
 #include <unistd.h>
 
 #include <cstring>
-#include <format>
 #include <iostream>
 #include <utility>
 
@@ -36,7 +35,7 @@ std::optional<std::string> SocketServer::initialize() {
     // Create socket
     server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd < 0) {
-        return std::format("Failed to create socket: {}", strerror(errno));
+        return "Failed to create socket: " + std::string(strerror(errno));
     }
 
     // Remove existing socket file
@@ -48,14 +47,14 @@ std::optional<std::string> SocketServer::initialize() {
     strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
 
     if (bind(server_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        auto error = std::format("Failed to bind socket: {}", strerror(errno));
+        std::string error = "Failed to bind socket: " + std::string(strerror(errno));
         close_fd(server_fd);
         return error;
     }
 
     // Listen
     if (listen(server_fd, 1) < 0) {
-        auto error = std::format("Failed to listen on socket: {}", strerror(errno));
+        std::string error = "Failed to listen on socket: " + std::string(strerror(errno));
         close_fd(server_fd);
         return error;
     }
@@ -63,7 +62,7 @@ std::optional<std::string> SocketServer::initialize() {
     // Accept connection
     client_fd = accept(server_fd, nullptr, nullptr);
     if (client_fd < 0) {
-        auto error = std::format("Failed to accept connection: {}", strerror(errno));
+        std::string error = "Failed to accept connection: " + std::string(strerror(errno));
         close_fd(server_fd);
         return error;
     }
@@ -84,7 +83,7 @@ std::optional<json> SocketServer::receive_message() {
         if (bytes_read == 0) {
             std::cerr << "Connection closed by client" << std::endl;
         } else {
-            std::cerr << std::format("Failed to read message length: {}", strerror(errno)) << std::endl;
+            std::cerr << "Failed to read message length: " << strerror(errno) << std::endl;
         }
         return std::nullopt;
     }
@@ -95,7 +94,7 @@ std::optional<json> SocketServer::receive_message() {
     while (total_read < length) {
         const ssize_t n = read(client_fd, buffer.data() + total_read, length - total_read);
         if (n <= 0) {
-            std::cerr << std::format("Failed to read message data: {}", strerror(errno)) << std::endl;
+            std::cerr << "Failed to read message data: " << strerror(errno) << std::endl;
             return std::nullopt;
         }
         total_read += static_cast<size_t>(n);
@@ -104,7 +103,7 @@ std::optional<json> SocketServer::receive_message() {
     try {
         return json::parse(buffer);
     } catch (const json::exception& e) {
-        std::cerr << std::format("Failed to parse JSON: {}", e.what()) << std::endl;
+        std::cerr << "Failed to parse JSON: " << e.what() << std::endl;
         return std::nullopt;
     }
 }
@@ -121,7 +120,7 @@ void SocketServer::send_message(const json& message) {
     // Send length prefix
     const ssize_t bytes_written = write(client_fd, &length, sizeof(length));
     if (bytes_written != sizeof(length)) {
-        std::cerr << std::format("Failed to write message length: {}", strerror(errno)) << std::endl;
+        std::cerr << "Failed to write message length: " << strerror(errno) << std::endl;
         return;
     }
 
@@ -130,7 +129,7 @@ void SocketServer::send_message(const json& message) {
     while (total_written < length) {
         const ssize_t n = write(client_fd, msg_str.data() + total_written, length - total_written);
         if (n <= 0) {
-            std::cerr << std::format("Failed to write message data: {}", strerror(errno)) << std::endl;
+            std::cerr << "Failed to write message data: " << strerror(errno) << std::endl;
             return;
         }
         total_written += static_cast<size_t>(n);

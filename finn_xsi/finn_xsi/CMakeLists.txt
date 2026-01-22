@@ -100,28 +100,33 @@ list(APPEND CMAKE_MESSAGE_INDENT "  ") #indent +1
 check_include(FIFOSIM_IPO          "InterproceduralOptimization" InterproceduralOptimization.cmake)
 list(POP_BACK CMAKE_MESSAGE_INDENT)    #indent -1
 
-# Main
+# Collect source files
 file(GLOB_RECURSE CORE_SRC src/*.cpp)
-add_executable(LayerSimulationBackend LayerSimulationBackend.cpp ${CORE_SRC})
 
 # For JSON writing
 include(FetchContent)
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
 FetchContent_MakeAvailable(json)
 
-# Add boost for IPC
+# Add boost for PO
 find_package(Boost COMPONENTS program_options REQUIRED)
+
+# Build the simulation library
+add_library(SimulationBackendLib SHARED ${CORE_SRC})
+target_include_directories(SimulationBackendLib PUBLIC "${CMAKE_BINARY_DIR}") # Include the rtlsim wrapper directory itself
+target_include_directories(SimulationBackendLib PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include") # Add xsim includes
+target_include_directories(SimulationBackendLib PUBLIC "include")
+target_link_libraries(SimulationBackendLib PUBLIC fifosim::options nlohmann_json::nlohmann_json Threads::Threads OpenMP::OpenMP_CXX -ldl -lrt)
+
+# Build the executable for connected simulations
+add_executable(LayerSimulationBackend LayerSimulationBackend.cpp)
 target_include_directories(LayerSimulationBackend SYSTEM PUBLIC ${Boost_INCLUDE_DIRS})
+target_link_libraries(LayerSimulationBackend SimulationBackendLib Boost::program_options)
 
-# Include the rtlsim wrapper directory itself
-target_include_directories(LayerSimulationBackend PUBLIC "${CMAKE_BINARY_DIR}")
-
-# Add xsim includes
-target_include_directories(LayerSimulationBackend PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include")
-target_include_directories(LayerSimulationBackend PUBLIC "include")
-
-# Link libraries
-target_link_libraries(LayerSimulationBackend fifosim::options nlohmann_json::nlohmann_json Threads::Threads OpenMP::OpenMP_CXX  Boost::program_options -ldl -lrt)
+# Build the executable for isolated simulations
+add_executable(IsolatedSimulationBackend IsolatedSimulationBackend.cpp)
+target_include_directories(IsolatedSimulationBackend SYSTEM PUBLIC ${Boost_INCLUDE_DIRS})
+target_link_libraries(IsolatedSimulationBackend SimulationBackendLib Boost::program_options)
 
 OPTION(ENABLE_UNITTESTS "Enable unittests" OFF)
 if(${ENABLE_UNITTESTS})

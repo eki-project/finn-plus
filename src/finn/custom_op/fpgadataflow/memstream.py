@@ -16,9 +16,11 @@ class MemStreamSupport(HWCustomOp, ABC):
     def calc_tmem(self) -> int:
         """Abstract method to calculate threshold memory size."""
 
-    @abstractmethod
     def calc_wmem(self) -> int:
-        """Abstract method to calculate weight memory size."""
+        """Abstract method to calculate weight memory size.
+        The default implementation raises NotImplementedError because
+        some subclasses dont implement calc_wmem."""
+        raise NotImplementedError()
 
     def generate_hdl_memstream(self, fpgapart: str, pumped_memory: int = 0) -> None:
         """Generate verilog code for memstream component.
