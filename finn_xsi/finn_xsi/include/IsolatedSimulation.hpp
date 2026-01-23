@@ -179,10 +179,10 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
         }
 
         // Sanity check. Eventually remove
-        if (!std::all_of(this->istreams.begin(), this->istreams.end(), [](S_AXIS_Control& s) {return s.isValid();})) {
+        if (!std::all_of(this->istreams.begin(), this->istreams.end(), [](S_AXIS_Control& s) {return s.getOutputValid();})) {
             std::cout << "ERROR: An input stream is not valid!" << std::endl;
         }
-        if (!std::all_of(this->ostreams.begin(), this->ostreams.end(), [](M_AXIS_Control& s) {return s.isReady();})) {
+        if (!std::all_of(this->ostreams.begin(), this->ostreams.end(), [](M_AXIS_Control& s) {return s.getInputReady();})) {
             std::cout << "ERROR: An output stream is not ready!" << std::endl;
         }
 

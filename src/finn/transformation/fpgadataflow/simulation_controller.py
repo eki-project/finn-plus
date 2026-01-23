@@ -274,7 +274,7 @@ class SimulationController:
                     raise RuntimeError(msg) from None
 
             return response
-        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+        except (BrokenPipeError, ConnectionResetError, TimeoutError) as err:
             # Connection error or timeout means the subprocess may have died
             # Check if it exited with an error and raise that instead
             proc, stdout_file, stderr_file = self.processes[process_idx]
@@ -299,7 +299,7 @@ class SimulationController:
                     f"Stderr:\n{stderr_output}\n"
                     f"Stdout:\n{stdout_output}"
                 )
-                raise RuntimeError(msg) from None
+                raise RuntimeError(msg) from err  # from None
 
             # If process exited cleanly (returncode == 0) or hasn't exited yet,
             # this is an unexpected connection error

@@ -84,6 +84,8 @@ class SimulationController {
                     sim.setFIFODepth(i, fifo_depths[depth_idx]);
                 }
 
+                std::cout << "Starting simulation with max cycles: " << max_cycles << std::endl;
+
                 // Run the simulation
                 bool timeout = sim.runToStableState(stoken, max_cycles);
 
@@ -99,6 +101,7 @@ class SimulationController {
                 }
             } catch (const std::exception& e) {
                 std::lock_guard<std::mutex> error_lock(state_mutex);
+                std::cout << "Simulation error: " << e.what() << std::endl;
                 error_message = e.what();
                 state = SimulationState::ERROR;
             }
@@ -169,7 +172,6 @@ class SimulationController {
                 status["message"] = error_message;
                 break;
         }
-
         return status;
     }
 
