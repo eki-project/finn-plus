@@ -200,8 +200,14 @@ class SimulationController:
 
         Returns:
             Dictionary containing the response, or None if error
+
+        Raises:
+            TimeoutError: If socket times out waiting for response
         """
         sock, _ = self.sockets[process_idx]
+
+        # Set 10 second timeout to prevent deadlocks
+        sock.settimeout(10.0)
 
         # Read 4-byte length prefix
         length_bytes = sock.recv(4)
@@ -238,9 +244,37 @@ class SimulationController:
         """
         try:
             self._send_command(process_idx, command, payload)
-            return self._receive_response(process_idx)
-        except (BrokenPipeError, ConnectionResetError):
-            # Connection error means the subprocess has died
+            response = self._receive_response(process_idx)
+
+            # If we got None (timeout or connection error), check if process crashed
+            if response is None:
+                proc, stdout_file, stderr_file = self.processes[process_idx]
+                returncode = proc.poll()
+
+                if returncode is not None and returncode != 0:
+                    # Process has terminated with an error
+                    # Flush and read error logs
+                    stdout_file.flush()
+                    stderr_file.flush()
+
+                    stdout_log = self.logdir / f"{process_idx}_stdout_cpp.log"
+                    stderr_log = self.logdir / f"{process_idx}_stderr_cpp.log"
+
+                    stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
+                    stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
+
+                    # Raise the actual error from the subprocess
+                    msg = (
+                        f"Subprocess (process_idx={process_idx}) terminated with"
+                        f" exit code {returncode}.\n"
+                        f"Stderr:\n{stderr_output}\n"
+                        f"Stdout:\n{stdout_output}"
+                    )
+                    raise RuntimeError(msg) from None
+
+            return response
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            # Connection error or timeout means the subprocess may have died
             # Check if it exited with an error and raise that instead
             proc, stdout_file, stderr_file = self.processes[process_idx]
             returncode = proc.poll()
@@ -251,8 +285,8 @@ class SimulationController:
                 stdout_file.flush()
                 stderr_file.flush()
 
-                stdout_log = self.logdir / f"{process_idx}_stdout.log"
-                stderr_log = self.logdir / f"{process_idx}_stderr.log"
+                stdout_log = self.logdir / f"{process_idx}_stdout_cpp.log"
+                stderr_log = self.logdir / f"{process_idx}_stderr_cpp.log"
 
                 stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
                 stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
@@ -260,7 +294,7 @@ class SimulationController:
                 # Raise the actual error from the subprocess
                 msg = (
                     f"Subprocess (process_idx={process_idx}) terminated with"
-                    " exit code {returncode}.\n"
+                    f" exit code {returncode}.\n"
                     f"Stderr:\n{stderr_output}\n"
                     f"Stdout:\n{stdout_output}"
                 )
@@ -359,7 +393,7 @@ class NodeIsolatedSimulationController(SimulationController):
                 invalid.append(self.names[i])
         if len(invalid) > 0:
             raise FINNInternalError(
-                f"Lost connection / malformed response " f"from nodes: {', '.join(invalid)}"
+                f"Lost connection / malformed response from nodes: {', '.join(invalid)}"
             )
 
         # TODO: Algorithm
@@ -377,6 +411,10 @@ class NodeIsolatedSimulationController(SimulationController):
             logfile.write("Initializing simulation.\n")
             proc_idx = self._start_process(binary, process_index)
             response = self._send_and_receive(proc_idx, "start", {})
+
+            if response is None:
+                logfile.write("Failed to start simulation: No response\n")
+                return None
 
             # Main loop
             logfile.write("Beginning main loop\n")

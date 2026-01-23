@@ -258,6 +258,8 @@ int main(int argc, const char* argv[]) {
     po::store(po::parse_command_line(argc, argv, desc), vm);
     po::notify(vm);
 
+    std::cout << "Connected Simulation Node Index: " << RTLSimConfig::NodeIndex << " / " << RTLSimConfig::TotalNodes << std::endl;
+
     // Construct simulation
     SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes> sim(
         RTLSimConfig::kernel_libname, RTLSimConfig::design_libname, "xsim_log_file.txt", "trace_file.txt", RTLSimConfig::istream_descs, RTLSimConfig::ostream_descs,
