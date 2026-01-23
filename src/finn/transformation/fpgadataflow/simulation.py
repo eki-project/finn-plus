@@ -10,7 +10,6 @@ from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-import finn.transformation.fpgadataflow.simulation_controller.IsolatedSimReturnType as IsoSimData
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -30,6 +29,7 @@ if TYPE_CHECKING:
     from onnx.onnx_ml_pb2 import NodeProto
 
 FIFODepthConfig: TypeAlias = dict[int, dict[str, str | list[int]]]
+IsoSimData = NodeIsolatedSimulationController.IsolatedSimReturnType
 
 
 class Simulation:
