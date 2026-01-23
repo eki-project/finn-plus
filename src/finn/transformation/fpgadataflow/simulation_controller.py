@@ -206,6 +206,7 @@ class SimulationController:
         # Read 4-byte length prefix
         length_bytes = sock.recv(4)
         if not length_bytes:
+            self.console.log(f"{process_idx}: Client disconnected.")
             return None
 
         length = int.from_bytes(length_bytes, byteorder="little")
@@ -343,6 +344,10 @@ class NodeIsolatedSimulationController(SimulationController):
             logfile.write("Initializing simulation.\n")
             proc_idx = self._start_process(binary, process_index)
             response = self._send_and_receive(proc_idx, "start", {})
+            if response is None:
+                logfile.write("Client disconnected / No answer received to start command!\n")
+                return None
+            logfile.write(f"Start response: {response}\n")
 
             # Main loop
             logfile.write("Beginning main loop\n")
@@ -353,18 +358,21 @@ class NodeIsolatedSimulationController(SimulationController):
             logfile.flush()
             while True:
                 time.sleep(self.poll_interval)
-                logfile.write("Sending status request")
+                logfile.write("Sending status request\n")
                 response = self._send_and_receive(proc_idx, "status", {})
                 if response is None:
+                    logfile.write("Empty response. Returning.\n")
                     return None
                 state = response["state"]
                 if state == "done":
                     return self._postprocess_logs(binary.parent)
+
+                # TODO: Order seems wrong
                 logfile.write(
-                    f"{response['totalCycles']},"
-                    f"{response['inputCyclesDone']},"
-                    f"{response['inputCyclesTarget']}"
-                    f"{response['outputCyclesDone']},"
+                    f"{response['totalCycles']}, "
+                    f"{response['inputCyclesDone']}, "
+                    f"{response['inputCyclesTarget']}, "
+                    f"{response['outputCyclesDone']}, "
                     f"{response['outputCyclesTarget']}\n"
                 )
 

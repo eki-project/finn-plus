@@ -53,6 +53,7 @@ int main(int argc, const char* argv[]) {
         // Command processing loop
         while (true) {
             // Read message
+            std::cout << "Awaiting message..." << std::endl;
             auto request = server.receive_message();
             if (!request.has_value()) {
                 std::cout << "Connection closed or error occurred" << std::endl;
@@ -61,6 +62,7 @@ int main(int argc, const char* argv[]) {
 
             // Process message
             std::size_t cycles = 0;
+            json response;
             std::string command = (*request)["command"];
             if (command == "start") {
                 std::cout << "Starting simulation" << std::endl;
@@ -71,27 +73,24 @@ int main(int argc, const char* argv[]) {
                             sim.simulate(true);
                         }
                         std::cout << "Simulation initialized. Going into main loop." << std::endl;
-                        {
-                            std::lock_guard<std::mutex> guard(simMutex);
-                            sim.simulate(false);
-                            std::cout << "Executed first cycle." << std::endl;
-                            std::cout << "Status: " << sim.getStatus() << std::endl;
-                            std::cout << "Is running: " << sim.isRunning() << std::endl;
-                        }
                         while (!stop.stop_requested()) {
                             std::lock_guard<std::mutex> guard(simMutex);
-                            if (cycles % 1000 == 0) {
+                            if (cycles % 10000 == 0) {
                                 std::cout << cycles << "   " << sim.getStatus() << std::endl;
                             }
                             sim.simulate(false);
                             ++cycles;
+                            if (sim.isDone()) {
+                                break;
+                            }
                         }
                     });
-                    simThread->join();
                 } else {
                     std::lock_guard<std::mutex> guard(simMutex);
                     sim.resume();
                 }
+                response["state"] = "running";
+                server.send_message(response);
             } else if (command == "stop") {
                 std::cout << "Stopping simulation." << std::endl;
                 std::lock_guard<std::mutex> guard(simMutex);
@@ -99,12 +98,16 @@ int main(int argc, const char* argv[]) {
                 if (simThread.has_value()) {
                     simThread->request_stop();
                 }
+                response["state"] = "stopped";
+                server.send_message(response);
             } else if (command == "pause") {
                 std::cout << "Pausing simulation." << std::endl;
                 std::lock_guard<std::mutex> guard(simMutex);
                 if (simThread.has_value()) {
                     simThread->request_stop();
                 }
+                response["state"] = "halted";
+                server.send_message(response);
             } else if (command == "status") {
                 std::cout << "Sending status update." << std::endl;
                 std::lock_guard<std::mutex> guard(simMutex);
@@ -112,6 +115,8 @@ int main(int argc, const char* argv[]) {
             } else {
                 std::cout << "Unknown command " << command << std::endl;
                 std::cerr << "Unknown command " << command << std::endl;
+                response["state"] = "unknown_command";
+                server.send_message(response);
             }
 
             // Exit if stop command received
@@ -119,6 +124,7 @@ int main(int argc, const char* argv[]) {
                 break;
             }
         }
+        simThread->join();
     } else {
         throw std::runtime_error("Socket path not provided. Socket communication is required.");
     }

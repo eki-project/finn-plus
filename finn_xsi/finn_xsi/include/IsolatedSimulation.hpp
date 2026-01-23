@@ -155,6 +155,10 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
 
     bool isRunning() { return simState.isRunning(); }
 
+    bool isDone() {
+        return !simState.isRunning() && simState.allCyclesProcessed();
+    }
+
     /***
      * Simulate a single cycle
      ***/
@@ -167,12 +171,27 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
             this->clearPorts();
             this->reset();
             for (S_AXIS_Control& s : this->istreams) {
-                s.setValid(true);
+                s.valid(true);
+                if (!s.isValid()) {
+                    std::cout << "ERROR: Stream should be valid now!" << std::endl;
+                }
             }
             for (M_AXIS_Control& s : this->ostreams) {
-                s.setReady(true);
+                s.ready(true);
+                if (!s.isReady()) {
+                    std::cout << "ERROR: Stream should be ready now!" << std::endl;
+                }
             }
         }
+
+        // Sanity check. Eventually remove
+        if (!std::all_of(this->istreams.begin(), this->istreams.end(), [](S_AXIS_Control& s) {return s.isValid();})) {
+            std::cout << "ERROR: An input stream is not valid!" << std::endl;
+        }
+        if (!std::all_of(this->ostreams.begin(), this->ostreams.end(), [](M_AXIS_Control& s) {return s.isReady();})) {
+            std::cout << "ERROR: An output stream is not ready!" << std::endl;
+        }
+
         if (!simState.isRunning()) {
             std::cout << "Simulation not running! Send \"start\" command first." << std::endl;
             return;
