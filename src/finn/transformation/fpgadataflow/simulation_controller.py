@@ -339,6 +339,8 @@ class SimulationController:
 class NodeIsolatedSimulationController(SimulationController):
     """Run simulations for node isolated cases."""
 
+    IsolatedSimReturnType = dict[Literal["valid", "ready"], dict[int, tuple[int, int, list[int]]]]
+
     def __init__(
         self,
         parallel_simulations: int,
@@ -356,7 +358,7 @@ class NodeIsolatedSimulationController(SimulationController):
 
     def _postprocess_logs(
         self, d: Path, readylog_name: str = "readylog.txt", validlog_name: str = "validlog.txt"
-    ) -> dict[Literal["valid", "ready"], dict[int, tuple[int, int, list[int]]]]:
+    ) -> IsolatedSimReturnType:
         """Recieve the directory containing a binary and the simulation logs.
         If no logs are found raises an error, otherwise return the postprocessed logs:
         {<cycle>: (<processed_cycle>, <total_cycles>, [<axi-stream-ready/valid>, ...]), ...}
@@ -376,7 +378,9 @@ class NodeIsolatedSimulationController(SimulationController):
             "valid": {line[0]: (line[1], line[2], line[3:]) for line in validdata},
         }
 
-    def run(self) -> None:
+    def run(self) -> dict[str, IsolatedSimReturnType]:
+        """Run a node isolated simulation and return the collected
+        input ready / output valid data, indexed based on node names."""
         futures: list[Future] = []
         with self.console.status(f"Running simulation on every node. Log directory: {self.logdir}"):
             with ThreadPoolExecutor(len(self.binaries)) as tpe:
@@ -386,7 +390,7 @@ class NodeIsolatedSimulationController(SimulationController):
         self._cleanup_sockets()
 
         # Read data
-        data = {}
+        data: dict[str, self.IsolatedSimReturnType] = {}
         invalid = []
         for i, future in enumerate(futures):
             data[self.names[i]] = future.result()
@@ -396,11 +400,7 @@ class NodeIsolatedSimulationController(SimulationController):
             raise FINNInternalError(
                 f"Lost connection / malformed response from nodes: {', '.join(invalid)}"
             )
-
-        # TODO: Algorithm
-        raise NotImplementedError()
-
-    IsolatedSimReturnType = dict[Literal["valid", "ready"], dict[int, tuple[int, int, list[int]]]]
+        return data
 
     def _run_binary(self, binary: Path) -> IsolatedSimReturnType | None:
         """Run simulation. Returning None if connection is lost."""

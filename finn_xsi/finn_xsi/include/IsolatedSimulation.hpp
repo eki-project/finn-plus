@@ -109,7 +109,7 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
 
     inline void writeLogEntryValid() {
         validLog << simState.getCycleStateOutput();
-        for (M_AXIS_Control& s : this->ostreams) { validLog << "," << s.getOutputValid(); }
+        for (M_AXIS_Control& s : this->ostreams) { validLog << "," << s.getOutputValid() << "\n"; }
     }
 
     public:
