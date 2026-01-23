@@ -158,7 +158,8 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
                     except ModuleNotFoundError as mnf:
                         msg = (
                             f"Could not resolve build step: {transform_step}. "
-                            "The given step is neither importable nor a default step."
+                            "The given step is neither importable nor a default step. "
+                            "This can also happen if an error occurs while importing your module. "
                         )
                         raise FINNConfigurationError(msg) from mnf
         elif callable(transform_step):
