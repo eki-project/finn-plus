@@ -233,9 +233,43 @@ class SimulationController:
 
         Returns:
             Response dictionary
+
+        Raises:
+            RuntimeError: If the subprocess has terminated with an error
         """
-        self._send_command(process_idx, command, payload)
-        return self._receive_response(process_idx)
+        try:
+            self._send_command(process_idx, command, payload)
+            return self._receive_response(process_idx)
+        except (BrokenPipeError, ConnectionResetError):
+            # Connection error means the subprocess has died
+            # Check if it exited with an error and raise that instead
+            proc, stdout_file, stderr_file = self.processes[process_idx]
+            returncode = proc.poll()
+
+            if returncode is not None and returncode != 0:
+                # Process has terminated with an error
+                # Flush and read error logs
+                stdout_file.flush()
+                stderr_file.flush()
+
+                stdout_log = self.logdir / f"{process_idx}_stdout.log"
+                stderr_log = self.logdir / f"{process_idx}_stderr.log"
+
+                stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
+                stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
+
+                # Raise the actual error from the subprocess
+                msg = (
+                    f"Subprocess (process_idx={process_idx}) terminated with"
+                    " exit code {returncode}.\n"
+                    f"Stderr:\n{stderr_output}\n"
+                    f"Stdout:\n{stdout_output}"
+                )
+                raise RuntimeError(msg) from None
+
+            # If process exited cleanly (returncode == 0) or hasn't exited yet,
+            # this is an unexpected connection error
+            return None
 
     def _cleanup_sockets(self) -> None:
         """Close all sockets and terminate all processes."""
@@ -253,7 +287,7 @@ class SimulationController:
             sock.close()
             socket_path_obj = Path(socket_path)
             if socket_path_obj.exists():
-                socket_path_obj.unlink()
+                socket_path_obj.unlink(True)
 
         # Terminate processes and close file handles
         for proc, stdout_file, stderr_file in self.processes:
@@ -627,7 +661,11 @@ class NodeConnectedSimulationController(SimulationController):
                     # Check if we should stop early
                     with self.stop_lock:
                         if self.should_stop:
-                            stop_response = self._send_and_receive(proc_idx, "stop", {})
+                            try:
+                                stop_response = self._send_and_receive(proc_idx, "stop", {})
+                            except (BrokenPipeError, ConnectionResetError, RuntimeError):
+                                # Process may have already exited - that's ok during shutdown
+                                stop_response = None
                             if stop_response:
                                 cycles = stop_response.get("cycles", 0)
                                 samps = stop_response.get("samples", 0)

@@ -9,7 +9,7 @@
 #include <SharedLibrary.h>
 #include <helper.h>
 
-#include <InterSimulationInterface.hpp>
+#include <InterprocessCommunicationChannelInterface.hpp>
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
@@ -90,6 +90,11 @@ class Simulation {
     }
 };
 
+//Small struct used for exange. Will be changed later to more complex data structure.
+struct CommData{
+    bool data;
+};
+
 // Communication Flow:
 //
 //           valid      ┌──────────────────────────────────────┐     valid            valid
@@ -101,8 +106,8 @@ class Simulation {
 //                      └──────────────────────────────────────┘
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes>
 class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
-    using ConsumingInterface = InterSimulationInterface<true>;
-    using ProducingInterface = InterSimulationInterface<false>;
+    using ConsumingInterface = InterprocessCommunicationChannelInterface<false>;
+    using ProducingInterface = InterprocessCommunicationChannelInterface<true>;
     constexpr static bool FirstNode = NodeIndex == 0;
     constexpr static bool LastNode = NodeIndex == (TotalNodes - 1);
     std::array<ConsumingInterface, IStreamsSize> fromProducerInterface;
@@ -115,24 +120,23 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     [[gnu::hot, gnu::flatten, gnu::always_inline]] void communicate(std::stop_token stoken = {}) {
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                // Interface SHM <-> sim
-                this->istreams[i].valid(fromProducerInterface[i].exchange(this->istreams[i].isReady(), stoken));
+                // Interface SHM <-> SIM
+                fromProducerInterface[i].exchangeDataDownstream(stoken);
             }
         }
         if constexpr (!LastNode) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                // Interface sim -valid-> FIFO <-> SHM
-                this->fifo[i].update(this->ostreams[i].isValid(), toConsumerInterface[i].exchange(this->fifo[i].isOutputValid(), stoken));
-                // FIFO -ready-> sim
-                this->ostreams[i].ready(this->fifo[i].isInputReady());
+                // Interface SIM <-> FIFO
+                this->ostreams[i].exchangeDataDownstream(stoken);
+                // Interface FIFO <-> SHM
+                this->fifo[i].exchangeDataDownstream(stoken);
                 // Toggle FIFO clock
                 this->fifo[i].toggleClock();
             }
         }
         if constexpr (LastNode) {
             for (auto&& stream : this->ostreams) {
-                if (stream.isValid() && ++stream.job_txns == stream.job_size) {
-                    static std::vector<std::size_t> debug_intervals;
+                if (stream.getOutputValid() && ++stream.job_txns == stream.job_size) {
                     // Track job completion and intervals
                     std::size_t lastComplete = stream.lastComplete;
                     stream.interval = cyclesRun - lastComplete;
@@ -154,12 +158,22 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     void initStreams() {
         if constexpr (FirstNode) {             // First Node; no predecessor
             for (auto&& s : this->istreams) {  // Input into sim valid
-                s.valid(true);
+                s.setInputValid(true);
             }
         } else if constexpr (LastNode) {       // Last Node; no successor
             for (auto&& s : this->ostreams) {  // Output from sim ready
-                s.ready(true);
+                s.setOutputReady(true);
             }
+        }
+    }
+
+    void connectLayers(){
+        for (std::size_t i = 0; i < IStreamsSize; ++i) {
+            fromProducerInterface[i].connectDownstream(this->istreams[i]);
+        }
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
+            this->ostreams[i].connectDownstream(fifo[i]);
+            fifo[i].connectDownstream(toConsumerInterface[i]);
         }
     }
 
@@ -239,7 +253,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
 
     [[gnu::hot, gnu::always_inline]] bool runToStableState(std::stop_token stoken = {}, std::size_t max_cycles = std::numeric_limits<std::size_t>::max()) {
         while (!std::all_of(this->ostreams.begin(), this->ostreams.end(), [](const M_AXIS_Control& stream) { return stream.stableState.is_stable(); }) &
-               !stoken.stop_requested() & cyclesRun <= max_cycles) {
+               !stoken.stop_requested() & (cyclesRun <= max_cycles)) {
             runSingleCycle(stoken);
             runSingleCycle(stoken);
             runSingleCycle(stoken);

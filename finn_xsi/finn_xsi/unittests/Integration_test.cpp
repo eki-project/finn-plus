@@ -5,7 +5,7 @@
 #include <cstddef>
 
 #include "FIFO.h"
-#include "InterSimulationInterface.hpp"
+#include "InterprocessCommunicationChannel.hpp"
 
 // Test fixture for integration tests
 class IntegrationTest : public ::testing::Test {
@@ -46,28 +46,38 @@ class SimDummy {
 // ===== Basic Integration Tests =====
 
 TEST_F(IntegrationTest, OneCycleReadyFalseValidFalse) {
-    // Test: FIFO feeds data to InterSimulationInterface sender/receiver pair
-    // Architecture: FIFO (process A) -> Sender -> Receiver (process B) -> SimDummy -> validation
+    // Test: FIFO feeds data to InterprocessCommunicationChannel sender/receiver pair
+    // Architecture: Sender (process A) -> Receiver -> FIFO (process B) -> SimDummy -> validation
 
     pid_t pid = fork();
 
     if (pid == 0) {
-        // Child process: Receiver with FIFO output validation
+        // Child process: Receiver with FIFO output to SimDummy
         int receivedCount = 0;
         {
-            InterSimulationInterface<true> receiver(shmName);
+            InterprocessCommunicationChannel<bool, bool, false> receiver(shmName);
+            FIFO outputFifo(15);
             SimDummy simDummy;
 
             simDummy.setNextReady(false);
-            bool readySignal = simDummy.isInputReady();
-            bool validSignal = receiver.exchange(readySignal);
+            bool readySignal = outputFifo.getInputReady();
+            bool validSignal = receiver.receive_request();
             if (validSignal) {
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 1 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
 
-            // Verify we received all data
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 15) {
+                exit(3);
+            }
+            if (outputFifo.getInputReady() != true) {
+                exit(4);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
             if (simDummy.isOutputValid()) {
                 exit(1);
             }
@@ -75,21 +85,13 @@ TEST_F(IntegrationTest, OneCycleReadyFalseValidFalse) {
         exit(0);
     }
 
-    // Parent process: Sender with FIFO input
+    // Parent process: Sender
     {
-        InterSimulationInterface<false> sender(shmName);
-        FIFO inputFifo(15);
+        InterprocessCommunicationChannel<bool, bool, true> sender(shmName);
 
         bool validSignal = false;
-        EXPECT_TRUE(inputFifo.isInputReady());
-        bool incomingReady = sender.exchange(inputFifo.isOutputValid());
+        bool incomingReady = sender.send_request(validSignal);
         EXPECT_TRUE(incomingReady);  // We are in cycle 0; expect ready==false for cycle 1
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
 
     }  // Destructor called here
 
@@ -100,28 +102,38 @@ TEST_F(IntegrationTest, OneCycleReadyFalseValidFalse) {
 }
 
 TEST_F(IntegrationTest, OneCycleReadyTrueValidFalse) {
-    // Test: FIFO feeds data to InterSimulationInterface sender/receiver pair
-    // Architecture: FIFO (process A) -> Sender -> Receiver (process B) -> SimDummy -> validation
+    // Test: FIFO feeds data to InterprocessCommunicationChannel sender/receiver pair
+    // Architecture: Sender (process A) -> Receiver -> FIFO (process B) -> SimDummy -> validation
 
     pid_t pid = fork();
 
     if (pid == 0) {
-        // Child process: Receiver with FIFO output validation
+        // Child process: Receiver with FIFO output to SimDummy
         int receivedCount = 0;
         {
-            InterSimulationInterface<true> receiver(shmName);
+            InterprocessCommunicationChannel<bool, bool, false> receiver(shmName);
+            FIFO outputFifo(15);
             SimDummy simDummy;
 
             simDummy.setNextReady(true);
-            bool readySignal = simDummy.isInputReady();
-            bool validSignal = receiver.exchange(readySignal);
+            bool readySignal = outputFifo.getInputReady();
+            bool validSignal = receiver.receive_request();
             if (validSignal) {
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 1 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
 
-            // Verify we received all data
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 15) {
+                exit(3);
+            }
+            if (outputFifo.getInputReady() != true) {
+                exit(4);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
             if (simDummy.isOutputValid()) {
                 exit(1);
             }
@@ -129,21 +141,13 @@ TEST_F(IntegrationTest, OneCycleReadyTrueValidFalse) {
         exit(0);
     }
 
-    // Parent process: Sender with FIFO input
+    // Parent process: Sender
     {
-        InterSimulationInterface<false> sender(shmName);
-        FIFO inputFifo(15);
+        InterprocessCommunicationChannel<bool, bool, true> sender(shmName);
 
         bool validSignal = false;
-        EXPECT_TRUE(inputFifo.isInputReady());
-        bool incomingReady = sender.exchange(inputFifo.isOutputValid());
+        bool incomingReady = sender.send_request(validSignal);
         EXPECT_TRUE(incomingReady);
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
 
     }  // Destructor called here
 
@@ -154,51 +158,56 @@ TEST_F(IntegrationTest, OneCycleReadyTrueValidFalse) {
 }
 
 TEST_F(IntegrationTest, OneCycleReadyFalseValidTrue) {
-    // Test: FIFO feeds data to InterSimulationInterface sender/receiver pair
-    // Architecture: FIFO (process A) -> Sender -> Receiver (process B) -> SimDummy -> validation
+    // Test: FIFO feeds data to InterprocessCommunicationChannel sender/receiver pair
+    // Architecture: Sender (process A) -> Receiver -> FIFO (process B) -> SimDummy -> validation
 
     pid_t pid = fork();
 
     if (pid == 0) {
-        // Child process: Receiver with FIFO output validation
+        // Child process: Receiver with FIFO output to SimDummy
         int receivedCount = 0;
         {
-            InterSimulationInterface<true> receiver(shmName);
+            InterprocessCommunicationChannel<bool, bool, false> receiver(shmName);
+            FIFO outputFifo(15);
             SimDummy simDummy;
 
             simDummy.setNextReady(false);
-            bool readySignal = simDummy.isInputReady();
-            bool validSignal = receiver.exchange(readySignal);
-            if (validSignal) {  // It is correct that valid is false here, because we only have a single cycle and the fifo input is set to valid in cycle 0. Therefore, the FIFO
-                                // output is valid in cycle 1 and we should receive a valid in cycle 1.
+            bool readySignal = outputFifo.getInputReady();
+            bool validSignal = receiver.receive_request();
+            if (!validSignal) {  // It is correct that valid is true here, because we only have a single cycle and the sender input is set to valid in cycle 0. Therefore, we should
+                                 // receive a valid in cycle 0.
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 1 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
 
-            // Verify we received all data
-            if (simDummy.isOutputValid()) {
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 14) {
+                exit(3);
+            }
+            if (outputFifo.getInputReady() != true) {
+                exit(4);
+            }
+            if (!outputFifo.getOutputValid()) {
+                exit(5);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
+            if (!simDummy.isOutputValid()) {
                 exit(1);
             }
         }  // Destructor called here
         exit(0);
     }
 
-    // Parent process: Sender with FIFO input
+    // Parent process: Sender
     {
-        InterSimulationInterface<false> sender(shmName);
-        FIFO inputFifo(15);
+        InterprocessCommunicationChannel<bool, bool, true> sender(shmName);
 
         bool validSignal = true;
-        EXPECT_TRUE(inputFifo.isInputReady());
-        bool incomingReady = sender.exchange(inputFifo.isOutputValid());
+        bool incomingReady = sender.send_request(validSignal);
         EXPECT_TRUE(incomingReady);  // We are in cycle 0; expect ready==true for cycle 1
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 14);
-        EXPECT_TRUE(inputFifo.isInputReady());
 
     }  // Destructor called here
 
@@ -209,51 +218,56 @@ TEST_F(IntegrationTest, OneCycleReadyFalseValidTrue) {
 }
 
 TEST_F(IntegrationTest, OneCycleReadyTrueValidTrue) {
-    // Test: FIFO feeds data to InterSimulationInterface sender/receiver pair
-    // Architecture: FIFO (process A) -> Sender -> Receiver (process B) -> SimDummy -> validation
+    // Test: FIFO feeds data to InterprocessCommunicationChannel sender/receiver pair
+    // Architecture: Sender (process A) -> Receiver -> FIFO (process B) -> SimDummy -> validation
 
     pid_t pid = fork();
 
     if (pid == 0) {
-        // Child process: Receiver with FIFO output validation
+        // Child process: Receiver with FIFO output to SimDummy
         int receivedCount = 0;
         {
-            InterSimulationInterface<true> receiver(shmName);
+            InterprocessCommunicationChannel<bool, bool, false> receiver(shmName);
+            FIFO outputFifo(15);
             SimDummy simDummy;
 
             simDummy.setNextReady(true);
-            bool readySignal = simDummy.isInputReady();
-            bool validSignal = receiver.exchange(readySignal);
-            if (validSignal) {  // It is correct that valid is false here, because we only have a single cycle and the fifo input is set to valid in cycle 0. Therefore, the FIFO
-                                // output is valid in cycle 1 and we should receive a valid in cycle 1.
+            bool readySignal = outputFifo.getInputReady();
+            bool validSignal = receiver.receive_request();
+            if (!validSignal) {  // It is correct that valid is true here, because we only have a single cycle and the sender input is set to valid in cycle 0. Therefore, we should
+                                 // receive a valid in cycle 0.
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 1 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
 
-            // Verify we received all data
-            if (simDummy.isOutputValid()) {
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 14) {
+                exit(3);
+            }
+            if (outputFifo.getInputReady() != true) {
+                exit(4);
+            }
+            if (!outputFifo.getOutputValid()) {
+                exit(5);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
+            if (!simDummy.isOutputValid()) {
                 exit(1);
             }
         }  // Destructor called here
         exit(0);
     }
 
-    // Parent process: Sender with FIFO input
+    // Parent process: Sender
     {
-        InterSimulationInterface<false> sender(shmName);
-        FIFO inputFifo(15);
+        InterprocessCommunicationChannel<bool, bool, true> sender(shmName);
 
         bool validSignal = true;
-        EXPECT_TRUE(inputFifo.isInputReady());
-        bool incomingReady = sender.exchange(inputFifo.isOutputValid());
+        bool incomingReady = sender.send_request(validSignal);
         EXPECT_TRUE(incomingReady);
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 14);
-        EXPECT_TRUE(inputFifo.isInputReady());
 
     }  // Destructor called here
 
@@ -266,42 +280,55 @@ TEST_F(IntegrationTest, OneCycleReadyTrueValidTrue) {
 // ===== Multicycle Integration Tests =====
 
 TEST_F(IntegrationTest, TwoCycleReadyFalseValidFalse) {
-    // Test: FIFO feeds data to InterSimulationInterface sender/receiver pair
-    // Architecture: FIFO (process A) -> Sender -> Receiver (process B) -> SimDummy -> validation
+    // Test: FIFO feeds data to InterprocessCommunicationChannel sender/receiver pair
+    // Architecture: Sender (process A) -> Receiver -> FIFO (process B) -> SimDummy -> validation
 
     pid_t pid = fork();
 
     if (pid == 0) {
-        // Child process: Receiver with FIFO output validation
+        // Child process: Receiver with FIFO output to SimDummy
         int receivedCount = 0;
         {
-            InterSimulationInterface<true> receiver(shmName);
+            InterprocessCommunicationChannel<bool, bool, false> receiver(shmName);
+            FIFO outputFifo(15);
             SimDummy simDummy;
 
             simDummy.setNextReady(false);
-            bool readySignal = simDummy.isInputReady();
-            bool validSignal = receiver.exchange(readySignal);
+            bool readySignal = outputFifo.getInputReady();
+            bool validSignal = receiver.receive_request();
             if (validSignal) {
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 1 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
 
-            // Verify we received all data
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 15) {
+                exit(3);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
             if (simDummy.isOutputValid()) {
                 exit(1);
             }
 
             simDummy.setNextReady(false);
-            readySignal = simDummy.isInputReady();  // Should be false now
-            validSignal = receiver.exchange(readySignal);
+            readySignal = outputFifo.getInputReady();  // Should be true
+            validSignal = receiver.receive_request();
             if (validSignal) {
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 2 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 2 STARTS
 
-            // Verify we received all data
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 15) {
+                exit(3);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
             if (simDummy.isOutputValid()) {
                 exit(1);
             }
@@ -310,30 +337,15 @@ TEST_F(IntegrationTest, TwoCycleReadyFalseValidFalse) {
         exit(0);
     }
 
-    // Parent process: Sender with FIFO input
+    // Parent process: Sender
     {
-        InterSimulationInterface<false> sender(shmName);
-        FIFO inputFifo(15);
+        InterprocessCommunicationChannel<bool, bool, true> sender(shmName);
 
         bool validSignal = false;
-        EXPECT_TRUE(inputFifo.isInputReady());
-        bool incomingReady = sender.exchange(inputFifo.isOutputValid());
+        bool incomingReady = sender.send_request(validSignal);
         EXPECT_TRUE(incomingReady);  // We are in cycle 0; expect ready==true for cycle 1
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        EXPECT_TRUE(inputFifo.isInputReady());
-        incomingReady = sender.exchange(inputFifo.isOutputValid());
-        EXPECT_FALSE(incomingReady);  // We are in cycle 1; expect ready==false for cycle 1
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 2 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
+        incomingReady = sender.send_request(validSignal);
+        EXPECT_TRUE(incomingReady);  // We are in cycle 1; expect ready==true for cycle 2
 
     }  // Destructor called here
 
@@ -344,42 +356,55 @@ TEST_F(IntegrationTest, TwoCycleReadyFalseValidFalse) {
 }
 
 TEST_F(IntegrationTest, TwoCycleReadyTrueValidFalse) {
-    // Test: FIFO feeds data to InterSimulationInterface sender/receiver pair
-    // Architecture: FIFO (process A) -> Sender -> Receiver (process B) -> SimDummy -> validation
+    // Test: FIFO feeds data to InterprocessCommunicationChannel sender/receiver pair
+    // Architecture: Sender (process A) -> Receiver -> FIFO (process B) -> SimDummy -> validation
 
     pid_t pid = fork();
 
     if (pid == 0) {
-        // Child process: Receiver with FIFO output validation
+        // Child process: Receiver with FIFO output to SimDummy
         int receivedCount = 0;
         {
-            InterSimulationInterface<true> receiver(shmName);
+            InterprocessCommunicationChannel<bool, bool, false> receiver(shmName);
+            FIFO outputFifo(15);
             SimDummy simDummy;
 
             simDummy.setNextReady(true);
-            bool readySignal = simDummy.isInputReady();
-            bool validSignal = receiver.exchange(readySignal);
+            bool readySignal = outputFifo.getInputReady();
+            bool validSignal = receiver.receive_request();
             if (validSignal) {
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 1 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
 
-            // Verify we received all data
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 15) {
+                exit(3);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
             if (simDummy.isOutputValid()) {
                 exit(1);
             }
 
             simDummy.setNextReady(true);
-            readySignal = simDummy.isInputReady();  // Should be true now
-            validSignal = receiver.exchange(readySignal);
+            readySignal = outputFifo.getInputReady();  // Should be true now
+            validSignal = receiver.receive_request();
             if (validSignal) {
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 2 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 2 STARTS
 
-            // Verify we received all data
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 15) {
+                exit(3);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
             if (simDummy.isOutputValid()) {
                 exit(1);
             }
@@ -388,30 +413,15 @@ TEST_F(IntegrationTest, TwoCycleReadyTrueValidFalse) {
         exit(0);
     }
 
-    // Parent process: Sender with FIFO input
+    // Parent process: Sender
     {
-        InterSimulationInterface<false> sender(shmName);
-        FIFO inputFifo(15);
+        InterprocessCommunicationChannel<bool, bool, true> sender(shmName);
 
         bool validSignal = false;
-        EXPECT_TRUE(inputFifo.isInputReady());
-        bool incomingReady = sender.exchange(inputFifo.isOutputValid());
+        bool incomingReady = sender.send_request(validSignal);
         EXPECT_TRUE(incomingReady);  // We are in cycle 0; expect ready==true for cycle 1
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        EXPECT_TRUE(inputFifo.isInputReady());
-        incomingReady = sender.exchange(inputFifo.isOutputValid());
-        EXPECT_TRUE(incomingReady);  // We are in cycle 1; expect ready==true for cycle 1
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 2 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
+        incomingReady = sender.send_request(validSignal);
+        EXPECT_TRUE(incomingReady);  // We are in cycle 1; expect ready==true for cycle 2
 
     }  // Destructor called here
 
@@ -422,42 +432,61 @@ TEST_F(IntegrationTest, TwoCycleReadyTrueValidFalse) {
 }
 
 TEST_F(IntegrationTest, TwoCycleReadyFalseValidTrue) {
-    // Test: FIFO feeds data to InterSimulationInterface sender/receiver pair
-    // Architecture: FIFO (process A) -> Sender -> Receiver (process B) -> SimDummy -> validation
+    // Test: FIFO feeds data to InterprocessCommunicationChannel sender/receiver pair
+    // Architecture: Sender (process A) -> Receiver -> FIFO (process B) -> SimDummy -> validation
 
     pid_t pid = fork();
 
     if (pid == 0) {
-        // Child process: Receiver with FIFO output validation
+        // Child process: Receiver with FIFO output to SimDummy
         int receivedCount = 0;
         {
-            InterSimulationInterface<true> receiver(shmName);
+            InterprocessCommunicationChannel<bool, bool, false> receiver(shmName);
+            FIFO outputFifo(15);
             SimDummy simDummy;
 
             simDummy.setNextReady(false);
-            bool readySignal = simDummy.isInputReady();
-            bool validSignal = receiver.exchange(readySignal);
-            if (validSignal) {
+            bool readySignal = outputFifo.getInputReady();
+            bool validSignal = receiver.receive_request();
+            if (!validSignal) {
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 1 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
 
-            // Verify we received all data
-            if (simDummy.isOutputValid()) {
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 14) {
+                exit(3);
+            }
+            if (!outputFifo.getOutputValid()) {
+                exit(4);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
+            if (!simDummy.isOutputValid()) {
                 exit(1);
             }
 
             simDummy.setNextReady(false);
-            readySignal = simDummy.isInputReady();  // Should be false now
-            validSignal = receiver.exchange(readySignal);
+            readySignal = outputFifo.getInputReady();  // Should be true now (FIFO not full)
+            validSignal = receiver.receive_request();
             if (!validSignal) {
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 2 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 2 STARTS
 
-            // Verify we received all data
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 13) {
+                exit(3);
+            }
+            if (!outputFifo.getOutputValid()) {
+                exit(4);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
             if (!simDummy.isOutputValid()) {
                 exit(1);
             }
@@ -466,30 +495,15 @@ TEST_F(IntegrationTest, TwoCycleReadyFalseValidTrue) {
         exit(0);
     }
 
-    // Parent process: Sender with FIFO input
+    // Parent process: Sender
     {
-        InterSimulationInterface<false> sender(shmName);
-        FIFO inputFifo(15);
+        InterprocessCommunicationChannel<bool, bool, true> sender(shmName);
 
         bool validSignal = true;
-        EXPECT_TRUE(inputFifo.isInputReady());
-        bool incomingReady = sender.exchange(inputFifo.isOutputValid());
+        bool incomingReady = sender.send_request(validSignal);
         EXPECT_TRUE(incomingReady);  // We are in cycle 0; expect ready==true for cycle 1
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 14);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        EXPECT_TRUE(inputFifo.isOutputValid());
-        incomingReady = sender.exchange(inputFifo.isOutputValid());
-        EXPECT_FALSE(incomingReady);  // We are in cycle 1; expect ready==false for cycle 1
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 14);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 2 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 13);
-        EXPECT_TRUE(inputFifo.isInputReady());
+        incomingReady = sender.send_request(validSignal);
+        EXPECT_TRUE(incomingReady);  // We are in cycle 1; expect ready==true for cycle 2
 
     }  // Destructor called here
 
@@ -501,42 +515,61 @@ TEST_F(IntegrationTest, TwoCycleReadyFalseValidTrue) {
 
 
 TEST_F(IntegrationTest, TwoCycleReadyTrueValidTrue) {
-    // Test: FIFO feeds data to InterSimulationInterface sender/receiver pair
-    // Architecture: FIFO (process A) -> Sender -> Receiver (process B) -> SimDummy -> validation
+    // Test: FIFO feeds data to InterprocessCommunicationChannel sender/receiver pair
+    // Architecture: Sender (process A) -> Receiver -> FIFO (process B) -> SimDummy -> validation
 
     pid_t pid = fork();
 
     if (pid == 0) {
-        // Child process: Receiver with FIFO output validation
+        // Child process: Receiver with FIFO output to SimDummy
         int receivedCount = 0;
         {
-            InterSimulationInterface<true> receiver(shmName);
+            InterprocessCommunicationChannel<bool, bool, false> receiver(shmName);
+            FIFO outputFifo(15);
             SimDummy simDummy;
 
             simDummy.setNextReady(true);
-            bool readySignal = simDummy.isInputReady();
-            bool validSignal = receiver.exchange(readySignal);
-            if (validSignal) {
+            bool readySignal = outputFifo.getInputReady();
+            bool validSignal = receiver.receive_request();
+            if (!validSignal) {
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 1 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
 
-            // Verify we received all data
-            if (simDummy.isOutputValid()) {
+            // Verify FIFO state and SimDummy
+            if (outputFifo.getSpaceLeft() != 14) {
+                exit(3);
+            }
+            if (!outputFifo.getOutputValid()) {
+                exit(4);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
+            if (!simDummy.isOutputValid()) {
                 exit(1);
             }
 
             simDummy.setNextReady(true);
-            readySignal = simDummy.isInputReady();  // Should be true now
-            validSignal = receiver.exchange(readySignal);
+            readySignal = outputFifo.getInputReady();  // Should be true now
+            validSignal = receiver.receive_request();
             if (!validSignal) {
                 exit(2);
             }
-            simDummy.setNextValid(validSignal);
-            simDummy.toggleClock();  // BELOW HERE CYCLE 2 STARTS
+            receiver.send_response(readySignal);
+            outputFifo.update(validSignal, simDummy.isInputReady());
+            outputFifo.toggleClock();  // BELOW HERE CYCLE 2 STARTS
 
-            // Verify we received all data
+            // Verify FIFO state and SimDummy - FIFO consumes data because SimDummy is ready
+            if (outputFifo.getSpaceLeft() != 14) {
+                exit(3);
+            }
+            if (!outputFifo.getOutputValid()) {
+                exit(4);
+            }
+            simDummy.setNextValid(outputFifo.getOutputValid());
+            simDummy.toggleClock();
             if (!simDummy.isOutputValid()) {
                 exit(1);
             }
@@ -545,30 +578,15 @@ TEST_F(IntegrationTest, TwoCycleReadyTrueValidTrue) {
         exit(0);
     }
 
-    // Parent process: Sender with FIFO input
+    // Parent process: Sender
     {
-        InterSimulationInterface<false> sender(shmName);
-        FIFO inputFifo(15);
+        InterprocessCommunicationChannel<bool, bool, true> sender(shmName);
 
         bool validSignal = true;
-        EXPECT_TRUE(inputFifo.isInputReady());
-        bool incomingReady = sender.exchange(inputFifo.isOutputValid());
+        bool incomingReady = sender.send_request(validSignal);
         EXPECT_TRUE(incomingReady);  // We are in cycle 0; expect ready==true for cycle 1
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 15);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 1 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 14);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        EXPECT_TRUE(inputFifo.isOutputValid());
-        incomingReady = sender.exchange(inputFifo.isOutputValid());
-        EXPECT_TRUE(incomingReady);  // We are in cycle 1; expect ready==true for cycle 1
-        inputFifo.update(validSignal, incomingReady);
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 14);
-        EXPECT_TRUE(inputFifo.isInputReady());
-        inputFifo.toggleClock();  // BELOW HERE CYCLE 2 STARTS
-        EXPECT_EQ(inputFifo.getSpaceLeft(), 14);
-        EXPECT_TRUE(inputFifo.isInputReady());
+        incomingReady = sender.send_request(validSignal);
+        EXPECT_TRUE(incomingReady);  // We are in cycle 1; expect ready==true for cycle 2
 
     }  // Destructor called here
 
@@ -587,37 +605,37 @@ TEST_F(IntegrationTest, SimToFIFO) {
     SimDummy sim;
     FIFO fifo(15);
 
-    //Propagate valid through SimDummy
+    // Propagate valid through SimDummy
     sim.setNextValid(true);
     fifo.update(sim.isOutputValid(), false);
-    EXPECT_TRUE(fifo.isInputReady());
-    sim.setNextReady(fifo.isInputReady());
+    EXPECT_TRUE(fifo.getInputReady());
+    sim.setNextReady(fifo.getInputReady());
     fifo.toggleClock();
     sim.toggleClock();
     EXPECT_EQ(fifo.size(), 0);
     EXPECT_TRUE(sim.isInputReady());
 
-    //Fill FIFO to capacity
+    // Fill FIFO to capacity
     for (std::size_t i = 0; i < 15; ++i) {
         sim.setNextValid(true);
 
         fifo.update(sim.isOutputValid(), false);
-        EXPECT_TRUE(fifo.isInputReady());
-        sim.setNextReady(fifo.isInputReady());
+        EXPECT_TRUE(fifo.getInputReady());
+        sim.setNextReady(fifo.getInputReady());
         EXPECT_EQ(fifo.size(), i);
         fifo.toggleClock();
         sim.toggleClock();
-        EXPECT_EQ(fifo.size(), i+1);
+        EXPECT_EQ(fifo.size(), i + 1);
         EXPECT_TRUE(sim.isInputReady());
     }
 
-    EXPECT_FALSE(fifo.isInputReady()); // FIFO changed to not ready on this cycle; Sim is still ready
+    EXPECT_FALSE(fifo.getInputReady());  // FIFO changed to not ready on this cycle; Sim is still ready
     sim.setNextValid(true);
     fifo.update(sim.isOutputValid(), false);
-    EXPECT_FALSE(fifo.isInputReady());
-    sim.setNextReady(fifo.isInputReady());
+    EXPECT_FALSE(fifo.getInputReady());
+    sim.setNextReady(fifo.getInputReady());
     fifo.toggleClock();
-    sim.toggleClock(); //Propagate ready false through sim
+    sim.toggleClock();  // Propagate ready false through sim
 
     EXPECT_EQ(fifo.size(), 15);
     EXPECT_FALSE(sim.isInputReady());

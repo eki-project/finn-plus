@@ -650,8 +650,8 @@ class BuildSimulation(Transformation):
 
         if needs_rebuild:
             self.builder = SimulationBuilder(self.model, self.fpgapart, self.clk_ns)
-            sys.stdout = sys.stdout.console  # type: ignore
-            sys.stderr = sys.stderr.console  # type: ignore
+            # sys.stdout = sys.stdout.console  # type: ignore
+            # sys.stderr = sys.stderr.console  # type: ignore
             self.binaries = self.builder.build_simulation(
                 self.sim_type,
                 self.workers,

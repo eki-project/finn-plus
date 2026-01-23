@@ -104,12 +104,12 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
 
     inline void writeLogEntryReady () {
         readyLog << simState.getCycleStateInput();
-        for (S_AXIS_Control& s : this->istreams) { readyLog << "," << s.isReady(); }
+        for (S_AXIS_Control& s : this->istreams) { readyLog << "," << s.getInputReady(); }
     }
 
     inline void writeLogEntryValid() {
         validLog << simState.getCycleStateOutput();
-        for (M_AXIS_Control& s : this->ostreams) { validLog << "," << s.isValid(); }
+        for (M_AXIS_Control& s : this->ostreams) { validLog << "," << s.getOutputValid(); }
     }
 
     public:
@@ -171,16 +171,10 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
             this->clearPorts();
             this->reset();
             for (S_AXIS_Control& s : this->istreams) {
-                s.valid(true);
-                if (!s.isValid()) {
-                    std::cout << "ERROR: Stream should be valid now!" << std::endl;
-                }
+                s.setInputValid(true);
             }
             for (M_AXIS_Control& s : this->ostreams) {
-                s.ready(true);
-                if (!s.isReady()) {
-                    std::cout << "ERROR: Stream should be ready now!" << std::endl;
-                }
+                s.setOutputReady(true);
             }
         }
 
@@ -200,10 +194,10 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
             writeLogEntryReady();
             writeLogEntryValid();
 
-            if (!simState.inputCyclesProcessed() && this->istreams[simState.inputLargestStreamIndex].isReady()) {
+            if (!simState.inputCyclesProcessed() && this->istreams[simState.inputLargestStreamIndex].getInputReady()) {
                 ++simState.inputCyclesDone;
             }
-            if (!simState.outputCyclesProcessed() && this->ostreams[simState.outputLargestStreamIndex].isValid()) {
+            if (!simState.outputCyclesProcessed() && this->ostreams[simState.outputLargestStreamIndex].getOutputValid()) {
                 ++simState.outputCyclesDone;
             }
             this->clk.toggleClk();

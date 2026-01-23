@@ -1,6 +1,7 @@
 """Here we organize FINN+`s exceptions and error handling. It also contains a decorator to
 snapshot FINN+ when it crashes for debugging purposes.
 """
+
 from __future__ import annotations
 
 import functools
@@ -8,15 +9,18 @@ import inspect
 import os
 import shutil
 import traceback
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
-from typing import Callable
+from typing import TYPE_CHECKING, TypeAlias
 
 import finn
-from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.util.basic import make_build_dir
+
+if TYPE_CHECKING:
+    from finn.builder.build_dataflow_config import DataflowBuildConfig
 
 """
 FINNError is the base class for all errors.
@@ -70,7 +74,7 @@ class FINNDataflowError(FINNInternalError):
 
 
 # Alias for a build flow step function apply function
-StepFunction = Callable[[ModelWrapper, DataflowBuildConfig], ModelWrapper]
+StepFunction: TypeAlias = Callable[[ModelWrapper, "DataflowBuildConfig"], ModelWrapper]
 
 
 def snapshot_on_exception(

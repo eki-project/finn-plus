@@ -1,10 +1,12 @@
 #ifndef FIFO_H
 #define FIFO_H
 
+#include <CommunicationChannel.hpp>
 #include <cstdint>
 #include <limits>
+#include <stop_token>
 
-class FIFO {
+class FIFO : public CommunicationChannel {
     uint64_t maxUtil = 0;
     uint64_t currentUtil = 0;
     uint64_t maxSize = 0;
@@ -16,8 +18,8 @@ class FIFO {
 
     void update(bool incomingValid, bool incomingReady);
     void toggleClock();
-    bool isInputReady() const;
-    bool isOutputValid() const;
+    virtual bool getInputReady(std::stop_token stoken = {}) noexcept override;
+    virtual bool getOutputValid(std::stop_token stoken = {}) noexcept override;
     bool isEmpty() const;
     void reset(uint64_t size = std::numeric_limits<uint64_t>::max());
     void setMaxSize(const uint64_t size);
@@ -27,8 +29,8 @@ class FIFO {
     void increaseCounter(const uint64_t count);
 
     // NOTE: User needs to ensure proper ordering. No runtime enforcement of order.
-    void tryPush(bool incomingValid);
-    void tryPop(bool incomingReady);
+    virtual void setInputValid(bool incomingValid, std::stop_token stoken = {}) override;
+    virtual void setOutputReady(bool incomingReady, std::stop_token stoken = {}) override;
     uint64_t size() const;
 };
 
