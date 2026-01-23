@@ -3,14 +3,14 @@
 import json
 import math
 import time
-from onnx.onnx_ml_pb2 import NodeProto
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
-from typing import Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+import finn.transformation.fpgadataflow.simulation_controller.IsolatedSimReturnType as IsoSimData
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -25,6 +25,9 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import DisabledLoggingConsole, log
+
+if TYPE_CHECKING:
+    from onnx.onnx_ml_pb2 import NodeProto
 
 FIFODepthConfig: TypeAlias = dict[int, dict[str, str | list[int]]]
 
@@ -129,7 +132,7 @@ class Simulation:
         json.dump(data, output_json.open("w"), indent=4)
         return data, merged_data.get("timeout_occurred", False)
 
-    def simulate_node_isolated(self) -> None:
+    def simulate_node_isolated(self) -> dict[str, IsoSimData]:
         """Simulate isolated nodes."""
         if self.simulation_type != SimulationType.NODE_BASED_ISOLATED:
             raise FINNInternalError(
@@ -142,10 +145,7 @@ class Simulation:
             controller = NodeIsolatedSimulationController(
                 len(self.binaries), names, list(self.binaries.values()), console, 0.1, False
             )
-            _ = controller.run()
-
-            # TODO: Implement algorithm
-            raise NotImplementedError()
+            return controller.run()
 
 
 class RunLayerParallelSimulation(Transformation):  # noqa
@@ -811,12 +811,57 @@ def calculate_srl16e_depth_range(luts: int, bitwidth: int) -> tuple[int, int]:
 
 
 class RunLayerIsolatedSimulation(Transformation):
+    """Run a layer isolated simulation and calculate some information for a
+    later layer parallel simulation."""
+
     def __init__(self, fpgapart: str, clk_ns: float, functional_sim: bool) -> None:
         """Run isolated layer simulations."""
         super().__init__()
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
         self.functional_sim = functional_sim
+
+    def calculate_upper_bounds(self, data: IsoSimData) -> dict[str, int]:
+        """Try to calculate an upper bound for the incoming FIFO size of the layers.
+        Return size indexed by node name."""
+        # First get the input ready signals of all layers
+        # TODO: We assume that every cycle gets recorded here
+        readies: dict[str, list[int]] = {
+            name: data[name]["ready"].values()[2] for name in data.keys()
+        }
+
+        # Calculate the count of _not_ ready cycles between the
+        # first ready and the first ready of the second sample
+        # TODO: Currently we simply divide target cycles by 2, since
+        # TODO: this is multiplied on the C++ side, but this may change in the
+        # TODO: future
+        cycles_per_sample: dict[str, int] = {}
+        for name in data.keys():
+            cycles: int = data[name]["ready"].values()[1]
+            if cycles % 2 != 0:
+                raise FINNInternalError(
+                    f"Layer {name} has an odd number "
+                    f"of ready cycles per sample. This points "
+                    f"towards a change in the C++ version, "
+                    f"since we currently assume that the number "
+                    f"we get here is twice the number per sample "
+                    f"(since we want to simulate 2 samples). "
+                    f"Getting this error might indicate that this "
+                    f"has to be fixed."
+                )
+            cycles_per_sample[name] = cycles / 2
+
+        # TODO: This calculation assumes, that if the producer does NOT fire the entire time,
+        # TODO: the consumer can read at least at the same speed as
+        #       if the producer did, and not slower.
+        # TODO: (Since this would mean that less data pressure from
+        #       the producer makes the consumer _slower_.)
+        # TODO: This should usually be the case, but is important to keep in mind.
+        return {
+            # num of zeroes = num total - num of ones
+            name: len(readies[name])
+            - sum(readies[name])
+        }
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Run isolated layer simulations."""
@@ -827,8 +872,15 @@ class RunLayerIsolatedSimulation(Transformation):
             self.clk_ns,
             self.functional_sim,
         )
-        # TODO
-        _ = sim.simulate_node_isolated()
+        data: dict[str, IsoSimData] = sim.simulate_node_isolated()
+        in_fifo_upper_bound = self.calculate_upper_bounds(data)
+        formatted_upper_bounds = "\n\t".join(
+            [f"{name}: {in_fifo_upper_bound[name]}" for name in in_fifo_upper_bound.keys()]
+        )
+        log.info("Upper bounds: \n" + formatted_upper_bounds)
+
+        raise NotImplementedError()
+        # TODO: Integrate data into the layer parallel simulation
         return model, False
 
 
