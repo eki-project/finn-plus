@@ -44,6 +44,7 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
     def global_includes(self):
         """Generate list of C++ includes at the top of the generated code."""
         self.code_gen_dict["$GLOBALS$"] = [
+            '#include <cmath>',
             '#include "multithreshold.hpp"',
             '#include "bind_storage.hpp"',
             '#include "params.hpp"',
@@ -118,13 +119,31 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
     def generate_params(self, model: ModelWrapper, path):
         """Generate C++ parameters file including thresholds parameters."""
 
+        # Converts values to string representation for code generation
+        def value2str(value, dtype=None):
+            # Generate infinity constant of the respective sign if the value is
+            # infinity
+            if np.isinf(value):
+                return f"{'-' if value < 0 else '+'}INFINITY"
+
+            # Convert floats to integer if an integer datatype if specified
+            if dtype is not None and dtype.is_integer():
+                value = int(value)
+
+            # Convert to string representation
+            return str(value)
+
         # Generate C/C++ array initializer code from Numpy
-        def carray(array):
+        def carray(array, dtype=None):
             # Recursion to handle nested dimensions
             if array.ndim > 1:
-                return "{" + ",".join((carray(inner) for inner in array)) + "}"
+                return "{" + \
+                    ",".join((carray(inner, dtype) for inner in array)) + \
+                    "}"
             # Innermost dimension joins values represented as string
-            return "{" + ",".join((f"{value:3}" for value in array)) + "}"
+            return "{" + \
+                ",".join((value2str(value, dtype) for value in array)) + \
+                "}"
 
         # Get the shape and type configuration of the operator to generate the
         # HLS C++ types and shape containers
@@ -165,6 +184,10 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
         if self.get_output_datatype(ind=0).is_integer():
             values = values.astype(np.int64)
 
+        # Threshold and output/values QONNX datatype
+        ttype = self.get_input_datatype(ind=1)
+        otype = self.get_output_datatype(ind=0)
+
         # Open a file with int code generation directory to store the thresholds
         # parameters as C++ code
         with open(f"{path}/params.hpp", "w") as file:
@@ -173,8 +196,8 @@ class MultiThreshold_hls(MultiThreshold, HLSBackend):
                 f"MultiThreshold<"
                 f"{TShape}, {N}, {OType}, {TType}, {WShape}"
                 f"> thresholds {{"
-                f"{carray(thresholds.reshape(-1, N))},"
-                f"{carray(values.reshape(-1, N + 1))}"
+                f"{carray(thresholds.reshape(-1, N), ttype)},"
+                f"{carray(values.reshape(-1, N + 1), otype)}"
                 f"}};",
                 # Append a newline at the end of the file (to avoid problems
                 # when including, required by C standard?)
