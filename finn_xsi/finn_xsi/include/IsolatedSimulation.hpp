@@ -1,5 +1,4 @@
 #include <Simulation.hpp>
-#include <thread>
 #include "SocketServer.h"
 
 
@@ -21,7 +20,7 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
             readyLog << "," << s.name;
         }
         readyLog << std::endl;
-        validLog << "totalCycles,outputCycles,doubled_targetOutputCycles" << std::endl;
+        validLog << "totalCycles,outputCycles,doubled_targetOutputCycles";
         for (M_AXIS_Control& s : this->ostreams) {
             validLog << "," << s.name;
         }
@@ -70,12 +69,6 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
             inputLargestStreamIndex = std::get<0>(largestIn);
             outputCyclesTarget = std::get<1>(largestOut) * 2;
             outputLargestStreamIndex = std::get<0>(largestOut);
-            std::cout << "In Job Sizes: ";
-            for (auto js : sim.inJobSizes) {
-                std::cout << js << " ";
-            }
-            std::cout << std::endl;
-            std::cout << "IO cycle targets: " << inputCyclesTarget << ", " << outputCyclesTarget << std::endl;
         }
         inline bool inputCyclesProcessed() { return inputCyclesDone >= inputCyclesTarget; }
         inline bool outputCyclesProcessed() { return outputCyclesDone >= outputCyclesTarget; }
@@ -105,11 +98,13 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
     inline void writeLogEntryReady () {
         readyLog << simState.getCycleStateInput();
         for (S_AXIS_Control& s : this->istreams) { readyLog << "," << s.getInputReady(); }
+        readyLog << std::endl;
     }
 
     inline void writeLogEntryValid() {
         validLog << simState.getCycleStateOutput();
-        for (M_AXIS_Control& s : this->ostreams) { validLog << "," << s.getOutputValid() << "\n"; }
+        for (M_AXIS_Control& s : this->ostreams) { validLog << "," << s.getOutputValid(); }
+        validLog << std::endl;
     }
 
     public:
@@ -139,6 +134,7 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
             outJobSizes.begin(),
             [](StreamDescriptor& s) { return s.job_size; }
         );
+        writeLogHeaders();
     }
 
     json getStatus() {
@@ -176,14 +172,6 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
             for (M_AXIS_Control& s : this->ostreams) {
                 s.setOutputReady(true);
             }
-        }
-
-        // Sanity check. Eventually remove
-        if (!std::all_of(this->istreams.begin(), this->istreams.end(), [](S_AXIS_Control& s) {return s.isValid();})) {
-            std::cout << "ERROR: An input stream is not valid!" << std::endl;
-        }
-        if (!std::all_of(this->ostreams.begin(), this->ostreams.end(), [](M_AXIS_Control& s) {return s.isReady();})) {
-            std::cout << "ERROR: An output stream is not ready!" << std::endl;
         }
 
         if (!simState.isRunning()) {

@@ -339,7 +339,7 @@ class SimulationController:
 class NodeIsolatedSimulationController(SimulationController):
     """Run simulations for node isolated cases."""
 
-    IsolatedSimReturnType = dict[Literal["valid", "ready"], dict[int, tuple[int, int, list[int]]]]
+    IsolatedSimReturnType = dict[Literal["valid", "ready"], list[tuple[int, int, list[int]]]]
 
     def __init__(
         self,
@@ -367,15 +367,13 @@ class NodeIsolatedSimulationController(SimulationController):
         validlog = d / validlog_name
         if not readylog.exists() or not validlog.exists():
             raise FINNInternalError(f"Could not find simulation logs at {readylog} and {validlog}")
-        readydata = [
-            [int(elem) for elem in line.split(",")] for line in readylog.read_text().split("\n")[1:]
-        ]
-        validdata = [
-            [int(elem) for elem in line.split(",")] for line in validlog.read_text().split("\n")[1:]
-        ]
+        readylines = readylog.read_text().splitlines()[1:]
+        validlines = validlog.read_text().splitlines()[1:]
+        readydata = [[int(elem) for elem in line.split(",")] for line in readylines if line != ""]
+        validdata = [[int(elem) for elem in line.split(",")] for line in validlines if line != ""]
         return {
-            "ready": {line[0]: (line[1], line[2], line[3:]) for line in readydata},
-            "valid": {line[0]: (line[1], line[2], line[3:]) for line in validdata},
+            "ready": [(line[1], line[2], line[3:]) for line in readydata],
+            "valid": [(line[1], line[2], line[3:]) for line in validdata],
         }
 
     def run(self) -> dict[str, IsolatedSimReturnType]:
@@ -428,6 +426,7 @@ class NodeIsolatedSimulationController(SimulationController):
                 "outputCyclesDone,outputCyclesTarget\n"
             )
             logfile.flush()
+
             while True:
                 time.sleep(self.poll_interval)
                 logfile.write("Sending status request\n")
@@ -437,6 +436,7 @@ class NodeIsolatedSimulationController(SimulationController):
                     return None
                 state = response["state"]
                 if state == "done":
+                    self.console.log(f"{process_index} is done and postprocessing data.")
                     return self._postprocess_logs(binary.parent)
 
                 # TODO: Order seems wrong

@@ -29,7 +29,8 @@ if TYPE_CHECKING:
     from onnx.onnx_ml_pb2 import NodeProto
 
 FIFODepthConfig: TypeAlias = dict[int, dict[str, str | list[int]]]
-IsoSimData = NodeIsolatedSimulationController.IsolatedSimReturnType
+IsoLayerSimData = NodeIsolatedSimulationController.IsolatedSimReturnType
+IsoSimData = dict[str, IsoLayerSimData]  # Indexed by layer name
 
 
 class Simulation:
@@ -132,7 +133,7 @@ class Simulation:
         json.dump(data, output_json.open("w"), indent=4)
         return data, merged_data.get("timeout_occurred", False)
 
-    def simulate_node_isolated(self) -> dict[str, IsoSimData]:
+    def simulate_node_isolated(self) -> dict[str, IsoLayerSimData]:
         """Simulate isolated nodes."""
         if self.simulation_type != SimulationType.NODE_BASED_ISOLATED:
             raise FINNInternalError(
@@ -821,13 +822,31 @@ class RunLayerIsolatedSimulation(Transformation):
         self.clk_ns = clk_ns
         self.functional_sim = functional_sim
 
-    def calculate_upper_bounds(self, data: IsoSimData) -> dict[str, int]:
+    def calculate_upper_bounds(self, data: IsoSimData) -> dict[str, list[int]]:
         """Try to calculate an upper bound for the incoming FIFO size of the layers.
-        Return size indexed by node name."""
+        Return size indexed by node name.
+
+        >>> step = RunLayerIsolatedSimulation("", 0.0, False)
+        >>> bounds = step.calculate_upper_bounds(
+        ... {"A": {"ready": [(0, 10, [1,1,0]), (1, 10, [0,0,0]), (2, 10, [1,0,0])]},
+        ... "B": {"ready": [(0, 10, [1]), (1, 10, [0]), (2, 10, [0])]}})
+        >>> bounds["A"]
+        [1, 2, 3]
+        >>> bounds["B"]
+        [2]
+        """
         # First get the input ready signals of all layers
         # TODO: We assume that every cycle gets recorded here
-        readies: dict[str, list[int]] = {
-            name: data[name]["ready"].values()[2] for name in data.keys()
+
+        # How many input channels each layer has
+        input_channel_count: dict[str, int] = {}
+        for name in data.keys():
+            input_channel_count[name] = len(data[name]["ready"][0][2])
+
+        # Map layer name to ready signals:
+        # {"Layer1": [[1], [0], [1], ...], ...}
+        readies: dict[str, list[list[int]]] = {
+            name: [line[2] for line in data[name]["ready"]] for name in data.keys()
         }
 
         # Calculate the count of _not_ ready cycles between the
@@ -837,7 +856,8 @@ class RunLayerIsolatedSimulation(Transformation):
         # TODO: future
         cycles_per_sample: dict[str, int] = {}
         for name in data.keys():
-            cycles: int = data[name]["ready"].values()[1]
+            cycles: int = int(data[name]["ready"][0][1])
+            cycles_per_sample[name] = cycles
             if cycles % 2 != 0:
                 raise FINNInternalError(
                     f"Layer {name} has an odd number "
@@ -849,7 +869,7 @@ class RunLayerIsolatedSimulation(Transformation):
                     f"Getting this error might indicate that this "
                     f"has to be fixed."
                 )
-            cycles_per_sample[name] = cycles / 2
+            cycles_per_sample[name] = int(cycles / 2)
 
         # TODO: This calculation assumes, that if the producer does NOT fire the entire time,
         # TODO: the consumer can read at least at the same speed as
@@ -857,11 +877,16 @@ class RunLayerIsolatedSimulation(Transformation):
         # TODO: (Since this would mean that less data pressure from
         #       the producer makes the consumer _slower_.)
         # TODO: This should usually be the case, but is important to keep in mind.
-        return {
-            # num of zeroes = num total - num of ones
-            name: len(readies[name])
-            - sum(readies[name])
-        }
+        non_ready_cycles = {}
+        for name in data.keys():
+            non_ready_cycles[name] = [0] * input_channel_count[name]
+            # State of all axi ready signals in a given cycle
+            for axi_stream_ready_list in readies[name]:
+                # Count all 0
+                # Example: [1,1,0] would mean streams 0 and 1 are ready, stream 2 is not
+                for i, rdy in enumerate(axi_stream_ready_list):
+                    non_ready_cycles[name][i] += int(rdy == 0)
+        return non_ready_cycles
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Run isolated layer simulations."""
@@ -872,7 +897,7 @@ class RunLayerIsolatedSimulation(Transformation):
             self.clk_ns,
             self.functional_sim,
         )
-        data: dict[str, IsoSimData] = sim.simulate_node_isolated()
+        data: dict[str, IsoLayerSimData] = sim.simulate_node_isolated()
         in_fifo_upper_bound = self.calculate_upper_bounds(data)
         formatted_upper_bounds = "\n\t".join(
             [f"{name}: {in_fifo_upper_bound[name]}" for name in in_fifo_upper_bound.keys()]
