@@ -84,6 +84,7 @@ class Simulation:
         cannot provide typing information."""
         match self.simulation_type:
             case SimulationType.NODE_BASED_CONNECTED:
+                print("Connected simulation")
                 return self.simulate_node_connected(*args, **kwargs)
             case SimulationType.NODE_BASED_ISOLATED:
                 return self.simulate_node_isolated(*args, **kwargs)

@@ -3,6 +3,7 @@
 
 #include <concepts>
 #include <stop_token>
+#include <iostream>
 
 template<typename T>
 concept ChannelInterface = requires(T t, bool b, std::stop_token stoken) {
@@ -48,10 +49,10 @@ class CommunicationChannel {
         this->setOutputReady(ready, stoken);
     }
 
-    virtual bool getOutputValid([[maybe_unused]] std::stop_token stoken = {}) { return false; }
-    virtual void setInputValid([[maybe_unused]] bool v, [[maybe_unused]] std::stop_token stoken = {}) {}
-    virtual bool getInputReady([[maybe_unused]] std::stop_token stoken = {}) { return false; }
-    virtual void setOutputReady([[maybe_unused]] bool r, [[maybe_unused]] std::stop_token stoken = {}) {}
+    virtual bool getOutputValid([[maybe_unused]] std::stop_token stoken = {}) = 0;
+    virtual void setInputValid([[maybe_unused]] bool v, [[maybe_unused]] std::stop_token stoken = {}) = 0;
+    virtual bool getInputReady([[maybe_unused]] std::stop_token stoken = {}) = 0;
+    virtual void setOutputReady([[maybe_unused]] bool r, [[maybe_unused]] std::stop_token stoken = {}) = 0;
 
     virtual ~CommunicationChannel() = default;
 };
