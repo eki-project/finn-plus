@@ -34,6 +34,27 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
             subprocess.run(
                 shlex.split(f"{sys.executable} -m pytest -n {num_workers} {name}", posix=IS_POSIX)
             )
+        case "doctest":
+            if name == "":
+                raise FINNUserError(
+                    "--variant custom was specified, but no test was "
+                    "given (please additionally pass --name "
+                    "<test-name> in pytest syntax)"
+                )
+            if name.endswith(".py"):
+                raise FINNUserError(
+                    "To run doctests, specify the name as a python module path. "
+                    "Instead of src/finn/interface/manage_tests.py do "
+                    "finn.interface.manage_tests!"
+                )
+            subprocess.run(
+                shlex.split(
+                    f"{sys.executable} -m pytest --doctest-modules "
+                    f"--doctest-continue-on-failure -n {num_workers} "
+                    f"--pyargs {name}",
+                    posix=IS_POSIX,
+                )
+            )
         case "quick":
             subprocess.run(
                 shlex.split(
