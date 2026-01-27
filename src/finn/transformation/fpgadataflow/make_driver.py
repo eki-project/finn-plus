@@ -45,8 +45,8 @@ from typing import Dict, List, Optional, Tuple
 import finn.util
 from finn.builder.build_dataflow_config import FpgaMemoryType
 from finn.templates import get_templates_folder
-from finn.util.basic import make_build_dir
-from finn.util.data_packing import get_driver_shapes, to_external_tensor
+from finn.util.basic import get_driver_shapes, make_build_dir
+from finn.util.data_packing import to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
