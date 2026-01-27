@@ -1,5 +1,7 @@
 """Experiment manager for measurement workflows."""
 
+# This is used as a workaround because there is some bug with multiprocessing and h5py
+import h5py  # noqa
 import importlib.util
 import inspect
 import json
