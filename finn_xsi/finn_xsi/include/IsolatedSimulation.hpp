@@ -112,7 +112,7 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
     ) : Simulation<IStreamsSize, OStreamsSize, false>(
         kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs
     ), simState(*this), readyJson(json::array()), validJson(json::array()),
-    readylogName("readylog.txt"), validlogName("validlog") {
+    readylogName("readylog.txt"), validlogName("validlog.txt") {
         inJobSizes.resize(_istream_descs.size());
         outJobSizes.resize(_ostream_descs.size());
         std::transform(

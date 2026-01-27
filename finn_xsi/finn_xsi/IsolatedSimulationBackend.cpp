@@ -23,9 +23,7 @@ int main(int argc, const char* argv[]) {
         "xsim_log_file.txt",
         "trace_file.txt",
         RTLSimConfig::istream_descs,
-        RTLSimConfig::ostream_descs,
-        "readylog.txt",
-        "validlog.txt"
+        RTLSimConfig::ostream_descs
     );
 
 
@@ -51,7 +49,11 @@ int main(int argc, const char* argv[]) {
         std::mutex simMutex;
 
         // Command processing loop
+        std::size_t cycles = 0;
+        std::size_t statusSent = 0;
+        json response;
         while (true) {
+            response = json::object();
             // Read message
             std::cout << "Awaiting message..." << std::endl;
             auto request = server.receive_message();
@@ -61,9 +63,8 @@ int main(int argc, const char* argv[]) {
             }
 
             // Process message
-            std::size_t cycles = 0;
-            json response;
             std::string command = (*request)["command"];
+            std::cout << "[Received command] " << command << std::endl;
             if (command == "start") {
                 std::cout << "Starting simulation" << std::endl;
                 if (!simThread.has_value()) {
@@ -95,6 +96,8 @@ int main(int argc, const char* argv[]) {
             } else if (command == "stop") {
                 std::cout << "Stopping simulation." << std::endl;
                 std::lock_guard<std::mutex> guard(simMutex);
+                std::cout << "Final status: " << sim.getStatus() << std::endl;
+                std::cout << "Is done? " << sim.isDone() << std::endl;
                 sim.halt();
                 if (simThread.has_value()) {
                     simThread->request_stop();
@@ -111,9 +114,12 @@ int main(int argc, const char* argv[]) {
                 response["state"] = "halted";
                 server.send_message(response);
             } else if (command == "status") {
-                std::cout << "Sending status update." << std::endl;
+                std::cout << "[Sending] Sending status update " << statusSent + 1 << std::endl;
                 std::lock_guard<std::mutex> guard(simMutex);
-                server.send_message(sim.getStatus());
+                json status = sim.getStatus();
+                server.send_message(status);
+                statusSent++;
+                std::cout << "[Sending] Status " << statusSent << " update sent!" << std::endl;
             } else {
                 std::cout << "Unknown command " << command << std::endl;
                 std::cerr << "Unknown command " << command << std::endl;

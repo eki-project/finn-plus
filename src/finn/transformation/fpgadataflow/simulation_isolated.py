@@ -60,6 +60,7 @@ class NodeIsolatedSimulationController(SimulationController):
                 for binary in self.binaries:
                     futures.append(tpe.submit(self._run_binary, binary))
             tpe.shutdown(wait=True)
+        self.console.log("Thread pool closed. Closing sockets and postprocessing data")
         self._cleanup_sockets()
 
         # Read data
@@ -96,10 +97,6 @@ class NodeIsolatedSimulationController(SimulationController):
 
             # Main loop
             logfile.write("Beginning main loop\n")
-            logfile.write(
-                "totalCycles,inputCyclesDone,inputCyclesTarget,"
-                "outputCyclesDone,outputCyclesTarget\n"
-            )
             logfile.flush()
 
             while True:
@@ -107,12 +104,16 @@ class NodeIsolatedSimulationController(SimulationController):
                 logfile.write("Sending status request\n")
                 response = self._send_and_receive(proc_idx, "status", {})
                 if response is None:
-                    self.console.log(f"Empty response from {proc_idx} at {binary.parent}")
-                    logfile.write("Empty response. Returning.\n")
                     return None
                 state = response["state"]
                 if state == "done":
                     self.console.log(f"{process_index} is done and postprocessing data.")
+                    logfile.write("Received done status. Sending stop signal\n")
+                    resp = self._send_and_receive(proc_idx, "stop", {})
+                    if resp is None:
+                        logfile.write("No stop response received.\n")
+                    else:
+                        logfile.write("Stop successfully received: " + str(resp))
                     return self.postprocess_logs(binary.parent)
 
                 # TODO: Order seems wrong
@@ -362,6 +363,12 @@ class RunLayerIsolatedSimulation(Transformation):
                             f"ready/valid signal) is neither 0 nor 1: "
                             f"Key: {key}, Value: {cycle_data[key]}"
                         )
+        # 6. Data is not empty
+        for layer, ldata in data.items():
+            if len(ldata["ready"]) == 0:
+                raise FINNInternalError(f"Layer {layer} has no ready data!")
+            if len(ldata["valid"]) == 0:
+                raise FINNInternalError(f"Layer {layer} has no valid data!")
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Run isolated layer simulations."""
