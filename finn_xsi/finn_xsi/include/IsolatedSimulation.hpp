@@ -84,11 +84,9 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
         j["totalCycles"] = simState.totalCycles;
         j["inputCyclesDone"] = simState.inputCyclesDone;
         j["inputCyclesTarget"] = simState.inputCyclesTarget;
-        j["ready"] = json::object();
-        std::transform(this->istreams.begin(), this->istreams.end(), j["ready"].begin(), [](S_AXIS_Control& s) {
-            return s.getInputReady();
-        });
-        readyJson.push_back(j);
+        for (S_AXIS_Control& s : this->istreams) {
+            j[s.name] = s.getInputReady();
+        }
     }
 
     void logValid() {
@@ -96,11 +94,9 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
         j["totalCycles"] = simState.totalCycles;
         j["outputCyclesDone"] = simState.outputCyclesDone;
         j["outputCyclesTarget"] = simState.outputCyclesTarget;
-        j["valid"] = json::object();
-        std::transform(this->ostreams.begin(), this->ostreams.end(), j["valid"].begin(), [](M_AXIS_Control& s) {
-            return s.getOutputValid();
-        });
-        validJson.push_back(j);
+        for (M_AXIS_Control& s : this->ostreams) {
+            j[s.name] = s.getOutputValid();
+        }
     }
 
     SimState simState;
