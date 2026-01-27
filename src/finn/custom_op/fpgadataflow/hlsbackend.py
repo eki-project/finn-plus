@@ -28,17 +28,13 @@
 
 """HLS backend implementation for FINN custom operations."""
 
-try:
-    import finn_xsi.adapter as finnxsi
-except ModuleNotFoundError:
-    finnxsi = None
-
 import numpy as np
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from qonnx.core.datatype import DataType
 
+from finn import xsi
 from finn.custom_op.fpgadataflow import templates
 from finn.templates import get_templates_folder
 from finn.util.basic import CppBuilder, launch_process_helper, make_build_dir
@@ -47,6 +43,8 @@ from finn.util.deps import get_deps_path
 from finn.util.exception import FINNError, FINNUserError
 from finn.util.hls import CallHLS
 from finn.util.logging import log
+
+finnxsi = xsi if xsi.is_available() else None
 
 
 class HLSBackend(ABC):

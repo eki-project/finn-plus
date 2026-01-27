@@ -72,6 +72,7 @@ NUMPY_REFERENCES = {
     "ElementwiseBitwiseAnd": np.bitwise_and,
     "ElementwiseBitwiseOr": np.bitwise_or,
     "ElementwiseBitwiseXor": np.bitwise_xor,
+    "ElementwiseMax": np.maximum,
     # TODO: "ElementwiseBitShift": np.left_shift / np.right_shift
     # TODO: "ElementwisePow": np.power
 }
