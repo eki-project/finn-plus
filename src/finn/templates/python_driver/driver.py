@@ -32,6 +32,7 @@ class FINNDMAOverlay(Overlay):
         device=None,
         download=True,
         runtime_weight_dir="runtime_weights/",
+        validation_dataset=None,
         **kwargs,
     ):
         """Initialize the FINN accelerator.
@@ -63,6 +64,7 @@ class FINNDMAOverlay(Overlay):
         self.platform = platform
         self.batch_size = batch_size
         self.fclk_mhz = fclk_mhz
+        self.validation_dataset = validation_dataset
         self.idma = []
         self.odma = []
         self.odma_handle = []
@@ -515,7 +517,7 @@ class FINNDMAOverlay(Overlay):
 
     def validate(self, *args, **kwargs):
         """Validate accelerator accuracy on dataset."""
-        dataset = kwargs.get("dataset_name")
+        validation_dataset = kwargs.get("validation_dataset", self.validation_dataset)
         dataset_root = kwargs.get(
             "dataset_root", os.path.join(os.path.dirname(os.path.realpath(__file__)), "validate")
         )
@@ -528,7 +530,7 @@ class FINNDMAOverlay(Overlay):
             if dataset_root in sys.path:
                 sys.path.remove(dataset_root)
 
-        run_validate.run_validate(dataset, self, *args, **kwargs)
+        run_validate.run_validate(validation_dataset, self, *args, **kwargs)
 
     def idle(self, *args, **kwargs):
         """Run idle for specified time."""
@@ -1059,6 +1061,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         device=None,
         download=True,
         runtime_weight_dir="runtime_weights/",
+        validation_dataset=None,
         batch_size=1,
         seed=1,
         **kwargs,
@@ -1072,6 +1075,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             device=device,
             download=download,
             runtime_weight_dir=runtime_weight_dir,
+            validation_dataset=validation_dataset,
             batch_size=batch_size,
             seed=seed,
         )
@@ -1107,6 +1111,10 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         """Run instrumentation experiment (instrumentation mode)."""
         self.set_current_mode("instr")
         return super().experiment_instrumentation(**kwargs)
+
+    def validate(self, *args, **kwargs):
+        self.set_current_mode("dma")
+        return super().validate(*args, **kwargs)
 
 
 def parse_kv(ctx, self, value):
