@@ -42,6 +42,7 @@ class PAF:
         global _ffi
         global _paf
 
+        board = board.lower()
         if board not in PAF.supported_boards:
             raise ValueError(
                 f"Board '{board}' not supported yet. Please choose one of the supported boards: {PAF.supported_boards}. Alternatively implement the needed dirver."

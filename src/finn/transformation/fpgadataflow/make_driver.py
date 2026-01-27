@@ -543,6 +543,7 @@ class MakePYNQDriver(Transformation):
         clk_period_ns=None,
         validation_datset=None,
         experiment_info=None,
+        board=None,
     ):
         """Initialize PYNQ driver generation.
 
@@ -560,6 +561,7 @@ class MakePYNQDriver(Transformation):
         self.clk_period_ns = clk_period_ns
         self.validation_datset = validation_datset
         self.experiment_info = experiment_info
+        self.board = board
 
     def _generate_driver_files(self, model):
         """Generate PYNQ driver base files."""
@@ -746,6 +748,9 @@ class MakePYNQDriver(Transformation):
 
         if self.validation_datset is not None:
             driver_information["validation_dataset"] = self.validation_datset
+
+        if self.board is not None and "board" not in experiment_information["global"]["PAF"]:
+            experiment_information["global"]["PAF"]["board"] = self.board
 
         settings = {
             "driver_information": driver_information,
