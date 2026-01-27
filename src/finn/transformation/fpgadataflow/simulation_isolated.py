@@ -365,14 +365,14 @@ class RunLayerIsolatedSimulation(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Run isolated layer simulations."""
-        sim = Simulation(
+        sim = IsolatedSimulation(
             model,
             SimulationType.NODE_BASED_ISOLATED,
             self.fpgapart,
             self.clk_ns,
             self.functional_sim,
         )
-        data: IsoSimLogDataByLayer = sim.simulate_node_isolated()
+        data: IsoSimLogDataByLayer = sim.simulate()
         self.sanity_check_logged_data(data)
         in_fifo_upper_bound = self.calculate_upper_bounds(data)
         formatted_upper_bounds = "\n\t".join(

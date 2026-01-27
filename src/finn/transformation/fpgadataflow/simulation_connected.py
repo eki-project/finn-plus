@@ -346,7 +346,7 @@ class NodeConnectedSimulationController(SimulationController):
                 return None
 
 
-class IsolatedSimulation(Simulation):
+class NodeConnectedSimulation(Simulation):
     def __init__(
         self,
         model: ModelWrapper,
@@ -423,7 +423,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Run layer parallel simulations."""
-        sim = Simulation(
+        sim = NodeConnectedSimulation(
             model,
             SimulationType.NODE_BASED_CONNECTED,
             self.fpgapart,
@@ -542,9 +542,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         test_depths = [row[:] for row in baseline_depths]  # Deep copy from baseline
         test_depths[node_idx][fifo_idx] = test_depth
 
-        new_data, timeout = sim.simulate_node_connected(
-            test_depths, max_cycles=math.ceil(sim_cycles * 1.1)
-        )
+        new_data, timeout = sim.simulate(test_depths, max_cycles=math.ceil(sim_cycles * 1.1))
 
         if timeout:
             return False, True
