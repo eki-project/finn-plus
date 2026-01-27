@@ -81,6 +81,7 @@ int main(int argc, const char* argv[]) {
                             sim.simulate(false);
                             ++cycles;
                             if (sim.isDone()) {
+                                sim.commitLogsToDisk(true);
                                 break;
                             }
                         }
@@ -98,6 +99,7 @@ int main(int argc, const char* argv[]) {
                 if (simThread.has_value()) {
                     simThread->request_stop();
                 }
+                sim.commitLogsToDisk(true);
                 response["state"] = "stopped";
                 server.send_message(response);
             } else if (command == "pause") {

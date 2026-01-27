@@ -5,28 +5,12 @@
 template<size_t IStreamsSize, size_t OStreamsSize>
 class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> {
     enum class LogType {READY, VALID};
-    std::ofstream readyLog; // Input side
-    std::ofstream validLog; // Output side
+    std::string readylogName;
+    std::string validlogName;
+    json readyJson;
+    json validJson;
     std::vector<size_t> inJobSizes;
     std::vector<size_t> outJobSizes;
-
-
-    /**
-     * Write CSV style headers to the files
-     **/
-    void writeLogHeaders() {
-        readyLog << "totalCycles,inputCycles,doubled_targetInputCycles";
-        for (S_AXIS_Control& s: this->istreams) {
-            readyLog << "," << s.name;
-        }
-        readyLog << std::endl;
-        validLog << "totalCycles,outputCycles,doubled_targetOutputCycles";
-        for (M_AXIS_Control& s : this->ostreams) {
-            validLog << "," << s.name;
-        }
-        validLog << std::endl;
-    }
-
 
     /**
      * For the given streams check which has the largest job size, and return a tuple
@@ -93,19 +77,33 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
         }
     };
 
+
+    /** Log the ready and valid signals to the JSON fields **/
+    void logReady() {
+        json j;
+        j["totalCycles"] = simState.totalCycles;
+        j["inputCyclesDone"] = simState.inputCyclesDone;
+        j["inputCyclesTarget"] = simState.inputCyclesTarget;
+        j["ready"] = json::object();
+        std::transform(this->istreams.begin(), this->istreams.end(), j["ready"].begin(), [](S_AXIS_Control& s) {
+            return s.getInputReady();
+        });
+        readyJson.push_back(j);
+    }
+
+    void logValid() {
+        json j;
+        j["totalCycles"] = simState.totalCycles;
+        j["outputCyclesDone"] = simState.outputCyclesDone;
+        j["outputCyclesTarget"] = simState.outputCyclesTarget;
+        j["valid"] = json::object();
+        std::transform(this->ostreams.begin(), this->ostreams.end(), j["valid"].begin(), [](M_AXIS_Control& s) {
+            return s.getOutputValid();
+        });
+        validJson.push_back(j);
+    }
+
     SimState simState;
-
-    inline void writeLogEntryReady () {
-        readyLog << simState.getCycleStateInput();
-        for (S_AXIS_Control& s : this->istreams) { readyLog << "," << s.getInputReady(); }
-        readyLog << std::endl;
-    }
-
-    inline void writeLogEntryValid() {
-        validLog << simState.getCycleStateOutput();
-        for (M_AXIS_Control& s : this->ostreams) { validLog << "," << s.getOutputValid(); }
-        validLog << std::endl;
-    }
 
     public:
     IsolatedSimulation(
@@ -114,12 +112,11 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
         const char* xsim_log_file,
         const char* trace_file,
         std::array<StreamDescriptor, IStreamsSize> _istream_descs,
-        std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
-        const std::string readyLogPath,
-        const std::string validLogPath
+        std::array<StreamDescriptor, OStreamsSize> _ostream_descs
     ) : Simulation<IStreamsSize, OStreamsSize, false>(
         kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs
-    ), readyLog(readyLogPath), validLog(validLogPath), simState(*this) {
+    ), simState(*this), readyJson(json::array()), validJson(json::array()),
+    readylogName("readylog.txt"), validlogName("validlog") {
         inJobSizes.resize(_istream_descs.size());
         outJobSizes.resize(_ostream_descs.size());
         std::transform(
@@ -134,8 +131,22 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
             outJobSizes.begin(),
             [](StreamDescriptor& s) { return s.job_size; }
         );
-        writeLogHeaders();
     }
+
+    /** Write logs to disk **/
+    void commitLogsToDisk(bool clearLogs = true) {
+        std::ofstream r(readylogName);
+        std::ofstream v(validlogName);
+        r << std::setw(4) << readyJson;
+        v << std::setw(4) << validJson;
+        r.close();
+        v.close();
+        if (clearLogs) {
+            readyJson = json::array();
+            validJson = json::array();
+        }
+    }
+
 
     json getStatus() {
         return simState.getStatus();
@@ -179,8 +190,8 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
             return;
         }
         if (!simState.allCyclesProcessed()) {
-            writeLogEntryReady();
-            writeLogEntryValid();
+            logValid();
+            logReady();
 
             if (!simState.inputCyclesProcessed() && this->istreams[simState.inputLargestStreamIndex].getInputReady()) {
                 ++simState.inputCyclesDone;

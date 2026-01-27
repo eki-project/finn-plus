@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from onnx.onnx_ml_pb2 import NodeProto
 
 FIFODepthConfig: TypeAlias = dict[int, dict[str, str | list[int]]]
-IsoLayerSimData = NodeIsolatedSimulationController.IsolatedSimReturnType
-IsoSimData = dict[str, IsoLayerSimData]  # Indexed by layer name
+IsoSimLogData = NodeIsolatedSimulationController.IsolatedSimLogData
+IsoSimLogDataByLayer = dict[str, IsoSimLogData]  # Indexed by layer name
 
 
 class Simulation:
@@ -134,7 +134,7 @@ class Simulation:
         json.dump(data, output_json.open("w"), indent=4)
         return data, merged_data.get("timeout_occurred", False)
 
-    def simulate_node_isolated(self) -> dict[str, IsoLayerSimData]:
+    def simulate_node_isolated(self) -> IsoSimLogDataByLayer:
         """Simulate isolated nodes."""
         if self.simulation_type != SimulationType.NODE_BASED_ISOLATED:
             raise FINNInternalError(
@@ -823,54 +823,83 @@ class RunLayerIsolatedSimulation(Transformation):
         self.clk_ns = clk_ns
         self.functional_sim = functional_sim
 
-    def calculate_upper_bounds(self, data: IsoSimData) -> dict[str, list[int]]:
+    def calculate_upper_bounds(self, data: IsoSimLogDataByLayer) -> dict[str, dict[str, int]]:
         """Try to calculate an upper bound for the incoming FIFO size of the layers.
-        Return size indexed by node name.
+        Return size indexed by layer name and stream name.
 
         >>> step = RunLayerIsolatedSimulation("", 0.0, False)
-        >>> bounds = step.calculate_upper_bounds(
-        ... {"A": {"ready": [(0, 10, [1,1,0]), (1, 10, [0,0,0]), (2, 10, [1,0,0])]},
-        ... "B": {"ready": [(0, 10, [1]), (1, 10, [0]), (2, 10, [0])]}})
+        >>> bounds = step.calculate_upper_bounds({
+        ... "A": {
+        ...         "ready": [
+        ...             {"totalCycles": 43, "inputCyclesDone": 12,
+        ...             "inputCyclesTarget": 24, "s_axi_0": 1, "s_axi_1": 0},
+        ...             {"totalCycles": 44, "inputCyclesDone": 13,
+        ...             "inputCyclesTarget": 24, "s_axi_0": 0, "s_axi_1": 0},
+        ...         ], "valid": []
+        ... },
+        ... "B": {
+        ...         "ready": [
+        ...             {"totalCycles": 100, "inputCyclesDone": 3,
+        ...             "inputCyclesTarget": 10, "s_axi_0": 1, "s_axi_1": 1,
+        ...             "s_axi_2": 0},
+        ...         ], "valid": []
+        ... },
+        ... "C": {
+        ...         "ready": [
+        ...             {"totalCycles": 43, "inputCyclesDone": 14,
+        ...             "inputCyclesTarget": 24, "s_axi_0": 1, "s_axi_1": 0},
+        ...             {"totalCycles": 44, "inputCyclesDone": 15,
+        ...             "inputCyclesTarget": 24, "s_axi_0": 0, "s_axi_1": 0},
+        ...         ], "valid": []
+        ... }
+        ... })
         >>> bounds["A"]
-        [1, 2, 3]
+        {'s_axi_0': 1, 's_axi_1': 2}
         >>> bounds["B"]
-        [2]
+        {'s_axi_0': 0, 's_axi_1': 0, 's_axi_2': 1}
+        >>> bounds["C"]
+        {'s_axi_0': 0, 's_axi_1': 0}
         """
-        # First get the input ready signals of all layers
-        # TODO: We assume that every cycle gets recorded here
 
-        # How many input channels each layer has
-        input_channel_count: dict[str, int] = {}
-        for name in data.keys():
-            input_channel_count[name] = len(data[name]["ready"][0][2])
+        # TODO: Proper pytest tests
+        def _any_ready(cycle_data: dict[str, int]) -> bool:
+            for key in cycle_data.keys():
+                if (
+                    key not in ["totalCycles", "inputCyclesDone", "inputCyclesTarget"]
+                    and cycle_data[key] == 1
+                ):
+                    return True
+            return False
 
-        # Map layer name to ready signals:
-        # {"Layer1": [[1], [0], [1], ...], ...}
-        readies: dict[str, list[list[int]]] = {
-            name: [line[2] for line in data[name]["ready"]] for name in data.keys()
-        }
-
-        # Calculate the count of _not_ ready cycles between the
-        # first ready and the first ready of the second sample
-        # TODO: Currently we simply divide target cycles by 2, since
-        # TODO: this is multiplied on the C++ side, but this may change in the
-        # TODO: future
-        cycles_per_sample: dict[str, int] = {}
-        for name in data.keys():
-            cycles: int = int(data[name]["ready"][0][1])
-            cycles_per_sample[name] = cycles
-            if cycles % 2 != 0:
-                raise FINNInternalError(
-                    f"Layer {name} has an odd number "
-                    f"of ready cycles per sample. This points "
-                    f"towards a change in the C++ version, "
-                    f"since we currently assume that the number "
-                    f"we get here is twice the number per sample "
-                    f"(since we want to simulate 2 samples). "
-                    f"Getting this error might indicate that this "
-                    f"has to be fixed."
-                )
-            cycles_per_sample[name] = int(cycles / 2)
+        results: dict[str, dict[str, int]] = {}
+        for layer in data.keys():
+            # Save all keys that are not
+            results[layer] = {
+                stream_name: 0
+                for stream_name in data[layer]["ready"][0].keys()
+                if stream_name not in ["inputCyclesDone", "inputCyclesTarget", "totalCycles"]
+            }
+            for cycle_data in data[layer]["ready"]:
+                if cycle_data["inputCyclesDone"] > int(
+                    cycle_data["inputCyclesTarget"] / 2
+                ) and _any_ready(cycle_data):
+                    break
+                for stream_name in results[layer].keys():
+                    # TODO: Currently on the C++ side we multiply the
+                    # TODO: target cycles by 2, to get two samples
+                    # TODO: We keep track of ready signals until we see
+                    # TODO: the first ready after half of all cycles were seen.
+                    # TODO: This might change in the future
+                    if cycle_data["inputCyclesTarget"] % 2 != 0:
+                        raise FINNInternalError(
+                            f"An 'inputCyclesTarget' of layer {layer} seems "
+                            f"to not be an even number. Currently, we double "
+                            f"the target simulation cycles for every layer "
+                            f"on the C++ side. This error may point towards "
+                            f"a change on the C++ side, which may cause the "
+                            f"need to update this function accordingly!"
+                        )
+                    results[layer][stream_name] += int(cycle_data[stream_name] == 0)
 
         # TODO: This calculation assumes, that if the producer does NOT fire the entire time,
         # TODO: the consumer can read at least at the same speed as
@@ -878,16 +907,103 @@ class RunLayerIsolatedSimulation(Transformation):
         # TODO: (Since this would mean that less data pressure from
         #       the producer makes the consumer _slower_.)
         # TODO: This should usually be the case, but is important to keep in mind.
-        non_ready_cycles = {}
-        for name in data.keys():
-            non_ready_cycles[name] = [0] * input_channel_count[name]
-            # State of all axi ready signals in a given cycle
-            for axi_stream_ready_list in readies[name]:
-                # Count all 0
-                # Example: [1,1,0] would mean streams 0 and 1 are ready, stream 2 is not
-                for i, rdy in enumerate(axi_stream_ready_list):
-                    non_ready_cycles[name][i] += int(rdy == 0)
-        return non_ready_cycles
+        return results
+
+    def sanity_check_logged_data(self, data: IsoSimLogDataByLayer) -> None:
+        """Do checks on the returned data to make sure it is in spec.
+
+        A correctly formatted example would be:
+        >>> data = {
+        ...     "layer1": {
+        ...         "ready": [{"totalCycles": 10, "inputCyclesDone": 5,
+        ...                 "inputCyclesTarget": 10, "s_axi0_ready": 1}],
+        ...         "valid": [{"totalCycles": 10, "outputCyclesDone": 5,
+        ...                 "outputCyclesTarget": 10, "m_axi0_valid": 1}]
+        ...     }
+        ... }
+        >>> sim = RunLayerIsolatedSimulation("", 0.0, False)
+        >>> sim.sanity_check_logged_data(data)
+        >>>
+        """
+        # 0. Valid and ready are present
+        for layer, ldata in data.items():
+            if "valid" not in ldata.keys():
+                raise FINNInternalError(
+                    f"Simulation log data of layer " f"{layer} is missing the VALID log."
+                )
+            if "ready" not in ldata.keys():
+                raise FINNInternalError(
+                    f"Simulation log data of layer " f"{layer} is missing the READY log."
+                )
+        # 1. All cycle datas are uniform and have at least one stream signal
+        for layer, ldata in data.items():
+            cycle_data = ldata["ready"] + ldata["valid"]
+            lengths: set[int] = {len(cycle.keys()) for cycle in cycle_data}
+            if len(lengths) != 1:
+                raise FINNInternalError(
+                    f"Simulation log data inconsistent for layer "
+                    f"{layer}. Differing number of fields per cycle."
+                )
+            if next(iter(lengths)) < 4:
+                raise FINNInternalError(
+                    f"Simulation for layer {layer} must contain "
+                    f"atleast 4 fields (total cycles, AXI cycles "
+                    f"done, AXI cycles target and at least one AXI "
+                    f"ready/valid signal)!"
+                )
+        # 2. All ready logs contain the required keywords
+        readykeys = ["inputCyclesDone", "inputCyclesTarget", "totalCycles"]
+        for rlayer, rdata in data.items():
+            for cycle in rdata["ready"]:
+                if any(keyword not in cycle.keys() for keyword in readykeys):
+                    raise FINNInternalError(
+                        f"Simulation READY log of layer {rlayer} "
+                        f"contains cycles that are missing a required key."
+                    )
+                if any(key not in readykeys and "axi" not in key for key in cycle.keys()):
+                    raise FINNInternalError(
+                        f"In the READY simulation log of layer "
+                        f"{rlayer} there seem to be fields that "
+                        f"are not expected keywords or AXI streams!"
+                    )
+        # 3. All valid logs contain the required keywords
+        validkeys = ["outputCyclesDone", "outputCyclesTarget", "totalCycles"]
+        for vlayer, vdata in data.items():
+            for cycle in vdata["valid"]:
+                if any(keyword not in cycle.keys() for keyword in validkeys):
+                    raise FINNInternalError(
+                        f"Simulation VALID log of layer {vlayer} "
+                        f"contains cycles that are missing a required key."
+                    )
+                if any(key not in validkeys and "axi" not in key for key in cycle.keys()):
+                    raise FINNInternalError(
+                        f"In the VALID simulation log of layer "
+                        f"{vlayer} there seem to be fields that "
+                        f"are not expected keywords or AXI streams!"
+                    )
+        # 4. Cycles done can never be larger then the number of total cycles passed in the sim
+        for layer, cdata in data.items():
+            for line in cdata["ready"] + cdata["valid"]:
+                if (
+                    "inputCyclesDone" in line.keys()
+                    and line["inputCyclesDone"] > line["totalCycles"]
+                ):
+                    raise FINNInternalError(
+                        f"Simulation log of layer {layer} looks incorrect: "
+                        f"Number of active receiving cycles "
+                        f"({line['inputCyclesDone']}) larger than number of "
+                        f"total cycles passed ({line['totalCycles']})."
+                    )
+                if (
+                    "outputCyclesDone" in line.keys()
+                    and line["outputCyclesDone"] > line["totalCycles"]
+                ):
+                    raise FINNInternalError(
+                        f"Simulation log of layer {layer} looks incorrect: "
+                        f"Number of active producing cycles "
+                        f"({line['outputCyclesDone']}) larger than number of "
+                        f"total cycles passed ({line['totalCycles']})."
+                    )
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Run isolated layer simulations."""
@@ -898,7 +1014,8 @@ class RunLayerIsolatedSimulation(Transformation):
             self.clk_ns,
             self.functional_sim,
         )
-        data: dict[str, IsoLayerSimData] = sim.simulate_node_isolated()
+        data: IsoSimLogDataByLayer = sim.simulate_node_isolated()
+        self.sanity_check_logged_data(data)
         in_fifo_upper_bound = self.calculate_upper_bounds(data)
         formatted_upper_bounds = "\n\t".join(
             [f"{name}: {in_fifo_upper_bound[name]}" for name in in_fifo_upper_bound.keys()]

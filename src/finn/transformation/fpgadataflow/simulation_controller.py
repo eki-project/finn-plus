@@ -339,7 +339,7 @@ class SimulationController:
 class NodeIsolatedSimulationController(SimulationController):
     """Run simulations for node isolated cases."""
 
-    IsolatedSimReturnType = dict[Literal["valid", "ready"], list[tuple[int, int, list[int]]]]
+    IsolatedSimLogData = dict[Literal["ready", "valid"], list[dict[str, int]]]
 
     def __init__(
         self,
@@ -356,27 +356,23 @@ class NodeIsolatedSimulationController(SimulationController):
         )
         self.console.log("Started simulation controller")
 
-    def _postprocess_logs(
+    def postprocess_logs(
         self, d: Path, readylog_name: str = "readylog.txt", validlog_name: str = "validlog.txt"
-    ) -> IsolatedSimReturnType:
+    ) -> IsolatedSimLogData:
         """Recieve the directory containing a binary and the simulation logs.
-        If no logs are found raises an error, otherwise return the postprocessed logs:
-        {<cycle>: (<processed_cycle>, <total_cycles>, [<axi-stream-ready/valid>, ...]), ...}
-        """  # noqa
+        If no logs are found raises an error, otherwise return the postprocessed logs
+        read from JSON.
+        """
         readylog = d / readylog_name
         validlog = d / validlog_name
         if not readylog.exists() or not validlog.exists():
             raise FINNInternalError(f"Could not find simulation logs at {readylog} and {validlog}")
-        readylines = readylog.read_text().splitlines()[1:]
-        validlines = validlog.read_text().splitlines()[1:]
-        readydata = [[int(elem) for elem in line.split(",")] for line in readylines if line != ""]
-        validdata = [[int(elem) for elem in line.split(",")] for line in validlines if line != ""]
         return {
-            "ready": [(line[1], line[2], line[3:]) for line in readydata],
-            "valid": [(line[1], line[2], line[3:]) for line in validdata],
+            "ready": json.loads(readylog.read_text()),
+            "valid": json.loads(validlog.read_text()),
         }
 
-    def run(self) -> dict[str, IsolatedSimReturnType]:
+    def run(self) -> dict[str, IsolatedSimLogData]:
         """Run a node isolated simulation and return the collected
         input ready / output valid data, indexed based on node names."""
         futures: list[Future] = []
@@ -388,7 +384,7 @@ class NodeIsolatedSimulationController(SimulationController):
         self._cleanup_sockets()
 
         # Read data
-        data: dict[str, self.IsolatedSimReturnType] = {}
+        data: dict[str, self.IsolatedSimLogData] = {}
         invalid = []
         for i, future in enumerate(futures):
             data[self.names[i]] = future.result()
@@ -400,7 +396,7 @@ class NodeIsolatedSimulationController(SimulationController):
             )
         return data
 
-    def _run_binary(self, binary: Path) -> IsolatedSimReturnType | None:
+    def _run_binary(self, binary: Path) -> IsolatedSimLogData | None:
         """Run simulation. Returning None if connection is lost."""
         process_index = self.binaries.index(binary)
         with (
@@ -432,12 +428,13 @@ class NodeIsolatedSimulationController(SimulationController):
                 logfile.write("Sending status request\n")
                 response = self._send_and_receive(proc_idx, "status", {})
                 if response is None:
+                    self.console.log(f"Empty response from {proc_idx} at {binary.parent}")
                     logfile.write("Empty response. Returning.\n")
                     return None
                 state = response["state"]
                 if state == "done":
                     self.console.log(f"{process_index} is done and postprocessing data.")
-                    return self._postprocess_logs(binary.parent)
+                    return self.postprocess_logs(binary.parent)
 
                 # TODO: Order seems wrong
                 logfile.write(
