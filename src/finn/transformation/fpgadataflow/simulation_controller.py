@@ -203,8 +203,9 @@ class SimulationController:
         """
         sock, _ = self.sockets[process_idx]
 
-        # Set 10 second timeout to prevent deadlocks
-        sock.settimeout(10.0)
+        # Set 120 second timeout to prevent deadlocks
+        # Needs to be rather larger to give the simulation IO thread time to answer
+        sock.settimeout(120.0)
 
         # Read 4-byte length prefix
         length_bytes = sock.recv(4)

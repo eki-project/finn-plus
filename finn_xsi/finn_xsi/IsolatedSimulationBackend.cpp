@@ -1,11 +1,20 @@
 #include <IsolatedSimulation.hpp>
 #include <boost/program_options.hpp>
 #include <SocketServer.h>
+#include <chrono>
 #include <rtlsim_config.hpp>
 #include <thread>
 
 namespace po = boost::program_options;
 
+
+std::string getTime() {
+    auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    auto formatted = std::put_time(std::localtime(&now), "[%T]");
+    std::stringstream ss;
+    ss << formatted;
+    return ss.str();
+}
 
 
 int main(int argc, const char* argv[]) {
@@ -55,25 +64,25 @@ int main(int argc, const char* argv[]) {
         while (true) {
             response = json::object();
             // Read message
-            std::cout << "Awaiting message..." << std::endl;
+            std::cout << getTime() << " Awaiting message..." << std::endl;
             auto request = server.receive_message();
             if (!request.has_value()) {
-                std::cout << "Connection closed or error occurred" << std::endl;
+                std::cout << getTime() << " Connection closed or error occurred" << std::endl;
                 break;
             }
 
             // Process message
             std::string command = (*request)["command"];
-            std::cout << "[Received command] " << command << std::endl;
+            std::cout << getTime() << " [Received command] " << command << std::endl;
             if (command == "start") {
-                std::cout << "Starting simulation" << std::endl;
+                std::cout << getTime() << " Starting simulation" << std::endl;
                 if (!simThread.has_value()) {
                     simThread = std::jthread([&sim, &simMutex, &cycles](std::stop_token stop) {
                         {
                             std::lock_guard<std::mutex> guard(simMutex);
                             sim.simulate(true);
                         }
-                        std::cout << "Simulation initialized. Going into main loop." << std::endl;
+                        std::cout << getTime() << " Simulation initialized. Going into main loop." << std::endl;
                         while (!stop.stop_requested()) {
                             std::lock_guard<std::mutex> guard(simMutex);
                             if (cycles % 10000 == 0) {
@@ -82,7 +91,11 @@ int main(int argc, const char* argv[]) {
                             sim.simulate(false);
                             ++cycles;
                             if (sim.isDone()) {
-                                sim.commitLogsToDisk(true);
+                                // For now do not clean up the JSON logs, as this is
+                                // done by the "stop" command from the python side of things.
+                                // TODO: However this should be changed when the communication is
+                                // rewritten
+                                sim.commitLogsToDisk(false);
                                 break;
                             }
                         }
@@ -94,10 +107,10 @@ int main(int argc, const char* argv[]) {
                 response["state"] = "running";
                 server.send_message(response);
             } else if (command == "stop") {
-                std::cout << "Stopping simulation." << std::endl;
+                std::cout << getTime() << " Stopping simulation." << std::endl;
                 std::lock_guard<std::mutex> guard(simMutex);
-                std::cout << "Final status: " << sim.getStatus() << std::endl;
-                std::cout << "Is done? " << sim.isDone() << std::endl;
+                std::cout << getTime() << " Final status: " << sim.getStatus() << std::endl;
+                std::cout << getTime() << " Is done? " << sim.isDone() << std::endl;
                 sim.halt();
                 if (simThread.has_value()) {
                     simThread->request_stop();
@@ -106,7 +119,7 @@ int main(int argc, const char* argv[]) {
                 response["state"] = "stopped";
                 server.send_message(response);
             } else if (command == "pause") {
-                std::cout << "Pausing simulation." << std::endl;
+                std::cout << getTime() << " Pausing simulation." << std::endl;
                 std::lock_guard<std::mutex> guard(simMutex);
                 if (simThread.has_value()) {
                     simThread->request_stop();
@@ -114,14 +127,14 @@ int main(int argc, const char* argv[]) {
                 response["state"] = "halted";
                 server.send_message(response);
             } else if (command == "status") {
-                std::cout << "[Sending] Sending status update " << statusSent + 1 << std::endl;
+                std::cout << getTime() << " [Sending] Sending status update " << statusSent + 1 << std::endl;
                 std::lock_guard<std::mutex> guard(simMutex);
                 json status = sim.getStatus();
                 server.send_message(status);
                 statusSent++;
-                std::cout << "[Sending] Status " << statusSent << " update sent!" << std::endl;
+                std::cout << getTime() << " [Sending] Status " << statusSent << " update sent!" << std::endl;
             } else {
-                std::cout << "Unknown command " << command << std::endl;
+                std::cout << getTime() << " Unknown command " << command << std::endl;
                 std::cerr << "Unknown command " << command << std::endl;
                 response["state"] = "unknown_command";
                 server.send_message(response);

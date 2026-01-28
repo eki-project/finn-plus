@@ -87,6 +87,7 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
         for (S_AXIS_Control& s : this->istreams) {
             j[s.name] = s.getInputReady();
         }
+        readyJson.push_back(j);
     }
 
     void logValid() {
@@ -97,6 +98,7 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
         for (M_AXIS_Control& s : this->ostreams) {
             j[s.name] = s.getOutputValid();
         }
+        validJson.push_back(j);
     }
 
     SimState simState;
@@ -131,10 +133,12 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
 
     /** Write logs to disk **/
     void commitLogsToDisk(bool clearLogs = true) {
-        std::ofstream r(readylogName);
-        std::ofstream v(validlogName);
+        std::ofstream r(readylogName, std::ios::trunc);
+        std::ofstream v(validlogName, std::ios::trunc);
         r << std::setw(4) << readyJson;
+        std::cout << "Writing ready log: " << readyJson.size() << " elements." << std::endl;
         v << std::setw(4) << validJson;
+        std::cout << "Writing valid log: " << validJson.size() << " elements." << std::endl;
         r.close();
         v.close();
         if (clearLogs) {
@@ -142,7 +146,6 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
             validJson = json::array();
         }
     }
-
 
     json getStatus() {
         return simState.getStatus();

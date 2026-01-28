@@ -1,8 +1,9 @@
 """Simulating layers on their own to observe their behaviour."""
+import io
 import json
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from pathlib import Path
+from pathlib import Path, PosixPath, PurePath
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from rich.console import Console
@@ -13,6 +14,10 @@ from finn.transformation.fpgadataflow.simulation_build import SimulationType
 from finn.transformation.fpgadataflow.simulation_controller import SimulationController
 from finn.util.exception import FINNInternalError
 from finn.util.logging import DisabledLoggingConsole, log
+
+
+def get_time() -> str:
+    return f"[{time.strftime('%H:%M:%S')}]"
 
 
 class NodeIsolatedSimulationController(SimulationController):
@@ -35,6 +40,24 @@ class NodeIsolatedSimulationController(SimulationController):
         )
         self.console.log("Started simulation controller")
 
+    def get_logfile_path(self, binary_or_idx: Path | int) -> Path:
+        """Get the logfile for the given binary or process index."""
+        if type(binary_or_idx) is int:
+            return (
+                self.logdir / f"{binary_or_idx}_log_isolated_"
+                f"{self.names[binary_or_idx]}_python.txt"
+            )
+        elif type(binary_or_idx) in [Path, PurePath, PosixPath]:  # noqa
+            process_idx = self.binaries.index(binary_or_idx)
+            return self.logdir / f"{process_idx}_log_isolated_{self.names[process_idx]}_python.txt"
+        raise TypeError("Pass either a simulation binary path of an index")
+
+    def write_log(self, logfile: io.TextIOWrapper, msg: str, flush: bool = True) -> None:
+        """Write a timestamped message to log."""
+        logfile.write(f"{get_time()} {msg}\n")
+        if flush:
+            logfile.flush()
+
     def postprocess_logs(
         self, d: Path, readylog_name: str = "readylog.txt", validlog_name: str = "validlog.txt"
     ) -> IsolatedSimLogData:
@@ -56,11 +79,17 @@ class NodeIsolatedSimulationController(SimulationController):
         input ready / output valid data, indexed based on node names."""
         futures: list[Future] = []
         with self.console.status(f"Running simulation on every node. Log directory: {self.logdir}"):
+            start = time.time()
             with ThreadPoolExecutor(len(self.binaries)) as tpe:
                 for binary in self.binaries:
                     futures.append(tpe.submit(self._run_binary, binary))
             tpe.shutdown(wait=True)
         self.console.log("Thread pool closed. Closing sockets and postprocessing data")
+        elapsed = time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start))
+        self.console.log(f"Simulations took {elapsed}")
+        for binary in self.binaries:
+            with self.get_logfile_path(binary).open("a") as logfile:
+                self.write_log(logfile, "Cleaning up socket.")
         self._cleanup_sockets()
 
         # Read data
@@ -69,60 +98,69 @@ class NodeIsolatedSimulationController(SimulationController):
         for i, future in enumerate(futures):
             data[self.names[i]] = future.result()
             if data[self.names[i]] is None:
-                invalid.append(self.names[i])
+                invalid.append((self.names[i], i))
         if len(invalid) > 0:
             raise FINNInternalError(
-                f"Lost connection / malformed response from nodes: {', '.join(invalid)}"
+                f"Lost connection / malformed response from nodes: "
+                f"{', '.join([str(x) for x in invalid])}"
             )
         return data
 
     def _run_binary(self, binary: Path) -> IsolatedSimLogData | None:
         """Run simulation. Returning None if connection is lost."""
         process_index = self.binaries.index(binary)
-        with (
-            self.logdir / f"{process_index}_log_isolated_{self.names[process_index]}_python.txt"
-        ).open("w+") as logfile:
+        with self.get_logfile_path(binary).open("w+") as logfile:
+
+            def write_log(msg: str) -> None:
+                self.write_log(logfile, msg)
+
             # Initialize
-            logfile.write("Initializing simulation.\n")
+            write_log("Initializing simulation")
             proc_idx = self._start_process(binary, process_index)
             response = self._send_and_receive(proc_idx, "start", {})
             if response is None:
-                logfile.write("Client disconnected / No answer received to start command!\n")
+                write_log("Client disconnected / no answer received to start command!")
                 return None
-            logfile.write(f"Start response: {response}\n")
+            write_log(f"Start response: {response}")
 
             if response is None:
-                logfile.write("Failed to start simulation: No response\n")
+                write_log("Failed to start simulation: No response")
                 return None
 
             # Main loop
-            logfile.write("Beginning main loop\n")
+            write_log("Beginning main loop")
             logfile.flush()
-
+            total_status_requests = 0
             while True:
+                # Request status in regular intervals
                 time.sleep(self.poll_interval)
-                logfile.write("Sending status request\n")
+                write_log("Sending status request")
                 response = self._send_and_receive(proc_idx, "status", {})
+                total_status_requests += 1
+                write_log(f"Status request {total_status_requests} sent.")
+
+                # Process response
                 if response is None:
                     return None
                 state = response["state"]
+                write_log(f"Received answer for status request ({total_status_requests})")
                 if state == "done":
                     self.console.log(f"{process_index} is done and postprocessing data.")
-                    logfile.write("Received done status. Sending stop signal\n")
+                    write_log("Received done status. Sending stop signal to simulation.")
                     resp = self._send_and_receive(proc_idx, "stop", {})
                     if resp is None:
-                        logfile.write("No stop response received.\n")
+                        write_log("No stop response received.")
                     else:
-                        logfile.write("Stop successfully received: " + str(resp))
+                        write_log("Stop successfully received.")
                     return self.postprocess_logs(binary.parent)
 
                 # TODO: Order seems wrong
-                logfile.write(
+                write_log(
                     f"{response['totalCycles']}, "
                     f"{response['inputCyclesDone']}, "
                     f"{response['inputCyclesTarget']}, "
                     f"{response['outputCyclesDone']}, "
-                    f"{response['outputCyclesTarget']}\n"
+                    f"{response['outputCyclesTarget']}"
                 )
 
 
@@ -283,13 +321,13 @@ class RunLayerIsolatedSimulation(Transformation):
                     f"Simulation log data of layer {layer} is missing the READY log."
                 )
         # 1. All cycle datas are uniform and have at least one stream signal
-        for layer, ldata in data.items():
+        for i, (layer, ldata) in enumerate(data.items()):
             cycle_data = ldata["ready"] + ldata["valid"]
             lengths: set[int] = {len(cycle.keys()) for cycle in cycle_data}
             if len(lengths) != 1:
                 raise FINNInternalError(
                     f"Simulation log data inconsistent for layer "
-                    f"{layer}. Differing number of fields per cycle."
+                    f"{layer} ({i}). Differing number of fields per cycle."
                 )
             if next(iter(lengths)) < 4:
                 raise FINNInternalError(
