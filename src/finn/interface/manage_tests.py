@@ -11,6 +11,35 @@ from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
 
 
+def run_doctests(num_workers: int) -> bool:
+    """Run all doctests in FINN and report if any failed."""
+    returncodes = []
+    tests = []
+    for submodule in [
+        "analysis",
+        "builder",
+        "core",
+        "custom_op",
+        "interface",
+        "transformation",
+        "util",
+    ]:
+        status(f"Running doctest on submodule finn.{submodule}")
+        tests.append(
+            subprocess.Popen(
+                shlex.split(
+                    f"{sys.executable} -m pytest --doctest-modules "
+                    f"--doctest-continue-on-failure -n {num_workers} "
+                    f"--pyargs finn." + submodule,
+                    posix=IS_POSIX,
+                )
+            )
+        )
+        tests[-1].communicate()
+    returncodes = [test.returncode for test in tests]
+    return any(returncodes)
+
+
 def run_test(variant: str, num_workers: str, name: str = "") -> None:
     """Run a given test variant with the given number of workers."""
     original_dir = Path.cwd()
@@ -36,11 +65,12 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
             )
         case "doctest":
             if name == "":
-                raise FINNUserError(
-                    "--variant custom was specified, but no test was "
-                    "given (please additionally pass --name "
-                    "<test-name> in pytest syntax)"
+                status(
+                    "No test name was specified, running "
+                    "doctests on all relevant FINN submodules."
                 )
+                run_doctests(int(num_workers))
+                return
             if name.endswith(".py"):
                 raise FINNUserError(
                     "To run doctests, specify the name as a python module path. "
@@ -104,6 +134,9 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
             test_2_process.communicate()
             test_2_returncode = test_2_process.returncode
 
+            # Run doctests for all FINN submodules
+            test_3_returncode = run_doctests(int(num_workers))
+
             subprocess.run(
                 shlex.split(
                     (
@@ -114,7 +147,7 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
                 )
             )
 
-            if test_1_returncode or test_2_returncode:
+            if test_1_returncode or test_2_returncode or test_3_returncode:
                 sys.exit(1)
 
         case _:

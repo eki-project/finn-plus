@@ -901,10 +901,10 @@ def bench(
 @click.option(
     "--variant",
     "-v",
-    help="Which test to execute (quick, quicktest_ci, full_ci)",
+    help="Which test to execute (quick, quicktest_ci, full_ci, doctest)",
     default="quick",
     show_default=True,
-    type=click.Choice(["quick", "quicktest_ci", "full_ci", "custom"]),
+    type=click.Choice(["quick", "quicktest_ci", "full_ci", "custom", "doctest", "doctest"]),
 )
 @click.option(
     "--name",
