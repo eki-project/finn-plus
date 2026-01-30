@@ -45,6 +45,7 @@ class Thresholding(HWCustomOp):
     """Abstraction layer for HW implementation of Thresholding."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the Thresholding node."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
