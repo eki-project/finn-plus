@@ -392,15 +392,32 @@ class bench:
         # Filter to only valid DataflowBuildConfig attributes to avoid errors
         valid_params = {k: v for k, v in self._params.items() if hasattr(cfg, k)}
 
+        # Separate params into those that can go through from_dict and those that are None
+        params_for_from_dict = {}
+        params_with_none = {}
+
+        for k, v in valid_params.items():
+            if v == "None":
+                # Convert string "None" to actual None
+                params_with_none[k] = None
+            elif v is None:
+                # Explicit None value - set directly to override cfg defaults
+                params_with_none[k] = None
+            else:
+                # Regular value - use from_dict for proper validation and enum conversion
+                params_for_from_dict[k] = v
+
         # TODO: warn/error if there are unrecognized options set?
 
-        if valid_params:
-            # Use DataflowBuildConfig's from_dict method which handles enum conversion.
-            updated_cfg = DataflowBuildConfig.from_dict(valid_params)
-
-            # Only apply values that were explicitly specified in params (not defaults)
-            for param_key in valid_params.keys():
+        # Apply non-None values through from_dict for validation and enum conversion
+        if params_for_from_dict:
+            updated_cfg = DataflowBuildConfig.from_dict(params_for_from_dict)
+            for param_key in params_for_from_dict.keys():
                 setattr(cfg, param_key, getattr(updated_cfg, param_key))
+
+        # Apply None values directly to override existing cfg values
+        for param_key, param_value in params_with_none.items():
+            setattr(cfg, param_key, param_value)
 
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?
