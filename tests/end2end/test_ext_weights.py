@@ -68,7 +68,12 @@ class Test_end2end_ext_weights:
             / "bnn-pynq"
             / (topology + "-w2a2_qonnx.onnx")
         )
-        f2 = Path("models/" + "bnn-pynq/" + (topology + "-w2a2_qonnx.onnx"))
+        f2 = (
+            Path(os.environ.get("PATH_WORKDIR", "."))
+            / "models"
+            / "bnn-pynq"
+            / (topology + "-w2a2_qonnx.onnx")
+        )
         model_file = f1
         if not model_file.is_file():
             model_file = f2
