@@ -442,21 +442,20 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: If set to commit hash, specified version will be used.
     cpp_driver_version: str = "latest"
 
-    #: (Optional) Specify validation dataset to be used for deployment of the PYNQ driver.
-    validation_dataset: Optional[str] = None
+    #: If set to True, the FINN compiler tries to create an MLO design based on
+    #: loop_body_hierarchy and loop_body_range
+    mlo: Optional[bool] = False
 
-    #: (Only relevant if step_vivado_power_estimation is run)
-    #: Whether to simulate the switching activity of the design for Vivado power estimation.
-    #: If set to False, use only a fixed set of static toggle rates and static probabilities.
-    #: If set to True, use simulated activity to generate an additional power report.
-    vivado_power_simulate_activity: bool = True
+    #: A List of strings that specify the PyTorch metadata hierarchy to
+    #: be used for the loop body hierarchy. Each item in the list should
+    #: be a string that represents a level in the hierarchy.
+    loop_body_hierarchy: Optional[List[List[str]]] = None
 
-    #: (Only relevant for step_vivado_power_estimation if vivado_power_simulate_activity is True)
-    #: Whether to use "functional" or "timing" simulation for Vivado power estimation.
-    vivado_power_simulation_type: Literal["timing", "functional"] = "functional"
-
-    #: If set, appends experiments_config to settings file during driver generation
-    experiments_config_path: Optional[str] = None
+    #: A list of a start and an end node to mark the loop body subgraph
+    #: For this node range, the PyTorch metadata hierarchy will be simulated
+    #: TODO: this argument will be replaced or extended when there is a way
+    #: to preserve node metadata from the PyTorch model (e.g. from dynamo exporter)
+    loop_body_range: Optional[List[Any]] = None
 
     def _resolve_hls_clk_period(self) -> float:
         """

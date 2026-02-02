@@ -24,7 +24,7 @@ FINN_DEPS = {
     ),
     "brevitas": (
         "https://github.com/Xilinx/brevitas.git",
-        "b106358c4169d8a9b68cb2a531aa795417d74887",
+        "1c0ebbe36fa7a3337ff52ebd52299814624c5898",
         True,
     ),
     "qonnx": (
