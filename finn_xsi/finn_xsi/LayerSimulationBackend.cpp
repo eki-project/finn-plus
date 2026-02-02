@@ -55,6 +55,22 @@ class SimulationController {
         current_samples = 0;
         max_cycles = maxCycles;
         state = SimulationState::CONFIGURED;
+
+        // Reset simulation first
+        sim.reset();
+
+        // Configure FIFO depths AFTER reset
+        std::size_t num_fifos = sim.getFIFOCount();
+
+        if (fifo_depths.empty()) {
+            throw std::runtime_error("FIFO depths not configured");
+        }
+
+        // Apply depths: if list is shorter, use last value for remaining FIFOs
+        for (std::size_t i = 0; i < num_fifos; ++i) {
+            std::size_t depth_idx = std::min(i, fifo_depths.size() - 1);
+            sim.setFIFODepth(i, fifo_depths[depth_idx]);
+        }
     }
 
     void start() {
@@ -68,22 +84,6 @@ class SimulationController {
         // Start simulation in a separate thread
         sim_thread = std::jthread([this](std::stop_token stoken) {
             try {
-                // Reset simulation first
-                sim.reset();
-
-                // Configure FIFO depths AFTER reset
-                std::size_t num_fifos = sim.getFIFOCount();
-
-                if (fifo_depths.empty()) {
-                    throw std::runtime_error("FIFO depths not configured");
-                }
-
-                // Apply depths: if list is shorter, use last value for remaining FIFOs
-                for (std::size_t i = 0; i < num_fifos; ++i) {
-                    std::size_t depth_idx = std::min(i, fifo_depths.size() - 1);
-                    sim.setFIFODepth(i, fifo_depths[depth_idx]);
-                }
-
                 std::cout << "Starting simulation with max cycles: " << max_cycles << std::endl;
 
                 // Run the simulation

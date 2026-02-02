@@ -206,19 +206,18 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             }
         }
 
-
-        if constexpr (!FirstNode) {
-            for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                std::string shmName = *prevNodeName + "_" + std::to_string(i);
-                fromProducerInterface[i] = std::move(ConsumingInterface(shmName));
-            }
-        }
-
         if constexpr (!LastNode) {
             // Create consumer facing interfaces
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
                 std::string shmName = *nodeName + "_" + std::to_string(i);
                 toConsumerInterface[i] = std::move(ProducingInterface(shmName));
+            }
+        }
+
+        if constexpr (!FirstNode) {
+            for (std::size_t i = 0; i < IStreamsSize; ++i) {
+                std::string shmName = *prevNodeName + "_" + std::to_string(i);
+                fromProducerInterface[i] = std::move(ConsumingInterface(shmName));
             }
         }
 

@@ -1,8 +1,10 @@
 """Node connected parallel simulations."""
 
+import glob
 import json
 import math
 import multiprocessing
+import os
 import time
 import traceback
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -11,6 +13,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from rich.console import Console
+from threading import Barrier
 from typing import Any
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
@@ -38,10 +41,36 @@ class NodeConnectedSimulationController(SimulationController):
         super().__init__(
             parallel_simulations, names, binaries, console, poll_interval, with_progressbar
         )
+        # Synchronization barrier for configuration phase
+        self.sync_barrier: Barrier | None = None
         for binary in binaries:
             if not binary.exists():
                 console.log(f"Binary {binary} does not exist!")
                 raise FINNUserError(f"Binary {binary} does not exist!")
+
+    def _cleanup_shm_resources(self) -> None:
+        """Remove any existing shared memory segments and semaphores from /dev/shm."""
+        try:
+            # Collect potential shared memory and semaphore names based on node names
+            shm_patterns = []
+            # Pattern for shared memory segments (e.g., /nodename_0, /nodename_1)
+            shm_patterns.append("/dev/shm/*")
+
+            removed_count = 0
+            for pattern in shm_patterns:
+                for filepath in glob.glob(pattern):
+                    try:
+                        os.unlink(filepath)
+                        removed_count += 1
+                    except (FileNotFoundError, PermissionError):
+                        # File might already be removed or we don't have permission
+                        pass
+
+            if removed_count > 0:
+                self.console.log(f"Cleaned up {removed_count} existing shared memory resources")
+        except Exception as e:
+            # Don't fail if cleanup fails - just log it
+            self.console.log(f"Warning: Error during shared memory cleanup: {e}")
 
     def run(
         self,
@@ -67,6 +96,12 @@ class NodeConnectedSimulationController(SimulationController):
         intervals_results: dict[str, list[int]] = {}
         timeout_result = False
         fifo_depths: dict[str, list[int]] = {}
+
+        # Clean up any existing shared memory resources before starting
+        self._cleanup_shm_resources()
+
+        # Initialize barrier for all simulations to synchronize after configuration
+        self.sync_barrier = Barrier(len(self.names))
 
         if self.progress is not None:
             self.progress.start()
@@ -249,6 +284,12 @@ class NodeConnectedSimulationController(SimulationController):
                     )
                     _print(f"Configuration failed: {error_msg}", "red")
                     return None
+
+                # Wait for all simulations to complete configuration before starting
+                _print("Waiting for all simulations to complete configuration...")
+                if self.sync_barrier is not None:
+                    self.sync_barrier.wait()
+                _print("All simulations configured, starting...")
 
                 # Start the simulation
                 response = self._send_and_receive(proc_idx, "start", {})

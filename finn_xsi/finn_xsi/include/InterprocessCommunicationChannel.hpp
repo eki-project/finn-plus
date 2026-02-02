@@ -21,6 +21,8 @@ namespace bip = boost::interprocess;
 template<bool IsSender>
 concept Sender = IsSender;
 
+constexpr int MAX_SPIN_WAIT = 100;
+
 template<typename Request, typename Response, bool IsSender, std::size_t SharedMemorySize = 4096>
 class InterprocessCommunicationChannel {
      private:
@@ -88,6 +90,20 @@ class InterprocessCommunicationChannel {
 
         // Construct the channel data in shared memory
         channel = shmem.find_or_construct<SharedChannelData>("ChannelData")();
+
+        // Perform handshake to verify communication works
+        if constexpr (IsSender) {
+            // Sender: send test request and wait for response
+            Request test_request{};
+            Response test_response = send_request(test_request);
+            // Communication verified if we got here without hanging
+        } else {
+            // Receiver: wait for test request and send response
+            Request test_request = receive_request();
+            Response test_response{};
+            send_response(test_response);
+            // Communication verified if we got here
+        }
     }
 
     // Delete copy operations
@@ -150,12 +166,18 @@ class InterprocessCommunicationChannel {
 
         // Wait for response in corresponding slot
         int read_slot = channel->response_read_idx.load(std::memory_order_acquire) % 2;
+        int spin_count = 0;
         while (!channel->responses[read_slot].valid.load(std::memory_order_acquire) && !stoken.stop_requested()) {
+            if (spin_count++ >= MAX_SPIN_WAIT) {
+                std::this_thread::yield();
+                spin_count = 0;
+            } else {
 #if defined(__x86_64__) || defined(_M_X64)
-            __builtin_ia32_pause();
+                __builtin_ia32_pause();
 #elif defined(__aarch64__)
-            asm volatile("yield" ::: "memory");
+                asm volatile("yield" ::: "memory");
 #endif
+            }
         }
 
         if (stoken.stop_requested()) {
@@ -174,13 +196,19 @@ class InterprocessCommunicationChannel {
         requires(!Sender<IsSender>)
     {
         int read_slot = channel->request_read_idx.load(std::memory_order_acquire) % 2;
+        int spin_count = 0;
 
         while (!channel->requests[read_slot].valid.load(std::memory_order_acquire) && !stoken.stop_requested()) {
+            if (spin_count++ >= MAX_SPIN_WAIT) {
+                std::this_thread::yield();
+                spin_count = 0;
+            } else {
 #if defined(__x86_64__) || defined(_M_X64)
-            __builtin_ia32_pause();
+                __builtin_ia32_pause();
 #elif defined(__aarch64__)
-            asm volatile("yield" ::: "memory");
+                asm volatile("yield" ::: "memory");
 #endif
+            }
         }
 
         if (stoken.stop_requested()) {
