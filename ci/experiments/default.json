@@ -35,13 +35,24 @@
           }
         ]
       },
-            {
+      {
         "name": "throughput_experiment_2",
         "warmup": 1,
         "num_runs": 1,
         "functions": [
           {
             "function_name": "throughput_test",
+            "kwargs" : {}
+          }
+        ]
+      },
+      {
+        "name": "validate_experiment",
+        "warmup": 1,
+        "num_runs": 1,
+        "functions": [
+          {
+            "function_name": "validate",
             "kwargs" : {}
           }
         ]
