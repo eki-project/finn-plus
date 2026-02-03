@@ -53,7 +53,7 @@ from dataclasses import dataclass
 from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, List 
 
 from finn.util.basic import alveo_default_platform, part_map
 
