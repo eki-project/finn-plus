@@ -25,7 +25,8 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""HLSBackend specialization for generic pooling operators MaxPool, AvgPool, AccPool and QuantAvgPool."""
+"""HLSBackend specialization for generic pooling operators:
+MaxPool, AvgPool, AccPool and QuantAvgPool."""
 
 import numpy as np
 
@@ -83,13 +84,9 @@ class Pool_hls(Pool, HLSBackend):
 
         self.code_gen_dict["$DOCOMPUTE$"] = []
         if fxn == "MaxPool":
-            self.code_gen_dict["$DOCOMPUTE$"] += [
-                "MaxPoolFunction<{}> pool_fxn;".format(o_hls_dt)
-            ]
+            self.code_gen_dict["$DOCOMPUTE$"] += ["MaxPoolFunction<{}> pool_fxn;".format(o_hls_dt)]
         elif fxn == "AccPool":
-            self.code_gen_dict["$DOCOMPUTE$"] += [
-                "AccPoolFunction<{}> pool_fxn;".format(o_hls_dt)
-            ]
+            self.code_gen_dict["$DOCOMPUTE$"] += ["AccPoolFunction<{}> pool_fxn;".format(o_hls_dt)]
         elif fxn == "AvgPool":
             n = np.prod(self.get_nodeattr("KernelSize"))
             accum_bits = self.get_nodeattr("AccumBits")
@@ -99,9 +96,7 @@ class Pool_hls(Pool, HLSBackend):
                 pe,
             )
             self.code_gen_dict["$DOCOMPUTE$"] += [
-                "AvgPoolFunction<{},{},{}> pool_fxn;".format(
-                    o_hls_dt, act_hls_dt, n
-                )
+                "AvgPoolFunction<{},{},{}> pool_fxn;".format(o_hls_dt, act_hls_dt, n)
             ]
         elif fxn == "QuantAvgPool":
             shift = self.get_nodeattr("Size")

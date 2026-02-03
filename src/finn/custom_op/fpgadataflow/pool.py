@@ -59,9 +59,7 @@ class Pool(HWCustomOp):
             "PE": ("i", True, 1),
             "KernelSize": ("ints", True, []),
             # Pooling function to use corresponding to hlslib functions
-            "Function": ("s", True, "", {
-                "MaxPool", "AvgPool", "AccPool", "QuantAvgPool"
-            }),
+            "Function": ("s", True, "", {"MaxPool", "AvgPool", "AccPool", "QuantAvgPool"}),
             "OutImgDims": ("ints", True, []),
             # FINN DataTypes for inputs/outputs
             "InputDataType": ("s", True, ""),
@@ -216,7 +214,7 @@ class Pool(HWCustomOp):
         elif fnx == "AccPool":
             result = np.sum(tmp_values, axis=3)
         elif fnx == "AvgPool":
-            result  = np.mean(tmp_values, axis=3)
+            result = np.mean(tmp_values, axis=3)
         elif fnx == "QuantAvgPool":
             # determine bits to shift
             ibits = self.get_input_datatype().bitwidth()
