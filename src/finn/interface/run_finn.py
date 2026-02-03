@@ -35,7 +35,7 @@ from finn.interface.interface_utils import (
     warning,
     write_yaml,
 )
-from finn.interface.manage_deps import install_finnxsi, update_dependencies
+from finn.interface.manage_deps import update_dependencies
 from finn.interface.manage_tests import run_test
 
 
@@ -138,13 +138,15 @@ def prepare_finn(
     os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks", prefix="")
     os.environ["FINN_TESTS"] = _resolve_module_path("tests", prefix="")
 
-    # Install FINN XSI
-    finnxsi_status = install_finnxsi()
-    if finnxsi_status:
-        status("FINN XSI installed successfully.")
+    # Set LD_LIBRARY_PATH
+    # TODO: unclear if this is still needed
+    vivado_path = os.environ["XILINX_VIVADO"]
+    if "LD_LIBRARY_PATH" not in os.environ.keys():
+        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
     else:
-        error("FINN XSI installation failed.")
-        sys.exit(1)
+        os.environ[
+            "LD_LIBRARY_PATH"
+        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
 
 
 @click.group()

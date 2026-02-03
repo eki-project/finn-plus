@@ -64,10 +64,6 @@ from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 # standalone Transpose following
 from qonnx.transformation.quant_constant_folding import FoldTransposeIntoQuantInit
 
-# Range information structure for seeding the range analysis for converting
-# quantized activations to MultiThreshold
-from qonnx.util.range_analysis import RangeInfo
-
 # FINN dataflow builder configuration
 from finn.builder.build_dataflow_config import DataflowBuildConfig, VerificationStepType
 
@@ -167,7 +163,7 @@ from finn.transformation.streamline.streamline_plus import StreamlinePlus as Str
 #  BatchNorm to Mul and Add operations followed by some necessary cleanup
 # 3. Converts all QONNX Quant nodes to MultiThreshold operations which can
 #  absorb scales and biases during streamlining
-def prepare_graph(range_info: RangeInfo):
+def prepare_graph():
     """
     Prepares the graph to be consumed by FINN.
 
