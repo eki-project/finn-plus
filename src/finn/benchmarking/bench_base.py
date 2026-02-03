@@ -105,6 +105,23 @@ class bench:
             # TODO: separate these more cleanly from builder options
         ]
 
+        if "experiments_config" in params:
+            self.experiments_config = params["experiments_config"]
+        else:
+            # Set default experiment config if not explicitly defined as absolute or relative path
+            # TODO: this assumes we are running from the repo root, where ci/ is available
+            if "live_fifo_sizing" in params and params["live_fifo_sizing"] is True:
+                # Default experiment config for FIFO-Sizing
+                self.experiments_config = os.path.join(
+                    "ci", "experiments", "fifosizing_default.json"
+                )
+            else:
+                # Default experiment config for normal builds
+                # TODO: Switch to default.json to run instr. + DMA validation exp. by default
+                self.experiments_config = os.path.join(
+                    "ci", "experiments", "instrument_only_default.json"
+                )
+
         dut_yaml_name = self._params["dut"] + ".yml"
         dut_path = os.path.join(os.path.dirname(__file__), "dut", dut_yaml_name)
         if os.path.isfile(dut_path):
@@ -368,6 +385,8 @@ class bench:
         # rtlsim_use_vivado_comps # TODO ?
         # cfg.default_swg_exception
         # cfg.large_fifo_mem_style
+
+        cfg.experiments_config_path = self.experiments_config
 
         # Overwrite build config settings with run-specific parameters
         # Filter to only valid DataflowBuildConfig attributes to avoid errors

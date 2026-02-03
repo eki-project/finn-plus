@@ -857,7 +857,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         # Return the interface name dictionary
         return intf_names
 
-    def prepare_rtlsim(self):
+    def prepare_rtlsim(self, behav=False):
         """Prepare for RTL simulation.
 
         Currently there is no RTL simulation of the attention operator.

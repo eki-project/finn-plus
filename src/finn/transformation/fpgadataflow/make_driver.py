@@ -1,3 +1,5 @@
+"""Create C++ and PYNQ drivers for FINN-generated accelerators."""
+
 # Copyright (c) 2020, Xilinx
 # All rights reserved.
 #
@@ -30,7 +32,6 @@ import json
 import multiprocessing
 import numpy as np
 import os
-import qonnx
 import shlex
 import shutil
 import subprocess
@@ -43,12 +44,11 @@ from typing import Dict, List, Optional, Tuple
 
 import finn.util
 from finn.builder.build_dataflow_config import FpgaMemoryType
-from finn.util.basic import make_build_dir
-from finn.util.data_packing import get_driver_shapes, to_external_tensor
+from finn.templates import get_templates_folder
+from finn.util.basic import get_driver_shapes, make_build_dir
+from finn.util.data_packing import to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
-
-from . import template_driver
 
 
 def update_bitfile_path_after_copy(bitfile_path: str, json_path: str) -> None:
@@ -93,6 +93,17 @@ class MakeCPPDriver(Transformation):
 
     # TODO: Enable multiple input types! Now only assumes the first one
     def resolve_dt_name(s: str) -> str:
+        """Resolve datatype name for C++ driver code generation.
+
+        Args:
+            s: Datatype string to resolve
+
+        Returns:
+            Resolved C++ datatype name
+
+        Raises:
+            FINNInternalError: If datatype is unknown
+        """
         s = s.replace("DataType[", "").replace("]", "")
         if s in ["BINARY", "TERNARY", "BIPOLAR"]:
             return "Datatype" + s[0] + s[1:].lower()
@@ -113,6 +124,16 @@ class MakeCPPDriver(Transformation):
         version: str,
         host_mem: str,
     ):
+        """Initialize MakeCPPDriver transformation.
+
+        Args:
+            platform: Target platform (must be "alveo")
+            version: Version of finn-cpp-driver to use ("latest" or commit hash)
+            host_mem: Memory type (FpgaMemoryType.HOST_MEM or FpgaMemoryType.DEVICE_MEM)
+
+        Raises:
+            FINNUserError: If platform is not "alveo"
+        """
         super().__init__()
         self.platform: str = platform
 
@@ -135,6 +156,14 @@ class MakeCPPDriver(Transformation):
             self.host_memory = False
 
     def apply(self, model: ModelWrapper) -> Tuple[ModelWrapper, bool]:
+        """Apply the MakeCPPDriver transformation to generate C++ driver code.
+
+        Args:
+            model: ONNX model wrapper
+
+        Returns:
+            Tuple of (modified model, transformation success flag)
+        """
         driver_shapes: Dict = get_driver_shapes(model)
         ext_weight_dma_cnt: int  # noqa
         weights_dir: str  # noqa
@@ -151,8 +180,17 @@ class MakeCPPDriver(Transformation):
         json_path = os.path.join(cpp_driver_dir, "acceleratorconfig.json")
         header_path = os.path.join(cpp_driver_dir, "AcceleratorDatatypes.h")
 
-        # Helper function to execute shell commands safely with error handling
         def run_command(command, cwd=None, debug=False):
+            """Execute a shell command with error handling.
+
+            Args:
+                command: Shell command string to execute.
+                cwd: Working directory for command execution. Defaults to None (current directory).
+                debug: If True, print command output for debugging. Defaults to False.
+
+            Raises:
+                subprocess.CalledProcessError: If the command returns a non-zero exit code.
+            """
             try:
                 result = subprocess.run(
                     shlex.split(command), cwd=cwd, check=True, text=True, capture_output=True
@@ -238,9 +276,15 @@ class MakeCPPDriver(Transformation):
         idmas = [x["m_name"] for x in ips if isIO(x) and "idma" in x["m_name"]]
         odmas = [x["m_name"] for x in ips if isIO(x) and "odma" in x["m_name"]]
 
-        # Helper function to format kernel names for the driver configuration
-        # Converts "kernelName:instance" to "kernelName:{instance}" format
         def formatKernelName(kname: str):
+            """Format kernel name into Vitis-compatible format.
+
+            Args:
+                kname: Kernel name string in "name:instance" format.
+
+            Returns:
+                Formatted kernel name as "name:{instance}".
+            """
             kparts = kname.split(":")
             return kparts[0] + ":{" + kparts[1] + "}"
 
@@ -295,7 +339,6 @@ class MakeCPPDriver(Transformation):
 
         log.info("Created runtime json config file")
 
-        # Helper function to configure CMake build system
         def configure_cmake(
             source_dir: str,  # Directory containing CMakeLists.txt
             build_dir: str,  # Directory where build files will be generated
@@ -304,6 +347,14 @@ class MakeCPPDriver(Transformation):
             # Command to invoke CMake
             cmake_executable: str = f"{sys.executable} -m cmake",
         ):
+            """Configure CMake build system for the C++ driver.
+
+            Args:
+                source_dir: Directory containing the CMakeLists.txt file.
+                build_dir: Directory where CMake build files will be generated.
+                cmake_args: Additional CMake configuration arguments. Defaults to None.
+                cmake_executable: Command to invoke CMake. Defaults to Python's cmake module.
+            """
             # Create build directory if it doesn't exist
             os.makedirs(build_dir, exist_ok=True)
             # Split the cmake executable command into arguments
@@ -325,7 +376,6 @@ class MakeCPPDriver(Transformation):
                     result.returncode, args, result.stdout, result.stderr
                 )
 
-        # Helper function to build the configured CMake project
         def build_cmake(
             build_dir: str,  # Directory containing the configured build files
             # Build tool to use (default: make)
@@ -335,6 +385,17 @@ class MakeCPPDriver(Transformation):
             # Additional build arguments
             build_args: Optional[List[str]] = None,
         ):
+            """Build the configured CMake project.
+
+            Args:
+                build_dir: Directory containing the configured build files.
+                cmake_executable: Build tool to use. Defaults to "make".
+                build_target: Specific target to build. Defaults to None (builds all).
+                build_args: Additional build arguments. Defaults to None.
+
+            Raises:
+                subprocess.CalledProcessError: If the build fails.
+            """
             # Prepare the build command with the executable
             args = [cmake_executable]
             # Add optional build target if specified
@@ -377,8 +438,18 @@ class MakeCPPDriver(Transformation):
             build_dir=os.path.join(cpp_driver_dir, "build"), build_args=["-j", str(num_cores)]
         )
 
-        # Helper function to verify that the built driver uses the correct datatypes
         def check_finn_types(bin_dir: str, expectedInputType: str, expectedOutputType: str) -> None:
+            """Verify that compiled driver's datatypes match expected types.
+
+            Args:
+                bin_dir: Directory containing the finnhpc executable.
+                expectedInputType: Expected input datatype string.
+                expectedOutputType: Expected output datatype string.
+
+            Raises:
+                subprocess.CalledProcessError: If the datatype check command fails.
+                RuntimeError: If the actual datatypes don't match expected types.
+            """
             # Run the built finnhpc executable with the --check flag to output datatype information
             result = subprocess.run(
                 "./finnhpc --check".split(), cwd=bin_dir, capture_output=True, text=True
@@ -451,7 +522,7 @@ class MakeCPPDriver(Transformation):
         return (model, False)
 
 
-class MakePYNQDriverIODMA(Transformation):
+class MakePYNQDriver(Transformation):
     """Create PYNQ Python code to correctly interface the generated
     accelerator, including data packing/unpacking. Should be called
     after conversion to HLS layers, folding and the creation of
@@ -465,42 +536,49 @@ class MakePYNQDriverIODMA(Transformation):
     under the runtime_weights/ subfolder of the pynq_driver_dir.
     """
 
-    def __init__(self, platform, validation_datset=None):
+    def __init__(
+        self,
+        platform,
+        driver_type,
+        clk_period_ns=None,
+        validation_datset=None,
+        experiment_info=None,
+    ):
+        """Initialize PYNQ driver generation.
+
+        Args:
+            platform: Target platform, one of ["zynq-iodma", "alveo"].
+            driver_type: Type/name of the driver to generate
+                (e.g. "FINNDMAOverlay", "FINNDMAInstrumentationOverlay").
+            clk_period_ns: Clock period in nanoseconds used for performance calculations.
+            validation_datset: Validation dataset path or identifier.
+            experiment_info: Path to a JSON file containing experiment metadata.
+        """
         super().__init__()
         self.platform = platform
+        self.driver_type = driver_type
+        self.clk_period_ns = clk_period_ns
         self.validation_datset = validation_datset
+        self.experiment_info = experiment_info
 
-    def apply(self, model):
+    def _generate_driver_files(self, model):
+        """Generate PYNQ driver base files."""
         # create a temporary folder for the generated driver
         pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
 
-        # create the base FINN driver -- same for all accels
-        driver_base_template = os.path.join(
-            os.environ["FINN_QNN_DATA"], "templates/driver/driver_base.py"
-        )
-        driver_base_py = pynq_driver_dir + "/driver_base.py"
+        # create the FINN driver
+        driver_base_template = get_templates_folder() / "python_driver/driver.py"
+
+        driver_base_py = pynq_driver_dir + "/driver.py"
+
         shutil.copy(driver_base_template, driver_base_py)
-        # driver depends on qonnx and finn packages
-        # extract individual source files and copy to driver folder
-        qonnx_target_path = pynq_driver_dir + "/qonnx"
+
+        # TODO: Can we do this without packaging data_packing.py this way?
         finn_target_path = pynq_driver_dir + "/finn"
-        os.makedirs(qonnx_target_path + "/core", exist_ok=True)
-        os.makedirs(qonnx_target_path + "/util", exist_ok=True)
         os.makedirs(finn_target_path + "/util", exist_ok=True)
-        qonnx_path = qonnx.__path__[0]
         finn_util_path = finn.util.__path__[0]
         files_to_copy = []
-        files_to_copy.append(
-            (qonnx_path + "/core/datatype.py", qonnx_target_path + "/core/datatype.py")
-        )
-        files_to_copy.append(
-            (qonnx_path + "/core/__init__.py", qonnx_target_path + "/core/__init__.py")
-        )
-        files_to_copy.append((qonnx_path + "/util/basic.py", qonnx_target_path + "/util/basic.py"))
-        files_to_copy.append(
-            (qonnx_path + "/util/__init__.py", qonnx_target_path + "/util/__init__.py")
-        )
         files_to_copy.append(
             (
                 finn_util_path + "/data_packing.py",
@@ -516,14 +594,21 @@ class MakePYNQDriverIODMA(Transformation):
         for src_file, target_file in files_to_copy:
             shutil.copy(src_file, target_file)
 
-        driver_shapes: Dict = get_driver_shapes(model)
+    def _generate_weight_files(self, model):
+        """Generate weight files for external and runtime-writable weights."""
+        pynq_driver_dir = model.get_metadata_prop("pynq_driver_dir")
 
+        external_weights = False
+        runtime_weights = False
+
+        # TODO: Check weights generation
         # generate external weights npy files
         weights_dir = pynq_driver_dir + "/runtime_weights"
 
         os.makedirs(weights_dir)
         idma_idx = 0
         ext_weight_dma_cnt = 0
+        ext_weight_shapes_dict = {}
 
         for node in model.graph.node:
             assert (
@@ -543,8 +628,17 @@ class MakePYNQDriverIODMA(Transformation):
                 df_model = ModelWrapper(sdp_inst.get_nodeattr("model"))
                 assert df_model.graph.node[0].op_type == "IODMA_hls"
                 iodma_node = getCustomOp(df_model.graph.node[0])
-                # input weights dma?
-                if iodma_node.get_nodeattr("burstMode") == "wrap":
+                if iodma_node.get_nodeattr("burstMode") == "wrap":  # input weights dma?
+                    external_weights = True
+                    dma_sdp_output = sdp_inst.onnx_node.output[0]
+                    dma_target_sdp = getCustomOp(model.find_consumer(dma_sdp_output))
+                    dma_target_model = ModelWrapper(dma_target_sdp.get_nodeattr("model"))
+                    iodma_output_tensor = iodma_node.onnx_node.output[0]
+                    dma_consumer = dma_target_model.find_consumer(iodma_output_tensor)
+                    ext_weight_shapes_dict[idma_name] = dma_target_model.get_tensor_shape(
+                        dma_consumer.output[0]
+                    )
+
                     init_tensor = df_model.get_initializer(iodma_node.onnx_node.input[0])
                     ext_weight_dma_cnt += 1
                     w_dtype = df_model.get_tensor_datatype(iodma_node.onnx_node.input[0])
@@ -552,47 +646,8 @@ class MakePYNQDriverIODMA(Transformation):
                     np.save(weights_dir + "/" + idma_name + ".npy", init_external_tensor)
                 idma_idx += 1
 
-        # fill in the driver template
-        driver_py = pynq_driver_dir + "/driver.py"
-        driver = template_driver.pynq_driver_template
-
-        driver = driver.replace("$PLATFORM$", self.platform)
-        driver = driver.replace("$INPUT_FINN_DATATYPE$", str(driver_shapes["idt"]).replace('"', ""))
-        driver = driver.replace("$INPUT_SHAPE_NORMAL$", str(driver_shapes["ishape_normal"]))
-        driver = driver.replace("$INPUT_SHAPE_FOLDED$", str(driver_shapes["ishape_folded"]))
-        driver = driver.replace("$INPUT_SHAPE_PACKED$", str(driver_shapes["ishape_packed"]))
-        driver = driver.replace(
-            "$OUTPUT_FINN_DATATYPE$", str(driver_shapes["odt"]).replace('"', "")
-        )
-        driver = driver.replace("$OUTPUT_SHAPE_NORMAL$", str(driver_shapes["oshape_normal"]))
-        driver = driver.replace("$OUTPUT_SHAPE_FOLDED$", str(driver_shapes["oshape_folded"]))
-        driver = driver.replace("$OUTPUT_SHAPE_PACKED$", str(driver_shapes["oshape_packed"]))
-        driver = driver.replace("$INPUT_DMA_NAME$", "%s" % str(driver_shapes["idma_names"]))
-        driver = driver.replace("$OUTPUT_DMA_NAME$", "%s" % str(driver_shapes["odma_names"]))
-        driver = driver.replace("$NUM_INPUTS$", str(len(driver_shapes["idma_names"])))
-        driver = driver.replace("$NUM_OUTPUTS$", str(len(driver_shapes["odma_names"])))
-        driver = driver.replace("$EXT_WEIGHT_NUM$", str(ext_weight_dma_cnt))
-
-        with open(driver_py, "w") as f:
-            f.write(driver)
-
-        # add validate.py to run full top-1 test (only for suitable networks)
-        validate_py = pynq_driver_dir + "/validate.py"
-        validate_template = os.path.join(
-            os.environ["FINN_QNN_DATA"], "templates/driver/validate.py"
-        )
-        shutil.copy(validate_template, validate_py)
-
-        # generate settings.json for generated driver
-        if self.validation_datset is not None:
-            settings = {
-                "validation_dataset": self.validation_datset,
-            }
-            settingsfile = pynq_driver_dir + "/settings.json"
-            with open(settingsfile, "w") as f:
-                json.dump(settings, f, indent=2)
-
         # generate weight files for runtime-writable layers
+        # TODO verify
         for sdp_ind, sdp_node in enumerate(model.graph.node):
             assert sdp_node.op_type == "StreamingDataflowPartition"
             # get dataflow model
@@ -605,6 +660,7 @@ class MakePYNQDriverIODMA(Transformation):
                     node_inst = getCustomOp(node)
                     is_rt_weights = node_inst.get_nodeattr("runtime_writeable_weights")
                     if is_rt_weights == 1:
+                        runtime_weights = True
                         fcl_w = dataflow_model.get_initializer(node.input[1])
                         w_filename = weights_dir + "/%d_%d_%s.dat" % (
                             sdp_ind,
@@ -621,67 +677,86 @@ class MakePYNQDriverIODMA(Transformation):
                 else:
                     continue
 
-        return (model, False)
+        if (not external_weights) and (not runtime_weights):
+            os.removedirs(weights_dir)
 
+        return external_weights, runtime_weights
 
-class MakePYNQDriverInstrumentation(Transformation):
-    def __init__(self, platform, clk_period_ns, live_fifo_sizing):
-        super().__init__()
-        self.platform = platform
-        self.clk_period_ns = clk_period_ns
-        self.live_fifo_sizing = live_fifo_sizing
+    def _write_fifo_widths(self, model):
+        """Export FIFO widths to the settings file as well.
+        At this stage, the FIFOs are already wrapped in StreamingDataflowPartitions."""
+        settings = {}
+        fifo_widths = {}
+        for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
+            sdp_node_inst = getCustomOp(sdp_node)
+            # JSON doesn't support int keys
+            sdp_id = str(sdp_node_inst.get_nodeattr("partition_id"))
+            dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
+            kernel_model = ModelWrapper(dataflow_model_filename)
+            for node in kernel_model.graph.node:
+                if node.op_type.startswith("StreamingFIFO"):
+                    node_inst = getCustomOp(node)
+                    fifo_widths[sdp_id] = node_inst.get_instream_width()
+        settings["fifo_widths"] = fifo_widths
+        # export original folding config to settings file,
+        # so that the driver can generate a final cfg with live fifo sizes applied
+        folding_path = model.get_metadata_prop("folding_config_before_lfs")
+        if folding_path:
+            with open(folding_path, "r") as f:
+                folding_cfg = json.load(f)
+            settings["folding_config_before_lfs"] = folding_cfg
 
-    def apply(self, model: ModelWrapper):
-        # TODO: support runtime-writable and external weights
-        # TODO: support Alveo and Versal platforms
+        return settings
 
-        # create a temporary folder for the generated driver
-        pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
-        model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
+    def apply(self, model):
+        """Apply the MakePYNQDriver transformation.
 
-        # create (copy) the static instrumentation driver
-        driver_template = (
-            os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_instrumentation.py"
-        )
-        if self.live_fifo_sizing:
-            driver_py = pynq_driver_dir + "/driver_instrumentation.py"
-        else:
-            driver_py = pynq_driver_dir + "/driver.py"
-        shutil.copy(driver_template, driver_py)
+        Creates a PYNQ Python driver package for interfacing with the generated
+        accelerator, including data packing/unpacking and runtime weight handling.
 
-        # add-on driver for live fifosizing
-        if self.live_fifo_sizing:
-            driver_template = os.environ["FINN_QNN_DATA"] + "/templates/driver/driver_fifosizing.py"
-            driver_py = pynq_driver_dir + "/driver.py"
-            shutil.copy(driver_template, driver_py)
+        Args:
+            model: The ONNX model to generate a driver for.
 
-        # write default settings to driver config file
+        Returns:
+            Tuple of (modified model, False) indicating transformation applied.
+        """
+        # TODO: support Alveo and Versal platforms (instr)
+
+        self._generate_driver_files(model)
+
+        driver_information = {}
+
+        experiment_information = {}
+        if self.experiment_info is not None:
+            with open(self.experiment_info, "r") as f:
+                experiment_information = json.load(f)
+
+        driver_information["driver_type"] = self.driver_type
+        if self.driver_type in ["FINNDMAOverlay", "FINNDMAInstrumentationOverlay"]:
+            external_weights, runtime_weights = self._generate_weight_files(model)
+            driver_shapes: Dict = get_driver_shapes(model)
+            driver_information["io_shape_dict"] = driver_shapes
+            driver_information["io_shape_dict"]["num_inputs"] = len(driver_shapes["idma_names"])
+            driver_information["io_shape_dict"]["num_outputs"] = len(driver_shapes["odma_names"])
+            driver_information["external_weights"] = external_weights
+            driver_information["runtime_weights"] = runtime_weights
+            driver_information["platform"] = self.platform
+            # TODO: also supply ext_weight_shapes_dict to driver
+
+        if self.clk_period_ns is not None:
+            driver_information["fclk_mhz"] = (1.0 / self.clk_period_ns) * 1e3
+
+        if self.driver_type == "FINNLiveFIFOOverlay":
+            driver_information.update(self._write_fifo_widths(model))
+
+        if self.validation_datset is not None:
+            driver_information["validation_dataset"] = self.validation_datset
+
         settings = {
-            "fclk_mhz": (1.0 / self.clk_period_ns) * 1e3,
+            "driver_information": driver_information,
+            "experiment_information": experiment_information,
         }
-        if self.live_fifo_sizing:
-            # export FIFO widths to the settings file as well
-            # at this stage, the FIFOs are already wrapped in StreamingDataflowPartitions
-            fifo_widths = {}
-            for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
-                sdp_node_inst = getCustomOp(sdp_node)
-                # JSON doesn't support int keys
-                sdp_id = str(sdp_node_inst.get_nodeattr("partition_id"))
-                dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
-                kernel_model = ModelWrapper(dataflow_model_filename)
-                for node in kernel_model.graph.node:
-                    if node.op_type.startswith("StreamingFIFO"):
-                        node_inst = getCustomOp(node)
-                        fifo_widths[sdp_id] = node_inst.get_instream_width()
-            settings["fifo_widths"] = fifo_widths
-            # export original folding config to settings file,
-            # so that the driver can generate a final cfg with live fifo sizes applied
-            folding_path = model.get_metadata_prop("folding_config_before_lfs")
-            if folding_path:
-                with open(folding_path, "r") as f:
-                    folding_cfg = json.load(f)
-                settings["folding_config_before_lfs"] = folding_cfg
-
+        pynq_driver_dir = model.get_metadata_prop("pynq_driver_dir")
         settingsfile = pynq_driver_dir + "/settings.json"
         with open(settingsfile, "w") as f:
             json.dump(settings, f, indent=2)
