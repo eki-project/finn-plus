@@ -373,10 +373,11 @@ class Thresholding_hls(Thresholding, HLSBackend):
             # the second input are the weights
             # the third input are the thresholds
             if in_ind == 0:
-                assert (
-                    str(context[inputs].dtype) == "float32"
-                ), """Input datatype is
-                not float32 as expected."""
+                assert str(context[inputs].dtype) in [
+                    "float32",
+                    "float16",
+                ], """Input datatype is
+                not float32 or float16 as expected."""
                 expected_inp_shape = self.get_folded_input_shape()
                 reshaped_input = context[inputs].reshape(expected_inp_shape)
                 if self.get_input_datatype(0) == DataType["BIPOLAR"]:
@@ -489,8 +490,8 @@ class Thresholding_hls(Thresholding, HLSBackend):
         packed_bits = self.get_instream_width(0)
         packed_hls_type = f"ap_uint<{packed_bits}>"
         elem_hls_type = dtype.get_hls_datatype_str()
-        npy_type = "float"
-        npy_in = f"{code_gen_dir}/input_0.npy"
+        npy_type = "half" if elem_hls_type == "half" else "float"
+        npy_in = "%s/input_0.npy" % code_gen_dir
         self.code_gen_dict["$READNPYDATA$"] = []
         # note: the innermost dim is reversed for the input
         self.code_gen_dict["$READNPYDATA$"].append(
@@ -504,8 +505,8 @@ class Thresholding_hls(Thresholding, HLSBackend):
             packed_bits = self.get_instream_width(1)
             packed_hls_type = f"ap_uint<{packed_bits}>"
             elem_hls_type = tdt.get_hls_datatype_str()
-            npy_type = "float"
-            npy_in = f"{code_gen_dir}/thresholds.npy"
+            npy_type = "half" if elem_hls_type == "half" else "float"
+            npy_in = "%s/thresholds.npy" % code_gen_dir
 
             self.code_gen_dict["$READNPYDATA$"].append(
                 f'npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>("'
@@ -560,8 +561,8 @@ class Thresholding_hls(Thresholding, HLSBackend):
         packed_bits = self.get_outstream_width()
         packed_hls_type = f"ap_uint<{packed_bits}>"
         elem_hls_type = dtype.get_hls_datatype_str()
-        npy_type = "float"
-        npy_out = f"{code_gen_dir}/output_0.npy"
+        npy_type = "half" if elem_hls_type == "half" else "float"
+        npy_out = "%s/output_0.npy" % code_gen_dir
         shape = self.get_folded_output_shape()
         shape_cpp_str = str(shape).replace("(", "{").replace(")", "}")
 

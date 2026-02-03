@@ -309,10 +309,11 @@ class ElementwiseBinaryOperation_hls(
         if self.lhs_style == "input" or lhs_decoupled:
             # Generate function calls for reading the input files into the input
             # streams
+            npy_type = "half" if self.lhs_dtype.get_hls_datatype_str() == "half" else "float"
             self.code_gen_dict["$READNPYDATA$"] += [
                 # Generate function call reading from file into the input stream
-                #   Note: Inputs are always represented as numpy floats
-                "npy2apintstream<LhsPacked, LhsType, LhsWidth, float>(",
+                #   Note: Inputs can be represented as numpy floats or halfs
+                f"npy2apintstream<LhsPacked, LhsType, LhsWidth, {npy_type}>(",
                 f'"{code_gen_dir}/input_0.npy", in0_V, false',
                 ");",
             ]
@@ -322,10 +323,11 @@ class ElementwiseBinaryOperation_hls(
         if self.rhs_style == "input" or rhs_decoupled:
             # Generate function calls for reading the input files into the input
             # streams
+            npy_type = "half" if self.rhs_dtype.get_hls_datatype_str() == "half" else "float"
             self.code_gen_dict["$READNPYDATA$"] += [
                 # Generate function call reading from file into the input stream
-                #   Note: Inputs are always represented as numpy floats
-                "npy2apintstream<RhsPacked, RhsType, RhsWidth, float>(",
+                #   Note: Inputs can be represented as numpy floats or halfs
+                f"npy2apintstream<RhsPacked, RhsType, RhsWidth, {npy_type}>(",
                 f'"{code_gen_dir}/input_1.npy", in1_V, false',
                 ");",
             ]
@@ -648,10 +650,11 @@ class ElementwiseBinaryOperation_hls(
         shape = f"""{{{",".join(str(i) for i in self.get_folded_output_shape(ind=0))}}}"""
         # Generate function call for reading from the output stream into the
         # output file
+        npy_type = "half" if self.out_dtype.get_hls_datatype_str() == "half" else "float"
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
             # Generate function call reading from stream into the output file
-            #   Note: Outputs are always represented as numpy floats
-            "apintstream2npy<OutPacked, OutType, OutWidth, float>(",
+            #   Note: Outputs can be numpy floats or halfs
+            f"apintstream2npy<OutPacked, OutType, OutWidth, {npy_type}>(",
             f'out0_V, {shape}, "{code_gen_dir}/output_0.npy", false',
             ");",
         ]
@@ -1148,3 +1151,13 @@ class ElementwiseBitShift_hls(
 #     ElementwiseBinaryOperation_hls, elementwise_binary.ElementwisePow
 # ):
 #     pass
+
+
+# Derive a specialization to implement elementwise maximum of two inputs
+@register_custom_op
+class ElementwiseMax_hls(
+    # CapWords convention
+    ElementwiseBinaryOperation_hls,
+    elementwise_binary.ElementwiseMax,
+):
+    pass

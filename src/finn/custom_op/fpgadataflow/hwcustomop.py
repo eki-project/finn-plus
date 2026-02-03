@@ -45,6 +45,7 @@ from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, cast
 
+from finn import xsi
 from finn.util.basic import get_liveness_threshold_cycles, is_versal
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
@@ -52,6 +53,8 @@ from finn.util.settings import get_settings
 
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
+
+finnxsi = xsi if xsi.is_available() else None
 
 
 class HWCustomOp(CustomOp):
@@ -451,6 +454,7 @@ class HWCustomOp(CustomOp):
                 init_file = ""
             code_gen_dict = {
                 "$MODULE_NAME$": [mname],
+                "$SETS$": ["1"],
                 "$DEPTH$": [str(depth)],
                 "$WIDTH$": [str(padded_width)],
                 "$INIT_FILE$": [init_file],

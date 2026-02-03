@@ -56,7 +56,7 @@ def out_of_context_synth(
 
     file_dir = Path(__file__).parent.resolve()
     script_path = file_dir / "vivado_scripts" / "vivadocompile.sh"
-    # vivadocompile.sh <top-level-entity> <clock-name (optional)> <fpga-part (optional)>
+    # vivadocompile.sh <top-level-entity> <fp0.tcl#fp1.tcl> <clk-name (opt)> <fpga-part (opt)>
     flag_post_synth_verilog = 0 if post_synth_verilog else 1
     float_ip_string = '"{}"'.format("#".join(float_ip_tcl))
     call = (

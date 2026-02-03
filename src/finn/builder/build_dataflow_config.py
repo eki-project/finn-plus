@@ -177,6 +177,7 @@ default_build_dataflow_steps = [
     "step_target_fps_parallelization",
     "step_apply_folding_config",
     "step_minimize_bit_width",
+    "step_transpose_decomposition",
     "step_generate_estimate_reports",
     "step_set_fifo_depths",
     "step_hw_codegen",
@@ -246,7 +247,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: The SpecializeLayers transformation picks up these settings and if possible
     #: fulfills the desired implementation style for each layer by converting the
     #: node into its HLS or RTL variant.
-    #: Will be applied with :py:mod:`qonnx.transformation.general.ApplyConfig`
+    #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
     specialize_layers_config_file: Optional[str] = None
 
     #: (Optional) Path to configuration JSON file. May include parallelization,
@@ -254,7 +255,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: If the parallelization attributes (PE, SIMD) are part of the config,
     #: this will override the automatically generated parallelization
     #: attributes inferred from target_fps (if any)
-    #: Will be applied with :py:mod:`qonnx.transformation.general.ApplyConfig`
+    #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
     folding_config_file: Optional[str] = None
 
     #: (Optional) Target inference performance in frames per second.
@@ -372,6 +373,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     fifosim_input_throttle: bool = True
 
     #: (Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM)
+    #: Manually specify the number of inferences for simulation-based FIFO sizing
+    fifosim_n_inferences: int = 2
+
+    #: (Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM)
     #: Enable saving waveforms from simulation-based FIFO sizing.
     fifosim_save_waveform: bool = False
 
@@ -393,7 +398,8 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: (Optional, only relevant when shell_flow_type = VITIS_ALVEO)
     #: Path to JSON config file assigning each layer to an SLR.
-    #: Will be applied with :py:mod:`qonnx.transformation.general.ApplyConfig`
+    #: Only relevant when `shell_flow_type = ShellFlowType.VITIS_ALVEO`
+    #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
     vitis_floorplan_file: Optional[str] = None
 
     #: (Only relevant when shell_flow_type = VITIS_ALVEO)
