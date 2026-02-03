@@ -6,22 +6,22 @@ git_deps:
         install_editable: False
     brevitas:
         url: "https://github.com/iksnagreb/brevitas.git"
-        commit: "003f9f4070c20639790c7b406a28612a089fc502"
+        commit: "b106358c4169d8a9b68cb2a531aa795417d74887"
         pip_install: True
         install_editable: True
     qonnx:
         url: "https://github.com/fpjentzsch/qonnx.git"
-        commit: "61863d197f22d893503ba6383ffea8e49b896275"
+        commit: "084bbec741feef1c1bea7a813e0d301d8e1a3de5"
         pip_install: True
         install_editable: True
     cnpy:
         url: "https://github.com/rogersce/cnpy.git"
-        commit: "4e8810b1a8637695171ed346ce68f6984e585ef4"
+        commit: "8c82362372ce600bbd1cf11d64661ab69d38d7de"
         pip_install: False
         install_editable: False
     finn-hlslib:
         url: "https://github.com/Xilinx/finn-hlslib.git"
-        commit: "5dde96382b84979c6caa6f34cdad2ac72fa28489"
+        commit: "206e57f5ea993630250f1209dce5a66291210269"
         pip_install: False
         install_editable: False
     attention-hlslib:
@@ -52,6 +52,10 @@ boardfile_deps:
         url: "https://github.com/Xilinx/XilinxBoardStore.git"
         commit: "98e0d3efc901f0b974006bc4370c2a7ad8856c79"
         subdirectory: "boards/Xilinx/kv260_som"
+    aupzu3-8gb-bdf:
+        url: "https://github.com/RealDigitalOrg/aup-zu3-bsp.git"
+        commit: "b595ecdf37c7204129517de1773b0895bcdcc2ed"
+        subdirectory: "board-files/aup-zu3-8gb"
 
 direct_download_deps:
     pynq-z1:
