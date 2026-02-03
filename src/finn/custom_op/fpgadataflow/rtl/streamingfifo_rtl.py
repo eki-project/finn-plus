@@ -73,7 +73,9 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
     def get_verilog_top_module_intf_names(self):
         ret = super().get_verilog_top_module_intf_names()
         is_virtual = self.get_nodeattr("impl_style") == "virtual"
-        if self.is_sim_fifo_gauge():
+        is_rtl = self.get_nodeattr("impl_style") == "rtl"
+        is_depth_monitor = self.get_nodeattr("depth_monitor") == 1
+        if is_rtl and is_depth_monitor:
             ret["ap_none"] = ["maxcount"]
         if is_virtual:
             ret["ap_none"] = ["icfg", "ocfg"]
