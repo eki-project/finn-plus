@@ -62,6 +62,7 @@ def start_bench_run(config_name):
         int: Exit code (0 for success, 1 for failure)
     """
     exit_code = 0
+    is_followup = False
     # Attempt to work around onnxruntime issue on Slurm-managed clusters:
     # See https://github.com/microsoft/onnxruntime/issues/8313
     # This seems to happen only when assigned CPU cores are not contiguous
@@ -96,6 +97,10 @@ def start_bench_run(config_name):
                 config_path = os.path.join(
                     os.environ.get("LOCAL_CFG_DIR"), os.environ.get("MANUAL_CFG_PATH")
                 )
+        elif config_name == "followup":
+            config_path = os.path.join(".", "followup_bench_config.json")
+            is_followup = True
+            save_dir = save_dir + "_followup"
         else:
             config_path = os.path.join("ci", "cfg", config_name + ".yml")
         print("Job launched with SLURM ID: %d" % (job_id))
@@ -128,6 +133,8 @@ def start_bench_run(config_name):
 
     # Prepare result directory
     artifacts_dir = os.path.join(experiment_dir, "build_artifacts")
+    if is_followup:
+        artifacts_dir = artifacts_dir + "_followup"
     os.makedirs(artifacts_dir, exist_ok=True)
     print("Collecting results in path: %s" % artifacts_dir)
 

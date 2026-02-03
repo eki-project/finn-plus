@@ -1,5 +1,6 @@
 """Collect and log benchmark results to DVC."""
 
+import argparse
 import json
 import os
 import shutil
@@ -21,13 +22,24 @@ def delete_dir_contents(dir):
             print("Failed to delete %s. Reason: %s" % (file_path, e))
 
 
-def open_json_report(id, report_name):
+def open_json_report(id, report_name, is_followup=False):
     """Open JSON report from build or measurement artifacts."""
+    # TODO: handle followup setting better
     # look in both, build & measurement, artifacts
-    path1 = os.path.join("build_artifacts", "runs_output", "run_%d" % (id), "reports", report_name)
-    path2 = os.path.join(
-        "measurement_artifacts", "runs_output", "run_%d" % (id), "reports", report_name
-    )
+    if is_followup:
+        path1 = os.path.join(
+            "build_artifacts_followup", "runs_output", "run_%d" % (id), "reports", report_name
+        )
+        path2 = os.path.join(
+            "measurement_artifacts_followup", "runs_output", "run_%d" % (id), "reports", report_name
+        )
+    else:
+        path1 = os.path.join(
+            "build_artifacts", "runs_output", "run_%d" % (id), "reports", report_name
+        )
+        path2 = os.path.join(
+            "measurement_artifacts", "runs_output", "run_%d" % (id), "reports", report_name
+        )
     if os.path.isfile(path1):
         with open(path1, "r") as f:
             report = json.load(f)
@@ -44,9 +56,10 @@ def open_json_report(id, report_name):
 class DVCLoggerHelper:
     """Wrapper around DVC Live for logging experiments."""
 
-    def __init__(self, experiment_name, experiment_msg, id, params):
+    def __init__(self, experiment_name, experiment_msg, id, params, is_followup=False):
         """Initialize DVC logger with experiment details."""
         self.id = id
+        self.is_followup = is_followup
 
         # extract logging settings from params
         self.store_as_experiment = params["params"].get("store_results_in_dvc_experiment", True)
@@ -117,14 +130,14 @@ class DVCLoggerHelper:
 
     def log_all_metrics_from_report(self, report_name, prefix=""):
         """Log all metrics from a JSON report."""
-        report = open_json_report(self.id, report_name)
+        report = open_json_report(self.id, report_name, self.is_followup)
         if report:
             for key in report:
                 self.log_metric(prefix, key, report[key])
 
     def log_metrics_from_report(self, report_name, keys, prefix=""):
         """Log specific metrics from a JSON report."""
-        report = open_json_report(self.id, report_name)
+        report = open_json_report(self.id, report_name, self.is_followup)
         if report:
             for key in keys:
                 if key in report:
@@ -132,7 +145,7 @@ class DVCLoggerHelper:
 
     def log_nested_metrics_from_report(self, report_name, key_top, keys, prefix=""):
         """Log nested metrics from a JSON report."""
-        report = open_json_report(self.id, report_name)
+        report = open_json_report(self.id, report_name, self.is_followup)
         if report:
             if key_top in report:
                 for key in keys:
@@ -142,10 +155,19 @@ class DVCLoggerHelper:
 
 if __name__ == "__main__":
     """Go through all runs found in the artifacts and log their results to DVC."""
-    print("FIXME: collect.py")
-    sys.exit(0)
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Collect and log benchmark results to DVC.")
+    parser.add_argument(
+        "--followup",
+        action="store_true",
+        help="Indicate this is a follow-up run (prevents generating new follow-up configs)",
+    )
+    args = parser.parse_args()
 
-    run_dir_list = os.listdir(os.path.join("build_artifacts", "runs_output"))
+    if args.followup:
+        run_dir_list = os.listdir(os.path.join("build_artifacts_followup", "runs_output"))
+    else:
+        run_dir_list = os.listdir(os.path.join("build_artifacts", "runs_output"))
     print("Looking for runs in build artifacts")
     run_ids = []
     for run_dir in run_dir_list:
@@ -156,18 +178,14 @@ if __name__ == "__main__":
     print("Found %d runs" % len(run_ids))
 
     follow_up_bench_cfg = list()
-    # Prepare (local) output directory where follow-up bench configs will be stored
-    output_cfg_dir = os.path.join(
-        os.environ.get("LOCAL_CFG_DIR_STORE"), "lfs", "CI_" + os.environ.get("CI_PIPELINE_ID")
-    )
-    output_folding_dir = os.path.join(output_cfg_dir, "folding")
-    output_cfg_path = os.path.join(output_cfg_dir, "follow-up.json")
-
     microbench_result_data = dict()
 
     for id in run_ids:
         print("Processing run %d" % id)
-        experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + str(id)
+        if args.followup:
+            experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_followup_" + str(id)
+        else:
+            experiment_name = "CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + str(id)
         experiment_msg = (
             "[CI] "
             + os.environ.get("CI_PIPELINE_NAME")
@@ -179,11 +197,13 @@ if __name__ == "__main__":
         )
 
         # initialize logging wrapper with input parameters logged by benchmarking infrastructure
-        metadata_bench = open_json_report(id, "metadata_bench.json")
+        metadata_bench = open_json_report(id, "metadata_bench.json", args.followup)
         params = {"params": metadata_bench["params"]}
-        with DVCLoggerHelper(experiment_name, experiment_msg, id, params) as dvc_logger:
+        with DVCLoggerHelper(
+            experiment_name, experiment_msg, id, params, is_followup=args.followup
+        ) as dvc_logger:
             # optional metadata logged by builder
-            metadata_builder = open_json_report(id, "metadata_builder.json")
+            metadata_builder = open_json_report(id, "metadata_builder.json", args.followup)
             if metadata_builder:
                 metadata = {
                     "metadata": {
@@ -193,7 +213,7 @@ if __name__ == "__main__":
                 dvc_logger.log_params(metadata)
 
             # optional dut_info.json (additional information generated during model generation)
-            dut_info_report = open_json_report(id, "dut_info.json")
+            dut_info_report = open_json_report(id, "dut_info.json", args.followup)
             if dut_info_report:
                 dut_info = {"dut_info": dut_info_report}
                 dvc_logger.log_params(dut_info)
@@ -347,7 +367,7 @@ if __name__ == "__main__":
             # special handling for microbenchmarks to extract only the relevant layer
             report_hierarchy_level = "(top)"
             if metadata_bench["params"]["dut"] == "mvau":
-                resource_report = open_json_report(id, "post_synth_resources.json")
+                resource_report = open_json_report(id, "post_synth_resources.json", args.followup)
                 if resource_report:
                     for key in resource_report:
                         if "MVAU" in key:
@@ -376,19 +396,20 @@ if __name__ == "__main__":
             # post synth timing report
             # TODO: only exported as post_route_timing.rpt, not .json
 
+            # TODO: update collection of all measurement reports after recent driver changes
             # instrumentation measurement
-            dvc_logger.log_all_metrics_from_report(
-                "measured_performance.json", prefix="measurement/performance/"
-            )
+            # dvc_logger.log_all_metrics_from_report(
+            #     "measured_performance.json", prefix="measurement/performance/"
+            # )
 
             # IODMA validation accuracy
-            dvc_logger.log_metrics_from_report(
-                "validation.json",
-                [
-                    "top-1_accuracy",
-                ],
-                prefix="measurement/validation/",
-            )
+            # dvc_logger.log_metrics_from_report(
+            #     "validation.json",
+            #     [
+            #         "top-1_accuracy",
+            #     ],
+            #     prefix="measurement/validation/",
+            # )
 
             # power estimation
             dvc_logger.log_all_metrics_from_report(
@@ -396,29 +417,29 @@ if __name__ == "__main__":
             )
 
             # power measurement
-            dvc_logger.log_all_metrics_from_report(
-                "measured_power.json", prefix="measurement/power/"
-            )
+            # dvc_logger.log_all_metrics_from_report(
+            #     "measured_power.json", prefix="measurement/power/"
+            # )
 
             # live fifosizing report + graph png
-            dvc_logger.log_metrics_from_report(
-                "fifo_sizing_report.json",
-                [
-                    "error",
-                    "fifo_size_total_kB",
-                ],
-                prefix="fifosizing/live/",
-            )
+            # dvc_logger.log_metrics_from_report(
+            #     "fifo_sizing_report.json",
+            #     [
+            #         "error",
+            #         "fifo_size_total_kB",
+            #     ],
+            #     prefix="fifosizing/live/",
+            # )
 
-            image = os.path.join(
-                "measurement_artifacts",
-                "runs_output",
-                "run_%d" % (id),
-                "reports",
-                "fifo_sizing_graph.png",
-            )
-            if os.path.isfile(image):
-                dvc_logger.log_image("fifosizing_pass_1", image)
+            # image = os.path.join(
+            #     "measurement_artifacts",
+            #     "runs_output",
+            #     "run_%d" % (id),
+            #     "reports",
+            #     "fifo_sizing_graph.png",
+            # )
+            # if os.path.isfile(image):
+            #     dvc_logger.log_image("fifosizing_pass_1", image)
 
             # time_per_step.json
             dvc_logger.log_all_metrics_from_report("time_per_step.json", prefix="time/")
@@ -426,12 +447,20 @@ if __name__ == "__main__":
             # ARTIFACTS
             # Log build reports as they come from GitLab artifacts,
             # but copy them to a central dir first so all runs share the same path
-            run_report_dir1 = os.path.join(
-                "build_artifacts", "runs_output", "run_%d" % (id), "reports"
-            )
-            run_report_dir2 = os.path.join(
-                "measurement_artifacts", "runs_output", "run_%d" % (id), "reports"
-            )
+            if args.followup:
+                run_report_dir1 = os.path.join(
+                    "build_artifacts_followup", "runs_output", "run_%d" % (id), "reports"
+                )
+                run_report_dir2 = os.path.join(
+                    "measurement_artifacts_followup", "runs_output", "run_%d" % (id), "reports"
+                )
+            else:
+                run_report_dir1 = os.path.join(
+                    "build_artifacts", "runs_output", "run_%d" % (id), "reports"
+                )
+                run_report_dir2 = os.path.join(
+                    "measurement_artifacts", "runs_output", "run_%d" % (id), "reports"
+                )
             dvc_report_dir = "reports"
             os.makedirs(dvc_report_dir, exist_ok=True)
             delete_dir_contents(dvc_report_dir)
@@ -449,43 +478,38 @@ if __name__ == "__main__":
             microbench_result_data[dut].append(dvc_logger.data_dict)
 
         # Prepare benchmarking config for follow-up runs after live FIFO-sizing
-        folding_config_lfs_path = os.path.join(
-            "measurement_artifacts",
-            "runs_output",
-            "run_%d" % (id),
-            "reports",
-            "folding_config_lfs.json",
-        )
-        if os.path.isfile(folding_config_lfs_path):
-            # Copy folding config produced by live FIFO-sizing
-            output_folding_path = os.path.join(output_folding_dir, experiment_name + ".json")
-            os.makedirs(output_folding_dir, exist_ok=True)
-            print(
-                "Saving lfs-generated folding config of this run to use in future builds: %s"
-                % output_folding_path
+        # Only generate follow-up config if this is not already a follow-up run
+        if not args.followup:
+            folding_config_lfs_path = os.path.join(
+                "measurement_artifacts",
+                "runs_output",
+                "run_%d" % (id),
+                "reports",
+                "experiment_fifosizing",
+                "exp_itr_1",
+                "largest_first",  # TODO: make configurable or choose best available FIFO-sizing
+                "both",
+                "folding_config_lfs.json",
             )
-            shutil.copy(folding_config_lfs_path, output_folding_path)
+            if os.path.isfile(folding_config_lfs_path):
+                print(
+                    "Creating follow-up experiment config based on lfs folding config: %s"
+                    % folding_config_lfs_path
+                )
 
-            # Create benchmarking config
-            metadata_bench = open_json_report(id, "metadata_bench.json")
-            configuration = dict()
-            for key in metadata_bench["params"]:
-                # wrap in list
-                configuration[key] = [metadata_bench["params"][key]]
-            # overwrite FIFO-related params
-            import_folding_path = os.path.join(
-                os.environ.get("LOCAL_CFG_DIR"),
-                "lfs",
-                "CI_" + os.environ.get("CI_PIPELINE_ID"),
-                "folding",
-                experiment_name + ".json",
-            )
-            configuration["live_fifo_sizing"] = [False]
-            configuration["auto_fifo_depths"] = [False]
-            configuration["target_fps"] = ["None"]
-            configuration["folding_config_file"] = [import_folding_path]
+                # Create benchmarking config
+                metadata_bench = open_json_report(id, "metadata_bench.json", args.followup)
+                configuration = dict()
+                for key in metadata_bench["params"]:
+                    # wrap in list
+                    configuration[key] = [metadata_bench["params"][key]]
+                # overwrite FIFO-related params
+                configuration["live_fifo_sizing"] = [False]
+                configuration["auto_fifo_depths"] = [False]
+                configuration["target_fps"] = ["None"]
+                configuration["folding_config_file"] = [folding_config_lfs_path]
 
-            follow_up_bench_cfg.append(configuration)
+                follow_up_bench_cfg.append(configuration)
 
     # Save microbenchmark results as (DVC-tracked? TODO) JSON for each DUT
     for dut in microbench_result_data:
@@ -516,10 +540,12 @@ if __name__ == "__main__":
             with open(dut_json_path, "w") as f:
                 json.dump(dut_json, f, indent=2)
 
-    # Save aggregated benchmarking config for follow-up job
+    # Save aggregated benchmarking config for follow-up job to working dir
+    # It is forwarded to the follow-up job via GitLab CI artifact
     if follow_up_bench_cfg:
-        print("Saving follow-up bench config for lfs: %s" % output_cfg_path)
-        with open(output_cfg_path, "w") as f:
+        followup_artifact_path = "followup_bench_config.json"
+        print("Saving follow-up bench config as artifact: %s" % followup_artifact_path)
+        with open(followup_artifact_path, "w") as f:
             json.dump(follow_up_bench_cfg, f, indent=2)
 
     print("Done")
