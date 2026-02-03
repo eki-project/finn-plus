@@ -63,9 +63,6 @@ dependencies = "2.0.1"                                # dependencies==2.0.1 requ
 setuptools = ">40.8.0,<70.0.0"                        # setuptools<70.0.0 required by brevitas
 cmake = "~4.0.3"
 
-# TODO: Eventually use the PyPI version...
-onnx-passes = { git = "https://github.com/iksnagreb/onnx-passes.git@e5ff48c" }
-
 termcolor = "^2.5.0"
 rich = "^13.9.4"
 click = "^8.1.8"
