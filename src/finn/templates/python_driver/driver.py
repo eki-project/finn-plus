@@ -334,7 +334,6 @@ class FINNDMAOverlay(Overlay):
             self.oshape_folded(ind),
             reverse_endian=True,
             reverse_inner=True,
-            fast_mode=True,
         )
         return obuf_folded
 

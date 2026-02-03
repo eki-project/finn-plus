@@ -37,6 +37,7 @@ import numpy as np
 from onnx import helper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
@@ -81,6 +82,11 @@ def _determine_impl_style(node, fpgapart, model):
                 inp_width_fit = idt.bitwidth() >= 4
                 weight_width_fit = wdt.bitwidth() >= 4
                 if inp_width_fit and weight_width_fit and _vvu_rtl_possible(node, fpgapart):
+                    return "rtl"
+                else:
+                    return "hls"
+            elif optype == "LayerNorm":
+                if _layernorm_rtl_possible(node, fpgapart):
                     return "rtl"
                 else:
                     return "hls"
@@ -150,6 +156,18 @@ def _determine_impl_style(node, fpgapart, model):
                         set to HLS variant. Please check the bit-widths to be <= 8 and ensure the
                         thresholds are implemented as standalone layer. Note that the RTL-variant
                         of this layer is only supported on Versal boards""" % (
+                    node.name,
+                )
+                log.warning(warn_str)
+                return "hls"
+
+        elif optype == "LayerNorm":
+            if _layernorm_rtl_possible(node, fpgapart):
+                return "rtl"
+            else:
+                warn_str = """There is no RTL variant for %s. The node will automatically be
+                        set to HLS variant. The RTL Layernorm layer currently only supports
+                        float32 inputs and uses DSP58, so only versal devices supported.""" % (
                     node.name,
                 )
                 log.warning(warn_str)
@@ -267,6 +285,19 @@ def _vvu_rtl_possible(n, fpgapart):
     return in_width_in_range and weight_width_in_range and signed_weights
 
 
+def _layernorm_rtl_possible(n, fpgapart):
+    # Checks whether RTL-based Layernorm is supported
+    # Currently, we only support float32 inputs and versal fabric
+    if not is_versal(fpgapart):
+        return False
+    node_inst = getCustomOp(n)
+    idt = node_inst.get_input_datatype(0)
+    if idt != "FLOAT32":
+        return False
+    else:
+        return True
+
+
 class SpecializeLayers(Transformation):
     """Specialize all layers to either HLS or RTL variants"""
 
@@ -292,6 +323,11 @@ class SpecializeLayers(Transformation):
             # Skip nodes that are not hw layers
             if not node.domain == "finn.custom_op.fpgadataflow":
                 continue
+            # For shuffle nodes the specialisation happens after
+            # the ShuffleDecomposition transformation with a
+            # dedicated InferInnerOuterShuffle transformation
+            if node.op_type == "Shuffle":
+                continue
             node_ind += 1
             impl_style = _determine_impl_style(node, self.fpgapart, model)
             optype = node.op_type + "_" + impl_style
@@ -309,8 +345,10 @@ class SpecializeLayers(Transformation):
             graph.node.insert(node_ind, new_node)
             # remove old nodes
             graph.node.remove(node)
-            # update node names to reflect new op types
-            # TODO: the following line causes excessive runtime and unexepected node sorting!
-            # model = model.transform(GiveUniqueNodeNames())
             graph_modified = True
+
+        if graph_modified:
+            # update node names to reflect new op types
+            model = model.transform(GiveUniqueNodeNames())
+
         return (model, graph_modified)
