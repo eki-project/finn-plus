@@ -45,8 +45,8 @@ from typing import Dict, List, Optional, Tuple
 import finn.util
 from finn.builder.build_dataflow_config import FpgaMemoryType
 from finn.templates import get_templates_folder
-from finn.util.basic import make_build_dir
-from finn.util.data_packing import get_driver_shapes, to_external_tensor
+from finn.util.basic import get_driver_shapes, make_build_dir
+from finn.util.data_packing import to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
@@ -615,6 +615,7 @@ class MakePYNQDriver(Transformation):
         os.makedirs(weights_dir)
         idma_idx = 0
         ext_weight_dma_cnt = 0
+        ext_weight_shapes_dict = {}
 
         for node in model.graph.node:
             assert (
@@ -634,9 +635,17 @@ class MakePYNQDriver(Transformation):
                 df_model = ModelWrapper(sdp_inst.get_nodeattr("model"))
                 assert df_model.graph.node[0].op_type == "IODMA_hls"
                 iodma_node = getCustomOp(df_model.graph.node[0])
-                # input weights dma?
-                if iodma_node.get_nodeattr("burstMode") == "wrap":
+                if iodma_node.get_nodeattr("burstMode") == "wrap":  # input weights dma?
                     external_weights = True
+                    dma_sdp_output = sdp_inst.onnx_node.output[0]
+                    dma_target_sdp = getCustomOp(model.find_consumer(dma_sdp_output))
+                    dma_target_model = ModelWrapper(dma_target_sdp.get_nodeattr("model"))
+                    iodma_output_tensor = iodma_node.onnx_node.output[0]
+                    dma_consumer = dma_target_model.find_consumer(iodma_output_tensor)
+                    ext_weight_shapes_dict[idma_name] = dma_target_model.get_tensor_shape(
+                        dma_consumer.output[0]
+                    )
+
                     init_tensor = df_model.get_initializer(iodma_node.onnx_node.input[0])
                     ext_weight_dma_cnt += 1
                     w_dtype = df_model.get_tensor_datatype(iodma_node.onnx_node.input[0])
@@ -739,6 +748,7 @@ class MakePYNQDriver(Transformation):
             driver_information["external_weights"] = external_weights
             driver_information["runtime_weights"] = runtime_weights
             driver_information["platform"] = self.platform
+            # TODO: also supply ext_weight_shapes_dict to driver
 
         if self.clk_period_ns is not None:
             driver_information["fclk_mhz"] = (1.0 / self.clk_period_ns) * 1e3
