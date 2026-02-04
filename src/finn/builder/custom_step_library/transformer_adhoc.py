@@ -28,6 +28,8 @@ from finn.builder.build_dataflow_config import DataflowBuildConfig
 # ONNX operator to FINN HWCustomOp conversion steps, also inferring custom-ops
 # from patterns of operators
 from finn.transformation.fpgadataflow import convert_to_hw_layers as hardware
+from finn.transformation.fpgadataflow.attention import InferScaledDotProductAttention
+from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
 
 # Reuse FINN auto-folding functionality to build folding of attention operators
 from finn.transformation.fpgadataflow.set_folding import (
@@ -58,7 +60,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     # Infer fused scaled dot-product attention before inferring standalone
     # thresholds and MVUs
-    model = model.transform(hardware.InferScaledDotProductAttention())
+    model = model.transform(InferScaledDotProductAttention())
 
     # Usual FINN hardware conversion transformations: Start with standalone
     # thresholds to avoid fusing these into MVAUs, from there on the order does
@@ -108,7 +110,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(hardware.InferReshape())
     # Explicitly replicate stream connections between layers as hardware does
     # not allow multiple consumer of a single AXI stream.
-    model = model.transform(hardware.InferReplicateStream())
+    model = model.transform(InferReplicateStream())
 
     # Cleanup the graph after hardware conversion by redoing type and shape
     # inference. There is also more potential for rounding thresholds after
