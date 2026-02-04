@@ -44,7 +44,10 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             # Toggle between rtl or IPI implementation
             # rtl - use the rtl generated IP during stitching
             # vivado - use the AXI Infrastructure FIFO
-            "impl_style": ("s", False, "rtl", {"rtl", "vivado"}),
+            # virtual - use virtual rtl implementation for live fifo-sizing
+            "impl_style": ("s", False, "rtl", {"rtl", "vivado", "virtual"}),
+            # Unique FIFO ID for ring bus addressing (only for impl_style=virtual)
+            "fifo_id": ("i", False, 0),
         }
         my_attrs.update(StreamingFIFO.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
@@ -69,13 +72,23 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
 
     def get_verilog_top_module_intf_names(self):
         ret = super().get_verilog_top_module_intf_names()
+        is_virtual = self.get_nodeattr("impl_style") == "virtual"
         is_rtl = self.get_nodeattr("impl_style") == "rtl"
         is_depth_monitor = self.get_nodeattr("depth_monitor") == 1
         if is_rtl and is_depth_monitor:
             ret["ap_none"] = ["maxcount"]
+        if is_virtual:
+            ret["ap_none"] = ["icfg", "ocfg"]
         return ret
 
     def generate_hdl(self, model, fpgapart, clk):
+        if self.get_nodeattr("impl_style") == "virtual":
+            # No HDL generation needed for virtual FIFOs
+            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+            self.set_nodeattr("ipgen_path", code_gen_dir)
+            self.set_nodeattr("ip_path", code_gen_dir)
+            return
+
         rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "fifo/hdl")
         template_path = rtlsrc + "/fifo_template.v"
 
@@ -193,6 +206,22 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
                 "[get_bd_pins %s/fifo/s_axis_aclk]" % (node_name, clk_name, node_name)
             )
             return cmd
+        elif impl_style == "virtual":
+            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+            sourcefiles = self.get_rtl_file_list(abspath=True)
+            fifo_name = self.onnx_node.name
+            id = self.get_nodeattr("fifo_id")
+            width = int(self.get_instream_width_padded())
+            fm_size = int(np.prod(self.get_folded_input_shape()[0:-1]))
+
+            cmd = []
+            for f in sourcefiles:
+                cmd += [f"add_files -norecurse {f}"]
+            cmd += [f"create_bd_cell -type module -reference fifo_gauge_wrapper {fifo_name}"]
+            cmd += [f"set_property CONFIG.ID {id} [get_bd_cells {fifo_name}]"]
+            cmd += [f"set_property CONFIG.DATA_WIDTH {width} [get_bd_cells {fifo_name}]"]
+            cmd += [f"set_property CONFIG.FM_SIZE {fm_size} [get_bd_cells {fifo_name}]"]
+            return cmd
         else:
             raise Exception(
                 "FIFO implementation style %s not supported, please use rtl or vivado" % impl_style
@@ -201,29 +230,44 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "fifo/hdl/")
+            if self.get_nodeattr("impl_style") == "virtual":
+                rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "fifo_virtual/hdl/")
+            else:
+                rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "fifo/hdl/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
 
-        verilog_files = [
-            rtllib_dir + "Q_srl.v",
-            code_gen_dir + self.get_nodeattr("gen_top_module") + ".v",
-        ]
+        if self.get_nodeattr("impl_style") == "virtual":
+            verilog_files = [
+                rtllib_dir + "fifo_gauge_pkg.sv",
+                rtllib_dir + "fifo_gauge.sv",
+                rtllib_dir + "fifo_gauge_wrapper.v",
+            ]
+        else:
+            verilog_files = [
+                rtllib_dir + "Q_srl.v",
+                code_gen_dir + self.get_nodeattr("gen_top_module") + ".v",
+            ]
         return verilog_files
 
     def prepare_rtlsim(self, behav=False):
-        assert self.get_nodeattr("impl_style") != "vivado", (
-            "StreamingFIFO impl_style "
-            "cannot be vivado for rtlsim. Only impl_style=rtl supported."
-        )
+        # TODO: Support simulation of vivado-style FIFOs,
+        # or ensure node-by-node rtlsim is always skipped for FIFOs in general
+        if self.get_nodeattr("impl_style") != "rtl":
+            log.warning(
+                f"Trying to prepare rtlsim for {self.onnx_node.name}, but impl_style "
+                "is set to vivado or virtual, which is not supported for simulation. Skipping. "
+                "Simulation will fall back to Python simulation."
+            )
+            raise NotImplementedError()
         return super().prepare_rtlsim(behav)
 
     def execute_node(self, context, graph):
         mode = self.get_nodeattr("exec_mode")
         impl_style = self.get_nodeattr("impl_style")
-        if mode == "cppsim" or impl_style == "vivado":
-            # Fall back to Python simulation (no-op) for vivado-style FIFOs
+        if mode == "cppsim" or impl_style == "vivado" or impl_style == "virtual":
+            # Fall back to Python simulation (no-op) for vivado or virtual style FIFOs
             StreamingFIFO.execute_node(self, context, graph)
         elif mode == "rtlsim":
             RTLBackend.execute_node(self, context, graph)
