@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import concurrent
 import concurrent.futures
-import os
 import shlex
 import shutil
 import subprocess as sp
@@ -24,13 +23,18 @@ FINN_DEPS = {
         False,
     ),
     "brevitas": (
-        "https://github.com/iksnagreb/brevitas.git",
-        "003f9f4070c20639790c7b406a28612a089fc502",
+        "https://github.com/Xilinx/brevitas.git",
+        "b106358c4169d8a9b68cb2a531aa795417d74887",
         True,
     ),
     "qonnx": (
         "https://github.com/fpjentzsch/qonnx.git",
-        "61863d197f22d893503ba6383ffea8e49b896275",
+        "084bbec741feef1c1bea7a813e0d301d8e1a3de5",
+        True,
+    ),
+    "onnx-passes": (
+        "https://github.com/iksnagreb/onnx-passes.git",
+        "e5ff48c2292f83d490b0aed11437d953193701d6",
         True,
     ),
     "dataset_loading": (
@@ -39,13 +43,13 @@ FINN_DEPS = {
         True,
     ),
     "cnpy": (
-        "https://github.com/rogersce/cnpy.git",
-        "4e8810b1a8637695171ed346ce68f6984e585ef4",
+        "https://github.com/maltanar/cnpy.git",
+        "8c82362372ce600bbd1cf11d64661ab69d38d7de",
         False,
     ),
     "finn-hlslib": (
         "https://github.com/Xilinx/finn-hlslib.git",
-        "5dde96382b84979c6caa6f34cdad2ac72fa28489",
+        "206e57f5ea993630250f1209dce5a66291210269",
         False,
     ),
     "attention-hlslib": (
@@ -267,33 +271,3 @@ def update_dependencies(location: Path) -> None:
             "Failed to retrieve all dependencies. Stopping...[/red]"
         )
         sys.exit(1)
-
-
-def install_finnxsi() -> bool:
-    # TODO: integrate properly into the rich.Live above?
-    finnxsi_path = os.environ["FINN_XSI"]
-    finnxsi_so_path = os.path.join(finnxsi_path, "xsi.so")
-
-    # Set LD_LIBRARY_PATH
-    vivado_path = os.environ["XILINX_VIVADO"]
-    if "LD_LIBRARY_PATH" not in os.environ.keys():
-        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
-    else:
-        os.environ[
-            "LD_LIBRARY_PATH"
-        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
-
-    # Run make
-    res = sp.run(["make"], cwd=finnxsi_path, capture_output=True, text=True)
-    if res.returncode != 0:
-        Console().print(res.stderr)
-        return False
-
-    # Check if .so was created
-    if not os.path.isfile(finnxsi_so_path):
-        return False
-
-    # Set PATH/PYTHONPATH so the .so can be imported
-    os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finnxsi_path}"
-    sys.path.append(str(finnxsi_path))
-    return True

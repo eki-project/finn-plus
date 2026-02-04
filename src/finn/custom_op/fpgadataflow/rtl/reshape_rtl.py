@@ -2,22 +2,22 @@
 
 # Handling paths
 import os
+
 # Copying files and directories
 import shutil
+
+# The generic HW custom operator version of the operator as a base class
+from finn.custom_op.fpgadataflow.reshape import Reshape
 
 # Utility for registering RTLBackend HWCustomOp implementations into the module
 # scope
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 
-# Logging and error handling in FINN
-from finn.util.exception import FINNInternalError
-from finn.util.logging import log
-
 # Base class for specializing HW operators as implemented via RTL
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 
-# The generic HW custom operator version of the operator as a base class
-from finn.custom_op.fpgadataflow.reshape import Reshape
+# Logging and error handling in FINN
+from finn.util.exception import FINNInternalError
 
 
 @register_custom_op
@@ -58,7 +58,7 @@ class Reshape_rtl(Reshape, RTLBackend):
             # Bitwidth of the input and output stream (same as this is
             # passthrough)
             "IBITS": self.get_instream_width(),
-            "OBITS": self.get_outstream_width()
+            "OBITS": self.get_outstream_width(),
         }
 
         # Save top module name so we can refer to it after this node has been
@@ -102,8 +102,7 @@ class Reshape_rtl(Reshape, RTLBackend):
              attributes are invalid.
 
         """
-        code_gen_dir = self.get_nodeattr(
-            "code_gen_dir_ipgen") if abspath else ""
+        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") if abspath else ""
 
         top_name = self.get_nodeattr("gen_top_module")
         if type(code_gen_dir) is not str:
@@ -121,7 +120,7 @@ class Reshape_rtl(Reshape, RTLBackend):
             # os.path.join(code_gen_dir, "passthru_axi.sv"),
             os.path.join(code_gen_dir, "dwc.sv"),
             os.path.join(code_gen_dir, "dwc_axi.sv"),
-            os.path.join(code_gen_dir, f"{top_name}.v")
+            os.path.join(code_gen_dir, f"{top_name}.v"),
         ]
 
     def code_generation_ipi(self):

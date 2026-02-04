@@ -867,13 +867,6 @@ class bench_transformer(bench):
                     "/emb_add/input_quant/export_handler/Quant_output_0"
                 )
 
-        # Read the input value range information for the dataset from the parameters
-        # Note: Consider calibrating this on the fly from the dataset
-        # value_range = [-100, +100]  # params["build"]["range"] # TODO: make configurable?
-        # input_range = tuple(np.array([value_range]).T)
-        # Construct the seed range information of the input tensor
-        # range_info = RangeInfo(shape=(1, seq_len, emb_dim), range=input_range)
-
         # Prepare config files
         # TODO: make configurable
         # TODO: log intermediate files such as inp.npy, folding.yaml,
@@ -918,7 +911,7 @@ class bench_transformer(bench):
             verify_expected_output_npy=self._build_inputs["output_npy_path"],
             # Build steps to execute
             steps=[
-                # prepare_graph(range_info=range_info),
+                # prepare_graph(),
                 # step_streamline, # Custom Transformer-specific StreamlinePlus
                 "step_passes_frontend",  # New onnx-passes frontend
                 # "step_streamline", # Old default streamlining

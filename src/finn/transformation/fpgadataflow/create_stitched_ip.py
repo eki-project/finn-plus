@@ -38,6 +38,7 @@ from qonnx.util.basic import get_num_default_workers
 from shutil import copytree
 from subprocess import CalledProcessError
 
+from finn.templates import get_templates_folder
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
 from finn.util.basic import launch_process_helper, make_build_dir
 from finn.util.exception import FINNError, FINNUserError
@@ -114,6 +115,7 @@ class CreateStitchedIP(Transformation):
             "m_axis": [],
             "aximm": [],
             "axilite": [],
+            "ap_none": [],
         }
 
     def is_double_pumped(self, node):
@@ -267,6 +269,7 @@ class CreateStitchedIP(Transformation):
             self.connect_cmds.append(
                 "set_property name %s [get_bd_ports %s_0]" % (input_intf_name, input_intf_name)
             )
+            self.intf_names["ap_none"].append(input_intf_name)
 
     def insert_signature(self, checksum_count):
         """Insert signature block for design identification."""
@@ -543,8 +546,8 @@ class CreateStitchedIP(Transformation):
                 "[ipx::get_file_groups xilinx_simulationcheckpoint]" % block_name
             )
         # add a rudimentary driver mdd to get correct ranges in xparameters.h later on
-        example_data_dir = os.path.join(os.environ["FINN_QNN_DATA"], "mdd-data")
-        copytree(example_data_dir, vivado_stitch_proj_dir + "/data")
+        min_driver = get_templates_folder() / "ipcore_driver"
+        copytree(min_driver, vivado_stitch_proj_dir + "/data")
 
         #####
         # Core Cleanup Operations

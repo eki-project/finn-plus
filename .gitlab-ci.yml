@@ -99,7 +99,19 @@ Build:
     # Let Poetry create virtual environment (.venv) and install Python dependencies
     # TODO: is it possible to cache the entire venv for the following jobs?
     - poetry install
-    # Build .whl
+    - export POETRY_VIRTUALENVS_CREATE=false #DO NOT TOUCH: needed to build sub-packages
+    # Also build .whl finn-plus-tests package (for test dependencies)
+    - poetry build -P tests --clean --format=wheel
+    # Also build .whl finn-plus-notebooks package (for notebooks dependencies)
+    - poetry build -P notebooks --format=wheel
+    # Set the version of the sub-packages in the main pyproject.toml
+    - |
+      VERSION=$(poetry version -s -C tests)
+      # Update main pyproject.toml with the correct version
+      sed -i "s/finn-plus-tests = { version = \"\*\", optional = true }/finn-plus-tests = { version = \"$VERSION\", optional = true }/" pyproject.toml
+      sed -i "s/finn-plus-notebooks = { version = \"\*\", optional = true }/finn-plus-notebooks = { version = \"$VERSION\", optional = true }/" pyproject.toml
+    - export POETRY_VIRTUALENVS_CREATE=true #DO NOT TOUCH: revert to default behavior
+    # Build .whl finn-plus package
     - poetry build --clean --format=wheel
     # Let FINN download additional dependencies, cache resulting deps directory
     # Also fetch & checkout DVC-managed data, $CI_DVC_CACHE_DIR persists between jobs
@@ -112,6 +124,9 @@ Build:
     name: "finn-plus_package"
     paths:
       - dist/*.whl
+      - tests/dist/*.whl
+      - notebooks/dist/*.whl
+    expire_in: 1 week
   cache:
     key: $CI_COMMIT_SHA #TODO: cache based on relevant files
     paths:
@@ -140,7 +155,6 @@ FINN Test Suite 2022.2:
     paths:
       - deps
   variables:
-    GIT_STRATEGY: empty # Do not pull repository, install from wheel (artifact) instead
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
     PYTEST_PARALLEL: "$CPU_CORES"
   extends: .setup_full_2022_2
@@ -148,8 +162,11 @@ FINN Test Suite 2022.2:
     # Launch additional monitoring
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
     # Launch FINN via test command, includes preparation of (cached) dependencies
+    # Also fetch & checkout DVC-managed data, which should already be cached in $CI_DVC_CACHE_DIR
     - |
       source finn-plus-venv/bin/activate
+      dvc config cache.dir $CI_DVC_CACHE_DIR
+      dvc pull
       finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers 1 --num-test-workers $PYTEST_PARALLEL
   artifacts:
     name: "test_reports"
