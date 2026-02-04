@@ -509,6 +509,16 @@ if __name__ == "__main__":
                 configuration["target_fps"] = ["None"]
                 configuration["folding_config_file"] = [folding_config_lfs_path]
 
+                # Exception for ResNet-50: Final model doesn't fit board used for FIFO-sizing
+                if "dut" in metadata_bench["params"]:
+                    if metadata_bench["params"]["dut"] == "resnet50":
+                        configuration["board"] = ["U250"]
+                        configuration["enable_instrumentation"] = [False]
+                        configuration["rtlsim_batch_size"] = [3]
+                        configuration["generate_outputs"] = [
+                            ["stitched_ip", "rtlsim_performance", "bitfile"]
+                        ]
+
                 follow_up_bench_cfg.append(configuration)
 
     # Save microbenchmark results as (DVC-tracked? TODO) JSON for each DUT
