@@ -282,6 +282,11 @@ class InferThresholdingLayer(Transformation):
                 #  input of the graph, e.g., for cnv (bnn-pynq) models
                 # NOTE: careful, this requires proper layout annotation for input AND output,
                 #  otherwise the graph could break because only one of two Transpose gets inserted
+                # NOTE: When used with the new onnx-passes front-end,
+                #  this might need to be removed to prevent the fallback layout annotations
+                #  messing with models which are already correct by using the
+                #  newly proposed layout mechanism. This of course breaks models
+                #  still relying on the existing layout mechanism.
 
                 # check layout of inputs/outputs, and convert if needed
                 # check layout and convert if necessary

@@ -676,6 +676,12 @@ def step_hw_ipgen(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
+def step_insert_dwc(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Inserts data width converters between layers where necessary."""
+    model = model.transform(InsertDWC())
+    return model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
+
+
 def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     """
     Depending on the auto_fifo_depths setting, do one of the following:
@@ -1216,6 +1222,7 @@ build_dataflow_step_lookup = {
     "step_generate_estimate_reports": step_generate_estimate_reports,
     "step_hw_codegen": step_hw_codegen,
     "step_hw_ipgen": step_hw_ipgen,
+    "step_insert_dwc": step_insert_dwc,
     "step_set_fifo_depths": step_set_fifo_depths,
     "step_create_stitched_ip": step_create_stitched_ip,
     "step_measure_rtlsim_performance": step_measure_rtlsim_performance,
