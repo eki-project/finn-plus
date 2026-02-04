@@ -1,0 +1,17 @@
+params:
+  dut: transformer
+  model_path: models/transformer/finn-transformers/benchmark/streamlined.onnx
+  verify_input_npy: models/transformer/finn-transformers/benchmark/inp.npy
+  verify_expected_output_npy: models/transformer/finn-transformers/benchmark/out.npy
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  target_fps: 1000
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
