@@ -70,6 +70,7 @@ from finn.builder.build_dataflow_config import (
     ShellFlowType,
     VerificationStepType,
 )
+from finn.builder.passes import step_passes_frontend
 from finn.core.onnx_exec import execute_onnx
 from finn.core.rtlsim_exec import rtlsim_exec
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
@@ -437,6 +438,11 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     if cfg.standalone_thresholds:
         # doing this first causes all threshold layers to be standalone
         model = model.transform(to_hw.InferThresholdingLayer())
+
+    model = model.transform(to_hw.InferPool())
+    model = model.transform(to_hw.InferPoolFromReduce())
+    model = model.transform(to_hw.InferConvInpGen())
+
     # needed for bipolar MatMul layers
     model = model.transform(to_hw.InferBinaryMatrixVectorActivation())
     # needed for non-bipolar MatMul layers
@@ -445,14 +451,10 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(to_hw.InferLabelSelectLayer())
     # input quantization (if any) as standalone threshold
     model = model.transform(to_hw.InferThresholdingLayer())
-    # needed for convolutions -- TODO always exec?
-    need_conv = len(model.get_nodes_by_op_type("Im2Col")) > 0
-    if need_conv:
-        model = model.transform(to_hw.InferPool())
-        model = model.transform(to_hw.InferConvInpGen())
-        model = model.transform(RemoveCNVtoFCFlatten())
+    model = model.transform(to_hw.InferFMPadding())
     # get rid of Tranpose -> Tranpose identity seq
     model = model.transform(absorb.AbsorbConsecutiveTransposes())
+    model = model.transform(RemoveCNVtoFCFlatten())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(InferDataLayouts())
     model = model.transform(InferDataTypes())
@@ -1197,6 +1199,7 @@ def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 #: map step name strings to step functions
 build_dataflow_step_lookup = {
+    "step_passes_frontend": step_passes_frontend,
     "step_qonnx_to_finn": step_qonnx_to_finn,
     "step_tidy_up": step_tidy_up,
     "step_streamline": step_streamline,

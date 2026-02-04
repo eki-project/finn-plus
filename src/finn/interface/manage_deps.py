@@ -32,6 +32,11 @@ FINN_DEPS = {
         "084bbec741feef1c1bea7a813e0d301d8e1a3de5",
         True,
     ),
+    "onnx-passes": (
+        "https://github.com/iksnagreb/onnx-passes.git",
+        "e5ff48c2292f83d490b0aed11437d953193701d6",
+        True,
+    ),
     "dataset_loading": (
         "https://github.com/fbcotter/dataset_loading.git",
         "5b9faa226e5f7c857579d31cdd9acde8cdfb816f",
