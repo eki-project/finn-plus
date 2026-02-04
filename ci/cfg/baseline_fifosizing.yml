@@ -1,0 +1,145 @@
+[
+    ### BNN-PYNQ ###
+    # cnv-w2a2
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/cnv-w2a2_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/cnv-w2a2_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/cnv-w2a2_specialize_layers.json],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["largefifo_rtlsim"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/cnv-w2a2_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/cnv-w2a2_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/cnv-w2a2_specialize_layers.json],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["analytical"],
+        "tav_generation_strategy": ["rtlsim", "tree_model"],
+        "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+    # tfc-w2a2
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/tfc-w2a2_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/tfc-w2a2_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/tfc-w2a2_specialize_layers.json],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["largefifo_rtlsim"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/tfc-w2a2_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/tfc-w2a2_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/tfc-w2a2_specialize_layers.json],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["analytical"],
+        "tav_generation_strategy": ["rtlsim", "tree_model"],
+        "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # GTSRB (cnv-w1a1)
+    {
+        "dut": ["gtsrb"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["largefifo_rtlsim"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+    {
+        "dut": ["gtsrb"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["analytical"],
+        "tav_generation_strategy": ["rtlsim", "tree_model"],
+        "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # Cybersecurity (MLP)
+    {
+        "dut": ["cybsec"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["largefifo_rtlsim"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+    {
+        "dut": ["cybsec"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["analytical"],
+        "tav_generation_strategy": ["rtlsim", "tree_model"],
+        "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # MobileNetV1 (ImageNet)
+    {
+        "dut": ["mobilenetv1"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["largefifo_rtlsim"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+    {
+        "dut": ["mobilenetv1"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["analytical"],
+        "tav_generation_strategy": ["rtlsim", "tree_model"],
+        "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # VGG-10 (1D CNN) (RadioML)
+    {
+        "dut": ["vgg10"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["largefifo_rtlsim"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+    {
+        "dut": ["vgg10"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["analytical"],
+        "tav_generation_strategy": ["rtlsim", "tree_model"],
+        "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # ResNet-50 (ImageNet)
+    {
+        "dut": ["resnet50"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["largefifo_rtlsim"],
+        "generate_outputs": [["stitched_ip", "rtlsim_performance", "bitfile"]],
+        "synth_clk_period_ns": [10],
+        "board": ["U250"],
+        "enable_instrumentation": [False],
+        "rtlsim_batch_size": [3],
+    },
+    {
+        "dut": ["resnet50"],
+        "auto_fifo_depths": [True],
+        "auto_fifo_strategy": ["analytical"],
+        "tav_generation_strategy": ["rtlsim", "tree_model"],
+        "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
+        "generate_outputs": [["stitched_ip", "rtlsim_performance", "bitfile"]],
+        "synth_clk_period_ns": [10],
+        "board": ["U250"],
+        "enable_instrumentation": [False],
+        "rtlsim_batch_size": [3],
+    },
+]
