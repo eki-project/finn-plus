@@ -201,12 +201,13 @@ class RunLayerIsolatedSimulation(Transformation):
     """Run a layer isolated simulation and calculate some information for a
     later layer parallel simulation."""
 
-    def __init__(self, fpgapart: str, clk_ns: float, functional_sim: bool) -> None:
+    def __init__(self, fpgapart: str, clk_ns: float, functional_sim: bool, output_dir: Path) -> None:
         """Run isolated layer simulations."""
         super().__init__()
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
         self.functional_sim = functional_sim
+        self.output_dir = output_dir
 
     def calculate_upper_bounds(self, data: IsoSimLogDataByLayer) -> dict[str, dict[str, int]]:
         """Try to calculate an upper bound for the incoming FIFO size of the layers.
@@ -424,6 +425,11 @@ class RunLayerIsolatedSimulation(Transformation):
             [f"{name}: {in_fifo_upper_bound[name]}" for name in in_fifo_upper_bound.keys()]
         )
         log.info("Upper bounds: \n" + formatted_upper_bounds)
+
+        # Write into report file
+        upper_bounds_file = self.output_dir / "report" / "estimate_upper_fifo_bound.json"
+        upper_bounds_file.write_text(json.dumps(in_fifo_upper_bound))
+        log.info(f"Wrote results to: {upper_bounds_file}")
 
         raise NotImplementedError()
         # TODO: Integrate data into the layer parallel simulation

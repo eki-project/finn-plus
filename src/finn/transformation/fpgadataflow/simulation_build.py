@@ -36,6 +36,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+# TODO: Fix that BuildSimulation has to return binaries for either SimulationType
+# TODO: Just store the directory instead - since we build all targets anyways
+
 class SimulationType(str, Enum):
     """Type of simulation."""
 
