@@ -20,10 +20,6 @@ from brevitas.nn import (
 from brevitas.quant_tensor import QuantTensor
 from qonnx.core.modelwrapper import ModelWrapper
 
-# Range information structure for seeding the range analysis for converting
-# quantized activations to MultiThreshold
-from qonnx.util.range_analysis import RangeInfo
-
 # Progressbar
 from tqdm import trange
 
@@ -869,13 +865,6 @@ class bench_transformer(bench):
                     "/emb_add/input_quant/export_handler/Quant_output_0"
                 )
 
-        # Read the input value range information for the dataset from the parameters
-        # Note: Consider calibrating this on the fly from the dataset
-        value_range = [-100, +100]  # params["build"]["range"] # TODO: make configurable?
-        input_range = tuple(np.array([value_range]).T)
-        # Construct the seed range information of the input tensor
-        range_info = RangeInfo(shape=(1, seq_len, emb_dim), range=input_range)
-
         # Prepare config files
         # TODO: make configurable
         # TODO: log intermediate files such as inp.npy, folding.yaml,
@@ -920,7 +909,7 @@ class bench_transformer(bench):
             steps=[
                 # Prepares the QONNX graph to be consumed by FINN: Cleanup, lowering
                 # and Quant to MultiThreshold conversion
-                prepare_graph(range_info=range_info),
+                prepare_graph(),
                 # Unified exhaustive streamlining of complex model topologies
                 # including attention, residuals and splits
                 step_streamline,

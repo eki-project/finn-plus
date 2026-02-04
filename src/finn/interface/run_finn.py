@@ -1,3 +1,9 @@
+"""FINN command-line interface.
+
+This module provides the main CLI for FINN, including commands for building,
+running, testing, and managing dependencies and configurations.
+"""
+
 from __future__ import annotations
 
 import click
@@ -29,12 +35,20 @@ from finn.interface.interface_utils import (
     warning,
     write_yaml,
 )
-from finn.interface.manage_deps import install_finnxsi, update_dependencies
+from finn.interface.manage_deps import update_dependencies
 from finn.interface.manage_tests import run_test
 
 
-# Resolves the path to modules which are not part of the FINN package hierarchy
-def _resolve_module_path(name: str) -> str:
+def _resolve_module_path(name: str, prefix: str = "finn.") -> str:
+    """Resolve the path to modules which are not part of the FINN package hierarchy.
+
+    Args:
+        name: Module name to resolve
+        prefix: Prefix to try if initial import fails
+
+    Returns:
+        Absolute path to the module as a string, or empty string if not found
+    """
     # Try to import the module via importlib - allows "-" in names and resolve
     # the absolute path to the first candidate location as a string
     try:
@@ -43,7 +57,7 @@ def _resolve_module_path(name: str) -> str:
         # Try a different location if notebooks have not been found, maybe we
         # are in the Git repository root and should look there as well...
         try:
-            return str(importlib.import_module(f"finn.{name}").__path__[0])
+            return str(importlib.import_module(f"{prefix}{name}").__path__[0])
         except ModuleNotFoundError:
             warning(f"Could not resolve {name}. FINN might not work properly.")
     # Return the empty string as a default...
@@ -58,10 +72,20 @@ def prepare_finn(
     is_test_run: bool = False,
     skip_dep_update: bool = False,
 ) -> None:
-    """Prepare a FINN environment by:
-    0. Reading all settings and environment vars
-    1. Updating all dependencies
-    2. Setting all environment vars
+    """Prepare a FINN environment.
+
+    This function:
+    0. Reads all settings and environment vars
+    1. Updates all dependencies
+    2. Sets all environment vars
+
+    Args:
+        deps: Path to dependencies
+        flow_config: File path for context
+        build_dir: Build directory path
+        num_workers: Number of parallel workers
+        is_test_run: Whether this is a test run
+        skip_dep_update: Skip dependency update
     """
     # Resolve settings and dependencies, error if this doesnt work
     if not settings_found():
@@ -111,22 +135,23 @@ def prepare_finn(
     os.environ["FINN_XSI"] = _resolve_module_path("finn_xsi")
     os.environ["FINN_RTLLIB"] = _resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = _resolve_module_path("custom_hls")
-    os.environ["FINN_QNN_DATA"] = _resolve_module_path("qnn-data")
-    os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks")
-    os.environ["FINN_TESTS"] = _resolve_module_path("tests")
+    os.environ["FINN_NOTEBOOKS"] = _resolve_module_path("notebooks", prefix="")
+    os.environ["FINN_TESTS"] = _resolve_module_path("tests", prefix="")
 
-    # Install FINN XSI
-    finnxsi_status = install_finnxsi()
-    if finnxsi_status:
-        status("FINN XSI installed successfully.")
+    # Set LD_LIBRARY_PATH
+    # TODO: unclear if this is still needed
+    vivado_path = os.environ["XILINX_VIVADO"]
+    if "LD_LIBRARY_PATH" not in os.environ.keys():
+        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
     else:
-        error("FINN XSI installation failed.")
-        sys.exit(1)
+        os.environ[
+            "LD_LIBRARY_PATH"
+        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
 
 
 @click.group()
 def main_group() -> None:
-    pass
+    """FINN command-line interface main group."""
 
 
 @click.command(help="Build a hardware design")
@@ -191,6 +216,18 @@ def build(
     verify_output: str | None = None,
     output: str | None = None
 ) -> None:
+    """Build a hardware design from a config and model.
+
+    Args:
+        dependency_path: Path to FINN dependencies
+        build_path: Path for build temporary files
+        num_workers: Number of parallel workers (-1 for auto)
+        skip_dep_update: Skip dependency update
+        start: Starting step for the build flow
+        stop: Stopping step for the build flow
+        config: Path to build configuration file
+        model: Path to model file
+    """
     config_path = Path(config).expanduser()
     model_path = Path(model).expanduser()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
@@ -284,6 +321,15 @@ def build(
 def run(
     dependency_path: str, build_path: str, skip_dep_update: bool, num_workers: int, script: str
 ) -> None:
+    """Run a script in a FINN environment.
+
+    Args:
+        dependency_path: Path to FINN dependencies
+        build_path: Path for build temporary files
+        skip_dep_update: Skip dependency update
+        num_workers: Number of parallel workers (-1 for auto)
+        script: Path to script file to execute
+    """
     script_path = Path(script).expanduser()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     assert_path_valid(script_path)
@@ -296,8 +342,7 @@ def run(
         skip_dep_update=(skip_dep_update or skip_update_by_default()),
     )
     Console().rule(
-        f"[bold cyan]Starting script "
-        f"[/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
+        f"[bold cyan]Starting script [/bold cyan][bold orange1]{script_path.name}[/bold orange1]"
     )
     subprocess.run(
         shlex.split(f"{sys.executable} {script_path.name}", posix=IS_POSIX), cwd=script_path.parent
@@ -315,6 +360,14 @@ def run(
     default="",
 )
 def bench(bench_config: str, dependency_path: str, num_workers: int, build_path: str) -> None:
+    """Run a given benchmark configuration.
+
+    Args:
+        bench_config: Name or path of experiment configuration file
+        dependency_path: Path to FINN dependencies
+        num_workers: Number of parallel workers
+        build_path: Path for build temporary files
+    """
     console = Console()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
@@ -348,6 +401,15 @@ def bench(bench_config: str, dependency_path: str, num_workers: int, build_path:
 def test(
     variant: str, dependency_path: str, num_workers: int, num_test_workers: str, build_path: str
 ) -> None:
+    """Run a given test variant.
+
+    Args:
+        variant: Which test to execute (quick, quicktest_ci, full_ci)
+        dependency_path: Path to FINN dependencies
+        num_workers: Number of parallel workers
+        num_test_workers: Number of test workers
+        build_path: Path for build temporary files
+    """
     console = Console()
     build_dir = Path(build_path).expanduser() if build_path != "" else None
     dep_path = Path(dependency_path).expanduser() if dependency_path != "" else None
@@ -359,7 +421,7 @@ def test(
 
 @click.group(help="Dependency management")
 def deps() -> None:
-    pass
+    """Dependency management command group."""
 
 
 @click.command(help="Update or install dependencies to the given path")
@@ -371,17 +433,27 @@ def deps() -> None:
     show_default=True,
 )
 def update(path: str) -> None:
+    """Update or install dependencies to the given path.
+
+    Args:
+        path: Path to install dependencies to
+    """
     dep_path = Path(path).expanduser() if path != "" else None
     prepare_finn(dep_path, Path(), None, 1)
 
 
 @click.group(help="Manage FINN settings")
 def config() -> None:
+    """Manage FINN settings command group."""
     # TODO: Config remove?
-    pass
 
 
-def _command_get_settings():
+def _command_get_settings() -> dict[str, str | int | bool]:
+    """Get settings from the settings file.
+
+    Returns:
+        Dictionary of settings key-value pairs
+    """
     sp = _resolve_settings_path()
     if sp is None:
         error("Could not find a settings file. Stopping")
@@ -392,6 +464,7 @@ def _command_get_settings():
 
 @click.command("list", help="List the settings files contents")
 def config_list() -> None:
+    """List the settings file contents."""
     console = Console()
     for k, v in _command_get_settings().items():
         console.print(f"[blue]{k}[/blue]: {v}")
@@ -400,6 +473,11 @@ def config_list() -> None:
 @click.command("get", help="Get a specific key from the settings")
 @click.argument("key")
 def config_get(key: str) -> None:
+    """Get a specific key from the settings.
+
+    Args:
+        key: Setting key to retrieve
+    """
     settings = _command_get_settings()
     if key not in settings.keys():
         error(f"Key {key} could not be found in the settings file!")
@@ -411,6 +489,12 @@ def config_get(key: str) -> None:
 @click.argument("key")
 @click.argument("value")
 def config_set(key: str, value: str) -> None:
+    """Set a key to a given value.
+
+    Args:
+        key: Setting key to set
+        value: Value to set
+    """
     if not settings_found():
         error(
             "Settings file not found. To create a template one at the "
@@ -431,6 +515,11 @@ def config_set(key: str, value: str) -> None:
 )
 @click.argument("path", default="~/.finn/")
 def config_create(path: str) -> None:
+    """Create a template settings file.
+
+    Args:
+        path: Directory path where to create the settings file
+    """
     p = Path(path).expanduser()
     if p.suffix != "":
         error("Please specify a path to a directory, not a file!")
@@ -445,6 +534,7 @@ def config_create(path: str) -> None:
 
 
 def main() -> None:
+    """Entry point for the FINN command-line interface."""
     config.add_command(config_list)
     config.add_command(config_create)
     config.add_command(config_get)

@@ -42,6 +42,7 @@ __pycache__/*
 *.ipynb_checkpoints*
 *.sif
 .DS_Store
+*.idx
 
 # Project files
 .vscode
@@ -54,6 +55,7 @@ tags
 poetry.lock
 *.code-workspace
 .env
+*/.cache/*
 
 # Package files
 *.egg
@@ -73,6 +75,9 @@ coverage.xml
 build/*
 dist/*
 sdist/*
+*/build/*
+*/dist/*
+*/sdist/*
 docs/api/*
 docs/_rst/*
 docs/_build/*

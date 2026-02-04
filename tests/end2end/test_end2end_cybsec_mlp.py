@@ -38,6 +38,7 @@ import torch.nn as nn
 from brevitas.core.quant import QuantType
 from brevitas.export import export_qonnx
 from brevitas.nn import QuantIdentity, QuantLinear, QuantReLU
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
@@ -46,7 +47,7 @@ import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.util.basic import make_build_dir
-from finn.util.test import load_test_checkpoint_or_skip
+from tests.testing_util.test import load_test_checkpoint_or_skip
 
 
 def get_checkpoint_name(step):
@@ -81,7 +82,7 @@ class CybSecMLPForExport(nn.Module):
 @pytest.mark.end2end
 class Test_end2end_cybsec_mlp:
     def test_end2end_cybsec_mlp_export(self):
-        assets_dir = os.path.join(os.environ["FINN_QNN_DATA"], "cybsec-mlp")
+        assets_dir = Path(__file__).parent.parent / "example_data" / "cybsec-mlp"
         # load up trained net in Brevitas
         input_size = 593
         hidden1 = 64
@@ -105,7 +106,7 @@ class Test_end2end_cybsec_mlp:
             QuantReLU(bit_width=act_bit_width),
             QuantLinear(hidden3, num_classes, bias=True, weight_bit_width=weight_bit_width),
         )
-        trained_state_dict = torch.load(assets_dir + "/state_dict.pth", weights_only=False)[
+        trained_state_dict = torch.load(assets_dir / "state_dict.pth", weights_only=False)[
             "models_state_dict"
         ][0]
         model.load_state_dict(trained_state_dict, strict=False)

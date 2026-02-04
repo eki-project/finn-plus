@@ -28,11 +28,11 @@
 
 import pytest
 
-import importlib_resources as importlib
 import numpy as np
 import os
 import torch
 from brevitas.export import export_qonnx
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.fold_constants import FoldConstants
 from qonnx.transformation.general import GiveUniqueNodeNames, RemoveStaticGraphInputs
@@ -42,7 +42,7 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 import finn.core.onnx_exec as oxe
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.util.basic import make_build_dir
-from finn.util.test import get_test_model_trained
+from tests.testing_util.test import get_test_model_trained
 
 
 @pytest.mark.brevitas_export
@@ -65,9 +65,10 @@ def test_brevitas_cnv_export_exec(wbits, abits):
     model = model.transform(RemoveStaticGraphInputs())
     assert len(model.graph.input) == 1
     assert len(model.graph.output) == 1
-    ref = importlib.files("finn.qnn-data") / "cifar10/cifar10-test-data-class3.npz"
-    with importlib.as_file(ref) as fn:
-        input_tensor = np.load(fn)["arr_0"].astype(np.float32)
+    cifar_path = (
+        Path(__file__).parent.parent / "example_data" / "cifar10" / "cifar10-test-data-class3.npz"
+    )
+    input_tensor = np.load(cifar_path)["arr_0"].astype(np.float32)
     input_tensor = input_tensor / 255
     assert input_tensor.shape == (1, 3, 32, 32)
     # run using FINN-based execution
