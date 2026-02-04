@@ -77,7 +77,7 @@ class RoundAndClipThresholds(Transformation):
                     max_val = dtype.max() + 1
                     # Do not go above 64-bit integers for now as these are not fully
                     # supported by QONNX
-                    if dtype in {"INT64", "UNIT64"}:
+                    if dtype in {"INT64", "UINT64"}:
                         tdt = dtype
                     else:
                         if not dtype.signed():
