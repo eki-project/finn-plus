@@ -1,0 +1,18 @@
+params:
+  dut: bnn-pynq
+  model_path: models/bnn-pynq/cnv-w1a1_qonnx.onnx
+  folding_config_file: 
+    measurement_artifacts/runs_output/run_0/reports/experiment_fifosizing/exp_itr_1/largest_first/both/folding_config_lfs.json
+  specialize_layers_config_file: models/bnn-pynq/cnv-w1a1_specialize_layers.json
+  live_fifo_sizing: false
+  generate_outputs:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+  auto_fifo_depths: false
+  target_fps: None
+metadata:
+  tool_version: '2024.2'
