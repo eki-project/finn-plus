@@ -19,7 +19,7 @@ def quantize(data):
 def validate(cls_inst, *args, **kwargs):
     report_dir = kwargs.get("report_dir")
     dataset_path = kwargs.get(
-        "dataset_path", os.path.join(os.environ["DATASETDIR"], "GOLD_XYZ_OSC.0001_1024.hdf5")
+        "dataset_path", os.path.join(os.environ["DATASET_DIR"], "GOLD_XYZ_OSC.0001_1024.hdf5")
     )
     h5_file = h5py.File(dataset_path, "r")
     data_h5 = h5_file["X"]

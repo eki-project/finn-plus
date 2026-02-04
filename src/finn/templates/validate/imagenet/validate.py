@@ -48,7 +48,8 @@ def setup_dataloader(val_path, label_file_path=None, batch_size=100, n_images=50
 def validate(cls_inst, *args, **kwargs):
     report_dir = kwargs.get("report_dir")
     dataset_path = kwargs.get(
-        "dataset_path", os.path.join(os.environ["DATASETDIR"], "ImageNet2012", "ILSVRC2012_img_val")
+        "dataset_path",
+        os.path.join(os.environ["DATASET_DIR"], "ImageNet2012", "ILSVRC2012_img_val"),
     )
     batch_size = cls_inst.batch_size
     img_queue = setup_dataloader(dataset_path, os.path.join(dataset_path, "../val.txt"), batch_size)
