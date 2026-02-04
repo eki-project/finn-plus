@@ -737,15 +737,15 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             *pragmas,
             # Connect the attention operator to the input and output streams
             f"for(std::size_t i = 0; i < {self.iterations}; ++i) {{",
-            f"    attention("
+            "    attention("
             f"    q_{self.hls_sname()}, "
             f"    k_{self.hls_sname()}, "
             f"    v_{self.hls_sname()}, "
             f"    out_{self.hls_sname()}, "
             # TODO: Does not work for "input" mode mask
-            f"    attention_mask"
-            f");",
-            f"}}"
+            "    attention_mask"
+            ");",
+            "}}"
         ]
 
     def dataoutstrm(self):

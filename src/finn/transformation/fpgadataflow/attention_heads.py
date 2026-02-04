@@ -15,7 +15,6 @@ from onnx import helper as oh
 
 # QONNX wrapper of ONNX model graphs
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.custom_op.base import CustomOp
 from qonnx.custom_op.registry import getCustomOp
 
 # QONNX graph transformation base class

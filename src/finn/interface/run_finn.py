@@ -186,20 +186,19 @@ def main_group() -> None:
 @click.option(
     "--verify-input",
     default=None,
-    help="Path to .npy  file that will be used as the input for verification."
+    help="Path to .npy  file that will be used as the input for verification.",
 )
 @click.option(
     "--verify-output",
     default=None,
-    help="Path to .npy file that will be used as the expected output for "
-    "verification."
+    help="Path to .npy file that will be used as the expected output for " "verification.",
 )
 @click.option(
     "--output",
     "-o",
     default=None,
     help="Directory where the final build outputs will be written into, "
-    "overrides output_dir from the config if present."
+    "overrides output_dir from the config if present.",
 )
 @click.argument("config")
 @click.argument("model")
@@ -214,7 +213,7 @@ def build(
     model: str,
     verify_input: str | None = None,
     verify_output: str | None = None,
-    output: str | None = None
+    output: str | None = None,
 ) -> None:
     """Build a hardware design from a config and model.
 
