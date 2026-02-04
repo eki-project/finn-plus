@@ -7,7 +7,7 @@ import os
 def validate(cls_inst, *args, **kwargs):
     report_dir = kwargs.get("report_dir")
     dataset_path = kwargs.get(
-        "dataset_path", os.path.join(os.environ["DATASETDIR"], "unsw_nb15_binarized.npz")
+        "dataset_path", os.path.join(os.environ["DATASET_DIR"], "unsw_nb15_binarized.npz")
     )
     unsw_nb15_data = np.load(dataset_path)["test"][:82000]
     batch_size = cls_inst.batch_size

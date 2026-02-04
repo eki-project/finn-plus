@@ -199,6 +199,13 @@ class Experiment:
                     print(f"[EM] STARTING RECORDING AFTER {self._warmup} s OF WARMUP", flush=True)
                     self._recorder.start()
 
+                import gc
+
+                print("unreachable:")
+                print(gc.garbage)
+                print(30 * "=")
+                print("Collect: " + str(gc.collect()))
+
                 # wait on DUT to finish
                 p.join()
 
