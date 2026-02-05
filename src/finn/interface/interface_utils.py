@@ -33,8 +33,8 @@ def resolve_module_path(name: str) -> str:
                 warning(f"Could not resolve {name}. FINN might not work properly.")
             else:
                 status(
-                    f"FINNs {name} module was not found. "
-                    f"This is normal for pip-installed builds."
+                    f"FINN+ installed without extra package {name}. "
+                    f"(Default for pip-based installations)"
                 )
     # Return the empty string as a default...
     return ""

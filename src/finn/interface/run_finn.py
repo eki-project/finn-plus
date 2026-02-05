@@ -19,12 +19,6 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from typing import TYPE_CHECKING, Any, cast
 
 import finn.util.settings
-from finn.builder.build_dataflow_config import (
-    DataflowBuildConfig,
-    LogLevel,
-    ShellFlowType,
-    default_build_dataflow_steps,
-)
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import (
     NullablePath,
@@ -179,6 +173,20 @@ def batch(f: Callable) -> Callable[..., Any]:
 
 def run_flow_wizard() -> None:
     """Interactively create a flow config with the user and save it."""
+    try:
+        from finn.builder.build_dataflow_config import (
+            DataflowBuildConfig,
+            LogLevel,
+            ShellFlowType,
+            default_build_dataflow_steps,
+        )
+    except ImportError:
+        error(
+            "Please run the setup before configuring a flow. "
+            "Run 'finn deps update' to install all necessary dependencies."
+        )
+        sys.exit(1)
+
     dfbc = DataflowBuildConfig()
     console = Console()
     console.clear()
