@@ -382,11 +382,17 @@ class DependencyUpdater:
         target = self.dep_location / package_name
         if target.exists() and importlib.util.find_spec(package_name.replace("-", "_")) is None:
             debug(
-                "Git repository seems to exist, but is not installed "
+                f"Git repository seems to exist ({target}), but is not installed "
                 "into this environment. Removing dependency and cloning again.",
                 False,
             )
             shutil.rmtree(target, ignore_errors=True)
+        elif target.exists():
+            debug(
+                f"[{package_name}] seems to exist already but is marked as "
+                f"outdated (hash mismatch, corruped install?). Deleting and reinstalling now."
+            )
+            shutil.rmtree(target)
         if not self._git_clone(url, commit, target):
             debug(f"[{package_name}] Cloning or checkout failed.", False)
             return False
@@ -488,42 +494,13 @@ class DependencyUpdater:
 
     def _install_finn_xsi(self) -> bool:
         """Install FINN XSI bindings and return if installation was successful."""
-        debug("[finn_xsi] Preparing LD LIBRARY PATH", False)
-        finn_xsi_path = Path(self.finn_xsi_str)
-        if "XILINX_VIVADO" not in os.environ:
-            raise FINNDependencyInstallationError(
-                "Vivado is not available " "(or XILINX_VIVADO is not set in your " "environment)!"
-            )
-        vivado_path = os.environ["XILINX_VIVADO"]
-        required_paths = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
-        if "LD_LIBRARY_PATH" not in os.environ:
-            os.environ["LD_LIBRARY_PATH"] = required_paths
-        else:
-            os.environ["LD_LIBRARY_PATH"] = f"{required_paths}:{os.environ['LD_LIBRARY_PATH']}"
+        # Hacky workaround
+        os.environ["FINN_XSI"] = self.finn_xsi_str
+        from finn.xsi import is_available
+        from finn.xsi.setup import build_xsi
 
-        # Run make
-        debug("[finn_xsi] Calling make..", False)
-        res = sp.run(["make"], cwd=finn_xsi_path, capture_output=True, text=True)
-        if res.returncode != 0:
-            debug("Make returned an error during installation of FINN XSI", False)
-            debug(f"Make stderr output: {res.stderr}", False)
-            if "pybind11.h: No such file or directory" in res.stderr:
-                raise FINNDependencyInstallationError(
-                    "pybind11 seems to be missing " "in your environment!"
-                )
-            return False
-
-        # Check if .so was created
-        finn_xsi_so = finn_xsi_path / "xsi.so"
-        debug(f"[finn_xsi] Checking if xsi.so was generated (at {finn_xsi_so})", False)
-        if not finn_xsi_so.exists():
-            return False
-
-        # Set PATH/PYTHONPATH so the .so can be imported
-        debug(f"[finn_xsi] Appending {finn_xsi_path} to PYTHONPATH", False)
-        os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finn_xsi_path.absolute()}"
-        sys.path.append(str(finn_xsi_path))
-        return True
+        build_xsi(force=False, verbose=False)
+        return is_available()
 
     def install_dependency(self, package_name: str) -> bool:
         """Install the dependency in the dependency location. If no definition for this dependency
@@ -544,6 +521,7 @@ class DependencyUpdater:
 
     def is_outdated(self, package_name: str, installed: bool = False) -> bool:
         """Return whether the a package is outdated. If no such package exist return False too."""
+        debug(f"Checking if package {package_name} is outdated.")
         data = self.deps.get_dependency_data(package_name)
         if data is None:
             raise FINNUserError(
@@ -606,6 +584,7 @@ class DependencyUpdater:
         # For pip-installable dependencies, also check if the package is accessible
         # in the current Python process
         if package_name in self.deps.git_deps and data.pip_install:
+            debug(f"Checking if package {package_name} is available from Python.")
             # Try to find the package in the current Python environment
             spec = importlib.util.find_spec(package_name.replace("-", "_"))
             if spec is None:
@@ -651,6 +630,7 @@ class DependencyUpdater:
                 return False
             except Exception as e:
                 status.set_finish(package_name, False)
+                status.update_status(package_name, f"Error: {e}", "purple")
                 debug(f"[{package_name}] Exception: {e}", False)
                 debug(f"[{package_name}] {traceback.format_exc()}", False)
                 status.update_status(

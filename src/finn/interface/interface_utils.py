@@ -9,6 +9,7 @@ import rich
 import rich.box
 import rich.table
 import sys
+import threading
 from pathlib import Path
 from rich.console import Console
 from typing import Any
@@ -84,7 +85,8 @@ def success(msg: str) -> None:
 def debug(msg: str, with_rich: bool = True) -> None:
     """Print a debug message. Only done when the flag is set."""
     if DEBUG:
-        if with_rich:
+        # Disable rich for live / multithreaded contexts where it might not be shown
+        if with_rich and (threading.main_thread().name == threading.current_thread().name):
             Console().print(f"[bold blue]DEBUG: [/bold blue][blue]{msg}[/blue]")
         else:
             print(f"DEBUG: {msg}")

@@ -5,7 +5,7 @@ git_deps:
         pip_install: True
         install_editable: False
     brevitas:
-        url: "https://github.com/iksnagreb/brevitas.git"
+        url: "https://github.com/Xilinx/brevitas.git"
         commit: "b106358c4169d8a9b68cb2a531aa795417d74887"
         pip_install: True
         install_editable: True
@@ -15,7 +15,7 @@ git_deps:
         pip_install: True
         install_editable: True
     cnpy:
-        url: "https://github.com/rogersce/cnpy.git"
+        url: "https://github.com/maltanar/cnpy.git"
         commit: "8c82362372ce600bbd1cf11d64661ab69d38d7de"
         pip_install: False
         install_editable: False
