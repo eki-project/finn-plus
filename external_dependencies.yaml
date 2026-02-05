@@ -14,6 +14,11 @@ git_deps:
         commit: "084bbec741feef1c1bea7a813e0d301d8e1a3de5"
         pip_install: True
         install_editable: True
+    onnx-passes:
+        url: "https://github.com/iksnagreb/onnx-passes.git"
+        commit: "e5ff48c2292f83d490b0aed11437d953193701d6"
+        pip_install: True
+        install_editable: True
     cnpy:
         url: "https://github.com/maltanar/cnpy.git"
         commit: "8c82362372ce600bbd1cf11d64661ab69d38d7de"

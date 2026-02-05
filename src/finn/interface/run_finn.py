@@ -484,6 +484,9 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
     os.environ["FINN_NOTEBOOKS"] = resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = resolve_module_path("tests")
 
+    # TODO: Should be deprecated with reworked FIFO Sizing
+    os.environ["FINN_XSI"] = resolve_module_path("finn_xsi")
+
 
 @click.group(
     help='Produce hardware designs from ONNX models. To get started use "finn build" '
