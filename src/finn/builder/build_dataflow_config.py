@@ -49,6 +49,7 @@ build process through a single, serializable configuration object.
 from __future__ import annotations
 
 import logging
+import mashumaro.config
 import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum
@@ -215,6 +216,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     serialized into or de-serialized from JSON files for persistence.
     See list of attributes below for more information on the build configuration.
     """
+
+    class Config(mashumaro.config.BaseConfig):
+        """Config for (de)serialization of the dataflow builder class."""  # noqa
+
+        forbid_extra_keys = True
 
     #: Path to the model. This CAN be set by the startup, but must not necessarily.
     model_path: Path | None = None

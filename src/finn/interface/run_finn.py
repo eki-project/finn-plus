@@ -6,6 +6,7 @@ from __future__ import annotations
 import click
 import inspect
 import json
+import mashumaro.exceptions
 import os
 import rich
 import shlex
@@ -597,19 +598,26 @@ def _build(
 
     status("Creating dataflow build config...")
     dfbc: DataflowBuildConfig | None = None
-    match flow_config.suffix:
-        case ".yaml" | ".yml":
-            with flow_config.open() as f:
-                dfbc = DataflowBuildConfig.from_yaml(f.read())
-        case ".json":
-            with flow_config.open() as f:
-                dfbc = DataflowBuildConfig.from_json(f.read())
-        case _:
-            error(
-                f"Unknown config file type: {flow_config.name}. "
-                f"Valid formats are: .json, .yml, .yaml"
-            )
-            sys.exit(1)
+    config_text = flow_config.read_text()
+    try:
+        match flow_config.suffix:
+            case ".yaml" | ".yml":
+                dfbc = DataflowBuildConfig.from_yaml(config_text)
+            case ".json":
+                dfbc = DataflowBuildConfig.from_json(config_text)
+            case _:
+                error(
+                    f"Unknown config file type: {flow_config.name}. "
+                    f"Valid formats are: .json, .yml, .yaml"
+                )
+                sys.exit(1)
+    except mashumaro.exceptions.ExtraKeysError as e:
+        error(
+            f"The following keys were found in your config, "
+            f"but are not known DataflowBuildConfig options: \n\t{', '.join(e.extra_keys)}"
+        )
+        sys.exit(1)
+
     if dfbc is None:
         error("Failed to generate dataflow build config!")
         sys.exit(1)
