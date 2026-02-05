@@ -116,6 +116,7 @@ class NodeIsolatedSimulationController(SimulationController):
 
             # Initialize
             write_log("Initializing simulation")
+            write_log(f"Binary is: {binary}")
             proc_idx = self._start_process(binary, process_index)
             response = self._send_and_receive(proc_idx, "start", {})
             if response is None:
