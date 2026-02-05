@@ -1,0 +1,18 @@
+params:
+  dut: resnet50
+  auto_fifo_depths: true
+  auto_fifo_strategy: analytical
+  tav_generation_strategy: tree_model
+  tav_utilization_strategy: conservative_relaxation
+  generate_outputs:
+  - stitched_ip
+  - rtlsim_performance
+  synth_clk_period_ns: 10
+  board: U250
+  enable_instrumentation: false
+  rtlsim_batch_size: 3
+  shell_flow_type: vitis_alveo
+  vitis_platform: xilinx_u250_gen3x16_xdma_4_1_202210_1
+  model_path: models/resnet50/resnet50_w1a2_exported.onnx
+metadata:
+  tool_version: '2024.2'
