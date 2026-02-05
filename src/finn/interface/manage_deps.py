@@ -497,9 +497,14 @@ class DependencyUpdater:
         # Hacky workaround
         os.environ["FINN_XSI"] = self.finn_xsi_str
         from finn.xsi import is_available
-        from finn.xsi.setup import build_xsi
 
-        build_xsi(force=False, verbose=False)
+        sp.run(
+            shlex.split(f"{sys.executable} -m finn.xsi.setup"),
+            stdout=sp.DEVNULL,
+            stderr=sp.DEVNULL,
+            env=os.environ.copy(),
+        )
+        sys.path.append(self.finn_xsi_str)
         return is_available()
 
     def install_dependency(self, package_name: str) -> bool:

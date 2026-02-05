@@ -460,16 +460,15 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
         sys.exit(1)
 
     # Even if we dont update deps, we still need to make xsi available
-    # TODO: Currently finn_xsi is not optional, and we have to error if its not found
-    if not settings.automatic_dependency_updates:
-        finn_xsi = Path(resolve_module_path("finn_xsi"))
-        finn_xsi_so = finn_xsi / "xsi.so"
-        if not finn_xsi_so.exists():
-            error(f"finn_xsi was not found at {finn_xsi}")
-            sys.exit(1)
-        status(f"Loading finn_xsi from {finn_xsi}")
-        os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finn_xsi.absolute()}"
-        sys.path.append(str(finn_xsi))
+    finn_xsi = Path(resolve_module_path("finn_xsi"))
+    os.environ["FINN_XSI"] = str(finn_xsi)
+    finn_xsi_so = finn_xsi / "xsi.so"
+    if not finn_xsi_so.exists():
+        error(f"finn_xsi was not found at {finn_xsi}")
+        sys.exit(1)
+    status(f"Loading finn_xsi from {finn_xsi}")
+    os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finn_xsi.absolute()}"
+    sys.path.append(str(finn_xsi))
 
     # Check synthesis tools
     set_synthesis_tools_paths()
@@ -491,9 +490,6 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
     os.environ["FINN_NOTEBOOKS"] = resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = resolve_module_path("tests")
-
-    # TODO: Should be deprecated with reworked FIFO Sizing
-    os.environ["FINN_XSI"] = resolve_module_path("finn_xsi")
 
 
 @click.group(
@@ -1063,7 +1059,7 @@ def deps_show(finn_deps_definitions: Path | None) -> None:
 @click.group(help="Manage FINN settings")
 def settings() -> None:
     """Click group for config related commands."""
-    # TODO: Config remove?
+    pass
 
 
 def _command_get_settings() -> FINNSettings:
