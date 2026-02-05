@@ -1,0 +1,6 @@
+outs:
+- md5: 0d6b4c7ea2712c605754500e3f097cab.dir
+  size: 1871996
+  nfiles: 14
+  hash: md5
+  path: reports
