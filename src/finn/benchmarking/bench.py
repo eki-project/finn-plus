@@ -26,7 +26,6 @@ from finn.benchmarking.util import delete_dir_contents
 dut = dict()
 dut["mvau"] = bench_mvau
 dut["synthetic_nonlinear"] = bench_synthetic_nonlinear
-# dut["transformer"] = bench_transformer # TODO: delete old transformer.py and custom steps
 
 
 class PrefixPrinter(object):
