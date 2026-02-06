@@ -26,12 +26,18 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module that provides the Thresholding class,that implements multi-threshold activation functions.
+The thresholding operation compares input values against a set of thresholds to produce quantized
+outputs.
+"""
+
 import numpy as np
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.util.basic import interleave_matrix_outer_dim_from_partitions
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
 
@@ -39,9 +45,15 @@ class Thresholding(HWCustomOp):
     """Abstraction layer for HW implementation of Thresholding."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the Thresholding node."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return a dictionary of attribute names and their types for this node.
+
+        Returns a dictionary describing node attributes including parallelization (PE),
+        number of channels, data types, and runtime configuration options.
+        """
         my_attrs = {
             # whether weights (thresholds) will be
             # writable through an AXI-lite interface during runtime
@@ -69,6 +81,14 @@ class Thresholding(HWCustomOp):
         return my_attrs
 
     def infer_node_datatype(self, model):
+        """Infer and set the data types for node inputs and outputs.
+
+        Updates the inputDataType attribute based on the model's tensor datatype
+        and sets the output tensor datatype based on the outputDataType attribute.
+
+        Args:
+            model: The ONNX model containing this node.
+        """
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype(0):
@@ -84,6 +104,14 @@ class Thresholding(HWCustomOp):
         model.set_tensor_datatype(node.output[0], odt)
 
     def verify_node(self):
+        """Verify that the node is configured correctly.
+
+        Checks that the backend attribute is set to 'fpgadataflow' and that
+        all necessary attributes exist.
+
+        Returns:
+            List of informational messages about the node's configuration status.
+        """
         info_messages = []
         # verify that "backend" is set to "fpgadataflow"
         backend_value = self.get_nodeattr("backend")
@@ -108,7 +136,7 @@ class Thresholding(HWCustomOp):
         return info_messages
 
     def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
+        """Return FINN DataType of input."""
         if ind == 0:
             dt = DataType[self.get_nodeattr("inputDataType")]
         elif ind == 1:
@@ -118,11 +146,11 @@ class Thresholding(HWCustomOp):
         return dt
 
     def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output."""
+        """Return FINN DataType of output."""
         return DataType[self.get_nodeattr("outputDataType")]
 
     def minimize_accumulator_width(self, model):
-        "Minimize threshold width ('accumulator width' here due to convention)"
+        """Minimize threshold width ('accumulator width' here due to convention)."""
         thresholds = model.get_initializer(self.onnx_node.input[1])
         threshold_tensor = self.get_hw_compatible_threshold_tensor(thresholds)
         # TODO: extend this for fixed point
@@ -133,8 +161,8 @@ class Thresholding(HWCustomOp):
             min_input = self.get_input_datatype(0).min()
             max_input = self.get_input_datatype(0).max()
             # get range required by threshold values
-            tdt_min = min(min_input, min_threshold)
-            tdt_max = max(max_input, max_threshold)
+            tdt_min = float(min(min_input, min_threshold))
+            tdt_max = float(max(max_input, max_threshold))
             if tdt_min < 0:
                 if abs(tdt_min) > tdt_max:
                     tdt = DataType.get_smallest_possible(tdt_min)
@@ -145,15 +173,22 @@ class Thresholding(HWCustomOp):
         else:
             # special case: if input is float, we keep thresholds as is
             tdt = self.get_input_datatype(1)
-        assert np.vectorize(tdt.allowed)(
-            threshold_tensor
-        ).all(), "Thresholds can't be expressed with type %s" % str(tdt)
+        if not np.vectorize(tdt.allowed)(threshold_tensor).all():
+            raise FINNInternalError(f"Thresholds can't be expressed with type {tdt!s}")
         self.set_nodeattr("weightDataType", tdt.name)
         # Update QONNX DataType of tensor for consistency
         model.set_tensor_datatype(self.onnx_node.input[1], tdt)
         return DataType[self.get_nodeattr("weightDataType")]
 
     def get_instream_width(self, ind=0):
+        """Return the width of the input stream in bits.
+
+        Args:
+            ind: Input index (0 for data input, 1 for threshold/weight input).
+
+        Returns:
+            Width of the input stream in bits.
+        """
         if ind == 0:
             i_bits = self.get_input_datatype(0).bitwidth()
             width = i_bits * self.get_nodeattr("PE")
@@ -175,10 +210,29 @@ class Thresholding(HWCustomOp):
         return width
 
     def get_outstream_width(self, ind=0):
+        """Return the width of the output stream in bits.
+
+        Args:
+            ind: Output index (currently only supports index 0).
+
+        Returns:
+            Width of the output stream in bits.
+        """
         o_bits = self.get_output_datatype().bitwidth()
         return o_bits * self.get_nodeattr("PE")
 
     def get_folded_input_shape(self, ind=0):
+        """Return the folded input shape for hardware implementation.
+
+        The folded shape accounts for parallelization (PE) and temporal memory (TMEM)
+        organization used in the hardware accelerator.
+
+        Args:
+            ind: Input index (currently only supports index 0).
+
+        Returns:
+            Tuple representing the folded input shape.
+        """
         pe = self.get_nodeattr("PE")
         fold = self.calc_tmem()
         vecs = list(self.get_nodeattr("numInputVectors"))
@@ -186,20 +240,51 @@ class Thresholding(HWCustomOp):
         return folded_input_shape
 
     def get_folded_output_shape(self, ind=0):
+        """Return the folded output shape for hardware implementation.
+
+        Args:
+            ind: Output index (currently only supports index 0).
+
+        Returns:
+            Tuple representing the folded output shape (same as folded input shape).
+        """
         # same shape as input
         return self.get_folded_input_shape()
 
     def get_normal_input_shape(self, ind=0):
+        """Return the normal (unfolded) input shape.
+
+        Args:
+            ind: Input index (currently only supports index 0).
+
+        Returns:
+            Tuple representing the normal input shape.
+        """
         ich = self.get_nodeattr("NumChannels")
         vecs = list(self.get_nodeattr("numInputVectors"))
         normal_input_shape = tuple(vecs + [ich])
         return normal_input_shape
 
     def get_normal_output_shape(self, ind=0):
+        """Return the normal (unfolded) output shape.
+
+        Args:
+            ind: Output index (currently only supports index 0).
+
+        Returns:
+            Tuple representing the normal output shape (same as normal input shape).
+        """
         # same shape as input
         return self.get_normal_input_shape()
 
     def get_exp_cycles(self):
+        """Return the expected number of execution cycles.
+
+        Calculates cycles as: Channels/PE * batch size * feature map dimensions.
+
+        Returns:
+            Expected number of cycles for execution.
+        """
         # Channels/PE * batch size * fmdim * fmdim
         return np.prod(self.get_folded_output_shape()[:-1])
 
@@ -209,7 +294,7 @@ class Thresholding(HWCustomOp):
         * ensure MH % PE == 0
         * for unsigned inputs, ensure thresholds are positive
         * interleave rows between PEs
-        * reshape into (PE, TMEM, n_thres_steps) and return
+        * reshape into (PE, TMEM, n_thres_steps) and return.
         """
         mh = self.get_nodeattr("NumChannels")
         pe = self.get_nodeattr("PE")
@@ -246,6 +331,16 @@ class Thresholding(HWCustomOp):
         return ret.reshape(1, pe, tmem, n_thres_steps)
 
     def execute_node(self, context, graph):
+        """Execute the thresholding operation.
+
+        Performs multi-threshold comparison on input values using the threshold tensor.
+        Handles data layout transformations and applies output bias (ActVal) if configured.
+        Converts output to bipolar format if the output data type is BIPOLAR.
+
+        Args:
+            context: Dictionary containing input values keyed by tensor names.
+            graph: The ONNX graph containing this node.
+        """
         node = self.onnx_node
         inp_values = context[node.input[0]]
         th_val = context[node.input[1]]
@@ -280,7 +375,7 @@ class Thresholding(HWCustomOp):
         context[node.output[0]] = y.astype(np.float32)
 
     def calc_tmem(self):
-        """Calculates and returns TMEM."""
+        """Calculate and returns TMEM."""
         num_channels = self.get_nodeattr("NumChannels")
         pe = self.get_nodeattr("PE")
         return num_channels // pe

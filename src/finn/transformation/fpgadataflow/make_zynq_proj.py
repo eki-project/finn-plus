@@ -97,12 +97,20 @@ class MakeZYNQProject(Transformation):
     value.
     """
 
-    def __init__(self, platform, period_ns, enable_debug=False, enable_finn_switch=False):
+    def __init__(
+        self,
+        platform,
+        period_ns,
+        enable_debug=False,
+        enable_finn_switch=False,
+        live_fifo_sizing=False,
+    ):
         """Initialize MakeZYNQProject with platform settings."""
         super().__init__()
         self.platform = platform
         self.period_ns = period_ns
         self.enable_finn_switch = enable_finn_switch
+        self.live_fifo_sizing = live_fifo_sizing
         self.enable_debug = 1 if enable_debug else 0
         self.enable_gpio_reset = 0
 
@@ -166,6 +174,42 @@ class MakeZYNQProject(Transformation):
             config.append("assign_axi_addr_proc instrumentation_wrap_0/s_axi_ctrl")
             master_axilite_idx += 1
 
+        if self.live_fifo_sizing:
+            # instantiate virtual FIFO controller
+            rtl_path = os.environ["FINN_RTLLIB"]
+            files = [
+                os.path.join(rtl_path, "axi/hdl/axilite.sv"),
+                os.path.join(rtl_path, "fifo_virtual/hdl/fifo_gauge_pkg.sv"),
+                os.path.join(rtl_path, "fifo_virtual/hdl/fifo_controller.sv"),
+                os.path.join(rtl_path, "fifo_virtual/hdl/fifo_controller_wrapper.v"),
+            ]
+            for f in files:
+                config.append(f"add_files -norecurse {f}")
+            config.append(
+                "create_bd_cell -type module -reference fifo_controller_wrapper fifo_controller_0"
+            )
+
+            # connect clock & reset
+            config.append(
+                "connect_bd_net [get_bd_pins fifo_controller_0/ap_clk] "
+                "[get_bd_pins smartconnect_0/aclk]"
+            )
+            config.append(
+                "connect_bd_net [get_bd_pins fifo_controller_0/ap_rst_n] "
+                "[get_bd_pins smartconnect_0/aresetn]"
+            )
+
+            # connect AXI-lite control interface
+            config.append(
+                "connect_bd_intf_net [get_bd_intf_pins fifo_controller_0/s_axi] "
+                "[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]" % (master_axilite_idx)
+            )
+            # Do not use assign_axi_addr_proc here. It doesn't map the 32-bit aperture correctly.
+            # Instead, let assign_bd_address command assign the address later.
+            # TODO: Support 32-bit systems by making aperture smaller?
+            # config.append("assign_axi_addr_proc fifo_controller_0/s_axi")
+            master_axilite_idx += 1
+
         # instantiate nested AXI interconnects if required
         # only the nested interconnects and all interfaces connected before this line
         # will be connected to the original (master) interconnect
@@ -209,11 +253,14 @@ class MakeZYNQProject(Transformation):
         else:
             axilite_idx = master_axilite_idx
 
+        num_sdps = len(model.graph.node)
+        prev_node_name = None
         for node in model.graph.node:
             assert node.op_type == "StreamingDataflowPartition", "Invalid link graph"
             sdp_node = getCustomOp(node)
             dataflow_model_filename = sdp_node.get_nodeattr("model")
             kernel_model = ModelWrapper(dataflow_model_filename)
+            sdp_id = int(node.name.split("_")[-1])
 
             ipstitch_path = kernel_model.get_metadata_prop("vivado_stitch_proj")
             if ipstitch_path is None or (not os.path.isdir(ipstitch_path)):
@@ -447,6 +494,33 @@ class MakeZYNQProject(Transformation):
                         % (instance_names[node.name])
                     )
 
+            # connect ring bus for live FIFO sizing
+            if self.live_fifo_sizing:
+                if "icfg" not in ifnames["ap_none"] or "ocfg" not in ifnames["ap_none"]:
+                    raise FINNError(
+                        "Live FIFO sizing requested but no icfg/ocfg interfaces found "
+                        "on SDP %s" % node.name
+                    )
+                if sdp_id == 0:
+                    # connect first SDP to fifo_controller
+                    config.append(
+                        "connect_bd_net [get_bd_pins fifo_controller_0/ocfg] "
+                        f"[get_bd_pins {instance_names[node.name]}/icfg]"
+                    )
+                else:
+                    # connect previous SDP to this SDP
+                    config.append(
+                        f"connect_bd_net [get_bd_pins {instance_names[prev_node_name]}/ocfg] "
+                        f"[get_bd_pins {instance_names[node.name]}/icfg]"
+                    )
+                if sdp_id == num_sdps - 1:
+                    # connect last SDP to fifo_controller
+                    config.append(
+                        f"connect_bd_net [get_bd_pins {instance_names[node.name]}/ocfg] "
+                        "[get_bd_pins fifo_controller_0/icfg]"
+                    )
+                prev_node_name = node.name
+
         # TODO: WORKAROUND, do not instantiate smartconnect when not needed!
         if use_instrumentation and not self.enable_finn_switch:
             config.append("delete_bd_objs [get_bd_cells smartconnect_0]")
@@ -628,6 +702,7 @@ class ZynqBuild(Transformation):
                 self.period_ns,
                 enable_debug=self.enable_debug,
                 enable_finn_switch=enable_finn_switch,
+                live_fifo_sizing=self.live_fifo_sizing,
             )
         )
 

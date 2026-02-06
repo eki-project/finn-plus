@@ -649,6 +649,17 @@ def _build(
     # Add path of config to sys.path so that custom steps can be found
     sys.path.append(str(flow_config.parent.absolute()))
 
+    # Override paths to verification input/output if specified
+    if verify_input is not None:
+        dfbc.verify_input_npy = verify_input
+
+    if verify_output is not None:
+        dfbc.verify_expected_output_npy = verify_output
+
+    # Override the output directory if specified
+    if output is not None:
+        dfbc.output_dir = output
+
     Console().rule(
         f"[bold cyan]Running FINN with config[/bold cyan][bold orange1] "
         f"{flow_config.name}[/bold orange1][bold cyan] on model [/bold cyan]"

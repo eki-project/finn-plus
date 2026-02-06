@@ -26,6 +26,7 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""Rounding and clipping of thresholds to integer representations."""
 
 import numpy as np
 from qonnx.core.datatype import DataType
@@ -44,6 +45,7 @@ class RoundAndClipThresholds(Transformation):
     quantization data types."""
 
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the rounding and clipping to all thresholds in the model."""
         graph = model.graph
         graph_modified = False
         for index, node in enumerate(graph.node):
@@ -73,10 +75,15 @@ class RoundAndClipThresholds(Transformation):
                     # that is one bit bigger than the input datatype
                     # Determine new max_value
                     max_val = dtype.max() + 1
-                    if not dtype.signed():
-                        tdt = DataType.get_smallest_possible(max_val)
+                    # Do not go above 64-bit integers for now as these are not fully
+                    # supported by QONNX
+                    if dtype in {"INT64", "UINT64"}:
+                        tdt = dtype
                     else:
-                        tdt = DataType.get_smallest_possible(-(max_val) - 1)
+                        if not dtype.signed():
+                            tdt = DataType.get_smallest_possible(max_val)
+                        else:
+                            tdt = DataType.get_smallest_possible(-(max_val) - 1)
                 elif dtype.is_fixed_point():
                     # Round thresholds up to nearest representable value
                     # of the input datatype

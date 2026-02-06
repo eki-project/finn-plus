@@ -163,6 +163,8 @@ class VerificationStepType(str, Enum):
     NODE_BY_NODE_RTLSIM = "node_by_node_rtlsim"
     #: verify after step_create_stitched_ip, using stitched-ip Verilog
     STITCHED_IP_RTLSIM = "stitched_ip_rtlsim"
+    #: verify during step_passes_frontend using ONNX Runtime execution
+    PASSES_FRONTEND = "passes_frontend"
 
 
 #: List of steps that will be run as part of the standard dataflow build, in the
@@ -263,6 +265,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: attributes inferred from target_fps (if any)
     #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
     folding_config_file: Optional[str] = None
+
+    #: (Optional) Path to configuration YAML file listing layout assumptions and
+    #: conversion (permutation) for global model inputs and outputs.
+    layouts_config_file: Optional[str] = None
 
     #: (Optional) Target inference performance in frames per second.
     #: Note that target may not be achievable due to specific layer constraints,
