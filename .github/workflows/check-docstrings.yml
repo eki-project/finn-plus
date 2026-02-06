@@ -101,7 +101,7 @@ jobs:
             next
           }
           /^  - Line/ {
-            print "- " $0
+            print "" $0
             next
           }
           /^Total missing docstrings:/ {
