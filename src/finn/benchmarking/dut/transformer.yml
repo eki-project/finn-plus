@@ -16,18 +16,16 @@ steps:
   - finn.builder.custom_step_library.transformer_adhoc.step_convert_to_hw
   # Default FINN partitioning and specialization steps
   - step_create_dataflow_partition
-  - step_minimize_bit_width
   - step_specialize_layers
-  # Customized adhoc folding configuration: Tries to meet the throughput target
-  # with each attention operator via semi-automatic folding and then hands over
-  # to FINN auto-folding to configure all other operators before loading folding
-  # configuration from a YAML file.
+  # Customized adhoc folding configuration
+  # (replaces step_target_fps_parallelization + step_apply_folding_config)
+  # Tries to meet the throughput target with each attention operator via semi-automatic
+  # folding and then hands over to FINN auto-folding to configure all other operators before
+  # loading folding configuration from a YAML file.
   - finn.builder.custom_step_library.transformer_adhoc.step_set_folding
-  # Default FINN backend step sequence: Minimizing bit-width setting FIFOs, code
-  # generation and synthesis
+  # Default FINN backend step sequence
   - step_minimize_bit_width
   - step_generate_estimate_reports
-#  - step_insert_dwc
   - step_set_fifo_depths
   - step_hw_codegen
   - step_hw_ipgen

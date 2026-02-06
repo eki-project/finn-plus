@@ -34,7 +34,7 @@ FINN_DEPS = {
     ),
     "onnx-passes": (
         "https://github.com/iksnagreb/onnx-passes.git",
-        "e5ff48c2292f83d490b0aed11437d953193701d6",
+        "3ffb808283c4de8312101a171761c0765ba0dffe",
         True,
     ),
     "dataset_loading": (

@@ -745,7 +745,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             # TODO: Does not work for "input" mode mask
             "    attention_mask"
             ");",
-            "}}"
+            "}"
         ]
 
     def dataoutstrm(self):

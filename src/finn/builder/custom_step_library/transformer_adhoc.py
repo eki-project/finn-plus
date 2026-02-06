@@ -28,6 +28,8 @@ from finn.builder.build_dataflow_config import DataflowBuildConfig
 # ONNX operator to FINN HWCustomOp conversion steps, also inferring custom-ops
 # from patterns of operators
 from finn.transformation.fpgadataflow import convert_to_hw_layers as hardware
+from finn.transformation.fpgadataflow.attention import InferScaledDotProductAttention
+from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
 
 # Reuse FINN auto-folding functionality to build folding of attention operators
 from finn.transformation.fpgadataflow.set_folding import (
@@ -36,11 +38,13 @@ from finn.transformation.fpgadataflow.set_folding import (
     common_divisors,
     dataflow_performance,
 )
+from finn.transformation.general import ApplyConfig
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 
 # FINN Streamlining transformations still required during hardware conversion
 from finn.transformation.streamline import RoundAndClipThresholds
 from finn.transformation.streamline.absorb import AbsorbConsecutiveTransposes
+from finn.util.exception import FINNUserError
 
 
 def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
@@ -58,7 +62,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     # Infer fused scaled dot-product attention before inferring standalone
     # thresholds and MVUs
-    model = model.transform(hardware.InferScaledDotProductAttention())
+    model = model.transform(InferScaledDotProductAttention())
 
     # Usual FINN hardware conversion transformations: Start with standalone
     # thresholds to avoid fusing these into MVAUs, from there on the order does
@@ -108,7 +112,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(hardware.InferReshape())
     # Explicitly replicate stream connections between layers as hardware does
     # not allow multiple consumer of a single AXI stream.
-    model = model.transform(hardware.InferReplicateStream())
+    model = model.transform(InferReplicateStream())
 
     # Cleanup the graph after hardware conversion by redoing type and shape
     # inference. There is also more potential for rounding thresholds after
@@ -170,9 +174,13 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
     # clock and target throughput
     target_cycles_per_frame = cfg._resolve_cycles_per_frame()
 
-    # Skip entire step if target_fps is not set
-    # In this case the default step_set_fifo_depths will handle applying the given folding cfg
+    # If no target_cycles_per_frame is given, assume we are provided with a full
+    # folding config JSON (including parallelism settings): Apply it and skip remaining step
     if target_cycles_per_frame is None:
+        if cfg.folding_config_file is None:
+            raise FINNUserError("Neither FPS target nor folding config provided.")
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(ApplyConfig(cfg.folding_config_file))
         return model
 
     # Set folding to target cycles for all attention operators in the model
@@ -197,6 +205,9 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
             # in the model
             model = _set_folding_attention(model, perf_dict["max_cycles"])
 
+    # TODO: The following export of auto_folding_config.yaml is largely redundant
+    # because later steps generate a final_hw_config.json, so it may be removed
+
     # Hardware attributes to be extracted from each node
     hw_attrs = {
         "PE",
@@ -219,8 +230,7 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
         "depth_trigger_bram",
     }
 
-    # Start collecting the configuration from the model graph as a
-    # dictionary
+    # Start collecting the configuration from the model graph as a dictionary
     config = {"defaults": {}}
     # Iterate all nodes in the graph keeping track of the index
     for index, node in enumerate(model.graph.node):
@@ -254,6 +264,9 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     # If a folding configuration file is given, load and parse YAML and apply to
     # all nodes in the model
+    # NOTE: This is intended to apply a folding YAML file that defines sensible
+    # defaults for resource selection (mem_mode, ram_style, etc.) in addition to the
+    # auto folding above, NOT for setting parallelism attributes (SIMD, PE, etc.)
     if cfg.folding_config_file is not None:
         with open(cfg.folding_config_file, "r") as file:
             config = yaml.safe_load(file)
