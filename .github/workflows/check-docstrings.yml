@@ -76,11 +76,6 @@ jobs:
         # Create a detailed report
         echo "📋 **Docstring Check Report**" > docstring_report.md
         echo "" >> docstring_report.md
-        echo "Checked files:" >> docstring_report.md
-        for file in $FILES; do
-          echo "- \`$file\`" >> docstring_report.md
-        done
-        echo "" >> docstring_report.md
 
         # Run the docstring checker from scripts folder and capture detailed output
         if output=$(python scripts/check_docstrings.py $FILES 2>&1); then
@@ -117,8 +112,13 @@ jobs:
           /^❌ Missing docstrings found:/ || /^$/ {
             next
           }
-          {
-            if (NR > 1) print $0
+          /^  - / {
+            # Skip other file list items (lines starting with "  - " that are not line references)
+            next
+          }
+          /^Checking.*file\(s\)/ {
+            # Skip the initial file check header
+            next
           }
           ' docstring_raw_output.txt >> docstring_report.md
 
