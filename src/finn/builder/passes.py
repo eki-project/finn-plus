@@ -9,7 +9,6 @@ import numpy as np
 # ONNX Passes and ONNX Script infrastructure is based on ONNX IR to interact
 # with the model, graph, nodes and values
 import onnx_ir as ir
-import onnxruntime as ort
 
 # YAML for loading layout assumption/conversion configuration from file
 import yaml
