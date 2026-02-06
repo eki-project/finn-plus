@@ -46,6 +46,7 @@ import finn.custom_op.fpgadataflow.elementwise_binary as elementwise_binary
 
 # Base class for all FINN custom ops, here just used for type-hinting
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNUserError
 from finn.util.logging import log
 
 
@@ -277,21 +278,56 @@ class InferThresholdingLayer(Transformation):
                 if not (tdt_int or tdt_fp or tdt_fxp):
                     continue
 
+                # Ad-hoc conversion of NCHW MT to NHWC MT by wrapping it in Transpose nodes
                 # TODO: this should be removed in favor of proper layout handling in the frontend
                 #  this workaround is currently still needed to handle standalone NCHW MTs at the
                 #  input of the graph, e.g., for cnv (bnn-pynq) models
-                # NOTE: careful, this requires proper layout annotation for input AND output,
-                #  otherwise the graph could break because only one of two Transpose gets inserted
-                # NOTE: When used with the new onnx-passes front-end,
-                #  this might need to be removed to prevent the fallback layout annotations
-                #  messing with models which are already correct by using the
-                #  newly proposed layout mechanism. This of course breaks models
-                #  still relying on the existing layout mechanism.
+                node_inst = getCustomOp(node)
+                try:
+                    mt_layout = node_inst.get_nodeattr("data_layout")
+                except AttributeError:
+                    log.warning(f"MultiThreshold ({node.name}) is missing a layout annotation.")
+                    mt_layout = "missing"
+                input_tensor_layout = model.get_tensor_layout(thl_input)
+                output_tensor_layout = model.get_tensor_layout(thl_output)
 
-                # check layout of inputs/outputs, and convert if needed
-                # check layout and convert if necessary
-                thl_in_layout = model.get_tensor_layout(thl_input)
-                if thl_in_layout == DataLayout.NCHW:
+                if input_tensor_layout != mt_layout:
+                    log.warning(
+                        f"MultiThreshold ({node.name}) layout ({mt_layout}) does not match "
+                        f"input tensor layout ({input_tensor_layout})."
+                    )
+                if output_tensor_layout != mt_layout:
+                    log.warning(
+                        f"MultiThreshold ({node.name}) layout ({mt_layout}) does not match "
+                        f"output tensor layout ({output_tensor_layout})."
+                    )
+
+                if (
+                    input_tensor_layout == DataLayout.NCHW
+                    and output_tensor_layout == DataLayout.NHWC
+                ):
+                    raise FINNUserError(
+                        f"MultiThreshold ({node.name}) input (NCHW) and output (NHWC) "
+                        "layout mismatch."
+                    )
+                if (
+                    input_tensor_layout == DataLayout.NHWC
+                    and output_tensor_layout == DataLayout.NCHW
+                ):
+                    raise FINNUserError(
+                        f"MultiThreshold ({node.name}) input (NHWC) and output (NCHW) "
+                        "layout mismatch."
+                    )
+
+                # Perform conversion only if both, input & output, are annotated as NCHW
+                convert = False
+                if (
+                    input_tensor_layout == DataLayout.NCHW
+                    and output_tensor_layout == DataLayout.NCHW
+                ):
+                    convert = True
+
+                if convert:
                     thl_input = nchw_to_nhwc(thl_input, model, node_ind)
                     node_ind += 1
                     thl_in_shape = model.get_tensor_shape(thl_input)
@@ -299,8 +335,8 @@ class InferThresholdingLayer(Transformation):
                 # keep track of where we need to insert the HLS Op
                 # it has to be ahead of the output transform
                 insert_point = node_ind
-                thl_output_layout = model.get_tensor_layout(thl_output)
-                if thl_output_layout == DataLayout.NCHW:
+
+                if convert:
                     thl_output = nchw_to_nhwc(thl_output, model, node_ind, reverse=True)
                     node_ind += 1
 
