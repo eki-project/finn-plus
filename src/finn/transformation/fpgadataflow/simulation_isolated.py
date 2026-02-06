@@ -429,9 +429,8 @@ class RunLayerIsolatedSimulation(Transformation):
 
         # Write into report file
         upper_bounds_file = self.output_dir / "report" / "estimate_upper_fifo_bound.json"
-        upper_bounds_file.write_text(json.dumps(in_fifo_upper_bound))
+        upper_bounds_file.write_text(json.dumps(in_fifo_upper_bound, indent=4))
         log.info(f"Wrote results to: {upper_bounds_file}")
 
-        raise NotImplementedError()
         # TODO: Integrate data into the layer parallel simulation
         return model, False

@@ -273,7 +273,7 @@ class SimulationBuilder:
         return Path(sim_base), Path(sim_rel)
 
     def _compile_simulation(
-        self, sim_base: Path, sim_type: SimulationType, silent: bool = False
+        self, sim_base: Path, silent: bool = False
     ) -> Path:
         """Compile an existing RTLSIM directory. Requires _create_sim_so to be run before. Expects
         rtlsim_config.hpp to be templated already.
@@ -282,19 +282,11 @@ class SimulationBuilder:
             Path: Path to the executable shell script to run the binary
         """
         # Determine executable name
-        execname = ""
-        match sim_type:
-            case SimulationType.NODE_BASED_CONNECTED:
-                execname = "LayerSimulationBackend"
-            case SimulationType.NODE_BASED_ISOLATED:
-                execname = "IsolatedSimulationBackend"
-            case _:
-                raise FINNInternalError(f"Unknown simulation type: {sim_type}")
-        simulation_executable = Path(sim_base) / execname
-        if simulation_executable.exists():
+        compile_targets = ["LayerSimulationBackend", "IsolatedSimulationBackend"]
+        if all((Path(sim_base) / execname).exists() for execname in compile_targets):
             # Simulation was already compiled, we can return early
             self.progress_bar.update("Make")
-            return simulation_executable
+            return Path(sim_base)
 
         # Check where FINNXSI is
         finnxsi_dir = os.environ["FINN_XSI"]
@@ -329,10 +321,16 @@ class SimulationBuilder:
         except CalledProcessError as e:
             raise FINNInternalError(f"Failed to create executable in {sim_base}!") from e
 
-        if not simulation_executable.exists():
-            raise FINNInternalError(f"Make call in {sim_base} failed!")
+        errors = []
+        for target in compile_targets:
+            simulation_executable = Path(sim_base) / target
+            if not simulation_executable.exists():
+                errors.append(f"Simulation compile target {target} was not created. "
+                              f"Check {sim_base} to run make manually.")
+        if len(errors) > 0:
+            raise FINNInternalError("Error compiling simulations: \n" + "\n\t".join(errors))
         self.progress_bar.update("Make")
-        return simulation_executable
+        return sim_base
 
     def _template_rtlsim_config(
         self,
@@ -400,7 +398,6 @@ class SimulationBuilder:
         total_nodes: int,
         previous_node_name: str | None,
         build_dir: Path | None,
-        sim_type: SimulationType,
         timeout_cycles: int = 0,
         silent: bool = False,
     ) -> Path:
@@ -422,7 +419,6 @@ class SimulationBuilder:
                                 this node and the previous one.
             build_dir: If given, use this directory for building the simulation. Otherwise one is
                         created from the nodes name.
-            sim_type: Simulation Type - determines the name of the executable that will be built
             timeout_cycles: Number of cycles until simulation timeout. When set to 0 (default), no
                             timeout is given.
             silent: If True, silences the Cmake and make output (including stderr)
@@ -483,7 +479,7 @@ class SimulationBuilder:
         )
 
         # Building the whole simulation
-        return self._compile_simulation(sim_base, sim_type=sim_type, silent=silent).absolute()
+        return self._compile_simulation(sim_base, silent=silent).absolute()
 
     def _get_randomized_names(self, model: ModelWrapper, suffix_length: int = 5) -> dict[int, str]:
         """Add a randomized suffix to every name in the model. Used to avoid interference with
@@ -499,7 +495,7 @@ class SimulationBuilder:
         }
 
     def _build_simulations_parallel(
-        self, workers: int, with_live_display: bool, functional_sim: bool, sim_type: SimulationType
+        self, workers: int, with_live_display: bool, functional_sim: bool
     ) -> dict[int, Path]:
         """Build all nodes in the model in parallel, as isolated simulations, ready for usage in
         an IPC connected simulation chain.
@@ -515,7 +511,7 @@ class SimulationBuilder:
             indexed by the node-index. These are in their respective FINN_TMP
             directories.
         """
-
+        log.info(f"Building simulation binaries for {len(self.model.graph.node)} layers.")
         def _build(
             node_name: str,
             node_index: int,
@@ -537,7 +533,6 @@ class SimulationBuilder:
                 total_nodes,
                 prev_node_name,
                 build_dir,
-                sim_type,
                 silent=with_live_display,
             )
 
@@ -576,10 +571,10 @@ class SimulationBuilder:
                 return {i: future.result() for i, future in futures.items()}
 
     def build_simulation(
-        self, simtype: SimulationType, workers: int, with_live_display: bool, functional_sim: bool
+        self, workers: int, with_live_display: bool, functional_sim: bool
     ) -> dict[int, Path]:
-        """Build a simulation of the given type, return the resulting executable (indexed by the
-        corresponding node index in the graph).
+        """Build a simulation of the given type, return the path to the executable directory
+        (indexed by the corresponding node index in the graph).
 
         Args:
             simtype: Simulation type to build.
@@ -588,23 +583,19 @@ class SimulationBuilder:
             with_live_display: If True, display a live progress-bar.
             functional_sim: If True, use functional simulation (faster but takes some time to build)
         """
-        match simtype:
-            case SimulationType.NODE_BASED_CONNECTED | SimulationType.NODE_BASED_ISOLATED:
-                node_count = len(self.model.graph.node)
-                self.progress_bar = ThreadsafeProgressDisplay(
-                    ["StitchedIP", "CMake", "Make"],
-                    [node_count] * 3,
-                    [
-                        "[bold blue](1)[/bold blue] Creating stitched IPs",
-                        "[bold blue](2)[/bold blue] Configuring project with CMake",
-                        "[bold blue](3)[/bold blue] Building simulation binaries",
-                    ],
-                )
-                return self._build_simulations_parallel(
-                    workers, with_live_display, functional_sim, simtype
-                )
-            case SimulationType.COMPLETE_DESIGN:
-                raise FINNUserError(f"Simulation method {simtype} is deprecated!")
+        node_count = len(self.model.graph.node)
+        self.progress_bar = ThreadsafeProgressDisplay(
+            ["StitchedIP", "CMake", "Make"],
+            [node_count] * 3,
+            [
+                "[bold blue](1)[/bold blue] Creating stitched IPs",
+                "[bold blue](2)[/bold blue] Configuring project with CMake",
+                "[bold blue](3)[/bold blue] Building simulation binaries",
+            ],
+        )
+        return self._build_simulations_parallel(
+            workers, with_live_display, functional_sim
+        )
 
 
 class BuildSimulation(Transformation):
@@ -617,7 +608,6 @@ class BuildSimulation(Transformation):
         fpgapart: str,
         clk_ns: float,
         functional_sim: bool,
-        simulation_type: SimulationType,
         workers: int | None = None,
     ) -> None:
         """Create a new BuildSimulation transform."""
@@ -625,7 +615,6 @@ class BuildSimulation(Transformation):
         self.functional_sim = functional_sim
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
-        self.sim_type = simulation_type
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build / compile the model. Modifies the model."""
@@ -656,7 +645,6 @@ class BuildSimulation(Transformation):
             # sys.stdout = sys.stdout.console  # type: ignore
             # sys.stderr = sys.stderr.console  # type: ignore
             self.binaries = self.builder.build_simulation(
-                self.sim_type,
                 self.workers,
                 with_live_display=True,
                 functional_sim=self.functional_sim,
@@ -670,17 +658,20 @@ class BuildSimulation(Transformation):
                 result = subprocess.run(
                     "cmake .;make",
                     shell=True,
-                    cwd=str(binary.parent),
+                    cwd=str(binary),
                     text=True,
                     capture_output=True,
                 )
                 if result.returncode != 0:
-                    raise FINNUserError(f"Failed compilation in {binary.parent}: {result.stderr}")
+                    raise FINNUserError(f"Failed compilation in {binary}: {result.stderr}")
                 progress.update("Compilation")
 
             sim_binaries = [Path(p) for p in sim_binaries]
-            sys.stdout = sys.stdout.console  # type: ignore
-            sys.stderr = sys.stderr.console  # type: ignore
+            try:
+                sys.stdout = sys.stdout.console  # type: ignore
+                sys.stderr = sys.stderr.console  # type: ignore
+            except AttributeError:
+                pass
             with DisabledLoggingConsole() as cons:  # noqa
                 progress = ThreadsafeProgressDisplay(
                     ["Compilation"], [len(sim_binaries)], ["Compilation"]

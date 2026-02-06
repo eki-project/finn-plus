@@ -651,7 +651,6 @@ def step_build_simulation(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mode
             cfg._resolve_fpga_part(), # noqa
             cfg._resolve_hls_clk_period(), # noqa
             cfg.functional_simulation,
-            SimulationType.NODE_BASED_CONNECTED
         )
     )
     return model

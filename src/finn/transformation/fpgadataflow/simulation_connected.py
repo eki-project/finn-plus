@@ -510,7 +510,10 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         # Minimize FIFO depths using binary search over BRAM block counts
         for i in range(len(fifo_depths)):
             for j in range(len(fifo_depths[i])):
+                log.info(f"Minimizing Layer {i} / {len(fifo_depths)} "
+                         f"(FIFO {j} / {len(fifo_depths[i])})")
                 if not needs_minimization[i][j]:
+                    log.info("Skipping minimization for this stream.")
                     continue
 
                 minimized_depth = self._minimize_fifo_depth(
@@ -643,6 +646,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         bw = bit_widths[node_idx][fifo_idx]
 
         print(f"Minimizing Node {node_idx} FIFO {fifo_idx}: original depth {original_size}")
+        log.info(f"Minimizing Node {node_idx} FIFO {fifo_idx}: original depth {original_size}")
 
         # If FIFO depth of 32 works, use it because it fits into bw/2 LUTs
         success, timeout = self._test_depth(

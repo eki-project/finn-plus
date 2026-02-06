@@ -69,25 +69,27 @@ class Simulation:
             BuildSimulation(fpgapart, clk_ns, functional_sim, simulation_type, workers)
         )
         self.binaries: dict[int, Path] = {i: sim_binaries[i] for i in range(len(sim_binaries))}
-        self.correct_binaries_paths()
+        match simulation_type:
+            case SimulationType.NODE_BASED_CONNECTED:
+                self.binaries = {
+                    i: self.binaries[i] / "LayerSimulationBackend"
+                    for i in self.binaries.keys()
+                }
+            case SimulationType.NODE_BASED_ISOLATED:
+                self.binaries = {
+                    i: self.binaries[i] / "IsolatedSimulationBackend"
+                    for i in self.binaries.keys()
+                }
+            case _:
+                raise FINNInternalError(f"Unsupported simulation type: {simulation_type}")
 
+        errors = []
+        for binary in self.binaries.values():
+            if not binary.exists():
+                errors.append(f"Binary {binary} does not exist! Please rerun BuildSimulation!")
+        if len(errors) > 0:
+            raise FINNInternalError("Errors occurred: \n" + "\n\t".join(errors))
 
-    def correct_binaries_paths(self) -> None:
-        """Since we use the same directory for isolated and connected simulation, the binaries might
-        point to a simulation executable of the other variant. This function modifies them to point
-        to the correct one.
-        TODO: Rework this mechanism.
-        """
-        binary_names = {
-            SimulationType.NODE_BASED_CONNECTED: "LayerSimulationBackend",
-            SimulationType.NODE_BASED_ISOLATED: "IsolatedSimulationBackend"
-        }
-        if self.simulation_type == SimulationType.COMPLETE_DESIGN:
-            raise FINNUserError("Unsupported SimulationType: COMPLETE_DESIGN")
-        updated = {}
-        for i, binary in self.binaries.items():
-            updated[i] = binary.parent / binary_names[self.simulation_type]
-        self.binaries = updated
 
     def simulate(self) -> Any:
         raise NotImplementedError("Call simulate() on subclasses.")
