@@ -1,24 +1,20 @@
 """Manage dependencies. Called by run_finn.py"""
 from __future__ import annotations
 
-# import concurrent
-# import concurrent.futures
+import concurrent
+import concurrent.futures
 import shlex
 import shutil
 import subprocess as sp
 import sys
-
-# from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from rich.console import Console
-
-# from rich.live import Live
+from rich.live import Live
 from rich.table import Table
+from threading import Lock
 
 from finn.interface import IS_POSIX
-
-# from threading import Lock
-
 
 FINN_DEPS = {
     "finn-experimental": (
@@ -106,7 +102,7 @@ DIRECT_DOWNLOAD_DEPS = {
 }
 
 # TODO: Change or make it configurable
-GIT_CLONE_TIMEOUT = 1000
+GIT_CLONE_TIMEOUT = 120
 
 
 # Tuple that defines a dep status
@@ -125,6 +121,9 @@ def run_silent(s: str, loc: str | None | Path, timeout: int | None = None) -> No
     sp.run(
         shlex.split(s, posix=IS_POSIX),
         cwd=loc,
+        stdout=sp.DEVNULL,
+        stderr=sp.DEVNULL,
+        stdin=sp.DEVNULL,
         timeout=timeout,
     )
 
@@ -146,20 +145,16 @@ def update_dependencies(location: Path) -> None:
     board_file_dir = location / "board_files"
     if not board_file_dir.exists():
         board_file_dir.mkdir(parents=True)
-    # current_state = {}
-    # state_lock = Lock()
+    current_state = {}
+    state_lock = Lock()
     any_failed = False
-    # Temporarily disabled pretty output for debugging
-    # with Live(make_status_table(current_state)) as live:
-    if True:  # Placeholder for indentation
+    with Live(make_status_table(current_state)) as live:
 
         def update_status(key: str, msg: str, color: str) -> None:
-            # Print directly to console instead of updating live table
-            print(f"[{key}] {msg}")
-            # state_lock.acquire()
-            # current_state[key] = (msg, color)
-            # live.update(make_status_table(current_state))
-            # state_lock.release()
+            state_lock.acquire()
+            current_state[key] = (msg, color)
+            live.update(make_status_table(current_state))
+            state_lock.release()
 
         def pull_data(args: tuple) -> bool:
             name, url, do_unzip, target = args
@@ -208,7 +203,7 @@ def update_dependencies(location: Path) -> None:
             if success:
                 if install:
                     update_status(pkg_name, "Installing dependency (pip)!", "orange1")
-                    run_silent(f"{sys.executable} -m pip --timeout=1000 install {target}", None)
+                    run_silent(f"{sys.executable} -m pip install {target}", None)
                     update_status(pkg_name, "Dependency ready & installed (pip)!", "green")
                 else:
                     update_status(pkg_name, "Dependency ready!", "green")
@@ -259,28 +254,16 @@ def update_dependencies(location: Path) -> None:
             update_status(pkg_name, "Dependency ready!", "green")
             return True
 
-        # Run sequentially for debugging (no parallel execution)
-        for name, (giturl, commit, install) in FINN_DEPS.items():
-            result = pull_dep((name, giturl, commit, install))
-            any_failed |= not result
-        for name, (giturl, commit, copy_from_here) in FINN_BOARDFILES.items():
-            result = pull_board((name, giturl, commit, copy_from_here))
-            any_failed |= not result
-        for name, (url, do_unzip, target) in DIRECT_DOWNLOAD_DEPS.items():
-            result = pull_data((name, url, do_unzip, target))
-            any_failed |= not result
-
-        # Original parallel version (commented out for debugging)
-        # with ThreadPoolExecutor(100) as tpe:
-        #     futures = []
-        #     for name, (giturl, commit, install) in FINN_DEPS.items():
-        #         futures.append(tpe.submit(pull_dep, (name, giturl, commit, install)))
-        #     for name, (giturl, commit, copy_from_here) in FINN_BOARDFILES.items():
-        #         futures.append(tpe.submit(pull_board, (name, giturl, commit, copy_from_here)))
-        #     for name, (url, do_unzip, target) in DIRECT_DOWNLOAD_DEPS.items():
-        #         futures.append(tpe.submit(pull_data, (name, url, do_unzip, target)))
-        #     for future in concurrent.futures.as_completed(futures):
-        #         any_failed |= not future.result()
+        with ThreadPoolExecutor(100) as tpe:
+            futures = []
+            for name, (giturl, commit, install) in FINN_DEPS.items():
+                futures.append(tpe.submit(pull_dep, (name, giturl, commit, install)))
+            for name, (giturl, commit, copy_from_here) in FINN_BOARDFILES.items():
+                futures.append(tpe.submit(pull_board, (name, giturl, commit, copy_from_here)))
+            for name, (url, do_unzip, target) in DIRECT_DOWNLOAD_DEPS.items():
+                futures.append(tpe.submit(pull_data, (name, url, do_unzip, target)))
+            for future in concurrent.futures.as_completed(futures):
+                any_failed |= not future.result()
 
     if any_failed:
         Console().print(
