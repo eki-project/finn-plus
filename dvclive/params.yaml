@@ -1,0 +1,16 @@
+params:
+  dut: transformer
+  model_path: models/transformer/finn-transformers/radioml/streamlined.onnx
+  verify_input_npy: models/transformer/finn-transformers/radioml/inp.npy
+  verify_expected_output_npy: models/transformer/finn-transformers/radioml/out.npy
+  live_fifo_sizing: true
+  generate_outputs:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  target_fps: 512
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
