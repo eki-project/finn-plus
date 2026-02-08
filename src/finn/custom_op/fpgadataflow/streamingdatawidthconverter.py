@@ -43,8 +43,11 @@ class StreamingDataWidthConverter(HWCustomOp):
 
     def get_nodeattr_types(self):
         my_attrs = {
-            # shape of input/output tensors
-            "shape": ("ints", True, []),
+            # shape of input tensor
+            "inShape": ("ints", True, []),
+            # shape of output tensor, usually the same as inShape,
+            # but can be different if DWC also acts as a reshape/flatten
+            "outShape": ("ints", True, []),
             # bit width of input and output streams
             "inWidth": ("i", True, 0),
             "outWidth": ("i", True, 0),
@@ -63,11 +66,11 @@ class StreamingDataWidthConverter(HWCustomOp):
         return DataType[self.get_nodeattr("dataType")]
 
     def get_normal_input_shape(self, ind=0):
-        ishape = self.get_nodeattr("shape")
+        ishape = self.get_nodeattr("inShape")
         return ishape
 
     def get_normal_output_shape(self, ind=0):
-        oshape = self.get_nodeattr("shape")
+        oshape = self.get_nodeattr("outShape")
         return oshape
 
     def get_iowidth_lcm(self):

@@ -806,9 +806,11 @@ class FINNInstrumentationOverlay(Overlay):
             "frequency_mhz": round(self.fclk_mhz_actual),
             "min_latency_ms": round(min_latency * (1 / (self.fclk_mhz_actual * 1e6)) * 1e3, 6),
             "latency_ms": round(latency * (1 / (self.fclk_mhz_actual * 1e6)) * 1e3, 6),
-            "throughput_fps": round(1 / (interval * (1 / (self.fclk_mhz_actual * 1e6)))),
-            "min_pipeline_depth": round(min_latency / interval, 2),
-            "pipeline_depth": round(latency / interval, 2),
+            "throughput_fps": (
+                round(1 / (interval * (1 / (self.fclk_mhz_actual * 1e6)))) if interval != 0 else 0
+            ),
+            "min_pipeline_depth": round(min_latency / interval, 2) if interval != 0 else 0,
+            "pipeline_depth": round(latency / interval, 2) if interval != 0 else 0,
         }
         reportfile = os.path.join(report_dir, "report_experiment_instrumentation.json")
         with open(reportfile, "w") as f:
@@ -1463,9 +1465,11 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             "frequency_mhz": round(self.fclk_mhz_actual),
             "min_latency_ms": round(min_latency * (1 / (self.fclk_mhz_actual * 1e6)) * 1e3, 6),
             "latency_ms": round(latency * (1 / (self.fclk_mhz_actual * 1e6)) * 1e3, 6),
-            "throughput_fps": round(1 / (interval * (1 / (self.fclk_mhz_actual * 1e6)))),
-            "min_pipeline_depth": round(min_latency / interval, 2),
-            "pipeline_depth": round(latency / interval, 2),
+            "throughput_fps": (
+                round(1 / (interval * (1 / (self.fclk_mhz_actual * 1e6)))) if interval != 0 else 0
+            ),
+            "min_pipeline_depth": round(min_latency / interval, 2) if interval != 0 else 0,
+            "pipeline_depth": round(latency / interval, 2) if interval != 0 else 0,
         }
         with open(reportfile, "w") as f:
             json.dump(report, f, indent=2)

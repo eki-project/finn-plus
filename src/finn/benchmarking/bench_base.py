@@ -388,6 +388,11 @@ class bench:
 
         cfg.experiments_config_path = self.experiments_config
 
+        # Set verification i/o paths if available
+        if "input_npy_path" in self._build_inputs and "output_npy_path" in self._build_inputs:
+            cfg.verify_input_npy = self._build_inputs["input_npy_path"]
+            cfg.verify_expected_output_npy = self._build_inputs["output_npy_path"]
+
         # Overwrite build config settings with run-specific parameters
         # Filter to only valid DataflowBuildConfig attributes to avoid errors
         valid_params = {k: v for k, v in self._params.items() if hasattr(cfg, k)}
@@ -418,6 +423,10 @@ class bench:
         # Apply None values directly to override existing cfg values
         for param_key, param_value in params_with_none.items():
             setattr(cfg, param_key, param_value)
+
+        # disable verification if live FIFO-sizing is on
+        if cfg.live_fifo_sizing:
+            cfg.verify_steps = None
 
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?
