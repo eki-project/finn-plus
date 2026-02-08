@@ -932,7 +932,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
             node.name
         ] = node_inst.get_instream_width() * node_inst.get_nodeattr("depth")
         total_fifo_size += fifo_info["fifo_sizes"][node.name]
-    fifo_info["total_fifo_size_kB"] = int(total_fifo_size / 8.0 / 1000.0)
+    fifo_info["total_fifo_size_kB"] = total_fifo_size / 8.0 / 1000.0
 
     with open(cfg.output_dir + "/report/fifo_sizing.json", "w") as f:
         json.dump(fifo_info, f, indent=2)
