@@ -638,6 +638,58 @@ def step_hw_ipgen(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
+
+
+
+
+# TODO: Both this and the step_size_... steps will be reworked before merging into dev
+def step_build_simulation(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Build the simulation binaries for isolated and connected simulations."""
+    from finn.transformation.fpgadataflow.simulation_build import BuildSimulation, SimulationType
+    model = model.transform(
+        BuildSimulation(
+            cfg._resolve_fpga_part(), # noqa
+            cfg._resolve_hls_clk_period(), # noqa
+            cfg.functional_simulation,
+        )
+    )
+    return model
+
+def step_size_fifo_isolated(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Simulate layers in isolation and use the observed behaviour to size the FIFOs accordingly."""
+    from finn.transformation.fpgadataflow.simulation_isolated import RunLayerIsolatedSimulation
+    from pathlib import Path
+    model = model.transform(
+        RunLayerIsolatedSimulation( 
+            cfg._resolve_fpga_part(), # noqa
+            cfg._resolve_hls_clk_period(), # noqa
+            cfg.functional_simulation,
+            Path(cfg.output_dir)
+       )
+    )
+    return model
+
+def step_size_fifo_connected(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Simulate layers connected and use the observed behaviour to size the FIFOs accordingly."""
+    from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
+    model = model.transform(
+        RunLayerParallelSimulation(
+            cfg._resolve_fpga_part(), # noqa
+            cfg._resolve_hls_clk_period(), # noqa
+            cfg
+       )
+    )
+    return model
+
+def step_apply_fifosizes(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Apply the previously found FIFO sizes to the model."""
+    from finn.transformation.fpgadataflow.simulation import ApplyFIFOSizes
+    return model.transform(ApplyFIFOSizes(cfg))
+
+
+
+
+
 def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     """
     Depending on the auto_fifo_depths setting, do one of the following:
@@ -1150,6 +1202,10 @@ build_dataflow_step_lookup = {
     "step_generate_estimate_reports": step_generate_estimate_reports,
     "step_hw_codegen": step_hw_codegen,
     "step_hw_ipgen": step_hw_ipgen,
+    "step_build_simulation": step_build_simulation,
+    "step_size_fifo_isolated": step_size_fifo_isolated,
+    "step_size_fifo_connected": step_size_fifo_connected,
+    "step_apply_fifosizes": step_apply_fifosizes,
     "step_set_fifo_depths": step_set_fifo_depths,
     "step_create_stitched_ip": step_create_stitched_ip,
     "step_measure_rtlsim_performance": step_measure_rtlsim_performance,

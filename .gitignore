@@ -117,6 +117,7 @@ finn_xsi/finn_xsi/rtlsim_config.hpp
 
 # downloaded dep repos
 /deps/
+finn_deps/
 
 # local test directories for benchmarking infrastructure
 bench_input
