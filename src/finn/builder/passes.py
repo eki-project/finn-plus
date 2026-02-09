@@ -45,7 +45,7 @@ def _make_pass_config(cfg: DataflowBuildConfig):
     """Creates ONNX Passes configuration from FINN build configuration."""
     # If specified, load data layout annotations from file
     if cfg.layouts_config_file is not None:
-        with open(cfg.layouts_config_file, "r") as file:
+        with cfg.layouts_config_file.open("r") as file:
             layouts = yaml.safe_load(file)
     # Otherwise assume emtpy layout annotations
     else:

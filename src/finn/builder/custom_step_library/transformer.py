@@ -702,7 +702,7 @@ def set_fifo_depths(seq_len: int, emb_dim: int, uram_threshold: int = 32):  # no
         # Only applies if a configuration file is given
         if cfg.folding_config_file is not None:
             # Load the configuration dictionary form YAML file
-            with open(cfg.folding_config_file, "r") as file:
+            with cfg.folding_config_file.open("r") as file:
                 # Load YAML string
                 config = yaml.safe_load(file)
                 # Assign unique names to the nodes which can be matched by
@@ -841,7 +841,7 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig):
     # Only applies if a configuration file is given
     if cfg.folding_config_file is not None:
         # Load the configuration dictionary form YAML file
-        with open(cfg.folding_config_file, "r") as file:
+        with cfg.folding_config_file.open("r") as file:
             # Load YAML string
             config = yaml.safe_load(file)
             # Assign unique names to the nodes which can be matched by

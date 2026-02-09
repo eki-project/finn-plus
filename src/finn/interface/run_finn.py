@@ -597,25 +597,25 @@ def _build(
     from finn.builder.build_dataflow_config import DataflowBuildConfig
 
     status("Creating dataflow build config...")
-    dfbc: DataflowBuildConfig | None = None
-    config_text = flow_config.read_text()
+
+    # Create the build config
+    dfbc: DataflowBuildConfig
     try:
-        match flow_config.suffix:
-            case ".yaml" | ".yml":
-                dfbc = DataflowBuildConfig.from_yaml(config_text)
-            case ".json":
-                dfbc = DataflowBuildConfig.from_json(config_text)
-            case _:
-                error(
-                    f"Unknown config file type: {flow_config.name}. "
-                    f"Valid formats are: .json, .yml, .yaml"
-                )
-                sys.exit(1)
+        if flow_config.suffix not in [".json", ".yaml", ".yml"]:
+            error(
+                f"Unknown config file type: {flow_config.name}. "
+                f"Valid formats are: .json, .yml, .yaml"
+            )
+            sys.exit(1)
+        dfbc = DataflowBuildConfig.construct_from(flow_config)
     except mashumaro.exceptions.ExtraKeysError as e:
         error(
             f"The following keys were found in your config, "
             f"but are not known DataflowBuildConfig options: \n\t{', '.join(e.extra_keys)}"
         )
+        sys.exit(1)
+    except FileNotFoundError:
+        error(f"The flow configuration file could not be found at " f"{flow_config}.")
         sys.exit(1)
 
     if dfbc is None:

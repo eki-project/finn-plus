@@ -224,6 +224,52 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
         forbid_extra_keys = True
 
+    @classmethod
+    def construct_from(cls, file: Path) -> DataflowBuildConfig:
+        """The only deserialization method that should be used. Identifies the source format,
+        patches in the config_path variable and corrects paths. Returns the completed config object.
+        """  # noqa
+        dfbc: DataflowBuildConfig
+        data = file.read_text()
+        match file.suffix:
+            case ".json":
+                dfbc = DataflowBuildConfig.from_json(data)
+            case ".yml" | ".yaml":
+                dfbc = DataflowBuildConfig.from_yaml(data)
+        dfbc.config_path = file.absolute()
+        dfbc.correct_paths()
+        return dfbc
+
+    def correct_paths(self) -> None:
+        """Fix paths by (if needed) joining them with the config path, so that
+        files can be found relative to the config file, not relative to the python
+        execution start point.
+
+        This is called by __post_deserialize when using DataflowBuildConfig.from_yaml/from_json,
+        but can also be called explicitly when constructing an object manually.
+        """
+
+        def _fix_path(p: Path | None) -> Path | None:
+            if self.config_path is None:
+                raise Exception(
+                    "Cannot fix paths since "
+                    "DataflowBuildConfig.config_path is set to None! "
+                    "Either use DataflowBuildConfig.construct_from() or "
+                    "manually set config_path and call correct_paths()."
+                )
+            if p is not None and not p.is_absolute() and str(self.config_path.parent) not in str(p):
+                return (self.config_path.parent / p).absolute()
+            return p
+
+        self.specialize_layers_config_file = _fix_path(self.specialize_layers_config_file)
+        self.folding_config_file = _fix_path(self.folding_config_file)
+        self.layouts_config_file = _fix_path(self.layouts_config_file)
+
+    #: Path to the config from which this object was created. Can be left on None
+    #: for cases in which "finn run" is used, but should otherwise be set to correctly
+    #: infer flow-config relative paths (like specialization JSONs, etc.)
+    config_path: Path | None = None
+
     #: Path to the model. This CAN be set by the startup, but must not necessarily.
     model_path: Path | None = None
 
@@ -256,7 +302,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: fulfills the desired implementation style for each layer by converting the
     #: node into its HLS or RTL variant.
     #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
-    specialize_layers_config_file: Optional[str] = None
+    specialize_layers_config_file: Path | None = None
 
     #: (Optional) Path to configuration JSON file. May include parallelization,
     #: FIFO sizes, RAM and implementation style attributes and so on.
@@ -264,11 +310,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: this will override the automatically generated parallelization
     #: attributes inferred from target_fps (if any)
     #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
-    folding_config_file: Optional[str] = None
+    folding_config_file: Path | None = None
 
     #: (Optional) Path to configuration YAML file listing layout assumptions and
     #: conversion (permutation) for global model inputs and outputs.
-    layouts_config_file: Optional[str] = None
+    layouts_config_file: Path | None = None
 
     #: (Optional) Target inference performance in frames per second.
     #: Note that target may not be achievable due to specific layer constraints,

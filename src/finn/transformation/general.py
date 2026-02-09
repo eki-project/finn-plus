@@ -14,6 +14,7 @@
 
 import json
 import warnings
+from pathlib import Path
 
 # Protobuf onnx graph node type
 from onnx import AttributeProto, NodeProto, mapping  # noqa
@@ -35,9 +36,9 @@ class ApplyConfig(Transformation):
 
     """
 
-    def __init__(self, config, node_filter=lambda x: True):
+    def __init__(self, config: Path | str, node_filter=lambda x: True):
         super().__init__()
-        self.config = config
+        self.config = Path(config)
         self.node_filter = node_filter
         self.used_configurations = ["Defaults"]
         self.missing_configurations = []
@@ -113,7 +114,7 @@ class ApplyConfig(Transformation):
         if isinstance(self.config, dict):
             model_config = self.config
         else:
-            with open(self.config, "r") as f:
+            with self.config.open("r") as f:
                 model_config = json.load(f)
 
         # apply configuration on upper level
