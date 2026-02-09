@@ -66,7 +66,7 @@ class Simulation:
         # TODO: called BuildSimulation in the step before
         # (However this only compiles, it should NOT stitch the IPs again)
         self.model = self.model.transform(
-            BuildSimulation(fpgapart, clk_ns, functional_sim, simulation_type, workers)
+            BuildSimulation(fpgapart, clk_ns, functional_sim)
         )
         self.binaries: dict[int, Path] = {i: sim_binaries[i] for i in range(len(sim_binaries))}
         match simulation_type:

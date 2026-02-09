@@ -6,6 +6,7 @@
 #include <Port.h>
 #include <SharedLibrary.h>
 #include <SocketServer.h>
+#include <sys/stat.h>
 
 #include <atomic>
 #include <boost/program_options.hpp>
@@ -25,12 +26,15 @@ namespace po = boost::program_options;
 constexpr std::size_t InstreamCount = RTLSimConfig::istream_descs.size();
 constexpr std::size_t OutstreamCount = RTLSimConfig::ostream_descs.size();
 
+static_assert(InstreamCount == RTLSimConfig::inputInterfaceNames.size(), "Number of input streams must match number of previous nodes");
+static_assert(OutstreamCount == RTLSimConfig::outputInterfaceNames.size(), "Number of output streams must match number of next nodes");
+
 // Simulation state management
 enum class SimulationState { IDLE, CONFIGURED, RUNNING, FINISHED, ERROR };
 
 class SimulationController {
      private:
-    SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes>& sim;
+    SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes, RTLSimConfig::IsInputNode, RTLSimConfig::IsOutputNode>& sim;
     std::atomic<SimulationState> state{SimulationState::IDLE};
     std::atomic<uint64_t> current_cycles{0};
     std::atomic<uint64_t> current_samples{0};
@@ -42,7 +46,7 @@ class SimulationController {
     bool timeout_occurred{false};
 
      public:
-    explicit SimulationController(SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes>& simulation)
+    explicit SimulationController(SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes, RTLSimConfig::IsInputNode, RTLSimConfig::IsOutputNode>& simulation)
         : sim(simulation) {}
 
     void configure(const std::vector<std::size_t>& depths, std::size_t maxCycles) {
@@ -263,9 +267,9 @@ int main(int argc, const char* argv[]) {
     std::cout << "Connected Simulation Node Index: " << RTLSimConfig::NodeIndex << " / " << RTLSimConfig::TotalNodes << std::endl;
 
     // Construct simulation
-    SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes> sim(
+    SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes, RTLSimConfig::IsInputNode, RTLSimConfig::IsOutputNode> sim(
         RTLSimConfig::kernel_libname, RTLSimConfig::design_libname, "xsim_log_file.txt", "trace_file.txt", RTLSimConfig::istream_descs, RTLSimConfig::ostream_descs,
-        RTLSimConfig::previousNodeName, RTLSimConfig::currentNodeName, 2);
+        RTLSimConfig::inputInterfaceNames, RTLSimConfig::outputInterfaceNames, 2);
 
     // Create simulation controller
     SimulationController controller(sim);

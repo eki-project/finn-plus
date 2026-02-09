@@ -10,7 +10,6 @@ import subprocess
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext
-from copy import deepcopy
 from enum import Enum
 from onnx import NodeProto, TensorProto, ValueInfoProto
 from pathlib import Path
@@ -20,7 +19,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.transformation.infer_shapes import InferShapes
-from random import Random
+from ast import literal_eval
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Any, cast
 
@@ -41,6 +40,7 @@ if TYPE_CHECKING:
 # TODO: Fix that BuildSimulation has to return binaries for either SimulationType
 # TODO: Just store the directory instead - since we build all targets anyways
 
+
 class SimulationType(str, Enum):
     """Type of simulation."""
 
@@ -49,9 +49,6 @@ class SimulationType(str, Enum):
 
     # Individual node simulations, isolated. E.g. for analysis purposes
     NODE_BASED_ISOLATED = "NODE_BASED_ISOLATED"
-
-    # Legacy method (deprecated)
-    COMPLETE_DESIGN = "COMPLETE_DESIGN"
 
 
 class SimulationBuilder:
@@ -120,6 +117,9 @@ class SimulationBuilder:
         num_preds = len(preds_list) if preds_list is not None else 0
         num_succs = len(succs_list) if succs_list is not None else 0
 
+        input_node = False
+        output_node = False
+
         # Set correct input/output count for input and output nodes, since they have no pred/succ.
         if num_preds == 0:
             inputs = self.model.graph.input
@@ -128,6 +128,7 @@ class SimulationBuilder:
             )  # Check that node is graph input
             if ret is not None:
                 num_preds = 1
+                input_node = True
         if num_succs == 0:
             outputs = self.model.graph.output
             ret = get_by_name(
@@ -135,6 +136,7 @@ class SimulationBuilder:
             )  # Check that node is graph output
             if ret is not None:
                 num_succs = 1
+                output_node = True
 
         num_inputs = len(self.model.graph.node[index].input)
         num_outputs = len(self.model.graph.node[index].output)
@@ -145,23 +147,33 @@ class SimulationBuilder:
                 f"{num_succs} successor nodes. This is not supported for isolation."
             )
 
+        initializer_inputs_list = [
+            self.model.graph.node[index].input[i]
+            for i in range(num_inputs)
+            if self.model.get_initializer(self.model.graph.node[index].input[i]) is not None
+        ]
+
         # Handle initializers of nodes
-        for i in range(num_preds, num_inputs):
-            ret = self.model.get_initializer(
-                self.model.graph.node[index].input[i], return_dtype=True
-            )
-            info = self.model.get_tensor_valueinfo(self.model.graph.node[index].input[i])
+        initializer_inputs = []
+        for init in initializer_inputs_list:
+            ret = self.model.get_initializer(init, return_dtype=True)
+            info = self.model.get_tensor_valueinfo(init)
             if ret is None or info is None:
                 raise FINNInternalError(
-                    f"Failed to get initializer for {self.model.graph.node[index].input[i]} "
+                    f"Failed to get initializer for {init} "
                     f"while isolating node {self.model.graph.node[index].name}."
                 )
             vals, dtype = cast("tuple[np.ndarray, int]", ret)
             initializers.append(onnx.helper.make_tensor(info.name, dtype, vals.shape, vals))
             val_info = onnx.helper.make_tensor_value_info(info.name, dtype, vals.shape)
             value_info_protos.append(val_info)
+            initializer_inputs.append(val_info)
 
-        for i in range(num_preds):
+        pred_count = 0
+        for i in range(num_inputs):
+            if self.model.graph.node[index].input[i] in initializer_inputs_list:
+                continue  # This input is handled as an initializer, skip
+            pred_count += 1
             info = self.model.get_tensor_valueinfo(self.model.graph.node[index].input[i])
             if info is None:
                 raise FINNInternalError(
@@ -170,16 +182,16 @@ class SimulationBuilder:
                 )
             # Setup new input tensors
             new_input_info = onnx.helper.make_tensor_value_info(
-                info.name+"_"+str(i),
+                info.name + "_" + str(i),
                 TensorProto.FLOAT,
                 cast("Sequence[int]", target_op.get_normal_input_shape(i)),
             )
             new_input_dummy_info = onnx.helper.make_tensor_value_info(
-                info.name + "_dummy_"+str(i),
+                info.name + "_dummy_" + str(i),
                 TensorProto.FLOAT,
                 cast("Sequence[int]", target_op.get_normal_input_shape(i)),
             )
-            #value_info_protos.append(new_input_info)
+            # value_info_protos.append(new_input_info)
             value_info_protos.append(new_input_dummy_info)
             inputs_graph.append(new_input_info)
             inputs_node.append(new_input_dummy_info)
@@ -198,6 +210,12 @@ class SimulationBuilder:
             )
 
             nodes_graph.append(dummy_node)
+        inputs_node.extend(initializer_inputs)
+        if pred_count != num_preds:
+            raise FINNInternalError(
+                f"Node {self.model.graph.node[index].name} has {num_preds} pred. nodes but only "
+                f"{pred_count} inputs have been handled."
+            )
         for i in range(num_succs):
             info = self.model.get_tensor_valueinfo(self.model.graph.node[index].output[i])
             if info is None:
@@ -207,16 +225,16 @@ class SimulationBuilder:
                 )
             # Setup new input tensors
             new_output_info = onnx.helper.make_tensor_value_info(
-                info.name+"_"+str(i),
+                info.name + "_" + str(i),
                 TensorProto.FLOAT,
                 cast("Sequence[int]", target_op.get_normal_output_shape(i)),
             )
             new_output_dummy_info = onnx.helper.make_tensor_value_info(
-                info.name + "_dummy_"+str(i),
+                info.name + "_dummy_" + str(i),
                 TensorProto.FLOAT,
                 cast("Sequence[int]", target_op.get_normal_output_shape(i)),
             )
-            #value_info_protos.append(new_output_info)
+            # value_info_protos.append(new_output_info)
             value_info_protos.append(new_output_dummy_info)
             outputs_graph.append(new_output_info)
             outputs_node.append(new_output_dummy_info)
@@ -240,7 +258,9 @@ class SimulationBuilder:
         params = {}
         for attr in target_op_attrs.keys():
             attr_val = target_op.get_nodeattr(attr)
-            if (attr_val == "" or attr_val == []
+            if (
+                attr_val == ""
+                or attr_val == []
                 or (isinstance(attr_val, np.ndarray) and attr_val.size == 0)
             ):  # Empty value, skip
                 continue
@@ -267,18 +287,22 @@ class SimulationBuilder:
         node_model = onnx.helper.make_model(graph)
         node_model = ModelWrapper(node_model)
 
+        node_model.set_metadata_prop("predecessors", str([pred.name for pred in inputs_graph]))
+        node_model.set_metadata_prop("successors", str([succ.name for succ in outputs_graph]))
+        node_model.set_metadata_prop("input_node", str(input_node).lower())
+        node_model.set_metadata_prop("output_node", str(output_node).lower())
+
         #node_model.save(f"isolated_node_model_{self.model.graph.node[index].name}.onnx")
 
         return node_model
 
-    def _get_stream_descriptions(self, model: ModelWrapper) -> tuple[str, int, str, int]:
+    def _get_stream_descriptions(self, model: ModelWrapper) -> tuple[str, str]:
         """Return the stream descriptions for the given model for the C++ sim config header.
 
         Used by for example _build_single_node_simulation().
 
         Returns:
-            tuple[str, int, str, int]: Strings of stream descriptions together with
-                                        their count (in, out)
+            tuple[str, str]: Strings of stream descriptions
         """
         # Get IO iterations required
         instream_iters = []
@@ -297,15 +321,14 @@ class SimulationBuilder:
             top_ind = list(last_node.output).index(oname)
             oshape_folded = getCustomOp(last_node).get_folded_output_shape(ind=top_ind)
             outstream_iters.append(int(np.prod(oshape_folded[:-1])))
+
         interface_names = model.get_metadata_prop("vivado_stitch_ifnames")
         if interface_names is None:
             raise FINNInternalError(
                 f"{model}: Could not find stitched-IP interface names. "
                 f"Did you run IP Stitching first?"
             )
-
-        # TODO: Copied from rtlsim_exec_cppxsi. Remove eval().
-        interface_names = eval(interface_names)
+        interface_names = literal_eval(interface_names)
         if "aximm" in interface_names.keys() and interface_names["aximm"] != []:
             raise FINNInternalError(
                 f"{model}: CPP XSI Sim does not know how to handle full "
@@ -314,25 +337,21 @@ class SimulationBuilder:
         instream_names = [x[0] for x in interface_names["s_axis"]]
         outstream_names = [x[0] for x in interface_names["m_axis"]]
 
-        # Format stream descriptions
-        def _format_descr_name(s: str) -> str:
-            for old, new in [("[", ""), ("]", ""), ("(", "{"), (")", "}"), ("'", '"')]:
-                s = s.replace(old, new)
-            return s
+        # Convert to the format required by the C++ sim config header
+        # (initializer list of pairs of name and iters)
+        def _format_descr_name(s: list[tuple[str, int]]) -> str:
+            return ", ".join([f'StreamDescriptor{{"{name}", {iters}}}' for name, iters in s])
 
-        # TODO: Change this since we don't have throttling
         instream_descrs = [
-            (instream_names[i], instream_iters[i], instream_iters[i])
-            for i in range(len(instream_names))
+            (instream_names[i], instream_iters[i]) for i in range(len(instream_names))
         ]
-        instream_descrs_str = _format_descr_name(str(instream_descrs))
+        instream_descrs_str = _format_descr_name(instream_descrs)
 
         outstream_descrs = [
-            (outstream_names[i], outstream_iters[i], outstream_iters[i])
-            for i in range(len(outstream_names))
+            (outstream_names[i], outstream_iters[i]) for i in range(len(outstream_names))
         ]
-        outstream_descrs_str = _format_descr_name(str(outstream_descrs))
-        return instream_descrs_str, len(instream_names), outstream_descrs_str, len(outstream_names)
+        outstream_descrs_str = _format_descr_name(outstream_descrs)
+        return instream_descrs_str, outstream_descrs_str
 
     def _create_sim_so(
         self,
@@ -367,9 +386,7 @@ class SimulationBuilder:
             sim_rel = "xsim.dir" + sim_rel
         return Path(sim_base), Path(sim_rel)
 
-    def _compile_simulation(
-        self, sim_base: Path, silent: bool = False
-    ) -> Path:
+    def _compile_simulation(self, sim_base: Path, silent: bool = False) -> Path:
         """Compile an existing RTLSIM directory. Requires _create_sim_so to be run before. Expects
         rtlsim_config.hpp to be templated already.
 
@@ -420,8 +437,10 @@ class SimulationBuilder:
         for target in compile_targets:
             simulation_executable = Path(sim_base) / target
             if not simulation_executable.exists():
-                errors.append(f"Simulation compile target {target} was not created. "
-                              f"Check {sim_base} to run make manually.")
+                errors.append(
+                    f"Simulation compile target {target} was not created. "
+                    f"Check {sim_base} to run make manually."
+                )
         if len(errors) > 0:
             raise FINNInternalError("Error compiling simulations: \n" + "\n\t".join(errors))
         self.progress_bar.update("Make")
@@ -431,8 +450,8 @@ class SimulationBuilder:
         self,
         model: ModelWrapper,
         sim_base: Path,
-        node_name: str,
-        previous_node_name: str | None,
+        input_interface_names: list[str] | None,
+        output_interface_names: list[str] | None,
         node_index: int,
         total_nodes: int,
         timeout_cycles: int,
@@ -446,9 +465,7 @@ class SimulationBuilder:
         # Prepare the C++ driver config template
         (
             instream_descrs_str,
-            len_instreams,
             outstream_descrs_str,
-            len_outstreams,
         ) = self._get_stream_descriptions(model)
         template_dict = {
             "TIMEOUT_CYCLES": timeout_cycles,
@@ -456,30 +473,37 @@ class SimulationBuilder:
             "TOP_MODULE_NAME": top_module_name,
             # top-level AXI stream descriptors
             "ISTREAM_DESC": instream_descrs_str,
-            "ISTREAM_LEN": len_instreams,
             "OSTREAM_DESC": outstream_descrs_str,
-            "OSTREAM_LEN": len_outstreams,
             # control tracing and trace filename
             "TRACE_FILE": "std::nullopt" if trace_file is None else f'"{trace_file}"',
             # sim kernel .so to use (depends on Vivado version)
             "SIMKERNEL_SO": finnxsi.get_simkernel_so(),
             # log file for xsi (not the sim driver)
             "XSIM_LOG_FILE": '"xsi.log"',
-            # Node name in case of single-node simulation
-            "NODE_NAME": node_name,
-            # Previous node name (for single node simulation)
-            "PREVIOUS_NODE_NAME": (
-                "std::nullopt" if previous_node_name is None else f'"{previous_node_name}"'
-            ),
+            "INPUT_INTERFACE_NAMES": ",".join(['"' + name + '"' for name in input_interface_names])
+            if input_interface_names is not None
+            else "",
+            "OUTPUT_INTERFACE_NAMES": ",".join(
+                ['"' + name + '"' for name in output_interface_names]
+            )
+            if output_interface_names is not None
+            else "",
+            "INPUT_INTERFACE_COUNT": len(input_interface_names)
+            if input_interface_names is not None
+            else 0,
+            "OUTPUT_INTERFACE_COUNT": len(output_interface_names)
+            if output_interface_names is not None
+            else 0,
             "NODE_INDEX": node_index,
             "TOTAL_NODES": total_nodes,
+            "IS_INPUT_NODE": model.get_metadata_prop("input_node"),
+            "IS_OUTPUT_NODE": model.get_metadata_prop("output_node"),
         }
 
         fifosim_config_fname = Path(finnxsi_dir) / "rtlsim_config.hpp.template"
         fsim_config = fifosim_config_fname.read_text()
         for key, val in template_dict.items():
             fsim_config = fsim_config.replace(f"@{key}@", str(val))
-
         # Write the config to the simulation directory
         rtlsim_config = Path(sim_base) / "rtlsim_config.hpp"
         rtlsim_config.write_text(fsim_config)
@@ -487,11 +511,11 @@ class SimulationBuilder:
 
     def build_single_node_simulation(
         self,
-        node_name: str,
         node_model: ModelWrapper,
         node_index: int,
         total_nodes: int,
-        previous_node_name: str | None,
+        input_interface_names: list[str] | None,
+        output_interface_names: list[str] | None,
         build_dir: Path | None,
         timeout_cycles: int = 0,
         silent: bool = False,
@@ -503,15 +527,16 @@ class SimulationBuilder:
         Much of this is from the rtlsim_exec.py in core/
 
         Args:
-            node_name: Despite the fact that we receive an isolated node model, we can still
-                    manually pass a node name. This is useful to give unique names (e.g. for IPC)
             node_model: The single node ModelWrapper to build the simulation from.
             node_index: The index of the simulated node. Used to determine whether a node shares IO
                         with successors or predecessors.
             total_nodes: The total number of nodes in the complete design.
-            previous_node_name: Required by the connected simulation. In the simulation binary this
-                                is used to get access to the correct shared memory segment between
-                                this node and the previous one.
+            input_interface_names: Names of input interfaces for IPC communication. Required by the
+                                connected simulation to access the correct shared memory segment
+                                between this node and its predecessors.
+            output_interface_names: Names of output interfaces for IPC communication. Required by
+                                the connected simulation to access the correct shared memory segment
+                                between this node and its successors.
             build_dir: If given, use this directory for building the simulation. Otherwise one is
                         created from the nodes name.
             timeout_cycles: Number of cycles until simulation timeout. When set to 0 (default), no
@@ -529,7 +554,7 @@ class SimulationBuilder:
         if wrapper_filename is None or not Path(wrapper_filename).exists():
             raise FINNUserError(
                 f"Call CreateStitchedIP prior to building "
-                f"the simulation for {node_name}. "
+                f"the simulation for {self.model.graph.node[node_index].name}. "
                 f"wrapper_filename is set to {wrapper_filename}!"
             )
 
@@ -537,7 +562,8 @@ class SimulationBuilder:
         if vivado_stitched_proj is None or not Path(vivado_stitched_proj).exists():
             raise FINNUserError(
                 f"Call CreateStitchedIP prior to building "
-                f"the simulation for {node_name}. (vivado_stitch_proj not set!)"
+                f"the simulation for {self.model.graph.node[node_index].name}."
+                "(vivado_stitch_proj not set!)"
             )
 
         trace_file = cast("str | None", node_model.get_metadata_prop("rtlsim_trace"))
@@ -556,8 +582,8 @@ class SimulationBuilder:
         _ = self._template_rtlsim_config(
             node_model,
             sim_base,
-            node_name,
-            previous_node_name,
+            input_interface_names,
+            output_interface_names,
             node_index,
             total_nodes,
             timeout_cycles,
@@ -568,21 +594,8 @@ class SimulationBuilder:
         # Building the whole simulation
         return self._compile_simulation(sim_base, silent=silent).absolute()
 
-    def _get_randomized_names(self, model: ModelWrapper, suffix_length: int = 5) -> dict[int, str]:
-        """Add a randomized suffix to every name in the model. Used to avoid interference with
-        previous or parallel running IPC simulations."""
-        rand = Random()
-        rand.seed()
-        return {
-            i: model.graph.node[i].name
-            + "".join(
-                rand.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(suffix_length)
-            )
-            for i in range(len(model.graph.node))
-        }
-
     def _build_simulations_parallel(
-        self, workers: int, with_live_display: bool, functional_sim: bool
+        self, with_live_display: bool, functional_sim: bool
     ) -> dict[int, Path]:
         """Build all nodes in the model in parallel, as isolated simulations, ready for usage in
         an IPC connected simulation chain.
@@ -599,11 +612,10 @@ class SimulationBuilder:
             directories.
         """
         log.info(f"Building simulation binaries for {len(self.model.graph.node)} layers.")
+
         def _build(
-            node_name: str,
             node_index: int,
             total_nodes: int,
-            prev_node_name: str | None,
             build_dir: Path,
         ) -> Any:
             nodemodel = self._isolated_node_model(node_index)
@@ -613,20 +625,22 @@ class SimulationBuilder:
                 CreateStitchedIP(self.fpgapart, self.clk_ns, functional_simulation=functional_sim)
             )
             self.progress_bar.update("StitchedIP")
+            input_interface_names = nodemodel.get_metadata_prop("predecessors")
+            if input_interface_names is not None:
+                input_interface_names = literal_eval(input_interface_names)
+            output_interface_names = nodemodel.get_metadata_prop("successors")
+            if output_interface_names is not None:
+                output_interface_names = literal_eval(output_interface_names)
             return self.build_single_node_simulation(
-                node_name,
                 nodemodel,
                 node_index,
                 total_nodes,
-                prev_node_name,
+                input_interface_names,
+                output_interface_names,
                 build_dir,
                 silent=with_live_display,
             )
 
-        # Create randomized names to avoid clashes with old IPC shared memory
-        randomized_names = self._get_randomized_names(self.model)
-
-        # TODO: Currently ignores workers argument
         total_nodes = len(self.model.graph.node)
         futures: dict[int, Future] = {}
 
@@ -647,19 +661,16 @@ class SimulationBuilder:
             )
             with ThreadPoolExecutor(max_workers=synth_workers) as pool:
                 for i in range(total_nodes):
+                    node_name = self.model.graph.node[i].name
                     futures[i] = pool.submit(
                         _build,
-                        randomized_names[i],
                         i,
                         total_nodes,
-                        randomized_names[i - 1] if i >= 1 else None,  # type: ignore
-                        Path(make_build_dir(f"rtlsim_{randomized_names[i]}_")),
+                        Path(make_build_dir(f"rtlsim_{node_name}")),
                     )
                 return {i: future.result() for i, future in futures.items()}
 
-    def build_simulation(
-        self, workers: int, with_live_display: bool, functional_sim: bool
-    ) -> dict[int, Path]:
+    def build_simulation(self, with_live_display: bool, functional_sim: bool) -> dict[int, Path]:
         """Build a simulation of the given type, return the path to the executable directory
         (indexed by the corresponding node index in the graph).
 
@@ -672,17 +683,13 @@ class SimulationBuilder:
         """
         node_count = len(self.model.graph.node)
         self.progress_bar = ThreadsafeProgressDisplay(
-            ["StitchedIP", "CMake", "Make"],
-            [node_count] * 3,
+            ["StitchedIP"],
+            [node_count],
             [
                 "[bold blue](1)[/bold blue] Creating stitched IPs",
-                "[bold blue](2)[/bold blue] Configuring project with CMake",
-                "[bold blue](3)[/bold blue] Building simulation binaries",
             ],
         )
-        return self._build_simulations_parallel(
-            workers, with_live_display, functional_sim
-        )
+        return self._build_simulations_parallel(with_live_display, functional_sim)
 
 
 class BuildSimulation(Transformation):
@@ -695,10 +702,8 @@ class BuildSimulation(Transformation):
         fpgapart: str,
         clk_ns: float,
         functional_sim: bool,
-        workers: int | None = None,
     ) -> None:
         """Create a new BuildSimulation transform."""
-        self.workers = int(os.environ["NUM_DEFAULT_WORKERS"]) if workers is None else workers
         self.functional_sim = functional_sim
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
@@ -729,10 +734,8 @@ class BuildSimulation(Transformation):
 
         if needs_rebuild:
             self.builder = SimulationBuilder(self.model, self.fpgapart, self.clk_ns)
-            # sys.stdout = sys.stdout.console  # type: ignore
-            # sys.stderr = sys.stderr.console  # type: ignore
+            sys.stdout = sys.stdout.console  # type: ignore
             self.binaries = self.builder.build_simulation(
-                self.workers,
                 with_live_display=True,
                 functional_sim=self.functional_sim,
             )
@@ -765,7 +768,7 @@ class BuildSimulation(Transformation):
                 )
                 progress.start()
                 futures = []
-                with ThreadPoolExecutor(self.workers) as tpe:
+                with ThreadPoolExecutor(int(os.environ.get("NUM_DEFAULT_WORKERS", "8"))) as tpe:
                     for binary in sim_binaries:
                         futures.append(tpe.submit(_compile, binary, progress))
                 tpe.shutdown()

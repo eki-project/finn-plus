@@ -12,8 +12,8 @@ constexpr std::array<char, 16> HEX = {'0', '1', '2', '3', '4', '5', '6', '7',
 struct StreamDescriptor {
   std::string name;
   std::size_t job_size;
-  // Next job can only start this many clock ticks after start of predecessor.
-  std::size_t job_ticks;
+  // // Next job can only start this many clock ticks after start of predecessor.
+  // std::size_t job_ticks;
 };
 
 #ifdef NDEBUG

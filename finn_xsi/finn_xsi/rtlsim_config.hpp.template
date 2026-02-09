@@ -16,14 +16,17 @@
 #include <string>
 #include <optional>
 #include <helper.h>
+#include <string_view>
 
 namespace RTLSimConfig {
 	// Log during simulation. Turned off by default. Might increase runtime if used.
 	constexpr bool LoggingEnabled = true;
+	constexpr bool IsInputNode = @IS_INPUT_NODE@;
+	constexpr bool IsOutputNode = @IS_OUTPUT_NODE@;
 
 	/**** General RTLSIM Configuration Parameters ****/
-	const std::optional<std::string> currentNodeName = "@NODE_NAME@";
-	const std::optional<std::string> previousNodeName = @PREVIOUS_NODE_NAME@;
+	constexpr std::array<std::string_view, @INPUT_INTERFACE_COUNT@> inputInterfaceNames { @INPUT_INTERFACE_NAMES@ };
+	constexpr std::array<std::string_view, @OUTPUT_INTERFACE_COUNT@> outputInterfaceNames { @OUTPUT_INTERFACE_NAMES@ };
 
 	// Which index node this simulation executes
 	// In a complete design simulation this is 0
@@ -42,10 +45,10 @@ namespace RTLSimConfig {
 
 	// AXI stream descriptors {stream_name, transactions_per_inference}
 	// input AXI stream descriptors
-	std::array<StreamDescriptor, @ISTREAM_LEN@> istream_descs { @ISTREAM_DESC@ };
+	constexpr std::array istream_descs { @ISTREAM_DESC@ };
 
 	// output AXI stream descriptors
-	std::array<StreamDescriptor, @OSTREAM_LEN@> ostream_descs { @OSTREAM_DESC@ };
+	constexpr std::array ostream_descs { @OSTREAM_DESC@ };
 
 	// max number of cycles to wait for output activity on any stream before timeout
 	constexpr unsigned max_iters = @TIMEOUT_CYCLES@;

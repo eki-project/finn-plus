@@ -47,7 +47,7 @@ class Simulation {
 
         // Find I/O Streams and initialize their Status
         for (size_t i = 0; i < _istream_descs.size(); ++i) {
-            istreams[i] = S_AXIS_Control{top, clk, std::data(_istream_descs)[i].job_size, std::data(_istream_descs)[i].job_ticks, std::data(_istream_descs)[i].name};
+            istreams[i] = S_AXIS_Control{top, clk, std::data(_istream_descs)[i].job_size, std::data(_istream_descs)[i].job_size, std::data(_istream_descs)[i].name};
         }
         for (size_t i = 0; i < _ostream_descs.size(); ++i) {
             ostreams[i] = M_AXIS_Control{top, clk, std::data(_ostream_descs)[i].job_size, std::data(_ostream_descs)[i].name};
@@ -104,12 +104,10 @@ struct CommData {
 //                      │         ready            ready       │
 //                      │                  (sim)               │
 //                      └──────────────────────────────────────┘
-template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes>
+template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes, bool FirstNode, bool LastNode>
 class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
     using ConsumingInterface = InterprocessCommunicationChannel<CommData, CommData, false>;
     using ProducingInterface = InterprocessCommunicationChannel<CommData, CommData, true>;
-    constexpr static bool FirstNode = NodeIndex == 0;
-    constexpr static bool LastNode = NodeIndex == (TotalNodes - 1);
     std::array<ConsumingInterface, IStreamsSize> fromProducerInterface;
     std::array<ProducingInterface, OStreamsSize> toConsumerInterface;
     std::size_t cyclesRun = 0;
@@ -179,26 +177,17 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
      public:
     SingleNodeSimulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file,
                          std::array<StreamDescriptor, IStreamsSize> _istream_descs, std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
-                         std::optional<std::string> prevNodeName = std::nullopt, std::optional<std::string> nodeName = std::nullopt, unsigned int initialFIFODepth = 2)
+                         std::array<std::string_view, IStreamsSize> inputInterfaceNames, std::array<std::string_view, OStreamsSize> outputInterfaceNames, unsigned int initialFIFODepth = 2)
         : Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs) {
-        if (!FirstNode && !prevNodeName) {
+        if (!FirstNode && inputInterfaceNames.empty()) {
             throw std::runtime_error("Cannot communicate with predecessor because previous node name was not given!");
-        } else if (FirstNode && prevNodeName) {
-            std::cout << "Simulation was passed the previous nodes name but is "
-                         "NOT marked for communication with predecessor node. No "
-                         "shared memory will be created."
-                      << std::endl;
-        }
-        if (!LastNode && !nodeName) {
+        } 
+        if (!LastNode && outputInterfaceNames.empty()) {
             throw std::runtime_error(
                 "Cannot communicate with successor because "
                 "current node name was not given!");
-        } else if (LastNode && nodeName) {
-            std::cout << "Simulation was passed the current nodes name but is NOT "
-                         "marked for communication with successor node. No shared "
-                         "memory will be created."
-                      << std::endl;
         }
+
         if constexpr (!LastNode) {
             // Create FIFO buffer
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
@@ -209,14 +198,14 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         if constexpr (!LastNode) {
             // Create consumer facing interfaces
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                std::string shmName = *nodeName + "_" + std::to_string(i);
+                std::string shmName{outputInterfaceNames[i]};
                 toConsumerInterface[i] = std::move(ProducingInterface(shmName));
             }
         }
 
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                std::string shmName = *prevNodeName + "_" + std::to_string(i);
+                std::string shmName{inputInterfaceNames[i]};
                 fromProducerInterface[i] = std::move(ConsumingInterface(shmName));
             }
         }
