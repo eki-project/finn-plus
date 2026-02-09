@@ -1,7 +1,6 @@
 """Support for memory stream operations in FPGA dataflow."""
 
 import os
-from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import cast
 
@@ -9,12 +8,14 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.basic import is_versal
 
 
-class MemStreamSupport(HWCustomOp, ABC):
+class MemStreamSupport(HWCustomOp):
     """Custom Op for memory stream operations in FPGA dataflow."""
 
-    @abstractmethod
     def calc_tmem(self) -> int:
-        """Abstract method to calculate threshold memory size."""
+        """Abstract method to calculate threshold memory size.
+        The default implementation raises NotImplementedError because
+        some subclasses dont implement calc_tmem."""
+        raise NotImplementedError()
 
     def calc_wmem(self) -> int:
         """Abstract method to calculate weight memory size.
