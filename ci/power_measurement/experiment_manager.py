@@ -211,6 +211,14 @@ class Experiment:
                 p.exitcode != 0
             ):  # If the process exit code is not 0 return with nonzero. This cancels the experiment
                 return p.exitcode
+
+            import gc
+
+            print("unreachable:")
+            print(gc.garbage)
+            print(30 * "=")
+            print("Collect: " + str(gc.collect()))
+            print("Stats: " + str(gc.get_stats()))
         return 0
 
 
@@ -221,14 +229,6 @@ if __name__ == "__main__":
 
         ex_flow = ExperimentManager(json_path, working_dir)
         ex_flow.start_experiments()
-
-        import gc
-
-        print("unreachable:")
-        print(gc.garbage)
-        print(30 * "=")
-        print("Collect: " + str(gc.collect()))
-        print("Stats: " + str(gc.get_stats()))
     else:
         print("[EM] ERROR: Provide settings.json path and working directory as argument")
         sys.exit(1)
