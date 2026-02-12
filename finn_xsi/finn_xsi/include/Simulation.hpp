@@ -177,11 +177,12 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
      public:
     SingleNodeSimulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file,
                          std::array<StreamDescriptor, IStreamsSize> _istream_descs, std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
-                         std::array<std::string_view, IStreamsSize> inputInterfaceNames, std::array<std::string_view, OStreamsSize> outputInterfaceNames, unsigned int initialFIFODepth = 2)
+                         std::array<std::string_view, IStreamsSize> inputInterfaceNames, std::array<std::string_view, OStreamsSize> outputInterfaceNames,
+                         unsigned int initialFIFODepth = 2)
         : Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs) {
         if (!FirstNode && inputInterfaceNames.empty()) {
             throw std::runtime_error("Cannot communicate with predecessor because previous node name was not given!");
-        } 
+        }
         if (!LastNode && outputInterfaceNames.empty()) {
             throw std::runtime_error(
                 "Cannot communicate with successor because "
@@ -195,6 +196,8 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             }
         }
 
+        std::cout << "Initialized " << OStreamsSize << " output FIFOs with depth " << initialFIFODepth << std::endl;
+
         if constexpr (!LastNode) {
             // Create consumer facing interfaces
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
@@ -203,6 +206,8 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             }
         }
 
+        std::cout << "Initialized " << OStreamsSize << " producing interfaces for successor communication" << std::endl;
+
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
                 std::string shmName{inputInterfaceNames[i]};
@@ -210,8 +215,22 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             }
         }
 
+        std::cout << "Initialized " << IStreamsSize << " consuming interfaces for predecessor communication" << std::endl;
+
+        // Verify communication works
+        if constexpr (!LastNode) {
+            for (std::size_t i = 0; i < OStreamsSize; ++i) {
+                toConsumerInterface[i].handshake();
+            }
+        }
+        if constexpr (!FirstNode) {
+            for (std::size_t i = 0; i < IStreamsSize; ++i) {
+                fromProducerInterface[i].handshake();
+            }
+        }
+
         initStreams();
-        debug("Finished initializing simulation.\nlog ------------------------------\n");
+        std::cout << "Finished initializing simulation." << std::endl;
     }
 
     /// Reset simulation (stream and current FIFO depth, as well as cycle counter)
