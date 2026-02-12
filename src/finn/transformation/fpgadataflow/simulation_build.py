@@ -3,26 +3,26 @@
 import finn_xsi.adapter as finnxsi
 import numpy as np
 import onnx
-import time
 import os
 import psutil
 import shlex
 import subprocess
 import sys
+import time
+from ast import literal_eval
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
 from onnx import NodeProto, TensorProto, ValueInfoProto
 from pathlib import Path
-from qonnx.util.basic import get_by_name
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.transformation.infer_shapes import InferShapes
-from ast import literal_eval
+from qonnx.util.basic import get_by_name
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Any, cast
-from collections.abc import Callable
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
@@ -650,7 +650,8 @@ class SimulationBuilder:
                 nonlocal total_nodes, built_nodes
                 built_nodes += 1
                 log.info(
-                    f"[ [bold green]{int(100.0 * float(built_nodes) / float(total_nodes))}%[/bold green]" # noqa
+                    f"[ [bold green]"
+                    f"{int(100.0*float(built_nodes)/float(total_nodes))}%[/bold green]"
                     f" ] {name}",
                     extra={"markup": True, "highlighter": None},
                 )
@@ -730,8 +731,6 @@ class BuildSimulation(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build / compile the model. Modifies the model."""
         self.model = model
-        log.info("[BuildSimulation] Starting model preparation.")
-        self._prepare_model()
 
         # Check if we already have stitched IPs and built simulations. If so, rerun only cmake/make
         needs_rebuild = True
@@ -758,6 +757,8 @@ class BuildSimulation(Transformation):
         # If needed, call the Builder to create the layer simulation binaries.
         # This creates both the isolated and connected binaries in one go.
         if needs_rebuild:
+            log.info("[BuildSimulation] Starting model preparation.")
+            self._prepare_model()
             self.builder = SimulationBuilder(self.model, self.fpgapart, self.clk_ns)
             sys.stdout = sys.stdout.console  # type: ignore
             self.binaries = self.builder.build_simulation(

@@ -474,18 +474,18 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         model = sim.model  # TODO:clean up
 
         # Running the initial simulation
+
+        # raise NotImplementedError()
+
         log.info("Running initial node-connected simulation.")
         initial_fifo_depths, _ = sim.simulate()
 
         # Store the initial sizes as a report
         initial_sizes_path = (
-            Path(self.cfg.output_dir)
-            / "report"
-            / "initial_fifo_sizes_sim_connected.json"
+            Path(self.cfg.output_dir) / "report" / "initial_fifo_sizes_sim_connected.json"
         )
         initial_sizes_path.write_text(json.dumps(initial_fifo_depths, indent=4))
         log.info(f"Wrote initial sizes to: {initial_sizes_path}")
-
 
         fifo_depths = []  # Each entry is a list of fifo sizes for that node
         for val in initial_fifo_depths.values():
@@ -524,7 +524,10 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         for i in range(len(fifo_depths)):
             for j in range(len(fifo_depths[i])):
                 if not needs_minimization[i][j]:
-                    log.debug(f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Skipping minimization for this stream.")
+                    log.debug(
+                        f"[ {i+1}.{j+1} / {len(fifo_depths)} ] "
+                        f"Skipping minimization for this stream."
+                    )
                     continue
 
                 minimized_depth = self._minimize_fifo_depth(
@@ -538,10 +541,12 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     sim_cycles,
                 )
                 fifo_depths[i][j] = minimized_depth
-                percentage = int(100.0 * float(i+1) / float (len(fifo_depths)))
-                log.info(f"[ [bold green]{percentage}%[/bold green] ] "
-                         f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Simulation completed.",
-                         extra={"markup": True, "highlighter": None})
+                percentage = int(100.0 * float(i + 1) / float(len(fifo_depths)))
+                log.info(
+                    f"[ [bold green]{percentage}%[/bold green] ] "
+                    f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Simulation completed.",
+                    extra={"markup": True, "highlighter": None},
+                )
 
         log.info("Final FIFO depths:")
         for i in range(len(fifo_depths)):
@@ -661,7 +666,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         original_size = baseline_depths[node_idx][fifo_idx]
         bw = bit_widths[node_idx][fifo_idx]
 
-        log.debug(f"Minimizing Node {node_idx + 1} FIFO {fifo_idx + 1}: original depth {original_size}")
+        log.debug(
+            f"Minimizing Node {node_idx + 1} FIFO {fifo_idx + 1}: original depth {original_size}"
+        )
 
         # If FIFO depth of 32 works, use it because it fits into bw/2 LUTs
         success, timeout = self._test_depth(

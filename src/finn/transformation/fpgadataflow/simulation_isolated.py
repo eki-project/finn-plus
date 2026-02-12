@@ -1,21 +1,23 @@
 """Simulating layers on their own to observe their behaviour."""
 import io
 import json
+import pandas as pd
+import re
 import time
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from threading import Lock
 from pathlib import Path, PosixPath, PurePath
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from rich.console import Console
-from typing import Literal, TypeAlias
-from collections.abc import Callable
+from threading import Lock
+from typing import Any, Literal, TypeAlias
 
-from finn.transformation.fpgadataflow.simulation import Simulation
+from finn.transformation.fpgadataflow.simulation import Simulation, store_fifo_data
 from finn.transformation.fpgadataflow.simulation_build import SimulationType
 from finn.transformation.fpgadataflow.simulation_controller import SimulationController
 from finn.util.exception import FINNInternalError
-from finn.util.logging import DisabledLoggingConsole, log
+from finn.util.logging import log
 
 
 def get_time() -> str:
@@ -51,7 +53,7 @@ class NodeIsolatedSimulationController(SimulationController):
                 f"{self.names[binary_or_idx]}_python.txt"
             )
         elif type(binary_or_idx) in [Path, PurePath, PosixPath]:  # noqa
-            process_idx = self.binaries.index(binary_or_idx) # type: ignore
+            process_idx = self.binaries.index(binary_or_idx)  # type: ignore
             return self.logdir / f"{process_idx}_log_isolated_{self.names[process_idx]}_python.txt"
         raise TypeError("Pass either a simulation binary path of an index")
 
@@ -86,16 +88,24 @@ class NodeIsolatedSimulationController(SimulationController):
         total = len(self.binaries)
         done = 0
 
-        ## Callback to show progress and save the simulation result
+        # TODO: Lock not needed; futures are not consumed just by
+        # TODO: using the callback, so we can unpack them later
+
+        # Callback to show progress and save the simulation result
         def _done_callback_generator(name: str) -> Callable:
             nonlocal total, done, data, datalock
+
             def _f(future: Future) -> None:
                 nonlocal total, done, data, datalock
                 with datalock:
                     done += 1
-                    log.info(f"[ [bold green]{int(100 * float(done)/float(total))}%[/bold green] ] {name} done!",
-                             extra={"markup": True, "highlighter": None})
+                    log.info(
+                        f"[ [bold green]{int(100 * float(done)/float(total))}%"
+                        f"[/bold green] ] {name} done!",
+                        extra={"markup": True, "highlighter": None},
+                    )
                     data[name] = future.result()
+
             return _f
 
         # Running the simulation threads
@@ -108,8 +118,8 @@ class NodeIsolatedSimulationController(SimulationController):
                     futures[-1].add_done_callback(_done_callback_generator(self.names[i]))
                 tpe.shutdown(wait=True)
             elapsed = time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start))
-            self.console.log("Thread pool closed. Closing sockets and postprocessing data")
-            self.console.log(f"Simulations took {elapsed}")
+            log.info("Thread pool closed. Closing sockets and postprocessing data")
+            log.info(f"Simulations took {elapsed}")
 
         # Finish the logs and clean up the sockets
         for binary in self.binaries:
@@ -129,7 +139,6 @@ class NodeIsolatedSimulationController(SimulationController):
             )
         return data
 
-
     def _run_binary(self, binary: Path) -> IsolatedSimLogData | None:
         """Thread routine: Run a single simulation from the given path and return
         the collected results. Returns None if connection is lost."""
@@ -145,8 +154,9 @@ class NodeIsolatedSimulationController(SimulationController):
             proc_idx = self._start_process(binary, process_index)
             response = self._send_and_receive(proc_idx, "start", {})
             if response is None:
-                write_log("No answer for the clients 'start' "
-                          "command received. Timeout or disconnect.")
+                write_log(
+                    "No answer for the clients 'start' " "command received. Timeout or disconnect."
+                )
                 return None
             write_log(f"Start response: {response}")
 
@@ -190,10 +200,14 @@ class NodeIsolatedSimulationController(SimulationController):
                 percent_simulated_output = int(100.0 * float(out_done) / float(out_target))
                 write_log("Status response:")
                 write_log(f"\tTotal cycles: {total_cycles}")
-                write_log(f"\tInput data simulated: {percent_simulated_input}% "
-                          f"({in_done} / {in_target})")
-                write_log(f"\tOutput data simulated: {percent_simulated_output}% "
-                          f"({out_done} / {out_target})")
+                write_log(
+                    f"\tInput data simulated: {percent_simulated_input}% "
+                    f"({in_done} / {in_target})"
+                )
+                write_log(
+                    f"\tOutput data simulated: {percent_simulated_output}% "
+                    f"({out_done} / {out_target})"
+                )
 
 
 FIFODepthConfig: TypeAlias = dict[int, dict[str, str | list[int]]]
@@ -231,15 +245,24 @@ class IsolatedSimulation(Simulation):
 
 class RunLayerIsolatedSimulation(Transformation):
     """Run a layer isolated simulation and calculate some information for a
-    later layer parallel simulation."""
+    later layer parallel simulation.
 
-    def __init__(self, fpgapart: str, clk_ns: float, functional_sim: bool, output_dir: Path) -> None:
-        """Run isolated layer simulations."""
+    This modifies or creates a pandas DF and stores it in a csv file. This file can be
+    modified by the node connected simulation as well."""
+
+    def __init__(
+        self, fpgapart: str, clk_ns: float, functional_sim: bool, output_dir: Path
+    ) -> None:
+        """Run isolated layer simulations. The
+        default location is at cfg.output_dir/report/fifo_data.csv."""
         super().__init__()
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
         self.functional_sim = functional_sim
         self.output_dir = output_dir
+
+        # Read / create dataframe with default path
+        self.default_fifo_data_path = self.output_dir / "report" / "fifo_data.csv"
 
     def calculate_upper_bounds(self, data: IsoSimLogDataByLayer) -> dict[str, dict[str, int]]:
         """Try to calculate an upper bound for the incoming FIFO size of the layers.
@@ -334,9 +357,9 @@ class RunLayerIsolatedSimulation(Transformation):
         >>> data = {
         ...     "layer1": {
         ...         "ready": [{"totalCycles": 10, "inputCyclesDone": 5,
-        ...                 "inputCyclesTarget": 10, "s_axi0_ready": 1}],
+        ...                 "inputCyclesTarget": 10, "s_axi_0": 1}],
         ...         "valid": [{"totalCycles": 10, "outputCyclesDone": 5,
-        ...                 "outputCyclesTarget": 10, "m_axi0_valid": 1}]
+        ...                 "outputCyclesTarget": 10, "m_axi_0": 1}]
         ...     }
         ... }
         >>> sim = RunLayerIsolatedSimulation("", 0.0, False)
@@ -440,9 +463,48 @@ class RunLayerIsolatedSimulation(Transformation):
                 raise FINNInternalError(f"Layer {layer} has no ready data!")
             if len(ldata["valid"]) == 0:
                 raise FINNInternalError(f"Layer {layer} has no valid data!")
+        # 7. Check that the order of axi streams corresponds to their names. This helps
+        # somewhat to guarantee that the order always stayed the same from building the simulations
+        # to evaluating their data
+
+        # The number in the name should increase with every stream, from 0, without gaps
+        # and streams should be called "s_axis_<number>"
+        readykeys = ["inputCyclesDone", "inputCyclesTarget", "totalCycles"]
+        for layer, ldata in data.items():
+            for cycledict in ldata["ready"]:
+                current_stream_idx = 0
+                for key in cycledict.keys():
+                    if key not in readykeys:
+                        m = re.fullmatch(r"^s_axis_(\d+)$", key)
+                        if m is None:
+                            raise FINNInternalError(
+                                f"Layer {layer} has a non-expected key that "
+                                f"does not match the names of streams expected "
+                                f"(s_axis_<number>).\n\tKey is: {key}"
+                            )
+                        stream_idx = m.group(1)
+                        if int(stream_idx) != current_stream_idx:
+                            raise FINNInternalError(
+                                f"Layer {layer} has non-expected stream key "
+                                f"that does not follow the expected index "
+                                f"scheme: Current expected index is "
+                                f"{current_stream_idx}. Got instead: "
+                                f"{stream_idx}"
+                            )
+                        current_stream_idx += 1
+        # TODO: Check that names match vivado_stitch_ifnames.
+        # TODO: Currently there is no easy way to do this, since we never save the isolated
+        # TODO: node-models and vivado_stitch_ifnames is a metadata prop of that isolated model
+
+    def percent_ready(self, data: IsoSimLogDataByLayer) -> dict[str, float]:
+        """Calculate how many percent of the time the layer was ready for input data.
+        Return indexed by layer name."""
+        # TODO: Implement
+        return dict.fromkeys(data, 0)
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Run isolated layer simulations."""
+        # Run the simulation
         sim = IsolatedSimulation(
             model,
             SimulationType.NODE_BASED_ISOLATED,
@@ -451,17 +513,106 @@ class RunLayerIsolatedSimulation(Transformation):
             self.functional_sim,
         )
         data: IsoSimLogDataByLayer = sim.simulate()
+
+        # Check if data looks good
+        log.info("Checking validity of received simulation data...")
+        start = time.time()
         self.sanity_check_logged_data(data)
+        log.info(f"Validity check took {time.time() - start} seconds.")
+
+        # Calculate upper bounds
+        log.info("Estimating upper bounds...")
+        start = time.time()
         in_fifo_upper_bound = self.calculate_upper_bounds(data)
-        formatted_upper_bounds = "\n\t".join(
-            [f"{name}: {in_fifo_upper_bound[name]}" for name in in_fifo_upper_bound.keys()]
-        )
-        log.info("Upper bounds: \n" + formatted_upper_bounds)
+        log.info(f"Estimation took {time.time() - start} seconds.")
 
         # Write into report file
         upper_bounds_file = self.output_dir / "report" / "estimate_upper_fifo_bound.json"
         upper_bounds_file.write_text(json.dumps(in_fifo_upper_bound, indent=4))
         log.info(f"Wrote results to: {upper_bounds_file}")
+
+        # Save data into dataframe
+        # NOTE: We actually have to swap the order here: We recorded the _incoming_ FIFO sizes
+        # However the connected simulation stores the depths on the layers before it, so
+        # essentially _outgoing_ FIFO sizes.
+
+        # NOTE: For this mapping to work, ordering has to be kept correctly in each step:
+        # 1. Mapping node.inputs to vivado_stitch_ifnames metadata prop (CreateStitchedIP)
+        # 2. Mapping IO shapes to ifnames from before (simulation_builder.py)
+        # 3. Mapping stream_descrs to M/S_AXIS_CONTROL array (C++ simulation creation)
+        # 4. Writing the data to json. Order of S_AXIS_CONTROL -> order in which JSON gets written
+        #       IMPORTANT: Use nlohmann::ordered_json to keep the insertion order!
+        # 5. Reading the JSON into python (python dicts are ordered since 3.7)
+        # 6. Syncing node.inputs to order of s_axi_... streams read from the JSON.
+        edited_bounds = {}
+
+        # Fill edited_bounds with empty values
+        for node in model.graph.node:
+            suc = model.find_direct_successors(node)
+            if suc is None:
+                continue
+            edited_bounds[node.name] = [-1] * len(suc)
+
+        # For every node check its predecessors.
+        # Find the index/tensor that connects the predecessor and the current one
+        # Use that index to retrieve the fifo depth between them and save it
+        def get_index(a: Any, values: Any) -> int | None:
+            for i, val in enumerate(values):
+                if val == a:
+                    return i
+            return None
+
+        for node in model.graph.node:
+            # Rely on the fact that find_direct_predecessors gives the streams in-order
+            predecessors = model.find_direct_predecessors(node)
+            if predecessors is None:
+                continue
+            for predecessor in predecessors:
+                # Find out which m_axis stream of the predecessor leads to node
+                for producer_idx, pre_out in enumerate(predecessor.output):
+                    if pre_out in node.input:
+                        consumer_idx = get_index(pre_out, node.input)
+                        if consumer_idx is None:
+                            raise FINNInternalError(
+                                f"Could not find index of "
+                                f"{predecessor.name}'s output and "
+                                f"{node.name}'s input: {pre_out}. "
+                                f"Index in predecessor.output is "
+                                f"{producer_idx}"
+                            )
+                        # TODO: Switch to array instead of dict?
+                        # We have to conver the string-key (s_axi_...) into the index of the dict
+                        key = list(in_fifo_upper_bound[node.name].keys())[consumer_idx]
+                        # TODO: Tests
+                        edited_bounds[predecessor.name][producer_idx] = in_fifo_upper_bound[
+                            node.name
+                        ][
+                            key
+                        ]  # noqa
+                        log.info(
+                            f"Incoming FIFO {node.name}[{key}/{consumer_idx}] "
+                            f"-> outgoing FIFO {predecessor.name}[{producer_idx}]"
+                        )
+
+        # Prepare the data
+        df_data = {"node": [], "stream": [], "out_fifo_upper_bound": [], "input_ready_percent": []}
+        for layer, layerdata in edited_bounds.items():
+            for idx in range(len(layerdata)):
+                df_data["node"].append(layer)
+                df_data["stream"].append(idx)
+                df_data["out_fifo_upper_bound"].append(layerdata[idx])
+                # TODO: Remove input_ready_percent?
+                df_data["input_ready_percent"].append(self.percent_ready(data)[layer])
+
+        # Create the DF
+        self.fifo_data = pd.DataFrame(df_data)
+        log.info("First few entries of collected data:")
+        log.info(str(self.fifo_data))
+
+        # Save in dataframe and model
+        model = store_fifo_data(
+            model, self.fifo_data, self.default_fifo_data_path, delete_existing=True
+        )
 
         # TODO: Integrate data into the layer parallel simulation
         return model, False
