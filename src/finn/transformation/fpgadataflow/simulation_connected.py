@@ -5,6 +5,7 @@ import json
 import math
 import multiprocessing
 import os
+import pandas as pd
 import time
 import traceback
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -14,11 +15,11 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from rich.console import Console
 from threading import Barrier
-from typing import Any
+from typing import Any, cast
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
-from finn.transformation.fpgadataflow.simulation import Simulation, SimulationType
+from finn.transformation.fpgadataflow.simulation import Simulation, SimulationType, store_fifo_data
 from finn.transformation.fpgadataflow.simulation_controller import SimulationController
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -401,7 +402,7 @@ class NodeConnectedSimulation(Simulation):
 
     def simulate(
         self, depth: int | list[list[int]] | None = None, max_cycles: int | None = None
-    ) -> tuple[dict[int, dict[str, list[int]]], bool]:
+    ) -> tuple[dict[int, dict[str, str | list[int]]], bool]:
         """Simulate the given number of samples for every layer. Layers are completely isolated
         and simulated in parallel. Simulation data is returned as a dict (by node name as index).
         """
@@ -472,10 +473,30 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         )
         model = sim.model  # TODO:clean up
 
+        # Create empty table for datapoints that will be collected
+        # First create as a nested dict, since not all data is avilable at the same time
+        # It is then flattened when creating the dataframe, so that node and stream are columns too
+        # df_data[node][stream_idx][columnm] = ...
+        df_data: dict[str, list[dict[str, Any]]] = {}
+        for nodeindex, node in enumerate(model.graph.node):
+            df_data[node.name] = []
+            for i in range(len(node.output)):
+                df_data[node.name].append(
+                    {
+                        "onnx_index": nodeindex,
+                        "out_bitwidth": -1,
+                        "out_initial_fifo_depths": -1,
+                        "out_final_fifo_depths": -1,
+                        "minimization_iterations": -1,
+                        "minimization_order": "TODO",  # TODO
+                        "simulation_time": -1,
+                        "successor_node": ", ".join(
+                            [node.name for node in model.find_consumers(node.output[i])]
+                        ),
+                    }
+                )
+
         # Running the initial simulation
-
-        # raise NotImplementedError()
-
         log.info("Running initial node-connected simulation.")
         initial_fifo_depths, _ = sim.simulate()
 
@@ -486,13 +507,22 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         initial_sizes_path.write_text(json.dumps(initial_fifo_depths, indent=4))
         log.info(f"Wrote initial sizes to: {initial_sizes_path}")
 
-        fifo_depths = []  # Each entry is a list of fifo sizes for that node
+        # Store initial sizes in dataframe as well
+        for layerdata in initial_fifo_depths.values():
+            for idx in range(len(layerdata["fifo_utilization"])):
+                name: str = cast("str", layerdata["name"])
+                df_data[name][idx]["out_initial_fifo_depths"] = layerdata["fifo_utilization"][idx]
+
+        # Create fifo_depths (indexed by layer index and then stream index)
+        fifo_depths: list[list[int]] = []  # Each entry is a list of fifo sizes for that node
         for val in initial_fifo_depths.values():
-            fifo_depths.append([v + 1 for v in val["fifo_utilization"]])
+            utilization: list[int] = cast("list[int]", val["fifo_utilization"])
+            fifo_depths.append([v + 1 for v in utilization])
 
         # Max cycles for any simulation
         sim_cycles = max([val["cycles"] for val in initial_fifo_depths.values()])
 
+        # Extract bitwidths from outstream widths of hw nodes
         bit_widths = []
         for i in range(len(fifo_depths)):
             bit_widths.append([])
@@ -503,6 +533,12 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             else:
                 raise FINNInternalError("Non-HW node found in dataflow graph during simulation")
 
+        # Store bitwidths into dataframe as well
+        for i in range(len(bit_widths)):
+            for j in range(len(bit_widths[i])):
+                df_data[model.graph.node[i].name][j]["out_bitwidth"] = bit_widths[i][j]
+
+        # Run minimization for every layer/stream
         log.info("Minimizing layers...")
         needs_minimization = []
         for i in range(len(fifo_depths)):
@@ -523,13 +559,15 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         for i in range(len(fifo_depths)):
             for j in range(len(fifo_depths[i])):
                 if not needs_minimization[i][j]:
+                    df_data[model.graph.node[i].name][j]["simulation_time"] = 0.0
                     log.debug(
                         f"[ {i+1}.{j+1} / {len(fifo_depths)} ] "
                         f"Skipping minimization for this stream."
                     )
                     continue
 
-                minimized_depth = self._minimize_fifo_depth(
+                minimization_start = time.time()
+                minimized_depth, iterations_needed = self._minimize_fifo_depth(
                     i,
                     j,
                     fifo_depths,
@@ -539,11 +577,18 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     sim,
                     sim_cycles,
                 )
+                minimization_time = time.time() - minimization_start
+                df_data[model.graph.node[i].name][j]["simulation_time"] = minimization_time
+                df_data[model.graph.node[i].name][j]["minimization_iterations"] = iterations_needed
+
+                # Store the minimized size
                 fifo_depths[i][j] = minimized_depth
+
                 percentage = int(100.0 * float(i + 1) / float(len(fifo_depths)))
                 log.info(
                     f"[ [bold green]{percentage}%[/bold green] ] "
-                    f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Simulation completed.",
+                    f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Simulation completed "
+                    f"({iterations_needed} iterations).",
                     extra={"markup": True, "highlighter": None},
                 )
 
@@ -560,6 +605,34 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         with writeback_path.open("w") as f:
             json.dump(json_results, f)
         log.info(f"Wrote results back to {writeback_path}")
+
+        # Write final FIFO sizes into dataframe
+        for i in range(len(fifo_depths)):
+            for j in range(len(fifo_depths[i])):
+                df_data[model.graph.node[i].name][j]["out_final_fifo_depths"] = fifo_depths[i][j]
+
+        # Store dataframe
+        df_keys = list(df_data[model.graph.node[0].name][0].keys())
+        df_dict = {}
+        df_dict["node"] = []
+        df_dict["stream"] = []
+        for k in df_keys:
+            df_dict[k] = []
+        for node, nodedata in df_data.items():
+            for streamindex, streamdata in enumerate(nodedata):
+                df_dict["node"].append(node)
+                df_dict["stream"].append(streamindex)
+                for key in df_keys:
+                    df_dict[key].append(streamdata[key])
+
+        df = pd.DataFrame(df_dict)
+        model = store_fifo_data(
+            model,
+            df,
+            Path(self.cfg.output_dir) / "report" / "fifo_data.csv",
+            delete_existing=False,
+            store_html=True,
+        )
 
         return model, False
 
@@ -586,7 +659,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fifo_idx: int,
         baseline_depths: list,
         initial_fifo_depths: dict,
-        sim: Simulation,
+        sim: NodeConnectedSimulation,
         sim_cycles: float,
     ) -> tuple[bool, bool]:
         """Test a specific FIFO depth.
@@ -643,9 +716,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         baseline_depths: list,
         bit_widths: list,
         initial_fifo_depths: dict,
-        sim: Simulation,
+        sim: NodeConnectedSimulation,
         sim_cycles: int,
-    ) -> int:
+    ) -> tuple[int, int]:
         """Minimize a single FIFO depth using binary search.
 
         Args:
@@ -660,8 +733,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             sim_cycles: Maximum simulation cycles
 
         Returns:
-            Minimized FIFO depth
+            Tuple: Minimized FIFO depth, Iterations required to arrive at the result
         """
+        iterations = 0
         original_size = baseline_depths[node_idx][fifo_idx]
         bw = bit_widths[node_idx][fifo_idx]
 
@@ -673,8 +747,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         success, timeout = self._test_depth(
             32, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
         )
+        iterations += 1
         if success:
-            return 32
+            return 32, iterations
 
         if original_size <= self.max_qsrl_depth:
             upper_luts = calculate_srl16e_luts(original_size, bw)
@@ -683,7 +758,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
             # Binary search if there's room to search
             if upper_luts > lower_luts:
-                best_working_depth = self._binary_search_srl_depth(
+                best_working_depth, bin_it = self._binary_search_srl_depth(
                     node_idx,
                     fifo_idx,
                     baseline_depths,
@@ -694,8 +769,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     lower_luts=lower_luts,
                     upper_luts=upper_luts,
                 )
-                return best_working_depth
-            return original_size
+                iterations += bin_it
+                return best_working_depth, iterations
+            return original_size, iterations
 
         # Try FIFO depth of 256 next (fits into LUTRAM)
         success, timeout = self._test_depth(
@@ -707,6 +783,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             sim,
             sim_cycles,
         )
+        iterations += 1
         if success:
             upper_luts = calculate_srl16e_luts(original_size, bw)
             # LUTRAM based FIFOs have block sizes of 32, so smallest after 32 is 64
@@ -714,7 +791,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
             # Binary search if there's room to search
             if upper_luts > lower_luts:
-                best_working_depth = self._binary_search_srl_depth(
+                best_working_depth, bin_it = self._binary_search_srl_depth(
                     node_idx,
                     fifo_idx,
                     baseline_depths,
@@ -725,8 +802,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     lower_luts=lower_luts,
                     upper_luts=upper_luts,
                 )
-                return best_working_depth
-            return self.max_qsrl_depth
+                iterations += bin_it
+                return best_working_depth, iterations
+            return self.max_qsrl_depth, iterations
 
         # We know 256 doesn't work, so we have to use BRAMs
         # Try one BRAM block less than current
@@ -743,15 +821,16 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         success, timeout = self._test_depth(
             max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
         )
+        iterations += 1
 
         if timeout or not success:
-            return original_size
+            return original_size, iterations
 
         best_working_depth = max_d
 
         # Binary search if there's room to search and multiple valid configs
         if len(valid_blocks) > 1:
-            best_working_depth = self._exponential_binary_search_depth(
+            best_working_depth, bin_it = self._exponential_binary_search_depth(
                 node_idx,
                 fifo_idx,
                 baseline_depths,
@@ -761,8 +840,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 sim_cycles,
                 valid_blocks=valid_blocks,
             )
+            iterations += bin_it
 
-        return best_working_depth
+        return best_working_depth, iterations
 
     def _exponential_binary_search_depth(
         self,
@@ -771,10 +851,10 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         baseline_depths: list,
         bitwidth: int,
         initial_fifo_depths: dict,
-        sim: Simulation,
+        sim: NodeConnectedSimulation,
         sim_cycles: float,
         valid_blocks: list[int],
-    ) -> int:
+    ) -> tuple[int, int]:
         """Perform exponential + binary search over valid block configurations.
 
         Uses exponential search to quickly find the range, then binary search within it.
@@ -792,8 +872,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             valid_blocks: Sorted list of valid block counts to search over
 
         Returns:
-            Best working depth found
+            Tuple: Best working depth found, Number of iterations required to arrive at this result.
         """
+        iterations = 0
         if not valid_blocks:
             raise FINNInternalError("valid_blocks list cannot be empty")
 
@@ -815,6 +896,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             success, _ = self._test_depth(
                 max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
             )
+            iterations += 1
 
             if success:
                 # Found a working depth, now binary search in [last_failed_idx+1, exp_idx]
@@ -835,6 +917,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             success, _ = self._test_depth(
                 max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
             )
+            iterations += 1
 
             if success:
                 # This depth works, try smaller (lower indices)
@@ -844,7 +927,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 # This depth doesn't work, need larger (higher indices)
                 lower_idx = mid_idx + 1
 
-        return best_working_depth
+        return best_working_depth, iterations
 
     def _binary_search_srl_depth(
         self,
@@ -853,11 +936,11 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         baseline_depths: list,
         bitwidth: int,
         initial_fifo_depths: dict,
-        sim: Simulation,
+        sim: NodeConnectedSimulation,
         sim_cycles: float,
         lower_luts: int,
         upper_luts: int,
-    ) -> int:
+    ) -> tuple[int, int]:
         """Perform binary search to find minimal working FIFO depth in LUTRAM range.
 
         Args:
@@ -872,8 +955,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             upper_luts: Upper bound for LUT count (known to work)
 
         Returns:
-            Best working depth found
+            Tuple: Best working depth found, Number of Iterations required to arrive at this result
         """
+        iterations = 0
         _, max_d = calculate_srl16e_depth_range(upper_luts, bitwidth)
         best_working_depth = max_d
 
@@ -897,6 +981,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             success, _ = self._test_depth(
                 max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
             )
+            iterations += 1
 
             if success:
                 # This depth works, try smaller
@@ -906,7 +991,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 # This depth doesn't work, need larger
                 lower_luts = mid_luts + 1
 
-        return best_working_depth
+        return best_working_depth, iterations
 
     def _needs_minimization(self, fifo_depth: int, bitwidth: int) -> bool:
         """Determine whether a FIFO can be minimized further.

@@ -83,10 +83,13 @@ class NodeIsolatedSimulationController(SimulationController):
         """Run a node isolated simulation and return the collected
         input ready / output valid data, indexed based on node names."""
         futures: list[Future] = []
-        data: dict[str, self.IsolatedSimLogData] = {}
         datalock = Lock()
         total = len(self.binaries)
         done = 0
+
+        # Important to initialize from names. Otherwise the results are added into the dict
+        # in the order in which they finished simulating. But we want to keep the model order.
+        data: dict[str, self.IsolatedSimLogData] = {name: {} for name in self.names}
 
         # TODO: Lock not needed; futures are not consumed just by
         # TODO: using the callback, so we can unpack them later
@@ -543,6 +546,7 @@ class RunLayerIsolatedSimulation(Transformation):
         # 4. Writing the data to json. Order of S_AXIS_CONTROL -> order in which JSON gets written
         #       IMPORTANT: Use nlohmann::ordered_json to keep the insertion order!
         # 5. Reading the JSON into python (python dicts are ordered since 3.7)
+        #       According to docs, the Python JSON module also keeps order
         # 6. Syncing node.inputs to order of s_axi_... streams read from the JSON.
         edited_bounds = {}
 
@@ -550,8 +554,9 @@ class RunLayerIsolatedSimulation(Transformation):
         for node in model.graph.node:
             suc = model.find_direct_successors(node)
             if suc is None:
-                continue
-            edited_bounds[node.name] = [-1] * len(suc)
+                edited_bounds[node.name] = [-1]
+            else:
+                edited_bounds[node.name] = [-1] * len(suc)
 
         # For every node check its predecessors.
         # Find the index/tensor that connects the predecessor and the current one
@@ -595,14 +600,22 @@ class RunLayerIsolatedSimulation(Transformation):
                         )
 
         # Prepare the data
-        df_data = {"node": [], "stream": [], "out_fifo_upper_bound": [], "input_ready_percent": []}
+        df_data = {
+            "onnx_index": [],
+            "node": [],
+            "stream": [],
+            "out_fifo_upper_bound": [],
+            "input_ready_percent": [],
+        }
         for layer, layerdata in edited_bounds.items():
             for idx in range(len(layerdata)):
+                df_data["onnx_index"].append([n.name for n in model.graph.node].index(layer))
                 df_data["node"].append(layer)
                 df_data["stream"].append(idx)
                 df_data["out_fifo_upper_bound"].append(layerdata[idx])
                 # TODO: Remove input_ready_percent?
-                df_data["input_ready_percent"].append(self.percent_ready(data)[layer])
+                # df_data["input_ready_percent"].append(self.percent_ready(data)[layer])
+                df_data["input_ready_percent"].append(0.0)
 
         # Create the DF
         self.fifo_data = pd.DataFrame(df_data)
@@ -611,7 +624,11 @@ class RunLayerIsolatedSimulation(Transformation):
 
         # Save in dataframe and model
         model = store_fifo_data(
-            model, self.fifo_data, self.default_fifo_data_path, delete_existing=True
+            model,
+            self.fifo_data,
+            self.default_fifo_data_path,
+            delete_existing=True,
+            store_html=True,
         )
 
         # TODO: Integrate data into the layer parallel simulation
