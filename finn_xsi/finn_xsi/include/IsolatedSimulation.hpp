@@ -7,8 +7,8 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
     enum class LogType {READY, VALID};
     std::string readylogName;
     std::string validlogName;
-    json readyJson;
-    json validJson;
+    nlohmann::ordered_json readyJson;
+    nlohmann::ordered_json validJson;
     std::vector<size_t> inJobSizes;
     std::vector<size_t> outJobSizes;
 
@@ -80,7 +80,7 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
 
     /** Log the ready and valid signals to the JSON fields **/
     void logReady() {
-        json j;
+        nlohmann::ordered_json j;
         j["totalCycles"] = simState.totalCycles;
         j["inputCyclesDone"] = simState.inputCyclesDone;
         j["inputCyclesTarget"] = simState.inputCyclesTarget;
@@ -91,7 +91,7 @@ class IsolatedSimulation : public Simulation<IStreamsSize, OStreamsSize, false> 
     }
 
     void logValid() {
-        json j;
+        nlohmann::ordered_json j;
         j["totalCycles"] = simState.totalCycles;
         j["outputCyclesDone"] = simState.outputCyclesDone;
         j["outputCyclesTarget"] = simState.outputCyclesTarget;

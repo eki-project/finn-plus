@@ -3,13 +3,13 @@
 import finn_xsi.adapter as finnxsi
 import numpy as np
 import onnx
+import time
 import os
 import psutil
 import shlex
 import subprocess
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import nullcontext
 from enum import Enum
 from onnx import NodeProto, TensorProto, ValueInfoProto
 from pathlib import Path
@@ -22,6 +22,7 @@ from qonnx.transformation.infer_shapes import InferShapes
 from ast import literal_eval
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Callable
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
@@ -31,7 +32,7 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import launch_process_helper, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
-from finn.util.logging import DisabledLoggingConsole, ThreadsafeProgressDisplay, log
+from finn.util.logging import log
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -59,7 +60,6 @@ class SimulationBuilder:
         self.model = model
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
-        self.progress_bar = ThreadsafeProgressDisplay([], [], [])
 
     def _isolated_node_model(self, by_node: int | str | NodeProto) -> ModelWrapper:
         """Return a modelwrapper that has only the specified node.
@@ -292,7 +292,7 @@ class SimulationBuilder:
         node_model.set_metadata_prop("input_node", str(input_node).lower())
         node_model.set_metadata_prop("output_node", str(output_node).lower())
 
-        #node_model.save(f"isolated_node_model_{self.model.graph.node[index].name}.onnx")
+        # node_model.save(f"isolated_node_model_{self.model.graph.node[index].name}.onnx")
 
         return node_model
 
@@ -386,7 +386,7 @@ class SimulationBuilder:
             sim_rel = "xsim.dir" + sim_rel
         return Path(sim_base), Path(sim_rel)
 
-    def _compile_simulation(self, sim_base: Path, silent: bool = False) -> Path:
+    def _compile_simulation(self, sim_base: Path, silent: bool = True) -> Path:
         """Compile an existing RTLSIM directory. Requires _create_sim_so to be run before. Expects
         rtlsim_config.hpp to be templated already.
 
@@ -397,7 +397,6 @@ class SimulationBuilder:
         compile_targets = ["LayerSimulationBackend", "IsolatedSimulationBackend"]
         if all((Path(sim_base) / execname).exists() for execname in compile_targets):
             # Simulation was already compiled, we can return early
-            self.progress_bar.update("Make")
             return Path(sim_base)
 
         # Check where FINNXSI is
@@ -416,7 +415,6 @@ class SimulationBuilder:
             )
         except CalledProcessError as e:
             raise FINNInternalError(f"Failed to run cmake in {sim_base}") from e
-        self.progress_bar.update("CMake")
 
         # Calling make to actually build the simulation
         makefile = Path(sim_base) / "Makefile"
@@ -443,7 +441,6 @@ class SimulationBuilder:
                 )
         if len(errors) > 0:
             raise FINNInternalError("Error compiling simulations: \n" + "\n\t".join(errors))
-        self.progress_bar.update("Make")
         return sim_base
 
     def _template_rtlsim_config(
@@ -624,7 +621,6 @@ class SimulationBuilder:
             nodemodel = nodemodel.transform(
                 CreateStitchedIP(self.fpgapart, self.clk_ns, functional_simulation=functional_sim)
             )
-            self.progress_bar.update("StitchedIP")
             input_interface_names = nodemodel.get_metadata_prop("predecessors")
             if input_interface_names is not None:
                 input_interface_names = literal_eval(input_interface_names)
@@ -642,7 +638,27 @@ class SimulationBuilder:
             )
 
         total_nodes = len(self.model.graph.node)
+        log.info(f"[BuildSimulation] Preparing to build {total_nodes} nodes for the simulation.")
         futures: dict[int, Future] = {}
+        built_nodes = 0
+
+        # Progress display callback
+        def _callback_progress(name: str) -> Callable:
+            nonlocal total_nodes, built_nodes
+
+            def _f(f: Future) -> None:
+                nonlocal total_nodes, built_nodes
+                built_nodes += 1
+                log.info(
+                    f"[ [bold green]{int(100.0 * float(built_nodes) / float(total_nodes))}%[/bold green]" # noqa
+                    f" ] {name}",
+                    extra={"markup": True, "highlighter": None},
+                )
+                # Unpack result once so that the pool fails immediately, instead of waiting for
+                # all futures to be completed.
+                f.result()
+
+            return _f
 
         # Build sims in parallel
         synth_workers = max(
@@ -655,20 +671,31 @@ class SimulationBuilder:
 
         # Build (stitched IP, cmake, make) all sims in parallel and return paths to
         # the compiled executables
-        with DisabledLoggingConsole(), self.progress_bar if with_live_display else nullcontext():
-            self.progress_bar.progress.console.log(
-                f"Building simulations using {int(synth_workers)} workers.."
+        log.info("[BuildSimulation] Starting the build process.")
+        with ThreadPoolExecutor(max_workers=synth_workers) as pool:
+            for i in range(total_nodes):
+                node_name = self.model.graph.node[i].name
+                futures[i] = pool.submit(
+                    _build,
+                    i,
+                    total_nodes - 1,
+                    Path(make_build_dir(f"rtlsim_{node_name}_")),
+                )
+                futures[i].add_done_callback(_callback_progress(node_name))
+            pool.shutdown(wait=True)
+
+        # Check if all binaries were compiled successfully
+        binaries = {i: future.result() for i, future in futures.items()}
+        not_found_binaries = []
+        for i, binary in binaries.items():
+            if binary is None:
+                not_found_binaries.append(i)
+        if len(not_found_binaries) > 0:
+            raise FINNInternalError(
+                "Building simulations failed. "
+                "Failed simulation binaries: " + ", ".join(not_found_binaries)
             )
-            with ThreadPoolExecutor(max_workers=synth_workers) as pool:
-                for i in range(total_nodes):
-                    node_name = self.model.graph.node[i].name
-                    futures[i] = pool.submit(
-                        _build,
-                        i,
-                        total_nodes - 1,
-                        Path(make_build_dir(f"rtlsim_{node_name}_")),
-                    )
-                return {i: future.result() for i, future in futures.items()}
+        return binaries
 
     def build_simulation(self, with_live_display: bool, functional_sim: bool) -> dict[int, Path]:
         """Build a simulation of the given type, return the path to the executable directory
@@ -681,14 +708,6 @@ class SimulationBuilder:
             with_live_display: If True, display a live progress-bar.
             functional_sim: If True, use functional simulation (faster but takes some time to build)
         """
-        node_count = len(self.model.graph.node)
-        self.progress_bar = ThreadsafeProgressDisplay(
-            ["StitchedIP"],
-            [node_count],
-            [
-                "[bold blue](1)[/bold blue] Creating stitched IPs",
-            ],
-        )
         return self._build_simulations_parallel(with_live_display, functional_sim)
 
 
@@ -711,18 +730,22 @@ class BuildSimulation(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build / compile the model. Modifies the model."""
         self.model = model
-        with DisabledLoggingConsole() as console:  # noqa
-            with console.status("Preparing model for the simulation step..."):
-                self._prepare_model()
+        log.info("[BuildSimulation] Starting model preparation.")
+        self._prepare_model()
 
-        # Check if we already have stitched IPs and built simulations. If so, rerun cmake/make
+        # Check if we already have stitched IPs and built simulations. If so, rerun only cmake/make
         needs_rebuild = True
         sim_binaries = self.model.get_metadata_prop("simulation_binaries")
+
+        # 1. Check if binary paths are saved in the model
         if sim_binaries is not None:
             sim_binaries = sim_binaries.split("\n")
+
+            # 2. Check that the model size hasn't changed since creating the binaries. Otherwise
+            # we should rebuild.
             if len(sim_binaries) != len(self.model.graph.node):
                 log.info(
-                    f"Found existing binaries, but number ({len(sim_binaries)}) "
+                    f"[BuildSimulation] Found existing binaries, but number ({len(sim_binaries)}) "
                     f"does not match number of nodes in the graph "
                     f"({len(self.model.graph.node)}). Rebuilding..."
                 )
@@ -730,8 +753,10 @@ class BuildSimulation(Transformation):
                 log.info("Existing simulations found. Re-running only CMake/Make..")
                 needs_rebuild = False
         else:
-            log.info("No simulation binaries found, building now.")
+            log.info("[BuildSimulation] No simulation binaries found, building now.")
 
+        # If needed, call the Builder to create the layer simulation binaries.
+        # This creates both the isolated and connected binaries in one go.
         if needs_rebuild:
             self.builder = SimulationBuilder(self.model, self.fpgapart, self.clk_ns)
             sys.stdout = sys.stdout.console  # type: ignore
@@ -743,8 +768,8 @@ class BuildSimulation(Transformation):
                 "simulation_binaries", "\n".join([str(p) for p in self.binaries.values()])
             )
         else:
-
-            def _compile(binary: Path, progress: ThreadsafeProgressDisplay) -> None:
+            # Run only compilation again, and avoid repeating building of the stitched IPs
+            def _compile(binary: Path) -> None:
                 result = subprocess.run(
                     "cmake .;make",
                     shell=True,
@@ -754,35 +779,53 @@ class BuildSimulation(Transformation):
                 )
                 if result.returncode != 0:
                     raise FINNUserError(f"Failed compilation in {binary}: {result.stderr}")
-                progress.update("Compilation")
 
+            # Since we dont need a rebuild, sim_binaries contains the paths to the binaries
             sim_binaries = [Path(p) for p in sim_binaries]
-            try:
-                sys.stdout = sys.stdout.console  # type: ignore
-                sys.stderr = sys.stderr.console  # type: ignore
-            except AttributeError:
-                pass
-            with DisabledLoggingConsole() as cons:  # noqa
-                progress = ThreadsafeProgressDisplay(
-                    ["Compilation"], [len(sim_binaries)], ["Compilation"]
-                )
-                progress.start()
-                futures = []
-                with ThreadPoolExecutor(int(os.environ.get("NUM_DEFAULT_WORKERS", "8"))) as tpe:
-                    for binary in sim_binaries:
-                        futures.append(tpe.submit(_compile, binary, progress))
-                tpe.shutdown()
-                progress.stop()
-                for future in futures:
+            total = len(sim_binaries)
+
+            # Prepare compiling the binaries again
+            done = 0
+
+            def _progress_callback(binary: str | Path) -> Callable:
+                nonlocal done, total
+
+                def _f(future: Future) -> None:
+                    nonlocal done, total
+                    done += 1
+                    log.info(
+                        f"[ [bold green]{int(100.0 * float(done) / float(total))}%[/bold green] ] "
+                        f"Simulation [green italic]{binary}[/green italic] built.",
+                        extra={"markup": True, "highlighter": None},
+                    )
                     future.result()
-                log.info("Compilation done.")
+
+                return _f
+
+            # Run the compilation in parallel with the number of workers specified.
+            # If not specified, use 8
+            compile_start = time.time()
+            futures: list[Future] = []
+            with ThreadPoolExecutor(int(os.environ.get("NUM_DEFAULT_WORKERS", "8"))) as tpe:
+                for binary in sim_binaries:
+                    futures.append(tpe.submit(_compile, binary))
+                    futures[-1].add_done_callback(_progress_callback(binary.name))
+            tpe.shutdown()
+            compile_end = time.time()
+            log.info(f"Compilation done. Took {compile_end - compile_start} seconds")
         return self.model, False
 
     def _prepare_model(self) -> None:
         """Execute some preparation transformations on the model."""
+        log.info("[BuildSimulation] Inserting DataWidthConverters...")
         self.model = self.model.transform(InsertDWC())
+        log.info("[BuildSimulation] Specializing layers...")
         self.model = self.model.transform(SpecializeLayers(self.fpgapart))
+        log.info("[BuildSimulation] Assigning unique and readable node and tensor names...")
         self.model = self.model.transform(GiveUniqueNodeNames())
         self.model = self.model.transform(GiveReadableTensorNames())
+        log.info("[BuildSimulation] Preparing IPs...")
         self.model = self.model.transform(PrepareIP(self.fpgapart, self.clk_ns))
+        log.info("[BuildSimulation] Synthesizing IPs...")
         self.model = self.model.transform(HLSSynthIP())
+        log.info("[BuildSimulation] Model preparation done.")

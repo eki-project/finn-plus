@@ -25,6 +25,7 @@ from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import DisabledLoggingConsole, log
 
 
+
 class NodeConnectedSimulationController(SimulationController):
     """Run simulations for node connected cases."""
 
@@ -67,7 +68,7 @@ class NodeConnectedSimulationController(SimulationController):
                         pass
 
             if removed_count > 0:
-                self.console.log(f"Cleaned up {removed_count} existing shared memory resources")
+                log.info(f"Cleaned up {removed_count} existing shared memory resources")
         except Exception as e:
             # Don't fail if cleanup fails - just log it
             self.console.log(f"Warning: Error during shared memory cleanup: {e}")
@@ -256,7 +257,7 @@ class NodeConnectedSimulationController(SimulationController):
                         color = "orange3"
                     if "ERROR" in msg:
                         color = "red"
-                    self.console.log(
+                    log.debug(
                         f"[bold {color}]{name:<35}"
                         f"[/bold {color}][cornflower_blue]{process_index} "
                         f"/ {len(self.names) - 1}[/cornflower_blue] {msg:<35}"
@@ -417,13 +418,12 @@ class NodeConnectedSimulation(Simulation):
         # Run simulation
         start = time.time()
         output_json = Path(make_build_dir("simulation_results_")) / "simulation_data.json"
-        with DisabledLoggingConsole() as console:
-            controller = NodeConnectedSimulationController(
-                len(self.binaries), names, list(self.binaries.values()), console, 0.1, False
-            )
-            controller.run(initial_depth, output_json, max_cycles)
+        controller = NodeConnectedSimulationController(
+            len(self.binaries), names, list(self.binaries.values()), Console(), 0.1, False
+        )
+        controller.run(initial_depth, output_json, max_cycles)
         end = time.time()
-        log.info(f"Simulation took {end - start} seconds!")
+        log.debug(f"Simulation took {end - start} seconds!")
 
         # Load the merged data from JSON
         merged_data = json.loads(output_json.read_text())
@@ -473,7 +473,19 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         )
         model = sim.model  # TODO:clean up
 
+        # Running the initial simulation
+        log.info("Running initial node-connected simulation.")
         initial_fifo_depths, _ = sim.simulate()
+
+        # Store the initial sizes as a report
+        initial_sizes_path = (
+            Path(self.cfg.output_dir)
+            / "report"
+            / "initial_fifo_sizes_sim_connected.json"
+        )
+        initial_sizes_path.write_text(json.dumps(initial_fifo_depths, indent=4))
+        log.info(f"Wrote initial sizes to: {initial_sizes_path}")
+
 
         fifo_depths = []  # Each entry is a list of fifo sizes for that node
         for val in initial_fifo_depths.values():
@@ -492,6 +504,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             else:
                 raise FINNInternalError("Non-HW node found in dataflow graph during simulation")
 
+        log.info("Minimizing layers...")
         needs_minimization = []
         for i in range(len(fifo_depths)):
             needs_minimization.append([True] * len(fifo_depths[i]))
@@ -510,10 +523,8 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         # Minimize FIFO depths using binary search over BRAM block counts
         for i in range(len(fifo_depths)):
             for j in range(len(fifo_depths[i])):
-                log.info(f"Minimizing Layer {i} / {len(fifo_depths)} "
-                         f"(FIFO {j} / {len(fifo_depths[i])})")
                 if not needs_minimization[i][j]:
-                    log.info("Skipping minimization for this stream.")
+                    log.debug(f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Skipping minimization for this stream.")
                     continue
 
                 minimized_depth = self._minimize_fifo_depth(
@@ -527,19 +538,24 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     sim_cycles,
                 )
                 fifo_depths[i][j] = minimized_depth
+                percentage = int(100.0 * float(i+1) / float (len(fifo_depths)))
+                log.info(f"[ [bold green]{percentage}%[/bold green] ] "
+                         f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Simulation completed.",
+                         extra={"markup": True, "highlighter": None})
 
-        print("Final FIFO depths:")
+        log.info("Final FIFO depths:")
         for i in range(len(fifo_depths)):
-            print(f"{i}: {fifo_depths[i]}")
             log.info(f"{i}: {fifo_depths[i]}")
 
         # Write back results. By default write to output_dir / "fifo_config.json"
+        writeback_path = Path(self.cfg.output_dir) / "fifo_config.json"
         assert len(fifo_depths) == len(model.graph.node)
         json_results = {}
         for i in range(len(fifo_depths)):
             json_results[i] = {"node": model.graph.node[i].name, "depths": fifo_depths[i]}
-        with (Path(self.cfg.output_dir) / "fifo_config.json").open("w") as f:
+        with writeback_path.open("w") as f:
             json.dump(json_results, f)
+        log.info(f"Wrote results back to {writeback_path}")
 
         return model, False
 
@@ -645,8 +661,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         original_size = baseline_depths[node_idx][fifo_idx]
         bw = bit_widths[node_idx][fifo_idx]
 
-        print(f"Minimizing Node {node_idx} FIFO {fifo_idx}: original depth {original_size}")
-        log.info(f"Minimizing Node {node_idx} FIFO {fifo_idx}: original depth {original_size}")
+        log.debug(f"Minimizing Node {node_idx + 1} FIFO {fifo_idx + 1}: original depth {original_size}")
 
         # If FIFO depth of 32 works, use it because it fits into bw/2 LUTs
         success, timeout = self._test_depth(

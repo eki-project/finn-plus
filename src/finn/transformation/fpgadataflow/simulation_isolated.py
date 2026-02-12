@@ -3,11 +3,13 @@ import io
 import json
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from threading import Lock
 from pathlib import Path, PosixPath, PurePath
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from rich.console import Console
 from typing import Literal, TypeAlias
+from collections.abc import Callable
 
 from finn.transformation.fpgadataflow.simulation import Simulation
 from finn.transformation.fpgadataflow.simulation_build import SimulationType
@@ -17,6 +19,7 @@ from finn.util.logging import DisabledLoggingConsole, log
 
 
 def get_time() -> str:
+    """Return the current time in a formatted hour:minutes:second string."""
     return f"[{time.strftime('%H:%M:%S')}]"
 
 
@@ -38,7 +41,7 @@ class NodeIsolatedSimulationController(SimulationController):
         super().__init__(
             parallel_simulations, names, binaries, console, poll_interval, with_progressbar
         )
-        self.console.log("Started simulation controller")
+        log.info("Started simulation controller")
 
     def get_logfile_path(self, binary_or_idx: Path | int) -> Path:
         """Get the logfile for the given binary or process index."""
@@ -48,7 +51,7 @@ class NodeIsolatedSimulationController(SimulationController):
                 f"{self.names[binary_or_idx]}_python.txt"
             )
         elif type(binary_or_idx) in [Path, PurePath, PosixPath]:  # noqa
-            process_idx = self.binaries.index(binary_or_idx)
+            process_idx = self.binaries.index(binary_or_idx) # type: ignore
             return self.logdir / f"{process_idx}_log_isolated_{self.names[process_idx]}_python.txt"
         raise TypeError("Pass either a simulation binary path of an index")
 
@@ -58,7 +61,7 @@ class NodeIsolatedSimulationController(SimulationController):
         if flush:
             logfile.flush()
 
-    def postprocess_logs(
+    def collect_results(
         self, d: Path, readylog_name: str = "readylog.txt", validlog_name: str = "validlog.txt"
     ) -> IsolatedSimLogData:
         """Recieve the directory containing a binary and the simulation logs.
@@ -78,27 +81,47 @@ class NodeIsolatedSimulationController(SimulationController):
         """Run a node isolated simulation and return the collected
         input ready / output valid data, indexed based on node names."""
         futures: list[Future] = []
+        data: dict[str, self.IsolatedSimLogData] = {}
+        datalock = Lock()
+        total = len(self.binaries)
+        done = 0
+
+        ## Callback to show progress and save the simulation result
+        def _done_callback_generator(name: str) -> Callable:
+            nonlocal total, done, data, datalock
+            def _f(future: Future) -> None:
+                nonlocal total, done, data, datalock
+                with datalock:
+                    done += 1
+                    log.info(f"[ [bold green]{int(100 * float(done)/float(total))}%[/bold green] ] {name} done!",
+                             extra={"markup": True, "highlighter": None})
+                    data[name] = future.result()
+            return _f
+
+        # Running the simulation threads
+        assert len(self.names) == len(self.binaries)
         with self.console.status(f"Running simulation on every node. Log directory: {self.logdir}"):
             start = time.time()
             with ThreadPoolExecutor(len(self.binaries)) as tpe:
-                for binary in self.binaries:
+                for i, binary in enumerate(self.binaries):
                     futures.append(tpe.submit(self._run_binary, binary))
-            tpe.shutdown(wait=True)
-        self.console.log("Thread pool closed. Closing sockets and postprocessing data")
-        elapsed = time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start))
-        self.console.log(f"Simulations took {elapsed}")
+                    futures[-1].add_done_callback(_done_callback_generator(self.names[i]))
+                tpe.shutdown(wait=True)
+            elapsed = time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - start))
+            self.console.log("Thread pool closed. Closing sockets and postprocessing data")
+            self.console.log(f"Simulations took {elapsed}")
+
+        # Finish the logs and clean up the sockets
         for binary in self.binaries:
             with self.get_logfile_path(binary).open("a") as logfile:
                 self.write_log(logfile, "Cleaning up socket.")
         self._cleanup_sockets()
 
-        # Read data
-        data: dict[str, self.IsolatedSimLogData] = {}
+        # Check for invalid data points
         invalid = []
-        for i, future in enumerate(futures):
-            data[self.names[i]] = future.result()
-            if data[self.names[i]] is None:
-                invalid.append((self.names[i], i))
+        for i, name in enumerate(data.keys()):
+            if data[name] is None:
+                invalid.append((name, i))
         if len(invalid) > 0:
             raise FINNInternalError(
                 f"Lost connection / malformed response from nodes: "
@@ -106,27 +129,26 @@ class NodeIsolatedSimulationController(SimulationController):
             )
         return data
 
+
     def _run_binary(self, binary: Path) -> IsolatedSimLogData | None:
-        """Run simulation. Returning None if connection is lost."""
+        """Thread routine: Run a single simulation from the given path and return
+        the collected results. Returns None if connection is lost."""
         process_index = self.binaries.index(binary)
         with self.get_logfile_path(binary).open("w+") as logfile:
-
+            # Logging helper
             def write_log(msg: str) -> None:
                 self.write_log(logfile, msg)
 
-            # Initialize
+            # Initialize: Start simulation process and give the start command
             write_log("Initializing simulation")
             write_log(f"Binary is: {binary}")
             proc_idx = self._start_process(binary, process_index)
             response = self._send_and_receive(proc_idx, "start", {})
             if response is None:
-                write_log("Client disconnected / no answer received to start command!")
+                write_log("No answer for the clients 'start' "
+                          "command received. Timeout or disconnect.")
                 return None
             write_log(f"Start response: {response}")
-
-            if response is None:
-                write_log("Failed to start simulation: No response")
-                return None
 
             # Main loop
             write_log("Beginning main loop")
@@ -142,27 +164,36 @@ class NodeIsolatedSimulationController(SimulationController):
 
                 # Process response
                 if response is None:
+                    write_log("Status request answered with None: Timeout or connection lost.")
                     return None
                 state = response["state"]
                 write_log(f"Received answer for status request ({total_status_requests})")
+
+                # If the simulation is done, postprocess and return the collected data
                 if state == "done":
-                    self.console.log(f"{process_index} is done and postprocessing data.")
                     write_log("Received done status. Sending stop signal to simulation.")
                     resp = self._send_and_receive(proc_idx, "stop", {})
                     if resp is None:
                         write_log("No stop response received.")
                     else:
                         write_log("Stop successfully received.")
-                    return self.postprocess_logs(binary.parent)
+                    return self.collect_results(binary.parent)
 
-                # TODO: Order seems wrong
-                write_log(
-                    f"{response['totalCycles']}, "
-                    f"{response['inputCyclesDone']}, "
-                    f"{response['inputCyclesTarget']}, "
-                    f"{response['outputCyclesDone']}, "
-                    f"{response['outputCyclesTarget']}"
-                )
+                # Otherwise log the current status
+                # TODO: Field name - meaning wrong?
+                in_done = response["inputCyclesDone"]
+                in_target = response["inputCyclesTarget"]
+                out_done = response["outputCyclesDone"]
+                out_target = response["outputCyclesTarget"]
+                total_cycles = response["totalCycles"]
+                percent_simulated_input = int(100.0 * float(in_done) / float(in_target))
+                percent_simulated_output = int(100.0 * float(out_done) / float(out_target))
+                write_log("Status response:")
+                write_log(f"\tTotal cycles: {total_cycles}")
+                write_log(f"\tInput data simulated: {percent_simulated_input}% "
+                          f"({in_done} / {in_target})")
+                write_log(f"\tOutput data simulated: {percent_simulated_output}% "
+                          f"({out_done} / {out_target})")
 
 
 FIFODepthConfig: TypeAlias = dict[int, dict[str, str | list[int]]]
@@ -191,11 +222,11 @@ class IsolatedSimulation(Simulation):
                 f"{self.simulation_type}"
             )
         names = [node.name for node in self.model.graph.node]
-        with DisabledLoggingConsole() as console:
-            controller = NodeIsolatedSimulationController(
-                len(self.binaries), names, list(self.binaries.values()), console, 0.1, False
-            )
-            return controller.run()
+        console = Console()
+        controller = NodeIsolatedSimulationController(
+            len(self.binaries), names, list(self.binaries.values()), console, 0.1, False
+        )
+        return controller.run()
 
 
 class RunLayerIsolatedSimulation(Transformation):
