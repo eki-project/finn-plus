@@ -16,16 +16,25 @@ std::string sanitize_prefix(const std::string& prefix) {
     return sanitized;
 }
 
+std::string remove_trailing_underscore(const std::string& prefix) {
+    std::string clean = prefix;
+    if (clean.back() == '_') {
+        // If checks implicitly that pop_back() doesn't have undefined behav.
+        clean.pop_back();
+    }
+    return clean;
+}
+
 AXIS_Control::AXIS_Control(xsi::Design& des, Clock& clock, size_t job_sz, const std::string& prefix)
     : job_size(job_sz),
       job_txns(0),
       total_txns(0),
       first_complete(0),
-      name(sanitize_prefix(prefix)),
+      name(remove_trailing_underscore(sanitize_prefix(prefix))),
       design(&des),
       clk(&clock),
-      port_vld(&des.getPort(name + "tvalid")),
-      port_rdy(&des.getPort(name + "tready")) {}
+      port_vld(&des.getPort(sanitize_prefix(prefix) + "tvalid")),
+      port_rdy(&des.getPort(sanitize_prefix(prefix) + "tready")) {}
 
 void AXIS_Control::inititialized_or_throw() {
     if (!design || !clk || !port_rdy || !port_vld) {

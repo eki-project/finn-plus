@@ -3,26 +3,26 @@
 import finn_xsi.adapter as finnxsi
 import numpy as np
 import onnx
-import time
 import os
 import psutil
 import shlex
 import subprocess
 import sys
+import time
+from ast import literal_eval
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
 from onnx import NodeProto, TensorProto, ValueInfoProto
 from pathlib import Path
-from qonnx.util.basic import get_by_name
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.transformation.infer_shapes import InferShapes
-from ast import literal_eval
+from qonnx.util.basic import get_by_name
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Any, cast
-from collections.abc import Callable
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
@@ -292,7 +292,7 @@ class SimulationBuilder:
         node_model.set_metadata_prop("input_node", str(input_node).lower())
         node_model.set_metadata_prop("output_node", str(output_node).lower())
 
-        #node_model.save(f"isolated_node_model_{self.model.graph.node[index].name}.onnx")
+        # node_model.save(f"isolated_node_model_{self.model.graph.node[index].name}.onnx")
 
         return node_model
 
@@ -645,14 +645,20 @@ class SimulationBuilder:
         # Progress display callback
         def _callback_progress(name: str) -> Callable:
             nonlocal total_nodes, built_nodes
+
             def _f(f: Future) -> None:
                 nonlocal total_nodes, built_nodes
                 built_nodes += 1
-                log.info(f"[ [bold green]{int(100.0*float(built_nodes)/float(total_nodes))}%[/bold green]"
-                         f" ] {name}", extra={"markup": True, "highlighter": None})
+                log.info(
+                    f"[ [bold green]"
+                    f"{int(100.0*float(built_nodes)/float(total_nodes))}%[/bold green]"
+                    f" ] {name}",
+                    extra={"markup": True, "highlighter": None},
+                )
                 # Unpack result once so that the pool fails immediately, instead of waiting for
                 # all futures to be completed.
                 f.result()
+
             return _f
 
         # Build sims in parallel
@@ -686,10 +692,11 @@ class SimulationBuilder:
             if binary is None:
                 not_found_binaries.append(i)
         if len(not_found_binaries) > 0:
-            raise FINNInternalError("Building simulations failed. "
-                                    "Failed simulation binaries: " + ", ".join(not_found_binaries))
+            raise FINNInternalError(
+                "Building simulations failed. "
+                "Failed simulation binaries: " + ", ".join(not_found_binaries)
+            )
         return binaries
-
 
     def build_simulation(self, with_live_display: bool, functional_sim: bool) -> dict[int, Path]:
         """Build a simulation of the given type, return the path to the executable directory
@@ -724,8 +731,6 @@ class BuildSimulation(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build / compile the model. Modifies the model."""
         self.model = model
-        log.info("[BuildSimulation] Starting model preparation.")
-        self._prepare_model()
 
         # Check if we already have stitched IPs and built simulations. If so, rerun only cmake/make
         needs_rebuild = True
@@ -752,6 +757,8 @@ class BuildSimulation(Transformation):
         # If needed, call the Builder to create the layer simulation binaries.
         # This creates both the isolated and connected binaries in one go.
         if needs_rebuild:
+            log.info("[BuildSimulation] Starting model preparation.")
+            self._prepare_model()
             self.builder = SimulationBuilder(self.model, self.fpgapart, self.clk_ns)
             sys.stdout = sys.stdout.console  # type: ignore
             self.binaries = self.builder.build_simulation(
@@ -780,17 +787,20 @@ class BuildSimulation(Transformation):
 
             # Prepare compiling the binaries again
             done = 0
+
             def _progress_callback(binary: str | Path) -> Callable:
                 nonlocal done, total
+
                 def _f(future: Future) -> None:
                     nonlocal done, total
                     done += 1
                     log.info(
                         f"[ [bold green]{int(100.0*float(done)/float(total))}%[/bold green] ] "
                         f"Simulation [green italic]{binary}[/green italic] built.",
-                        extra={"markup": True, "highlighter": None}
+                        extra={"markup": True, "highlighter": None},
                     )
                     future.result()
+
                 return _f
 
             # Run the compilation in parallel with the number of workers specified.

@@ -1,6 +1,7 @@
 """Manages the Simulation superclass as well as general simulation related transforms."""
 
 import json
+import pandas as pd
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -25,8 +26,51 @@ if TYPE_CHECKING:
 FIFODepthConfig: TypeAlias = dict[int, dict[str, str | list[int]]]
 
 
+def store_fifo_data(
+    model: ModelWrapper,
+    data: pd.DataFrame,
+    default_path: Path,
+    delete_existing: bool,
+    merge_on: list[str] | None = None,
+) -> ModelWrapper:
+    """Store the given dataframe in a CSV file.
+
+    If the model already points to data, merge with it and store at the
+    path used before (unless delete_existing=True, then simply overwrite at that same path).
+    If no data is stored beforehand, use the `default_path` and simply store
+    the data there. The path is then entered into the `"fifo_data_path"` metadata prop of the model.
+
+    The function can be used to aggregate benchmarking data across several flow steps.
+
+    Args:
+        model: The model that we check for a path to existing FIFO data.
+        data: The data to store.
+        default_path: Path to use in case that the model doesn't reference a data file yet.
+           Is then stored as a metadata prop in the model.
+        delete_existing: If true, delete the table and start a new one.
+        merge_on: What columns to merge on. If "None", use `["node", "stream"]`
+
+    Returns:
+        model: Return the model since we might have modified its metadata.
+    """
+    fifo_data_path = model.get_metadata_prop("fifo_data_path")
+    if fifo_data_path is not None:
+        if delete_existing:
+            merged = data
+        else:
+            merged = pd.merge(data, pd.read_csv(fifo_data_path), on=merge_on, how="outer")
+        merged.to_csv(fifo_data_path)
+        log.info(f"Stored FIFO dataframe to {fifo_data_path}.")
+    else:
+        data.to_csv(default_path)
+        model.set_metadata_prop("fifo_data_path", str(default_path))
+        log.info(f"Stored FIFO dataframe to {default_path}.")
+    return model
+
+
 class Simulation:
     """Manage simulation (runs) in FINN. Upon instance creation, the simulation will be built.
+    Simulations should inherit from this class and expand for their specific needs.
 
     IMPORTANT: If the modelwrapper was somehow changed, create a NEW simulation object!
     """
@@ -65,20 +109,16 @@ class Simulation:
         # TODO: Currently we have to recompile even if we just
         # TODO: called BuildSimulation in the step before
         # (However this only compiles, it should NOT stitch the IPs again)
-        self.model = self.model.transform(
-            BuildSimulation(fpgapart, clk_ns, functional_sim)
-        )
+        self.model = self.model.transform(BuildSimulation(fpgapart, clk_ns, functional_sim))
         self.binaries: dict[int, Path] = {i: sim_binaries[i] for i in range(len(sim_binaries))}
         match simulation_type:
             case SimulationType.NODE_BASED_CONNECTED:
                 self.binaries = {
-                    i: self.binaries[i] / "LayerSimulationBackend"
-                    for i in self.binaries.keys()
+                    i: self.binaries[i] / "LayerSimulationBackend" for i in self.binaries.keys()
                 }
             case SimulationType.NODE_BASED_ISOLATED:
                 self.binaries = {
-                    i: self.binaries[i] / "IsolatedSimulationBackend"
-                    for i in self.binaries.keys()
+                    i: self.binaries[i] / "IsolatedSimulationBackend" for i in self.binaries.keys()
                 }
             case _:
                 raise FINNInternalError(f"Unsupported simulation type: {simulation_type}")
@@ -89,7 +129,6 @@ class Simulation:
                 errors.append(f"Binary {binary} does not exist! Please rerun BuildSimulation!")
         if len(errors) > 0:
             raise FINNInternalError("Errors occurred: \n" + "\n\t".join(errors))
-
 
     def simulate(self) -> Any:
         raise NotImplementedError("Call simulate() on subclasses.")
