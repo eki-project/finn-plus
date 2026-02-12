@@ -34,7 +34,8 @@ enum class SimulationState { IDLE, CONFIGURED, RUNNING, FINISHED, ERROR };
 
 class SimulationController {
      private:
-    SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes, RTLSimConfig::IsInputNode, RTLSimConfig::IsOutputNode>& sim;
+    SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes, RTLSimConfig::IsInputNode,
+                         RTLSimConfig::IsOutputNode>& sim;
     std::atomic<SimulationState> state{SimulationState::IDLE};
     std::atomic<uint64_t> current_cycles{0};
     std::atomic<uint64_t> current_samples{0};
@@ -46,7 +47,8 @@ class SimulationController {
     bool timeout_occurred{false};
 
      public:
-    explicit SimulationController(SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes, RTLSimConfig::IsInputNode, RTLSimConfig::IsOutputNode>& simulation)
+    explicit SimulationController(SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes,
+                                                       RTLSimConfig::IsInputNode, RTLSimConfig::IsOutputNode>& simulation)
         : sim(simulation) {}
 
     void configure(const std::vector<std::size_t>& depths, std::size_t maxCycles) {
@@ -266,14 +268,6 @@ int main(int argc, const char* argv[]) {
 
     std::cout << "Connected Simulation Node Index: " << RTLSimConfig::NodeIndex << " / " << RTLSimConfig::TotalNodes << std::endl;
 
-    // Construct simulation
-    SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes, RTLSimConfig::IsInputNode, RTLSimConfig::IsOutputNode> sim(
-        RTLSimConfig::kernel_libname, RTLSimConfig::design_libname, "xsim_log_file.txt", "trace_file.txt", RTLSimConfig::istream_descs, RTLSimConfig::ostream_descs,
-        RTLSimConfig::inputInterfaceNames, RTLSimConfig::outputInterfaceNames, 2);
-
-    // Create simulation controller
-    SimulationController controller(sim);
-
     // Check if socket communication is enabled
     if (vm.count("socket")) {
         const std::string socket_path = vm["socket"].as<std::string>();
@@ -289,6 +283,15 @@ int main(int argc, const char* argv[]) {
 
         std::cout << "Socket server initialized, waiting for commands..." << std::endl;
         std::cout.flush();
+
+        // Construct simulation
+        SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes, RTLSimConfig::IsInputNode,
+                             RTLSimConfig::IsOutputNode>
+            sim(RTLSimConfig::kernel_libname, RTLSimConfig::design_libname, "xsim_log_file.txt", "trace_file.txt", RTLSimConfig::istream_descs, RTLSimConfig::ostream_descs,
+                RTLSimConfig::inputInterfaceNames, RTLSimConfig::outputInterfaceNames, 2);
+
+        // Create simulation controller
+        SimulationController controller(sim);
 
         // Command processing loop
         while (true) {

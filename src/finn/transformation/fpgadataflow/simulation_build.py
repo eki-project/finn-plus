@@ -182,12 +182,12 @@ class SimulationBuilder:
                 )
             # Setup new input tensors
             new_input_info = onnx.helper.make_tensor_value_info(
-                info.name + "_" + str(i),
+                info.name,
                 TensorProto.FLOAT,
                 cast("Sequence[int]", target_op.get_normal_input_shape(i)),
             )
             new_input_dummy_info = onnx.helper.make_tensor_value_info(
-                info.name + "_dummy_" + str(i),
+                info.name + "_dummy",
                 TensorProto.FLOAT,
                 cast("Sequence[int]", target_op.get_normal_input_shape(i)),
             )
@@ -225,12 +225,12 @@ class SimulationBuilder:
                 )
             # Setup new input tensors
             new_output_info = onnx.helper.make_tensor_value_info(
-                info.name + "_" + str(i),
+                info.name,
                 TensorProto.FLOAT,
                 cast("Sequence[int]", target_op.get_normal_output_shape(i)),
             )
             new_output_dummy_info = onnx.helper.make_tensor_value_info(
-                info.name + "_dummy_" + str(i),
+                info.name + "_dummy",
                 TensorProto.FLOAT,
                 cast("Sequence[int]", target_op.get_normal_output_shape(i)),
             )
@@ -679,8 +679,8 @@ class SimulationBuilder:
                 futures[i] = pool.submit(
                     _build,
                     i,
-                    total_nodes,
-                    Path(make_build_dir(f"rtlsim_{node_name}")),
+                    total_nodes - 1,
+                    Path(make_build_dir(f"rtlsim_{node_name}_")),
                 )
                 futures[i].add_done_callback(_callback_progress(node_name))
             pool.shutdown(wait=True)
@@ -795,7 +795,7 @@ class BuildSimulation(Transformation):
                     nonlocal done, total
                     done += 1
                     log.info(
-                        f"[ [bold green]{int(100.0*float(done)/float(total))}%[/bold green] ] "
+                        f"[ [bold green]{int(100.0 * float(done) / float(total))}%[/bold green] ] "
                         f"Simulation [green italic]{binary}[/green italic] built.",
                         extra={"markup": True, "highlighter": None},
                     )

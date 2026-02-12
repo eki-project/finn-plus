@@ -5,6 +5,7 @@
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include <new>
 #include <thread>
+#include <iostream>
 
 #ifndef CACHE_LINE_SIZE
     #ifdef __cpp_lib_hardware_interference_size
@@ -74,14 +75,17 @@ class InterprocessCommunicationChannel {
             // Sender creates shared memory
             bip::shared_memory_object::remove(sharedMemoryName.c_str());
             shmem = bip::managed_shared_memory(bip::create_only, sharedMemoryName.c_str(), SharedMemorySize);
+            std::cout << "Created shared memory: " << sharedMemoryName << std::endl;
         } else {
             // Receiver opens existing shared memory
+            std::cout << "Waiting to connect to shared memory: " << sharedMemoryName << std::endl;
             while (true) {
                 try {
                     shmem = bip::managed_shared_memory(bip::open_only, sharedMemoryName.c_str());
                     break;
                 } catch (const bip::interprocess_exception& e) { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
             }
+            std::cout << "Connected to shared memory: " << sharedMemoryName << std::endl;
         }
 
         // Construct or find the reference counter
@@ -91,17 +95,25 @@ class InterprocessCommunicationChannel {
         // Construct the channel data in shared memory
         channel = shmem.find_or_construct<SharedChannelData>("ChannelData")();
 
+    }
+
+    void handshake() {
         // Perform handshake to verify communication works
         if constexpr (IsSender) {
             // Sender: send test request and wait for response
+            std::cout << "Sending handshake test request for " << sharedMemoryName << std::endl;
             Request test_request{};
             Response test_response = send_request(test_request);
+            std::cout << "Received handshake test response for " << sharedMemoryName << std::endl;
             // Communication verified if we got here without hanging
         } else {
             // Receiver: wait for test request and send response
+            std::cout << "Waiting for handshake test request for " << sharedMemoryName << std::endl;
             Request test_request = receive_request();
+            std::cout << "Received handshake test request for " << sharedMemoryName << std::endl;
             Response test_response{};
             send_response(test_response);
+            std::cout << "Sent handshake test response for " << sharedMemoryName << std::endl;
             // Communication verified if we got here
         }
     }
