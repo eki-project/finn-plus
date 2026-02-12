@@ -22,7 +22,7 @@ from finn.transformation.fpgadataflow.simulation import Simulation, SimulationTy
 from finn.transformation.fpgadataflow.simulation_controller import SimulationController
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
-from finn.util.logging import DisabledLoggingConsole, log
+from finn.util.logging import log
 
 
 
