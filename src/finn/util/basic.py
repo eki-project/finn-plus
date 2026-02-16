@@ -351,6 +351,7 @@ def get_dsp_block(fpgapart):
 
 
 def get_driver_shapes(model: ModelWrapper) -> Dict:
+    """Get all the IO shapes for the driver."""
     idt = []
     idma_names = []
     ishape_normal = []

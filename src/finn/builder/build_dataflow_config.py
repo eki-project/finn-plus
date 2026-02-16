@@ -250,6 +250,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """
 
         def _fix_path(p: Path | None) -> Path | None:
+            """Return the fixed path (which should now be relative to the flow config)."""
             if self.config_path is None:
                 raise Exception(
                     "Cannot fix paths since "

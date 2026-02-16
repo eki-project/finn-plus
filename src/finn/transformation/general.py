@@ -1,3 +1,5 @@
+"""Generally applicable transformations."""
+
 ############################################################################
 # Copyright (C) 2020-2022, Xilinx, Inc.
 # Copyright (C) 2025, Advanced Micro Devices, Inc.
@@ -7,18 +9,21 @@
 #
 ############################################################################
 
+import json
+from collections.abc import Callable
+
+# Protobuf onnx graph node type
+from onnx import AttributeProto, GraphProto, NodeProto
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.base import Transformation
+
 # Note: This transformation is migrated and extended from qonnx.transformation.general
 # For more information on the git history of the file see here:
 # https://github.com/fastmachinelearning/qonnx/blob/
 # abb9eb12e0248014a805f505aacfaeb14d42409a/src/qonnx/transformation/general.py
-
-import json
-import warnings
-from pathlib import Path
-
-# Protobuf onnx graph node type
-from onnx import AttributeProto, NodeProto, mapping  # noqa
-from qonnx.transformation.base import Transformation  # noqa
+from finn.util.exception import FINNInternalError
+from finn.util.logging import log
 
 
 class ApplyConfig(Transformation):
@@ -34,22 +39,33 @@ class ApplyConfig(Transformation):
         "Im2Col_0" : {"kernel_size" : 7}
         }
 
-    """
+    """  # noqa
 
-    def __init__(self, config: Path | str, node_filter=lambda x: True):
+    def __init__(
+        self, config: Path | str, node_filter: Callable[[NodeProto], bool] = lambda _: True
+    ) -> None:
+        """Apply a JSON config file to the model."""
         super().__init__()
         self.config = Path(config)
         self.node_filter = node_filter
         self.used_configurations = ["Defaults"]
         self.missing_configurations = []
 
-    def configure_network(self, graph_proto, model_config, subgraph_hier):
-        # Configure network - graph_proto can be a GraphProto or ModelWrapper
-        # If it's a ModelWrapper, get the graph
-        if hasattr(graph_proto, "graph"):
-            graph = graph_proto.graph
+    def configure_network(
+        self, target: GraphProto | ModelWrapper, model_config: dict, subgraph_hier: str | None
+    ) -> None:
+        """Configure network - target can be a GraphProto or ModelWrapper.
+        If it's a ModelWrapper, get the graph.
+        """
+        if type(target) is ModelWrapper:
+            graph: GraphProto = target.graph
+        elif type(target) is GraphProto:
+            graph: GraphProto = target
         else:
-            graph = graph_proto
+            raise FINNInternalError(
+                f"Tried configuring target of type {type(target)}, "
+                f"but a GraphProto or ModelWrapper is required."
+            )
 
         for node in graph.node:
             if not self.node_filter(node):
@@ -80,7 +96,7 @@ class ApplyConfig(Transformation):
                     for key, value in model_config["Defaults"].items():
                         assert len(value) % 2 == 0
                         if key not in model_config:
-                            for val, op in zip(value[::2], value[1::2]):
+                            for val, op in zip(value[::2], value[1::2], strict=True):
                                 default_values.append((key, val, op))
                                 assert not (op == "all" and len(value) > 2)
                     default_configs = {
@@ -110,7 +126,8 @@ class ApplyConfig(Transformation):
                     new_hier = new_hier + "_" + attr.name
                     self.configure_network(attr.g, model_config, subgraph_hier=new_hier)
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Apply the config to the model."""
         if isinstance(self.config, dict):
             model_config = self.config
         else:
@@ -125,14 +142,14 @@ class ApplyConfig(Transformation):
         # (can happen with shared subgraphs in If nodes)
         unique_missing = list(dict.fromkeys(self.missing_configurations))
         if len(unique_missing) > 0:
-            warnings.warn("\nNo HW configuration for nodes: " + ", ".join(unique_missing))
+            log.warning("\nNo HW configuration for nodes: " + ", ".join(unique_missing))
 
         # Check for unused configs (top-level configs that weren't applied)
         unused_configs = [
             x for x in model_config if x not in self.used_configurations and x != "Defaults"
         ]
         if len(unused_configs) > 0:
-            warnings.warn("\nUnused HW configurations: " + ", ".join(unused_configs))
+            log.warning("\nUnused HW configurations: " + ", ".join(unused_configs))
 
         # one iteration is enough
         return (model, False)
