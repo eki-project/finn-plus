@@ -347,6 +347,10 @@ class bench:
         - Merging run-specific parameters
         - Environment setup for build execution
         """
+        # BUILD SETUP
+        # Initialize from YAML (default) or custom script (if dedicated subclass is defined)
+        cfg = self._step_build_setup()
+
         if "model_dir" in self._params:
             # input ONNX model and verification input/output pairs are provided
             model_dir = self._params["model_dir"]
@@ -355,6 +359,10 @@ class bench:
             self._build_inputs["output_npy_path"] = os.path.join(model_dir, "out.npy")
         elif "model_path" in self._params:
             self._build_inputs["onnx_path"] = self._params["model_path"]
+        elif cfg.multi_dnn_config_path is not None:
+            # The Models are provided in the multi-DNN config
+            # TODO: handle verification I/O for multi-DNN configs
+            self._build_inputs["onnx_path"] = None
         else:
             # input ONNX model (+ optional I/O pair for verification) will be generated
             self._build_inputs["onnx_path"] = os.path.join(
@@ -363,10 +371,6 @@ class bench:
             if self._step_export_onnx(self._build_inputs["onnx_path"]) == "skipped":
                 # microbenchmarks might skip because no model can be generated for given params
                 return "skipped"
-
-        # BUILD SETUP
-        # Initialize from YAML (default) or custom script (if dedicated subclass is defined)
-        cfg = self._step_build_setup()
 
         # Set some global defaults (could still be overwritten by run-specific YAML)
         cfg.output_dir = self._build_inputs["build_dir"]

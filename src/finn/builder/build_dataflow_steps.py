@@ -115,6 +115,10 @@ from finn.transformation.fpgadataflow.vitis_build import VitisBuild
 from finn.transformation.fpgadataflow.vivado_power_estimation import VivadoPowerEstimation
 from finn.transformation.general import ApplyConfig
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
+from finn.transformation.multi_dnn.mutli_dnn_steps import (
+    step_apply_multi_dnn,
+    step_collapse_multi_dnn,
+)
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
 from finn.transformation.streamline import Streamline
@@ -1221,4 +1225,6 @@ build_dataflow_step_lookup = {
     "step_vivado_power_estimation": step_vivado_power_estimation,
     "step_synthesize_bitfile": step_synthesize_bitfile,
     "step_deployment_package": step_deployment_package,
+    "step_apply_multi_dnn": step_apply_multi_dnn,
+    "step_collapse_multi_dnn": step_collapse_multi_dnn,
 }
