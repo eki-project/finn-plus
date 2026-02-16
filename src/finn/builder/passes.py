@@ -40,6 +40,10 @@ from qonnx.core.modelwrapper import ModelWrapper
 # step
 from finn.builder.build_dataflow_config import DataflowBuildConfig, VerificationStepType
 
+# Makes custom QONNX import and inlining passes available
+import onnx_passes.passes.imports.qonnx  # isort:skip # noqa: Used indirectly via registry
+import onnx_passes.passes.inline.qonnx  # isort:skip # noqa: Used indirectly via registry
+
 
 def _make_pass_config(cfg: DataflowBuildConfig):
     """Creates ONNX Passes configuration from FINN build configuration."""
@@ -80,7 +84,8 @@ def _make_pass_config(cfg: DataflowBuildConfig):
         # Configuration of logging and verbosity
         "logging": {
             # Enable all passes to print a message when entering/leaving
-            "verbose": cfg.verbose
+            # TODO: control from build config or logging level
+            "verbose": False
         },
         # Forward layout configuration loaded from file
         "layouts": layouts,

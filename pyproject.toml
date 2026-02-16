@@ -55,7 +55,7 @@ numpy = "1.26.4"  # numpy<=1.26.4 required by brevitas
 # due to the model IR version support issue...
 onnx = "1.17.0"
 onnxruntime = "1.20.1"
-onnxscript = "0.5.0"
+onnxscript = ">=0.5.0"                                # TODO: the onnx-passes installation will overwrite this version
 protobuf = "4.25.8"
 scipy = "~1.15.0"                                     # scipy>=1.16.0 requires python>=3.11, required by brevitas
 pyyaml = "~6.0.2"
