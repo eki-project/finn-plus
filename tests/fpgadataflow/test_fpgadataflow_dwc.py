@@ -45,7 +45,7 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
-from finn.util.test import tree_model_test
+from tests.testing_util.test import tree_model_test
 
 
 def make_single_dwc_modelwrapper(shape, inWidth, outWidth, finn_dtype, impl_style):
