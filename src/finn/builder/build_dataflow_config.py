@@ -369,7 +369,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: When True, skips the resynthesis steps after fifo sizing. This makes it
     #: possible to run the step for rapid fifo size analysis during
     #: automatic folding optimizations or as a first approximation.
-    skip_resynth_during_fifo_sizing: bool = False
+    skip_resynth_during_fifo_sizing: bool = True
 
     #: (Only relevant when auto_fifo_depths is enabled)
     #: Memory resource type for large FIFOs.
