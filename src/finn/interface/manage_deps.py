@@ -28,8 +28,8 @@ FINN_DEPS = {
         True,
     ),
     "qonnx": (
-        "https://github.com/fpjentzsch/qonnx.git",
-        "084bbec741feef1c1bea7a813e0d301d8e1a3de5",
+        "https://github.com/fastmachinelearning/qonnx.git",
+        "7dfd7dc4ec1087b75dca50ae4eacb1cee435716b",
         True,
     ),
     "onnx-passes": (
