@@ -404,13 +404,13 @@ class SimulationBuilder:
 
         # Running CMake first
         cmake_call = f"{sys.executable} -m cmake -S {finnxsi_dir} -B {sim_base}"
-        log.info(f"Running cmake on RTLSIM Wrapper in {sim_base}")
+        log.debug(f"Running cmake on RTLSIM Wrapper in {sim_base}")
         try:
             launch_process_helper(
                 shlex.split(cmake_call),
                 cwd=finnxsi_dir,
-                print_stdout=not silent,
-                print_stderr=not silent,
+                print_stdout=silent,
+                print_stderr=silent,
                 proc_env=os.environ.copy(),
             )
         except CalledProcessError as e:
@@ -425,8 +425,8 @@ class SimulationBuilder:
                 ["make"],
                 proc_env=os.environ.copy(),
                 cwd=sim_base,
-                print_stdout=not silent,
-                print_stderr=not silent,
+                print_stdout=silent,
+                print_stderr=silent,
             )
         except CalledProcessError as e:
             raise FINNInternalError(f"Failed to create executable in {sim_base}!") from e
@@ -762,7 +762,7 @@ class BuildSimulation(Transformation):
             self.builder = SimulationBuilder(self.model, self.fpgapart, self.clk_ns)
             sys.stdout = sys.stdout.console  # type: ignore
             self.binaries = self.builder.build_simulation(
-                with_live_display=True,
+                with_live_display=False,
                 functional_sim=self.functional_sim,
             )
             self.model.set_metadata_prop(

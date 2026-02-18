@@ -820,6 +820,33 @@ TEST_F(FIFOTest, TryMethodsWithReset) {
     EXPECT_EQ(fifo.size(), 1);
 }
 
+TEST_F(FIFOTest, TestTimeout){
+    FIFO fifo(10);
+    fifo.setCyclesUntilExpectedFirstValid(3);
+    EXPECT_TRUE(fifo.toggleClock());  // 3 cycles left
+    EXPECT_TRUE(fifo.toggleClock());  // 2 cycles left
+    EXPECT_FALSE(fifo.toggleClock());  // 0 cycles left, should return false
+
+    fifo.reset(10);
+    fifo.setCyclesUntilExpectedFirstValid(2);
+    EXPECT_TRUE(fifo.toggleClock());  // 2 cycles left
+    fifo.update(true, false);        // Set valid, should disable timeout
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+
+    fifo.reset(10);
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+    EXPECT_TRUE(fifo.toggleClock());  // Still should return true
+}
+
 // Main function to run all tests
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);

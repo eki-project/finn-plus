@@ -51,7 +51,7 @@ class SimulationController {
                                                        RTLSimConfig::IsInputNode, RTLSimConfig::IsOutputNode>& simulation)
         : sim(simulation) {}
 
-    void configure(const std::vector<std::size_t>& depths, std::size_t maxCycles) {
+    void configure(const std::vector<std::size_t>& depths, const std::vector<std::size_t>& expected_first_valid_cycles, std::size_t maxCycles) {
         std::lock_guard<std::mutex> lock(state_mutex);
         if (state != SimulationState::IDLE && state != SimulationState::FINISHED) {
             throw std::runtime_error("Cannot configure while simulation is running");
@@ -76,6 +76,11 @@ class SimulationController {
         for (std::size_t i = 0; i < num_fifos; ++i) {
             std::size_t depth_idx = std::min(i, fifo_depths.size() - 1);
             sim.setFIFODepth(i, fifo_depths[depth_idx]);
+        }
+
+        for (std::size_t i = 0; i < expected_first_valid_cycles.size(); ++i) {
+            std::size_t cycles_idx = std::min(i, expected_first_valid_cycles.size() - 1);
+            sim.setFIFOCyclesUntilExpectedFirstValid(i, expected_first_valid_cycles[cycles_idx]);
         }
     }
 
@@ -172,6 +177,17 @@ class SimulationController {
                         status["fifo_utilization"] = fifo_util;
                     }
                 }
+                // Add FIFO cycles until first valid data
+                {
+                    auto cycles_until_valid = sim.getFIFOCyclesUntilFirstValid();
+                    json fifo_cycles = json::array();
+                    for (size_t i = 0; i < cycles_until_valid.size(); ++i) {
+                        fifo_cycles.push_back(cycles_until_valid[i]);
+                    }
+                    if (!fifo_cycles.empty()) {
+                        status["fifo_cycles_until_first_valid"] = fifo_cycles;
+                    }
+                }
                 break;
             case SimulationState::ERROR:
                 status["state"] = "error";
@@ -192,6 +208,8 @@ void process_command(const json& request, json& response, SimulationController& 
         if (command == "configure") {
             std::vector<std::size_t> fifo_depths;
 
+            std::cout << "Payload: " << payload << std::endl;
+
             // Handle fifo_depth as either a single value or an array
             if (payload.contains("fifo_depth")) {
                 const auto& depth_value = payload["fifo_depth"];
@@ -206,6 +224,18 @@ void process_command(const json& request, json& response, SimulationController& 
                 fifo_depths.push_back(std::numeric_limits<std::size_t>::max());  // Default value
             }
 
+            std::vector<std::size_t> expected_first_valid_cycles;
+            if (payload.contains("fifo_first_valid_cycles")) {
+                const auto& expected_cycles_value = payload["fifo_first_valid_cycles"];
+                if (expected_cycles_value.is_array()) {
+                    for (const auto& val : expected_cycles_value) {
+                        expected_first_valid_cycles.push_back(val.get<std::size_t>());
+                    }
+                } else {
+                    expected_first_valid_cycles.push_back(expected_cycles_value.get<std::size_t>());
+                }
+            }
+
             if (fifo_depths.empty()) {
                 throw std::runtime_error("FIFO depth list cannot be empty");
             }
@@ -215,7 +245,7 @@ void process_command(const json& request, json& response, SimulationController& 
                 max_cycles = payload["max_cycles"].get<std::size_t>();
             }
 
-            controller.configure(fifo_depths, max_cycles);
+            controller.configure(fifo_depths, expected_first_valid_cycles, max_cycles);
             response["status"] = "success";
             response["message"] = "Configuration successful";
         } else if (command == "start") {
@@ -247,6 +277,9 @@ void process_command(const json& request, json& response, SimulationController& 
             }
             if (final_status.contains("timeout")) {
                 response["timeout"] = final_status["timeout"];
+            }
+            if (final_status.contains("fifo_cycles_until_first_valid")) {
+                response["fifo_cycles_until_first_valid"] = final_status["fifo_cycles_until_first_valid"];
             }
         } else {
             response["status"] = "error";

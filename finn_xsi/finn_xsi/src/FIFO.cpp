@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iostream>
 
 FIFO::FIFO(uint64_t size) : maxSize(size) {}
 FIFO::~FIFO() {}
@@ -25,10 +26,13 @@ void FIFO::update(bool incomingValid, bool incomingReady) {
 
 /// Toggle the clock cycle, and update the previously set values.
 /// nextUtil is guaranteed to be in [0, maxSize] by all operations.
-void FIFO::toggleClock() {
+/// Returns false if a first valid signal was expected, but has not been observed.
+bool FIFO::toggleClock() {
     currentUtil = nextUtil;
     maxUtil = std::max(maxUtil, currentUtil);
     nextUtil = currentUtil;
+    cyclesUntilExpectedFirstValid -= static_cast<uint64_t>(static_cast<bool>(cyclesUntilExpectedFirstValid) & !static_cast<bool>(maxUtil));  // Underflow-safe decrement
+    return (cyclesUntilExpectedFirstValid == 0) & (maxUtil == 0);
 }
 
 /// Return whether the FIFO can accept inputs (for the current utilization)
@@ -47,7 +51,16 @@ void FIFO::reset(uint64_t size) {
     maxUtil = 0;
     maxSize = size;
     nextUtil = 0;
+    cyclesUntilExpectedFirstValid = std::numeric_limits<uint64_t>::max();
 }
+
+void FIFO::setCyclesUntilExpectedFirstValid(uint64_t cycles) {
+    cyclesUntilExpectedFirstValid = cycles;
+    initialCyclesUntilExpectedFirstValid = cycles;
+    std::cout << "FIFO set to expect first valid after " << cycles << " cycles" << std::endl;
+}
+
+uint64_t FIFO::getCyclesUntilFirstValid() const { return initialCyclesUntilExpectedFirstValid - cyclesUntilExpectedFirstValid; }
 
 /// Set the FIFOs max size
 void FIFO::setMaxSize(const uint64_t size) { maxSize = size; }

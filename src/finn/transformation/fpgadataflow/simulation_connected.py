@@ -3,7 +3,6 @@
 import glob
 import json
 import math
-import multiprocessing
 import os
 import time
 import traceback
@@ -23,7 +22,6 @@ from finn.transformation.fpgadataflow.simulation_controller import SimulationCon
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
-
 
 
 class NodeConnectedSimulationController(SimulationController):
@@ -78,6 +76,7 @@ class NodeConnectedSimulationController(SimulationController):
         depth: list[list[int]] | None = None,
         output_json: Path | None = None,
         max_cycles: int | None = None,
+        fifo_first_valid_cycles: list[list[int]] | None = None,
     ) -> dict[str, list[int]]:
         """Run the simulation entirely with the given depth and sample count.
 
@@ -86,6 +85,7 @@ class NodeConnectedSimulationController(SimulationController):
             samples: Number of samples to simulate.
             output_json: Optional path to write merged simulation data as JSON.
             max_cycles: Max cycles
+            fifo_first_valid_cycles: First valid cycle for each FIFO (used for timeout detection)
 
         Returns:
             Dictionary mapping simulation names to their FIFO utilization arrays.
@@ -97,6 +97,7 @@ class NodeConnectedSimulationController(SimulationController):
         intervals_results: dict[str, list[int]] = {}
         timeout_result = False
         fifo_depths: dict[str, list[int]] = {}
+        fifo_cycles_until_first_valid_results: dict[str, list[int]] = {}
 
         # Clean up any existing shared memory resources before starting
         self._cleanup_shm_resources()
@@ -116,11 +117,18 @@ class NodeConnectedSimulationController(SimulationController):
                             self._run_binary,
                             binary,
                             name,
-                            i % multiprocessing.cpu_count(),
+                            i % len(os.sched_getaffinity(0))
+                            if len(os.sched_getaffinity(0)) < len(self.names)
+                            else -1,  # sched_getaffinity needed, because
+                            # cpu_count does not handle well with workload schedulers.
+                            # We only pin the core if we have more simulations than cores to avoid
+                            # simulations moving around too much and hurting performance. If we have
+                            # more cores than simulations, we leave it to the OS to schedule.
                             depth[i] if depth is not None else None,
                             is_last_node,  # Only last node has no output FIFOs
                             is_special_for_display,  # First and last get special coloring
                             max_cycles,
+                            fifo_first_valid_cycles[i] if fifo_first_valid_cycles is not None else None,
                         )
                     )
 
@@ -144,12 +152,16 @@ class NodeConnectedSimulationController(SimulationController):
                                     intervals,
                                     timeout,
                                     fifo_depth,
+                                    fifo_cycles_until_first_valid,
                                 ) = result
                                 fifo_depths[sim_name] = fifo_depth
                                 fifo_results[sim_name] = fifo_util
                                 cycles_results[sim_name] = cycles
                                 samples_results[sim_name] = samps
                                 intervals_results[sim_name] = intervals
+                                fifo_cycles_until_first_valid_results[sim_name] = (
+                                    fifo_cycles_until_first_valid
+                                )
                                 timeout_result = timeout_result or timeout
                         except Exception as e:  # noqa
                             self.console.log(f"Simulation failed: {e}")
@@ -180,9 +192,13 @@ class NodeConnectedSimulationController(SimulationController):
                                 intervals,
                                 timeout,
                                 fifo_depth,
+                                fifo_cycles_until_first_valid,
                             ) = result
                             # Only update if not already collected
                             if sim_name not in fifo_results:
+                                fifo_cycles_until_first_valid_results[sim_name] = (
+                                    fifo_cycles_until_first_valid
+                                )
                                 fifo_depths[sim_name] = fifo_depth
                                 fifo_results[sim_name] = fifo_util
                                 cycles_results[sim_name] = cycles
@@ -207,6 +223,9 @@ class NodeConnectedSimulationController(SimulationController):
                         "cycles": cycles_results.get(name, 0),
                         "samples": samples_results.get(name, 0),
                         "intervals": intervals_results.get(name, []),
+                        "fifo_cycles_until_first_valid": fifo_cycles_until_first_valid_results.get(
+                            name, []
+                        ),
                     }
                     for name in self.names
                 ],
@@ -226,7 +245,8 @@ class NodeConnectedSimulationController(SimulationController):
         is_last_node: bool = False,
         is_special_for_display: bool = False,
         max_cycles: int | None = None,
-    ) -> tuple[str, list[int], int, int, list[int], bool, list[int]] | None:
+        fifo_first_valid_cycles: list[int] | None = None,
+    ) -> tuple[str, list[int], int, int, list[int], bool, list[int], list[int]] | None:
         """Run the specified simulation binary in a new subprocess and communicate with it.
 
         Args:
@@ -237,10 +257,11 @@ class NodeConnectedSimulationController(SimulationController):
             is_last_node: True if this is the last node (no output FIFOs to configure)
             is_special_for_display: True if this node should get special color in logs
             max_cycles: Maximum cycles to simulate
+            fifo_first_valid_cycles: First valid cycle for each FIFO (used for timeout detection)
 
         Returns:
             Tuple of (simulation_name, fifo_utilization, cycles, samples, intervals, timeout,
-            fifo_depth) on success,
+            fifo_depth, fifo_cycles_until_first_valid) on success,
             None on failure.
         """
         cwd = binary.parent
@@ -267,7 +288,9 @@ class NodeConnectedSimulationController(SimulationController):
 
             try:
                 # Start the simulation process with socket communication
-                proc_idx = self._start_process(binary, process_index)
+                proc_idx = self._start_process(
+                    binary, process_index, cpu=_cpu if _cpu is not None else -1
+                )
 
                 # Send configuration commands
                 # Last node has no output FIFOs, so don't configure FIFO depths
@@ -276,6 +299,8 @@ class NodeConnectedSimulationController(SimulationController):
                     config_payload["fifo_depth"] = depth
                 if max_cycles is not None:
                     config_payload["max_cycles"] = max_cycles
+                if not is_last_node and fifo_first_valid_cycles is not None:
+                    config_payload["fifo_first_valid_cycles"] = fifo_first_valid_cycles
 
                 response = self._send_and_receive(proc_idx, "configure", config_payload)
 
@@ -308,6 +333,7 @@ class NodeConnectedSimulationController(SimulationController):
                 timeout = False
                 fifo_util: list[int] = []
                 fifo_depth: list[int] = []
+                fifo_cycles_until_first_valid: list[int] = []
 
                 # Poll for status updates
                 while True:
@@ -326,9 +352,21 @@ class NodeConnectedSimulationController(SimulationController):
                                 intervals = stop_response.get("intervals", [])
                                 fifo_depth = stop_response.get("fifo_depth", [])
                                 timeout = stop_response.get("timeout", False)
+                                fifo_cycles_until_first_valid = stop_response.get(
+                                    "fifo_cycles_until_first_valid", []
+                                )
                                 if fifo_util:
                                     logfile.write(f"Final FIFO utilization: {fifo_util}\n")
-                            return (name, fifo_util, cycles, samps, intervals, timeout, fifo_depth)
+                            return (
+                                name,
+                                fifo_util,
+                                cycles,
+                                samps,
+                                intervals,
+                                timeout,
+                                fifo_depth,
+                                fifo_cycles_until_first_valid,
+                            )
                     time.sleep(self.poll_interval)
 
                     response = self._send_and_receive(proc_idx, "status", {})
@@ -348,6 +386,9 @@ class NodeConnectedSimulationController(SimulationController):
                         fifo_depth = response.get("fifo_depth", [])
                         intervals = response.get("intervals", [])
                         timeout = response.get("timeout", False)
+                        fifo_cycles_until_first_valid = response.get(
+                            "fifo_cycles_until_first_valid", []
+                        )
                         with self.stop_lock:
                             self.should_stop = True
                         break
@@ -366,17 +407,28 @@ class NodeConnectedSimulationController(SimulationController):
 
                 # Stop the simulation
                 stop_response = self._send_and_receive(proc_idx, "stop", {})
-                fifo_util = []
 
                 if stop_response:
                     fifo_util = stop_response.get("fifo_utilization", [])
                     fifo_depth = stop_response.get("fifo_depth", [])
                     cycles = stop_response.get("cycles", 0)
                     samps = stop_response.get("samples", 0)
+                    fifo_cycles_until_first_valid = stop_response.get(
+                        "fifo_cycles_until_first_valid", []
+                    )
                     if fifo_util:
                         logfile.write(f"Final FIFO utilization: {fifo_util}\n")
 
-                return (name, fifo_util, cycles, samps, intervals, timeout, fifo_depth)
+                return (
+                    name,
+                    fifo_util,
+                    cycles,
+                    samps,
+                    intervals,
+                    timeout,
+                    fifo_depth,
+                    fifo_cycles_until_first_valid,
+                )
 
             except Exception as e:
                 self.console.log(f"Exception caught during simulation execution ({name}): {e}")
@@ -401,7 +453,10 @@ class NodeConnectedSimulation(Simulation):
         super().__init__(model, simulation_type, fpgapart, clk_ns, functional_sim, workers)
 
     def simulate(
-        self, depth: int | list[list[int]] | None = None, max_cycles: int | None = None
+        self,
+        depth: int | list[list[int]] | None = None,
+        max_cycles: int | None = None,
+        fifo_first_valid_cycles: list[list[int]] | None = None,
     ) -> tuple[dict[int, dict[str, list[int]]], bool]:
         """Simulate the given number of samples for every layer. Layers are completely isolated
         and simulated in parallel. Simulation data is returned as a dict (by node name as index).
@@ -421,9 +476,10 @@ class NodeConnectedSimulation(Simulation):
         controller = NodeConnectedSimulationController(
             len(self.binaries), names, list(self.binaries.values()), Console(), 0.1, False
         )
-        controller.run(initial_depth, output_json, max_cycles)
+        controller.run(initial_depth, output_json, max_cycles, fifo_first_valid_cycles)
         end = time.time()
         log.debug(f"Simulation took {end - start} seconds!")
+        print(f"Simulation took {end - start} seconds!")
 
         # Load the merged data from JSON
         merged_data = json.loads(output_json.read_text())
@@ -438,6 +494,7 @@ class NodeConnectedSimulation(Simulation):
                 "cycles": sim_entry["cycles"],
                 "samples": sim_entry["samples"],
                 "intervals": sim_entry["intervals"],
+                "fifo_cycles_until_first_valid": sim_entry["fifo_cycles_until_first_valid"],
             }
         json.dump(data, output_json.open("w"), indent=4)
         return data, merged_data.get("timeout_occurred", False)
@@ -475,8 +532,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
         # Running the initial simulation
 
-        # raise NotImplementedError()
-
         log.info("Running initial node-connected simulation.")
         initial_fifo_depths, _ = sim.simulate()
 
@@ -490,9 +545,14 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fifo_depths = []  # Each entry is a list of fifo sizes for that node
         for val in initial_fifo_depths.values():
             fifo_depths.append([v + 1 for v in val["fifo_utilization"]])
+        fifo_first_valid_cycles: list[list[int]] = []
+        for val in initial_fifo_depths.values():
+            fifo_first_valid_cycles.append(
+                [v + 10 for v in val["fifo_cycles_until_first_valid"]]
+            )  # Add 10 cycles grace period
 
         # Max cycles for any simulation
-        sim_cycles = max([val["cycles"] for val in initial_fifo_depths.values()])
+        sim_cycles: int = max([val["cycles"] for val in initial_fifo_depths.values()])  # type: ignore
 
         bit_widths = []
         for i in range(len(fifo_depths)):
@@ -525,7 +585,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             for j in range(len(fifo_depths[i])):
                 if not needs_minimization[i][j]:
                     log.debug(
-                        f"[ {i+1}.{j+1} / {len(fifo_depths)} ] "
+                        f"[ {i + 1}.{j + 1} / {len(fifo_depths)} ] "
                         f"Skipping minimization for this stream."
                     )
                     continue
@@ -539,12 +599,13 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     initial_fifo_depths,
                     sim,
                     sim_cycles,
+                    fifo_first_valid_cycles,
                 )
                 fifo_depths[i][j] = minimized_depth
                 percentage = int(100.0 * float(i + 1) / float(len(fifo_depths)))
                 log.info(
                     f"[ [bold green]{percentage}%[/bold green] ] "
-                    f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Simulation completed.",
+                    f"[ {i + 1}.{j + 1} / {len(fifo_depths)} ] Simulation completed.",
                     extra={"markup": True, "highlighter": None},
                 )
 
@@ -589,6 +650,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         initial_fifo_depths: dict,
         sim: Simulation,
         sim_cycles: float,
+        fifo_first_valid_cycles: list[list[int]],
     ) -> tuple[bool, bool]:
         """Test a specific FIFO depth.
 
@@ -600,14 +662,18 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             initial_fifo_depths: Baseline performance data
             sim: Simulation controller
             sim_cycles: Maximum simulation cycles
-
+            fifo_first_valid_cycles: First valid cycle for each FIFO
         Returns:
             Tuple of (success, timeout) where success means depth works without degradation
         """
         test_depths = [row[:] for row in baseline_depths]  # Deep copy from baseline
         test_depths[node_idx][fifo_idx] = test_depth
 
-        new_data, timeout = sim.simulate(test_depths, max_cycles=math.ceil(sim_cycles * 1.1))
+        new_data, timeout = sim.simulate(
+            test_depths,
+            max_cycles=min(math.ceil(sim_cycles * 1.05), sim_cycles + 10 * len(test_depths)),
+            fifo_first_valid_cycles=fifo_first_valid_cycles,
+        )
 
         if timeout:
             return False, True
@@ -646,6 +712,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         initial_fifo_depths: dict,
         sim: Simulation,
         sim_cycles: int,
+        fifo_first_valid_cycles: list[list[int]],
     ) -> int:
         """Minimize a single FIFO depth using binary search.
 
@@ -659,7 +726,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             initial_fifo_depths: Baseline performance data
             sim: Simulation controller
             sim_cycles: Maximum simulation cycles
-
+            fifo_first_valid_cycles: First valid cycle for each FIFO
         Returns:
             Minimized FIFO depth
         """
@@ -672,7 +739,14 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
         # If FIFO depth of 32 works, use it because it fits into bw/2 LUTs
         success, timeout = self._test_depth(
-            32, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+            32,
+            node_idx,
+            fifo_idx,
+            baseline_depths,
+            initial_fifo_depths,
+            sim,
+            sim_cycles,
+            fifo_first_valid_cycles,
         )
         if success:
             return 32
@@ -692,6 +766,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     initial_fifo_depths,
                     sim,
                     sim_cycles,
+                    fifo_first_valid_cycles,
                     lower_luts=lower_luts,
                     upper_luts=upper_luts,
                 )
@@ -707,6 +782,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             initial_fifo_depths,
             sim,
             sim_cycles,
+            fifo_first_valid_cycles,
         )
         if success:
             upper_luts = calculate_srl16e_luts(original_size, bw)
@@ -723,6 +799,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     initial_fifo_depths,
                     sim,
                     sim_cycles,
+                    fifo_first_valid_cycles,
                     lower_luts=lower_luts,
                     upper_luts=upper_luts,
                 )
@@ -742,7 +819,14 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         _, max_d = calculate_bram_depth_range(max_valid_blocks, bw)
 
         success, timeout = self._test_depth(
-            max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+            max_d,
+            node_idx,
+            fifo_idx,
+            baseline_depths,
+            initial_fifo_depths,
+            sim,
+            sim_cycles,
+            fifo_first_valid_cycles,
         )
 
         if timeout or not success:
@@ -760,6 +844,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 initial_fifo_depths,
                 sim,
                 sim_cycles,
+                fifo_first_valid_cycles,
                 valid_blocks=valid_blocks,
             )
 
@@ -774,6 +859,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         initial_fifo_depths: dict,
         sim: Simulation,
         sim_cycles: float,
+        fifo_first_valid_cycles: list[list[int]],
         valid_blocks: list[int],
     ) -> int:
         """Perform exponential + binary search over valid block configurations.
@@ -790,6 +876,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             initial_fifo_depths: Baseline performance data
             sim: Simulation controller
             sim_cycles: Maximum simulation cycles
+            fifo_first_valid_cycles: First valid cycle for each FIFO
             valid_blocks: Sorted list of valid block counts to search over
 
         Returns:
@@ -814,7 +901,14 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             _, max_d = calculate_bram_depth_range(blocks, bitwidth)
 
             success, _ = self._test_depth(
-                max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+                max_d,
+                node_idx,
+                fifo_idx,
+                baseline_depths,
+                initial_fifo_depths,
+                sim,
+                sim_cycles,
+                fifo_first_valid_cycles,
             )
 
             if success:
@@ -834,7 +928,14 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             _, max_d = calculate_bram_depth_range(blocks, bitwidth)
 
             success, _ = self._test_depth(
-                max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+                max_d,
+                node_idx,
+                fifo_idx,
+                baseline_depths,
+                initial_fifo_depths,
+                sim,
+                sim_cycles,
+                fifo_first_valid_cycles,
             )
 
             if success:
@@ -856,6 +957,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         initial_fifo_depths: dict,
         sim: Simulation,
         sim_cycles: float,
+        fifo_first_valid_cycles: list[list[int]],
         lower_luts: int,
         upper_luts: int,
     ) -> int:
@@ -869,6 +971,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             initial_fifo_depths: Baseline performance data
             sim: Simulation controller
             sim_cycles: Maximum simulation cycles
+            fifo_first_valid_cycles: First valid cycle for each FIFO
             lower_luts: Lower bound for LUT count
             upper_luts: Upper bound for LUT count (known to work)
 
@@ -896,7 +999,14 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 continue
 
             success, _ = self._test_depth(
-                max_d, node_idx, fifo_idx, baseline_depths, initial_fifo_depths, sim, sim_cycles
+                max_d,
+                node_idx,
+                fifo_idx,
+                baseline_depths,
+                initial_fifo_depths,
+                sim,
+                sim_cycles,
+                fifo_first_valid_cycles,
             )
 
             if success:
