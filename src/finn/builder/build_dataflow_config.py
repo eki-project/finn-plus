@@ -229,7 +229,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """The only deserialization method that should be used.
         - Identifies the source format (if from file)
         - Patches in the config_path variable and corrects paths (if from file or if config_path is set)
-        - Makes sure that either target_fps oder folding_config_file is defined
+        - Makes sure that either target_fps or folding_config_file is defined
 
         Args:
             from_this: The file to construct the DataflowBuildConfig from, or the initial DFBC object
