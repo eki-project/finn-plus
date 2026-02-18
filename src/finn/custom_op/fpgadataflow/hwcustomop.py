@@ -221,22 +221,14 @@ class HWCustomOp(CustomOp):
         back to one"""
         finnxsi.reset_rtlsim(sim)
 
-    def rtlsim_multi_io_custom(self, sim, io_dict, sname="_V", batch_size=1):
-        "Run rtlsim for this node, supports multiple i/o streams."
-        num_out_values = self.get_number_output_values() * batch_size
-        total_cycle_count = finnxsi.rtlsim_multi_io(
-            sim,
-            io_dict,
-            num_out_values,
-            sname=sname,
-            liveness_threshold=get_liveness_threshold_cycles(),
-        )
-
-        self.set_nodeattr("cycles_rtlsim", total_cycle_count)
-
-    def rtlsim_multi_io(self, sim, io_dict, sname="_V"):
+    def rtlsim_multi_io(self, sim, io_dict, sname="_V", batch_size=1):
         "Run rtlsim for this node, supports multiple i/o streams."
         num_out_values = self.get_number_output_values()
+        if batch_size > 1:
+            if isinstance(num_out_values, dict):
+                num_out_values = {k: v * batch_size for k, v in num_out_values.items()}
+            else:
+                num_out_values = num_out_values * batch_size
         total_cycle_count = finnxsi.rtlsim_multi_io(
             sim,
             io_dict,
@@ -321,20 +313,22 @@ class HWCustomOp(CustomOp):
     def derive_token_access_vectors(
         self, model, period, strategy, fpga_part, clk_period, op_type, override_dict=None
     ):
-        if override_dict is None:
-            n_inps = np.prod(self.get_folded_input_shape()[:-1])
-            io_dict = {
-                "inputs": {
-                    "in0": [i for i in range(n_inps)],
-                },
-                "outputs": {"out0": []},
-            }
-        else:
-            io_dict = override_dict
         if strategy == "tree_model":
             # check for override function
             if self.get_tree_model() is not None:
                 print(f"using tree model for node {self}")
+                if override_dict is not None:
+                    io_dict = override_dict
+                else:
+                    n_inps = np.prod(self.get_folded_input_shape()[:-1])
+                    # TODO: io_dict is still left hard-coded for tree model TAV generation
+                    io_dict = {
+                        "inputs": {
+                            "in0": [i for i in range(n_inps)],
+                        },
+                        "outputs": {"out0": []},
+                    }
+
                 self.derive_token_access_vectors_using_tree_model(period, io_dict=io_dict)
                 return
         print(f"using rtlsim for node {self}")
@@ -342,7 +336,9 @@ class HWCustomOp(CustomOp):
         # there is a 20 clock marging added for when get_exp_cycles()
         # is underestimating the real operator runtime.
         period = self.get_exp_cycles() + 20
-        self.derive_token_access_vectors_using_rtlsim(model, period, fpga_part, clk_period, io_dict)
+        self.derive_token_access_vectors_using_rtlsim(
+            model, period, fpga_part, clk_period, override_dict
+        )
 
     def derive_token_access_vectors_using_tree_model(self, period, io_dict):
         # Analytical flow
@@ -575,19 +571,27 @@ class HWCustomOp(CustomOp):
 
             for input_key in io_dict["inputs"]:
                 io_dict["inputs"][input_key] = io_dict["inputs"][input_key] * periods_to_simulate
-
         else:
-            io_dict = {
-                "inputs": {
-                    "in0": [i for i in range(n_inps)],
-                },
-                "outputs": {"out0": []},
-            }
+            node = self.onnx_node
+            # collect inputs
+            inputs = {}
+            for i, inp in enumerate(node.input):
+                nbits = self.get_instream_width(i)
+                if nbits == 0:
+                    continue  # skip inputs that are not exposed as streams
+                n_inps = np.prod(self.get_folded_input_shape(i)[:-1]) * periods_to_simulate
+                inputs["in%s" % i] = [0 for i in range(n_inps)]  # all-zero dummy input
+
+            # collect outputs
+            outputs = {}
+            for o, outp in enumerate(node.output):
+                outputs["out%s" % o] = []
+
+            io_dict = {"inputs": inputs, "outputs": outputs}
 
         # extra dicts to keep track of cycle-by-cycle transaction behavior
-        # note that we restrict key names to filter out weight streams etc
-        txns_in = {key: [] for (key, value) in io_dict["inputs"].items() if "in0" in key}
-        txns_out = {key: [] for (key, value) in io_dict["outputs"].items() if "out0" in key}
+        txns_in = {key: [] for (key, value) in io_dict["inputs"].items()}
+        txns_out = {key: [] for (key, value) in io_dict["outputs"].items()}
         # signal name, note no underscore at the end (new finnxsi behavior)
         sname = "_V"
         self.reset_rtlsim(sim)
@@ -598,7 +602,7 @@ class HWCustomOp(CustomOp):
         for k in txns_out.keys():
             txns_out[k] = sim.trace_stream(k + sname)
 
-        self.rtlsim_multi_io_custom(sim, io_dict, sname="_V", batch_size=periods_to_simulate)
+        self.rtlsim_multi_io(sim, io_dict, sname="_V", batch_size=periods_to_simulate)
 
         total_cycle_count = self.get_nodeattr("cycles_rtlsim")
 
