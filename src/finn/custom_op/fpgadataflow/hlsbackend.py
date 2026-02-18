@@ -347,6 +347,12 @@ compilation transformations?
             )
         inputs = {}
         for i, inp in enumerate(node.input):
+            nbits = self.get_instream_width(i)
+            # If the stream is not exposed, it has 0 width and no npy file will be created
+            # Do this check before get_normal_input_shape() because some operators (attention)
+            # still return dummy shapes for some non-exposed inputs (TODO)
+            if nbits == 0:
+                continue
             exp_ishape = tuple(self.get_normal_input_shape(i))
             folded_ishape = self.get_folded_input_shape(i)
             inp_val = context[inp]
@@ -370,11 +376,9 @@ compilation transformations?
 
             reshaped_input = inp_val.reshape(folded_ishape)
             reshaped_input = reshaped_input.copy()
+            # This npy file will be read by the cppsim executable
             np.save(os.path.join(code_gen_dir, "input_%s.npy" % i), reshaped_input)
-            nbits = self.get_instream_width(i)
-            # if the stream is not exposed, it has 0 width and no npy file will be created
-            if nbits == 0:
-                continue
+            # The rtlsim will instead operate on a flattened int sequence from an "io_dict"
             rtlsim_inp = npy_to_rtlsim_input(
                 "{}/input_{}.npy".format(code_gen_dir, i), export_idt, nbits
             )
@@ -633,6 +637,8 @@ compilation transformations?
     def pragmas(self):
         """Generate pragma commands in C++.
         Might need to be overwritten depending on CustomOp."""
+        # TODO: make this loop over all inputs/outputs so we don't need as much
+        # specialization in the child classes (e.g., ScaledDotProductAttention)
         self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0_V"]
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
