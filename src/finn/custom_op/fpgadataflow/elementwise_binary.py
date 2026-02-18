@@ -286,6 +286,15 @@ class ElementwiseBinaryOperation(HWCustomOp):
 
     # Widths of the input data stream of the input at index ind
     def get_instream_width(self, ind=0):
+        mem_mode = self.get_nodeattr("mem_mode")
+        lhs_const = self.get_nodeattr("lhs_style") == "const"
+        rhs_const = self.get_nodeattr("rhs_style") == "const"
+        # Constant inputs are not exposed as streams
+        if ind == 0 and lhs_const and mem_mode == "internal_embedded":
+            return 0
+        if ind == 1 and rhs_const and mem_mode == "internal_embedded":
+            return 0
+
         # Get the number of bits used to represent the input
         i_bits = self.get_input_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
