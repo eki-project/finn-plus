@@ -225,6 +225,7 @@
         "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["largefifo_rtlsim"],
         "fifosim_n_inferences": [2, 4],
@@ -237,6 +238,7 @@
         "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["analytical"],
         "tav_generation_strategy": ["rtlsim", "tree_model"],
@@ -252,6 +254,7 @@
         "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["largefifo_rtlsim"],
         "fifosim_n_inferences": [2, 4],
@@ -264,6 +267,7 @@
         "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["analytical"],
         "tav_generation_strategy": ["rtlsim", "tree_model"],
@@ -279,6 +283,7 @@
         "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["largefifo_rtlsim"],
         "fifosim_n_inferences": [2, 4],
@@ -291,6 +296,7 @@
         "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["analytical"],
         "tav_generation_strategy": ["rtlsim", "tree_model"],
