@@ -35,6 +35,7 @@ import json
 import numpy as np
 import os
 import shutil
+import time
 from copy import deepcopy
 from functools import partial
 from qonnx.core.modelwrapper import ModelWrapper
@@ -804,6 +805,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
             else:
                 # rtlsim everything by force if not using trees
                 only_jit_nodes_without_tree = False
+            t_jit_start = time.time()
             model = model.transform(
                 JustInTimeSynthesize(
                     cfg._resolve_fpga_part(),
@@ -811,6 +813,9 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                     only_jit_nodes_without_tree,
                 )
             )
+            t_jit_end = time.time()
+
+            t_tav_start = time.time()
             period = int(model.analysis(dataflow_performance)["max_cycles"])
             model = model.transform(
                 DeriveTokenAccessVectors(
@@ -821,7 +826,9 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                     cfg._resolve_hls_clk_period(),
                 )
             )
+            t_tav_end = time.time()
 
+            t_fifo_sizing_start = time.time()
             period = int(model.analysis(dataflow_performance)["max_cycles"])
             model = model.transform(
                 LocalStretchCharacteristicFunctions(
@@ -864,6 +871,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                     tav_utilization_strategy=cfg.tav_utilization_strategy,
                 )
             )
+            t_fifo_sizing_end = time.time()
 
             model = model.transform(
                 InsertFIFO(
@@ -936,6 +944,10 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     fifo_info = {}
     fifo_info["fifo_depths"] = {}
     fifo_info["fifo_sizes"] = {}
+    if cfg.auto_fifo_depths and cfg.auto_fifo_strategy == "analytical":
+        fifo_info["time_jit_synthesize_s"] = t_jit_end - t_jit_start
+        fifo_info["time_derive_token_access_vectors_s"] = t_tav_end - t_tav_start
+        fifo_info["time_fifo_sizing_s"] = t_fifo_sizing_end - t_fifo_sizing_start
     total_fifo_size = 0
     for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
         node_inst = getCustomOp(node)
