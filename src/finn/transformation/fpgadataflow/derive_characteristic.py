@@ -42,6 +42,56 @@ from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
 
+class JustInTimeSynthesizeParallel(NodeLocalTransformation):
+    def __init__(self, part, clk_period, only_without_tree_model=False):
+        super().__init__()
+        self.part = part
+        self.clk_period = clk_period
+        self.only_without_tree_model = only_without_tree_model
+
+    def applyNodeLocal(self, node):
+        inst = registry.getCustomOp(node)
+        if (is_hls_node(node) or is_rtl_node(node)) and (
+            (
+                (inst.get_tree_model() is None and self.only_without_tree_model)
+                or not self.only_without_tree_model
+            )
+            and (inst.get_nodeattr("io_chrc_in") == "")
+        ):
+            _codegen_single_node(
+                node,
+                self.ref_input_model,
+                self.part,
+                self.clk_period,
+            )
+
+            op_type = node.op_type
+            if is_hls_node(node):
+                try:
+                    # ensure that code is generated
+                    assert (
+                        inst.get_nodeattr("code_gen_dir_ipgen") != ""
+                    ), """Node
+                    attribute "code_gen_dir_ipgen" is empty. Please run
+                    transformation PrepareIP first."""
+                    if not os.path.isdir(inst.get_nodeattr("ipgen_path")) or not inst.get_nodeattr(
+                        "code_gen_dir_ipgen"
+                    ) in inst.get_nodeattr("ipgen_path"):
+                        # call the compilation function for this node
+                        inst.ipgen_singlenode_code()
+                    else:
+                        log.warning("Using pre-existing IP for %s" % node.name)
+                    # ensure that executable path is now set
+                    assert (
+                        inst.get_nodeattr("ipgen_path") != ""
+                    ), """Transformation
+                    HLSSynthIP was not successful. Node attribute "ipgen_path"
+                    is empty."""
+                except KeyError:
+                    raise Exception("Custom op_type %s is currently not supported." % op_type)
+        return (node, False)
+
+
 class JustInTimeSynthesize(Transformation):
     def __init__(self, part, clk_period, only_without_tree_model=False):
         super().__init__()
@@ -50,51 +100,14 @@ class JustInTimeSynthesize(Transformation):
         self.only_without_tree_model = only_without_tree_model
 
     def apply(self, model):
-        for node in model.graph.node:
-            inst = registry.getCustomOp(node)
-            if (is_hls_node(node) or is_rtl_node(node)) and (
-                (
-                    (inst.get_tree_model() is None and self.only_without_tree_model)
-                    or not self.only_without_tree_model
-                )
-                and (inst.get_nodeattr("io_chrc_in") == "")
-            ):
-                _codegen_single_node(
-                    node,
-                    model,
-                    self.part,
-                    self.clk_period,
-                )
-
-                op_type = node.op_type
-                if is_hls_node(node):
-                    try:
-                        # ensure that code is generated
-                        assert (
-                            inst.get_nodeattr("code_gen_dir_ipgen") != ""
-                        ), """Node
-                        attribute "code_gen_dir_ipgen" is empty. Please run
-                        transformation PrepareIP first."""
-                        if not os.path.isdir(
-                            inst.get_nodeattr("ipgen_path")
-                        ) or not inst.get_nodeattr("code_gen_dir_ipgen") in inst.get_nodeattr(
-                            "ipgen_path"
-                        ):
-                            # call the compilation function for this node
-                            inst.ipgen_singlenode_code()
-                        else:
-                            log.warning("Using pre-existing IP for %s" % node.name)
-                        # ensure that executable path is now set
-                        assert (
-                            inst.get_nodeattr("ipgen_path") != ""
-                        ), """Transformation
-                        HLSSynthIP was not successful. Node attribute "ipgen_path"
-                        is empty."""
-                    except KeyError:
-                        raise Exception("Custom op_type %s is currently not supported." % op_type)
+        # Run HLS codegen/ipgen in parallel
+        model = model.transform(
+            JustInTimeSynthesizeParallel(self.part, self.clk_period, self.only_without_tree_model)
+        )
 
         model = model.transform(ReplaceVerilogRelPaths())
         for node in model.graph.node:
+            op_type = node.op_type
             inst = registry.getCustomOp(node)
             if (
                 (is_hls_node(node) or is_rtl_node(node))
@@ -103,7 +116,7 @@ class JustInTimeSynthesize(Transformation):
                     or not self.only_without_tree_model
                 )
                 and (
-                    node.op_type
+                    op_type
                     not in [
                         "AddStreams_hls",
                         "DuplicateStreams_hls",
