@@ -79,7 +79,7 @@ def store_fifo_data(
             merged = pd.merge(
                 data, pd.read_csv(fifo_data_path), on=merge_on, how=merge_how  # type: ignore
             )
-            merged.sort_values(sort_on)
+            merged = merged.sort_values(sort_on)
         merged.to_csv(fifo_data_path, index=False)
         if store_html:
             merged.to_html(fifo_data_path.replace(".csv", ".html"))

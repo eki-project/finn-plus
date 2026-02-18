@@ -30,7 +30,7 @@ int main(int argc, const char* argv[]) {
         RTLSimConfig::kernel_libname,
         RTLSimConfig::design_libname,
         "xsim_log_file.txt",
-        "trace_file.txt",
+        "trace_file.wdb",
         RTLSimConfig::istream_descs,
         RTLSimConfig::ostream_descs
     );

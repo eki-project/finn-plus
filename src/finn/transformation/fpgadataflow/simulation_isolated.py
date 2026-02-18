@@ -323,10 +323,14 @@ class RunLayerIsolatedSimulation(Transformation):
                 for stream_name in data[layer]["ready"][0].keys()
                 if stream_name not in ["inputCyclesDone", "inputCyclesTarget", "totalCycles"]
             }
-            for cycle_data in data[layer]["ready"]:
-                if cycle_data["inputCyclesDone"] > int(
-                    cycle_data["inputCyclesTarget"] / 2
-                ) and _any_ready(cycle_data):
+            for cycle_data_ready, cycle_data_valid in zip(
+                data[layer]["ready"], data[layer]["valid"], strict=True
+            ):
+                if cycle_data_ready["inputCyclesDone"] > int(
+                    cycle_data_ready["inputCyclesTarget"] / 2.0
+                ) and cycle_data_valid["outputCyclesDone"] > int(
+                    cycle_data_valid["outputCyclesTarget"] / 2.0
+                ):
                     break
                 for stream_name in results[layer].keys():
                     # TODO: Currently on the C++ side we multiply the
@@ -334,16 +338,19 @@ class RunLayerIsolatedSimulation(Transformation):
                     # TODO: We keep track of ready signals until we see
                     # TODO: the first ready after half of all cycles were seen.
                     # TODO: This might change in the future
-                    if cycle_data["inputCyclesTarget"] % 2 != 0:
+                    if (
+                        cycle_data_ready["inputCyclesTarget"] % 2 != 0
+                        or cycle_data_valid["outputCyclesTarget"] % 2 != 0
+                    ):
                         raise FINNInternalError(
-                            f"An 'inputCyclesTarget' of layer {layer} seems "
+                            f"An 'inputCyclesTarget' / 'outputCyclesTarget' of layer {layer} seems "
                             f"to not be an even number. Currently, we double "
                             f"the target simulation cycles for every layer "
                             f"on the C++ side. This error may point towards "
                             f"a change on the C++ side, which may cause the "
                             f"need to update this function accordingly!"
                         )
-                    results[layer][stream_name] += int(cycle_data[stream_name] == 0)
+                    results[layer][stream_name] += int(cycle_data_ready[stream_name] == 0)
 
         # TODO: This calculation assumes, that if the producer does NOT fire the entire time,
         # TODO: the consumer can read at least at the same speed as

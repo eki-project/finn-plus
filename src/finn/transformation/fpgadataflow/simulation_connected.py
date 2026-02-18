@@ -487,7 +487,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                         "out_bitwidth": -1,
                         "out_initial_fifo_depths": -1,
                         "out_final_fifo_depths": -1,
-                        "minimization_iterations": -1,
+                        "minimization_iterations": 0,
                         "minimization_order": "TODO",  # TODO
                         "simulation_time": -1,
                         "successor_node": ", ".join(
