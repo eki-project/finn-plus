@@ -990,7 +990,6 @@ def remove_leading_duplicates_keep_one(arr):
     # Keep one leading instance, then the rest
     return np.concatenate(([first_val], arr[i + 1 :]))
 
-
 class DeriveFIFOSizes(Transformation):
     """Prerequisite: DeriveTokenAccessVectors, ProducerDelayCharacteristic
     #  and DelayCharacteristic already called on graph.
@@ -1002,7 +1001,7 @@ class DeriveFIFOSizes(Transformation):
     def __init__(
         self,
         num_workers=None,
-        io_fifo_depth=2,
+        io_fifo_depth=5,
         period=None,
         nodes_to_ignore=[],
         global_offset_correction=False,
@@ -1067,17 +1066,15 @@ class DeriveFIFOSizes(Transformation):
                             if len(chr_pairs) == 0:
                                 chr_pairs = [["io_chrc_out", "io_chrc_in"]]
 
-                            # override different attempt
+
                             depth_attempts = []
                             # currently only testing the first (main) pair
 
                             if (prod.get_nodeattr(chr_pairs[0][0])) == "":
-                                # print("break pair")
                                 out_fifo_depths.append(2)
                                 continue
 
                             if (cons.get_nodeattr(chr_pairs[0][1])) == "":
-                                # print("break pair")
                                 out_fifo_depths.append(2)
                                 continue
 
@@ -1107,10 +1104,6 @@ class DeriveFIFOSizes(Transformation):
 
                                 global_period = self.period
 
-                                # prod_original_chr_cons = decompress_string_to_numpy(
-                                #     prod.get_nodeattr("io_chrc_in")
-                                # )[0]
-
                                 prod_original_chr = decompress_string_to_numpy(
                                     prod.get_nodeattr("io_chrc_out")
                                 )[0]
@@ -1125,15 +1118,9 @@ class DeriveFIFOSizes(Transformation):
                                     cons.get_nodeattr("io_chrc_in_original")
                                 )[0]
 
-                                # period_prod_cons = len(prod_original_chr_cons) // 2
                                 period_true = len(prod_original_chr) // 2
 
                                 period_cons = len(cons_original_chr) // 2
-
-                                # ratio = period_cons / period_true
-                                # if ratio < 1:
-                                #     ratio = period_true / period_cons
-
                                 # find phase shift
                                 pshift_min = 0
 
@@ -1144,59 +1131,19 @@ class DeriveFIFOSizes(Transformation):
                                         pshift_min = pshift_cand
                                         break
 
-                                # parent_throughput = get_parent_throughput(node, model)
                                 parent_period, producer_node = get_top_producer_period(node, model)
                                 consumer_period, consumer_node = get_top_consumer_period(
                                     node, model
                                 )
-                                # consumer_throughput = get_consumer_throughput(cons_node, model)
-                                # self_in_throughput = get_throughput(node, "in")
-                                # self_out_throughput = get_throughput(cons_node, "out")
-
-                                # if parent_throughput == 0:
-                                #     parent_throughput = self_in_throughput
-                                # if consumer_throughput == 0:
-                                #     consumer_throughput = self_out_throughput
-
-                                # self_prod_thr = get_throughput(node, "out")
-                                # self_cons_thr = get_throughput(cons.onnx_node, "in")
-
-                                # RELAXATIONS ===========================
-                                # phase_relaxation_hyper = 0.0
-                                # second_relaxation_hyper = 1 / len(model.graph.node)
-
-                                # if parent_throughput != 0:
-                                #     throughput_ratio = max(
-                                #         1, self_in_throughput / parent_throughput
-                                #     )
-                                # else:
-                                #     throughput_ratio = 1
 
                                 if global_period < period_prod:
                                     global_period = period_prod
 
-                                # node_splits = 1
-                                # for n in model.graph.node:
-                                #     inst = registry.getCustomOp(n)
-                                #     if inst.get_nodeattr("io_chrc_period") <= period_true:
-                                #         node_splits += 1
 
                                 pshift_min = max(0, pshift_min - max(0, period_true - period_cons))
 
                                 prod_chrc_part = prod_chrc[pshift_min : (pshift_min + period_prod)]
                                 cons_chrc_part = cons_chrc[:period_prod]
-
-                                # prod_volume = prod_chrc[period_prod] - prod_chrc[0]
-                                # cons_volume = cons_chrc[period_prod] - cons_chrc[0]
-
-                                # prod_true_volume = (
-                                #     prod_original_chr[period_true] - prod_original_chr[0]
-                                # )
-                                # prod_true_cons_volume = (
-                                #     prod_original_chr_cons[period_prod_cons]
-                                #     - prod_original_chr_cons[0]
-                                # )
-                                # ratio = prod_true_cons_volume / prod_true_volume
 
                                 # using the original tav for determining data rates
                                 gaps, token_times = inter_token_gaps(prod_chr_original)
@@ -1222,38 +1169,11 @@ class DeriveFIFOSizes(Transformation):
                                     self.max_delay_so_far, local_max_delay_prod
                                 )
 
-                                # global_max_delay = self.max_delay_so_far
-
-                                # prod_safe_slowdown = max(0, 1 - prod_true_volume / period_true)
-
-                                # cons_true_volume = (
-                                #     cons_original_chr[period_cons] - cons_original_chr[0]
-                                # )
-                                # cons_safe_slowdown = max(0, 1 - cons_true_volume / period_cons)
-
-                                # Step 1: Compute the difference (assumed to be NumPy arrays)
                                 diff = prod_chrc_part - cons_chrc_part
 
                                 # Step 2: Get the index of the maximum
                                 max_pos = np.argmax(diff)
                                 fifo_depth_maximum = max(0, int(diff[max_pos]))
-
-                                # inter_token_gaps_prod_gaps, _ = inter_token_gaps(prod_chrc_part)
-                                # inter_token_gaps_prod_gaps = sorted(
-                                #     inter_token_gaps_prod_gaps, reverse=True
-                                # )
-
-                                # inter_token_gaps_cons_gaps, _ = inter_token_gaps(cons_chrc_part)
-                                # inter_token_gaps_cons_gaps = sorted(
-                                #     inter_token_gaps_cons_gaps, reverse=True
-                                # )
-
-                                # total_delay = np.sum(
-                                #     np.array(inter_token_gaps_cons_gaps[:fifo_depth_maximum])
-                                # )
-
-                                # slowdown_period = local_max_delay_period
-                                # slowdown_period = local_max_delay_cons
 
                                 # Compute the slowdown numerator using the new logic
                                 effective_depth = min(len(gap_ratios), fifo_depth_maximum)
@@ -1272,16 +1192,6 @@ class DeriveFIFOSizes(Transformation):
 
                                 fifo_slowdown = slowdown_numerator / period_true
                                 fifo_slowdown = sum(gap_ratios) / period_true
-
-                                # fifo_slowdown_cons = (
-                                #     fifo_depth_maximum * local_max_delay_cons
-                                # ) / period_cons
-                                # delay_on_cons = (
-                                #     local_max_delay_cons +
-                                # (fifo_depth_maximum * local_max_delay_prod)
-                                # ) * cons_volume
-
-                                # ratio_on_delays = local_max_delay_cons / local_max_delay_prod
 
                                 minimum_fifos_true = int(
                                     (local_max_delay_prod + local_max_delay_cons)
@@ -1328,7 +1238,7 @@ class DeriveFIFOSizes(Transformation):
                                 cons_loss = (global_period - period_cons) // cycle_loss_of_fifo
                                 pred_loss = (global_period - parent_period) // cycle_loss_of_fifo
 
-                                ignorable_fifos = int(min(prod_loss, cons_loss, pred_loss))
+                                ignorable_fifos = int(max(0,min(prod_loss, cons_loss, pred_loss)))
 
                                 if producer_node is not None:
                                     if producer_node.op_type.startswith("DuplicateStreams"):
@@ -1354,22 +1264,11 @@ class DeriveFIFOSizes(Transformation):
                                 else:
                                     fifos_to_remove_rate = minimum_fifos_true
 
-                                # slowdown logic, TODO in the future
-                                # should be considered to avoid propagating slowdowns
-                                # if fifos_to_remove > 0:
-                                #     # (self.slowdown_so_far[indx] +=
-                                #     # max(0, fifos_to_remove - minimum_fifos_needed))
-                                #     self.slowdown_introduced =
-                                # (fifos_to_remove * local_max_delay_cons)
-                                # else:
-                                #     self.slowdown_introduced = 0
-
-                                # if self.slowdown_so_far[indx] + period_true < period_cons:
-                                #     self.slowdown_so_far[indx] = 0
 
                                 delta_fifo_size_post_adjustment = max(
-                                    0, fifo_depth_maximum - fifos_to_remove
+                                    0, fifo_depth_maximum - max(fifos_to_remove, ignorable_fifos )
                                 )
+                                #print("fifos to remove: ", fifos_to_remove)
                                 delta_fifo_size_post_adjustment_rate = max(
                                     0, minimum_fifos_true - fifos_to_remove_rate
                                 )
@@ -1398,11 +1297,11 @@ class DeriveFIFOSizes(Transformation):
                                     # maximum from TAV comparisons
                                     fifo_depth = fifo_depth_maximum
 
-                                # fifo_depth = hybrid_size
-                                # fifo_depth = minimized_depth - max(0, period_true- period_cons)
-                                # fifo_depth = minimum_fifos     # minimized data rate based
-                                # fifo_depth = minimum_fifos_true # not minimized data rate based
-                                print(f"sized {node.name} with {fifo_depth} ")
+
+                                # override for testing:
+                                #fifo_depth = delta_fifo_size_post_adjustment
+
+                                #print(f"sized {node.name} with {fifo_depth} ")
                                 depth_attempts.append(fifo_depth)
                             fifo_depth = min(depth_attempts)
                         else:
@@ -1434,4 +1333,6 @@ class DeriveFIFOSizes(Transformation):
 
                 except KeyError:
                     raise Exception("Custom op_type %s is currently not supported." % op_type)
+
+        #print("final sizes for each strategy: ",self.delta_total_fifo_size, self.delta_adjusted_fifo_size, self.data_rate_total_fifo_size,self.data_rate_adjusted_fifo_size,self.hybrid_fifo_size, self.hybrid_fifo_size_rate)
         return (model, False)
