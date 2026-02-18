@@ -115,7 +115,8 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     std::array<FIFO, OStreamsSize> fifo;
 
     /// Communicate with predecessors and successors and update their values and our own
-    [[gnu::hot, gnu::flatten, gnu::always_inline]] void communicate(std::stop_token stoken = {}) {
+    [[gnu::hot, gnu::flatten, gnu::always_inline]] bool communicate(std::stop_token stoken = {}) {
+        bool ret = false;
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
                 // Interface SHM <-> sim
@@ -132,7 +133,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 // FIFO -ready-> sim
                 this->ostreams[i].setOutputReady(this->fifo[i].getInputReady());
                 // Toggle FIFO clock
-                this->fifo[i].toggleClock();
+                ret |= this->fifo[i].toggleClock();
             }
         }
         if constexpr (LastNode) {
@@ -151,6 +152,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 }
             }
         }
+        return ret;
     }
 
     /**
@@ -168,10 +170,11 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         }
     }
 
-    [[gnu::hot, gnu::always_inline]] void runSingleCycle(std::stop_token stoken = {}) {
+    [[gnu::hot, gnu::always_inline]] bool runSingleCycle(std::stop_token stoken = {}) {
         ++cyclesRun;
-        communicate(stoken);
+        bool ret = communicate(stoken);
         this->clk.toggleClk();
+        return ret;
     }
 
      public:
@@ -252,14 +255,15 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     }
 
     [[gnu::hot, gnu::always_inline]] bool runToStableState(std::stop_token stoken = {}, std::size_t max_cycles = std::numeric_limits<std::size_t>::max()) {
+        bool timeout = false;
         while (!std::all_of(this->ostreams.begin(), this->ostreams.end(), [](const M_AXIS_Control& stream) { return stream.stableState.is_stable(); }) & !stoken.stop_requested() &
-               (cyclesRun <= max_cycles)) {
-            runSingleCycle(stoken);
-            runSingleCycle(stoken);
-            runSingleCycle(stoken);
-            runSingleCycle(stoken);
+               (cyclesRun <= max_cycles) & !timeout) {
+            timeout |= runSingleCycle(stoken);
+            timeout |= runSingleCycle(stoken);
+            timeout |= runSingleCycle(stoken);
+            timeout |= runSingleCycle(stoken);
         }
-        return cyclesRun > max_cycles;
+        return timeout || cyclesRun > max_cycles;
     }
 
     /// Get the number of FIFOs
@@ -282,6 +286,17 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         fifo[index].setMaxSize(depth);
     }
 
+    void setFIFOCyclesUntilExpectedFirstValid(std::size_t index, std::size_t cycles) {
+        if constexpr (LastNode) {
+            throw std::runtime_error("Cannot set FIFO cycles until expected first valid on last node (no FIFOs present)");
+        }
+        if (index >= OStreamsSize) {
+            auto error = "FIFO index " + std::to_string(index) + " out of range (max: " + std::to_string(OStreamsSize - 1) + ")";
+            throw std::out_of_range(error);
+        }
+        fifo[index].setCyclesUntilExpectedFirstValid(cycles);
+    }
+
     /// Set the max FIFO depth of all interfaces
     void setMaxFIFODepth(std::size_t depth) {
         if constexpr (!LastNode) {
@@ -300,6 +315,17 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             utilizations[i] = fifo[i].getMaxSize();
         }
         return utilizations;
+    }
+
+    std::array<std::size_t, OStreamsSize> getFIFOCyclesUntilFirstValid() const noexcept {
+        if constexpr (LastNode) {
+            return {};
+        }
+        std::array<std::size_t, OStreamsSize> cycles{};
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
+            cycles[i] = fifo[i].getCyclesUntilFirstValid();
+        }
+        return cycles;
     }
 
     /// Get the job size of the specified output stream

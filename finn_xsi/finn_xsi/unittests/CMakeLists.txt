@@ -18,11 +18,6 @@ target_link_libraries(FIFO_test PRIVATE nlohmann_json::nlohmann_json GTest::gtes
 target_include_directories(FIFO_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
 target_include_directories(FIFO_test PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include")
 
-# Add InterSimulationInterface unit tests
-add_executable(InterSimulationInterface_test InterSimulationInterface_test.cpp)
-target_link_libraries(InterSimulationInterface_test PRIVATE GTest::gtest_main Threads::Threads -ldl -lrt nlohmann_json::nlohmann_json)
-target_include_directories(InterSimulationInterface_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include ${Boost_INCLUDE_DIRS})
-
 # Add InterprocessCommunicationChannel unit tests
 add_executable(InterprocessCommunicationChannel_test InterprocessCommunicationChannel_test.cpp)
 target_link_libraries(InterprocessCommunicationChannel_test PRIVATE GTest::gtest_main Threads::Threads -ldl -lrt nlohmann_json::nlohmann_json)
@@ -37,10 +32,9 @@ target_include_directories(Integration_test PUBLIC "$ENV{XILINX_VIVADO}/data/xsi
 # Register tests with CTest
 include(GoogleTest)
 gtest_discover_tests(FIFO_test)
-gtest_discover_tests(InterSimulationInterface_test)
 gtest_discover_tests(InterprocessCommunicationChannel_test)
 gtest_discover_tests(Integration_test)
 
 # Create a target to build all unittests at once
 add_custom_target(all_unittests)
-add_dependencies(all_unittests FIFO_test InterSimulationInterface_test InterprocessCommunicationChannel_test Integration_test)
+add_dependencies(all_unittests FIFO_test InterprocessCommunicationChannel_test Integration_test)
