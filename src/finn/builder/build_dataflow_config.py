@@ -55,8 +55,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
-from pathlib import Path
-from typing import Any, Literal, Optional
+from pathlib import Path, PosixPath, PurePath
+from typing import Any, Literal, Optional, cast
 
 from finn.util.basic import alveo_default_platform, part_map
 from finn.util.exception import FINNConfigurationError
@@ -225,19 +225,59 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         forbid_extra_keys = True
 
     @classmethod
-    def construct_from(cls, file: Path) -> DataflowBuildConfig:
-        """The only deserialization method that should be used. Identifies the source format,
-        patches in the config_path variable and corrects paths. Returns the completed config object.
+    def construct_from(cls, from_this: Path | DataflowBuildConfig) -> DataflowBuildConfig:
+        """The only deserialization method that should be used.
+        - Identifies the source format (if from file)
+        - Patches in the config_path variable and corrects paths (if from file or if config_path is set)
+        - Makes sure that either target_fps oder folding_config_file is defined
+
+        Args:
+            from_this: The file to construct the DataflowBuildConfig from, or the initial DFBC object
+                to modify.
+
+        Returns:
+            The completed config object
         """  # noqa
         dfbc: DataflowBuildConfig
-        data = file.read_text()
-        match file.suffix:
-            case ".json":
-                dfbc = DataflowBuildConfig.from_json(data)
-            case ".yml" | ".yaml":
-                dfbc = DataflowBuildConfig.from_yaml(data)
-        dfbc.config_path = file.absolute()
-        dfbc.correct_paths()
+
+        # Read the config
+        if type(from_this) in [Path, PosixPath, PurePath]:
+            # Needed because type-checker doesn't recognize the check above this line
+            from_this = cast("Path", from_this)
+
+            data = from_this.read_text()
+            match from_this.suffix:
+                case ".json":
+                    dfbc = DataflowBuildConfig.from_json(data)
+                case ".yml" | ".yaml":
+                    dfbc = DataflowBuildConfig.from_yaml(data)
+            dfbc.config_path = from_this.absolute()
+        elif type(from_this) is DataflowBuildConfig:
+            dfbc = from_this
+        else:
+            raise FINNConfigurationError(
+                f"Cannot construct DataflowBuildConfig from type "
+                f"{type(from_this)}. Please pass either a path to a "
+                f"YAML/JSON file, or an already existing "
+                f"DataflowBuildConfig object."
+            )
+
+        # Correct relative paths
+        if dfbc.config_path is not None:
+            dfbc.correct_paths()
+
+        # Make sure either target_fps or folding_config_file is set (and the file exists if given).
+        if dfbc.target_fps is None and dfbc.folding_config_file is None:
+            raise FINNConfigurationError(
+                "Set either target_fps or folding_config_file in your "
+                "flow config, so that FINN can determine the folding "
+                "configuration for your accelerator."
+            )
+        if dfbc.folding_config_file is not None and not dfbc.folding_config_file.exists():
+            raise FINNConfigurationError(
+                f"No folding config file could be found " f"at {dfbc.folding_config_file}."
+            )
+
         return dfbc
 
     def correct_paths(self) -> None:
@@ -252,7 +292,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         def _fix_path(p: Path | None) -> Path | None:
             """Return the fixed path (which should now be relative to the flow config)."""
             if self.config_path is None:
-                raise Exception(
+                raise FINNConfigurationError(
                     "Cannot fix paths since "
                     "DataflowBuildConfig.config_path is set to None! "
                     "Either use DataflowBuildConfig.construct_from() or "
