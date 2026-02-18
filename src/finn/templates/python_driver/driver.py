@@ -1301,7 +1301,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         print("RELAXATION: %.1f%%" % (relaxation * 100))
         print("RELAXATION SWEEP: %s" % ("Enabled" if relaxation_sweep else "Disabled"))
         # Determine search iteration runtime via heuristic based on free-running latency
-        iteration_runtime = max(0.001, (paced_latency * 10) * 10 / 1000 / 1000 / 1000)
+        iteration_runtime = max(0.001, (paced_latency * 4) * 10 / 1000 / 1000 / 1000)
 
         search_log = self.size_iteratively_binary_search(
             start_depth=max_occupancy,
