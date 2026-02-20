@@ -548,8 +548,8 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fifo_first_valid_cycles: list[list[int]] = []
         for val in initial_fifo_depths.values():
             fifo_first_valid_cycles.append(
-                [v + 10 for v in val["fifo_cycles_until_first_valid"]]
-            )  # Add 10 cycles grace period
+                [v + math.ceil(v*0.01) for v in val["fifo_cycles_until_first_valid"]]
+            )  # Add 1% cycles grace period
 
         # Max cycles for any simulation
         sim_cycles: int = max([val["cycles"] for val in initial_fifo_depths.values()])  # type: ignore
