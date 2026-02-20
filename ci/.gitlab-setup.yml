@@ -5,6 +5,7 @@
     - ml lang/Python/3.10.4-GCCcore-11.3.0
     - ml tools/git-lfs/3.6.1
     - ml tools/UnZip/6.0-GCCcore-11.3.0
+    - ml devel/ncurses/5.9
     - ml compiler/GCC/14.2.0 devel/Boost/1.88.0-GCC-14.2.0
     - ulimit -s unlimited # Increase stack size limit
 
