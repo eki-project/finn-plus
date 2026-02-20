@@ -1,0 +1,44 @@
+{
+    "status": "ok",
+    "hls_estimate": {
+        "resources": {
+            "LUT": 161057.0,
+            "FF": 144633.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 629.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 72500,
+            "FF": 74643,
+            "SRL": 62,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 1,
+            "URAM": 0
+        }
+    },
+    "time": {
+        "step_resnet50_tidy": 14,
+        "step_resnet50_streamline": 224,
+        "step_resnet50_convert_to_hw": 6,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 13,
+        "step_generate_estimate_reports": 0,
+        "step_set_fifo_depths": 4,
+        "step_hw_codegen": 212,
+        "step_hw_ipgen": 205,
+        "step_create_stitched_ip": 54,
+        "step_measure_rtlsim_performance": 0,
+        "step_out_of_context_synthesis": 0,
+        "step_synthesize_bitfile": 4779,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 5511
+    }
+}
