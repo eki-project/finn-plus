@@ -17,6 +17,8 @@
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
     # Workaround for https://github.com/eki-project/finn-plus/issues/112
     - export LD_LIBRARY_PATH=$XILINX_VIVADO/lib/lnx64.o:$XILINX_VITIS/lnx64/tools/fpo_v7_1:$LD_LIBRARY_PATH
+    # Force use of system SSL libs (version 3) on Noctua 2 (prepends to LD_LIBRARY_PATH)
+    - ml system/OpenSSL/3
 
 .n2_setup_xilinx_2024_2:
   before_script:
@@ -29,6 +31,8 @@
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
     # Workaround for https://github.com/eki-project/finn-plus/issues/112
     - export LD_LIBRARY_PATH=$XILINX_VIVADO/lib/lnx64.o:$XILINX_VITIS/lnx64/tools/fpo_v7_1:$LD_LIBRARY_PATH
+    # Force use of system SSL libs (version 3) on Noctua 2 (prepends to LD_LIBRARY_PATH)
+    - ml system/OpenSSL/3
 
 .setup_venv_from_whl:
   before_script:
