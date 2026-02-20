@@ -10,8 +10,8 @@ git_deps:
         pip_install: True
         install_editable: True
     qonnx:
-        url: "https://github.com/fpjentzsch/qonnx.git"
-        commit: "084bbec741feef1c1bea7a813e0d301d8e1a3de5"
+        url: "https://github.com/fastmachinelearning/qonnx.git"
+        commit: "7dfd7dc4ec1087b75dca50ae4eacb1cee435716b"
         pip_install: True
         install_editable: True
     onnx-passes:
