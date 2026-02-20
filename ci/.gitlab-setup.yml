@@ -4,7 +4,7 @@
   before_script:
     - ml lang/Python/3.10.4-GCCcore-11.3.0
     - ml compiler/GCC/14.2.0 devel/Boost/1.88.0-GCC-14.2.0
-    - ml tools/git-lfs/3.5.1
+    - ml tools/git-lfs/3.6.1
     - ulimit -s unlimited # Increase stack size limit
 
 .n2_setup_xilinx_2022_2:
