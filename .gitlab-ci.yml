@@ -80,7 +80,7 @@ Build:
       aud: https://git.uni-paderborn.de
   stage: build
   tags:
-    - login
+    - otus_login
   rules:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -137,6 +137,8 @@ FINN Test Suite 2022.2:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: test
+  tags:
+    - otus
   rules:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
