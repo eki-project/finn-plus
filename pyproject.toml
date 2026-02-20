@@ -63,6 +63,7 @@ mip = "~1.13.0"
 dependencies = "2.0.1"                                # dependencies==2.0.1 required by brevitas
 setuptools = ">40.8.0,<70.0.0"                        # setuptools<70.0.0 required by brevitas
 cmake = "~4.0.3"
+qonnx = "1.0.0"
 
 termcolor = "^2.5.0"
 rich = "^13.9.4"
