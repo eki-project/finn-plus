@@ -24,6 +24,7 @@ The framework is fully open-source in order to give a higher degree of flexibili
 - **[Getting Started](#getting-started)** - Start using FINN+ in minutes
 - **[Wiki Documentation](https://github.com/eki-project/finn-plus/wiki)** - Complete documentation and guides
 - **[Feature Tracker](https://github.com/orgs/eki-project/projects/1)** - Current development status
+- **[Contributing](#contributing)** - Learn how to contribute to FINN+
 
 ## What's New in FINN+
 
@@ -81,6 +82,19 @@ For more detailed instructions, like installation for development use, please re
 > Please note, that `finn deps update` (and most other commands) will automatically download and update dependencies required for FINN to work (mostly the same as the original FINN repository).
 > This is done to provide a better user experience and to not require the user to manage a dozen dependencies on their own.
 > If you want to know which dependencies will be installed before continuing, check out `external_dependencies.yaml`.
+
+## Contributing
+
+Contributions are very welcome! Whether you are fixing a bug, adding a new feature, improving documentation, or sharing a model — every contribution helps.
+
+To get started:
+
+1. **Fork** the repository and create a feature branch from `main`.
+2. **Check** the [Feature Tracker](https://github.com/orgs/eki-project/projects/1) to see what is planned or already in progress.
+3. **Open an issue** to discuss larger changes before investing significant effort.
+4. **Submit a pull request** with a clear description of your changes.
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on code style, testing, and the review process.
 
 ## About Us
 
