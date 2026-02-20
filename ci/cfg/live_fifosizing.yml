@@ -1,74 +1,4 @@
 [
-    ### BNN-PYNQ ###
-    # cnv-w1a1
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/cnv-w1a1_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/cnv-w1a1_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a1_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
-    # cnv-w1a2
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/cnv-w1a2_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/cnv-w1a2_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a2_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
-    # cnv-w2a2
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/cnv-w2a2_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/cnv-w2a2_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/cnv-w2a2_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
-    # tfc-w1a1
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/tfc-w1a1_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/tfc-w1a1_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/tfc-w1a1_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
-    # tfc-w1a2
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/tfc-w1a2_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/tfc-w1a2_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/tfc-w1a2_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
-    # tfc-w2a2
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/tfc-w2a2_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/tfc-w2a2_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/tfc-w2a2_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
-
-    # GTSRB (cnv-w1a1)
-    {
-        "dut": ["gtsrb"],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
-
     # KWS (MLP)
     {
         "dut": ["kws"],
@@ -85,9 +15,51 @@
         "synth_clk_period_ns": [10],
     },
 
-    # MobileNetV1 (ImageNet)
+    ### BNN-PYNQ ###
+    # tfc-w1a1
     {
-        "dut": ["mobilenetv1"],
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/tfc-w1a1_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/tfc-w1a1_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/tfc-w1a1_specialize_layers.json],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+    # tfc-w2a2
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/tfc-w2a2_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/tfc-w2a2_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/tfc-w2a2_specialize_layers.json],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+    # cnv-w1a1
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/cnv-w1a1_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/cnv-w1a1_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a1_specialize_layers.json],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+    # cnv-w2a2
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/cnv-w2a2_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/cnv-w2a2_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/cnv-w2a2_specialize_layers.json],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # GTSRB (cnv-w1a1)
+    {
+        "dut": ["gtsrb"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "synth_clk_period_ns": [10],
@@ -96,6 +68,14 @@
     # VGG-10 (1D CNN) (RadioML)
     {
         "dut": ["vgg10"],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
+
+    # MobileNetV1 (ImageNet)
+    {
+        "dut": ["mobilenetv1"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "synth_clk_period_ns": [10],
@@ -110,30 +90,6 @@
     },
 
     ### NEW Transformer models (dvc-imported from finn-transformers repo):
-    # benchmark model ("dummy")
-    {
-        "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/benchmark"],
-        "model_path": ["models/transformer/finn-transformers/benchmark/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/benchmark/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/benchmark/out.npy"],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1000],
-    },
-
-    # language model
-    {
-        "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/language"],
-        "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1000],
-    },
-
     # radioml model
     {
         "dut": ["transformer"],
@@ -141,9 +97,10 @@
         "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1000],
+        "target_fps": [65536],
     },
 
     # vision model
@@ -153,9 +110,23 @@
         "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1000],
+        "target_fps": [1525],
+    },
+
+    # language model
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/language"],
+        "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1024],
     },
 
     # Synthetic non-linear models
