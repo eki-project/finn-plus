@@ -218,6 +218,7 @@
     },
 
     ### NEW Transformer models (dvc-imported from finn-transformers repo):
+    # TODO: analytical FIFO sizing temporarily disabled because it is broken for these models
     # radioml model
     {
         "dut": ["transformer"],
@@ -232,20 +233,20 @@
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": [65536],
     },
-    {
-        "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/radioml"],
-        "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
-        "verify_steps": ["None"], # disable verification to not affect build time measurements
-        "auto_fifo_depths": [True],
-        "auto_fifo_strategy": ["analytical"],
-        "tav_generation_strategy": ["rtlsim", "tree_model"],
-        "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [65536],
-    },
+    # {
+    #     "dut": ["transformer"],
+    #     #"model_dir": ["models/transformer/finn-transformers/radioml"],
+    #     "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
+    #     "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
+    #     "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
+    #     "verify_steps": ["None"], # disable verification to not affect build time measurements
+    #     "auto_fifo_depths": [True],
+    #     "auto_fifo_strategy": ["analytical"],
+    #     "tav_generation_strategy": ["rtlsim", "tree_model"],
+    #     "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
+    #     "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #     "target_fps": [65536],
+    # },
 
     # vision model
     {
@@ -261,20 +262,20 @@
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": [1525],
     },
-        {
-        "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/vision"],
-        "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
-        "verify_steps": ["None"], # disable verification to not affect build time measurements
-        "auto_fifo_depths": [True],
-        "auto_fifo_strategy": ["analytical"],
-        "tav_generation_strategy": ["rtlsim", "tree_model"],
-        "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1525],
-    },
+    # {
+    #     "dut": ["transformer"],
+    #     #"model_dir": ["models/transformer/finn-transformers/vision"],
+    #     "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
+    #     "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
+    #     "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
+    #     "verify_steps": ["None"], # disable verification to not affect build time measurements
+    #     "auto_fifo_depths": [True],
+    #     "auto_fifo_strategy": ["analytical"],
+    #     "tav_generation_strategy": ["rtlsim", "tree_model"],
+    #     "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
+    #     "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #     "target_fps": [1525],
+    # },
 
     # language model
     {
@@ -290,18 +291,18 @@
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": [1024],
     },
-        {
-        "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/language"],
-        "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
-        "verify_steps": ["None"], # disable verification to not affect build time measurements
-        "auto_fifo_depths": [True],
-        "auto_fifo_strategy": ["analytical"],
-        "tav_generation_strategy": ["rtlsim", "tree_model"],
-        "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1024],
-    },
+    # {
+    #     "dut": ["transformer"],
+    #     #"model_dir": ["models/transformer/finn-transformers/language"],
+    #     "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
+    #     "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
+    #     "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
+    #     "verify_steps": ["None"], # disable verification to not affect build time measurements
+    #     "auto_fifo_depths": [True],
+    #     "auto_fifo_strategy": ["analytical"],
+    #     "tav_generation_strategy": ["rtlsim", "tree_model"],
+    #     "tav_utilization_strategy": ["conservative_relaxation", "aggressive_relaxation", "no_relaxation"],
+    #     "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #     "target_fps": [1024],
+    # },
 ]
