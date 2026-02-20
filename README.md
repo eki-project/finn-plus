@@ -1,16 +1,18 @@
-<img src=https://cs.uni-paderborn.de/fileadmin-eim/informatik/fg/ce/MiscImages/finn-plus_logo.png width=196/>
+<img src=<https://cs.uni-paderborn.de/fileadmin-eim/informatik/fg/ce/MiscImages/finn-plus_logo.png> width=196/>
 
 # Dataflow Compiler for Fast, Scalable Quantized Neural Network Inference on FPGAs
 
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/finn-plus?period=total&units=ABBREVIATION&left_color=GREY&right_color=GREEN&left_text=Downloads)](https://pepy.tech/projects/finn-plus)
 [![PyPI version](https://img.shields.io/pypi/v/finn-plus?logo=pypi&logoColor=white&color=brightgreen)](https://badge.fury.io/py/finn-plus)
-[![GitHub license](https://img.shields.io/badge/License-BSD-purple.svg)](https://raw.githubusercontent.com/eki-project/finn-plus/refs/heads/main/LICENSE.txt)
-[![Documentation](https://img.shields.io/badge/Documentation-Wiki-blue)](https://github.com/eki-project/finn-plus/wiki)
-![GitHub branch status](https://img.shields.io/github/checks-status/eki-project/finn-plus/main?label=CI)
+[![GitHub license](https://img.shields.io/badge/License-BSD-purple.svg?logo=bsd)](https://raw.githubusercontent.com/eki-project/finn-plus/refs/heads/main/LICENSE.txt)
+[![Documentation](https://img.shields.io/badge/Documentation-Wiki-blue?logo=github)](https://github.com/eki-project/finn-plus/wiki)
+![GitHub branch status](https://img.shields.io/github/checks-status/eki-project/finn-plus/main?label=CI&logo=gitlab&logoColor=white)
 [![Go to Python website](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Feki-project%2Ffinn-plus%2Frefs%2Fheads%2Fmain%2Fpyproject.toml&query=tool.poetry.dependencies.python&label=python&logo=python&logoColor=white)](https://python.org)
-![GitHub Issues or Pull Requests](https://img.shields.io/github/issues-pr/eki-project/finn-plus?label=Pull%20Requests&color=green)
-[![GitLab CI](https://img.shields.io/badge/GitLab%20CI-FC6D26?logo=gitlab&logoColor=fff)](#)
-[![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](#)
+![GitHub Issues or Pull Requests](https://img.shields.io/github/issues-pr/eki-project/finn-plus?label=Pull%20Requests&color=green&logo=githubactions&logoColor=white)
+![GitLab CI](https://img.shields.io/badge/GitLab%20CI-FC6D26?logo=gitlab&logoColor=fff)
+![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)
+[![Go to QONNX website](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Feki-project%2Ffinn-plus%2Frefs%2Fheads%2Fmain%2Fpyproject.toml&query=tool.poetry.dependencies.qonnx&label=QONNX&logo=onnx&logoColor=white&color=orange)](https://github.com/fastmachinelearning/qonnx)
+[![Go to Brevitas website](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Feki-project%2Ffinn-plus%2Frefs%2Fheads%2Fmain%2Fpyproject.toml&query=tool.poetry.dependencies.brevitas&logo=pytorch&logoColor=white&label=Brevitas&color=%23bd0000)](https://github.com/Xilinx/brevitas)
 
 **FINN+** is a fork of **FINN**, an experimental framework from the Integrated Communications and AI Lab of AMD Research & Advanced Development to explore deep neural network inference on FPGAs.
 It specifically targets quantized neural networks, with emphasis on generating dataflow-style architectures customized for each network.
