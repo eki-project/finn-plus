@@ -61,8 +61,8 @@ scipy = "~1.15.0"                                     # scipy>=1.16.0 requires p
 pyyaml = "~6.0.2"
 mip = "~1.13.0"
 dependencies = "2.0.1"                                # dependencies==2.0.1 required by brevitas
-setuptools = ">40.8.0,<70.0.0"                        # setuptools<70.0.0 required by brevitas
 cmake = "~4.0.3"
+brevitas = "0.12.1"
 qonnx = "1.0.0"
 
 termcolor = "^2.5.0"
