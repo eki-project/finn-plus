@@ -18,12 +18,16 @@ from finn.util.logging import log
 
 FIFODepthConfig: TypeAlias = dict[str, dict[str, str | list[int]]]
 
+
 def store_fifo_data(
     model: ModelWrapper,
     data: pd.DataFrame,
     default_path: Path,
     delete_existing: bool,
+    sort_on: str = "onnx_index",
     merge_on: list[str] | None = None,
+    merge_how: str = "inner",
+    store_html: bool = True,
 ) -> ModelWrapper:
     """Store the given dataframe in a CSV file.
 
@@ -40,21 +44,50 @@ def store_fifo_data(
         default_path: Path to use in case that the model doesn't reference a data file yet.
            Is then stored as a metadata prop in the model.
         delete_existing: If true, delete the table and start a new one.
-        merge_on: What columns to merge on. If "None", use `["node", "stream"]`
+        sort_on: The column to sort on after merging.
+        merge_on: What columns to merge on. If "None", use `["onnx_index", "node", "stream"]`
+        merge_how: How to merge. Forwarded to pd.merge().
+        store_html: If True, also store the data as a HTML with the same name next to the CSV.
 
     Returns:
         model: Return the model since we might have modified its metadata.
     """
+    # TODO: Check if all layers are accounted for
+    if len(data.index) != len(model.graph.node):
+        raise FINNInternalError(
+            f"Tried storing FIFO data for {len(data.index)} "
+            f"values but expected {len(model.graph.node)}"
+        )
     fifo_data_path = model.get_metadata_prop("fifo_data_path")
     if fifo_data_path is not None:
+        if not fifo_data_path.endswith(".csv"):
+            raise FINNInternalError(
+                f"It seems the model saved path to store "
+                f"the dataframe does not point to a csv file: {fifo_data_path}"
+            )
         if delete_existing:
+            Path(fifo_data_path).unlink(missing_ok=True)
             merged = data
         else:
-            merged = pd.merge(data, pd.read_csv(fifo_data_path), on=merge_on, how="outer")
-        merged.to_csv(fifo_data_path)
+            merged = pd.merge(
+                data, pd.read_csv(fifo_data_path), on=merge_on, how=merge_how  # type: ignore
+            )
+            merged = merged.sort_values(sort_on)
+        merged.to_csv(fifo_data_path, index=False)
+        if store_html:
+            merged.to_html(fifo_data_path.replace(".csv", ".html"))
         log.info(f"Stored FIFO dataframe to {fifo_data_path}.")
     else:
-        data.to_csv(default_path)
+        if not default_path.suffix == ".csv":
+            raise FINNInternalError(
+                f"It seems the provided default path to store "
+                f"the dataframe does not point to a csv file: {fifo_data_path}"
+            )
+        if delete_existing:
+            default_path.unlink(missing_ok=True)
+        data.to_csv(default_path, index=False)
+        if store_html:
+            data.to_html(str(default_path).replace(".csv", ".html"))
         model.set_metadata_prop("fifo_data_path", str(default_path))
         log.info(f"Stored FIFO dataframe to {default_path}.")
     return model
@@ -124,6 +157,7 @@ class Simulation:
 
     def simulate(self) -> Any:
         raise NotImplementedError("Call simulate() on subclasses.")
+
 
 class ApplyFIFOSizes(Transformation):
     """Apply a FIFO sizing configuration to the model.
