@@ -1,0 +1,21 @@
+params:
+  dut: transformer
+  model_path: models/transformer/finn-transformers/language/streamlined.onnx
+  verify_input_npy: models/transformer/finn-transformers/language/inp.npy
+  verify_expected_output_npy: models/transformer/finn-transformers/language/out.npy
+  verify_steps: None
+  auto_fifo_depths: true
+  auto_fifo_strategy: largefifo_rtlsim
+  fifosim_input_throttle: false
+  fifosim_n_inferences: 8
+  generate_outputs:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  - estimate_reports
+  target_fps: 1024
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
