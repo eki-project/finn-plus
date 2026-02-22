@@ -1,0 +1,65 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 31891.0,
+            "DSP": 0.0,
+            "BRAM_18K": 72.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 1791,
+            "max_cycles": 490,
+            "max_cycles_node_name": "Thresholding_rtl_0",
+            "estimated_throughput_fps": 204081.6326530612,
+            "estimated_latency_ns": 17910.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 63062.0,
+            "FF": 19409.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 0.1255
+    },
+    "synth": {
+        "resources": {
+            "LUT": 45256,
+            "FF": 40216,
+            "SRL": 1655,
+            "DSP": 0,
+            "BRAM_18K": 3,
+            "BRAM_36K": 37,
+            "URAM": 0
+        }
+    },
+    "time": {
+        "add_postproc_top1": 0,
+        "step_qonnx_to_finn": 0,
+        "step_tidy_up": 0,
+        "step_streamline": 1,
+        "step_convert_to_hw": 0,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_target_fps_parallelization": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "step_set_fifo_depths": 115,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 0,
+        "step_create_stitched_ip": 43,
+        "step_measure_rtlsim_performance": 0,
+        "step_out_of_context_synthesis": 0,
+        "step_synthesize_bitfile": 690,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 849
+    }
+}
