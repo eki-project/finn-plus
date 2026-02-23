@@ -41,7 +41,11 @@ finn = "finn.interface.run_finn:main"
 python = ">=3.10,<3.12"
 pybind11 = "3.0.1"                              # pybind11==3.0.1 already for FIFO sim rework, after rework remove module load
 bitstring = "~4.3.1"
-numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
+clize = "~5.0.2"
+gspread = "~3.6.0"
+importlib-resources = "~6.5.2"
+ipython = "~8.37.0"  # ipython>=9.0.0 requires python>=3.11
+numpy = "1.26.4"  # numpy<=1.26.4 required by brevitas
 # Cannot upgrade onnx and onnxruntime any further. For now this seems to be the
 # last compatible pair which is also consistent with qonnx.
 # Upgrading onnx will result in model IR version not supported by onnxruntime
@@ -50,7 +54,7 @@ numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
 # due to the model IR version support issue...
 onnx = "1.17.0"
 onnxruntime = "1.20.1"
-onnxscript = "0.5.0"
+onnxscript = ">=0.5.0"                                # TODO: the onnx-passes installation will overwrite this version
 protobuf = "4.25.8"
 scipy = "~1.15.0"                                     # scipy>=1.16.0 requires python>=3.11, required by brevitas
 pyyaml = "~6.0.2"

@@ -701,14 +701,14 @@ class MakePYNQDriver(Transformation):
         fifo_widths = {}
         for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
             sdp_node_inst = getCustomOp(sdp_node)
-            # JSON doesn't support int keys
-            sdp_id = str(sdp_node_inst.get_nodeattr("partition_id"))
             dataflow_model_filename = sdp_node_inst.get_nodeattr("model")
             kernel_model = ModelWrapper(dataflow_model_filename)
             for node in kernel_model.graph.node:
                 if node.op_type.startswith("StreamingFIFO"):
                     node_inst = getCustomOp(node)
-                    fifo_widths[sdp_id] = node_inst.get_instream_width()
+                    # JSON doesn't support int keys
+                    fifo_id = str(node_inst.get_nodeattr("fifo_id"))
+                    fifo_widths[fifo_id] = node_inst.get_instream_width()
         settings["fifo_widths"] = fifo_widths
         # export original folding config to settings file,
         # so that the driver can generate a final cfg with live fifo sizes applied

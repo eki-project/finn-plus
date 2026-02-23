@@ -128,19 +128,19 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         if self.get_nodeattr("mask_mode") in {"input", "const"}:
             # Parallelism is the number of elements in the last dimension of the
             # folded mask input
-            _, _, elems = self.get_folded_input_shape(ind=3)
+            *_, elems = self.get_folded_input_shape(ind=3)
             # Get width of the mask datatype
             m_bits = elems * DataType[self.get_nodeattr("MType")].bitwidth()
 
         # Elements per folded key input (second input)
-        _, _, i_elems = self.get_folded_input_shape(ind=1)
+        *_, i_elems = self.get_folded_input_shape(ind=1)
         # Elements per folded value input (third input), same as the number of
         # output elements
-        _, _, o_elems = self.get_folded_input_shape(ind=2)
+        *_, o_elems = self.get_folded_input_shape(ind=2)
 
         # Parallelism is the number of elements in the last dimension of the
         # folded attention weights
-        _, _, s_elems = self.get_folded_attention_shape()
+        *_, s_elems = self.get_folded_attention_shape()
         # Number of bits used for the attention weights stream
         a_bits = s_elems * DataType[self.get_nodeattr("AType")].bitwidth()
 
@@ -222,17 +222,11 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             # threshold tensor, first dimension is covering all output elements
             num = ts.shape[-1]  # noqa
             # Explicitly broadcast thresholds from per-tensor to per-channel
-            # TODO: Consider adjusting length and fold instead
             ts = np.broadcast_to(ts, (length, num))
             # Partition the thresholds along the length into folds of parallel
             # elements
             ts = interleave_matrix_outer_dim_from_partitions(ts, length // fold)
             # Reshape folded thresholds adding an outer dimension
-            # TODO: Why? MVAU does this, just copied the behavior. This is
-            #  probably to generate the outer C++ initializer braces {} for
-            #  object construction. Isn't it weird to rely on an artificial
-            #  dimension just to have the code generator produce the correct
-            #  string?
             ts = ts.reshape(1, length // fold, fold, num)
             # Format the thresholds as C++ array code
             # Note: no packing, no variable name/type declaration
@@ -277,8 +271,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
                 " AccQKMatMul,"
                 " OutQKMatMul,"
                 f" {bias},"
-                # Note: Not sure why the default comp::less does not work...
-                f" comp::less_equal<{dtype_str}, {dtype_str}>",
+                f" comp::less<{dtype_str}, {dtype_str}>",
                 ">"
             ])
 
@@ -317,8 +310,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
                 " AccASoftmax,"
                 " AType,"
                 f" {bias},"
-                # Note: Not sure why the default comp::less does not work...
-                f" comp::less_equal<{dtype_str}, {dtype_str}>",
+                f" comp::less<{dtype_str}, {dtype_str}>",
                 ">"
             ])
 
@@ -357,8 +349,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
                 " AccAVMatMul,"
                 " OutAVMatMul,"
                 f" {bias},"
-                # Note: Not sure why the default comp::less does not work...
-                f" comp::less_equal<{dtype_str}, {dtype_str}>",
+                f" comp::less<{dtype_str}, {dtype_str}>",
                 ">"
             ])
 
@@ -745,14 +736,16 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             # implementation details of components internal to "attention"
             *pragmas,
             # Connect the attention operator to the input and output streams
-            "attention("
-            f"q_{self.hls_sname()}, "
-            f"k_{self.hls_sname()}, "
-            f"v_{self.hls_sname()}, "
-            f"out_{self.hls_sname()}, "
+            f"for(std::size_t i = 0; i < {self.iterations}; ++i) {{",
+            "    attention("
+            f"    q_{self.hls_sname()}, "
+            f"    k_{self.hls_sname()}, "
+            f"    v_{self.hls_sname()}, "
+            f"    out_{self.hls_sname()}, "
             # TODO: Does not work for "input" mode mask
-            "attention_mask"
+            "    attention_mask"
             ");",
+            "}"
         ]
 
     def dataoutstrm(self):

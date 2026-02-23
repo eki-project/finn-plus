@@ -69,7 +69,7 @@
         "synth_clk_period_ns": [10],
     },
 
-    #KWS (MLP)
+    # KWS (MLP)
     {
         "dut": ["kws"],
         "live_fifo_sizing": [True],
@@ -109,37 +109,86 @@
         "synth_clk_period_ns": [10],
     },
 
-    # Synthetic non-linear models
+    ### NEW Transformer models (dvc-imported from finn-transformers repo):
+    # benchmark model ("dummy")
     {
-        "dut": ["synthetic_nonlinear"],
-        "dim": [64],
-        "kernel_size": [5],
-        "ch": [8],
-        "simd": [8],
-        "pe": [8],
-        "parallel_window": [1],
-
-        "lb_num_layers": [1],
-        "rb_num_layers": [4, 8, 16],
-
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/benchmark"],
+        "model_path": ["models/transformer/finn-transformers/benchmark/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/benchmark/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/benchmark/out.npy"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
+        "target_fps": [1000],
     },
+
+    # language model
     {
-        "dut": ["synthetic_nonlinear"],
-        "dim": [64],
-        "kernel_size": [5],
-        "ch": [8],
-        "simd": [1],
-        "pe": [1],
-        "parallel_window": [0],
-
-        "lb_num_layers": [1],
-        "rb_num_layers": [4, 8, 16],
-
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/language"],
+        "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    }
+        "target_fps": [1000],
+    },
+
+    # radioml model
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/radioml"],
+        "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1000],
+    },
+
+    # vision model
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/vision"],
+        "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1000],
+    },
+
+    # Synthetic non-linear models
+    # {
+    #     "dut": ["synthetic_nonlinear"],
+    #     "dim": [64],
+    #     "kernel_size": [5],
+    #     "ch": [8],
+    #     "simd": [8],
+    #     "pe": [8],
+    #     "parallel_window": [1],
+
+    #     "lb_num_layers": [1],
+    #     "rb_num_layers": [4, 8, 16],
+
+    #     "live_fifo_sizing": [True],
+    #     "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #     "synth_clk_period_ns": [10],
+    # },
+    # {
+    #     "dut": ["synthetic_nonlinear"],
+    #     "dim": [64],
+    #     "kernel_size": [5],
+    #     "ch": [8],
+    #     "simd": [1],
+    #     "pe": [1],
+    #     "parallel_window": [0],
+
+    #     "lb_num_layers": [1],
+    #     "rb_num_layers": [4, 8, 16],
+
+    #     "live_fifo_sizing": [True],
+    #     "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #     "synth_clk_period_ns": [10],
+    # }
 ]
