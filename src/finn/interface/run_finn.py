@@ -495,11 +495,22 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
 
 @click.group(
     help='Produce hardware designs from ONNX models. To get started use "finn build" '
-    "(or run or auto) to start a FINN flow."
+    "(or run or auto) to start a FINN flow.",
+    invoke_without_command=True,
 )
-def main_group() -> None:
+@click.option("--version", "-v", is_flag=True)
+def main_group(version: bool) -> None:
     """Main click group."""  # noqa
-    pass
+    if version:
+        import importlib_metadata
+
+        print("FINN+ " + importlib_metadata.version("finn-plus") + "\n")
+        sys.exit()
+    else:
+        ctx = click.get_current_context()
+        if ctx.invoked_subcommand is None:
+            print(ctx.get_help())
+            sys.exit()
 
 
 def get_function_args() -> dict:
