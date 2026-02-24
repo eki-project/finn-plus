@@ -26,6 +26,9 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""Annotate the estimate of clock cycles per sample taken by each fpgadataflow node as an attribute
+on the node.
+"""
 
 import qonnx.custom_op.registry as registry
 from qonnx.core.modelwrapper import ModelWrapper

@@ -526,11 +526,15 @@ def get_fifo_split_configs(
     """Break non-power-of-2 sized FIFO depths into several ones."""
 
     def floor_pow2(x: int) -> int:
+        """Return the largest power of 2 less than or equal to x."""
         if (x & (x - 1) == 0) and x != 0:
             return x
         return 1 << ((x - 1).bit_length() - 1)
 
     def decompose_pow2(x: int) -> list[int]:
+        """Decompose x into a sum of powers of 2,
+        with each power of 2 no larger than max_qsrl_depth.
+        """
         if x <= max_qsrl_depth:
             return [x]
         r = floor_pow2(x)
