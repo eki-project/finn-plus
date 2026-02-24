@@ -28,11 +28,17 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from qonnx.custom_op.registry import getCustomOp
+from typing import TYPE_CHECKING, cast
 
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
-def dataflow_performance(model):
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+
+def dataflow_performance(model: "ModelWrapper") -> dict[str, int | str]:
     """Extract key performance indicators from given model with dataflow nodes.
     Note that the latency (critical path) analysis is very pessimistic, it
     assumes no overlap between executions and simply sums the expected cycles
@@ -54,8 +60,8 @@ def dataflow_performance(model):
 
     for node in model.graph.node:
         if is_hls_node(node) or is_rtl_node(node):
-            inst = getCustomOp(node)
-            node_cycles = int(inst.get_nodeattr("cycles_estimate"))
+            inst = cast("HWCustomOp", getCustomOp(node))
+            node_cycles = int(cast("int", inst.get_nodeattr("cycles_estimate")))
             if node_cycles > max_cycles:
                 max_cycles = node_cycles
                 max_node_name = node.name
@@ -67,7 +73,7 @@ def dataflow_performance(model):
                     max_pred_latency = 0
                 else:
                     # find max of any of predecessors
-                    pred_latencies = map(lambda x: latency_at_node_output[x.name], predecessors)
+                    pred_latencies = (latency_at_node_output[x.name] for x in predecessors)
                     max_pred_latency = max(pred_latencies)
                 latency_at_node_output[node.name] = node_cycles + max_pred_latency
     critical_path_cycles = max(latency_at_node_output.values())
