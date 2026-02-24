@@ -162,9 +162,9 @@ class NodeConnectedSimulationController(SimulationController):
                                 cycles_results[sim_name] = cycles
                                 samples_results[sim_name] = samps
                                 intervals_results[sim_name] = intervals
-                                fifo_cycles_until_first_valid_results[
-                                    sim_name
-                                ] = fifo_cycles_until_first_valid
+                                fifo_cycles_until_first_valid_results[sim_name] = (
+                                    fifo_cycles_until_first_valid
+                                )
                                 timeout_result = timeout_result or timeout
                         except Exception as e:  # noqa
                             self.console.log(f"Simulation failed: {e}")
@@ -199,9 +199,9 @@ class NodeConnectedSimulationController(SimulationController):
                             ) = result
                             # Only update if not already collected
                             if sim_name not in fifo_results:
-                                fifo_cycles_until_first_valid_results[
-                                    sim_name
-                                ] = fifo_cycles_until_first_valid
+                                fifo_cycles_until_first_valid_results[sim_name] = (
+                                    fifo_cycles_until_first_valid
+                                )
                                 fifo_depths[sim_name] = fifo_depth
                                 fifo_results[sim_name] = fifo_util
                                 cycles_results[sim_name] = cycles
@@ -460,7 +460,7 @@ class NodeConnectedSimulation(Simulation):
         depth: int | list[list[int]] | None = None,
         max_cycles: int | None = None,
         fifo_first_valid_cycles: list[list[int]] | None = None,
-    ) -> tuple[dict[int, dict[str, str | list[int]]], bool]:
+    ) -> tuple[dict[int, dict[str, list[int]]], bool]:
         """Simulate the given number of samples for every layer. Layers are completely isolated
         and simulated in parallel. Simulation data is returned as a dict (by node name as index).
         """
@@ -547,6 +547,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                         "out_bitwidth": -1,
                         "out_initial_fifo_depths": -1,
                         "out_final_fifo_depths": -1,
+                        "fifo_cycles_until_first_valid": -1,
                         "minimization_iterations": 0,
                         "minimization_order": "TODO",  # TODO
                         "simulation_time": -1,
@@ -572,21 +573,22 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             for idx in range(len(layerdata["fifo_utilization"])):
                 name: str = cast("str", layerdata["name"])
                 df_data[name][idx]["out_initial_fifo_depths"] = layerdata["fifo_utilization"][idx]
+                df_data[name][idx]["fifo_cycles_until_first_valid"] = layerdata[
+                    "fifo_cycles_until_first_valid"
+                ][idx]
 
         # Create fifo_depths (indexed by layer index and then stream index)
         fifo_depths: list[list[int]] = []  # Each entry is a list of fifo sizes for that node
         for val in initial_fifo_depths.values():
-            fifo_depths.append([v + 1 for v in val["fifo_utilization"]])
+            fifo_depths.append([max(v + 1, 32) for v in val["fifo_utilization"]])
         fifo_first_valid_cycles: list[list[int]] = []
         for val in initial_fifo_depths.values():
             fifo_first_valid_cycles.append(
-                [v + math.ceil(v*0.01) for v in val["fifo_cycles_until_first_valid"]]
+                [v + math.ceil(v * 0.01) for v in val["fifo_cycles_until_first_valid"]]
             )  # Add 1% cycles grace period
 
         # Max cycles for any simulation
-        sim_cycles: int = max(
-            [val["cycles"] for val in initial_fifo_depths.values()]
-        )  # type: ignore
+        sim_cycles: int = max([val["cycles"] for val in initial_fifo_depths.values()])  # type: ignore
 
         # Extract bitwidths from outstream widths of hw nodes
         bit_widths = []
@@ -654,7 +656,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 percentage = int(100.0 * float(i + 1) / float(len(fifo_depths)))
                 log.info(
                     f"[ [bold green]{percentage}%[/bold green] ] "
-                    f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Simulation completed "
+                    f"[ {i + 1}.{j + 1} / {len(fifo_depths)} ] Simulation completed "
                     f"({iterations_needed} iterations).",
                     extra={"markup": True, "highlighter": None},
                 )
@@ -749,7 +751,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
         new_data, timeout = sim.simulate(
             test_depths,
-            max_cycles=min(math.ceil(sim_cycles * 1.05), sim_cycles + 10 * len(test_depths)),
+            max_cycles=min(
+                math.ceil(sim_cycles * 1.05), math.ceil(sim_cycles) + 10 * len(test_depths)
+            ),
             fifo_first_valid_cycles=fifo_first_valid_cycles,
         )
 
@@ -896,7 +900,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         valid_blocks = self._get_valid_block_counts(1, upper_blocks - 1, bw)
         if not valid_blocks:
             # No valid configurations exist
-            return original_size
+            return original_size, iterations
         # Test the maximum valid block count first (smallest depth)
         max_valid_blocks = valid_blocks[-1]
         _, max_d = calculate_bram_depth_range(max_valid_blocks, bw)
