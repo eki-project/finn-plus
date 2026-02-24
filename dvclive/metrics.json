@@ -1,0 +1,21 @@
+{
+    "status": "failed",
+    "estimate": {
+        "resources": {
+            "LUT": 67427.0,
+            "DSP": 684.0,
+            "BRAM_18K": 1070.0,
+            "URAM": 0.0
+        }
+    },
+    "time": {
+        "step_mobilenet_streamline": 26,
+        "step_mobilenet_lower_convs": 1,
+        "step_mobilenet_convert_to_hw_layers_separate_th": 1,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 5,
+        "total_build_time": 33
+    }
+}
