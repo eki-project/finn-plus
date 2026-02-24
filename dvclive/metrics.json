@@ -1,0 +1,24 @@
+{
+    "status": "failed",
+    "estimate": {
+        "resources": {
+            "LUT": 10628.0,
+            "DSP": 1080.0,
+            "BRAM_18K": 379.0,
+            "URAM": 0.0
+        }
+    },
+    "time": {
+        "step_tidy_up": 0,
+        "step_pre_streamline": 0,
+        "step_streamline": 5,
+        "step_convert_to_hw": 0,
+        "step_convert_final_layers": 0,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_target_fps_parallelization": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 1,
+        "total_build_time": 6
+    }
+}
