@@ -16,7 +16,7 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
-FIFODepthConfig: TypeAlias = dict[str, dict[str, str | list[int]]]
+FIFODepthConfig: TypeAlias = dict[str, dict[str, list[int]]]
 
 
 def store_fifo_data(

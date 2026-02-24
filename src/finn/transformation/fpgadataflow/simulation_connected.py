@@ -479,7 +479,7 @@ class NodeConnectedSimulation(Simulation):
         depth: int | list[list[int]] | None = None,
         max_cycles: int | None = None,
         fifo_first_valid_cycles: list[list[int]] | None = None,
-    ) -> tuple[dict[int, dict[str, str | list[int]]], bool]:
+    ) -> tuple[dict[int, dict[str, list[int]]], bool]:
         """Simulate the given number of samples for every layer. Layers are completely isolated
         and simulated in parallel. Simulation data is returned as a dict (by node name as index).
         """
@@ -564,12 +564,12 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         # Create fifo_depths (indexed by layer index and then stream index)
         fifo_depths: list[list[int]] = []  # Each entry is a list of fifo sizes for that node
         for val in initial_fifo_depths.values():
-            fifo_depths.append([v + 1 for v in val["fifo_utilization"]])
+            fifo_depths.append([max(v + 1, 32) for v in val["fifo_utilization"]])
         fifo_first_valid_cycles: list[list[int]] = []
         for val in initial_fifo_depths.values():
             fifo_first_valid_cycles.append(
-                [v + 10 for v in val["fifo_cycles_until_first_valid"]]
-            )  # Add 10 cycles grace period
+                [v + math.ceil(v * 0.01) for v in val["fifo_cycles_until_first_valid"]]
+            )  # Add 1% cycles grace period
         return fifo_depths, fifo_first_valid_cycles
 
     def get_minimization_order_indices(
@@ -635,6 +635,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                         "onnx_index": nodeindex,
                         "out_bitwidth": -1,
                         "out_initial_fifo_depths": -1,
+                        "fifo_cycles_until_first_valid": -1,
                         "successor_node": ", ".join(
                             [node.name for node in model.find_consumers(node.output[i])]
                         ),
@@ -665,6 +666,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             for idx in range(len(layerdata["fifo_utilization"])):
                 name: str = cast("str", layerdata["name"])
                 df_data[name][idx]["out_initial_fifo_depths"] = layerdata["fifo_utilization"][idx]
+                df_data[name][idx]["fifo_cycles_until_first_valid"] = layerdata[
+                    "fifo_cycles_until_first_valid"
+                ][idx]
 
         # List of list of fifo depths
         fifo_depths, fifo_first_valid_cycles = self.create_starting_fifo_depths(initial_fifo_depths)
@@ -902,7 +906,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
         new_data, timeout = sim.simulate(
             test_depths,
-            max_cycles=min(math.ceil(sim_cycles * 1.05), sim_cycles + 10 * len(test_depths)),
+            max_cycles=min(
+                math.ceil(sim_cycles * 1.05), math.ceil(sim_cycles) + 10 * len(test_depths)
+            ),
             fifo_first_valid_cycles=fifo_first_valid_cycles,
         )
 
@@ -1049,7 +1055,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         valid_blocks = self._get_valid_block_counts(1, upper_blocks - 1, bw)
         if not valid_blocks:
             # No valid configurations exist
-            return original_size
+            return original_size, iterations
         # Test the maximum valid block count first (smallest depth)
         max_valid_blocks = valid_blocks[-1]
         _, max_d = calculate_bram_depth_range(max_valid_blocks, bw)
