@@ -1,5 +1,4 @@
 """Node connected parallel simulations."""
-
 import glob
 import json
 import math
@@ -8,6 +7,8 @@ import pandas as pd
 import time
 import traceback
 from concurrent.futures import Future, ThreadPoolExecutor
+from copy import deepcopy
+from enum import Enum
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -23,6 +24,24 @@ from finn.transformation.fpgadataflow.simulation_controller import SimulationCon
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
+
+
+class MinimizationOrder(Enum):
+    """The order in which the search algorithm minimizes the FIFO depths."""
+
+    NODE_ORDER = 0
+    REVERSE_NODE_ORDER = 1
+    LARGEST_BITWIDTH_DIFF_FIRST = 2
+    SMALLEST_BITWIDTH_DIFF_FIRST = 3
+
+    # Non black-box model orders
+    AFTER_THRESHOLDS_FIRST = 4
+    AFTER_DWC_FIRST = 5
+
+    # Half black-box
+    # If we ran a sim before, we know the largest FIFOs, so start with these.
+    # This strategy might work, if the changes to the model are small enough
+    REUSE_PREVIOUS_ORDER = 6
 
 
 class NodeConnectedSimulationController(SimulationController):
@@ -482,7 +501,6 @@ class NodeConnectedSimulation(Simulation):
         controller.run(initial_depth, output_json, max_cycles, fifo_first_valid_cycles)
         end = time.time()
         log.debug(f"Simulation took {end - start} seconds!")
-        print(f"Simulation took {end - start} seconds!")
 
         # Load the merged data from JSON
         merged_data = json.loads(output_json.read_text())
@@ -509,6 +527,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fpgapart: str,
         clk_ns: float,
         cfg: DataflowBuildConfig,
+        minimization_orders: list[MinimizationOrder] | None = None,
         max_qsrl_depth: int = 256,
         vivado_ram_style: str = "auto",
         quality_of_results: str = "default",
@@ -521,6 +540,76 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         self.max_qsrl_depth = max_qsrl_depth
         self.vivado_ram_style = vivado_ram_style
         self.quality_of_results = quality_of_results
+        if minimization_orders is not None:
+            self.minimization_orders = minimization_orders
+        else:
+            self.minimization_orders = [
+                MinimizationOrder.LARGEST_BITWIDTH_DIFF_FIRST,
+                MinimizationOrder.NODE_ORDER,
+                MinimizationOrder.REVERSE_NODE_ORDER,
+                MinimizationOrder.SMALLEST_BITWIDTH_DIFF_FIRST,
+            ]
+
+        self.final_depths: dict[MinimizationOrder, list[list[int]] | None] = dict.fromkeys(
+            self.minimization_orders
+        )
+
+    def create_starting_fifo_depths(
+        self, initial_fifo_depths: dict
+    ) -> tuple[list[list[int]], list[list[int]]]:
+        """From the given initial_fifo_depths returned by the simulation, create a starting
+        FIFO depth configuration that can be modified sequentially by the minimization algorithm.
+        Also return the fifo_first_valid_cycles.
+        """
+        # Create fifo_depths (indexed by layer index and then stream index)
+        fifo_depths: list[list[int]] = []  # Each entry is a list of fifo sizes for that node
+        for val in initial_fifo_depths.values():
+            fifo_depths.append([v + 1 for v in val["fifo_utilization"]])
+        fifo_first_valid_cycles: list[list[int]] = []
+        for val in initial_fifo_depths.values():
+            fifo_first_valid_cycles.append(
+                [v + 10 for v in val["fifo_cycles_until_first_valid"]]
+            )  # Add 10 cycles grace period
+        return fifo_depths, fifo_first_valid_cycles
+
+    def get_minimization_order_indices(
+        self,
+        min_order: MinimizationOrder,
+        model: ModelWrapper,
+        bitwidths: list[int],
+    ) -> list[int]:
+        """Given a MinimizationOrder, return the list of indices to
+        access/minimize `fifo_depths` for that order. For example, NODE_ORDER would return
+        [0,1,2,...] and NODE_ORDER_REVERSED [N, N-1, N-2, ..., 0].
+        """
+        assert len(model.graph.node) == len(bitwidths)
+        match min_order:
+            case MinimizationOrder.NODE_ORDER:
+                return list(range(len(model.graph.node)))
+            case MinimizationOrder.REVERSE_NODE_ORDER:
+                return list(range(len(model.graph.node)))[::-1]
+            case (
+                MinimizationOrder.LARGEST_BITWIDTH_DIFF_FIRST
+                | MinimizationOrder.SMALLEST_BITWIDTH_DIFF_FIRST
+            ):
+                diffs: list[tuple[int, int]] = []  # (index, diff)
+                for i in range(len(model.graph.node)):
+                    hw: HWCustomOp = getCustomOp(model.graph.node[i])
+                    in_width = max(
+                        [hw.get_instream_width(j) for j in range(len(model.graph.node[i].input))]
+                    )
+                    out_width = max(
+                        [hw.get_outstream_width(j) for j in range(len(model.graph.node[i].output))]
+                    )
+                    diffs.append((i, in_width - out_width))
+                sorted_order = sorted(
+                    diffs,
+                    key=lambda x: x[1],
+                    reverse=(min_order == MinimizationOrder.LARGEST_BITWIDTH_DIFF_FIRST),
+                )
+                return [idx for idx, diff in sorted_order]
+            case _:
+                raise NotImplementedError()
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Run layer parallel simulations."""
@@ -546,15 +635,19 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                         "onnx_index": nodeindex,
                         "out_bitwidth": -1,
                         "out_initial_fifo_depths": -1,
-                        "out_final_fifo_depths": -1,
-                        "minimization_iterations": 0,
-                        "minimization_order": "TODO",  # TODO
-                        "simulation_time": -1,
                         "successor_node": ", ".join(
                             [node.name for node in model.find_consumers(node.output[i])]
                         ),
                     }
                 )
+                for min_order in self.minimization_orders:
+                    df_data[node.name][-1][f"out_final_depth_{min_order.name}"] = -1
+                    df_data[node.name][-1][f"simulation_time_{min_order.name}"] = -1
+                    df_data[node.name][-1][f"minimization_iterations_{min_order.name}"] = -1
+
+        # TODO: The final depths contained a lot of -1 (default values).
+        # Did we need to write the initial depths into there?
+        # Or in case of minimization skip we likely need to write the values still.
 
         # Running the initial simulation
         log.info("Running initial node-connected simulation.")
@@ -573,15 +666,8 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 name: str = cast("str", layerdata["name"])
                 df_data[name][idx]["out_initial_fifo_depths"] = layerdata["fifo_utilization"][idx]
 
-        # Create fifo_depths (indexed by layer index and then stream index)
-        fifo_depths: list[list[int]] = []  # Each entry is a list of fifo sizes for that node
-        for val in initial_fifo_depths.values():
-            fifo_depths.append([v + 1 for v in val["fifo_utilization"]])
-        fifo_first_valid_cycles: list[list[int]] = []
-        for val in initial_fifo_depths.values():
-            fifo_first_valid_cycles.append(
-                [v + 10 for v in val["fifo_cycles_until_first_valid"]]
-            )  # Add 10 cycles grace period
+        # List of list of fifo depths
+        fifo_depths, fifo_first_valid_cycles = self.create_starting_fifo_depths(initial_fifo_depths)
 
         # Max cycles for any simulation
         sim_cycles: int = max(
@@ -621,43 +707,138 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         # Preserve original baseline depths for testing (deep copy)
         original_fifo_depths = [row[:] for row in fifo_depths]
 
-        # Minimize FIFO depths using binary search over BRAM block counts
-        for i in range(len(fifo_depths)):
-            for j in range(len(fifo_depths[i])):
-                if not needs_minimization[i][j]:
-                    df_data[model.graph.node[i].name][j]["simulation_time"] = 0.0
-                    log.debug(
-                        f"[ {i + 1}.{j + 1} / {len(fifo_depths)} ] "
-                        f"Skipping minimization for this stream."
+        # Total minimizations
+        total_minimizations = sum(len(streams) for streams in fifo_depths)
+
+        for k, minimization_order in enumerate(self.minimization_orders):
+            # Create a new empty FIFO depth list
+            fifo_depths, fifo_first_valid_cycles = self.create_starting_fifo_depths(
+                initial_fifo_depths
+            )
+
+            # Minimize FIFO depths using binary search over BRAM block counts
+            idx_order = self.get_minimization_order_indices(minimization_order, model, bit_widths)
+
+            log.info(
+                f"Minimizing using order: {minimization_order.name}. Index order is: {idx_order}"
+            )
+
+            done = 0
+            for i in idx_order:
+                for j in range(len(fifo_depths[i])):
+                    if not needs_minimization[i][j]:
+                        df_data[model.graph.node[i].name][j][
+                            f"simulation_time_{minimization_order.name}"
+                        ] = 0.0
+                        df_data[model.graph.node[i].name][j][
+                            f"out_final_depth_{minimization_order.name}"
+                        ] = fifo_depths[i][j]
+                        df_data[model.graph.node[i].name][j][
+                            f"minimization_iterations_{minimization_order.name}"
+                        ] = 0
+                        log.info(
+                            f"[ {i + 1}.{j + 1} / {len(fifo_depths)} ] "
+                            f"Skipping minimization for this stream."
+                        )
+                        done += 1
+                        continue
+
+                    minimization_start = time.time()
+                    minimized_depth, iterations_needed = self._minimize_fifo_depth(
+                        i,
+                        j,
+                        fifo_depths,
+                        original_fifo_depths,
+                        bit_widths,
+                        initial_fifo_depths,
+                        sim,
+                        sim_cycles,
+                        fifo_first_valid_cycles,
                     )
-                    continue
+                    minimization_time = time.time() - minimization_start
 
-                minimization_start = time.time()
-                minimized_depth, iterations_needed = self._minimize_fifo_depth(
-                    i,
-                    j,
-                    fifo_depths,
-                    original_fifo_depths,
-                    bit_widths,
-                    initial_fifo_depths,
-                    sim,
-                    sim_cycles,
-                    fifo_first_valid_cycles,
+                    # Store the minimized size
+                    fifo_depths[i][j] = minimized_depth
+                    done += 1
+
+                    # Store data into dataframe
+                    df_data[model.graph.node[i].name][j][
+                        f"simulation_time_{minimization_order.name}"
+                    ] = minimization_time
+                    df_data[model.graph.node[i].name][j][
+                        f"minimization_iterations_{minimization_order.name}"
+                    ] = iterations_needed
+                    df_data[model.graph.node[i].name][j][
+                        f"out_final_depth_{minimization_order.name}"
+                    ] = fifo_depths[i][j]
+                    log.debug(
+                        f"Set node/stream {i}.{j} to depth {fifo_depths[i][j]}, in "
+                        f"{iterations_needed} iterations and {minimization_time} "
+                        f"seconds. (To {minimization_order.name})"
+                    )
+
+                    percentage = int(100.0 * float(done) / float(total_minimizations))
+                    log.info(
+                        f"[ [bold green]{percentage}%[/bold green] ] "
+                        f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Simulation completed "
+                        f"({iterations_needed} iterations).",
+                        extra={"markup": True, "highlighter": None},
+                    )
+
+            self.final_depths[minimization_order] = deepcopy(fifo_depths)
+
+            order_percent = int(100.0 * float(k + 1) / float(len(self.minimization_orders)))
+            log.info(
+                f"[ [bold gold1]{order_percent}%[/bold gold1] ] "
+                f"-----  Minimization order {minimization_order.name} completed -----",
+                extra={"markup": True, "highlighter": None},
+            )
+
+        # Store dataframe
+        df_keys = list(df_data[model.graph.node[0].name][0].keys())
+        log.debug(f"Saving keys: {df_keys} + [node, stream]")
+        df_dict = {}
+        df_dict["node"] = []
+        df_dict["stream"] = []
+        for k in df_keys:
+            df_dict[k] = []
+        for node, nodedata in df_data.items():
+            for streamindex, streamdata in enumerate(nodedata):
+                df_dict["node"].append(node)
+                df_dict["stream"].append(streamindex)
+                for key in streamdata.keys():
+                    df_dict[key].append(streamdata[key])
+
+        df = pd.DataFrame(df_dict)
+        model = store_fifo_data(
+            model,
+            df,
+            Path(self.cfg.output_dir) / "report" / "fifo_data.csv",
+            delete_existing=False,
+            store_html=True,
+        )
+
+        # Use the smallest fifo depths found (by total bytes)
+        smallest_order = self.minimization_orders[0]
+        smallest_size = None
+        for order in self.minimization_orders:
+            current_size = 0
+            depths = self.final_depths[order]
+            if depths is None:
+                raise FINNInternalError(
+                    f"Expected FIFO sizes for minimization order " f"{order.name}, but found None."
                 )
-                minimization_time = time.time() - minimization_start
-                df_data[model.graph.node[i].name][j]["simulation_time"] = minimization_time
-                df_data[model.graph.node[i].name][j]["minimization_iterations"] = iterations_needed
+            for i in range(len(depths)):
+                for j in range(len(depths[i])):
+                    current_size += depths[i][j] * bit_widths[i][j]
 
-                # Store the minimized size
-                fifo_depths[i][j] = minimized_depth
+            if smallest_size is None or current_size < smallest_size:
+                smallest_size = current_size
+                smallest_order = order
 
-                percentage = int(100.0 * float(i + 1) / float(len(fifo_depths)))
-                log.info(
-                    f"[ [bold green]{percentage}%[/bold green] ] "
-                    f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Simulation completed "
-                    f"({iterations_needed} iterations).",
-                    extra={"markup": True, "highlighter": None},
-                )
+        # Set the result fifo depths
+        fifo_depths = self.final_depths[smallest_order]
+        assert fifo_depths is not None
 
         log.info("Final FIFO depths:")
         for i in range(len(fifo_depths)):
@@ -672,34 +853,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         with writeback_path.open("w") as f:
             json.dump(json_results, f)
         log.info(f"Wrote results back to {writeback_path}")
-
-        # Write final FIFO sizes into dataframe
-        for i in range(len(fifo_depths)):
-            for j in range(len(fifo_depths[i])):
-                df_data[model.graph.node[i].name][j]["out_final_fifo_depths"] = fifo_depths[i][j]
-
-        # Store dataframe
-        df_keys = list(df_data[model.graph.node[0].name][0].keys())
-        df_dict = {}
-        df_dict["node"] = []
-        df_dict["stream"] = []
-        for k in df_keys:
-            df_dict[k] = []
-        for node, nodedata in df_data.items():
-            for streamindex, streamdata in enumerate(nodedata):
-                df_dict["node"].append(node)
-                df_dict["stream"].append(streamindex)
-                for key in df_keys:
-                    df_dict[key].append(streamdata[key])
-
-        df = pd.DataFrame(df_dict)
-        model = store_fifo_data(
-            model,
-            df,
-            Path(self.cfg.output_dir) / "report" / "fifo_data.csv",
-            delete_existing=False,
-            store_html=True,
-        )
 
         return model, False
 
