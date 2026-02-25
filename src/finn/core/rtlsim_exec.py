@@ -198,7 +198,7 @@ def rtlsim_exec_cppxsi(
 
     # prepare the C++ sim driver template
     # TODO: There has to be a better solution than using the relative path
-    finnxsi_dir = Path(__file__).parent.parent.parent.parent / "finn_xsi" / "finn_xsi"
+    finnxsi_dir = Path(__file__).parent.parent.parent.parent / "finn_xsi"
     fifosim_config_fname = finnxsi_dir / "rtlsim_config.hpp.template"
     with fifosim_config_fname.open() as f:
         fifsom_config_template = f.read()
