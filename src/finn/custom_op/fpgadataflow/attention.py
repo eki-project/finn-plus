@@ -19,6 +19,7 @@ from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.util.basic import calculate_matvec_accumulator_range
 
 # Derive custom operators form the FINN base custom op
+from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # FINN logging
@@ -307,7 +308,7 @@ class ScaledDotProductAttention(HWCustomOp):
                 # activation
                 bias = self.get_nodeattr("BiasActQKMatMul")
                 # Applies thresholding activation in python to the input
-                return multithreshold(x, thresholds) + bias
+                return multithreshold(x, thresholds, channels_last=True) + bias
             # If not thresholds, assume identity function
             return x
 
@@ -324,7 +325,7 @@ class ScaledDotProductAttention(HWCustomOp):
                 # activation
                 bias = self.get_nodeattr("BiasActASoftmax")
                 # Applies thresholding activation in python to the input
-                return multithreshold(x, thresholds) + bias
+                return multithreshold(x, thresholds, channels_last=True) + bias
             # If not thresholds, assume identity function
             return x
 
@@ -342,7 +343,7 @@ class ScaledDotProductAttention(HWCustomOp):
                 # activation
                 bias = self.get_nodeattr("BiasActAVMatMul")
                 # Applies thresholding activation in python to the input
-                return multithreshold(x, thresholds) + bias
+                return multithreshold(x, thresholds, channels_last=True) + bias
             # If not thresholds, assume identity function
             return x
 
@@ -423,14 +424,11 @@ class ScaledDotProductAttention(HWCustomOp):
     def execute_node(self, context, graph):
         # Get the configured execution mode
         mode = self.get_nodeattr("exec_mode")
-        # Lookup table mapping execution modes to implementing methods
-        exec_fns = {
-            "python": self._execute_node_python,
-            "cppsim": self._execute_node_cppsim,
-            "rtlsim": self._execute_node_python,  # TODO: Revert to rtlsim
-        }
-        # Select and execute the function by mode string
-        exec_fns[mode](context, graph)
+        if mode == "python":
+            self._execute_node_python(context, graph)
+        else:
+            # Delegate execution to parent class for cppsim and rtlsim
+            HLSBackend.execute_node(self, context, graph)
 
     # Optional node verification
     def verify_node(self):
@@ -600,13 +598,22 @@ class ScaledDotProductAttention(HWCustomOp):
 
     # Widths of the input data stream of the input at index ind
     def get_instream_width(self, ind=0):
-        # Get the number of bits used to represent the input
-        i_bits = self.get_input_datatype(ind).bitwidth()
-        # Parallelism is the number of elements in the last dimension of the
-        # folded input
-        *_, elems = self.get_folded_input_shape(ind)
-        # Width of a stream receiving input elements in parallel
-        return elems * i_bits
+        if ind in (0, 1, 2):
+            # Get the number of bits used to represent the input
+            i_bits = self.get_input_datatype(ind).bitwidth()
+            # Parallelism is the number of elements in the last dimension of the
+            # folded input
+            *_, elems = self.get_folded_input_shape(ind)
+            # Width of a stream receiving input elements in parallel
+            return elems * i_bits
+
+        if ind == 3 and self.get_nodeattr("mask_mode") == "input":
+            mask_bits = self.get_input_datatype(ind).bitwidth()
+            *_, elems = self.get_folded_input_shape(ind)
+            return elems * mask_bits
+
+        # Any further inputs are either a fixed mask or fixed thresholds
+        return 0  # 0 = not exposed as stream
 
     # Widths of the output data stream of the output at index ind
     def get_outstream_width(self, ind=0):
