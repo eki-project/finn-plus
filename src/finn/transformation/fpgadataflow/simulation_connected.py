@@ -60,9 +60,9 @@ class NodeConnectedSimulationController(SimulationController):
             for pattern in shm_patterns:
                 for filepath in glob.glob(pattern):
                     try:
-                        os.unlink(filepath)
+                        Path(filepath).unlink()
                         removed_count += 1
-                    except (FileNotFoundError, PermissionError):
+                    except (FileNotFoundError, PermissionError):  # noqa: PERF203
                         # File might already be removed or we don't have permission
                         pass
 
@@ -460,7 +460,7 @@ class NodeConnectedSimulation(Simulation):
         depth: int | list[list[int]] | None = None,
         max_cycles: int | None = None,
         fifo_first_valid_cycles: list[list[int]] | None = None,
-    ) -> tuple[dict[int, dict[str, str | list[int]]], bool]:
+    ) -> tuple[dict[int, dict[str, list[int]]], bool]:
         """Simulate the given number of samples for every layer. Layers are completely isolated
         and simulated in parallel. Simulation data is returned as a dict (by node name as index).
         """
@@ -580,13 +580,11 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fifo_first_valid_cycles: list[list[int]] = []
         for val in initial_fifo_depths.values():
             fifo_first_valid_cycles.append(
-                [v + math.ceil(v*0.01) for v in val["fifo_cycles_until_first_valid"]]
+                [v + math.ceil(v * 0.01) for v in val["fifo_cycles_until_first_valid"]]
             )  # Add 1% cycles grace period
 
         # Max cycles for any simulation
-        sim_cycles: int = max(
-            [val["cycles"] for val in initial_fifo_depths.values()]
-        )  # type: ignore
+        sim_cycles: int = cast("int", max([val["cycles"] for val in initial_fifo_depths.values()]))
 
         # Extract bitwidths from outstream widths of hw nodes
         bit_widths = []
@@ -654,10 +652,20 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 percentage = int(100.0 * float(i + 1) / float(len(fifo_depths)))
                 log.info(
                     f"[ [bold green]{percentage}%[/bold green] ] "
-                    f"[ {i+1}.{j+1} / {len(fifo_depths)} ] Simulation completed "
+                    f"[ {i + 1}.{j + 1} / {len(fifo_depths)} ] Simulation completed "
                     f"({iterations_needed} iterations).",
                     extra={"markup": True, "highlighter": None},
                 )
+
+        # Make sure that all FIFOs with depth > 256 use a full BRAM block,
+        # since partial blocks are not supported by Vivado HLS
+        for i in range(len(fifo_depths)):
+            for j in range(len(fifo_depths[i])):
+                if fifo_depths[i][j] > 256:
+                    bw = bit_widths[i][j]
+                    blocks = calculate_bram_blocks(fifo_depths[i][j], bw)
+                    _, max_d = calculate_bram_depth_range(blocks, bw)
+                    fifo_depths[i][j] = max_d
 
         log.info("Final FIFO depths:")
         for i in range(len(fifo_depths)):

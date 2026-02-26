@@ -28,7 +28,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Collection of default build steps for building and verifying a dataflow
- accelerator from an ONNX model."""
+accelerator from an ONNX model."""
 
 import json
 import numpy as np
@@ -638,56 +638,56 @@ def step_hw_ipgen(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
-
-
-
-
 # TODO: Both this and the step_size_... steps will be reworked before merging into dev
 def step_build_simulation(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Build the simulation binaries for isolated and connected simulations."""
-    from finn.transformation.fpgadataflow.simulation_build import BuildSimulation, SimulationType
+    from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
+
     model = model.transform(
         BuildSimulation(
-            cfg._resolve_fpga_part(), # noqa
-            cfg._resolve_hls_clk_period(), # noqa
+            cfg._resolve_fpga_part(),  # noqa
+            cfg._resolve_hls_clk_period(),  # noqa
             cfg.functional_simulation,
         )
     )
     return model
 
+
 def step_size_fifo_isolated(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Simulate layers in isolation and use the observed behaviour to size the FIFOs accordingly."""
-    from finn.transformation.fpgadataflow.simulation_isolated import RunLayerIsolatedSimulation
     from pathlib import Path
+
+    from finn.transformation.fpgadataflow.simulation_isolated import RunLayerIsolatedSimulation
+
     model = model.transform(
-        RunLayerIsolatedSimulation( 
-            cfg._resolve_fpga_part(), # noqa
-            cfg._resolve_hls_clk_period(), # noqa
+        RunLayerIsolatedSimulation(
+            cfg._resolve_fpga_part(),  # noqa
+            cfg._resolve_hls_clk_period(),  # noqa
             cfg.functional_simulation,
-            Path(cfg.output_dir)
-       )
+            Path(cfg.output_dir),
+        )
     )
     return model
+
 
 def step_size_fifo_connected(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Simulate layers connected and use the observed behaviour to size the FIFOs accordingly."""
     from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
+
     model = model.transform(
         RunLayerParallelSimulation(
-            cfg._resolve_fpga_part(), # noqa
-            cfg._resolve_hls_clk_period(), # noqa
-            cfg
-       )
+            cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period(), cfg  # noqa  # noqa
+        )
     )
+    model = model.transform(SplitLargeFIFOs(max_qsrl_depth=256))
     return model
+
 
 def step_apply_fifosizes(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Apply the previously found FIFO sizes to the model."""
     from finn.transformation.fpgadataflow.simulation import ApplyFIFOSizes
+
     return model.transform(ApplyFIFOSizes(cfg))
-
-
-
 
 
 def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):

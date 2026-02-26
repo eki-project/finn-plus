@@ -135,8 +135,8 @@ class Thresholding(MemStreamSupport, HWCustomOp):
             max_threshold = thresholds.max()
             min_input = self.get_input_datatype(0).min()
             max_input = self.get_input_datatype(0).max()
-            tdt_min = min(min_input, min_threshold)
-            tdt_max = max(max_input, max_threshold)
+            tdt_min = float(min(min_input, min_threshold))
+            tdt_max = float(max(max_input, max_threshold))
             if tdt_min < 0:
                 if abs(tdt_min) > tdt_max:
                     tdt = DataType.get_smallest_possible(tdt_min)

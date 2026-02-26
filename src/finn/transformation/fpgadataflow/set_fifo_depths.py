@@ -505,24 +505,23 @@ class InsertAndSetFIFODepths(Transformation):
         return (model, False)
 
 
-def get_fifo_split_configs(depth, max_qsrl_depth=256, max_vivado_depth=32768):
-    """Break non-power-of-2 sized FIFO depths into several ones"""
+def get_fifo_split_configs(
+    depth: int, max_qsrl_depth: int = 256, max_vivado_depth: int = 32768
+) -> list[tuple[int, str]]:
+    """Break non-power-of-2 sized FIFO depths into several ones."""
 
-    def floor_pow2(x):
+    def floor_pow2(x: int) -> int:
         if (x & (x - 1) == 0) and x != 0:
             return x
-        else:
-            return 1 << ((x - 1).bit_length() - 1)
+        return 1 << ((x - 1).bit_length() - 1)
 
-    def decompose_pow2(x):
+    def decompose_pow2(x: int) -> list[int]:
         if x <= max_qsrl_depth:
             return [x]
-        else:
-            r = floor_pow2(x)
-            if x == r:
-                return [x]
-            else:
-                return [r, *decompose_pow2(x - r)]
+        r = floor_pow2(x)
+        if x == r:
+            return [x]
+        return [r, *decompose_pow2(x - r)]
 
     ret = []
     # trivial case: for small FIFOs, return as-is with rtl style
@@ -557,7 +556,7 @@ def get_fifo_split_configs(depth, max_qsrl_depth=256, max_vivado_depth=32768):
 
 
 class SplitLargeFIFOs(Transformation):
-    """Split large FIFOs before implementation, for two reasons:
+    """Split large FIFOs before implementation, for two reasons.
 
     - impl_style="vivado" supports a max depth of 32k. Any larger
       FIFOs must be implemented as a sequence of smaller FIFOs.
@@ -569,7 +568,7 @@ class SplitLargeFIFOs(Transformation):
 
     """
 
-    def __init__(self, max_qsrl_depth=256, max_vivado_depth=32768):
+    def __init__(self, max_qsrl_depth: int = 256, max_vivado_depth: int = 32768):
         super().__init__()
         self.max_qsrl_depth = max_qsrl_depth
         self.max_vivado_depth = max_vivado_depth
@@ -590,11 +589,12 @@ class SplitLargeFIFOs(Transformation):
                     dtype = n_inst.get_nodeattr("dataType")
                     ram_style = n_inst.get_nodeattr("ram_style")
                     shape = model.get_tensor_shape(node.input[0])
+                    log.info(
+                        f"Splitting FIFO {node.name} of depth {depth} "
+                        f"into {len(cfgs)} FIFOs with depths {[c[0] for c in cfgs]}"
+                    )
                     for i, (fifo_depth, impl_style) in enumerate(cfgs):
-                        if i == 0:
-                            inp = node.input[0]
-                        else:
-                            inp = node.name + "_" + str(i - 1) + "_out"
+                        inp = node.input[0] if i == 0 else node.name + "_" + str(i - 1) + "_out"
                         if i == len(cfgs) - 1:
                             outp = node.output[0]
                         else:
