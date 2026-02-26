@@ -41,7 +41,7 @@ from finn.util.basic import (
     make_build_dir,
 )
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.exception import FINNConfigurationError, FINNError
+from finn.util.exception import FINNConfigurationError, FINNError, FINNInternalError
 
 finnxsi = xsi if xsi.is_available() else None
 
@@ -196,10 +196,22 @@ def rtlsim_exec_cppxsi(
         sim_base, sim_rel = rtlsim_so.split("xsim.dir")
         sim_rel = "xsim.dir" + sim_rel
 
-    # prepare the C++ sim driver template
     # TODO: There has to be a better solution than using the relative path
+
+    # 1. Assume we are in a git repository
     finnxsi_dir = Path(__file__).parent.parent.parent.parent / "finn_xsi"
     fifosim_config_fname = finnxsi_dir / "rtlsim_config.hpp.template"
+
+    # 2. We have to assume that we are in site-packages/finn/core
+    if not fifosim_config_fname.exists():
+        finnxsi_dir = Path(__file__).parent.parent.parent / "finn_xsi"
+        fifosim_config_fname = finnxsi_dir / "rtlsim_config.hpp.template"
+
+        # Where are we?
+        if not fifosim_config_fname.exists():
+            raise FINNInternalError("The finn_xsi directory could not be found. Stopping here.")
+
+    # prepare the C++ sim driver template
     with fifosim_config_fname.open() as f:
         fifsom_config_template = f.read()
 
