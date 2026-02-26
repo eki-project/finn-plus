@@ -16,7 +16,7 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
-FIFODepthConfig: TypeAlias = dict[str, dict[str, str | list[int]]]
+FIFODepthConfig: TypeAlias = dict[str, dict[str, list[int]]]
 
 
 def store_fifo_data(
@@ -52,8 +52,16 @@ def store_fifo_data(
     Returns:
         model: Return the model since we might have modified its metadata.
     """
-    # TODO: Check if all layers are accounted for
-    if len(data.index) != len(model.graph.node):
+    # Check if all layers are accounted for
+    # Note: data may have multiple rows per node (one per output stream)
+    if "node" in data.columns:
+        num_unique_nodes = len(data["node"].unique())
+        if num_unique_nodes != len(model.graph.node):
+            raise FINNInternalError(
+                f"Tried storing FIFO data for {num_unique_nodes} unique nodes "
+                f"but expected {len(model.graph.node)}"
+            )
+    elif len(data.index) != len(model.graph.node):
         raise FINNInternalError(
             f"Tried storing FIFO data for {len(data.index)} "
             f"values but expected {len(model.graph.node)}"
