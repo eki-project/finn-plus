@@ -103,8 +103,8 @@ def compile_sim_obj(top_module_name, source_list, sim_out_dir, debug=False):
 
     cmd_xvlog = "xvlog --incr --relax -prj rtlsim.prj".split()
 
-    launch_process_helper(cmd_xvlog, cwd=sim_out_dir)
-    launch_process_helper(cmd_xelab, cwd=sim_out_dir)
+    launch_process_helper(cmd_xvlog, cwd=sim_out_dir, print_stdout=False)
+    launch_process_helper(cmd_xelab, cwd=sim_out_dir, print_stdout=False)
     out_so_relative_path = "xsim.dir/%s/xsimk.so" % top_module_name
     out_so_full_path = sim_out_dir + "/" + out_so_relative_path
 
