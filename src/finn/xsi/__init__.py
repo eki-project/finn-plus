@@ -160,14 +160,14 @@ def __getattr__(name: str) -> Any:
     """Dynamically wrap finn_xsi.adapter functions."""
     if name in _ADAPTER_FUNCTIONS:
 
-        def wrapper(*args, **kwargs):
+        def _wrapper(*args, **kwargs):
             if not _load_modules():
                 raise ImportError("finn_xsi not available. Run: python -m finn.xsi.setup")
             return getattr(_adapter_module, name)(*args, **kwargs)
 
-        wrapper.__name__ = name
-        wrapper.__doc__ = f"Wrapper for finn_xsi.adapter.{name}"
-        return wrapper
+        _wrapper.__name__ = name
+        _wrapper.__doc__ = f"Wrapper for finn_xsi.adapter.{name}"
+        return _wrapper
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
@@ -176,11 +176,13 @@ class SimEngine:
     """Wrapper for finn_xsi.sim_engine.SimEngine."""
 
     def __init__(self, *args, **kwargs):
+        """Create a new SimEngine."""
         if not _load_modules():
             raise ImportError("finn_xsi not available. Run: python -m finn.xsi.setup")
         self._engine = _sim_engine_module.SimEngine(*args, **kwargs)
 
     def __getattr__(self, name):
+        """Get attribute of the given name."""
         return getattr(self._engine, name)
 
 

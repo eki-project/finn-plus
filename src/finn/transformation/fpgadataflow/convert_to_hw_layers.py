@@ -2124,9 +2124,14 @@ class InferHWSoftmax(Transformation):
     """
 
     def __init__(self):
+        """
+        Infers a regular softmax node without merging the multithreshold
+        and setting the softmax to perform the quantisation.
+        """
         super().__init__()
 
     def apply(self, model):
+        """Apply the transformation."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -2162,6 +2167,10 @@ class InferShuffle(Transformation):
     """
 
     def __init__(self):
+        """
+        Find transpose layers with (optionally) reshape layers around them
+        and convert them into a shuffle operator
+        """
         super().__init__()
 
     def _is_streaming_ptranspose(self, perm, shape):
@@ -2178,6 +2187,7 @@ class InferShuffle(Transformation):
         return perm == expected_perm
 
     def apply(self, model):
+        """Apply the transformation."""
         graph = model.graph
         graph_modified = False
         for node_ind, n in enumerate(graph.node, start=1):
@@ -2392,13 +2402,15 @@ class InferElementwiseBinaryOperation(Transformation):
         return model, graph_modified
 
 
-# Converts ReLU into ElementwiseMaximum(in, 0)
 class InferReLUAsElementwiseMax(Transformation):
-    # Filter function to filter out any operation involving any floating-point
-    # tensor
+    """Converts ReLU into ElementwiseMaximum(in, 0)."""
+
     @staticmethod
     def reject_unsupported_dtypes(model: ModelWrapper, node: NodeProto):
+        """Filter function to filter out any operation involving any floating-point tensor."""
+
         def dtype_ok(tname):
+            """Check if a datatype is okay."""
             dt = model.get_tensor_datatype(tname)
             if dt is None:
                 return False
@@ -2413,15 +2425,15 @@ class InferReLUAsElementwiseMax(Transformation):
 
         return all([dtype_ok(tname) for tname in list(node.input) + list(node.output)])
 
-    # Initializes the transformation method with an optional filter function
     def __init__(self, _filter=reject_unsupported_dtypes):
+        """Initializes the transformation method with an optional filter function."""
         # Initialize the base class Transformation object
         super().__init__()
         # Register the filter function as attribute
         self._filter = _filter if _filter is not None else lambda *_: True
 
-    # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply the transformation."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -2488,6 +2500,7 @@ class InferLayerNorm(Transformation):
     This transform is adapted from Brainsmith InferLayerNorm."""
 
     def apply(self, model):
+        """Apply the transformation."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -2563,6 +2576,7 @@ class InferLayerNorm(Transformation):
 
 
 def elements_are_consecutive(indices):
+    """Are elements consecutive (max diff. 1 between all adjacent elements)?"""
     if indices.size == 1:
         return True
     else:
@@ -2577,9 +2591,14 @@ class InferCrop(Transformation):
     """
 
     def __init__(self):
+        """
+        Find gather layers that can be converted into a Crop layer
+        and replace them with a Crop layer
+        """
         super().__init__()
 
     def apply(self, model):
+        """Apply the transformation."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -2793,7 +2812,7 @@ class InferUnsqueeze(Transformation):
                         model.set_initializer(node.input[1], axes)
                         model.set_tensor_shape(node.input[1], axes.shape)
                     # Set axes attribute (used by older opsets) even if axes is provided as input
-                    inst.set_nodeattr("axes", list(axes))
+                    inst.set_nodeattr("axes", [int(x) for x in axes])  # type: ignore
                 # Consider the graph to be modified, triggering exhaustive
                 # re-application of this transformation
                 graph_modified = True
