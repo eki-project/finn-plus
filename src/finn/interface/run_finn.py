@@ -1040,7 +1040,8 @@ def update(
         **get_function_args(),
     )
     if force:
-        shutil.rmtree(settings.finn_deps)
+        if settings.finn_deps.exists():
+            shutil.rmtree(settings.finn_deps)
         finnxsi = resolve_module_path("finn_xsi")
         so = Path(finnxsi) / "xsi.so"
         if so.exists():

@@ -48,6 +48,7 @@ def is_available() -> bool:
         _attempt_auto_install()
         # Check again after auto-install attempt
         if not xsi_so.exists():
+            print("XSI INSTALL: xsi.so does not exist")
             return False
 
     # Try loading the modules (this will cache them if successful)
@@ -106,6 +107,7 @@ def _load_modules() -> bool:
     xsi_so = xsi_path / "xsi.so"
 
     if not xsi_so.exists():
+        print("XSI INSTALL: xsi.so does not exist (load modules)")
         return False
 
     # Temporarily add to path for import
@@ -126,10 +128,12 @@ def _load_modules() -> bool:
     except ImportError as e:
         # Log the specific import error for debugging
         log.debug(f"Failed to import finn_xsi modules: {e}")
+        print("XSI INSTALL: import error: " + str(e))
         return False
     except Exception as e:
         # Catch any unexpected errors during module loading
         log.warning(f"Unexpected error loading finn_xsi: {type(e).__name__}: {e}")
+        print(f"Unexpected error loading finn_xsi: {type(e).__name__}: {e}")
         return False
     finally:
         # Remove from path if we added it
