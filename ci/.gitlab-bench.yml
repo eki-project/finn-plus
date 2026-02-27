@@ -21,6 +21,8 @@ FINN Build:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: build
+  tags:
+    - otus
   needs:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
@@ -104,6 +106,8 @@ FINN Build (Follow-up):
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: build_followup
+  tags:
+    - otus
   rules:
     # Also run on failure of previous tasks to measure partial results
     - when: always

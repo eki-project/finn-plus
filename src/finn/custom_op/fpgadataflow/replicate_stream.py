@@ -5,9 +5,6 @@
 # Numpy math and arrays
 import numpy as np
 
-# Operating system stuff, e.g. paths
-import os
-
 # Helper for creating ONNX nodes
 from onnx import helper as oh
 
@@ -18,10 +15,8 @@ from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 
 # Derive custom operators form the FINN base custom op
+from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
-
-# Converts inputs/outputs to/from RTL simulation format
-from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 
 # FINN logging
 from finn.util.logging import log
@@ -151,72 +146,15 @@ class ReplicateStream(HWCustomOp):
             f"exec_mode cppsim of {self.__class__.__name__} is not implemented!"
         )
 
-    # Executes replicating inputs in RTL simulation
-    def _execute_node_rtlsim(self, context, graph):  # noqa: graph unused
-        # Get the node wrapped by this custom op  # noqa Duplicate
-        node = self.onnx_node
-        # Input data is stored in numpy files in the code generation dictionary
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        # Get the input out of the execution context
-        inp = context[node.input[0]]
-        # Validate the shape of the input
-        assert inp.shape == self.get_normal_input_shape(ind=0), \
-            f"Input shape mismatch for {node.input[0]}"
-        # Reshape the input into folded form
-        inp = inp.reshape(self.get_folded_input_shape(ind=0))
-        # Path to store the intermediate input in numpy format
-        filename = os.path.join(code_gen_dir, "in.npy")
-        # Save the folded inputs to file to be used by simulation
-        np.save(filename, inp)
-        # Start collecting inputs/outputs to the RTL simulation in a dictionary
-        #   Note: Prepare one output list per replica
-        io_dict = {
-            "inputs": {}, "outputs": {f"out{i}": [] for i in range(self.num)}
-        }
-        # Type and width of the input tensor
-        dtype = self.get_input_datatype(ind=0)
-        width = self.get_instream_width(ind=0)
-        # Convert inputs to RTL simulation format
-        io_dict["inputs"]["in"] = npy_to_rtlsim_input(filename, dtype, width)
-
-        # Setup PyVerilator simulation of the node
-        sim = self.get_rtlsim()
-        # Reset the RTL simulation
-        super().reset_rtlsim(sim)
-        # Run the RTL Simulation
-        self.rtlsim_multi_io(sim, io_dict)
-
-        # Enumerate the node outputs
-        for i, name in enumerate(node.output):
-            # Collect the output from RTL simulation
-            out = io_dict["outputs"][f"out{i}"]
-            # Type and sizes of the output tensor
-            dtype = self.get_output_datatype(ind=i)
-            width = self.get_outstream_width(ind=i)
-            shape = self.get_folded_output_shape(ind=i)
-            # Path to store the intermediate numpy file
-            filename = os.path.join(code_gen_dir, f"out{i}.npy")
-            # Convert from RTL simulation format to numpy format
-            rtlsim_output_to_npy(
-                out, filename, dtype, shape, width, dtype.bitwidth()
-            )
-            # Load the generated output numpy file
-            out = np.load(filename)
-            # Reshape the folded output and insert into the execution context
-            context[name] = out.reshape(self.get_normal_output_shape(ind=i))
-
     # Executes replicating inputs in simulation (either python c++ or rtl sim)
     def execute_node(self, context, graph):
         # Get the configured execution mode
         mode = self.get_nodeattr("exec_mode")
-        # Lookup table mapping execution modes to implementing methods
-        exec_fns = {
-            "python": self._execute_node_python,
-            "cppsim": self._execute_node_cppsim,
-            "rtlsim": self._execute_node_rtlsim,
-        }
-        # Select and execute the function by mode string
-        exec_fns[mode](context, graph)
+        if mode == "python":
+            self._execute_node_python(context, graph)
+        else:
+            # Delegate execution to parent class for cppsim and rtlsim
+            HLSBackend.execute_node(self, context, graph)
 
     # Verifies the node attributes, inputs and outputs
     def verify_node(self):
