@@ -2874,6 +2874,10 @@ class InferReshape(Transformation):
                 # hardware operator
                 remove_by_name(node.attribute, "allowzero")
 
+                # Cast to python-int to match QONNX's type checking
+                # This might fail, since technically, out_shape can be of type "Any"
+                out_shape = [int(x) for x in out_shape]  # type: ignore
+
                 # The reshape hardware operator statically annotates both, the
                 # input and output shape, as node attributes
                 reshape.set_nodeattr("inp_shape", list(inp_shape))

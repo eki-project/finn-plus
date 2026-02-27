@@ -474,6 +474,17 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
     # Check synthesis tools
     set_synthesis_tools_paths()
 
+    # Set LD_LIBRARY_PATH
+    # Set LD_LIBRARY_PATH
+    vivado_path = os.environ["XILINX_VIVADO"]
+    if "LD_LIBRARY_PATH" not in os.environ.keys():
+        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
+    else:
+        os.environ[
+            "LD_LIBRARY_PATH"
+        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
+
+    # Automatically set XILINX_LOCAL_USER_DATA to avoid issues later on
     if "XILINX_LOCAL_USER_DATA" in os.environ and os.environ["XILINX_LOCAL_USER_DATA"] != "no":
         warning(
             "It seems that you have set XILINX_LOCAL_USER_DATA to a value other "

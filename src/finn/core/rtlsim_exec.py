@@ -199,7 +199,7 @@ def rtlsim_exec_cppxsi(
     # TODO: There has to be a better solution than using the relative path
 
     # 1. Assume we are in a git repository
-    finnxsi_dir = Path(__file__).parent.parent.parent.parent / "finn_xsi"
+    finnxsi_dir = Path(__file__).parent.parent.parent.parent / "finn_xsi" / "finn_xsi"
     fifosim_config_fname = finnxsi_dir / "rtlsim_config.hpp.template"
 
     # 2. We have to assume that we are in site-packages/finn/core

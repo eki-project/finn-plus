@@ -42,11 +42,14 @@ class ApplyConfig(Transformation):
     """  # noqa
 
     def __init__(
-        self, config: Path | str, node_filter: Callable[[NodeProto], bool] = lambda _: True
+        self, config: Path | str | dict, node_filter: Callable[[NodeProto], bool] = lambda _: True
     ) -> None:
         """Apply a JSON config file to the model."""
         super().__init__()
-        self.config = Path(config)
+        if type(config) is not dict:
+            self.config = Path(config)  # type: ignore
+        else:
+            self.config = config
         self.node_filter = node_filter
         self.used_configurations = ["Defaults"]
         self.missing_configurations = []
