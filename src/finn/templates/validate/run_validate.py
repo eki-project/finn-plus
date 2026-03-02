@@ -6,11 +6,11 @@ def run_validate(validation_dataset, cls_inst, *args, **kwargs):
     dp = os.path.join(os.path.dirname(os.path.realpath(__file__)))
     sys.path.insert(0, dp)
     try:
-        import validate.cifar.validate as cifar_validate
-        import validate.imagenet.validate as imagenet_validate
-        import validate.mnist.validate as mnist_validate
-        import validate.radioml.validate as radioml_validate
-        import validate.unswnb15.validate as unswnb15_validate
+        import cifar.validate as cifar_validate
+        import imagenet.validate as imagenet_validate
+        import mnist.validate as mnist_validate
+        import radioml.validate as radioml_validate
+        import unswnb15.validate as unswnb15_validate
     finally:
         # Remove the added path to avoid side effects
         if dp in sys.path:

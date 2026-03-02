@@ -50,7 +50,7 @@
         "name": "validate_experiment",
         "warmup": 1,
         "num_runs": 1,
-        "batch_size": 1000,
+        "batch_size": 100,
         "functions": [
           {
             "function_name": "validate",
