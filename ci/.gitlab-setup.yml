@@ -24,7 +24,7 @@
 .n2_setup_xilinx_2024_2:
   before_script:
     - module load fpga
-    - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    - ml xilinx/xrt/2.16_static_boost_1.75 # includes Vitis/Vivado 2023.2
     - module swap xilinx/vitis/24.2 # switch to Vitis/Vivado 2024.2
     - ml fpga/xilinx/vitis_hls_xcd_fix
     - export PLATFORM_PATH=$FINN_CUSTOM_PLATFORM_PATH # override with custom platform path
