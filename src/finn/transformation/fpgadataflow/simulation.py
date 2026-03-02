@@ -227,6 +227,15 @@ class ApplyFIFOSizes(Transformation):
                 if successors is not None:
                     n.set_nodeattr("outFIFODepths", [0] * len(successors))
 
+        #TODO: Remove later, just for testing
+        graph_in_names = [x.name for x in model.graph.input]
+        for graph_in_name in graph_in_names:
+                first_node = model.find_consumer(graph_in_name)
+                if first_node is not None:
+                    n = getCustomOp(first_node)
+                    if n is not None:
+                        n.set_nodeattr("inFIFODepths", [8192])
+
         # Set new outFIFODepths according to config
         graph = model.graph
         node_ind = -1

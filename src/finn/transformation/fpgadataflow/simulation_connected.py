@@ -527,7 +527,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fpgapart: str,
         clk_ns: float,
         cfg: DataflowBuildConfig,
-        minimization_orders: list[MinimizationOrder] | None = None,
+        minimization_orders: list[MinimizationOrder] | None = [MinimizationOrder.NODE_ORDER],
         max_qsrl_depth: int = 256,
         vivado_ram_style: str = "auto",
         quality_of_results: str = "default",
@@ -706,9 +706,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
                 needs_minimization[i][j] = self._needs_minimization(used_size, bw)
 
-        # Preserve original baseline depths for testing (deep copy)
-        original_fifo_depths = [row[:] for row in fifo_depths]
-
         # Total minimizations
         total_minimizations = sum(len(streams) for streams in fifo_depths)
 
@@ -750,7 +747,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                         i,
                         j,
                         fifo_depths,
-                        original_fifo_depths,
                         bit_widths,
                         initial_fifo_depths,
                         sim,
@@ -828,7 +824,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             depths = self.final_depths[order]
             if depths is None:
                 raise FINNInternalError(
-                    f"Expected FIFO sizes for minimization order " f"{order.name}, but found None."
+                    f"Expected FIFO sizes for minimization order {order.name}, but found None."
                 )
             for i in range(len(depths)):
                 for j in range(len(depths[i])):
@@ -849,7 +845,8 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 if fifo_depths[i][j] > 256:
                     bw = bit_widths[i][j]
                     blocks = calculate_bram_blocks(fifo_depths[i][j], bw)
-                    _, max_d = calculate_bram_depth_range(blocks, bw)
+                    blocks_plus_one = self._get_valid_block_counts(blocks+1, blocks+1000, bw)
+                    _, max_d = calculate_bram_depth_range(blocks_plus_one[0], bw)
                     fifo_depths[i][j] = max_d
 
         log.info("Final FIFO depths:")
@@ -951,7 +948,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         self,
         node_idx: int,
         fifo_idx: int,
-        current_depths: list,
         baseline_depths: list,
         bit_widths: list,
         initial_fifo_depths: dict,

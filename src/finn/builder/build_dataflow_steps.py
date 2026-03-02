@@ -679,7 +679,6 @@ def step_size_fifo_connected(model: ModelWrapper, cfg: DataflowBuildConfig) -> M
             cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period(), cfg  # noqa  # noqa
         )
     )
-    model = model.transform(SplitLargeFIFOs(max_qsrl_depth=256))
     return model
 
 
@@ -687,7 +686,9 @@ def step_apply_fifosizes(model: ModelWrapper, cfg: DataflowBuildConfig) -> Model
     """Apply the previously found FIFO sizes to the model."""
     from finn.transformation.fpgadataflow.simulation import ApplyFIFOSizes
 
-    return model.transform(ApplyFIFOSizes(cfg))
+    model = model.transform(ApplyFIFOSizes(cfg))
+    model = model.transform(SplitLargeFIFOs(max_qsrl_depth=256))
+    return model
 
 
 def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
