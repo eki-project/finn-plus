@@ -1,0 +1,13 @@
+params:
+  dut: bnn-pynq
+  model_path: models/bnn-pynq/cnv-w2a2_qonnx.onnx
+  folding_config_file: models/bnn-pynq/cnv-w2a2_folding_config.json
+  specialize_layers_config_file: models/bnn-pynq/cnv-w2a2_specialize_layers.json
+  generate_outputs:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
