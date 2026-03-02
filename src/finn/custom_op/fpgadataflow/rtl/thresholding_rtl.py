@@ -26,6 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""RTL implementation of thresholding activation.
+
+This module provides an RTL-based implementation of thresholding activations
+for quantization and activation functions in FPGA dataflow architectures.
+"""
+
 import math
 import numpy as np
 import os
@@ -35,21 +41,39 @@ from qonnx.util.basic import roundup_to_integer_multiple
 
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.thresholding import Thresholding
-from finn.util.basic import get_memutil_alternatives, mem_primitives_versal
 from finn.util.data_packing import (
     npy_to_rtlsim_input,
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
+from finn.util.memutil import get_memutil_alternatives, mem_primitives_versal
+from finn.util.settings import get_settings
 
 
 class Thresholding_rtl(Thresholding, RTLBackend):
     """Class that corresponds to finn-rtllib 'thresholding' function."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the RTL thresholding activation node.
+
+        Parameters
+        ----------
+        onnx_node : NodeProto
+            ONNX node to wrap
+        **kwargs : dict
+            Additional arguments passed to parent class
+        """
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Get dictionary of attribute names and their types for this node.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping attribute names to type specifications,
+            including memory depth triggers and optimization flags
+        """
         my_attrs = {
             # memory depth triggers for threshold storage
             "depth_trigger_uram": ("i", False, 0),
@@ -67,8 +91,8 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         return my_attrs
 
     def get_pe_mem_geometries(self):
-        """return a list of (bitwidth, depth) for PE memory configurations to be used
-        in resource estimation
+        """Return a list of (bitwidth, depth) for PE memory configurations to be used
+        in resource estimation.
 
         for each bitwidth, the depth is calculated as the
         number of thresholds that can be stored in a single
@@ -97,7 +121,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         return ret
 
     def get_memory_estimate(self):
-        """return the memory estimate for this node"""
+        """Return the memory estimate for this node."""
         res_dict = {}
         depth_trigger_bram = self.get_nodeattr("depth_trigger_bram")
         depth_trigger_uram = self.get_nodeattr("depth_trigger_uram")
@@ -119,22 +143,22 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         return res_dict
 
     def bram_estimation(self):
-        """return the number of BRAMs required for this node"""
+        """Return the number of BRAMs required for this node."""
         res_dict = self.get_memory_estimate()
         return res_dict.get("BRAM", 0)
 
     def uram_estimation(self):
-        """return the number of URAMs required for this node"""
+        """Return the number of URAMs required for this node."""
         res_dict = self.get_memory_estimate()
         return res_dict.get("URAM", 0)
 
     def lut_estimation(self):
-        """return the number of LUTs required for this node"""
+        """Return the number of LUTs required for this node."""
         res_dict = self.get_memory_estimate()
         return res_dict.get("LUTRAM", 0)
 
     def get_all_meminit_filenames(self, abspath=False):
-        "Return a list of all .dat memory initializer files used for this node"
+        """Return a list of all .dat memory initializer files used for this node."""
         dat_files = []
         t_path = self.get_nodeattr("code_gen_dir_ipgen") if abspath else "."
         pe = self.get_nodeattr("PE")
@@ -152,7 +176,8 @@ class Thresholding_rtl(Thresholding, RTLBackend):
 
     def prepare_codegen_rtl_values(self, model):
         """All dictionary values produced in this function are to replace
-        their key value(s) in the RTL template files"""
+        their key value(s) in the RTL template files.
+        """
         code_gen_dict = {}
 
         t_path = self.get_nodeattr("code_gen_dir_ipgen")
@@ -247,11 +272,11 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         return code_gen_dict
 
     def get_rtl_file_list(self, abspath=False):
-        """Thresholding binary search RTL file list"""
+        """Thresholding binary search RTL file list."""
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "thresholding/hdl/")
-            axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "thresholding/hdl/")
+            axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
@@ -266,7 +291,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         return verilog_files
 
     def generate_hdl(self, model, fpgapart, clk):
-        """Prepare HDL files from templates for synthesis"""
+        """Prepare HDL files from templates for synthesis."""
         # Generate a dictionary of values to put in RTL template
         code_gen_dict = self.prepare_codegen_rtl_values(model)
 
@@ -276,8 +301,8 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         # Set the 'gen_top_module' attribute for use later
         # by xsi and IPI generation
         self.set_nodeattr("gen_top_module", code_gen_dict["$TOP_MODULE$"][0])
-        axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
-        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "thresholding/hdl")
+        axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
+        rtlsrc = os.path.join(get_settings().finn_rtllib, "thresholding/hdl")
         template_path = rtlsrc + "/thresholding_template_wrapper.v"
         with open(template_path, "r") as f:
             template_wrapper = f.read()
@@ -304,6 +329,17 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         return
 
     def execute_node(self, context, graph):
+        """Execute this thresholding node.
+
+        Performs threshold comparisons using C++ or RTL simulation.
+
+        Parameters
+        ----------
+        context : dict
+            Dictionary mapping tensor names to numpy arrays
+        graph : GraphProto
+            ONNX graph containing this node
+        """
         mode = self.get_nodeattr("exec_mode")
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         if mode == "cppsim":
@@ -380,8 +416,9 @@ class Thresholding_rtl(Thresholding, RTLBackend):
             )
 
     def code_generation_ipi(self):
-        """Constructs and returns the TCL commands for node instantiation as an RTL
-        block."""
+        """Construct and returns the TCL commands for node instantiation as an RTL
+        block.
+        """
         rtl_file_list = self.get_rtl_file_list()
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
@@ -402,6 +439,14 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         return cmd
 
     def get_verilog_top_module_intf_names(self):
+        """Get Verilog top module interface names for this node.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping interface types to port names,
+            including optional AXI-Lite interface for runtime weights
+        """
         intf_names = super().get_verilog_top_module_intf_names()
         if self.get_nodeattr("runtime_writeable_weights") == 1:
             intf_names["axilite"] = ["s_axilite"]
@@ -409,6 +454,15 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         return intf_names
 
     def generate_params(self, model, path):
+        """Generate threshold parameter files for RTL implementation.
+
+        Parameters
+        ----------
+        model : ModelWrapper
+            ONNX model wrapper containing threshold values
+        path : str
+            Directory path where parameter files will be generated
+        """
         thresholds = model.get_initializer(self.onnx_node.input[1])
         rt_weights = self.get_nodeattr("runtime_writeable_weights")
         file_name = "{}/memblock.dat".format(path)
@@ -421,10 +475,14 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         format for this layer. This file can be used for either synthesis or
         run-time reconfig of weights.
 
-        Arguments:
-
-        * weights : numpy array with weights to be put into the file
-        * weight_file_name : filename for the weight file to be generated
+        Parameters
+        ----------
+        weights : numpy array
+            Weights to be put into the file
+        weight_file_mode : str
+            Mode for the weight file ("decoupled_runtime" or "internal_embedded")
+        weight_file_name : str
+            Filename for the weight file to be generated
 
         """
         path = os.path.dirname(weight_file_name)

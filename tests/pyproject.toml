@@ -42,6 +42,28 @@ torch = "~2.7.1"
 torchvision = "~0.22.1"
 wget = "~3.2"
 
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow",
+    "infrastructure: marks tests that refer to infrastructure functionality",
+    "vivado: mark tests that require Vivado or Vivado HLS",
+    "vitis: mark tests that require Vitis",
+    "board: mark tests that require a PYNQ board",
+    "brevitas_export : mark tests that test brevitas export functionality",
+    "streamline: mark tests that test streamlining functionality",
+    "util: mark tests that test util functions",
+    "transform: mark tests that test transformations (before hls layers)",
+    "fpgadataflow: mark tests related to hls layers",
+    "end2end: mark tests that run the end2end flow",
+    "notebooks: mark tests that execute all Jupyter notebooks",
+    "sanity_bnn: mark tests that execute the sanity BNN test",
+    "bnn_u250: mark tests that execute U250 BNN tests",
+    "bnn_kv260: mark tests that execute KV260 BNN tests",
+    "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
+    "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
+    "analysis: mark tests that run analysis tests",
+]
+
 [build-system]
 requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
 build-backend = "poetry_dynamic_versioning.backend"

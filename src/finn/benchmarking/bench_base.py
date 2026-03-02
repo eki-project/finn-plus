@@ -18,10 +18,10 @@ from shutil import copytree
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
-
 from finn.benchmarking.util import delete_dir_contents
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.util.basic import alveo_default_platform, alveo_part_map, part_map
+from finn.util.settings import get_settings
 
 
 class bench:
@@ -133,7 +133,7 @@ class bench:
 
         # Clear FINN tmp build dir before every run
         print("Clearing FINN BUILD DIR ahead of run")
-        delete_dir_contents(os.environ["FINN_BUILD_DIR"])
+        delete_dir_contents(get_settings().finn_build_dir)
 
         # Initialize dictionary to collect all benchmark results
         # TODO: remove completely or only use for meta data,
@@ -152,7 +152,7 @@ class bench:
             # Save entire FINN_BUILD_DIR
             # TODO: add option to only save upon error/exception
             self._local_artifacts_collection.append(
-                ("debug_finn_tmp", os.environ["FINN_BUILD_DIR"], True)
+                ("debug_finn_tmp", get_settings().finn_build_dir, True)
             )
 
         # SETUP

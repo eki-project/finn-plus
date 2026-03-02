@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Script to check for missing docstrings in Python files.
+"""Script to check for missing docstrings in Python files.
 
 This script analyzes Python source files using the AST (Abstract Syntax Tree)
 to identify functions, classes, and modules that are missing docstrings.
@@ -18,17 +17,16 @@ Exit codes:
     0: All checked files have proper docstrings
     1: Missing docstrings found or error occurred
 """
+
 import argparse
 import ast
-import os
 import subprocess
 import sys
-from typing import Dict, List, Optional, Union
+from pathlib import Path
 
 
 class DocstringChecker(ast.NodeVisitor):
-    """
-    AST visitor class to check for missing docstrings in Python code.
+    """AST visitor class to check for missing docstrings in Python code.
 
     This class traverses the Abstract Syntax Tree of a Python file and
     identifies functions, methods, classes, and modules that lack docstrings.
@@ -43,19 +41,17 @@ class DocstringChecker(ast.NodeVisitor):
     """
 
     def __init__(self, filename: str) -> None:
-        """
-        Initialize the docstring checker.
+        """Initialize the docstring checker.
 
         Args:
             filename: Path to the Python file being analyzed
         """
         self.filename: str = filename
-        self.missing_docstrings: List[Dict[str, Union[str, int]]] = []
-        self.current_class: Optional[str] = None
+        self.missing_docstrings: list[dict[str, str | int]] = []
+        self.current_class: str | None = None
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """
-        Visit function definition nodes and check for docstrings.
+        """Visit function definition nodes and check for docstrings.
 
         Args:
             node: The function definition AST node to analyze
@@ -64,8 +60,7 @@ class DocstringChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """
-        Visit async function definition nodes and check for docstrings.
+        """Visit async function definition nodes and check for docstrings.
 
         Args:
             node: The async function definition AST node to analyze
@@ -74,8 +69,7 @@ class DocstringChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """
-        Visit class definition nodes and check for docstrings.
+        """Visit class definition nodes and check for docstrings.
 
         Maintains context of the current class for proper method naming
         in the missing docstrings report.
@@ -83,30 +77,28 @@ class DocstringChecker(ast.NodeVisitor):
         Args:
             node: The class definition AST node to analyze
         """
-        old_class: Optional[str] = self.current_class
+        old_class: str | None = self.current_class
         self.current_class = node.name
         self._check_docstring(node, "class")
         self.generic_visit(node)
         self.current_class = old_class
 
     def visit_Module(self, node: ast.Module) -> None:
-        """
-        Visit module nodes and check for module-level docstrings.
+        """Visit module nodes and check for module-level docstrings.
 
         Args:
             node: The module AST node to analyze
         """
         if not ast.get_docstring(node):
             self.missing_docstrings.append(
-                {"type": "module", "name": os.path.basename(self.filename), "line": 1}
+                {"type": "module", "name": Path(self.filename).name, "line": 1}
             )
         self.generic_visit(node)
 
     def _check_docstring(
-        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef], node_type: str
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef, node_type: str
     ) -> None:
-        """
-        Check if a given AST node has a docstring and record if missing.
+        """Check if a given AST node has a docstring and record if missing.
 
         This method requires docstrings for all functions, methods, and classes,
         including private functions. Only test functions (starting with 'test_')
@@ -117,10 +109,8 @@ class DocstringChecker(ast.NodeVisitor):
             node_type: String describing the type of node ('function', 'async function', 'class')
         """
         # Only skip test functions
-        if hasattr(node, "name"):
-            # Skip test functions
-            if node.name.startswith("test_"):
-                return
+        if hasattr(node, "name") and node.name.startswith("test_"):
+            return
 
         if not ast.get_docstring(node):
             name: str = getattr(node, "name", "unknown")
@@ -130,9 +120,8 @@ class DocstringChecker(ast.NodeVisitor):
             self.missing_docstrings.append({"type": node_type, "name": name, "line": node.lineno})
 
 
-def get_changed_python_files(include_tests: bool = False) -> List[str]:
-    """
-    Get a list of changed Python files in the git repository.
+def get_changed_python_files(include_tests: bool = False) -> list[str]:
+    """Get a list of changed Python files in the git repository.
 
     This function runs git commands to identify Python files that have been
     modified, staged, or are untracked. It combines both staged and unstaged
@@ -186,11 +175,13 @@ def get_changed_python_files(include_tests: bool = False) -> List[str]:
 
         # Combine all changed files and filter for Python files
         all_files = set(staged_files + unstaged_files + untracked_files)
-        python_files = [f for f in all_files if f and f.endswith(".py") and os.path.exists(f)]
+        python_files = [f for f in all_files if f and f.endswith(".py") and Path(f).exists()]
 
-        # Filter out test files if include_tests is False
+        # Filter out test files and ci folder if include_tests is False
         if not include_tests:
-            python_files = [f for f in python_files if not f.startswith("tests/")]
+            python_files = [
+                f for f in python_files if not f.startswith("tests/") and not f.startswith("ci/")
+            ]
 
         return python_files
 
@@ -199,9 +190,8 @@ def get_changed_python_files(include_tests: bool = False) -> List[str]:
         sys.exit(1)
 
 
-def check_file_docstrings(filepath: str) -> List[Dict[str, Union[str, int]]]:
-    """
-    Check docstrings in a single Python file.
+def check_file_docstrings(filepath: str) -> list[dict[str, str | int]]:
+    """Check docstrings in a single Python file.
 
     Parses the given Python file using the AST module and analyzes it
     for missing docstrings in modules, classes, functions, and methods.
@@ -217,7 +207,7 @@ def check_file_docstrings(filepath: str) -> List[Dict[str, Union[str, int]]]:
         No exceptions are raised; errors are caught and logged to stdout
     """
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with Path(filepath).open(encoding="utf-8") as f:
             content: str = f.read()
 
         # Skip empty files
@@ -234,25 +224,23 @@ def check_file_docstrings(filepath: str) -> List[Dict[str, Union[str, int]]]:
         return []
 
 
-def filter_files(files: List[str], include_tests: bool = False) -> List[str]:
-    """
-    Filter a list of files, optionally excluding test files.
+def filter_files(files: list[str], include_tests: bool = False) -> list[str]:
+    """Filter a list of files, optionally excluding test files and ci folder.
 
     Args:
         files: List of file paths to filter
-        include_tests: Whether to include files in the tests folder
+        include_tests: Whether to include files in the tests folder and ci folder
 
     Returns:
         Filtered list of file paths
     """
     if include_tests:
         return files
-    return [f for f in files if not f.startswith("tests/")]
+    return [f for f in files if not f.startswith("tests/") and not f.startswith("ci/")]
 
 
 def main() -> None:
-    """
-    Main function to check docstrings in specified files.
+    """Main function to check docstrings in specified files.
 
     Processes command-line arguments to get a list of Python files,
     checks each file for missing docstrings, and reports the results.
@@ -272,7 +260,7 @@ def main() -> None:
     Side effects:
         - Prints results to stdout
         - May print warnings for non-existent files
-    """
+    """  # noqa: D401
     parser = argparse.ArgumentParser(
         description="Check for missing docstrings in Python files.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -331,15 +319,15 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
-    all_missing: Dict[str, List[Dict[str, Union[str, int]]]] = {}
+    all_missing: dict[str, list[dict[str, str | int]]] = {}
     total_missing: int = 0
 
     for filepath in files_to_check:
-        if not os.path.exists(filepath):
+        if not Path(filepath).exists():
             print(f"Warning: File {filepath} does not exist")
             continue
 
-        missing: List[Dict[str, Union[str, int]]] = check_file_docstrings(filepath)
+        missing: list[dict[str, str | int]] = check_file_docstrings(filepath)
         if missing:
             all_missing[filepath] = missing
             total_missing += len(missing)
