@@ -79,9 +79,9 @@ class NodeConnectedSimulationController(SimulationController):
             for pattern in shm_patterns:
                 for filepath in glob.glob(pattern):
                     try:
-                        os.unlink(filepath)
+                        Path(filepath).unlink()
                         removed_count += 1
-                    except (FileNotFoundError, PermissionError):
+                    except (FileNotFoundError, PermissionError):  # noqa: PERF203
                         # File might already be removed or we don't have permission
                         pass
 
@@ -527,7 +527,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fpgapart: str,
         clk_ns: float,
         cfg: DataflowBuildConfig,
-        minimization_orders: list[MinimizationOrder] | None = None,
+        minimization_orders: list[MinimizationOrder] | None = [MinimizationOrder.NODE_ORDER],
         max_qsrl_depth: int = 256,
         vivado_ram_style: str = "auto",
         quality_of_results: str = "default",
@@ -674,9 +674,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fifo_depths, fifo_first_valid_cycles = self.create_starting_fifo_depths(initial_fifo_depths)
 
         # Max cycles for any simulation
-        sim_cycles: int = max(
-            [val["cycles"] for val in initial_fifo_depths.values()]
-        )  # type: ignore
+        sim_cycles: int = cast("int", max([val["cycles"] for val in initial_fifo_depths.values()]))
 
         # Extract bitwidths from outstream widths of hw nodes
         bit_widths = []
@@ -707,9 +705,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 bw = bit_widths[i][j]
 
                 needs_minimization[i][j] = self._needs_minimization(used_size, bw)
-
-        # Preserve original baseline depths for testing (deep copy)
-        original_fifo_depths = [row[:] for row in fifo_depths]
 
         # Total minimizations
         total_minimizations = sum(len(streams) for streams in fifo_depths)
@@ -752,7 +747,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                         i,
                         j,
                         fifo_depths,
-                        original_fifo_depths,
                         bit_widths,
                         initial_fifo_depths,
                         sim,
@@ -830,7 +824,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             depths = self.final_depths[order]
             if depths is None:
                 raise FINNInternalError(
-                    f"Expected FIFO sizes for minimization order " f"{order.name}, but found None."
+                    f"Expected FIFO sizes for minimization order {order.name}, but found None."
                 )
             for i in range(len(depths)):
                 for j in range(len(depths[i])):
@@ -843,6 +837,17 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         # Set the result fifo depths
         fifo_depths = self.final_depths[smallest_order]
         assert fifo_depths is not None
+
+        # Make sure that all FIFOs with depth > 256 use a full BRAM block,
+        # since partial blocks are not supported by Vivado HLS
+        for i in range(len(fifo_depths)):
+            for j in range(len(fifo_depths[i])):
+                if fifo_depths[i][j] > 256:
+                    bw = bit_widths[i][j]
+                    blocks = calculate_bram_blocks(fifo_depths[i][j], bw)
+                    blocks_plus_one = self._get_valid_block_counts(blocks+1, blocks+1000, bw)
+                    _, max_d = calculate_bram_depth_range(blocks_plus_one[0], bw)
+                    fifo_depths[i][j] = max_d
 
         log.info("Final FIFO depths:")
         for i in range(len(fifo_depths)):
@@ -943,7 +948,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         self,
         node_idx: int,
         fifo_idx: int,
-        current_depths: list,
         baseline_depths: list,
         bit_widths: list,
         initial_fifo_depths: dict,

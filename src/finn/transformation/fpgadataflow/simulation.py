@@ -52,8 +52,16 @@ def store_fifo_data(
     Returns:
         model: Return the model since we might have modified its metadata.
     """
-    # TODO: Check if all layers are accounted for
-    if len(data.index) != len(model.graph.node):
+    # Check if all layers are accounted for
+    # Note: data may have multiple rows per node (one per output stream)
+    if "node" in data.columns:
+        num_unique_nodes = len(data["node"].unique())
+        if num_unique_nodes != len(model.graph.node):
+            raise FINNInternalError(
+                f"Tried storing FIFO data for {num_unique_nodes} unique nodes "
+                f"but expected {len(model.graph.node)}"
+            )
+    elif len(data.index) != len(model.graph.node):
         raise FINNInternalError(
             f"Tried storing FIFO data for {len(data.index)} "
             f"values but expected {len(model.graph.node)}"
@@ -218,6 +226,15 @@ class ApplyFIFOSizes(Transformation):
                     n.set_nodeattr("inFIFODepths", [0] * len(predecessors))
                 if successors is not None:
                     n.set_nodeattr("outFIFODepths", [0] * len(successors))
+
+        #TODO: Remove later, just for testing
+        graph_in_names = [x.name for x in model.graph.input]
+        for graph_in_name in graph_in_names:
+                first_node = model.find_consumer(graph_in_name)
+                if first_node is not None:
+                    n = getCustomOp(first_node)
+                    if n is not None:
+                        n.set_nodeattr("inFIFODepths", [8192])
 
         # Set new outFIFODepths according to config
         graph = model.graph

@@ -259,9 +259,9 @@ class SimulationBuilder:
         for attr in target_op_attrs.keys():
             attr_val = target_op.get_nodeattr(attr)
             if (
-                attr_val == ""
+                (isinstance(attr_val, np.ndarray) and attr_val.size == 0)
+                or attr_val == ""
                 or attr_val == []
-                or (isinstance(attr_val, np.ndarray) and attr_val.size == 0)
             ):  # Empty value, skip
                 continue
             params[attr] = target_op.get_nodeattr(attr)
@@ -651,7 +651,7 @@ class SimulationBuilder:
                 built_nodes += 1
                 log.info(
                     f"[ [bold green]"
-                    f"{int(100.0*float(built_nodes)/float(total_nodes))}%[/bold green]"
+                    f"{int(100.0 * float(built_nodes) / float(total_nodes))}%[/bold green]"
                     f" ] {name}",
                     extra={"markup": True, "highlighter": None},
                 )
