@@ -167,6 +167,132 @@ TEST_F(InterprocessCommunicationChannelTest, RequestResponseWithDifferentValues)
     }
 }
 
+TEST_F(InterprocessCommunicationChannelTest, SingleSplitJoinRequest) {
+    // Test that a diamond pattern of communication works
+    pid_t p1 = fork();
+    pid_t p2 = fork();
+    pid_t p3 = fork();
+    std::string leftName = shmName + "_left_in";
+    std::string rightName = shmName + "_right_in";
+    std::string leftOutName = shmName + "_left_out";
+    std::string rightOutName = shmName + "_right_out";
+
+    if (p1 != 0 && p2 != 0 && p3 != 0) {
+        // Parent (origin)
+        InterprocessCommunicationChannel<TestRequest, TestResponse, true> originToLeft(leftName);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        InterprocessCommunicationChannel<TestRequest, TestResponse, true> originToRight(rightName);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        originToLeft.handshake();
+        originToRight.handshake();
+
+        // Send message to the left
+        TestRequest reqLeft(100, false);
+        TestResponse respLeft = originToLeft.send_request(reqLeft);
+        EXPECT_EQ(respLeft.result, 600);
+
+        // Send message to the right
+        TestRequest reqRight(130, false);
+        TestResponse respRight = originToRight.send_request(reqRight);
+        EXPECT_EQ(respRight.result, 780);
+        std::cout << "Origin done." << std::endl;
+
+    } else if (p1 == 0 && p2 != 0 && p3 != 0) {
+        // P1 (Left)
+        InterprocessCommunicationChannel<TestRequest, TestResponse, false> fromOrigin(leftName);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        InterprocessCommunicationChannel<TestRequest, TestResponse, true> toEnd(leftOutName);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        fromOrigin.handshake();
+        toEnd.handshake();
+
+        // Receive from origin
+        TestRequest req = fromOrigin.receive_request();
+        EXPECT_EQ(req.value, 100);
+        EXPECT_FALSE(req.flag);
+
+        // Forward triple
+        TestRequest reqForward(req.value * 3, req.flag);
+        TestResponse resp = toEnd.send_request(reqForward);
+        auto expectedResponseFromEnd = req.value * 2 * 3;
+        EXPECT_EQ(resp.result, expectedResponseFromEnd);
+
+        // Answer with value from end
+        TestResponse respOrigin(resp.result, resp.success);
+        fromOrigin.send_response(respOrigin);
+
+        std::cout << "Left done." << std::endl;
+        exit((req.value == 100 && resp.result == expectedResponseFromEnd) ? 0 : 1);
+
+    } else if (p1 != 0 && p2 == 0 && p3 != 0) {
+        // P2 (Right)
+        InterprocessCommunicationChannel<TestRequest, TestResponse, false> fromOrigin(rightName);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        InterprocessCommunicationChannel<TestRequest, TestResponse, true> toEnd(rightOutName);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        fromOrigin.handshake();
+        toEnd.handshake();
+
+        // Receive from origin
+        TestRequest req = fromOrigin.receive_request();
+        EXPECT_EQ(req.value, 130);
+        EXPECT_FALSE(req.flag);
+
+        // Forward triple
+        TestRequest reqForward(req.value * 3, req.flag);
+        TestResponse resp = toEnd.send_request(reqForward);
+        auto expectedResponseFromEnd = req.value * 2 * 3;
+        EXPECT_EQ(resp.result, expectedResponseFromEnd);
+
+        // Answer with value from end
+        TestResponse respOrigin(resp.result, resp.success);
+        fromOrigin.send_response(respOrigin);
+
+        std::cout << "Right done." << std::endl;
+        exit((req.value == 130 && resp.result == expectedResponseFromEnd) ? 0 : 1);
+
+    } else if (p1 != 0 && p2 != 0 && p3 == 0) {
+        // End
+        InterprocessCommunicationChannel<TestRequest, TestResponse, false> endLeft(leftOutName);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        InterprocessCommunicationChannel<TestRequest, TestResponse, false> endRight(rightOutName);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        endLeft.handshake();
+        endRight.handshake();
+
+        // Receive and return double
+        TestRequest reqLeft = endLeft.receive_request();
+        EXPECT_EQ(reqLeft.value, 300);
+        TestResponse respLeft(reqLeft.value * 2, true);
+        endLeft.send_response(respLeft);
+
+        // Receive and return double
+        TestRequest reqRight = endRight.receive_request();
+        EXPECT_EQ(reqRight.value, 390);
+        TestResponse respRight(reqRight.value * 2, true);
+        endRight.send_response(respRight);
+
+        std::cout << "End done." << std::endl;
+        exit((reqLeft.value == 300 && reqRight.value == 390) ? 0 : 1);
+    }
+
+    // Wait for all forks to shut down
+    if (p1 != 0 && p2 != 0 && p3 != 0) {
+        int status;
+        waitpid(p1, &status, 0);
+        EXPECT_EQ(WEXITSTATUS(status), 0);
+        waitpid(p2, &status, 0);
+        EXPECT_EQ(WEXITSTATUS(status), 0);
+        waitpid(p3, &status, 0);
+        EXPECT_EQ(WEXITSTATUS(status), 0);
+    }
+
+}
+
 // ===== Multiple Request-Response Tests =====
 
 TEST_F(InterprocessCommunicationChannelTest, MultipleRequestResponseSequential) {
