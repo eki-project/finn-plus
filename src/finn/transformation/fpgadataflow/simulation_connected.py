@@ -527,7 +527,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fpgapart: str,
         clk_ns: float,
         cfg: DataflowBuildConfig,
-        minimization_orders: list[MinimizationOrder] | None = [MinimizationOrder.NODE_ORDER],
+        minimization_orders: list[MinimizationOrder] | None = None,
         max_qsrl_depth: int = 256,
         vivado_ram_style: str = "auto",
         quality_of_results: str = "default",
@@ -543,12 +543,8 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         if minimization_orders is not None:
             self.minimization_orders = minimization_orders
         else:
-            self.minimization_orders = [
-                MinimizationOrder.LARGEST_BITWIDTH_DIFF_FIRST,
-                MinimizationOrder.NODE_ORDER,
-                MinimizationOrder.REVERSE_NODE_ORDER,
-                MinimizationOrder.SMALLEST_BITWIDTH_DIFF_FIRST,
-            ]
+            # TODO: Set to ALL search orders
+            self.minimization_orders = [MinimizationOrder.NODE_ORDER]
 
         self.final_depths: dict[MinimizationOrder, list[list[int]] | None] = dict.fromkeys(
             self.minimization_orders
@@ -845,7 +841,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 if fifo_depths[i][j] > 256:
                     bw = bit_widths[i][j]
                     blocks = calculate_bram_blocks(fifo_depths[i][j], bw)
-                    blocks_plus_one = self._get_valid_block_counts(blocks+1, blocks+1000, bw)
+                    blocks_plus_one = self._get_valid_block_counts(blocks + 1, blocks + 1000, bw)
                     _, max_d = calculate_bram_depth_range(blocks_plus_one[0], bw)
                     fifo_depths[i][j] = max_d
 
