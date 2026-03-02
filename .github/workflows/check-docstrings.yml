@@ -76,11 +76,6 @@ jobs:
         # Create a detailed report
         echo "📋 **Docstring Check Report**" > docstring_report.md
         echo "" >> docstring_report.md
-        echo "Checked files:" >> docstring_report.md
-        for file in $FILES; do
-          echo "- \`$file\`" >> docstring_report.md
-        done
-        echo "" >> docstring_report.md
 
         # Run the docstring checker from scripts folder and capture detailed output
         if output=$(python scripts/check_docstrings.py $FILES 2>&1); then
@@ -106,7 +101,7 @@ jobs:
             next
           }
           /^  - Line/ {
-            print "- " $0
+            print "" $0
             next
           }
           /^Total missing docstrings:/ {
@@ -117,8 +112,13 @@ jobs:
           /^❌ Missing docstrings found:/ || /^$/ {
             next
           }
-          {
-            if (NR > 1) print $0
+          /^  - / {
+            # Skip other file list items (lines starting with "  - " that are not line references)
+            next
+          }
+          /^Checking.*file\(s\)/ {
+            # Skip the initial file check header
+            next
           }
           ' docstring_raw_output.txt >> docstring_report.md
 
@@ -159,6 +159,33 @@ jobs:
         path: docstring_report.md
         retention-days: 7
 
+    - name: Remove old comment on success
+      uses: actions/github-script@v6
+      if: success() && github.event_name == 'pull_request' && steps.changed-files.outputs.skip == 'false'
+      with:
+        script: |
+          const commentMarker = '<!-- docstring-check-comment -->';
+
+          // Find existing comment from this action
+          const comments = await github.rest.issues.listComments({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+          });
+
+          const existingComment = comments.data.find(comment =>
+            comment.body.includes(commentMarker)
+          );
+
+          if (existingComment) {
+            // Delete the comment since docstrings are now complete
+            await github.rest.issues.deleteComment({
+              comment_id: existingComment.id,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+          }
+
     - name: Add PR comment on failure
       uses: actions/github-script@v6
       if: failure() && github.event_name == 'pull_request' && steps.changed-files.outputs.skip == 'false'
@@ -177,12 +204,38 @@ jobs:
             body = '❌ **Docstring Check Failed**\n\nUnable to read detailed report. Please check the workflow logs for details.';
           }
 
-          github.rest.issues.createComment({
+          // Add a unique identifier to find this comment later
+          const commentMarker = '<!-- docstring-check-comment -->';
+          body = commentMarker + '\n' + body;
+
+          // Find existing comment from this action
+          const comments = await github.rest.issues.listComments({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: body
-          })
+          });
+
+          const existingComment = comments.data.find(comment =>
+            comment.body.includes(commentMarker)
+          );
+
+          if (existingComment) {
+            // Update existing comment
+            await github.rest.issues.updateComment({
+              comment_id: existingComment.id,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+          } else {
+            // Create new comment
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+          }
 
     - name: Summary
       if: always() && steps.changed-files.outputs.skip == 'false'

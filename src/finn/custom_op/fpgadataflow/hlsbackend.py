@@ -39,10 +39,10 @@ from finn.custom_op.fpgadataflow import templates
 from finn.templates import get_templates_folder
 from finn.util.basic import CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.deps import get_deps_path
 from finn.util.exception import FINNError, FINNUserError
 from finn.util.hls import CallHLS
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 finnxsi = xsi if xsi.is_available() else None
 
@@ -153,8 +153,10 @@ class HLSBackend(ABC):
         self.code_gen_dict["$CLKPERIOD$"] = [str(clk)]
         self.code_gen_dict["$DEFAULT_DIRECTIVES$"] = self.ipgen_default_directives()
         self.code_gen_dict["$EXTRA_DIRECTIVES$"] = self.ipgen_extra_directives()
-        self.code_gen_dict["$FINNHLSLIB$"] = [str(get_deps_path() / "finn-hlslib")]
-        self.code_gen_dict["$ATTENTIONHLSLIB$"] = [str(get_deps_path() / "attention-hlslib")]
+        self.code_gen_dict["$FINNHLSLIB$"] = [str(get_settings().finn_deps / "finn-hlslib")]
+        self.code_gen_dict["$ATTENTIONHLSLIB$"] = [
+            str(get_settings().finn_deps / "attention-hlslib")
+        ]
 
         template = templates.ipgentcl_template
 
@@ -276,17 +278,17 @@ class HLSBackend(ABC):
         # to enable additional debug features please uncommand the next line
         # builder.append_includes("-DDEBUG")
         builder.append_includes(f"-I{get_templates_folder()}/npy2stream")
-        builder.append_includes("-I" + str(get_deps_path() / "cnpy"))
-        builder.append_includes("-I" + str(get_deps_path() / "finn-hlslib"))
+        builder.append_includes("-I" + str(get_settings().finn_deps / "cnpy"))
+        builder.append_includes("-I" + str(get_settings().finn_deps / "finn-hlslib"))
         # TODO: Is it ok to add this here? Add some specialization to the
         #  attention operator? Eventually integrate this into the finn-hlslib?
-        builder.append_includes("-I" + str(get_deps_path() / "attention-hlslib"))
+        builder.append_includes("-I" + str(get_settings().finn_deps / "attention-hlslib"))
         builder.append_includes("-I$FINN_CUSTOM_HLS")
         builder.append_includes(f"-I{hls_path}/include")
         builder.append_includes("--std=c++14")
         builder.append_includes("-O3")
         builder.append_sources(code_gen_dir + "/*.cpp")
-        builder.append_sources(str(get_deps_path() / "cnpy" / "cnpy.cpp"))
+        builder.append_sources(str(get_settings().finn_deps / "cnpy" / "cnpy.cpp"))
         builder.append_includes("-lz")
         builder.append_includes("-fno-builtin -fno-inline")
         builder.append_includes(f'-Wl,-rpath,"{hls_path}/lnx64/lib/csim"')
@@ -347,6 +349,12 @@ compilation transformations?
             )
         inputs = {}
         for i, inp in enumerate(node.input):
+            nbits = self.get_instream_width(i)
+            # If the stream is not exposed, it has 0 width and no npy file will be created
+            # Do this check before get_normal_input_shape() because some operators (attention)
+            # still return dummy shapes for some non-exposed inputs (TODO)
+            if nbits == 0:
+                continue
             exp_ishape = tuple(self.get_normal_input_shape(i))
             folded_ishape = self.get_folded_input_shape(i)
             inp_val = context[inp]
@@ -370,11 +378,9 @@ compilation transformations?
 
             reshaped_input = inp_val.reshape(folded_ishape)
             reshaped_input = reshaped_input.copy()
+            # This npy file will be read by the cppsim executable
             np.save(os.path.join(code_gen_dir, "input_%s.npy" % i), reshaped_input)
-            nbits = self.get_instream_width(i)
-            # if the stream is not exposed, it has 0 width and no npy file will be created
-            if nbits == 0:
-                continue
+            # The rtlsim will instead operate on a flattened int sequence from an "io_dict"
             rtlsim_inp = npy_to_rtlsim_input(
                 "{}/input_{}.npy".format(code_gen_dir, i), export_idt, nbits
             )
@@ -633,6 +639,8 @@ compilation transformations?
     def pragmas(self):
         """Generate pragma commands in C++.
         Might need to be overwritten depending on CustomOp."""
+        # TODO: make this loop over all inputs/outputs so we don't need as much
+        # specialization in the child classes (e.g., ScaledDotProductAttention)
         self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0_V"]
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")

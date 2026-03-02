@@ -80,7 +80,7 @@ Build:
       aud: https://git.uni-paderborn.de
   stage: build
   tags:
-    - login
+    - otus_login
   rules:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -117,7 +117,7 @@ Build:
     # Also fetch & checkout DVC-managed data, $CI_DVC_CACHE_DIR persists between jobs
     - |
       source .venv/bin/activate
-      finn deps update --path ./deps
+      finn deps update --dependency-path ./deps --accept-defaults
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
   artifacts:
@@ -137,6 +137,8 @@ FINN Test Suite 2022.2:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: test
+  tags:
+    - otus
   rules:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -167,7 +169,7 @@ FINN Test Suite 2022.2:
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
-      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers 1 --num-test-workers $PYTEST_PARALLEL
+      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers 1 --num-test-workers $PYTEST_PARALLEL
   artifacts:
     name: "test_reports"
     when: always

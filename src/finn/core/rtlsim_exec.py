@@ -1,3 +1,4 @@
+"""Manage execution of RTL based simulation."""
 # Copyright (c) 2020 Xilinx, Inc.
 # All rights reserved.
 #
@@ -28,6 +29,7 @@
 
 import numpy as np
 import os
+from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from subprocess import CalledProcessError
 
@@ -39,12 +41,13 @@ from finn.util.basic import (
     make_build_dir,
 )
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.exception import FINNError
+from finn.util.exception import FINNConfigurationError, FINNError, FINNInternalError
 
 finnxsi = xsi if xsi.is_available() else None
 
 
 def prep_rtlsim_io_dict(model, execution_context):
+    """Prepare the input/output dictionary for RTLSim execution."""
     # extract i/o info to prepare io_dict
     io_dict = {"inputs": {}, "outputs": {}}
     if_dict = eval(model.get_metadata_prop("vivado_stitch_ifnames"))
@@ -114,7 +117,9 @@ def prep_rtlsim_io_dict(model, execution_context):
     return io_dict, if_dict, num_out_values, o_tensor_info, batchsize
 
 
-def file_to_basename(x):
+def file_to_basename(x: str | Path) -> str:
+    """Given a path return it's name (basename), without any symlinks."""
+    # return str(Path(x).resolve())
     return os.path.basename(os.path.realpath(x))
 
 
@@ -149,6 +154,8 @@ def rtlsim_exec_cppxsi(
         timeout_cycles = get_liveness_threshold_cycles()
 
     assert dummy_data_mode, "Only dummy_data_mode=True is supported for now"
+    if finnxsi is None:
+        raise FINNConfigurationError("Cannot execute RTLSIM since finn_xsi is not available!")
 
     # ensure stitched ip project already exists
     assert os.path.isfile(
@@ -188,10 +195,24 @@ def rtlsim_exec_cppxsi(
     else:
         sim_base, sim_rel = rtlsim_so.split("xsim.dir")
         sim_rel = "xsim.dir" + sim_rel
+
+    # TODO: There has to be a better solution than using the relative path
+
+    # 1. Assume we are in a git repository
+    finnxsi_dir = Path(__file__).parent.parent.parent.parent / "finn_xsi" / "finn_xsi"
+    fifosim_config_fname = finnxsi_dir / "rtlsim_config.hpp.template"
+
+    # 2. We have to assume that we are in site-packages/finn/core
+    if not fifosim_config_fname.exists():
+        finnxsi_dir = Path(__file__).parent.parent.parent / "finn_xsi"
+        fifosim_config_fname = finnxsi_dir / "rtlsim_config.hpp.template"
+
+        # Where are we?
+        if not fifosim_config_fname.exists():
+            raise FINNInternalError("The finn_xsi directory could not be found. Stopping here.")
+
     # prepare the C++ sim driver template
-    finnxsi_dir = os.environ["FINN_XSI"]
-    fifosim_config_fname = finnxsi_dir + "/rtlsim_config.hpp.template"
-    with open(fifosim_config_fname, "r") as f:
+    with fifosim_config_fname.open() as f:
         fifsom_config_template = f.read()
 
     instream_iters = []
