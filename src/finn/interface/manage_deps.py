@@ -498,12 +498,16 @@ class DependencyUpdater:
         os.environ["FINN_XSI"] = self.finn_xsi_str
         from finn.xsi import is_available
 
-        sp.run(
+        result = sp.run(
             shlex.split(f"{sys.executable} -m finn.xsi.setup"),
-            stdout=sp.DEVNULL,
-            stderr=sp.DEVNULL,
+            capture_output=True,
+            text=True,
             env=os.environ.copy(),
         )
+        if result.returncode != 0:
+            raise FINNDependencyInstallationError(
+                "Installation of FINN XSI failed!:\n" + result.stdout
+            )
         sys.path.append(self.finn_xsi_str)
         return is_available()
 
