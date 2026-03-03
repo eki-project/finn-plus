@@ -1,0 +1,6 @@
+outs:
+- md5: 2ef8ca06aabcaefc63808dbd5a5adabe.dir
+  size: 1075120
+  nfiles: 26
+  hash: md5
+  path: reports
