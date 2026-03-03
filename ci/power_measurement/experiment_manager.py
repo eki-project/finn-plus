@@ -206,6 +206,7 @@ class Experiment:
             # stop & reset recorder and save results
             self._recorder.stop()
             self._recorder.save_dfs_to_xlsx(experiment_path, f"{self._name}_run_{i}")
+            self._recorder.save_dfs_to_json(experiment_path, f"{self._name}_run_{i}")
             self._recorder.reset()
 
             if (
@@ -213,13 +214,6 @@ class Experiment:
             ):  # If the process exit code is not 0 return with nonzero. This cancels the experiment
                 return p.exitcode
 
-            import gc
-
-            print("unreachable:")
-            print(gc.garbage)
-            print(30 * "=")
-            print("Collect: " + str(gc.collect()))
-            print("Stats: " + str(gc.get_stats()))
         return 0
 
 

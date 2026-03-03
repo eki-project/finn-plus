@@ -4,6 +4,7 @@
 
 
 import IPython
+import json
 import os
 import pandas as pd
 import plotly.graph_objects as go
@@ -488,6 +489,22 @@ class Recorder:
         self._thread = Thread(
             target=self._thread_record_data, args=[self._rails, self._sensors, self._power_supply]
         )
+
+    def save_dfs_to_json(self, output_dir, title):
+        """Saves the recorder dataframes as .json.
+
+        Parameters
+        ----------
+        title : string
+            Name of the json file to export to.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        combined_data = {
+            "rails": json.loads(self._df_rails.to_json(orient="records")),
+            "sensors": json.loads(self._df_sensors.to_json(orient="records")),
+        }
+        with open(os.path.join(output_dir, f"{title}.json"), "w", encoding="utf-8") as output_file:
+            json.dump(combined_data, output_file, indent=2)
 
     def save_dfs_to_xlsx(self, output_dir, title):
         """Saves the recorder dataframes as .xlsx.
