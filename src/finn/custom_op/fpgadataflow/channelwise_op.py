@@ -33,6 +33,7 @@ from qonnx.core.datatype import DataType
 from qonnx.util.basic import qonnx_make_model
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.deprecated import deprecated
 from finn.util.logging import log
 
 # ONNX i/o tensor shape assumptions for channelwise ops:
@@ -76,6 +77,7 @@ def get_smallest_possible(vals):
 class ChannelwiseOp(HWCustomOp):
     """Abstraction layer for HW implementation of ChannelwiseOp."""
 
+    @deprecated
     def __init__(self, onnx_node, **kwargs):
         super().__init__(onnx_node, **kwargs)
 
@@ -235,10 +237,7 @@ class ChannelwiseOp(HWCustomOp):
             outputs=[outp],
         )
 
-        opset_version = self.onnx_opset_version
-        opset_imports = [helper.make_opsetid("", opset_version)]
-        onnx_kwargs = {"opset_imports": opset_imports}
-        model_func = qonnx_make_model(graph_func, **onnx_kwargs)
+        model_func = qonnx_make_model(graph_func)
         idict = {node.input[0]: inp_values, node.input[1]: param_values}
         sess = rt.InferenceSession(model_func.SerializeToString())
         result = sess.run(None, idict)

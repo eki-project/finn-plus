@@ -29,10 +29,10 @@
 import json
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from qonnx.transformation.general import ApplyConfig
 from qonnx.util.basic import get_by_name
 
 from finn.analysis.fpgadataflow.floorplan_params import floorplan_params
+from finn.transformation.general import ApplyConfig
 from finn.util.basic import make_build_dir
 from finn.util.logging import log
 
@@ -166,6 +166,13 @@ class Floorplan(Transformation):
             axilite_intf_name = node_inst.get_verilog_top_module_intf_names()["axilite"]
             if len(axilite_intf_name) != 0:
                 # This node has an AXI-Lite interface -> start new partition
+                node_inst.set_nodeattr("partition_id", partition_cnt)
+                partition_cnt += 1
+                continue
+
+            ap_none_intf_names = node_inst.get_verilog_top_module_intf_names()["ap_none"]
+            if "icfg" in ap_none_intf_names:
+                # Also start a new partition for every icfg/ocfg virtual FIFO ring bus interface
                 node_inst.set_nodeattr("partition_id", partition_cnt)
                 partition_cnt += 1
                 continue

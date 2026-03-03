@@ -26,6 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""HLS backend implementation for elementwise binary operations.
+
+This module provides HLS (High-Level Synthesis) implementations of elementwise
+binary operations with support for various memory modes, broadcasting, and
+parallel execution.
+"""
+
 import numpy as np
 import os
 import textwrap
@@ -42,6 +49,7 @@ from finn.util.data_packing import (
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
+from finn.util.settings import get_settings
 
 # Mapping of memory resource attributes to the corresponding C++ HLS
 # pragma directives
@@ -54,8 +62,21 @@ class ElementwiseBinaryOperation_hls(
     ElementwiseBinaryOperation,
     HLSBackend,
 ):
+    """HLS backend implementation of elementwise binary operations.
+
+    Supports various binary operations (add, subtract, multiply, etc.) with
+    configurable memory modes, broadcasting, and parallel execution units (PEs).
+    """
+
     # Node attributes matching the HLS operator
     def get_nodeattr_types(self):
+        """Get node attribute types for this operator.
+
+        Returns
+        -------
+        dict
+            Dictionary of node attribute names and their types.
+        """
         # Start from parent operator class attributes
         attrs = ElementwiseBinaryOperation.get_nodeattr_types(self)
         # Add the HLSBackend default attributes on top
@@ -66,6 +87,13 @@ class ElementwiseBinaryOperation_hls(
 
     # Maximum width of any ap_int used in this operator
     def get_ap_int_max_w(self):
+        """Get maximum ap_int width used in this operator.
+
+        Returns
+        -------
+        int
+            Maximum bit width of any ap_int used in the operator.
+        """
         # Find the widths of the widest of the two inputs
         i_bits_max = max(self.get_instream_width(ind=0), self.get_instream_width(ind=1))
         # Width of the output, there is just one output
@@ -76,8 +104,8 @@ class ElementwiseBinaryOperation_hls(
 
     # Note: End of shape and datatype utilities
 
-    def code_generation_ipgen(self, model, fpgapart, clk):
-        """Generates c++ code and tcl script for ip generation."""
+    def code_generation_ipgen(self, model, fpgapart, clk) -> None:
+        """Generate c++ code and tcl script for ip generation."""
         super().code_generation_ipgen(model, fpgapart, clk)
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_decoupled":
@@ -85,12 +113,22 @@ class ElementwiseBinaryOperation_hls(
 
     # Generates list of C++ includes to be placed at the top of the generated
     # code
-    def global_includes(self):
+    def global_includes(self) -> None:
+        """Generate list of C++ includes for the top of generated code."""
         # Currently nothing to include
         self.code_gen_dict["$GLOBALS$"] = ['#include "flatten.hpp"']
 
     # Generates C++ parameters file, i.e., constant initializer inputs
-    def generate_params(self, model: ModelWrapper, path: str):
+    def generate_params(self, model: ModelWrapper, path: str) -> None:
+        """Generate C++ parameters file for constant initializer inputs.
+
+        Parameters
+        ----------
+        model : ModelWrapper
+            The ONNX model wrapper.
+        path : str
+            Path to the code generation directory.
+        """
         # The code generation directory is specified as an argument, so this
         # will work for both RTL and C++ simulation
         code_gen_dir = path
@@ -222,7 +260,14 @@ class ElementwiseBinaryOperation_hls(
             )
 
     # Generates C++ code of type alias, global constant and macro definitions
-    def defines(self, var):
+    def defines(self, var) -> None:
+        """Generate C++ type aliases, global constants and macro definitions.
+
+        Parameters
+        ----------
+        var : str
+            Variable name (currently unused).
+        """
         # Insert constants and type aliases into the dictionary
         self.code_gen_dict["$DEFINES$"] = [
             # Input and output element datatypes
@@ -251,7 +296,8 @@ class ElementwiseBinaryOperation_hls(
 
     # Generates C++ code for reading data from .npy (numpy format) for testing
     # in C++ simulation
-    def read_npy_data(self):
+    def read_npy_data(self) -> None:
+        """Generate C++ code for reading data from .npy files for C++ simulation testing."""
         # Input data is stored in numpy files in the code generation dictionary
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         # Prepare empty stream reading to append optionals
@@ -263,10 +309,11 @@ class ElementwiseBinaryOperation_hls(
         if self.lhs_style == "input" or lhs_decoupled:
             # Generate function calls for reading the input files into the input
             # streams
+            npy_type = "half" if self.lhs_dtype.get_hls_datatype_str() == "half" else "float"
             self.code_gen_dict["$READNPYDATA$"] += [
                 # Generate function call reading from file into the input stream
-                #   Note: Inputs are always represented as numpy floats
-                "npy2apintstream<LhsPacked, LhsType, LhsWidth, float>(",
+                #   Note: Inputs can be represented as numpy floats or halfs
+                f"npy2apintstream<LhsPacked, LhsType, LhsWidth, {npy_type}>(",
                 f'"{code_gen_dir}/input_0.npy", in0_V, false',
                 ");",
             ]
@@ -276,17 +323,19 @@ class ElementwiseBinaryOperation_hls(
         if self.rhs_style == "input" or rhs_decoupled:
             # Generate function calls for reading the input files into the input
             # streams
+            npy_type = "half" if self.rhs_dtype.get_hls_datatype_str() == "half" else "float"
             self.code_gen_dict["$READNPYDATA$"] += [
                 # Generate function call reading from file into the input stream
-                #   Note: Inputs are always represented as numpy floats
-                "npy2apintstream<RhsPacked, RhsType, RhsWidth, float>(",
+                #   Note: Inputs can be represented as numpy floats or halfs
+                f"npy2apintstream<RhsPacked, RhsType, RhsWidth, {npy_type}>(",
                 f'"{code_gen_dir}/input_1.npy", in1_V, false',
                 ");",
             ]
 
     # Generates C++ code for declaring all streams involved in C++ simulation
     # for testing
-    def strm_decl(self):
+    def strm_decl(self) -> None:
+        """Generate C++ code for declaring all streams involved in C++ simulation testing."""
         # Allways add the output stream to the declarations
         self.code_gen_dict["$STREAMDECLARATIONS$"] = [
             # Note: Assumes stream type aliases to be set in defines
@@ -313,9 +362,23 @@ class ElementwiseBinaryOperation_hls(
             ]
 
     # Generates C++ code for calling the computation part of the operator
-    def docompute(self):
+    def docompute(self) -> None:
+        """Generate C++ code for the computation part of the operator."""
+
         # Add padding ones to a shape to match the broadcast output shape
         def pad_shape(shape):
+            """Add padding ones to a shape to match the broadcast output shape.
+
+            Parameters
+            ----------
+            shape : tuple
+                Input shape to pad.
+
+            Returns
+            -------
+            tuple
+                Padded shape aligned with output shape.
+            """
             return (len(out_shape) - len(shape)) * (1,) + shape
 
         # Get the folded shapes of all tensors involved without PE axis
@@ -329,6 +392,20 @@ class ElementwiseBinaryOperation_hls(
 
         # Removes contiguous matching dimensions from a shape
         def drop_matching_dims(shape, like):
+            """Remove contiguous matching dimensions from a shape.
+
+            Parameters
+            ----------
+            shape : tuple
+                Shape to process.
+            like : tuple
+                Reference shape to compare against.
+
+            Returns
+            -------
+            tuple
+                Shape with matching dimensions removed.
+            """
             # Core functionality for this is implemented in itertools
             from itertools import dropwhile
 
@@ -347,7 +424,19 @@ class ElementwiseBinaryOperation_hls(
         rhs_buffer_shape = pad_shape(rhs_buffer_shape)
 
         # Code generation of array index strings with broadcasting
-        def make_index_string(shape):
+        def make_index_string(shape) -> str:
+            """Generate C++ array index strings with broadcasting.
+
+            Parameters
+            ----------
+            shape : tuple
+                Shape to generate index string for.
+
+            Returns
+            -------
+            str
+                C++ array indexing string with broadcasting support.
+            """
             # Generate index operation [i] for "normal" dimensions but reduce to
             # hardcoded [0] for broadcast dimensions to repeat from a single
             # buffer slot
@@ -379,12 +468,38 @@ class ElementwiseBinaryOperation_hls(
         ndim = len(out_shape) + 1
 
         # For-Loop template for nested loops over arbitrary many levels
-        def for_loop(level, size):
+        def for_loop(level: int, size: int) -> str:
+            """Generate C++ for-loop template for nested loops.
+
+            Parameters
+            ----------
+            level : int
+                Loop nesting level.
+            size : int
+                Loop iteration count.
+
+            Returns
+            -------
+            str
+                C++ for-loop code.
+            """
             return f"for(std::size_t i{level} = 0; i{level}<{size}; ++i{level})"
 
         # Generate code testing for the condition when the next element needs to
         # be read from the input stream according to broadcasting semantics
-        def read_stream_condition(shape):
+        def read_stream_condition(shape) -> str:
+            """Generate condition for when to read from input stream with broadcasting.
+
+            Parameters
+            ----------
+            shape : tuple
+                Input shape to generate read condition for.
+
+            Returns
+            -------
+            str
+                C++ boolean condition expression.
+            """
             # Start with the assumption that none of the dimensions is
             # broadcast, meaning each individual element needs to be read from
             # the stream
@@ -402,7 +517,19 @@ class ElementwiseBinaryOperation_hls(
 
         # Generate code for unpacking elements read from the stream into the PE-
         # parallel buffer according to broadcasting semantics
-        def unpack_buffer(shape):
+        def unpack_buffer(shape) -> str:
+            """Generate code for unpacking stream elements into PE-parallel buffer.
+
+            Parameters
+            ----------
+            shape : tuple
+                Input shape to determine unpacking behavior.
+
+            Returns
+            -------
+            str
+                C++ expression for unpacking buffer elements.
+            """
             # Unpacking behavior depends on whether the last, i.e., folded PE
             # dimension is broadcast
             if shape[-1] == 1 and self.pe != self.out_shape[-1]:
@@ -491,9 +618,7 @@ class ElementwiseBinaryOperation_hls(
             f"""
             for(std::size_t pe = 0; pe < {self.pe}; ++pe) {{
             #pragma HLS unroll
-                out[pe] = {self.cpp_op.format(
-                    f"lhs{lhs_index}[pe]", f"rhs{rhs_index}[pe]"
-                )};
+                out[pe] = {self.cpp_op.format(f"lhs{lhs_index}[pe]", f"rhs{rhs_index}[pe]")};
             }}
             """,
             # Write the PE group into the output stream
@@ -501,7 +626,7 @@ class ElementwiseBinaryOperation_hls(
             out0_V.write(flatten(out));
             """,
             # Close all for-loop bodies of the generated nest
-            *["}" for _ in enumerate(out_shape)]
+            *["}" for _ in enumerate(out_shape)],
             # @formatter:on  End of code generation
         ]
 
@@ -512,7 +637,8 @@ class ElementwiseBinaryOperation_hls(
 
     # Generates C++ code for reading the output stream and converting back to
     # numpy format for testing in C** simulation
-    def dataoutstrm(self):
+    def dataoutstrm(self) -> None:
+        """Generate C++ code for reading output stream and converting to numpy format."""
         # Output data will be stored in numpy files in the code generation
         # dictionary
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
@@ -521,27 +647,36 @@ class ElementwiseBinaryOperation_hls(
         # Note: Valid formatting relies on correct placement of curly braces
         # and line breaks: Open/close all three braces on the same line of code
         # to avoid '\n' to be inserted into the string
-        shape = f"""{{{','.join((str(i) for i in self.get_folded_output_shape(ind=0)))}}}"""
+        shape = f"""{{{",".join(str(i) for i in self.get_folded_output_shape(ind=0))}}}"""
         # Generate function call for reading from the output stream into the
         # output file
+        npy_type = "half" if self.out_dtype.get_hls_datatype_str() == "half" else "float"
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
             # Generate function call reading from stream into the output file
-            #   Note: Outputs are always represented as numpy floats
-            "apintstream2npy<OutPacked, OutType, OutWidth, float>(",
+            #   Note: Outputs can be numpy floats or halfs
+            f"apintstream2npy<OutPacked, OutType, OutWidth, {npy_type}>(",
             f'out0_V, {shape}, "{code_gen_dir}/output_0.npy", false',
             ");",
         ]
 
     # Generates C++ code for saving the output of C++ simulation to a file in
     # numpy format
-    def save_as_npy(self):
+    def save_as_npy(self) -> None:
+        """Generate C++ code for saving simulation output to numpy format.
+
+        Note:
+        ----
+        This is currently empty in all HLSBackends. Functionality is now
+        integrated into dataoutstrm().
+        """
         # Note: This seems to be empty in ALL HLSBackends. Probably it was used
         # for something before, which is now integrated into dataoutstrm()?
         self.code_gen_dict["$SAVEASCNPY$"] = []
 
     # Generates essentially the head of the C++ function from which the IP block
     # will be generated during ipgen, i.e. actual synthesis
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
+        """Generate C++ function head for the IP block (used during synthesis)."""
         # Check whether the inputs are provided at runtime to generate stream
         # inputs to the toplevel interface
         mem_mode = self.get_nodeattr("mem_mode")
@@ -562,7 +697,8 @@ class ElementwiseBinaryOperation_hls(
 
     # Generates C++ pragmas to be inserted into the main function of the C++
     # simulation and the ipgen-blackboxfunction as well
-    def pragmas(self):
+    def pragmas(self) -> None:
+        """Generate C++ HLS pragmas for simulation and synthesis."""
         mem_mode = self.get_nodeattr("mem_mode")
         lhs_decoupled = self.lhs_style == "const" and mem_mode == "internal_decoupled"
         rhs_decoupled = self.rhs_style == "const" and mem_mode == "internal_decoupled"
@@ -599,7 +735,14 @@ class ElementwiseBinaryOperation_hls(
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
     # Returns the names of input and output interfaces grouped by protocol
-    def get_verilog_top_module_intf_names(self):
+    def get_verilog_top_module_intf_names(self) -> dict[str, list[str]]:
+        """Get the names of input and output interfaces grouped by protocol.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping protocol types to interface names.
+        """
         # Start collecting interface names in a dictionary starting with clock
         # and reset
         intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}
@@ -623,6 +766,13 @@ class ElementwiseBinaryOperation_hls(
         return intf_names
 
     def code_generation_ipi(self):
+        """Generate IPI (IP Integrator) code for Vivado block design integration.
+
+        Returns
+        -------
+        list
+            List of TCL commands for IP integration.
+        """
         source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
         cmd = ["file mkdir %s" % source_target]
         # add streamer if needed
@@ -656,8 +806,8 @@ class ElementwiseBinaryOperation_hls(
             )
             # instantiate a streamer and connect it to the IP
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-            axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
-            ms_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
+            axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
+            ms_rtllib_dir = os.path.join(get_settings().finn_rtllib, "memstream/hdl/")
             file_suffix = "_memstream_wrapper.v"
             # automatically find memstream verilog component in code generation directory
             for fname in os.listdir(code_gen_dir):
@@ -719,7 +869,16 @@ class ElementwiseBinaryOperation_hls(
             return super().code_generation_ipi()
         return cmd
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context, graph) -> None:
+        """Execute this node in the given context.
+
+        Parameters
+        ----------
+        context : dict
+            Execution context mapping tensor names to numpy arrays.
+        graph : onnx.GraphProto
+            The ONNX graph containing this node.
+        """
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             HLSBackend.execute_node(self, context, graph)
@@ -796,17 +955,15 @@ class ElementwiseBinaryOperation_hls(
             context[node.output[0]] = out.reshape(self.get_normal_output_shape(ind=0))
         else:
             raise Exception(
-                """Invalid value for attribute exec_mode! Is currently set to: {}
-            has to be set to one of the following value ("cppsim", "rtlsim")""".format(
-                    mode
-                )
+                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
+            has to be set to one of the following value ("cppsim", "rtlsim")"""
             )
 
 
 # Derive a specialization to implement elementwise addition of two inputs
 @register_custom_op
 class ElementwiseAdd_hls(ElementwiseBinaryOperation_hls, elementwise_binary.ElementwiseAdd):
-    pass
+    """HLS implementation of elementwise addition operation."""
 
 
 # Derive a specialization to implement elementwise subtraction of two inputs
@@ -816,7 +973,7 @@ class ElementwiseSub_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseSub,
 ):
-    pass
+    """HLS implementation of elementwise subtraction operation."""
 
 
 # Derive a specialization to implement elementwise multiplication of two inputs
@@ -826,7 +983,7 @@ class ElementwiseMul_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseMul,
 ):
-    pass
+    """HLS implementation of elementwise multiplication operation."""
 
 
 # Derive a specialization to implement elementwise division of two inputs
@@ -836,7 +993,7 @@ class ElementwiseDiv_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseDiv,
 ):
-    pass
+    """HLS implementation of elementwise division operation."""
 
 
 # TODO: ElementwiseMod_hls - Requires extra attribute selecting the function
@@ -849,7 +1006,7 @@ class ElementwiseAnd_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseAnd,
 ):
-    pass
+    """HLS implementation of elementwise logical AND operation."""
 
 
 # Derive a specialization to implement elementwise logical or of two inputs
@@ -859,7 +1016,7 @@ class ElementwiseOr_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseOr,
 ):
-    pass
+    """HLS implementation of elementwise logical OR operation."""
 
 
 # Derive a specialization to implement elementwise logical xor of two inputs
@@ -869,7 +1026,7 @@ class ElementwiseXor_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseXor,
 ):
-    pass
+    """HLS implementation of elementwise logical XOR operation."""
 
 
 # Derive a specialization to implement elementwise equal of two inputs
@@ -879,7 +1036,7 @@ class ElementwiseEqual_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseEqual,
 ):
-    pass
+    """HLS implementation of elementwise equality comparison operation."""
 
 
 # Derive a specialization to implement elementwise less of two inputs
@@ -889,7 +1046,7 @@ class ElementwiseLess_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseLess,
 ):
-    pass
+    """HLS implementation of elementwise less-than comparison operation."""
 
 
 # Derive a specialization to implement elementwise less or equal of two inputs
@@ -899,7 +1056,7 @@ class ElementwiseLessOrEqual_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseLessOrEqual,
 ):
-    pass
+    """HLS implementation of elementwise less-than-or-equal comparison operation."""
 
 
 # Derive a specialization to implement elementwise greater of two inputs
@@ -909,7 +1066,7 @@ class ElementwiseGreater_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseGreater,
 ):
-    pass
+    """HLS implementation of elementwise greater-than comparison operation."""
 
 
 # Derive a specialization to implement elementwise greater or equal of two
@@ -920,7 +1077,7 @@ class ElementwiseGreaterOrEqual_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseGreaterOrEqual,
 ):
-    pass
+    """HLS implementation of elementwise greater-than-or-equal comparison operation."""
 
 
 # Derive a specialization to implement elementwise bitwise and of two inputs
@@ -930,7 +1087,7 @@ class ElementwiseBitwiseAnd_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseBitwiseAnd,
 ):
-    pass
+    """HLS implementation of elementwise bitwise AND operation."""
 
 
 # Derive a specialization to implement elementwise bitwise or of two inputs
@@ -940,7 +1097,7 @@ class ElementwiseBitwiseOr_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseBitwiseOr,
 ):
-    pass
+    """HLS implementation of elementwise bitwise OR operation."""
 
 
 # Derive a specialization to implement elementwise bitwise xor of two inputs
@@ -950,18 +1107,32 @@ class ElementwiseBitwiseXor_hls(
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseBitwiseXor,
 ):
-    pass
+    """HLS implementation of elementwise bitwise XOR operation."""
 
 
-# ElementwiseBitShift_hls - Requires extra attribute selecting the direction
+# Derive a specialization to implement elementwise bit shift of two inputs
 @register_custom_op
 class ElementwiseBitShift_hls(
     # CapWords convention
     ElementwiseBinaryOperation_hls,
     elementwise_binary.ElementwiseBitShift,
 ):
+    """HLS implementation of elementwise bit shift operation.
+
+    Supports both left and right bit shift operations based on the 'direction'
+    attribute.
+    """
+
     # We need to resolve the attribute types due to multiple inheritance
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> dict:
+        """Get node attribute types for bit shift operation.
+
+        Returns
+        -------
+        dict
+            Dictionary of node attribute names and their types, including the
+            direction attribute for selecting shift direction.
+        """
         # Start from parent operator class attributes
         attrs = elementwise_binary.ElementwiseBitShift.get_nodeattr_types(self)
         # Add the HLSBackend default attributes on top
@@ -980,3 +1151,15 @@ class ElementwiseBitShift_hls(
 #     ElementwiseBinaryOperation_hls, elementwise_binary.ElementwisePow
 # ):
 #     pass
+
+
+# Derive a specialization to implement elementwise maximum of two inputs
+@register_custom_op
+class ElementwiseMax_hls(
+    # CapWords convention
+    ElementwiseBinaryOperation_hls,
+    elementwise_binary.ElementwiseMax,
+):
+    """HLS Implementation of the elementwise max operation."""
+
+    pass

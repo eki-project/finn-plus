@@ -9,8 +9,8 @@ from qonnx.transformation.base import Transformation
 
 from finn.custom_op.fpgadataflow.templates import ipgentcl_template
 from finn.util.basic import make_build_dir
-from finn.util.deps import get_deps_path
 from finn.util.hls import CallHLS
+from finn.util.settings import get_settings
 
 
 # TODO: duplicate function from make_zynq_proj.py
@@ -57,8 +57,11 @@ class GenerateInstrumentationIP(Transformation):
         wrapper_output_dir = make_build_dir(prefix="code_gen_ipgen_Instrumentation_")
         model.set_metadata_prop("instrumentation_ipgen", wrapper_output_dir)
 
-        # conservative max for pending feature maps: number of layers
-        pending = len(model.graph.node)
+        # Heuristic for setting timestamp buffer size of instrumentation wrapper:
+        # Currently set to minimum of 1024 or number of layers (if larger) to avoid
+        # overflow issues with small designs during (initial) live FIFO sizing.
+        # TODO: Implement a better heuristic.
+        pending = max(len(model.graph.node), 1024)
         # query the parallelism-dependent folded input shape from the
         # node consuming the graph input
         inp_name = model.graph.input[0].name
@@ -79,7 +82,7 @@ class GenerateInstrumentationIP(Transformation):
         ko = out_shape_folded[-1]
         # fill out instrumentation wrapper template
         with open(
-            os.path.join(os.environ["FINN_CUSTOM_HLS"], "instrumentation.template.cpp"), "r"
+            os.path.join(get_settings().finn_custom_hls, "instrumentation.template.cpp"), "r"
         ) as f:
             instrwrp_cpp = f.read()
         instrwrp_cpp = instrwrp_cpp.replace("@PENDING@", str(pending))
@@ -94,9 +97,11 @@ class GenerateInstrumentationIP(Transformation):
         prjname = "project_instrwrap"
         ipgentcl = ipgentcl_template
         ipgentcl = ipgentcl.replace("$PROJECTNAME$", prjname)
-        ipgentcl = ipgentcl.replace("$HWSRCDIR$", wrapper_output_dir)
-        ipgentcl = ipgentcl.replace("$FINNHLSLIB$", str(get_deps_path() / "finn-hlslib"))
-        ipgentcl = ipgentcl.replace("$ATTENTIONHLSLIB$", str(get_deps_path() / "attention-hlslib"))
+        ipgentcl = ipgentcl.replace("$HWSRCDIR$", str(wrapper_output_dir))
+        ipgentcl = ipgentcl.replace("$FINNHLSLIB$", str(get_settings().finn_deps / "finn-hlslib"))
+        ipgentcl = ipgentcl.replace(
+            "$ATTENTIONHLSLIB$", str(get_settings().finn_deps / "attention-hlslib")
+        )
         ipgentcl = ipgentcl.replace("$TOPFXN$", "instrumentation_wrapper")
         ipgentcl = ipgentcl.replace("$FPGAPART$", self.fpga_part)
         ipgentcl = ipgentcl.replace("$CLKPERIOD$", str(self.clk_period_ns))
@@ -166,7 +171,7 @@ class PrepareInstrumentationSim(Transformation):
         # TODO: Support simulation with AXI-lite control interfaces (e.g., for dynamic pipelines)
         # fill in testbench template
         with open(
-            os.path.join(os.environ["FINN_CUSTOM_HLS"], "instrumentation_tb.template.sv"),
+            os.path.join(get_settings().finn_custom_hls, "instrumentation_tb.template.sv"),
             "r",
         ) as f:
             testbench_sv = f.read()
@@ -174,7 +179,7 @@ class PrepareInstrumentationSim(Transformation):
             f.write(testbench_sv)
         # fill in testbench project creator template
         with open(
-            os.path.join(os.environ["FINN_CUSTOM_HLS"], "instrumentation_sim.template.tcl"),
+            os.path.join(get_settings().finn_custom_hls, "instrumentation_sim.template.tcl"),
             "r",
         ) as f:
             testbench_tcl = f.read()

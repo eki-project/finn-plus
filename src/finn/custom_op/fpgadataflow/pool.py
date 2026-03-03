@@ -25,6 +25,7 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""HWCustomOp for generic pooling operators MaxPool, AvgPool, AccPool and QuantAvgPool."""
 
 import numpy as np
 from qonnx.core.datatype import DataType
@@ -52,15 +53,13 @@ class Pool(HWCustomOp):
     """
 
     def get_nodeattr_types(self):
+        """Get dictionary of custom node attributes with their types and default values."""
         my_attrs = {
             "Channels": ("i", True, 0),
             "PE": ("i", True, 1),
             "KernelSize": ("ints", True, []),
-            # Function:
-            #  - MaxPool
-            #  - QuantAvgPool
-            # TODO add support for AvgPool and AccPool
-            "Function": ("s", True, "", {"MaxPool", "QuantAvgPool"}),
+            # Pooling function to use corresponding to hlslib functions
+            "Function": ("s", True, "", {"MaxPool", "AvgPool", "AccPool", "QuantAvgPool"}),
             "OutImgDims": ("ints", True, []),
             # FINN DataTypes for inputs/outputs
             "InputDataType": ("s", True, ""),
@@ -86,6 +85,10 @@ class Pool(HWCustomOp):
             # Same as input
             idt = DataType[self.get_nodeattr("InputDataType")]
             assert odt == idt, "In datatype must be equal to out datatype for Maxpool"
+        elif fxn == "AccPool":
+            pass
+        elif fxn == "AvgPool":
+            pass
         elif fxn == "QuantAvgPool":
             idt = DataType[self.get_nodeattr("InputDataType")]
             assert (
@@ -98,6 +101,7 @@ class Pool(HWCustomOp):
         return odt
 
     def get_normal_input_shape(self, ind=0):
+        """Return shape of the input tensor."""
         ifm_ch = self.get_nodeattr("Channels")
         odims = self.get_nodeattr("OutImgDims")
         batch_size = self.get_nodeattr("BatchSize")
@@ -107,6 +111,7 @@ class Pool(HWCustomOp):
         return ishape
 
     def get_folded_input_shape(self, ind=0):
+        """Return shape of the folded input tensor."""
         normal_ishape = list(self.get_normal_input_shape())
         ifm_ch = self.get_nodeattr("Channels")
         pe = self.get_nodeattr("PE")
@@ -116,6 +121,7 @@ class Pool(HWCustomOp):
         return tuple(folded_ishape)
 
     def get_normal_output_shape(self, ind=0):
+        """Return shape of the output tensor."""
         ofm_ch = self.get_nodeattr("Channels")
         odims = self.get_nodeattr("OutImgDims")
         batch_size = self.get_nodeattr("BatchSize")
@@ -123,6 +129,7 @@ class Pool(HWCustomOp):
         return oshape
 
     def get_folded_output_shape(self, ind=0):
+        """Return shape of the folded output tensor."""
         normal_oshape = list(self.get_normal_output_shape())
         ifm_ch = self.get_nodeattr("Channels")
         pe = self.get_nodeattr("PE")
@@ -132,6 +139,7 @@ class Pool(HWCustomOp):
         return tuple(folded_oshape)
 
     def get_exp_cycles(self):
+        """Return estimation of expected cycles for set folding."""
         # (Channels * kernel * kernel) / PE * odim * odim * batch_size
         ifm_ch = self.get_nodeattr("Channels")
         pe = self.get_nodeattr("PE")
@@ -143,24 +151,28 @@ class Pool(HWCustomOp):
         return int(exp_cycles)
 
     def get_instream_width(self, ind=0):
+        """Width of the input stream."""
         dt_bits = self.get_input_datatype().bitwidth()
         pe = self.get_nodeattr("PE")
         in_width = int(dt_bits * pe)
         return in_width
 
     def get_outstream_width(self, ind=0):
+        """Width of the output stream."""
         dt_bits = self.get_output_datatype().bitwidth()
         pe = self.get_nodeattr("PE")
         out_width = int(dt_bits * pe)
         return out_width
 
     def infer_node_datatype(self, model):
+        """Infers the datatype of the output from the node attribute."""
         node = self.onnx_node
         # data type stays the same
         dtype = self.get_output_datatype()
         model.set_tensor_datatype(node.output[0], dtype)
 
     def verify_node(self):
+        """Verifies the node configuration attributes."""
         info_messages = []
         # verify that "backend" is set to "fpgadataflow"
         backend_value = self.get_nodeattr("backend")
@@ -177,13 +189,14 @@ class Pool(HWCustomOp):
 
         # check supported function
         fnx = self.get_nodeattr("Function")
-        if fnx in ["MaxPool", "QuantAvgPool"]:
+        if fnx in ["MaxPool", "AvgPool", "AccPool", "QuantAvgPool"]:
             info_messages.append("Attribute Function contains a supported pool function")
         else:
             info_messages.append("Attribute Function contains an unsupported pool function")
         return info_messages
 
     def execute_node(self, context, graph):
+        """Executes the node with inputs from context writing outputs to context."""
         # simulate behavior with Python functionality
         node = self.onnx_node
         fnx = self.get_nodeattr("Function")
@@ -198,6 +211,10 @@ class Pool(HWCustomOp):
         tmp_values = inp_values.reshape(tmp_shape)
         if fnx == "MaxPool":
             result = np.max(tmp_values, axis=3)
+        elif fnx == "AccPool":
+            result = np.sum(tmp_values, axis=3)
+        elif fnx == "AvgPool":
+            result = np.mean(tmp_values, axis=3)
         elif fnx == "QuantAvgPool":
             # determine bits to shift
             ibits = self.get_input_datatype().bitwidth()

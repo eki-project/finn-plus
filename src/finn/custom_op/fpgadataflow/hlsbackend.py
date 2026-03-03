@@ -28,25 +28,23 @@
 
 """HLS backend implementation for FINN custom operations."""
 
-try:
-    import finn_xsi.adapter as finnxsi
-except ModuleNotFoundError:
-    finnxsi = None
-
 import numpy as np
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from qonnx.core.datatype import DataType
 
+from finn import xsi
 from finn.custom_op.fpgadataflow import templates
 from finn.templates import get_templates_folder
 from finn.util.basic import CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.deps import get_deps_path
 from finn.util.exception import FINNError, FINNUserError
 from finn.util.hls import CallHLS
 from finn.util.logging import log
+from finn.util.settings import get_settings
+
+finnxsi = xsi if xsi.is_available() else None
 
 
 class HLSBackend(ABC):
@@ -100,7 +98,7 @@ class HLSBackend(ABC):
                         verilog_files += [f]
         return verilog_files
 
-    def prepare_rtlsim(self):
+    def prepare_rtlsim(self, behav=False):
         """Creates a xsi emulation library for the RTL code generated
         for this node, sets the rtlsim_so attribute to its path."""
 
@@ -109,7 +107,7 @@ class HLSBackend(ABC):
         trace_file = self.get_nodeattr("rtlsim_trace")
         debug = not (trace_file is None or trace_file == "")
         ret = finnxsi.compile_sim_obj(
-            self.get_verilog_top_module_name(), verilog_files, single_src_dir, debug
+            self.get_verilog_top_module_name(), verilog_files, single_src_dir, debug, behav
         )
         # save generated lib filename in attribute
         self.set_nodeattr("rtlsim_so", ret[0] + "/" + ret[1])
@@ -155,8 +153,10 @@ class HLSBackend(ABC):
         self.code_gen_dict["$CLKPERIOD$"] = [str(clk)]
         self.code_gen_dict["$DEFAULT_DIRECTIVES$"] = self.ipgen_default_directives()
         self.code_gen_dict["$EXTRA_DIRECTIVES$"] = self.ipgen_extra_directives()
-        self.code_gen_dict["$FINNHLSLIB$"] = [str(get_deps_path() / "finn-hlslib")]
-        self.code_gen_dict["$ATTENTIONHLSLIB$"] = [str(get_deps_path() / "attention-hlslib")]
+        self.code_gen_dict["$FINNHLSLIB$"] = [str(get_settings().finn_deps / "finn-hlslib")]
+        self.code_gen_dict["$ATTENTIONHLSLIB$"] = [
+            str(get_settings().finn_deps / "attention-hlslib")
+        ]
 
         template = templates.ipgentcl_template
 
@@ -273,22 +273,29 @@ class HLSBackend(ABC):
     def compile_singlenode_code(self):
         """Build bash script for compilation using CppBuilder and execute to produce executable."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
+        hls_path = os.environ.get("XILINX_HLS")
         builder = CppBuilder()
         # to enable additional debug features please uncommand the next line
         # builder.append_includes("-DDEBUG")
         builder.append_includes(f"-I{get_templates_folder()}/npy2stream")
-        builder.append_includes("-I" + str(get_deps_path() / "cnpy"))
-        builder.append_includes("-I" + str(get_deps_path() / "finn-hlslib"))
+        builder.append_includes("-I" + str(get_settings().finn_deps / "cnpy"))
+        builder.append_includes("-I" + str(get_settings().finn_deps / "finn-hlslib"))
         # TODO: Is it ok to add this here? Add some specialization to the
         #  attention operator? Eventually integrate this into the finn-hlslib?
-        builder.append_includes("-I" + str(get_deps_path() / "attention-hlslib"))
+        builder.append_includes("-I" + str(get_settings().finn_deps / "attention-hlslib"))
         builder.append_includes("-I$FINN_CUSTOM_HLS")
-        builder.append_includes("-I{}/include".format(os.environ["XILINX_HLS"]))
+        builder.append_includes(f"-I{hls_path}/include")
         builder.append_includes("--std=c++14")
         builder.append_includes("-O3")
         builder.append_sources(code_gen_dir + "/*.cpp")
-        builder.append_sources(str(get_deps_path() / "cnpy" / "cnpy.cpp"))
+        builder.append_sources(str(get_settings().finn_deps / "cnpy" / "cnpy.cpp"))
         builder.append_includes("-lz")
+        builder.append_includes("-fno-builtin -fno-inline")
+        builder.append_includes(f'-Wl,-rpath,"{hls_path}/lnx64/lib/csim"')
+        builder.append_includes(f"-L{hls_path}/lnx64/lib/csim -lhlsmc++-GCC46")
+        builder.append_includes(f'-Wl,-rpath,"{hls_path}/lnx64/tools/fpo_v7_1"')
+        builder.append_includes(f"-L{hls_path}/lnx64/tools/fpo_v7_1 -lgmp -lmpfr")
+        builder.append_includes("-lIp_floating_point_v7_1_bitacc_cmodel")
         builder.set_executable_path(code_gen_dir + "/node_model")
         builder.build(code_gen_dir)
         self.set_nodeattr("executable_path", builder.executable_path)
@@ -342,11 +349,17 @@ compilation transformations?
             )
         inputs = {}
         for i, inp in enumerate(node.input):
+            nbits = self.get_instream_width(i)
+            # If the stream is not exposed, it has 0 width and no npy file will be created
+            # Do this check before get_normal_input_shape() because some operators (attention)
+            # still return dummy shapes for some non-exposed inputs (TODO)
+            if nbits == 0:
+                continue
             exp_ishape = tuple(self.get_normal_input_shape(i))
             folded_ishape = self.get_folded_input_shape(i)
             inp_val = context[inp]
             # Make sure the input has the right container datatype
-            if inp_val.dtype != np.float32:
+            if inp_val.dtype not in [np.float32, np.float16]:
                 # Issue a warning to make the user aware of this type-cast
                 log.warning(
                     f"{node.name}: Changing input container datatype from "
@@ -365,11 +378,9 @@ compilation transformations?
 
             reshaped_input = inp_val.reshape(folded_ishape)
             reshaped_input = reshaped_input.copy()
+            # This npy file will be read by the cppsim executable
             np.save(os.path.join(code_gen_dir, "input_%s.npy" % i), reshaped_input)
-            nbits = self.get_instream_width(i)
-            # if the stream is not exposed, it has 0 width and no npy file will be created
-            if nbits == 0:
-                continue
+            # The rtlsim will instead operate on a flattened int sequence from an "io_dict"
             rtlsim_inp = npy_to_rtlsim_input(
                 "{}/input_{}.npy".format(code_gen_dir, i), export_idt, nbits
             )
@@ -460,7 +471,7 @@ compilation transformations?
                 # use binary for bipolar storage
                 dtype = DataType["BINARY"]
             elem_hls_type = dtype.get_hls_datatype_str()
-            npy_type = "float"
+            npy_type = "half" if elem_hls_type == "half" else "float"
             npy_in = "%s/input_%s.npy" % (code_gen_dir, i)
 
             iwidth = self.get_instream_width(i)
@@ -573,7 +584,7 @@ compilation transformations?
                 # use binary for bipolar storage
                 dtype = DataType["BINARY"]
             elem_hls_type = dtype.get_hls_datatype_str()
-            npy_type = "float"
+            npy_type = "half" if elem_hls_type == "half" else "float"
             npy_out = "%s/output_%s.npy" % (code_gen_dir, o)
             oshape = self.get_folded_output_shape(o)
             oshape_cpp_str = str(oshape).replace("(", "{").replace(")", "}")
@@ -628,6 +639,8 @@ compilation transformations?
     def pragmas(self):
         """Generate pragma commands in C++.
         Might need to be overwritten depending on CustomOp."""
+        # TODO: make this loop over all inputs/outputs so we don't need as much
+        # specialization in the child classes (e.g., ScaledDotProductAttention)
         self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0_V"]
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")

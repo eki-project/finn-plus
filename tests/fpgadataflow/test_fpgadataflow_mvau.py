@@ -36,7 +36,7 @@ from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.custom_op.registry import getCustomOp
-from qonnx.transformation.general import ApplyConfig, GiveReadableTensorNames, GiveUniqueNodeNames
+from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.util.basic import calculate_signed_dot_prod_range, gen_finn_dt_tensor, qonnx_make_model
 
@@ -57,6 +57,7 @@ from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from finn.transformation.general import ApplyConfig
 from finn.util.basic import is_versal
 
 
@@ -499,11 +500,6 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
         pytest.skip("Temporarily xfail this test, because last address can't be read back.")
     if preferred_impl_style == "rtl" and act is not None:
         pytest.skip("RTL-MVAU doesn't support const mem mode or embedded activations")
-    if preferred_impl_style == "hls" and ram_style == "ultra" and not is_versal(part):
-        # reference: https://github.com/Xilinx/finn/issues/1312
-        pytest.skip(
-            "Known error for runtime writeable weights and HLS MVU. Described in issue 1312"
-        )
     if nf == -1:
         nf = mh
     if sf == -1:

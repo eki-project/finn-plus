@@ -1,3 +1,4 @@
+"""Manage execution of RTL based simulation."""
 # Copyright (c) 2020 Xilinx, Inc.
 # All rights reserved.
 #
@@ -26,16 +27,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-try:
-    import finn_xsi.adapter as finnxsi
-except ModuleNotFoundError:
-    finnxsi = None
-
 import numpy as np
 import os
+from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from subprocess import CalledProcessError
 
+from finn import xsi
 from finn.util.basic import (
     get_liveness_threshold_cycles,
     get_vivado_root,
@@ -43,10 +41,13 @@ from finn.util.basic import (
     make_build_dir,
 )
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.exception import FINNError
+from finn.util.exception import FINNConfigurationError, FINNError, FINNInternalError
+
+finnxsi = xsi if xsi.is_available() else None
 
 
 def prep_rtlsim_io_dict(model, execution_context):
+    """Prepare the input/output dictionary for RTLSim execution."""
     # extract i/o info to prepare io_dict
     io_dict = {"inputs": {}, "outputs": {}}
     if_dict = eval(model.get_metadata_prop("vivado_stitch_ifnames"))
@@ -67,11 +68,16 @@ def prep_rtlsim_io_dict(model, execution_context):
             # for these functions
             i_stream_w = first_node.get_instream_width(node_inp_ind)
             i_folded_shape = first_node.get_folded_input_shape(node_inp_ind)
-        batchsize = i_tensor.shape[0]
-        # override batch size for input
-        i_folded_shape = list(i_folded_shape)
-        i_folded_shape[0] = batchsize
+
+        if first_node.onnx_node.op_type == "InnerShuffle_rtl":
+            batchsize = 1
+        else:
+            batchsize = i_tensor.shape[0]
+            i_folded_shape = list(i_folded_shape)
+            i_folded_shape[0] = batchsize
+            # override batch size for input
         i_folded_shape = tuple(i_folded_shape)
+
         # TODO any other layout transformations need to happen here!
         i_tensor = i_tensor.reshape(i_folded_shape)
         # pack input for rtlsim
@@ -94,14 +100,14 @@ def prep_rtlsim_io_dict(model, execution_context):
         o_folded_shape = last_node.get_folded_output_shape()
         # override batch size from actual input
         o_shape = list(o_shape)
-        if o_shape[0] != batchsize:
+        if o_shape[0] != batchsize and (first_node.onnx_node.op_type != "InnerShuffle_rtl"):
             o_shape[0] = batchsize
             num_out_values[if_name] = batchsize * last_node.get_number_output_values()
         else:
             num_out_values[if_name] = last_node.get_number_output_values()
         o_shape = tuple(o_shape)
         o_folded_shape = list(o_folded_shape)
-        if o_folded_shape[0] != batchsize:
+        if o_folded_shape[0] != batchsize and (first_node.onnx_node.op_type != "InnerShuffle_rtl"):
             o_folded_shape[0] = batchsize
         o_folded_shape = tuple(o_folded_shape)
         o_stream_w = last_node.get_outstream_width()
@@ -111,7 +117,9 @@ def prep_rtlsim_io_dict(model, execution_context):
     return io_dict, if_dict, num_out_values, o_tensor_info, batchsize
 
 
-def file_to_basename(x):
+def file_to_basename(x: str | Path) -> str:
+    """Given a path return it's name (basename), without any symlinks."""
+    # return str(Path(x).resolve())
     return os.path.basename(os.path.realpath(x))
 
 
@@ -146,6 +154,8 @@ def rtlsim_exec_cppxsi(
         timeout_cycles = get_liveness_threshold_cycles()
 
     assert dummy_data_mode, "Only dummy_data_mode=True is supported for now"
+    if finnxsi is None:
+        raise FINNConfigurationError("Cannot execute RTLSIM since finn_xsi is not available!")
 
     # ensure stitched ip project already exists
     assert os.path.isfile(
@@ -174,7 +184,7 @@ def rtlsim_exec_cppxsi(
         single_src_dir = make_build_dir("rtlsim_" + top_module_name + "_")
         debug = not (trace_file is None or trace_file == "")
         rtlsim_so = finnxsi.compile_sim_obj(
-            top_module_name, all_verilog_srcs, single_src_dir, debug=debug
+            top_module_name, all_verilog_srcs, single_src_dir, debug=debug, behav=True
         )
         # save generated lib filename in attribute
         model.set_metadata_prop("rtlsim_so", rtlsim_so[0] + "/" + rtlsim_so[1])
@@ -185,10 +195,24 @@ def rtlsim_exec_cppxsi(
     else:
         sim_base, sim_rel = rtlsim_so.split("xsim.dir")
         sim_rel = "xsim.dir" + sim_rel
+
+    # TODO: There has to be a better solution than using the relative path
+
+    # 1. Assume we are in a git repository
+    finnxsi_dir = Path(__file__).parent.parent.parent.parent / "finn_xsi" / "finn_xsi"
+    fifosim_config_fname = finnxsi_dir / "rtlsim_config.hpp.template"
+
+    # 2. We have to assume that we are in site-packages/finn/core
+    if not fifosim_config_fname.exists():
+        finnxsi_dir = Path(__file__).parent.parent.parent / "finn_xsi"
+        fifosim_config_fname = finnxsi_dir / "rtlsim_config.hpp.template"
+
+        # Where are we?
+        if not fifosim_config_fname.exists():
+            raise FINNInternalError("The finn_xsi directory could not be found. Stopping here.")
+
     # prepare the C++ sim driver template
-    finnxsi_dir = os.environ["FINN_XSI"]
-    fifosim_config_fname = finnxsi_dir + "/rtlsim_config.hpp.template"
-    with open(fifosim_config_fname, "r") as f:
+    with fifosim_config_fname.open() as f:
         fifsom_config_template = f.read()
 
     instream_iters = []
@@ -357,6 +381,7 @@ def rtlsim_exec_finnxsi(model, execution_context, pre_hook=None, post_hook=None)
     finnxsi.reset_rtlsim(sim)
     if pre_hook is not None:
         pre_hook(sim)
+        finnxsi.reset_rtlsim(sim)
     n_cycles = finnxsi.rtlsim_multi_io(
         sim,
         io_dict,

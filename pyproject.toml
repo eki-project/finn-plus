@@ -22,9 +22,10 @@ packages = [
     { include = "custom_hls", to = "finn" },
 ]
 include = [
-    "src/finn/util/vivado_scripts/*.sh",
-    "src/finn/util/vivado_scripts/*.tcl",
-    "src/finn/util/vivado_scripts/*.xdc",
+    {path = "src/finn/util/vivado_scripts/*.sh", format = ["sdist", "wheel"]},
+    {path = "src/finn/util/vivado_scripts/*.tcl", format = ["sdist", "wheel"]},
+    {path = "src/finn/util/vivado_scripts/*.xdc", format = ["sdist", "wheel"]},
+    {path = "external_dependencies.yaml", format = ["sdist", "wheel"]}
 ]
 version = "0.0.0"
 
@@ -41,7 +42,7 @@ finn = "finn.interface.run_finn:main"
 python = ">=3.10,<3.12"
 pybind11 = "3.0.1"                              # pybind11==3.0.1 already for FIFO sim rework, after rework remove module load
 bitstring = "~4.3.1"
-numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
+numpy = "1.26.4"  # numpy<=1.26.4 required by brevitas
 # Cannot upgrade onnx and onnxruntime any further. For now this seems to be the
 # last compatible pair which is also consistent with qonnx.
 # Upgrading onnx will result in model IR version not supported by onnxruntime
@@ -50,18 +51,19 @@ numpy = "1.26.4"               # numpy<=1.24.4 required by brevitas
 # due to the model IR version support issue...
 onnx = "1.17.0"
 onnxruntime = "1.20.1"
-protobuf = "3.20.3"                                   # protobuf==3.20.3 required by qonnx
-scipy = "~1.15.0"                                     # scipy>=1.16.0 requires python>=3.11, required by brevitas
+onnxscript = ">=0.5.0"                                # TODO: the onnx-passes installation will overwrite this version
+protobuf = "4.25.8"
 pyyaml = "~6.0.2"
 mip = "~1.13.0"
-dependencies = "2.0.1"                                # dependencies==2.0.1 required by brevitas
-setuptools = ">40.8.0,<70.0.0"                        # setuptools<70.0.0 required by brevitas
 cmake = "~4.0.3"
+brevitas = "0.12.1"
+qonnx = "1.0.0"
 
 termcolor = "^2.5.0"
 rich = "^13.9.4"
 click = "^8.1.8"
 onnxoptimizer = "^0.3.13"
+pydantic = ">2.0"
 mashumaro = { extras = ["yaml"], version = "^3.15" }
 
 finn-plus-tests = { version = "*", optional = true }
@@ -74,8 +76,8 @@ finn-plus-notebooks = { path = "./notebooks", develop = true }
 pygments = "~2.19.2"
 torch = "~2.7.1"                                      # required by CI
 torchvision = "~0.22.1"                               # required by CI
-dvc = { version = " ~3.59.1", extras = ["webdav"] }   # required by CI
-dvclive = { version = "~3.48.2", extras = ["image"] } # required by CI
+dvc = { version = " ~3.66.0", extras = ["webdav"] }   # required by CI
+dvclive = { version = "~3.49.0", extras = ["image"] } # required by CI
 
 [tool.poetry.extras]
 tests = ["finn-plus-tests"]
@@ -180,4 +182,5 @@ ignore = [
     "ANN401",   # Don't use the "Any" type
     "D413",     # Blank lines at docstring end
     "D205",     # Blank line after summary (enables multiline summaries)
+    "N801",     # Class names should use CapWords convention
 ]

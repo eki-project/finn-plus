@@ -80,7 +80,7 @@ Build:
       aud: https://git.uni-paderborn.de
   stage: build
   tags:
-    - login
+    - otus_login
   rules:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -117,7 +117,7 @@ Build:
     # Also fetch & checkout DVC-managed data, $CI_DVC_CACHE_DIR persists between jobs
     - |
       source .venv/bin/activate
-      finn deps update --path ./deps
+      finn deps update --dependency-path ./deps --accept-defaults
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
   artifacts:
@@ -137,6 +137,8 @@ FINN Test Suite 2022.2:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: test
+  tags:
+    - otus
   rules:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -155,7 +157,6 @@ FINN Test Suite 2022.2:
     paths:
       - deps
   variables:
-    GIT_STRATEGY: empty # Do not pull repository, install from wheel (artifact) instead
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
     PYTEST_PARALLEL: "$CPU_CORES"
   extends: .setup_full_2022_2
@@ -163,9 +164,12 @@ FINN Test Suite 2022.2:
     # Launch additional monitoring
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
     # Launch FINN via test command, includes preparation of (cached) dependencies
+    # Also fetch & checkout DVC-managed data, which should already be cached in $CI_DVC_CACHE_DIR
     - |
       source finn-plus-venv/bin/activate
-      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers 1 --num-test-workers $PYTEST_PARALLEL
+      dvc config cache.dir $CI_DVC_CACHE_DIR
+      dvc pull
+      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers 1 --num-test-workers $PYTEST_PARALLEL
   artifacts:
     name: "test_reports"
     when: always

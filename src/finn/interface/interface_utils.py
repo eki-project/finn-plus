@@ -2,44 +2,106 @@
 
 from __future__ import annotations
 
-import multiprocessing
+import click
+import importlib
 import os
+import rich
+import rich.box
+import rich.table
 import sys
-import yaml
+import threading
 from pathlib import Path
 from rich.console import Console
+from typing import Any
 
 from finn.interface import DEBUG
 
 
+def resolve_module_path(name: str) -> str:
+    """Resolve the path to modules which are not part of the FINN package hierarchy."""
+    # Try to import the module via importlib - allows "-" in names and resolve
+    # the absolute path to the first candidate location as a string
+    try:
+        return str(importlib.import_module(name).__path__[0])
+    except ModuleNotFoundError:
+        # Try a different location if notebooks have not been found, maybe we
+        # are in the Git repository root and should look there as well...
+        try:
+            return str(importlib.import_module(f"finn.{name}").__path__[0])
+        except ModuleNotFoundError:
+            if name not in ["notebooks", "tests"]:
+                warning(f"Could not resolve {name}. FINN might not work properly.")
+            else:
+                status(
+                    f"FINN+ installed without extra package {name}. "
+                    f"(Default for pip-based installations)"
+                )
+    # Return the empty string as a default...
+    return ""
+
+
+class NullablePath(click.ParamType):
+    """If the passed parameter is an empty string return None, otherwise a Path."""
+
+    name = "NullablePath"
+
+    def __init__(self, expand_user: bool = True) -> None:
+        """Initialize a NullablePath."""
+        super().__init__()
+        self.expand_user = expand_user
+
+    def convert(self, value: str, param: Any, ctx: Any) -> Path | None:  # noqa
+        """Convert a string value into a Path or None, depending on the contents."""
+        if value == "":
+            return None
+        p = Path(value)
+        if self.expand_user:
+            return p.expanduser()
+        return p
+
+
 def error(msg: str) -> None:
-    """Print an error"""
+    """Print an error."""
     Console().print(f"[bold red]ERROR: [/bold red][red]{msg}[/red]")
 
 
-def warning(msg: str) -> None:
-    """Print a warning"""
-    Console().print(f"[bold orange1]WARNING: [/bold orange1][orange3]{msg}[/orange3]")
+def warning(msg: str, critical: bool = False) -> None:
+    """Print a warning."""
+    color = "bold orange1" if not critical else "bold orange_red1"
+    prefix = "" if not critical else "CRITICAL "
+    Console().print(f"[{color}]{prefix}WARNING: [/{color}][orange3]{msg}[/orange3]")
 
 
 def status(msg: str) -> None:
-    """Print a status message"""
+    """Print a status message."""
     Console().print(f"[bold cyan]STATUS: [/bold cyan][cyan]{msg}[/cyan]")
 
 
 def success(msg: str) -> None:
-    """Print a success message"""
+    """Print a success message."""
     Console().print(f"[bold green]SUCCESS: [/bold green][green]{msg}[/green]")
 
 
-def debug(msg: str) -> None:
-    """Print a debug message. Only done when the flag is set"""
+def debug(msg: str, with_rich: bool = True) -> None:
+    """Print a debug message. Only done when the flag is set."""
     if DEBUG:
-        Console().print(f"[bold blue]DEBUG: [/bold blue][blue]{msg}[/blue]")
+        # Disable rich for live / multithreaded contexts where it might not be shown
+        if with_rich and (threading.main_thread().name == threading.current_thread().name):
+            Console().print(f"[bold blue]DEBUG: [/bold blue][blue]{msg}[/blue]")
+        else:
+            print(f"DEBUG: {msg}")
+
+
+def table(data: dict[Any, Any], key_header: str, value_header: str) -> None:
+    """Print the data as a table."""
+    table = rich.table.Table(key_header, value_header, box=rich.box.SIMPLE)
+    for k, v in data.items():
+        table.add_row(str(k), str(v))
+    Console().print(table)
 
 
 def assert_path_valid(p: Path) -> None:
-    """Check if the path exists, if not print an error message and exit with an error code"""
+    """Check if the path exists, if not print an error message and exit with an error code."""
     if not p.exists():
         Console().print(f"[bold red]File or directory {p} does not exist. Stopping...[/bold red]")
         sys.exit(1)
@@ -87,81 +149,3 @@ def set_synthesis_tools_paths() -> None:
                 "PLATFORM_REPO_PATHS is not set "
                 "and the default path does not exist. Synthesis might fail."
             )
-
-
-def resolve_build_dir(
-    flow_config: Path, build_dir: Path | None, settings: dict, is_test_run: bool = False
-) -> Path | None:
-    """Resolve the build dir. By default this should return FINN_TMP next to the flow config.
-    Priority is command line argument > Environment variable > Settings Default > Fixed default.
-    If the given path is relative and found in the envvar or settings file,
-    add it to the flow_config_path"""
-    if build_dir is not None:
-        return build_dir
-    if "FINN_BUILD_DIR" in os.environ.keys():
-        p = Path(os.environ["FINN_BUILD_DIR"])
-        if not p.is_absolute():
-            return flow_config.parent / p
-        return p
-    if "FINN_BUILD_DIR" in settings.keys():
-        p = Path(settings["FINN_BUILD_DIR"])
-        if not p.is_absolute():
-            return flow_config.parent / p
-        return p
-    if is_test_run:
-        # Need a different fallback because tests have no build config
-        return Path("/tmp/FINN_TEST_BUILD_DIR")
-    return flow_config.parent / "FINN_TMP"
-
-
-def resolve_deps_path(deps: Path | None, settings: dict) -> Path | None:
-    """Try to resolve the dependency path. If none is valid, return None. If the path is relative,
-    and not given by command line, append it to the FINN directory.
-    Priority is command line argument > Environment variable > Settings Default > Fixed default"""
-    if deps is not None:
-        return deps
-    if "FINN_DEPS" in os.environ.keys():
-        p = Path(os.environ["FINN_DEPS"])
-        if not p.is_absolute():
-            return Path(__file__).parent.parent.parent.parent / p
-        return p
-    if "FINN_DEPS" in settings.keys():
-        p = Path(settings["FINN_DEPS"])
-        if not p.is_absolute():
-            return Path(__file__).parent.parent.parent.parent / p
-        return p
-    return None
-
-
-def resolve_num_workers(num: int, settings: dict) -> int:
-    """Resolve the number of workers to use. Uses 75% of cores available as default fallback"""
-    if num > -1:
-        return num
-    if "NUM_DEFAULT_WORKERS" in os.environ.keys() and os.environ["NUM_DEFAULT_WORKERS"] != "":
-        return int(os.environ["NUM_DEFAULT_WORKERS"])
-    if "NUM_DEFAULT_WORKERS" in settings.keys():
-        return int(settings["NUM_DEFAULT_WORKERS"])
-    cpus = multiprocessing.cpu_count()
-    if cpus is None or cpus == 1:
-        return 1
-    return int(cpus * 0.75)
-
-
-def read_yaml(p: Path) -> dict | None:
-    """Read a yaml file and return its contents. If the file does not exist, return None"""
-    if p.exists():
-        with p.open() as f:
-            return yaml.load(f, yaml.Loader)
-    else:
-        return None
-
-
-def write_yaml(data: dict, p: Path) -> bool:
-    """Try writing the given data to a yaml file. If this fails, return false otherwise
-    true"""
-    try:
-        with p.open("w+") as f:
-            yaml.dump(data, f, yaml.Dumper)
-            return True
-    except (OSError, yaml.error.YAMLError):
-        return False
