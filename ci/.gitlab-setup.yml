@@ -47,6 +47,8 @@
     - finn-plus-venv/bin/pip install tests/dist/*.whl
     - finn-plus-venv/bin/pip install notebooks/dist/*.whl
     - finn-plus-venv/bin/pip install dist/*.whl
+    # Install dataset loading for some end to end tests. Usually only needed to run pynq driver.
+    - finn-plus-venv/bin/pip install -e git+https://github.com/maltanar/dataset_loading.git@v0.0.5#egg=finn-dataset-loading
 
 .setup_full_2022_2:
   before_script:
