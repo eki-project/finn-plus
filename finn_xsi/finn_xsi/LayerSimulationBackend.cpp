@@ -208,7 +208,7 @@ void process_command(const json& request, json& response, SimulationController& 
         if (command == "configure") {
             std::vector<std::size_t> fifo_depths;
 
-            std::cout << "Payload: " << payload << std::endl;
+            //std::cout << "Payload: " << payload << std::endl;
 
             // Handle fifo_depth as either a single value or an array
             if (payload.contains("fifo_depth")) {

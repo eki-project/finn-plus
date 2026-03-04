@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 
-using json = nlohmann::json;
+using json = nlohmann::ordered_json;
 
 class SocketServer {
      private:

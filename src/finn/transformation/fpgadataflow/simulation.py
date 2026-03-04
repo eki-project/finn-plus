@@ -16,7 +16,7 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
-FIFODepthConfig: TypeAlias = dict[str, dict[str, list[int]]]
+FIFODepthConfig: TypeAlias = list[dict[str, list[int]]]
 
 
 def store_fifo_data(
@@ -189,7 +189,7 @@ class ApplyFIFOSizes(Transformation):
         else:
             self.path = fifo_config
 
-        self.fifo_depths: FIFODepthConfig = {}
+        self.fifo_depths: FIFODepthConfig = []
         with self.path.open() as f:
             self.fifo_depths = cast("FIFODepthConfig", json.load(f))
 
@@ -227,15 +227,6 @@ class ApplyFIFOSizes(Transformation):
                 if successors is not None:
                     n.set_nodeattr("outFIFODepths", [0] * len(successors))
 
-        #TODO: Remove later, just for testing
-        graph_in_names = [x.name for x in model.graph.input]
-        for graph_in_name in graph_in_names:
-                first_node = model.find_consumer(graph_in_name)
-                if first_node is not None:
-                    n = getCustomOp(first_node)
-                    if n is not None:
-                        n.set_nodeattr("inFIFODepths", [8192])
-
         # Set new outFIFODepths according to config
         graph = model.graph
         node_ind = -1
@@ -247,7 +238,15 @@ class ApplyFIFOSizes(Transformation):
                     f"Node {first_node.name} does not have a custom op instance."
                     " This is required for FIFO insertion."
                 )
-            fifos = cast("list[int]", (self.fifo_depths[str(node_ind)]["depths"]))
+            if first_node.name != self.fifo_depths[node_ind]["name"]:
+                raise FINNInternalError(
+                    f"Node name {n0.name} does not match expected name "
+                    f"{self.fifo_depths[node_ind]['name']} at index {node_ind}. "
+                    "This may be due to a mismatch between the model and the config, "
+                    "or due to changes in the model after the simulation was run. "
+                    "Consider re-running the entire flow from start to finish."
+                )
+            fifos = cast("list[int]", (self.fifo_depths[node_ind]["depths"]))
             n0.set_nodeattr("outFIFODepths", fifos)
 
         # Insert the FIFOs into the model
