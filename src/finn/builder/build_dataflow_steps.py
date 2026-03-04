@@ -124,9 +124,9 @@ from finn.transformation.streamline.round_thresholds import RoundAndClipThreshol
 from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth
 from finn.util.config import extract_model_config_consolidate_shuffles, extract_model_config_to_json
 from finn.util.exception import FINNUserError
-from finn.util.mlo_sim import is_mlo, mlo_prehook_func_factory
 from finn.util.execution import execute_parent
 from finn.util.logging import log
+from finn.util.mlo_sim import is_mlo, mlo_prehook_func_factory
 
 
 def verify_step(
@@ -167,8 +167,8 @@ def verify_step(
             child_model_fn = intermediate_models_dir + "/verify_%s.onnx" % step_name
             model.save(child_model_fn)
             parent_model = ModelWrapper(parent_model_fn)
-            out_tensor_name = parent_model.graph.output[0].name
-            exp_ishape = parent_model.get_tensor_shape(parent_model.graph.input[0].name)
+            out_tensor_name = parent_model.get_first_global_out()
+            exp_ishape = parent_model.get_tensor_shape(parent_model.get_first_global_in())
             if in_npy.shape != exp_ishape:
                 log.warning(
                     f"Verification input has shape {in_npy.shape} while model expects {exp_ishape}"
@@ -178,8 +178,8 @@ def verify_step(
             out_dict = execute_parent(parent_model_fn, child_model_fn, in_npy, return_full_ctx=True)
             out_npy = out_dict[out_tensor_name]
         else:
-            inp_tensor_name = model.graph.input[0].name
-            out_tensor_name = model.graph.output[0].name
+            inp_tensor_name = model.get_first_global_in()
+            out_tensor_name = model.get_first_global_out()
             exp_ishape = model.get_tensor_shape(inp_tensor_name)
             if in_npy.shape != exp_ishape:
                 log.warning(
@@ -525,6 +525,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(InferShapes())
     model = model.transform(RoundAndClipThresholds())
     model = model.transform(to_hw.InferReshape())
+    model = model.transform(to_hw.InferShuffle())
     return model
 
 
@@ -617,6 +618,13 @@ def step_transpose_decomposition(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()), apply_to_subgraphs=True)
         model = model.transform(InferShapes(), apply_to_subgraphs=True)
         model = model.transform(InferDataTypes(), apply_to_subgraphs=True)
+        model = model.transform(GiveUniqueNodeNames())
+        loop_nodes = model.get_nodes_by_op_type("FINNLoop")
+        for node in loop_nodes:
+            node_inst = getCustomOp(node)
+            loop_model = node_inst.get_nodeattr("body")
+            loop_model = loop_model.transform(GiveUniqueNodeNames(prefix=node.name + "_"))
+            node_inst.set_nodeattr("body", loop_model.graph)
     else:
         print("Model doesn't contain any Shuffle nodes, skipping step_transpose_decomposition.")
     return model
@@ -1140,7 +1148,7 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
         liveness = get_liveness_threshold_cycles()
         perf = model.analysis(dataflow_performance)
         latency = perf["critical_path_cycles"]
-        max_iters = max(liveness, int(np.ceil(latency * 1.1 + 20)))
+        max_iters = max(liveness, int(np.ceil(latency * 1.1 + 50)))
 
         rtlsim_perf_dict = xsi_fifosim(model, rtlsim_bs, max_iters=max_iters)
         # keep keys consistent between the Python and C++-styles
@@ -1284,23 +1292,6 @@ def step_vivado_power_estimation(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
-def step_vivado_power_estimation(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Run Vivado power estimation on the stitched IP after OOC synthesis."""
-    if DataflowOutputType.OOC_SYNTH not in cfg.generate_outputs:
-        raise FINNUserError("Vivado power estimation needs OOC synth")
-
-    report_dir = cfg.output_dir + "/report"
-    model.transform(
-        VivadoPowerEstimation(
-            report_dir,
-            cfg.synth_clk_period_ns,
-            cfg.vivado_power_simulate_activity,
-            cfg.vivado_power_simulation_type,
-        )
-    )
-    return model
-
-
 def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Synthesize a bitfile for the using the specified shell flow, using either
     Vivado or Vitis, to target the specified board."""
@@ -1407,6 +1398,7 @@ def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig):
         )
     return model
 
+
 def step_loop_rolling(model, cfg):
     """Roll a repeating sequence of layers into a loop. PyTorch metadata node hierarchy
     is used to indicate the loop structure."""
@@ -1434,6 +1426,7 @@ def step_loop_rolling(model, cfg):
         print("MLO not selected, skipping step_loop_rolling.")
 
     return model
+
 
 #: map step name strings to step functions
 build_dataflow_step_lookup = {

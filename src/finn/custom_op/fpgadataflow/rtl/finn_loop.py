@@ -35,13 +35,8 @@ import subprocess
 from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.custom_op.registry import getCustomOp
-from qonnx.util.basic import (
-    get_by_name,
-    is_finn_op,
-    qonnx_make_model,
-    roundup_to_integer_multiple,
-)
+from qonnx.custom_op.registry import getCustomOp, is_custom_op
+from qonnx.util.basic import get_by_name, qonnx_make_model, roundup_to_integer_multiple
 
 import finn.core.onnx_exec as oxe
 from finn import xsi
@@ -152,7 +147,7 @@ class FINNLoop(HWCustomOp, RTLBackend):
             # get first node in loop body and return
             # normal input shape
             node = loop_body.graph.node[0]
-            if is_finn_op(node.domain):
+            if is_custom_op(node.domain):
                 inst = getCustomOp(node)
                 ishape = inst.get_normal_input_shape(0)
             else:
@@ -162,7 +157,7 @@ class FINNLoop(HWCustomOp, RTLBackend):
             tensor = loop_body.graph.input[ind].name
             # get consumer, assuming the second input is the parameter input
             param_node = loop_body.find_consumer(tensor)
-            if is_finn_op(param_node.domain):
+            if is_custom_op(param_node.domain):
                 inst = getCustomOp(param_node)
                 ishape = inst.get_normal_input_shape(1)
             else:
@@ -174,7 +169,7 @@ class FINNLoop(HWCustomOp, RTLBackend):
         # get last node in loop body and return
         # normal output shape
         node = loop_body.graph.node[-1]
-        if is_finn_op(node.domain):
+        if is_custom_op(node.domain):
             inst = getCustomOp(node)
             oshape = inst.get_normal_output_shape(0)
         else:
@@ -217,7 +212,7 @@ class FINNLoop(HWCustomOp, RTLBackend):
             tensor = loop_body.graph.input[ind].name
             # get consumer, assuming the second input is the parameter input
             param_node = loop_body.find_consumer(tensor)
-            if is_finn_op(param_node.domain):
+            if is_custom_op(param_node.domain):
                 inst = getCustomOp(param_node)
                 idt = inst.get_input_datatype(1)
             else:
@@ -524,9 +519,7 @@ class FINNLoop(HWCustomOp, RTLBackend):
 
     def generate_hdl_stream_tap(self):
         """Helper function to generate verilog code for stream tap components."""
-        template_path = (
-            os.environ["FINN_RTLLIB"] + "/stream_tap/hdl/stream_tap_wrapper_template.v"
-        )
+        template_path = os.environ["FINN_RTLLIB"] + "/stream_tap/hdl/stream_tap_wrapper_template.v"
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         iteration = self.get_nodeattr("iteration")
         loop_body = self.get_nodeattr("body")
@@ -1120,7 +1113,7 @@ class FINNLoop(HWCustomOp, RTLBackend):
         loop_body = self.get_nodeattr("body")
         loop_body_intf = eval(loop_body.get_metadata_prop("vivado_stitch_ifnames"))
         for intf in loop_body_intf["aximm"]:
-            intf_names["aximm"] += [intf]
+            intf_names["aximm"].append(intf)
 
         return intf_names
 

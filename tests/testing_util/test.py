@@ -161,6 +161,24 @@ def get_trained_network_and_ishape(topology, wbits, abits):
     return (model, ishape)
 
 
+def execute_parent(parent_path, child_path, input_tensor_npy, return_full_ctx=False):
+    """Execute parent model containing a single StreamingDataflowPartition by
+    replacing it with the model at child_path and return result."""
+
+    parent_model = load_test_checkpoint_or_skip(parent_path)
+    iname = parent_model.get_first_global_in()
+    oname = parent_model.get_first_global_out()
+    sdp_node = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
+    sdp_node = getCustomOp(sdp_node)
+    sdp_node.set_nodeattr("model", child_path)
+    sdp_node.set_nodeattr("return_full_exec_context", 1 if return_full_ctx else 0)
+    ret = execute_onnx(parent_model, {iname: input_tensor_npy}, True)
+    if return_full_ctx:
+        return ret
+    else:
+        return ret[oname]
+
+
 def resize_smaller_side(target_pixels, img):
     """Resizes smallest side of image to target pixels and resizes larger side with
     same ratio. Expects a PIL image."""
