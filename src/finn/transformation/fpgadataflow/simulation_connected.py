@@ -482,7 +482,8 @@ class NodeConnectedSimulation(Simulation):
         fifo_first_valid_cycles: list[list[int]] | None = None,
     ) -> tuple[list[dict[str, list[int]]], bool]:
         """Simulate the given number of samples for every layer. Layers are completely isolated
-        and simulated in parallel. Simulation data is returned as a list of dicts (by node name as index).
+        and simulated in parallel.
+        Simulation data is returned as a list of dicts (by node name as index).
         """
         if self.simulation_type != SimulationType.NODE_BASED_CONNECTED:
             raise FINNInternalError(
@@ -528,7 +529,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         fpgapart: str,
         clk_ns: float,
         cfg: DataflowBuildConfig,
-        minimization_orders: list[MinimizationOrder] | None = [MinimizationOrder.NODE_ORDER],
+        minimization_orders: list[MinimizationOrder] | None = None,
         max_qsrl_depth: int = 256,
         vivado_ram_style: str = "auto",
         quality_of_results: str = "default",
@@ -544,12 +545,8 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         if minimization_orders is not None:
             self.minimization_orders = minimization_orders
         else:
-            self.minimization_orders = [
-                MinimizationOrder.LARGEST_BITWIDTH_DIFF_FIRST,
-                MinimizationOrder.NODE_ORDER,
-                MinimizationOrder.REVERSE_NODE_ORDER,
-                MinimizationOrder.SMALLEST_BITWIDTH_DIFF_FIRST,
-            ]
+            # TODO: Set to ALL search orders
+            self.minimization_orders = [MinimizationOrder.NODE_ORDER]
 
         self.final_depths: dict[MinimizationOrder, list[list[int]] | None] = dict.fromkeys(
             self.minimization_orders
