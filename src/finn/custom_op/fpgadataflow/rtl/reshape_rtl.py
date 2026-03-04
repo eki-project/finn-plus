@@ -18,6 +18,7 @@ from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 
 # Logging and error handling in FINN
 from finn.util.exception import FINNInternalError
+from finn.util.settings import get_settings
 
 
 @register_custom_op
@@ -47,7 +48,7 @@ class Reshape_rtl(Reshape, RTLBackend):
         # Path to RTL sources implementing the AXI pass-through operator
         # Note: Implements AXI pass-through via the data width converter, which,
         # for identical input and output width, reduces to a no-op.
-        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "dwc", "hdl")
+        rtlsrc = os.path.join(get_settings().finn_rtllib, "dwc", "hdl")
         # Path to the verilog template of the top-level module
         template = os.path.join(rtlsrc, "dwc_template.v")
 

@@ -56,7 +56,7 @@ from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
 from pathlib import Path, PosixPath, PurePath
-from typing import Any, Literal, Optional, cast
+from typing import Any, List, Literal, Optional, cast
 
 from finn.util.basic import alveo_default_platform, part_map
 from finn.util.exception import FINNConfigurationError
@@ -572,6 +572,21 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: If set to True, FIFOs with impl_style=vivado will be kept during
     #: rtlsim, otherwise they will be replaced by RTL implementations.
     rtlsim_use_vivado_comps: bool = True
+
+    #: If set to True, the FINN compiler tries to create an MLO design based on
+    #: loop_body_hierarchy and loop_body_range
+    mlo: bool = False
+
+    #: A List of strings that specify the PyTorch metadata hierarchy to
+    #: be used for the loop body hierarchy. Each item in the list should
+    #: be a string that represents a level in the hierarchy.
+    loop_body_hierarchy: Optional[List[List[str]]] = None
+
+    #: A list of a start and an end node to mark the loop body subgraph
+    #: For this node range, the PyTorch metadata hierarchy will be simulated
+    #: TODO: this argument will be replaced or extended when there is a way
+    #: to preserve node metadata from the PyTorch model (e.g. from dynamo exporter)
+    loop_body_range: Optional[List[Any]] = None
 
     #: (Only relevant if CPP_DRIVER output product is enabled) Selects C++ driver version.
     #: If set to "latest", newest version will be used.
