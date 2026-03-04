@@ -70,6 +70,7 @@ from finn.builder.build_dataflow_config import (
     ShellFlowType,
     VerificationStepType,
 )
+from finn.builder.passes import step_passes_frontend
 from finn.core.onnx_exec import execute_onnx
 from finn.core.rtlsim_exec import rtlsim_exec
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
@@ -496,13 +497,18 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
         # doing this first causes all threshold layers to be standalone
         model = model.transform(to_hw.InferThresholdingLayer())
     else:
-        print(
+        log.warning(
             """standalone_thresholds are set to False.
             Please be aware that this means the MVAUs will be implemented in HLS
             because the RTL variant doesn't support the merge of
             MatMul + MultiThreshold into one layer. If you would like to have the RTL variant,
             please set standalone_thresholds to True."""
         )
+
+    model = model.transform(to_hw.InferPool())
+    model = model.transform(to_hw.InferPoolFromReduce())
+    model = model.transform(to_hw.InferConvInpGen())
+
     # needed for bipolar MatMul layers
     model = model.transform(to_hw.InferBinaryMatrixVectorActivation())
     # needed for non-bipolar MatMul layers
@@ -511,14 +517,10 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(to_hw.InferLabelSelectLayer())
     # input quantization (if any) as standalone threshold
     model = model.transform(to_hw.InferThresholdingLayer())
-    # needed for convolutions -- TODO always exec?
-    need_conv = len(model.get_nodes_by_op_type("Im2Col")) > 0
-    if need_conv:
-        model = model.transform(to_hw.InferPool())
-        model = model.transform(to_hw.InferConvInpGen())
-        model = model.transform(RemoveCNVtoFCFlatten())
+    model = model.transform(to_hw.InferFMPadding())
     # get rid of Tranpose -> Tranpose identity seq
     model = model.transform(absorb.AbsorbConsecutiveTransposes())
+    model = model.transform(RemoveCNVtoFCFlatten())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(InferDataLayouts())
     model = model.transform(InferDataTypes())
@@ -657,9 +659,16 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
         hw_attrs = [
             "PE",
             "SIMD",
+            "EmbFold",
+            "SeqFold",
             "parallel_window",
             "ram_style",
+            "ram_style_thresholds",
+            "ram_style_mask",
+            "depth",
+            "impl_style",
             "resType",
+            "mac_resource",
             "mem_mode",
             "runtime_writeable_weights",
             "depth_trigger_uram",
@@ -832,6 +841,12 @@ def step_hw_ipgen(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
+def step_insert_dwc(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Inserts data width converters between layers where necessary."""
+    model = model.transform(InsertDWC())
+    return model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
+
+
 def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     """
     Depending on the auto_fifo_depths setting, do one of the following:
@@ -848,11 +863,16 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     hw_attrs = [
         "PE",
         "SIMD",
+        "EmbFold",
+        "SeqFold",
         "parallel_window",
         "ram_style",
+        "ram_style_thresholds",
+        "ram_style_mask",
         "depth",
         "impl_style",
         "resType",
+        "mac_resource",
         "mem_mode",
         "runtime_writeable_weights",
         "inFIFODepths",
@@ -879,8 +899,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
         extract_model_config_to_json(model, cfg_path, hw_attrs)
         model.set_metadata_prop("folding_config_before_lfs", cfg_path)
 
-        # Disable runtime-writable weights, external weights, and dynamic mode,
-        # as we don't support additional AXI-lite interfaces next to the FIFOs
+        # Disable runtime-writable weights, external weights, and dynamic mode
         for node in model.graph.node:
             if node.domain.startswith("finn.custom_op.fpgadataflow"):
                 node_inst = getCustomOp(node)
@@ -902,21 +921,25 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
                 except AttributeError:
                     pass
 
-        # Specialize FIFOs to HLS back-end instead of default RTL back-end
+        # Specialize FIFOs to RTL back-end
         for node in model.get_nodes_by_op_type("StreamingFIFO"):
             node_inst = getCustomOp(node)
-            node_inst.set_nodeattr("preferred_impl_style", "hls")
+            node_inst.set_nodeattr("preferred_impl_style", "rtl")
         model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
-
-        # Fix impl_style attribute
-        for node in model.get_nodes_by_op_type("StreamingFIFO_hls"):
-            node_inst = getCustomOp(node)
-            node_inst.set_nodeattr("impl_style", "virtual")
 
         # Clean up model
         model = model.transform(SortGraph())
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(GiveReadableTensorNames())
+
+        # Set impl_style + ID attributes
+        # We can't infer ID from the unique node name at IP instantiation,
+        # because the nodes will be wrapped in SDPs
+        for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
+            node_inst = getCustomOp(node)
+            id = int(node.name.split("_")[-1])
+            node_inst.set_nodeattr("impl_style", "virtual")
+            node_inst.set_nodeattr("fifo_id", id)
 
         return model
 
@@ -1430,6 +1453,7 @@ def step_loop_rolling(model, cfg):
 
 #: map step name strings to step functions
 build_dataflow_step_lookup = {
+    "step_passes_frontend": step_passes_frontend,
     "step_qonnx_to_finn": step_qonnx_to_finn,
     "step_tidy_up": step_tidy_up,
     "step_streamline": step_streamline,
@@ -1443,6 +1467,7 @@ build_dataflow_step_lookup = {
     "step_generate_estimate_reports": step_generate_estimate_reports,
     "step_hw_codegen": step_hw_codegen,
     "step_hw_ipgen": step_hw_ipgen,
+    "step_insert_dwc": step_insert_dwc,
     "step_set_fifo_depths": step_set_fifo_depths,
     "step_create_stitched_ip": step_create_stitched_ip,
     "step_measure_rtlsim_performance": step_measure_rtlsim_performance,

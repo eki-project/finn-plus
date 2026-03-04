@@ -1,5 +1,6 @@
 """CI measurement script for FINN deployment packages."""
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -20,11 +21,24 @@ def delete_dir_contents(dir):
 
 
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Run measurements on FINN deployment packages.")
+    parser.add_argument(
+        "--followup",
+        action="store_true",
+        help="Indicate this is a follow-up run (uses different artifact directories)",
+    )
+    args = parser.parse_args()
+
     exit_code = 0
     print("SCANNING DEPLOYMENT PACKAGES IN BUILD ARTIFACTS..")
     # Find deployment packages from artifacts
-    artifacts_in_dir = os.path.join("build_artifacts", "runs_output")
-    artifacts_out_dir = os.path.join("measurement_artifacts", "runs_output")
+    if args.followup:
+        artifacts_in_dir = os.path.join("build_artifacts_followup", "runs_output")
+        artifacts_out_dir = os.path.join("measurement_artifacts_followup", "runs_output")
+    else:
+        artifacts_in_dir = os.path.join("build_artifacts", "runs_output")
+        artifacts_out_dir = os.path.join("measurement_artifacts", "runs_output")
     for run in os.listdir(artifacts_in_dir):
         run_in_dir = os.path.join(artifacts_in_dir, run)
         run_out_dir = os.path.join(artifacts_out_dir, run)

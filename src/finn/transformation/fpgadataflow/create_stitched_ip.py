@@ -117,6 +117,7 @@ class CreateStitchedIP(Transformation):
             "m_axis": [],
             "aximm": [],
             "axilite": [],
+            "ap_none": [],
         }
 
     def is_double_pumped(self, node):
@@ -347,6 +348,7 @@ class CreateStitchedIP(Transformation):
             self.connect_cmds.append(
                 "set_property name %s [get_bd_ports %s_0]" % (input_intf_name, input_intf_name)
             )
+            self.intf_names["ap_none"].append(input_intf_name)
 
     def insert_signature(self, checksum_count):
         """Insert signature block for design identification."""

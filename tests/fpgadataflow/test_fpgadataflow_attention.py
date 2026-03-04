@@ -189,7 +189,8 @@ class MockScaledDotProductAttention:
     # Computes the query-key matmul with activation function simulating
     # quantization via thresholding
     def qk_matmul(self, query, key):
-        return multithreshold(query @ key.T, self.qk_thresholds)
+        return multithreshold(query @ key.transpose(0, 2, 1),
+                              self.qk_thresholds, channels_last=True)
 
     # Computes the softmax normalization of attention weights with activation
     # function simulating quantization via thresholding
@@ -198,13 +199,13 @@ class MockScaledDotProductAttention:
         iscale = self.DequantSoftmax
         # Scale the inputs, normalize using softmax and activate via thresholds
         return multithreshold(
-            softmax(iscale * attention, axis=1), self.a_thresholds
+            softmax(iscale * attention, axis=1), self.a_thresholds, channels_last=True
         )
 
     # Computes the attention-value matmul with activation function simulating
     # quantization via thresholding
     def av_matmul(self, attention, value):
-        return multithreshold(attention @ value, self.av_thresholds)
+        return multithreshold(attention @ value, self.av_thresholds, channels_last=True)
 
     # Computes scaled dot-product attention
     def __call__(self, query, key, value):
@@ -214,9 +215,9 @@ class MockScaledDotProductAttention:
     def make_rand_input(self):
         # Sample random query, key and value matrices with types and shapes
         # configured as attributes
-        query = gen_finn_dt_tensor(self.QType, (self.QLen, self.QKDim))
-        key = gen_finn_dt_tensor(self.KType, (self.KVLen, self.QKDim))
-        value = gen_finn_dt_tensor(self.VType, (self.KVLen, self.VDim))
+        query = gen_finn_dt_tensor(self.QType, (1, self.QLen, self.QKDim))
+        key = gen_finn_dt_tensor(self.KType, (1, self.KVLen, self.QKDim))
+        value = gen_finn_dt_tensor(self.VType, (1, self.KVLen, self.VDim))
         # Return query, key, value tensors with integers represented as floats
         return query, key, value
 
@@ -413,10 +414,10 @@ def test_attention_cppsim(
     o_produced = execute_onnx(model, context)["O"]
 
     # Log outputs for debugging
-    print(f"{o_expected}\n", file=open('o_expected_cppsim.txt', 'w'))
-    print(f"{o_produced}\n", file=open('o_produced_cppsim.txt', 'w'))
+    # print(f"{o_expected}\n", file=open('o_expected_cppsim.txt', 'w'))
+    # print(f"{o_produced}\n", file=open('o_produced_cppsim.txt', 'w'))
     # Save the ONNX model graph for debugging
-    model.save("attention-cppsim.onnx")
+    # model.save("attention-cppsim.onnx")
 
     # Test whether the expectation and the onnx model output match
     assert np.allclose(o_produced, o_expected), "cppsim exec failed"
@@ -528,10 +529,10 @@ def test_attention_rtlsim(
     o_produced = execute_onnx(model, context)["O"]
 
     # Log outputs for debugging
-    print(f"{o_expected}\n", file=open('o_expected_rtlsim.txt', 'w'))
-    print(f"{o_produced}\n", file=open('o_produced_rtlsim.txt', 'w'))
+    # print(f"{o_expected}\n", file=open('o_expected_rtlsim.txt', 'w'))
+    # print(f"{o_produced}\n", file=open('o_produced_rtlsim.txt', 'w'))
     # Save the ONNX model graph for debugging
-    model.save("attention-rtlsim.onnx")
+    # model.save("attention-rtlsim.onnx")
 
     # Test whether the expectation and the onnx model output match
     assert np.allclose(o_produced, o_expected), "rtlsim exec failed"
