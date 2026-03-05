@@ -20,11 +20,50 @@ from typing import Any, cast
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.transformation.fpgadataflow.set_fifo_depths import get_fifo_split_configs
 from finn.transformation.fpgadataflow.simulation import Simulation, SimulationType, store_fifo_data
 from finn.transformation.fpgadataflow.simulation_controller import SimulationController
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
+
+
+# Hardware BRAM FIFOs lose entries to internal pipeline registers compared to the software FIFO
+# model (which has exact capacity). This constant accounts for that overhead so that the
+# minimization algorithm finds depths that are safe to deploy on hardware.
+BRAM_FIFO_PIPELINE_OVERHEAD = 2
+
+
+def _count_bram_sub_fifos(depth: int, max_qsrl_depth: int) -> int:
+    """Return the number of BRAM (vivado) sub-FIFOs that *depth* decomposes into.
+
+    Non-power-of-two BRAM FIFOs are decomposed into several power-of-two sub-FIFOs by
+    get_fifo_split_configs.  Each sub-FIFO whose style is "vivado" has its own pipeline
+    register overhead, so the total overhead scales with the sub-FIFO count.
+    """
+    return sum(1 for _, style in get_fifo_split_configs(depth, max_qsrl_depth) if style == "vivado")
+
+
+def _safe_bram_starting_depth(peak_util: int, max_qsrl_depth: int) -> int:
+    """Return the smallest depth d such that d minus its BRAM pipeline overhead >= peak_util + 1.
+
+    For LUTRAM depths (d <= max_qsrl_depth) the software model is exact so no overhead is needed.
+    For BRAM depths the overhead depends on how many sub-FIFOs the decomposition produces,
+    which itself depends on d.  We iterate (typically 1-2 steps) until the overhead stabilises.
+    """
+    d = max(peak_util + 1, 32)
+    if d <= max_qsrl_depth:
+        return d
+    # Iteratively find d where d - num_vivado(d)*overhead >= peak_util + 1
+    overhead = 0
+    while True:
+        d = peak_util + 1 + overhead
+        num_vivado = _count_bram_sub_fifos(d, max_qsrl_depth)
+        new_overhead = num_vivado * BRAM_FIFO_PIPELINE_OVERHEAD
+        if new_overhead <= overhead:
+            break
+        overhead = new_overhead
+    return max(d, 32)
 
 
 class MinimizationOrder(Enum):
@@ -472,8 +511,10 @@ class NodeConnectedSimulation(Simulation):
         clk_ns: float,
         functional_sim: bool,
         workers: int | None = None,
+        max_qsrl_depth: int = 256,
     ) -> None:
         super().__init__(model, simulation_type, fpgapart, clk_ns, functional_sim, workers)
+        self.max_qsrl_depth = max_qsrl_depth
 
     def simulate(
         self,
@@ -494,13 +535,33 @@ class NodeConnectedSimulation(Simulation):
         names = [node.name for node in self.model.graph.node]
         initial_depth: Any = [[depth]] * len(self.binaries) if isinstance(depth, int) else depth
 
+        # For BRAM FIFOs (depth > max_qsrl_depth), hardware loses BRAM_FIFO_PIPELINE_OVERHEAD
+        # entries to internal pipeline registers *per BRAM sub-FIFO*.  Non-power-of-two depths
+        # are decomposed into several power-of-two sub-FIFOs (see get_fifo_split_configs), so
+        # the total overhead is num_bram_sub_fifos * BRAM_FIFO_PIPELINE_OVERHEAD.
+        # Rounding to a full BRAM block before calling get_fifo_split_configs is NOT needed:
+        # the decomposition works on any depth, and we want the sub-FIFO count for the exact
+        # depth under test.
+        if initial_depth is not None and not isinstance(initial_depth, int):
+            adjusted_depth: Any = [
+                [
+                    d - _count_bram_sub_fifos(d, self.max_qsrl_depth) * BRAM_FIFO_PIPELINE_OVERHEAD
+                    if d > self.max_qsrl_depth
+                    else d
+                    for d in node_depths
+                ]
+                for node_depths in initial_depth
+            ]
+        else:
+            adjusted_depth = initial_depth
+
         # Run simulation
         start = time.time()
         output_json = Path(make_build_dir("simulation_results_")) / "simulation_data.json"
         controller = NodeConnectedSimulationController(
             len(self.binaries), names, list(self.binaries.values()), Console(), 0.1, False
         )
-        controller.run(initial_depth, output_json, max_cycles, fifo_first_valid_cycles)
+        controller.run(adjusted_depth, output_json, max_cycles, fifo_first_valid_cycles)
         end = time.time()
         log.debug(f"Simulation took {end - start} seconds!")
 
@@ -510,15 +571,17 @@ class NodeConnectedSimulation(Simulation):
         # Return the collected data indexed by node index
         data = []
         for sim_entry in merged_data["simulations"]:
-            data.append({
-                "name": sim_entry["name"],
-                "fifo_utilization": sim_entry["fifo_utilization"],
-                "fifo_depth": sim_entry["fifo_depth"],
-                "cycles": sim_entry["cycles"],
-                "samples": sim_entry["samples"],
-                "intervals": sim_entry["intervals"],
-                "fifo_cycles_until_first_valid": sim_entry["fifo_cycles_until_first_valid"],
-            })
+            data.append(
+                {
+                    "name": sim_entry["name"],
+                    "fifo_utilization": sim_entry["fifo_utilization"],
+                    "fifo_depth": sim_entry["fifo_depth"],
+                    "cycles": sim_entry["cycles"],
+                    "samples": sim_entry["samples"],
+                    "intervals": sim_entry["intervals"],
+                    "fifo_cycles_until_first_valid": sim_entry["fifo_cycles_until_first_valid"],
+                }
+            )
         json.dump(data, output_json.open("w"), indent=4)
         return data, merged_data.get("timeout_occurred", False)
 
@@ -562,7 +625,14 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         # Create fifo_depths (indexed by layer index and then stream index)
         fifo_depths: list[list[int]] = []  # Each entry is a list of fifo sizes for that node
         for val in initial_fifo_depths:
-            fifo_depths.append([max(v + 1, 32) for v in val["fifo_utilization"]])
+            # Use _safe_bram_starting_depth so that simulate() (which subtracts
+            # num_sub_fifos*BRAM_FIFO_PIPELINE_OVERHEAD for BRAM depths) still sees a depth
+            # that covers the observed peak utilisation.  A flat +2 is insufficient when a
+            # depth decomposes into multiple BRAM sub-FIFOs (e.g. depth 1537 → 2 sub-FIFOs
+            # → 4 entries of overhead).
+            fifo_depths.append(
+                [_safe_bram_starting_depth(v, self.max_qsrl_depth) for v in val["fifo_utilization"]]
+            )
         fifo_first_valid_cycles: list[list[int]] = []
         for val in initial_fifo_depths:
             fifo_first_valid_cycles.append(
@@ -617,6 +687,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             self.fpgapart,
             self.clk_ns,
             self.cfg.functional_simulation,
+            max_qsrl_depth=self.max_qsrl_depth,
         )
         model = sim.model  # TODO:clean up
 
