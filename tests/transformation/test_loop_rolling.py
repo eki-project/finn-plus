@@ -10,11 +10,7 @@ from brevitas.nn import QuantLinear
 from brevitas.quant import Int8ActPerTensorFloat, Int8WeightPerTensorFloat
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.transformation.general import (
-    ConvertDivToMul,
-    ConvertSubToAdd,
-    GiveUniqueNodeNames,
-)
+from qonnx.transformation.general import ConvertDivToMul, ConvertSubToAdd, GiveUniqueNodeNames
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor
 from qonnx.util.cleanup import cleanup as qonnx_cleanup

@@ -2,15 +2,8 @@ import ast
 from collections.abc import Iterable
 from onnx_ir import _enums
 from onnxscript import ir
-from onnxscript.rewriter._pattern_ir import (
-    GraphPattern,
-    NodeOutputPattern,
-    ValuePattern,
-)
-from onnxscript.rewriter._rewrite_rule import (
-    ReplacementPatternFunction,
-    ReplacementSubgraph,
-)
+from onnxscript.rewriter._pattern_ir import GraphPattern, NodeOutputPattern, ValuePattern
+from onnxscript.rewriter._rewrite_rule import ReplacementPatternFunction, ReplacementSubgraph
 from onnxscript.rewriter.pattern import (
     MatchResult,
     OpsetPatternBuilder,
