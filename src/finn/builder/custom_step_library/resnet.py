@@ -184,6 +184,11 @@ def step_resnet_convert_to_hw(
 
 
 def step_resnet50_tidy(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Tidy up ResNet-50 models (backwards-compatible legacy step).
+
+    Applies shape and datatype inference, constant folding, unique naming, and
+    inserts a TopK layer at the output.
+    """
     model = model.transform(GiveUniqueParameterTensors())
     model = model.transform(InferShapes())
     model = model.transform(FoldConstants())
@@ -200,6 +205,12 @@ def step_resnet50_tidy(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_resnet50_streamline_linear(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Apply linear streamlining transformations to a ResNet-50 model.
+
+    Moves and absorbs scalar linear operations (mul, add) past convolutions and
+    matrix multiplications, collapses repeated operations, converts sign nodes
+    to thresholds, and absorbs values into multithreshold nodes.
+    """
     streamline_transformations = [
         AbsorbScalarMulAddIntoTopK(),  # before MoveAddPastMul to avoid int->float
         ConvertSubToAdd(),
@@ -232,6 +243,11 @@ def step_resnet50_streamline_linear(model: ModelWrapper, cfg: DataflowBuildConfi
 
 
 def step_resnet50_streamline_nonlinear(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Apply non-linear streamlining transformations to a ResNet-50 model.
+
+    Moves linear operations past elementwise-add nodes and fork points to
+    enable further fusion in subsequent linear streamlining passes.
+    """
     streamline_transformations = [
         MoveLinearPastEltwiseAdd(),
         MoveLinearPastFork(),
@@ -243,6 +259,11 @@ def step_resnet50_streamline_nonlinear(model: ModelWrapper, cfg: DataflowBuildCo
 
 
 def step_resnet50_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Streamline a ResNet-50 model (backwards-compatible legacy step).
+
+    Iterates linear and non-linear streamlining passes, then lowers convolutions
+    to matrix multiplications and absorbs the resulting transpose operations.
+    """
     for iter_id in range(4):
         model = step_resnet50_streamline_linear(model, cfg)
         model = step_resnet50_streamline_nonlinear(model, cfg)
@@ -272,6 +293,13 @@ def step_resnet50_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Convert a ResNet-50 model to hardware-specific operations (backwards-compatible legacy step).
+
+    Sets the input datatype to UINT8, then sequentially converts channelwise
+    linear layers, pooling, matrix-vector activations, thresholding, convolution
+    input generators, stream duplication/addition, and label selection to their
+    corresponding HLS hardware layer variants.
+    """
     model.set_tensor_datatype(model.graph.input[0].name, DataType["UINT8"])
     model = model.transform(InferDataLayouts())
     model = model.transform(DoubleToSingleFloat())
