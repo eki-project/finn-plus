@@ -1,0 +1,18 @@
+params:
+  dut: transformer
+  model_path: models/transformer/finn-transformers/benchmark/streamlined.onnx
+  verify_input_npy: models/transformer/finn-transformers/benchmark/inp.npy
+  verify_expected_output_npy: models/transformer/finn-transformers/benchmark/out.npy
+  generate_outputs:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  target_fps: None
+  auto_fifo_depths: false
+  folding_config_file: models/transformer/finn-transformers_folding/benchmark_1000fps_fifo.json
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
