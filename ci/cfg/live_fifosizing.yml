@@ -124,10 +124,7 @@
     # benchmark model ("dummy")
     {
         "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/benchmark"],
-        "model_path": ["models/transformer/finn-transformers/benchmark/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/benchmark/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/benchmark/out.npy"],
+        "model_dir": ["models/transformer/finn-transformers/benchmark"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": [1000],
@@ -136,10 +133,7 @@
     # language model
     {
         "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/language"],
-        "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
+        "model_dir": ["models/transformer/finn-transformers/language"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": [1000],
@@ -148,10 +142,7 @@
     # radioml model
     {
         "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/radioml"],
-        "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
+        "model_dir": ["models/transformer/finn-transformers/radioml"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": [1000],
@@ -160,10 +151,7 @@
     # vision model
     {
         "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/vision"],
-        "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
+        "model_dir": ["models/transformer/finn-transformers/vision"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": [1000],

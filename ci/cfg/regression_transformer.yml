@@ -3,10 +3,7 @@
     # benchmark model ("dummy")
     {
         "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/benchmark"],
-        "model_path": ["models/transformer/finn-transformers/benchmark/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/benchmark/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/benchmark/out.npy"],
+        "model_dir": ["models/transformer/finn-transformers/benchmark"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": ["None"],
         "auto_fifo_depths": [False],
@@ -16,10 +13,7 @@
     # language model
     {
         "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/language"],
-        "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
+        "model_dir": ["models/transformer/finn-transformers/language"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": ["None"],
         "auto_fifo_depths": [False],
@@ -29,10 +23,7 @@
     # radioml model
     {
         "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/radioml"],
-        "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
+        "model_dir": ["models/transformer/finn-transformers/radioml"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": ["None"],
         "auto_fifo_depths": [False],
@@ -42,10 +33,7 @@
     # vision model
     {
         "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/vision"],
-        "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
+        "model_dir": ["models/transformer/finn-transformers/vision"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "target_fps": ["None"],
         "auto_fifo_depths": [False],
