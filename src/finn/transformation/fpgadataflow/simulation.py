@@ -238,10 +238,10 @@ class ApplyFIFOSizes(Transformation):
                     f"Node {first_node.name} does not have a custom op instance."
                     " This is required for FIFO insertion."
                 )
-            if first_node.name != self.fifo_depths[node_ind]["name"]:
+            if first_node.name != self.fifo_depths[node_ind]["node"]:
                 raise FINNInternalError(
-                    f"Node name {n0.name} does not match expected name "
-                    f"{self.fifo_depths[node_ind]['name']} at index {node_ind}. "
+                    f"Node name {first_node.name} does not match expected name "
+                    f"{self.fifo_depths[node_ind]['node']} at index {node_ind}. "
                     "This may be due to a mismatch between the model and the config, "
                     "or due to changes in the model after the simulation was run. "
                     "Consider re-running the entire flow from start to finish."
