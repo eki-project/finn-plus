@@ -7,11 +7,11 @@
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
 
-import warnings
 from qonnx.core.datatype import DataType
 from scipy.special import softmax
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class HWSoftmax(HWCustomOp):
@@ -60,7 +60,7 @@ class HWSoftmax(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("input_data_type", idt.name)
 
         # set output datatype from property

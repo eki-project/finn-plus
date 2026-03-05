@@ -85,7 +85,7 @@ def test_streamline_fc(size, wbits, abits):
     # run using FINN-based execution
     input_dict = {"global_in": nph.to_array(input_tensor)}
     expected_ctx = oxe.execute_onnx(model, input_dict, True)
-    expected = expected_ctx[model.graph.output[0].name]
+    expected = expected_ctx[model.get_first_global_out()]
     model = model.transform(Streamline())
     model = model.transform(RemoveUnusedTensors())
     assert len(model.graph.initializer) == 11
@@ -94,5 +94,5 @@ def test_streamline_fc(size, wbits, abits):
     # but it does have a layout annotation now, which is also stored as "quantization_annotation"
     assert len(model.graph.quantization_annotation) == 21
     produced_ctx = oxe.execute_onnx(model, input_dict, True)
-    produced = produced_ctx[model.graph.output[0].name]
+    produced = produced_ctx[model.get_first_global_out()]
     assert np.isclose(expected, produced, atol=1e-3).all()

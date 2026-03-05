@@ -14,6 +14,7 @@ from typing import Optional
 
 from finn.custom_op.fpgadataflow.inner_shuffle import InnerShuffle
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.util.settings import get_settings
 
 
 def auto_size_simd(I_dim: int, SIMD: int) -> Optional[int]:
@@ -76,8 +77,8 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
         return code_gen_dict
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtlsrc = f'{os.environ["FINN_RTLLIB"]}/inner_shuffle'
-        template_path = f"{rtlsrc}/inner_shuffle_template.v"
+        rtlsrc = os.path.join(get_settings().finn_rtllib, "inner_shuffle")
+        template_path = os.path.join(rtlsrc, "inner_shuffle_template.v")
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         dt = DataType[self.get_nodeattr("data_type")]
         simd = self.get_nodeattr("SIMD")
@@ -111,7 +112,7 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = f"{self.get_nodeattr('code_gen_dir_ipgen')}/"
-            rtllib_dir = f'{os.environ["FINN_RTLLIB"]}/inner_shuffle'
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "inner_shuffle")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
