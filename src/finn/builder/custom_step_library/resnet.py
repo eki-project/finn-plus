@@ -36,49 +36,35 @@ hardware conversion.
 
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.transformation.batchnorm_to_affine import BatchNormToAffine
 from qonnx.transformation.composed import ComposedTransformation
 from qonnx.transformation.double_to_single_float import DoubleToSingleFloat
 from qonnx.transformation.fold_constants import FoldConstants
 from qonnx.transformation.general import (
-    ConvertDivToMul,
-    ConvertSubToAdd,
     GiveReadableTensorNames,
     GiveUniqueNodeNames,
     GiveUniqueParameterTensors,
-    RemoveStaticGraphInputs,
     RemoveUnusedTensors,
     SortGraph,
 )
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
-from qonnx.transformation.insert_topk import InsertTopK
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
-from qonnx.transformation.remove import RemoveIdentityOps
 
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.streamline.absorb import (
-    Absorb1BitMulIntoConv,
-    Absorb1BitMulIntoMatMul,
     AbsorbAddIntoMultiThreshold,
     AbsorbConsecutiveTransposes,
     AbsorbMulIntoMultiThreshold,
     AbsorbScalarMulAddIntoTopK,
     AbsorbSignBiasIntoMultiThreshold,
     AbsorbTransposeIntoMultiThreshold,
-    FactorOutMulSignMagnitude,
-)
-from finn.transformation.streamline.collapse_repeated import (
-    CollapseRepeatedAdd,
-    CollapseRepeatedMul,
 )
 from finn.transformation.streamline.remove import RemoveIdentityReshape, RemoveIdentityTranspose
 
-# just for not linear
 # just for not linear
 from finn.transformation.streamline.reorder import (
     MoveAddPastConv,
@@ -183,96 +169,62 @@ def step_resnet_convert_to_hw(
 # For backwards compatibility
 
 
-def step_resnet50_tidy(model: ModelWrapper, cfg: DataflowBuildConfig):
-    model = model.transform(GiveUniqueParameterTensors())
-    model = model.transform(InferShapes())
-    model = model.transform(FoldConstants())
-    model = model.transform(RemoveStaticGraphInputs())
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(GiveReadableTensorNames())
-    model = model.transform(InferDataTypes())
-    model = model.transform(InsertTopK())
-    model = model.transform(InferShapes())
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(GiveReadableTensorNames())
-    model = model.transform(InferDataTypes())
-    return model
-
-
-def step_resnet50_streamline_linear(model: ModelWrapper, cfg: DataflowBuildConfig):
-    streamline_transformations = [
-        AbsorbScalarMulAddIntoTopK(),  # before MoveAddPastMul to avoid int->float
-        ConvertSubToAdd(),
-        ConvertDivToMul(),
-        RemoveIdentityOps(),
-        CollapseRepeatedMul(),
-        BatchNormToAffine(),
-        ConvertSignToThres(),
-        MoveAddPastMul(),
-        MoveScalarAddPastMatMul(),
-        MoveAddPastConv(),
-        MoveScalarMulPastMatMul(),
-        MoveScalarMulPastConv(),
-        MoveScalarLinearPastInvariants(),
-        MoveAddPastMul(),
-        CollapseRepeatedAdd(),
-        CollapseRepeatedMul(),
-        AbsorbAddIntoMultiThreshold(),
-        FactorOutMulSignMagnitude(),
-        MoveMaxPoolPastMultiThreshold(),
-        AbsorbMulIntoMultiThreshold(),
-        Absorb1BitMulIntoMatMul(),
-        Absorb1BitMulIntoConv(),
-        RoundAndClipThresholds(),
-    ]
-    for trn in streamline_transformations:
-        model = model.transform(trn)
-        model = model.transform(GiveUniqueNodeNames())
-    return model
-
-
-def step_resnet50_streamline_nonlinear(model: ModelWrapper, cfg: DataflowBuildConfig):
-    streamline_transformations = [
-        MoveLinearPastEltwiseAdd(),
-        MoveLinearPastFork(),
-    ]
-    for trn in streamline_transformations:
-        model = model.transform(trn)
-        model = model.transform(GiveUniqueNodeNames())
-    return model
-
-
-def step_resnet50_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
-    for iter_id in range(4):
-        model = step_resnet50_streamline_linear(model, cfg)
-        model = step_resnet50_streamline_nonlinear(model, cfg)
-
-        # big loop tidy up
-        model = model.transform(RemoveUnusedTensors())
-        model = model.transform(GiveReadableTensorNames())
-        model = model.transform(InferDataTypes())
-        model = model.transform(SortGraph())
-
-    model = model.transform(DoubleToSingleFloat())
-
-    # Lower convolutions and streamline resulting transposes
-    model = model.transform(LowerConvsToMatMul())
+def step_resnet_tidy(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:  # noqa: ARG001
+    """Tidy up ResNet models."""
     model = model.transform(
         ComposedTransformation(
             [
-                MoveTransposePastJoinAdd(),
-                MoveTransposePastFork(),
-                MoveTransposePastEltwise(),
-                AbsorbConsecutiveTransposes(),
-                AbsorbTransposeIntoMultiThreshold(),
+                # Adds shape and datatype annotations to all tensors in this graph
+                InferDataTypes(),
+                InferShapes(),
+                # Cleanup the graph by removing redundant, unnecessary and constant
+                # nodes and tensors and give unique names to everything remaining
+                GiveUniqueNodeNames(),
+                GiveReadableTensorNames(),
+                RemoveUnusedTensors(),
+                GiveUniqueParameterTensors(),
+                FoldConstants(),
+                # Remove unnecessary shape and layout transformations
+                RemoveIdentityReshape(),
+                RemoveIdentityTranspose(),
+                # Redo shape and datatype annotations after removing nodes and
+                # tensors
+                InferShapes(),
+                InferDataTypes(),
             ]
         )
     )
     return model
 
 
-def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
-    model.set_tensor_datatype(model.graph.input[0].name, DataType["UINT8"])
+def step_resnet_streamline(
+    model: ModelWrapper, cfg: DataflowBuildConfig
+) -> ModelWrapper:  # noqa: ARG001
+    """Streamline ResNet models."""
+    transform = ComposedTransformation(
+        [
+            MoveMulPastAdd(),
+            AbsorbSignBiasIntoMultiThreshold(),
+        ]
+    )
+    model = model.transform(transform)
+    model = model.transform(Streamline())
+    transform2 = ComposedTransformation(
+        [LowerConvsToMatMul(), AbsorbAddIntoMultiThreshold(), AbsorbTransposeIntoMultiThreshold()]
+    )
+    model = model.transform(transform2)
+    model = model.transform(Streamline())
+    # model = model.transform(InsertTopK())
+    # model = model.transform(AbsorbScalarMulAddIntoTopK())
+
+    return model
+
+
+def step_resnet_convert_to_hw(
+    model: ModelWrapper, cfg: DataflowBuildConfig
+) -> ModelWrapper:  # noqa: ARG001
+    """Convert ResNet models to hardware-specific operations."""
+    # Convert Squeeze and Unsqueeze operators to hardware operations
     model = model.transform(InferDataLayouts())
     model = model.transform(DoubleToSingleFloat())
     model = model.transform(InferDataTypes())
@@ -280,15 +232,9 @@ def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     to_hw_transformations = [
         to_hw.InferChannelwiseLinearLayer,
-        to_hw.InferPool,
-        AbsorbConsecutiveTransposes,
-        RoundAndClipThresholds,
-        to_hw.InferQuantizedMatrixVectorActivation,
-        to_hw.InferThresholdingLayer,
-        to_hw.InferConvInpGen,
-        to_hw.InferDuplicateStreamsLayer,
-        to_hw.InferAddStreamsLayer,
+        InferReplicateStream,
         to_hw.InferLabelSelectLayer,
+        to_hw.InferElementwiseBinaryOperation,
     ]
     for trn in to_hw_transformations:
         model = model.transform(trn())
@@ -300,5 +246,4 @@ def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(GiveReadableTensorNames())
     model = model.transform(RemoveUnusedTensors())
     model = model.transform(SortGraph())
-
     return model
