@@ -1,11 +1,16 @@
-# Wrapper around ONNX models introducing convenience methods to access QONNX and
-# FINN specifics
+"""Ad-hoc build steps for transformer models, covering hardware conversion and
+folding configuration for operators not yet handled by the standard FINN
+pipeline, in particular scaled dot-product attention.
+"""
+
 # QONNX arbitrary precision datatype annotations
 # Use "greatest common divisor" in folding calculations
+import contextlib
 import math
 
 # Custom folding is specified and saved as YAML instead of JSON
 import yaml
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 
@@ -20,6 +25,7 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 
 # QONNX type and shape inference transformations
 from qonnx.transformation.infer_shapes import InferShapes
+from typing import TYPE_CHECKING, cast
 
 # Configuration for FINN dataflow builds passed through the build steps by the
 # FINN frontend
@@ -46,8 +52,28 @@ from finn.transformation.streamline import RoundAndClipThresholds
 from finn.transformation.streamline.absorb import AbsorbConsecutiveTransposes
 from finn.util.exception import FINNUserError
 
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hls.attention_hls import ScaledDotProductAttention_hls
 
-def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
+
+def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Convert a streamlined transformer ONNX model to FINN hardware operators.
+
+    Applies the full sequence of hardware-conversion transformations, including
+    split/concat infrastructure, pooling, convolution input generation, fused
+    scaled dot-product attention, MVAUs/VVAUs, thresholding, lookup layers, and
+    elementwise binary operators.  A cleanup pass (type/shape inference, unique
+    node naming) is executed at the end.
+
+    Args:
+        model: QONNX ``ModelWrapper`` of the streamlined model to convert.
+        cfg: FINN ``DataflowBuildConfig`` controlling optional steps such as
+            ``standalone_thresholds``.
+
+    Returns:
+        The transformed ``ModelWrapper`` with all supported operators replaced
+        by FINN HW custom-ops.
+    """
     # Start with inferring splitting and concatenating infrastructure operators
     # as these also address QONNX type inference defects.
     model = model.transform(hardware.InferSplitLayer())
@@ -80,7 +106,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     # Inferring Gather as Lookup layers needs some special treatment: The ONNX
     # standard requires signed-integer index inputs whereas FINN assumes float
     # container types annotated as unsigned integer.
-    for index, node in enumerate(model.graph.node):
+    for _index, node in enumerate(model.graph.node):
         # If this is a Gather node, force the input (index) type annotation
         if node.op_type == "Gather":
             # Force to unsigned 64-bit integer for now
@@ -88,6 +114,11 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
             # Get the value info for the input tensor to have access to the ONNX
             # datatype of the tensor
             value_info = model.get_tensor_valueinfo(node.input[1])
+            if value_info is None:
+                raise FINNUserError(
+                    f"Value info for Gather index input {node.input[1]}"
+                    " not found, cannot set datatype."
+                )
             # Force the container datatype of the input to be a float
             value_info.type.tensor_type.elem_type = 1
 
@@ -127,41 +158,57 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model.transform(GiveUniqueNodeNames())
 
 
-def _set_folding_attention(model: ModelWrapper, target_cycles_per_frame):
+def _set_folding_attention(model: ModelWrapper, target_cycles_per_frame: int) -> ModelWrapper:
+    """Set folding parameters for all ScaledDotProductAttention_hls nodes.
+
+    Iterates the graph and, for every attention operator, greedily increases
+    parallelism first along the embedding dimension and then along the sequence
+    dimension until ``target_cycles_per_frame`` is met or the maximum
+    parallelism is reached.  Annotates cycle estimates for all operators
+    afterwards.
+
+    Args:
+        model: ``ModelWrapper`` containing the dataflow graph.
+        target_cycles_per_frame: Cycle budget per input frame.
+
+    Returns:
+        The ``ModelWrapper`` with updated folding attributes and cycle
+        annotations.
+    """
     # Run over all nodes in the model graph to look for attention operators,
     # which are currently not handled by the SetFolding transformation
-    for index, node in enumerate(model.graph.node):
+    for _index, node in enumerate(model.graph.node):
         if node.op_type == "ScaledDotProductAttention_hls":
             # Convert this to the custom-op instance for easy access to node
             # attributes
-            inst = getCustomOp(node)
+            inst = cast("ScaledDotProductAttention_hls", getCustomOp(node))
 
             # Extract sequence length and embedding dimension from the
             # operator attributes
-            qkdim, qlen, vdim, kvlen = inst.shapes
+            qkdim, _qlen, vdim, kvlen = inst.shapes
 
             # Initialize folding to sequential processing. As the same
             # folding is applied to query, key and value embeddings, but
             # these might be different, use the greatest common divisor.
-            inst.set_nodeattr("EmbFold", math.gcd(qkdim, vdim))
-            inst.set_nodeattr("SeqFold", kvlen)
+            inst.set_nodeattr("EmbFold", math.gcd(cast("int", qkdim), cast("int", vdim)))
+            inst.set_nodeattr("SeqFold", cast("int", kvlen))
 
             # Try to unfold along the embedding dimension first, increasing
             # parallelism in steps following the common divisors the inputs.
-            for fold in reversed(common_divisors([qkdim, vdim])):
+            for fold in reversed(common_divisors([cast("int", qkdim), cast("int", vdim)])):
                 # Configure the folding attribute
-                inst.set_nodeattr("EmbFold", fold)
+                inst.set_nodeattr("EmbFold", int(fold))
                 # Check if this is sufficient to meet the cycles target
-                if inst.get_exp_cycles() <= target_cycles_per_frame:
+                if cast("int", inst.get_exp_cycles()) <= target_cycles_per_frame:
                     break
 
             # Try to unfold along the sequence dimension next, increasing
             # parallelism in steps divisors of the key and value sequence.
-            for fold in reversed(common_divisors([kvlen])):
+            for fold in reversed(common_divisors([cast("int", kvlen)])):
                 # Configure the folding attribute
-                inst.set_nodeattr("SeqFold", fold)
+                inst.set_nodeattr("SeqFold", int(fold))
                 # Check if this is sufficient to meet the cycles target
-                if inst.get_exp_cycles() <= target_cycles_per_frame:
+                if cast("int", inst.get_exp_cycles()) <= target_cycles_per_frame:
                     break
 
     # Annotate cycles estimates for all operators n the model
@@ -169,10 +216,36 @@ def _set_folding_attention(model: ModelWrapper, target_cycles_per_frame):
     return model.transform(AnnotateCycles())
 
 
-def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Configure the folding (parallelism) of all dataflow operators in *model*.
+
+    When ``cfg`` specifies a throughput target the function first applies
+    ``_set_folding_attention`` for attention operators and then FINN's
+    ``SetFolding`` for the remaining operators.  An optional two-pass relaxation
+    step re-runs attention folding at the cycle count of the identified
+    bottleneck.  When only a ``folding_config_file`` is provided (no FPS
+    target), the config is applied directly without any auto-folding.
+
+    After auto-folding, the resolved configuration is written to
+    ``<output_dir>/auto_folding_config.yaml``.  If ``cfg.folding_config_file``
+    is also set its entries are applied on top to override resource-style
+    defaults (``mem_mode``, ``ram_style``, etc.).
+
+    Args:
+        model: ``ModelWrapper`` containing the dataflow graph.
+        cfg: FINN ``DataflowBuildConfig`` with throughput targets and optional
+            folding overrides.
+
+    Returns:
+        The ``ModelWrapper`` with folding attributes fully configured.
+
+    Raises:
+        FINNUserError: If neither a throughput target nor a folding config file
+            is provided.
+    """
     # Resolve the target cycles per from the build configuration, considering
     # clock and target throughput
-    target_cycles_per_frame = cfg._resolve_cycles_per_frame()
+    target_cycles_per_frame = cfg._resolve_cycles_per_frame()  # noqa: SLF001
 
     # If no target_cycles_per_frame is given, assume we are provided with a full
     # folding config JSON (including parallelism settings): Apply it and skip remaining step
@@ -200,10 +273,10 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
         perf_dict = model.analysis(dataflow_performance)
         # Estimated cycles are above the target, so this is bottlenecked by
         # some operator
-        if perf_dict["max_cycles"] > target_cycles_per_frame:
+        if cast("int", perf_dict["max_cycles"]) > target_cycles_per_frame:
             # Set folding to lower target cycles for all attention operators
             # in the model
-            model = _set_folding_attention(model, perf_dict["max_cycles"])
+            model = _set_folding_attention(model, cast("int", perf_dict["max_cycles"]))
 
     # TODO: The following export of auto_folding_config.yaml is largely redundant
     # because later steps generate a final_hw_config.json, so it may be removed
@@ -233,7 +306,7 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
     # Start collecting the configuration from the model graph as a dictionary
     config = {"defaults": {}}
     # Iterate all nodes in the graph keeping track of the index
-    for index, node in enumerate(model.graph.node):
+    for _index, node in enumerate(model.graph.node):
         # Convert this to the custom-op instance for easy access to node
         # attributes
         inst = getCustomOp(node)
@@ -243,13 +316,10 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
         for key in hw_attrs:
             # Some hardware attributes may not be present for all nodes or
             # op-types, this will be signaled via exception
-            try:
+            with contextlib.suppress(AttributeError):
                 # Try extracting the configuration value from the node
                 # custom-op instance
                 config[node.name][key] = inst.get_nodeattr(key)
-            # Missing attributes are signaled via AttributeError
-            except AttributeError:
-                pass
         # Cleanup: If no attribute is present for this node, there is no
         # need to keep this in the configuration dictionary as there is
         # nothing to be restored later
@@ -258,7 +328,7 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
             del config[node.name]
 
     # Create/Open a YAML file to store the configuration for later reuse
-    with open(cfg.output_dir + "/auto_folding_config.yaml", "w") as file:
+    with Path(cast("str", cfg.output_dir) + "/auto_folding_config.yaml").open("w") as file:
         # Store the configuration dictionary as YAML code
         yaml.safe_dump(config, file)
 
@@ -268,10 +338,10 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig):
     # defaults for resource selection (mem_mode, ram_style, etc.) in addition to the
     # auto folding above, NOT for setting parallelism attributes (SIMD, PE, etc.)
     if cfg.folding_config_file is not None:
-        with open(cfg.folding_config_file, "r") as file:
+        with Path(cfg.folding_config_file).open() as file:
             config = yaml.safe_load(file)
 
-        for index, node in enumerate(model.graph.node):
+        for _index, node in enumerate(model.graph.node):
             # A node should not be named "defaults"...
             assert node.name != "defaults", "Node has reserved name 'defaults'"
             # Convert this to the custom-op instance for easy access to node
