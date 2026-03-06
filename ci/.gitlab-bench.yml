@@ -68,7 +68,7 @@ Measurement:
     # Install dependencies for FINN driver
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && chmod +x scripts/driver_install_dependencies.sh && scripts/driver_install_dependencies.sh"
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
-    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python ci/measure.py"
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && python ci/measure.py"
   artifacts:
     name: "measurement_artifacts"
     when: always
@@ -171,7 +171,7 @@ Measurement (Follow-up):
     # Install dependencies for FINN driver
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && chmod +x scripts/driver_install_dependencies.sh && scripts/driver_install_dependencies.sh"
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
-    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python ci/measure.py --followup"
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && python ci/measure.py --followup"
   artifacts:
     name: "measurement_artifacts_followup"
     when: always

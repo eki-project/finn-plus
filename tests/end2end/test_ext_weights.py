@@ -86,6 +86,7 @@ class Test_end2end_ext_weights:
         specialize_layers_config_file = test_data / (
             "specialize_layers_config_" + topology + ".json"
         )
+
         output_dir = make_build_dir("test_end2end_" + topology + "_ext_weights_build")
         cfg = build.DataflowBuildConfig(
             output_dir=output_dir,

@@ -543,6 +543,7 @@ class MakePYNQDriver(Transformation):
         clk_period_ns=None,
         validation_datset=None,
         experiment_info=None,
+        board=None,
     ):
         """Initialize PYNQ driver generation.
 
@@ -560,6 +561,7 @@ class MakePYNQDriver(Transformation):
         self.clk_period_ns = clk_period_ns
         self.validation_datset = validation_datset
         self.experiment_info = experiment_info
+        self.board = board
 
     def _generate_driver_files(self, model):
         """Generate PYNQ driver base files."""
@@ -573,6 +575,11 @@ class MakePYNQDriver(Transformation):
         driver_base_py = pynq_driver_dir + "/driver.py"
 
         shutil.copy(driver_base_template, driver_base_py)
+
+        # Copy validate scripts
+        validate_base_template = get_templates_folder() / "validate"
+        validate_target_path = pynq_driver_dir + "/validate"
+        shutil.copytree(validate_base_template, validate_target_path)
 
         # TODO: Can we do this without packaging data_packing.py this way?
         finn_target_path = pynq_driver_dir + "/finn"
@@ -638,13 +645,18 @@ class MakePYNQDriver(Transformation):
                     ext_weight_shapes_dict[idma_name] = dma_target_model.get_tensor_shape(
                         dma_consumer.output[0]
                     )
-
                     init_tensor = df_model.get_initializer(iodma_node.onnx_node.input[0])
                     ext_weight_dma_cnt += 1
                     w_dtype = df_model.get_tensor_datatype(iodma_node.onnx_node.input[0])
                     init_external_tensor = to_external_tensor(init_tensor, w_dtype)
                     np.save(weights_dir + "/" + idma_name + ".npy", init_external_tensor)
                 idma_idx += 1
+
+        external_weights_dict = {
+            "external_weights": external_weights,
+            "number_of_external_weights": str(ext_weight_dma_cnt),
+            "external_weights_input_shapes": ext_weight_shapes_dict,
+        }
 
         # generate weight files for runtime-writable layers
         # TODO verify
@@ -680,7 +692,7 @@ class MakePYNQDriver(Transformation):
         if (not external_weights) and (not runtime_weights):
             os.removedirs(weights_dir)
 
-        return external_weights, runtime_weights
+        return external_weights_dict, runtime_weights
 
     def _write_fifo_widths(self, model):
         """Export FIFO widths to the settings file as well.
@@ -733,12 +745,19 @@ class MakePYNQDriver(Transformation):
 
         driver_information["driver_type"] = self.driver_type
         if self.driver_type in ["FINNDMAOverlay", "FINNDMAInstrumentationOverlay"]:
-            external_weights, runtime_weights = self._generate_weight_files(model)
+            external_weights_dict, runtime_weights = self._generate_weight_files(model)
             driver_shapes: Dict = get_driver_shapes(model)
             driver_information["io_shape_dict"] = driver_shapes
             driver_information["io_shape_dict"]["num_inputs"] = len(driver_shapes["idma_names"])
             driver_information["io_shape_dict"]["num_outputs"] = len(driver_shapes["odma_names"])
-            driver_information["external_weights"] = external_weights
+            driver_information["io_shape_dict"]["num_outputs"] = len(driver_shapes["odma_names"])
+            driver_information["io_shape_dict"][
+                "number_of_external_weights"
+            ] = external_weights_dict["number_of_external_weights"]
+            driver_information["io_shape_dict"][
+                "external_weights_input_shapes"
+            ] = external_weights_dict["external_weights_input_shapes"]
+            driver_information["external_weights"] = external_weights_dict["external_weights"]
             driver_information["runtime_weights"] = runtime_weights
             driver_information["platform"] = self.platform
             # TODO: also supply ext_weight_shapes_dict to driver
@@ -751,6 +770,10 @@ class MakePYNQDriver(Transformation):
 
         if self.validation_datset is not None:
             driver_information["validation_dataset"] = self.validation_datset
+
+        if "global" in experiment_information:
+            if self.board is not None and "board" not in experiment_information["global"]["PAF"]:
+                experiment_information["global"]["PAF"]["board"] = self.board
 
         settings = {
             "driver_information": driver_information,

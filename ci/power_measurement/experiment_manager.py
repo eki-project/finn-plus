@@ -1,5 +1,7 @@
 """Experiment manager for measurement workflows."""
 
+# This is used as a workaround because there is some bug with multiprocessing and h5py
+import h5py  # noqa
 import importlib.util
 import inspect
 import json
@@ -204,12 +206,14 @@ class Experiment:
             # stop & reset recorder and save results
             self._recorder.stop()
             self._recorder.save_dfs_to_xlsx(experiment_path, f"{self._name}_run_{i}")
+            self._recorder.save_dfs_to_json(experiment_path, f"{self._name}_run_{i}")
             self._recorder.reset()
 
             if (
                 p.exitcode != 0
             ):  # If the process exit code is not 0 return with nonzero. This cancels the experiment
                 return p.exitcode
+
         return 0
 
 
