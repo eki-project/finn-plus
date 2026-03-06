@@ -269,6 +269,23 @@ class NodeConnectedSimulationController(SimulationController):
                                 timeout_result = timeout_result or timeout
                     except Exception as e:
                         self.console.log(f"Error collecting result: {e}")
+
+                # Detect nodes whose _run_binary returned None (subprocess
+                # crash / unhandled exception).  Their names were never inserted into
+                # fifo_results, so the merged JSON would contain empty 'intervals' lists
+                # for those nodes.  _check_performance would then silently return False
+                # (no degradation detected) and the minimisation algorithm would treat a
+                # failed simulation as a successful one.  Mark the run as timed-out so
+                # that _test_depth correctly rejects the candidate depth.
+                missing_nodes = [name for name in self.names if name not in fifo_results]
+                if missing_nodes:
+                    self.console.log(
+                        f"[bold red]WARNING: simulation results missing for node(s) "
+                        f"{missing_nodes} (subprocess likely crashed). "
+                        f"Marking run as timed-out to prevent false-success "
+                        f"classification.[/bold red]"
+                    )
+                    timeout_result = True
         finally:
             if self.progress is not None:
                 self.progress.stop()
@@ -821,7 +838,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     minimized_depth, iterations_needed = self._minimize_fifo_depth(
                         node_idx,
                         fifo_idx,
-                        fifo_depths,
+                        fifo_depths,  # current_depths: evolves as FIFOs are minimised
                         bit_widths,
                         initial_fifo_depths,
                         sim,
@@ -934,6 +951,29 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         for node_idx in range(len(fifo_depths)):
             log.info(f"{node_idx}: {fifo_depths[node_idx]}")
 
+        log.info("Running final end-to-end validation simulation with minimised FIFO depths...")
+        validation_data, validation_timeout = sim.simulate(
+            fifo_depths,
+            max_cycles=math.ceil(sim_cycles * 1.05),
+            fifo_first_valid_cycles=fifo_first_valid_cycles,
+        )
+        if validation_timeout:
+            raise FINNUserError(
+                "Final validation simulation timed out with the jointly-minimised FIFO depths. "
+                "The per-FIFO minimisation may have produced a configuration that is "
+                "collectively too small.  Re-run with a larger initial depth or fewer "
+                "minimisation orders."
+            )
+        if self._check_performance(validation_data, initial_fifo_depths):
+            raise FINNUserError(
+                "Final validation simulation detected throughput degradation with the "
+                "jointly-minimised FIFO depths (intervals exceeded baseline). "
+                "The per-FIFO minimisation may have produced a configuration that is "
+                "collectively too small.  Re-run with a larger initial depth or fewer "
+                "minimisation orders."
+            )
+        log.info("Final validation simulation passed - minimised depths are correct.")
+
         # Write back results. By default write to output_dir / "fifo_config.json"
         writeback_path = Path(self.cfg.output_dir) / "fifo_config.json"
         assert len(fifo_depths) == len(model.graph.node)
@@ -973,7 +1013,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         test_depth: int,
         node_idx: int,
         fifo_idx: int,
-        baseline_depths: list[list[int]],
+        current_depths: list[list[int]],
         initial_fifo_depths: list[dict[str, list[int]]],
         sim: NodeConnectedSimulation,
         sim_cycles: float,
@@ -985,7 +1025,11 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             test_depth: Depth to test
             node_idx: Node index
             fifo_idx: FIFO index within node
-            baseline_depths: Original baseline FIFO depths (unchanged during minimization)
+            current_depths: Current working FIFO depth configuration.  FIFOs that have
+                already been minimised contain their final minimised depth; FIFOs not yet
+                processed still carry the safe starting depth.  This list is never
+                modified by this method - a deep copy is made before inserting
+                ``test_depth``.
             initial_fifo_depths: Baseline performance data
             sim: Simulation controller
             sim_cycles: Maximum simulation cycles
@@ -993,7 +1037,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         Returns:
             Tuple of (success, timeout) where success means depth works without degradation
         """
-        test_depths = deepcopy(baseline_depths)  # Deep copy from baseline
+        test_depths = deepcopy(current_depths)
         test_depths[node_idx][fifo_idx] = test_depth
 
         new_simulation_data, timeout = sim.simulate(
@@ -1035,7 +1079,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         self,
         node_idx: int,
         fifo_idx: int,
-        baseline_depths: list[list[int]],
+        current_depths: list[list[int]],
         bit_widths: list[list[int]],
         initial_fifo_depths: list[dict[str, list[int]]],
         sim: NodeConnectedSimulation,
@@ -1047,9 +1091,11 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         Args:
             node_idx: Node index
             fifo_idx: FIFO index within node
-            current_depths: Current working FIFO depth configuration
-            (may have already-minimized values)
-            baseline_depths: Original baseline FIFO depths (unchanged during minimization)
+            current_depths: Current working FIFO depth configuration.  FIFOs that have
+                already been minimised in this pass carry their final minimised depth;
+                FIFOs not yet processed still carry the safe starting depth.  This list
+                is mutated by the caller (``apply``) after each call to store the
+                minimised result, so successive calls see the evolving state.
             bit_widths: Bitwidths for all FIFOs
             initial_fifo_depths: Baseline performance data
             sim: Simulation controller
@@ -1059,7 +1105,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             Tuple: Minimized FIFO depth, Iterations required to arrive at the result
         """
         iterations = 0
-        original_size = baseline_depths[node_idx][fifo_idx]
+        original_size = current_depths[node_idx][fifo_idx]
         bw = bit_widths[node_idx][fifo_idx]
 
         log.debug(f"Minimizing Node {node_idx} FIFO {fifo_idx}: original depth {original_size}")
@@ -1069,7 +1115,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             32,
             node_idx,
             fifo_idx,
-            baseline_depths,
+            current_depths,
             initial_fifo_depths,
             sim,
             sim_cycles,
@@ -1089,7 +1135,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 best_working_depth, bin_it = self._binary_search_srl_depth(
                     node_idx,
                     fifo_idx,
-                    baseline_depths,
+                    current_depths,
                     bw,
                     initial_fifo_depths,
                     sim,
@@ -1107,7 +1153,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             self.max_qsrl_depth,
             node_idx,
             fifo_idx,
-            baseline_depths,
+            current_depths,
             initial_fifo_depths,
             sim,
             sim_cycles,
@@ -1124,7 +1170,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 best_working_depth, bin_it = self._binary_search_srl_depth(
                     node_idx,
                     fifo_idx,
-                    baseline_depths,
+                    current_depths,
                     bw,
                     initial_fifo_depths,
                     sim,
@@ -1154,7 +1200,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             max_d,
             node_idx,
             fifo_idx,
-            baseline_depths,
+            current_depths,
             initial_fifo_depths,
             sim,
             sim_cycles,
@@ -1172,7 +1218,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             best_working_depth, bin_it = self._exponential_binary_search_depth(
                 node_idx,
                 fifo_idx,
-                baseline_depths,
+                current_depths,
                 bw,
                 initial_fifo_depths,
                 sim,
@@ -1188,7 +1234,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         self,
         node_idx: int,
         fifo_idx: int,
-        baseline_depths: list,
+        current_depths: list,
         bitwidth: int,
         initial_fifo_depths: list[dict[str, list[int]]],
         sim: NodeConnectedSimulation,
@@ -1205,7 +1251,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         Args:
             node_idx: Node index
             fifo_idx: FIFO index within node
-            baseline_depths: Original baseline FIFO depths (unchanged during minimization)
+            current_depths: Current working FIFO depth configuration.  FIFOs already
+                minimised in this pass carry their final depth; this list must not be
+                modified directly (``_test_depth`` deep-copies it before trial edits).
             bitwidth: Data bitwidth
             initial_fifo_depths: Baseline performance data
             sim: Simulation controller
@@ -1239,7 +1287,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 max_d,
                 node_idx,
                 fifo_idx,
-                baseline_depths,
+                current_depths,
                 initial_fifo_depths,
                 sim,
                 sim_cycles,
@@ -1267,7 +1315,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 max_d,
                 node_idx,
                 fifo_idx,
-                baseline_depths,
+                current_depths,
                 initial_fifo_depths,
                 sim,
                 sim_cycles,
@@ -1289,7 +1337,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         self,
         node_idx: int,
         fifo_idx: int,
-        baseline_depths: list,
+        current_depths: list,
         bitwidth: int,
         initial_fifo_depths: list[dict[str, list[int]]],
         sim: NodeConnectedSimulation,
@@ -1303,7 +1351,9 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         Args:
             node_idx: Node index
             fifo_idx: FIFO index within node
-            baseline_depths: Original baseline FIFO depths (unchanged during minimization)
+            current_depths: Current working FIFO depth configuration.  FIFOs already
+                minimised in this pass carry their final depth; this list must not be
+                modified directly (``_test_depth`` deep-copies it before trial edits).
             bitwidth: Data bitwidth
             initial_fifo_depths: Baseline performance data
             sim: Simulation controller
@@ -1340,7 +1390,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 max_d,
                 node_idx,
                 fifo_idx,
-                baseline_depths,
+                current_depths,
                 initial_fifo_depths,
                 sim,
                 sim_cycles,

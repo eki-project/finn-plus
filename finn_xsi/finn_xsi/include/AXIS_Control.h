@@ -78,7 +78,7 @@ class M_AXIS_Control : public AXIS_Control {
     M_AXIS_Control& operator=(M_AXIS_Control&& other) = default;
 
     size_t lastComplete = 0;
-    size_t interval;
+    size_t interval = 0;
     StableStateTracker<> stableState;
 };
 

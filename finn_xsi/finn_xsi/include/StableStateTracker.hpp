@@ -1,5 +1,5 @@
-#ifndef STABLESTATETRACKER_HPP
-#define STABLESTATETRACKER_HPP
+#ifndef STABLESTATETRACKER
+#define STABLESTATETRACKER
 
 #include <cstdint>
 #include <concepts>
@@ -81,4 +81,4 @@ public:
     static consteval uint8_t get_required_stable_count() { return RequiredStableCount; }
 };
 
-#endif // STABLESTATETRACKER_HPP
+#endif /* STABLESTATETRACKER */

@@ -11,6 +11,7 @@
 
 #include <InterprocessCommunicationChannelInterface.hpp>
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <fstream>
@@ -352,12 +353,22 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         return utilizations;
     }
 
-    /// Get the current Ostream stable state intervals
+    /// Get the current Ostream stable state intervals.
+    /// Returns the rounded EMA of observed output intervals so that a single noisy
+    /// measurement at the boundary of stability does not cause _check_performance to
+    /// report a false positive or negative (raw last interval can differ from the EMA
+    /// by up to the StableStateTracker stability threshold in either direction).
+    /// This should not be the case, but its an additional security measure.
     std::array<std::size_t, OStreamsSize> getOStreamStableStateIntervals() const noexcept {
         std::array<std::size_t, OStreamsSize> intervals{};
         if constexpr (LastNode) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                intervals[i] = this->ostreams[i].interval;
+                const double ema = this->ostreams[i].stableState.get_ema();
+                // Fall back to the raw interval when the EMA has never been updated
+                // (ema == 0.0 means no second job completion has occurred yet).
+                intervals[i] = (ema > 0.0)
+                    ? static_cast<std::size_t>(std::round(ema))
+                    : this->ostreams[i].interval;
             }
         }
         return intervals;
