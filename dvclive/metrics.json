@@ -1,0 +1,18 @@
+{
+    "status": "failed",
+    "time": {
+        "step_qonnx_to_finn": 4,
+        "step_tidy_up": 0,
+        "step_resnet_tidy": 6,
+        "step_resnet_streamline": 84,
+        "step_convert_to_hw": 1,
+        "step_resnet_convert_to_hw": 1,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_target_fps_parallelization": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 1,
+        "step_generate_estimate_reports": 0,
+        "total_build_time": 97
+    }
+}
