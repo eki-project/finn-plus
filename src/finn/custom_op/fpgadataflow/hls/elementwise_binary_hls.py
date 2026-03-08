@@ -634,7 +634,7 @@ class ElementwiseBinaryOperation_hls(
         rhs_decoupled = self.rhs_style == "const" and mem_mode == "internal_decoupled"
 
         # lhs_decoupled XOR rhs_decoupled
-        if lhs_decoupled != rhs_decoupled:
+        if lhs_decoupled != rhs_decoupled or self.get_nodeattr("bodies"):
             node_name = self.onnx_node.name
             # create a hierarchy for this layer, with the same port names
             clk_name = self.get_verilog_top_module_intf_names()["clk"][0]

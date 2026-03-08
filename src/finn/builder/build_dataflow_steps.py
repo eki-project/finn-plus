@@ -564,7 +564,8 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
                 target_cycles_per_frame,
                 mvau_wwidth_max=cfg.mvau_wwidth_max,
                 two_pass_relaxation=cfg.folding_two_pass_relaxation,
-            )
+            ),
+            apply_to_subgraphs=True,
         )
         # extract the suggested configuration and save it as json
         hw_attrs = [
@@ -588,10 +589,12 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
 def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Apply the folding configuration file onto the model to set folding (parallelization)
     and other attributes, if config file is specified."""
-
+    apply_to_subgraphs = True if cfg.multi_dnn_config_path is not None else False
     model = model.transform(GiveUniqueNodeNames())
     if cfg.folding_config_file is not None:
-        model = model.transform(ApplyConfig(cfg.folding_config_file))
+        model = model.transform(
+            ApplyConfig(cfg.folding_config_file), apply_to_subgraphs=apply_to_subgraphs
+        )
 
     if VerificationStepType.FOLDED_HLS_CPPSIM in cfg._resolve_verification_steps():
         # prepare cppsim
@@ -604,6 +607,7 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig):
     "Generate per-layer resource and cycle estimates using analytical models."
+    apply_to_subgraphs = True if cfg.multi_dnn_config_path is not None else False
 
     if DataflowOutputType.ESTIMATE_REPORTS in cfg.generate_outputs:
         report_dir = cfg.output_dir + "/report"
@@ -626,7 +630,7 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
         with open(report_dir + "/estimate_layer_config_alternatives.json", "w") as f:
             json.dump(estimate_layer_resources_complete, f, indent=2)
         # need to call AnnotateCycles before dataflow_performance
-        model = model.transform(AnnotateCycles())
+        model = model.transform(AnnotateCycles(), apply_to_subgraphs=apply_to_subgraphs)
         estimate_network_performance = model.analysis(dataflow_performance)
         # add some more metrics to estimated performance
         n_clock_cycles_per_sec = (10**9) / cfg.synth_clk_period_ns
@@ -643,12 +647,13 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
 
 def step_minimize_bit_width(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Tighten the weight and accumulator bit widths for each layer."""
+    apply_to_subgraphs = True if cfg.multi_dnn_config_path is not None else False
     if cfg.minimize_bit_width:
         model = model.transform(MinimizeWeightBitWidth())
         model = model.transform(MinimizeAccumulatorWidth())
         model = model.transform(RoundAndClipThresholds())
         # make sure the changed datatypes are propagated through the network
-        model = model.transform(InferDataTypes())
+        model = model.transform(InferDataTypes(), apply_to_subgraphs=apply_to_subgraphs)
     return model
 
 
@@ -692,7 +697,7 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
     Coherency with config file node naming is ensured by calling
     `GiveUniqueNodeNames`.
     """
-
+    apply_to_subgraphs = True if cfg.multi_dnn_config_path is not None else False
     hw_attrs = [
         "PE",
         "SIMD",
@@ -824,7 +829,9 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(GiveReadableTensorNames())
         if cfg.folding_config_file is not None:
-            model = model.transform(ApplyConfig(cfg.folding_config_file))
+            model = model.transform(
+                ApplyConfig(cfg.folding_config_file), apply_to_subgraphs=apply_to_subgraphs
+            )
 
     # extract the final configuration and save it as json
     if model.get_nodes_by_op_type("InnerShuffle_rtl") or model.get_nodes_by_op_type(

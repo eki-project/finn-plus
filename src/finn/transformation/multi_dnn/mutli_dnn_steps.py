@@ -11,6 +11,8 @@ from finn.transformation.multi_dnn.multi_dnn_wrapper_transformations import (
     MultiDNNWrapperExposeIO,
 )
 
+from finn.transformation.multi_dnn.mutli_dnn_selectable import ExtractSelectableWeights
+
 
 def _resolve_multi_dnn_mode(cfg: DataflowBuildConfig):
     with open(cfg.multi_dnn_config_path, "r") as fp_json:
@@ -30,6 +32,9 @@ def step_apply_multi_dnn(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = (
             model.transform(CombineOutputsChannelwise()) if combine_outputs_channelwise else model
         )
+    elif mode == "SelectableWeights":
+        model = model.transform(ExtractSelectableWeights(kwargs.get("models")))
+        model = model.transform(MultiDNNWrapperExposeIO())
     else:
         raise Exception("This Mode is not implemented")
 

@@ -91,7 +91,7 @@ class MVAU_rtl(MVAU, RTLBackend):
                     )
 
                 if in_ind == 1:
-                    if dynamic_input:
+                    if dynamic_input or self.get_nodeattr("bodies"):
                         reshaped_input = context[inputs].reshape(-1, context[inputs].shape[-1])
                         self.make_weight_file(
                             reshaped_input, "decoupled_npy", "{}/input_1.npy".format(code_gen_dir)
@@ -102,7 +102,11 @@ class MVAU_rtl(MVAU, RTLBackend):
             inp = npy_to_rtlsim_input("{}/input_0.npy".format(code_gen_dir), export_idt, nbits)
             super().reset_rtlsim(sim)
 
-            if dynamic_input or mem_mode in ["external", "internal_decoupled"]:
+            if (
+                dynamic_input
+                or mem_mode in ["external", "internal_decoupled"]
+                or self.get_nodeattr("bodies")
+            ):
                 wnbits = self.get_instream_width(1)
                 if dynamic_input:
                     wnbits = wnbits * self.get_nodeattr("SIMD")

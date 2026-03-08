@@ -93,6 +93,7 @@ class HWCustomOp(CustomOp):
             # amount of zero padding inserted during chrc.
             "io_chrc_pads_in": ("ints", False, []),
             "io_chrc_pads_out": ("ints", False, []),
+            "bodies": ("i", False, 0),
         }
 
     def make_shape_compatible_op(self, model):
@@ -304,6 +305,12 @@ class HWCustomOp(CustomOp):
                 os.environ["FINN_RTLLIB"] + "/memstream/hdl/memstream_wrapper_template.v"
             )
             mname = self.onnx_node.name
+            bodies = self.get_nodeattr("bodies")
+            if bodies:
+                bodies = bodies
+            else:
+                bodies = 1
+
             if self.onnx_node.op_type.startswith("Thresholding"):
                 depth = self.calc_tmem()
             else:
@@ -317,7 +324,7 @@ class HWCustomOp(CustomOp):
                 init_file = ""
             code_gen_dict = {
                 "$MODULE_NAME$": [mname],
-                "$SETS$": ["1"],
+                "$SETS$": [str(bodies)],
                 "$DEPTH$": [str(depth)],
                 "$WIDTH$": [str(padded_width)],
                 "$INIT_FILE$": [init_file],

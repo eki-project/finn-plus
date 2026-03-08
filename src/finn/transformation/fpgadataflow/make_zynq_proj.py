@@ -105,6 +105,7 @@ class MakeZYNQProject(Transformation):
         self.enable_finn_switch = enable_finn_switch
         self.enable_debug = 1 if enable_debug else 0
         self.enable_gpio_reset = 0
+        self.enable_selectable = 1  # TODO make this optional
 
     def apply(self, model):
         """Apply the transformation to create a Zynq project."""
@@ -120,6 +121,18 @@ class MakeZYNQProject(Transformation):
 
         # instantiate instrumentation IP if it was generated
         instr_ip_dir = model.get_metadata_prop("instrumentation_ipgen")
+
+        if self.enable_selectable:
+            for import_name in [
+                "/selector/selector_verilog.v",
+                "/selector/selector.sv",
+                "/axi/hdl/axilite.sv",
+            ]:
+                module_dir = os.environ["FINN_RTLLIB"] + import_name
+                config.append(
+                    "add_files -copy_to [get_property DIRECTORY [current_project]] -norecurse %s"
+                    % module_dir
+                )
 
         if self.enable_finn_switch:
             # TODO: Add ‑copy_to
@@ -304,6 +317,29 @@ class MakeZYNQProject(Transformation):
                     "create_bd_cell -type ip -vlnv %s %s"
                     % (vivado_stitch_vlnv, instance_names[node.name])
                 )
+
+                if self.enable_selectable:
+                    config.append(templates.selector_zynq_shell_template_procs)
+                    config.append(
+                        templates.selector_zynq_shell_template % (instance_names[node.name], 4)
+                    )
+                    config.append(
+                        "connect_bd_intf_net [get_bd_intf_pins %s/%s] "
+                        "[get_bd_intf_pins axi_interconnect_%d/M%02d_AXI]"
+                        % (
+                            f"{instance_names[node.name]}_selector",
+                            "s_axilite",
+                            axilite_interconnect_idx,
+                            axilite_idx,
+                        )
+                    )
+                    axilite_idx += 1
+                    if axilite_idx == 64:
+                        axilite_interconnect_idx += 1
+                        axilite_idx = 0
+                    if axilite_interconnect_idx == 0:
+                        master_axilite_idx += 1
+
                 for axilite_intf_name in ifnames["axilite"]:
                     config.append(
                         "connect_bd_intf_net [get_bd_intf_pins %s/%s] "
@@ -612,7 +648,10 @@ class ZynqBuild(Transformation):
             if not self.enable_instrumentation:
                 kernel_model = kernel_model.transform(InsertFIFO())
             kernel_model = kernel_model.transform(SpecializeLayers(self.fpga_part))
-            kernel_model = kernel_model.transform(GiveUniqueNodeNames(prefix))
+
+            nodecontiner = kernel_model.get_nodes_by_op_type("NodeContainer")
+            if not nodecontiner:
+                kernel_model = kernel_model.transform(GiveUniqueNodeNames(prefix))
             kernel_model.save(dataflow_model_filename)
             kernel_model = kernel_model.transform(PrepareIP(self.fpga_part, self.period_ns))
             kernel_model = kernel_model.transform(HLSSynthIP())

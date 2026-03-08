@@ -115,5 +115,8 @@ class RoundAndClipThresholds(Transformation):
                     # Immediately exit here to propagate the data type changes
                     # before considering the next node
                     break
+            if op_type == "NodeContainer":
+                pass  # TODO
+
         model = model.transform(InferDataTypes())
         return model, graph_modified

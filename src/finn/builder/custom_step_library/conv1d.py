@@ -14,7 +14,7 @@ def step_pre_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_convert_final_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
-    model = model.transform(to_hw.InferChannelwiseLinearLayer())
+    model = model.transform(to_hw.InferElementwiseBinaryOperation())
     model = model.transform(to_hw.InferLabelSelectLayer())
     model = model.transform(GiveUniqueNodeNames())
     return model

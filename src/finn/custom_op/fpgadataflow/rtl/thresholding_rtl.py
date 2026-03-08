@@ -213,6 +213,11 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         code_gen_dict["$C$"] = [str(num_channels)]  # number of channels
         code_gen_dict["$BIAS$"] = [str(bias)]  # activation bias value
         code_gen_dict["$PE$"] = [str(pe)]  # requires C = M*PE
+        bodies = self.get_nodeattr("bodies")
+        if bodies:
+            code_gen_dict["$SETS$"] = [str(bodies)]
+        else:
+            code_gen_dict["$SETS$"] = [str(1)]
 
         # Is the input datatype signed or unsigned?
         # The thresholding core needs to know this when comparing weights to inputs

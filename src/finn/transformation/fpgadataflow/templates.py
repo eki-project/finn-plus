@@ -218,6 +218,8 @@ validate_bd_design
 
 set_property SYNTH_CHECKPOINT_MODE "Hierarchical" [ get_files top.bd ]
 make_wrapper -files [get_files top.bd] -import -fileset sources_1 -top
+set_property top top_wrapper [current_fileset]
+update_compile_order -fileset sources_1
 
 # TODO: make strategies and optimization options configurable
 #set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
@@ -239,6 +241,183 @@ wait_on_run [get_runs impl_1]
 open_run impl_1
 report_utilization -hierarchical -hierarchical_depth 4 -file synth_report.xml -format xml
 close_project
+"""
+
+selector_zynq_shell_template_procs = """
+proc create_broadcaster_tree {num_outputs base_name} {
+    set MAX_MI 16
+    set bc_cells [list]
+
+    if {$num_outputs <= $MAX_MI} {
+        set cell_name "${base_name}_0"
+        create_bd_cell -type ip -vlnv xilinx.com:ip:axis_broadcaster:1.1 $cell_name
+        set_property CONFIG.NUM_MI $num_outputs [get_bd_cells $cell_name]
+        lappend bc_cells $cell_name
+
+    } else {
+        set leaf_broadcasters [list]
+        set outputs_left $num_outputs
+        set bc_idx 0
+        while {$outputs_left > 0} {
+            set mi [expr {min($outputs_left, $MAX_MI)}]
+            set cell_name "${base_name}_leaf_${bc_idx}"
+            create_bd_cell -type ip -vlnv xilinx.com:ip:axis_broadcaster:1.1 $cell_name
+            set_property CONFIG.NUM_MI $mi [get_bd_cells $cell_name]
+            lappend leaf_broadcasters $cell_name
+            lappend bc_cells $cell_name
+            set outputs_left [expr {$outputs_left - $mi}]
+            incr bc_idx
+        }
+
+        set current_level $leaf_broadcasters
+        set level 0
+
+        # Create levels of broadcasters until we have a single root
+        while {[llength $current_level] > 1} {
+            set next_level [list]
+            set inputs_needed [llength $current_level]
+            set outputs_left $inputs_needed
+            set bc_idx 0
+
+            while {$outputs_left > 0} {
+                set mi [expr {min($outputs_left, $MAX_MI)}]
+                set cell_name "${base_name}_lvl${level}_${bc_idx}"
+                create_bd_cell -type ip -vlnv xilinx.com:ip:axis_broadcaster:1.1 $cell_name
+                set_property CONFIG.NUM_MI $mi [get_bd_cells $cell_name]
+                lappend next_level $cell_name
+                lappend bc_cells $cell_name
+                set outputs_left [expr {$outputs_left - $mi}]
+                incr bc_idx
+            }
+
+            set leaf_idx 0
+            foreach parent $next_level {
+                set parent_mi [get_property CONFIG.NUM_MI [get_bd_cells $parent]]
+                for {set mi_port 0} {$mi_port < $parent_mi} {incr mi_port} {
+                    set child [lindex $current_level $leaf_idx]
+                    set port_str [format "M%02d_AXIS" $mi_port]
+                    connect_bd_intf_net \
+                        [get_bd_intf_pins ${parent}/${port_str}] \
+                        [get_bd_intf_pins ${child}/S_AXIS]
+                    incr leaf_idx
+                }
+            }
+
+            set current_level $next_level
+            incr level
+        }
+    }
+
+    group_bd_cells $base_name [get_bd_cells $bc_cells]
+
+    current_bd_instance $base_name
+    create_bd_pin -dir I -type clk aclk
+    create_bd_pin -dir I -type rst aresetn
+    connect_bd_net [get_bd_pins aclk] \
+        [get_bd_pins -of_objects [get_bd_cells *] -filter {NAME == aclk}]
+    connect_bd_net [get_bd_pins aresetn] \
+        [get_bd_pins -of_objects [get_bd_cells *] -filter {NAME == aresetn}]
+
+    set master_idx 0
+    foreach cell [get_bd_cells *] {
+        foreach intf_pin [get_bd_intf_pins -of_objects $cell] {
+            if {[llength [get_bd_intf_nets -quiet -of_objects $intf_pin]] == 0} {
+                set mode [get_property MODE $intf_pin]
+                set vlnv [get_property VLNV $intf_pin]
+                if {$mode eq "Slave"} {
+                    set hier_port [get_property NAME $intf_pin]
+                } else {
+                    set hier_port [format "M%02d_AXIS" $master_idx]
+                    incr master_idx
+                }
+                create_bd_intf_pin -mode $mode -vlnv $vlnv $hier_port
+                connect_bd_intf_net [get_bd_intf_pins $hier_port] $intf_pin
+            }
+        }
+    }
+    current_bd_instance ..
+
+    return [get_bd_cells $base_name]
+}
+
+proc create_fifo_stage {num_inputs depth base_name} {
+    set fifo_list [list]
+
+    for {set i 0} {$i < $num_inputs} {incr i} {
+        set fifo_name "axis_data_fifo_${i}"
+        create_bd_cell -type ip -vlnv xilinx.com:ip:axis_data_fifo:2.0 $fifo_name
+        set_property CONFIG.FIFO_DEPTH $depth [get_bd_cells $fifo_name]
+        lappend fifo_list $fifo_name
+    }
+
+    group_bd_cells $base_name [get_bd_cells $fifo_list]
+    current_bd_instance $base_name
+
+    create_bd_pin -dir I -type clk aclk
+    create_bd_pin -dir I -type rst aresetn
+    connect_bd_net [get_bd_pins aclk] [get_bd_pins -of_objects [get_bd_cells *] -filter {NAME == s_axis_aclk}]
+    connect_bd_net [get_bd_pins aresetn] [get_bd_pins -of_objects [get_bd_cells *] -filter {NAME == s_axis_aresetn}]
+
+    set slave_idx 0
+    set master_idx 0
+    foreach cell [get_bd_cells *] {
+        foreach intf_pin [get_bd_intf_pins -of_objects $cell] {
+            if {[llength [get_bd_intf_nets -quiet -of_objects $intf_pin]] == 0} {
+                set mode [get_property MODE $intf_pin]
+                set vlnv [get_property VLNV $intf_pin]
+                if {$mode eq "Slave"} {
+                    set hier_port [format "S%02d_AXIS" $slave_idx]
+                    incr slave_idx
+                } else {
+                    set hier_port [format "M%02d_AXIS" $master_idx]
+                    incr master_idx
+                }
+                create_bd_intf_pin -mode $mode -vlnv $vlnv $hier_port
+                connect_bd_intf_net [get_bd_intf_pins $hier_port] $intf_pin
+            }
+        }
+    }
+
+    current_bd_instance ..
+    return [get_bd_cells $base_name]
+}
+"""
+
+selector_zynq_shell_template = """
+set partition_name %s
+set clk_net [get_bd_pins ${partition_name}/ap_clk]
+set rst_net [get_bd_pins ${partition_name}/ap_rst_n]
+set s_axis_pins [get_bd_intf_pins ${partition_name}/IN_NodeContainer_*]
+set num_inputs [llength $s_axis_pins]
+
+set fifo_name "${partition_name}_selector_fifo"
+set broadcaster_name "${partition_name}_selector_broadcaster"
+set selector_name "${partition_name}_selector"
+
+set bc_cells [create_fifo_stage $num_inputs 32 $fifo_name]
+set bc_cells [create_broadcaster_tree $num_inputs $broadcaster_name]
+
+create_bd_cell -type module -reference selector_verilog $selector_name
+set_property CONFIG.N {%d} [get_bd_cells $selector_name]
+# CLK/RESET
+connect_bd_net $clk_net [get_bd_pins $broadcaster_name/aclk]
+connect_bd_net $clk_net [get_bd_pins $fifo_name/aclk]
+connect_bd_net $clk_net [get_bd_pins $selector_name/aclk]
+
+# -boundary_type upper
+connect_bd_net $rst_net [get_bd_pins $fifo_name/aresetn ]
+connect_bd_net $rst_net [get_bd_pins $broadcaster_name/aresetn]
+connect_bd_net $rst_net [get_bd_pins $selector_name/aresetn]
+
+#AXI
+connect_bd_intf_net [get_bd_intf_pins $selector_name/M_AXIS] [get_bd_intf_pins $broadcaster_name/S_AXIS]
+for {set i 0} {$i < $num_inputs} {incr i} {
+    connect_bd_intf_net [get_bd_intf_pins $broadcaster_name/[format "M%%02d_AXIS" $i]] [get_bd_intf_pins $fifo_name/[format "S%%02d_AXIS" $i]]
+}
+set s_axis_pins_sorted [lsort $s_axis_pins]
+for {set i 0} {$i < $num_inputs} {incr i} {
+    connect_bd_intf_net [get_bd_intf_pins $fifo_name/[format "M%%02d_AXIS" $i]] [lindex $s_axis_pins_sorted $i]
+}
 """
 
 vitis_gen_xml_report_tcl_template = """
