@@ -6,6 +6,8 @@ import os
 import shutil
 import sys
 from datetime import date
+
+import yaml
 from dvclive import Live
 
 
@@ -50,7 +52,24 @@ def open_json_report(id, report_name, is_followup=False):
         return report
     else:
         return None
-
+    
+def generate_power_report(experiment_reports_path):
+    keys = ["0V85_power", "3V3_power", "total_power"] 
+    for filename in os.listdir(experiment_reports_path):
+        power_measurements = [m for m in os.listdir(os.path.join(experiment_reports_path, filename)) if m.startswith(filename) and m.endswith(".json")]
+        if power_measurements:
+            per_file_averages = []
+            for file in power_measurements:
+                with open(os.path.join(experiment_reports_path, filename, file), "r") as f:
+                    report = json.load(f)
+                rails = report.get("rails", [])
+                per_file_averages.append(
+                    {key: sum(r[key] for r in rails if key in r) / len(rails) for key in keys}
+                )
+                averaged = {"avg_" + key: sum(a[key] for a in per_file_averages) / len(per_file_averages) for key in keys}
+                min_values = {"min_" + key: min(a[key] for a in per_file_averages) for key in keys}
+                max_values = {"max_" + key: max(a[key] for a in per_file_averages) for key in keys}
+                return {**averaged, **min_values, **max_values}
 
 # Wrapper around DVC Live object
 class DVCLoggerHelper:
@@ -151,10 +170,37 @@ class DVCLoggerHelper:
                 for key in keys:
                     if key in report[key_top]:
                         self.log_metric(prefix, key, report[key_top][key])
+            
+    def log_experiment_metrics(self,report_path, collect_cfg_path, prefix=""):
+        with open(collect_cfg_path, "r") as f:
+            collect_cfg = yaml.safe_load(f)
+        metrics = collect_cfg.get("Metrics", {})
+        possible_files = list(metrics.keys())
+        
+        for foldername in os.listdir(report_path):
+            path = os.path.join(report_path, foldername, "exp_itr_1")
+            for possible_file in possible_files:
+                if os.path.isfile(os.path.join(path, possible_file)):
+                    file_stem = os.path.splitext(possible_file)[0]
+                    self.log_metrics_from_experiment_report(os.path.join(path, possible_file), metrics, prefix=prefix + file_stem + "/")
+                    possible_files.remove(possible_file) # Only log the first matching 
+                    if not possible_files:
+                        break
 
+    def log_metrics_from_experiment_report(self, report_file_name, log_metrics, prefix=""):
+        with open(os.path.join(report_file_name), "r") as f:
+            report = json.load(f)
+        for key in log_metrics[report_file_name.split(os.sep)[-1]]:
+            if key in report:
+                self.log_metric(prefix, key, report[key])
 
 if __name__ == "__main__":
     """Go through all runs found in the artifacts and log their results to DVC."""
+    os.environ["CI_PIPELINE_NAME"] = "DevRun"
+    os.environ["CI_PIPELINE_ID"] = "99999999999"
+    os.environ["CI_COMMIT_SHA"] = "99999999991"
+    os.environ["LOCAL_BENCHMARK_DIR_STORE"] = "test"
+
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Collect and log benchmark results to DVC.")
     parser.add_argument(
@@ -396,50 +442,20 @@ if __name__ == "__main__":
             # post synth timing report
             # TODO: only exported as post_route_timing.rpt, not .json
 
-            # TODO: update collection of all measurement reports after recent driver changes
-            # instrumentation measurement
-            # dvc_logger.log_all_metrics_from_report(
-            #     "measured_performance.json", prefix="measurement/performance/"
-            # )
-
-            # IODMA validation accuracy
-            # dvc_logger.log_metrics_from_report(
-            #     "validation.json",
-            #     [
-            #         "top-1_accuracy",
-            #     ],
-            #     prefix="measurement/validation/",
-            # )
-
             # power estimation
             dvc_logger.log_all_metrics_from_report(
                 "power_estimate_summary.json", prefix="vivado_estimate/power/"
             )
 
-            # power measurement
-            # dvc_logger.log_all_metrics_from_report(
-            #     "measured_power.json", prefix="measurement/power/"
-            # )
+            # power measurement 
+            experiment_reports_path = os.path.join("measurement_artifacts", "runs_output", "run_%d" % (id), "reports") 
+            power = generate_power_report(experiment_reports_path)
+            for name, value in power.items():
+                dvc_logger.log_metric(prefix="measurement/power/", name=name, value=value)
 
-            # live fifosizing report + graph png
-            # dvc_logger.log_metrics_from_report(
-            #     "fifo_sizing_report.json",
-            #     [
-            #         "error",
-            #         "fifo_size_total_kB",
-            #     ],
-            #     prefix="fifosizing/live/",
-            # )
-
-            # image = os.path.join(
-            #     "measurement_artifacts",
-            #     "runs_output",
-            #     "run_%d" % (id),
-            #     "reports",
-            #     "fifo_sizing_graph.png",
-            # )
-            # if os.path.isfile(image):
-            #     dvc_logger.log_image("fifosizing_pass_1", image)
+            # measurement metric logging
+            collect_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "collect.yaml")
+            dvc_logger.log_experiment_metrics(experiment_reports_path, collect_cfg_path, prefix="measurement/experiments/")
 
             # time_per_step.json
             dvc_logger.log_all_metrics_from_report("time_per_step.json", prefix="time/")
