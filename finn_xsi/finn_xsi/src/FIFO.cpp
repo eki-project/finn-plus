@@ -36,7 +36,9 @@ bool FIFO::toggleClock() {
 }
 
 /// Return whether the FIFO can accept inputs (for the current utilization)
-bool FIFO::getInputReady([[maybe_unused]] std::stop_token stoken) noexcept { return currentUtil < maxSize; }
+/// Uses nextUtil (post-push state) so that ready correctly reflects capacity
+/// after any push already committed this cycle, preventing AXI-S violations.
+bool FIFO::getInputReady([[maybe_unused]] std::stop_token stoken) noexcept { return nextUtil < maxSize; }
 
 /// Return whether the FIFO can output values (for the current utilization)
 bool FIFO::getOutputValid([[maybe_unused]] std::stop_token stoken) noexcept { return currentUtil > 0; }

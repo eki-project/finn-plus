@@ -31,7 +31,7 @@ from finn.util.logging import log
 # Hardware BRAM FIFOs lose entries to internal pipeline registers compared to the software FIFO
 # model (which has exact capacity). This constant accounts for that overhead so that the
 # minimization algorithm finds depths that are safe to deploy on hardware.
-BRAM_FIFO_PIPELINE_OVERHEAD = 3
+BRAM_FIFO_PIPELINE_OVERHEAD = 2
 
 
 def _count_bram_sub_fifos(depth: int, max_qsrl_depth: int) -> int:
@@ -158,42 +158,6 @@ class NodeConnectedSimulationController(SimulationController):
         timeout_result = False
         fifo_depths: dict[str, list[int]] = {}
         fifo_cycles_until_first_valid_results: dict[str, list[int]] = {}
-        input_job_size_results: dict[str, list[int]] = {}
-        output_job_size_results: dict[str, list[int]] = {}
-
-        def _store_result(result: tuple | None) -> None:
-            """Unpack one _run_binary result into the accumulator dicts.
-
-            Safe to call from both the FIRST_COMPLETED loop and the shutdown
-            cleanup loop: the `sim_name not in fifo_results` guard prevents a
-            result that was already stored by the first loop from being
-            overwritten by the second.
-            """
-            nonlocal timeout_result
-            if result is None:
-                return
-            (
-                sim_name,
-                fifo_util,
-                cycles,
-                samps,
-                intervals,
-                timeout,
-                fifo_depth,
-                fifo_cycles_until_first_valid,
-                input_job_size,
-                output_job_size,
-            ) = result
-            if sim_name not in fifo_results:
-                fifo_results[sim_name] = fifo_util
-                fifo_depths[sim_name] = fifo_depth
-                cycles_results[sim_name] = cycles
-                samples_results[sim_name] = samps
-                intervals_results[sim_name] = intervals
-                fifo_cycles_until_first_valid_results[sim_name] = fifo_cycles_until_first_valid
-                input_job_size_results[sim_name] = input_job_size
-                output_job_size_results[sim_name] = output_job_size
-                timeout_result = timeout_result or timeout
 
         # Clean up any existing shared memory resources before starting
         self._cleanup_shm_resources()
@@ -241,7 +205,26 @@ class NodeConnectedSimulationController(SimulationController):
                     for future in done:
                         try:
                             result = future.result()  # This will raise if there was an exception
-                            _store_result(result)
+                            if result is not None:
+                                (
+                                    sim_name,
+                                    fifo_util,
+                                    cycles,
+                                    samps,
+                                    intervals,
+                                    timeout,
+                                    fifo_depth,
+                                    fifo_cycles_until_first_valid,
+                                ) = result
+                                fifo_depths[sim_name] = fifo_depth
+                                fifo_results[sim_name] = fifo_util
+                                cycles_results[sim_name] = cycles
+                                samples_results[sim_name] = samps
+                                intervals_results[sim_name] = intervals
+                                fifo_cycles_until_first_valid_results[sim_name] = (
+                                    fifo_cycles_until_first_valid
+                                )
+                                timeout_result = timeout_result or timeout
                         except Exception as e:  # noqa
                             self.console.log(f"Simulation failed: {e}")
                             # Set stop flag and break
@@ -262,7 +245,28 @@ class NodeConnectedSimulationController(SimulationController):
                         continue
                     try:
                         result = future.result()
-                        _store_result(result)  # guard inside: skips already-collected names
+                        if result is not None:
+                            (
+                                sim_name,
+                                fifo_util,
+                                cycles,
+                                samps,
+                                intervals,
+                                timeout,
+                                fifo_depth,
+                                fifo_cycles_until_first_valid,
+                            ) = result
+                            # Only update if not already collected
+                            if sim_name not in fifo_results:
+                                fifo_cycles_until_first_valid_results[sim_name] = (
+                                    fifo_cycles_until_first_valid
+                                )
+                                fifo_depths[sim_name] = fifo_depth
+                                fifo_results[sim_name] = fifo_util
+                                cycles_results[sim_name] = cycles
+                                samples_results[sim_name] = samps
+                                intervals_results[sim_name] = intervals
+                                timeout_result = timeout_result or timeout
                     except Exception as e:
                         self.console.log(f"Error collecting result: {e}")
 
@@ -301,8 +305,6 @@ class NodeConnectedSimulationController(SimulationController):
                         "fifo_cycles_until_first_valid": fifo_cycles_until_first_valid_results.get(
                             name, []
                         ),
-                        "input_job_size": input_job_size_results.get(name, []),
-                        "output_job_size": output_job_size_results.get(name, []),
                     }
                     for name in self.names
                 ],
@@ -323,10 +325,7 @@ class NodeConnectedSimulationController(SimulationController):
         is_special_for_display: bool = False,
         max_cycles: int | None = None,
         fifo_first_valid_cycles: list[int] | None = None,
-    ) -> (
-        tuple[str, list[int], int, int, list[int], bool, list[int], list[int], list[int], list[int]]
-        | None
-    ):
+    ) -> tuple[str, list[int], int, int, list[int], bool, list[int], list[int]] | None:
         """Run the specified simulation binary in a new subprocess and communicate with it.
 
         Args:
@@ -341,7 +340,7 @@ class NodeConnectedSimulationController(SimulationController):
 
         Returns:
             Tuple of (simulation_name, fifo_utilization, cycles, samples, intervals, timeout,
-            fifo_depth, fifo_cycles_until_first_valid, input_job_size, output_job_size) on success,
+            fifo_depth, fifo_cycles_until_first_valid) on success,
             None on failure.
         """
         cwd = binary.parent
@@ -414,8 +413,6 @@ class NodeConnectedSimulationController(SimulationController):
                 fifo_util: list[int] = []
                 fifo_depth: list[int] = []
                 fifo_cycles_until_first_valid: list[int] = []
-                input_job_size: list[int] = []
-                output_job_size: list[int] = []
 
                 # Poll for status updates
                 while True:
@@ -437,8 +434,6 @@ class NodeConnectedSimulationController(SimulationController):
                                 fifo_cycles_until_first_valid = stop_response.get(
                                     "fifo_cycles_until_first_valid", []
                                 )
-                                input_job_size = stop_response.get("input_job_size", [])
-                                output_job_size = stop_response.get("output_job_size", [])
                                 if fifo_util:
                                     logfile.write(f"Final FIFO utilization: {fifo_util}\n")
                             return (
@@ -450,8 +445,6 @@ class NodeConnectedSimulationController(SimulationController):
                                 timeout,
                                 fifo_depth,
                                 fifo_cycles_until_first_valid,
-                                input_job_size,
-                                output_job_size,
                             )
                     time.sleep(self.poll_interval)
 
@@ -475,8 +468,6 @@ class NodeConnectedSimulationController(SimulationController):
                         fifo_cycles_until_first_valid = response.get(
                             "fifo_cycles_until_first_valid", []
                         )
-                        input_job_size = response.get("input_job_size", [])
-                        output_job_size = response.get("output_job_size", [])
                         with self.stop_lock:
                             self.should_stop = True
                         break
@@ -504,8 +495,6 @@ class NodeConnectedSimulationController(SimulationController):
                     fifo_cycles_until_first_valid = stop_response.get(
                         "fifo_cycles_until_first_valid", []
                     )
-                    input_job_size = stop_response.get("input_job_size", [])
-                    output_job_size = stop_response.get("output_job_size", [])
                     if fifo_util:
                         logfile.write(f"Final FIFO utilization: {fifo_util}\n")
 
@@ -518,8 +507,6 @@ class NodeConnectedSimulationController(SimulationController):
                     timeout,
                     fifo_depth,
                     fifo_cycles_until_first_valid,
-                    input_job_size,
-                    output_job_size,
                 )
 
             except Exception as e:
@@ -610,8 +597,6 @@ class NodeConnectedSimulation(Simulation):
                     "samples": sim_entry["samples"],
                     "intervals": sim_entry["intervals"],
                     "fifo_cycles_until_first_valid": sim_entry["fifo_cycles_until_first_valid"],
-                    "input_job_size": sim_entry.get("input_job_size", []),
-                    "output_job_size": sim_entry.get("output_job_size", []),
                 }
             )
         json.dump(data, output_json.open("w"), indent=4)
@@ -1019,10 +1004,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     "New simulation data has different number of streams than baseline."
                 )
             for idx in range(len(new["intervals"])):
-                if new["intervals"][idx] != 0:
-                    print(
-                        f"New intervals: {new['intervals'][idx]}, Initial intervals: {initial['intervals'][idx]}"
-                    )
                 if new["intervals"][idx] > initial["intervals"][idx]:
                     return True
         return False
@@ -1056,11 +1037,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         Returns:
             Tuple of (success, timeout) where success means depth works without degradation
         """
-        node_name = sim.model.graph.node[node_idx].name
-        peak_util = initial_fifo_depths[node_idx]["fifo_utilization"][fifo_idx]
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: testing depth {test_depth} (peak util {peak_util}) ..."
-        )
         test_depths = deepcopy(current_depths)
         test_depths[node_idx][fifo_idx] = test_depth
 
@@ -1069,19 +1045,13 @@ class RunLayerParallelSimulation(Transformation):  # noqa
             max_cycles=min(
                 math.ceil(sim_cycles * 1.05), math.ceil(sim_cycles) + 10 * len(test_depths)
             ),
-            # fifo_first_valid_cycles=fifo_first_valid_cycles,
+            fifo_first_valid_cycles=fifo_first_valid_cycles,
         )
 
         if timeout:
-            print(f"[{node_name}] FIFO {fifo_idx}: depth {test_depth} -> TIMEOUT.")
             return False, True
 
-        new_peak_util = new_simulation_data[node_idx]["fifo_utilization"][fifo_idx]
         performance_degraded = self._check_performance(new_simulation_data, initial_fifo_depths)
-        result_str = "SUCCESS" if not performance_degraded else "FAILED (perf degraded)"
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: depth {test_depth} -> {result_str} (new peak util {new_peak_util})."
-        )
         return not performance_degraded, False
 
     def _get_valid_block_counts(self, min_blocks: int, max_blocks: int, bitwidth: int) -> list[int]:
@@ -1137,17 +1107,8 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         iterations = 0
         original_size = current_depths[node_idx][fifo_idx]
         bw = bit_widths[node_idx][fifo_idx]
-        node_name = sim.model.graph.node[node_idx].name
-        peak_util = initial_fifo_depths[node_idx]["fifo_utilization"][fifo_idx]
 
-        log.debug(
-            f"[{node_name}] Minimizing node {node_idx} FIFO {fifo_idx}: "
-            f"original depth {original_size}, peak utilization {peak_util}, bitwidth {bw}"
-        )
-        print(
-            f"[{node_name}] Minimizing node {node_idx} FIFO {fifo_idx}: "
-            f"original depth {original_size}, peak utilization {peak_util}, bitwidth {bw}"
-        )
+        log.debug(f"Minimizing Node {node_idx} FIFO {fifo_idx}: original depth {original_size}")
 
         # If FIFO depth of 32 works, use it because it fits into bw/2 LUTs
         success, timeout = self._test_depth(
@@ -1162,11 +1123,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         )
         iterations += 1
         if success:
-            print(
-                f"[{node_name}] FIFO {fifo_idx}: depth 32 works -> done in {iterations} iteration(s)."
-            )
             return 32, iterations
-        print(f"[{node_name}] FIFO {fifo_idx}: depth 32 failed (timeout={timeout}).")
 
         if original_size <= self.max_qsrl_depth:
             upper_luts = calculate_srl16e_luts(original_size, bw)
@@ -1175,9 +1132,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
             # Binary search if there's room to search
             if upper_luts > lower_luts:
-                print(
-                    f"[{node_name}] FIFO {fifo_idx}: original size {original_size} fits in LUTRAM; binary-searching SRL depths (LUTs {lower_luts}..{upper_luts})."
-                )
                 best_working_depth, bin_it = self._binary_search_srl_depth(
                     node_idx,
                     fifo_idx,
@@ -1191,13 +1145,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     upper_luts=upper_luts,
                 )
                 iterations += bin_it
-                print(
-                    f"[{node_name}] FIFO {fifo_idx}: SRL binary search done -> depth {best_working_depth} in {bin_it} iteration(s)."
-                )
                 return best_working_depth, iterations
-            print(
-                f"[{node_name}] FIFO {fifo_idx}: no SRL search room (upper_luts == lower_luts); keeping original depth {original_size}."
-            )
             return original_size, iterations
 
         # Try FIFO depth of 256 next (fits into LUTRAM)
@@ -1219,9 +1167,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
             # Binary search if there's room to search
             if upper_luts > lower_luts:
-                print(
-                    f"[{node_name}] FIFO {fifo_idx}: max_qsrl_depth ({self.max_qsrl_depth}) works; binary-searching SRL depths (LUTs {lower_luts}..{upper_luts})."
-                )
                 best_working_depth, bin_it = self._binary_search_srl_depth(
                     node_idx,
                     fifo_idx,
@@ -1235,38 +1180,21 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                     upper_luts=upper_luts,
                 )
                 iterations += bin_it
-                print(
-                    f"[{node_name}] FIFO {fifo_idx}: SRL binary search done -> depth {best_working_depth} in {bin_it} iteration(s)."
-                )
                 return best_working_depth, iterations
-            print(
-                f"[{node_name}] FIFO {fifo_idx}: no SRL search room; using max_qsrl_depth {self.max_qsrl_depth}."
-            )
             return self.max_qsrl_depth, iterations
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: max_qsrl_depth ({self.max_qsrl_depth}) failed -> escalating to BRAM search."
-        )
+
         # We know 256 doesn't work, so we have to use BRAMs
         # Try one BRAM block less than current
         upper_blocks = calculate_bram_blocks(original_size, bw)
         # Get all valid block counts in the range
         valid_blocks = self._get_valid_block_counts(1, upper_blocks - 1, bw)
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: upper_blocks={upper_blocks}, valid_blocks range=[{valid_blocks[0] if valid_blocks else 'none'}..{valid_blocks[-1] if valid_blocks else 'none'}] ({len(valid_blocks)} candidates)."
-        )
         if not valid_blocks:
             # No valid configurations exist
-            print(
-                f"[{node_name}] FIFO {fifo_idx}: no valid BRAM configs below original -> keeping depth {original_size}."
-            )
             return original_size, iterations
         # Test the maximum valid block count first
         # (largest depth below original, most likely to succeed)
         max_valid_blocks = valid_blocks[-1]
         _, max_d = calculate_bram_depth_range(max_valid_blocks, bw)
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: testing max_valid_blocks={max_valid_blocks} -> depth {max_d}."
-        )
 
         success, timeout = self._test_depth(
             max_d,
@@ -1281,21 +1209,12 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         iterations += 1
 
         if timeout or not success:
-            print(
-                f"[{node_name}] FIFO {fifo_idx}: depth {max_d} failed (timeout={timeout}) -> keeping original depth {original_size}."
-            )
             return original_size, iterations
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: depth {max_d} (blocks={max_valid_blocks}) works -> entering BRAM binary search."
-        )
 
         best_working_depth = max_d
 
         # Binary search if there's room to search and multiple valid configs
         if len(valid_blocks) > 1:
-            print(
-                f"[{node_name}] FIFO {fifo_idx}: {len(valid_blocks)} valid BRAM configs -> exponential+binary search over blocks {valid_blocks[0]}..{valid_blocks[-1]}."
-            )
             best_working_depth, bin_it = self._exponential_binary_search_depth(
                 node_idx,
                 fifo_idx,
@@ -1308,13 +1227,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 valid_blocks=valid_blocks,
             )
             iterations += bin_it
-            print(
-                f"[{node_name}] FIFO {fifo_idx}: BRAM search done -> depth {best_working_depth} in {bin_it} iteration(s)."
-            )
-        else:
-            print(
-                f"[{node_name}] FIFO {fifo_idx}: only one valid BRAM config -> depth {best_working_depth}."
-            )
 
         return best_working_depth, iterations
 
@@ -1355,7 +1267,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         iterations = 0
         if not valid_blocks:
             raise FINNInternalError("valid_blocks list cannot be empty")
-        node_name = sim.model.graph.node[node_idx].name
 
         # Start with the largest valid block count (known to work from caller)
         _, max_d = calculate_bram_depth_range(valid_blocks[-1], bitwidth)
@@ -1368,9 +1279,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         exp_idx = 0
         last_failed_idx = -1
 
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: exponential search phase over {len(valid_blocks)} valid blocks."
-        )
         while exp_idx < upper_idx:
             blocks = valid_blocks[exp_idx]
             _, max_d = calculate_bram_depth_range(blocks, bitwidth)
@@ -1392,21 +1300,12 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 best_working_depth = max_d
                 lower_idx = last_failed_idx + 1
                 upper_idx = exp_idx
-                print(
-                    f"[{node_name}] FIFO {fifo_idx}: exp search: blocks={blocks} depth={max_d} SUCCESS -> narrowing to idx [{lower_idx}, {upper_idx}]."
-                )
                 break
             # This doesn't work, try exponentially larger index
-            print(
-                f"[{node_name}] FIFO {fifo_idx}: exp search: blocks={blocks} depth={max_d} FAILED -> advancing exp_idx."
-            )
             last_failed_idx = exp_idx
             exp_idx = min(exp_idx * 2 if exp_idx > 0 else 1, upper_idx)
 
         # Binary search phase: refine the range
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: binary search phase over idx [{lower_idx}, {upper_idx}] (blocks {valid_blocks[lower_idx]}..{valid_blocks[upper_idx]})."
-        )
         while lower_idx < upper_idx:
             mid_idx = (lower_idx + upper_idx) // 2
             blocks = valid_blocks[mid_idx]
@@ -1428,19 +1327,10 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 # This depth works, try smaller (lower indices)
                 best_working_depth = max_d
                 upper_idx = mid_idx
-                print(
-                    f"[{node_name}] FIFO {fifo_idx}: bin search: blocks={blocks} depth={max_d} SUCCESS -> upper_idx={upper_idx}."
-                )
             else:
                 # This depth doesn't work, need larger (higher indices)
                 lower_idx = mid_idx + 1
-                print(
-                    f"[{node_name}] FIFO {fifo_idx}: bin search: blocks={blocks} depth={max_d} FAILED -> lower_idx={lower_idx}."
-                )
 
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: exponential+binary search finished -> best depth {best_working_depth} in {iterations} iteration(s)."
-        )
         return best_working_depth, iterations
 
     def _binary_search_srl_depth(
@@ -1478,11 +1368,7 @@ class RunLayerParallelSimulation(Transformation):  # noqa
         iterations = 0
         _, max_d = calculate_srl16e_depth_range(upper_luts, bitwidth)
         best_working_depth = max_d
-        node_name = sim.model.graph.node[node_idx].name
 
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: SRL binary search over LUTs [{lower_luts}, {upper_luts}], initial depth {best_working_depth}."
-        )
         while lower_luts < upper_luts:
             mid_luts = (lower_luts + upper_luts) // 2
 
@@ -1497,9 +1383,6 @@ class RunLayerParallelSimulation(Transformation):  # noqa
 
             if max_d == 0:
                 # No valid configuration, try more LUTs
-                print(
-                    f"[{node_name}] FIFO {fifo_idx}: SRL bin search: mid_luts={mid_luts} has no valid depth -> lower_luts={mid_luts + 1}."
-                )
                 lower_luts = mid_luts + 1
                 continue
 
@@ -1519,19 +1402,10 @@ class RunLayerParallelSimulation(Transformation):  # noqa
                 # This depth works, try smaller
                 best_working_depth = max_d
                 upper_luts = mid_luts
-                print(
-                    f"[{node_name}] FIFO {fifo_idx}: SRL bin search: luts={mid_luts} depth={max_d} SUCCESS -> upper_luts={upper_luts}."
-                )
             else:
                 # This depth doesn't work, need larger
                 lower_luts = mid_luts + 1
-                print(
-                    f"[{node_name}] FIFO {fifo_idx}: SRL bin search: luts={mid_luts} depth={max_d} FAILED -> lower_luts={lower_luts}."
-                )
 
-        print(
-            f"[{node_name}] FIFO {fifo_idx}: SRL binary search finished -> best depth {best_working_depth} in {iterations} iteration(s)."
-        )
         return best_working_depth, iterations
 
     def _needs_minimization(self, fifo_depth: int, bitwidth: int) -> bool:

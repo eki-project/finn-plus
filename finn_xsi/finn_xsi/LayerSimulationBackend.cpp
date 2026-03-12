@@ -110,6 +110,7 @@ class SimulationController {
                     current_samples.store(sim.getCompletedMaps());
                     state = SimulationState::FINISHED;
                 }
+                state = SimulationState::FINISHED;
             } catch (const std::exception& e) {
                 std::lock_guard<std::mutex> error_lock(state_mutex);
                 std::cout << "Simulation error: " << e.what() << std::endl;

@@ -107,8 +107,8 @@ struct CommData {
 //                      └──────────────────────────────────────┘
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes, bool FirstNode, bool LastNode>
 class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
-    using ConsumingInterface = InterprocessCommunicationChannel<CommData, CommData, false>;
-    using ProducingInterface = InterprocessCommunicationChannel<CommData, CommData, true>;
+    using ConsumingInterface = InterprocessCommunicationChannel<CommData, CommData, true>;
+    using ProducingInterface = InterprocessCommunicationChannel<CommData, CommData, false>;
     std::array<ConsumingInterface, IStreamsSize> fromProducerInterface;
     std::array<ProducingInterface, OStreamsSize> toConsumerInterface;
     std::size_t cyclesRun = 0;
@@ -136,8 +136,9 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
                 // Interface SHM <-> sim
-                this->istreams[i].setValid(fromProducerInterface[i].receive_request(stoken).data);
-                fromProducerInterface[i].send_response(CommData{this->istreams[i].getInputReady()});
+                bool istreamReady = this->istreams[i].getInputReady();
+                bool fifoValid = fromProducerInterface[i].send_request(CommData{istreamReady}, stoken).data;
+                this->istreams[i].setValid(fifoValid);  // deferred
             }
         }
         if constexpr (!LastNode) {
@@ -145,11 +146,14 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 // Interface sim -valid-> FIFO
                 this->fifo[i].setInputValid(this->ostreams[i].getOutputValid(), stoken);
                 // Interface FIFO <-> SHM
-                this->fifo[i].setOutputReady(toConsumerInterface[i].send_request(CommData{this->fifo[i].getOutputValid()}, stoken).data, stoken);
-                // FIFO -ready-> sim
-                this->ostreams[i].setReady(this->fifo[i].getInputReady());
+                this->fifo[i].setOutputReady(toConsumerInterface[i].receive_request(stoken).data, stoken);
+                
                 // Toggle FIFO clock
                 ret |= this->fifo[i].toggleClock();
+                bool fifoValid = this->fifo[i].getOutputValid();
+                toConsumerInterface[i].send_response(CommData{fifoValid});
+                // FIFO -ready-> sim
+                this->ostreams[i].setReady(this->fifo[i].getInputReady());
             }
         }
         if constexpr (LastNode) {
@@ -168,15 +172,22 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 }
             }
         }
-        //this->clk.toggleClk();
-        this->clk.clockHigh();
+        // ── CLOCK HIGH ─────────────────────────────────────────────────────────
+        this->clk.clockHigh();  // run(1) [gap] → clk=1 → run(1)
+
+        // ── WRITE (clock is high, commit deferred setValid / setReady) ─────────
+        //
+        // The deferred values were prepared at the end of the previous cycle's read
+        // phase (or are defaults for the first cycle).
         for (std::size_t i = 0; i < IStreamsSize; ++i) {
             this->istreams[i].writeBack();
-            }
+        }
         for (std::size_t i = 0; i < OStreamsSize; ++i) {
             this->ostreams[i].writeBack();
         }
-        this->clk.clockLow();
+
+        // ── CLOCK LOW ──────────────────────────────────────────────────────────
+        this->clk.clockLow();  // run(4999) → clk=0 → run(4999)  ← sim settles
         return ret;
     }
 
@@ -370,9 +381,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 const double ema = this->ostreams[i].stableState.get_ema();
                 // Fall back to the raw interval when the EMA has never been updated
                 // (ema == 0.0 means no second job completion has occurred yet).
-                intervals[i] = (ema > 0.0)
-                    ? static_cast<std::size_t>(std::round(ema))
-                    : this->ostreams[i].interval;
+                intervals[i] = (ema > 0.0) ? static_cast<std::size_t>(std::round(ema)) : this->ostreams[i].interval;
             }
         }
         return intervals;
