@@ -188,6 +188,20 @@ class SimulationController {
                         status["fifo_cycles_until_first_valid"] = fifo_cycles;
                     }
                 }
+                // Add input/output job sizes
+                {
+                    json in_job_sizes = json::array();
+                    for (size_t i = 0; i < InstreamCount; ++i) {
+                        in_job_sizes.push_back(sim.getInputJobSize(i));
+                    }
+                    status["input_job_size"] = in_job_sizes;
+
+                    json out_job_sizes = json::array();
+                    for (size_t i = 0; i < OutstreamCount; ++i) {
+                        out_job_sizes.push_back(sim.getOutputJobSize(i));
+                    }
+                    status["output_job_size"] = out_job_sizes;
+                }
                 break;
             case SimulationState::ERROR:
                 status["state"] = "error";
@@ -208,7 +222,7 @@ void process_command(const json& request, json& response, SimulationController& 
         if (command == "configure") {
             std::vector<std::size_t> fifo_depths;
 
-            //std::cout << "Payload: " << payload << std::endl;
+            // std::cout << "Payload: " << payload << std::endl;
 
             // Handle fifo_depth as either a single value or an array
             if (payload.contains("fifo_depth")) {
@@ -280,6 +294,12 @@ void process_command(const json& request, json& response, SimulationController& 
             }
             if (final_status.contains("fifo_cycles_until_first_valid")) {
                 response["fifo_cycles_until_first_valid"] = final_status["fifo_cycles_until_first_valid"];
+            }
+            if (final_status.contains("input_job_size")) {
+                response["input_job_size"] = final_status["input_job_size"];
+            }
+            if (final_status.contains("output_job_size")) {
+                response["output_job_size"] = final_status["output_job_size"];
             }
         } else {
             response["status"] = "error";

@@ -115,13 +115,28 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     std::size_t completedMaps = 0;
     std::array<FIFO, OStreamsSize> fifo;
 
-    /// Communicate with predecessors and successors and update their values and our own
-    [[gnu::hot, gnu::flatten, gnu::always_inline]] bool communicate(std::stop_token stoken = {}) {
+    /**
+     * Initialize streams according to nodeindex
+     */
+    void initStreams() {
+        if constexpr (FirstNode) {             // First Node; no predecessor
+            for (auto&& s : this->istreams) {  // Input into sim valid
+                s.setInputValid(true);
+            }
+        } else if constexpr (LastNode) {       // Last Node; no successor
+            for (auto&& s : this->ostreams) {  // Output from sim ready
+                s.setOutputReady(true);
+            }
+        }
+    }
+
+    [[gnu::hot, gnu::always_inline]] bool runSingleCycle(std::stop_token stoken = {}) {
+        ++cyclesRun;
         bool ret = false;
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
                 // Interface SHM <-> sim
-                this->istreams[i].setInputValid(fromProducerInterface[i].receive_request(stoken).data);
+                this->istreams[i].setValid(fromProducerInterface[i].receive_request(stoken).data);
                 fromProducerInterface[i].send_response(CommData{this->istreams[i].getInputReady()});
             }
         }
@@ -132,7 +147,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 // Interface FIFO <-> SHM
                 this->fifo[i].setOutputReady(toConsumerInterface[i].send_request(CommData{this->fifo[i].getOutputValid()}, stoken).data, stoken);
                 // FIFO -ready-> sim
-                this->ostreams[i].setOutputReady(this->fifo[i].getInputReady());
+                this->ostreams[i].setReady(this->fifo[i].getInputReady());
                 // Toggle FIFO clock
                 ret |= this->fifo[i].toggleClock();
             }
@@ -153,28 +168,15 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 }
             }
         }
-        return ret;
-    }
-
-    /**
-     * Initialize streams according to nodeindex
-     */
-    void initStreams() {
-        if constexpr (FirstNode) {             // First Node; no predecessor
-            for (auto&& s : this->istreams) {  // Input into sim valid
-                s.setInputValid(true);
+        //this->clk.toggleClk();
+        this->clk.clockHigh();
+        for (std::size_t i = 0; i < IStreamsSize; ++i) {
+            this->istreams[i].writeBack();
             }
-        } else if constexpr (LastNode) {       // Last Node; no successor
-            for (auto&& s : this->ostreams) {  // Output from sim ready
-                s.setOutputReady(true);
-            }
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
+            this->ostreams[i].writeBack();
         }
-    }
-
-    [[gnu::hot, gnu::always_inline]] bool runSingleCycle(std::stop_token stoken = {}) {
-        ++cyclesRun;
-        bool ret = communicate(stoken);
-        this->clk.toggleClk();
+        this->clk.clockLow();
         return ret;
     }
 
@@ -233,7 +235,9 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             }
         }
 
+        this->clk.clockHigh();
         initStreams();
+        this->clk.clockLow();
         std::cout << "Finished initializing simulation." << std::endl;
     }
 

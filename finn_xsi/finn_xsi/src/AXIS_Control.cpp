@@ -61,8 +61,16 @@ S_AXIS_Control::S_AXIS_Control(xsi::Design& des, Clock& clock, size_t job_sz, si
     }
 }
 
+void S_AXIS_Control::writeBack() {
+    this->port_vld->write_back();
+}
+
 M_AXIS_Control::M_AXIS_Control(xsi::Design& des, Clock& clock, size_t job_sz, const std::string& prefix) : AXIS_Control(des, clock, job_sz, prefix), lastComplete(0), interval(0) {
     if (job_sz < 1) {
         throw std::invalid_argument("Job size must be greater than 0.");
     }
+}
+
+void M_AXIS_Control::writeBack() {
+    this->port_rdy->write_back();
 }

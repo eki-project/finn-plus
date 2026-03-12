@@ -22,10 +22,15 @@ class Clock {
     Clock& operator=(Clock&&) noexcept = default;
     ~Clock() noexcept = default;
 
+    std::function<void()> clkHigh;
+    std::function<void()> clkLow;
     std::function<void(bool)> cycle;
 
 
     void toggleClk() noexcept;
+
+    void clockHigh() noexcept;
+    void clockLow() noexcept;
 };
 
 #endif /* CLOCK */

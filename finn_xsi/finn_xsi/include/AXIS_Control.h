@@ -36,6 +36,8 @@ class AXIS_Control : public CommunicationChannel {
     std::reference_wrapper<xsi::Port> setValid(bool value = true);
     std::reference_wrapper<xsi::Port> setReady(bool value = true);
 
+    virtual void writeBack() = 0;
+
     // Job Size and Transaction Statistics
     size_t job_size;
     size_t job_txns;  // [0:job_size]
@@ -45,7 +47,7 @@ class AXIS_Control : public CommunicationChannel {
     // AXI interface prefix
     std::string name;
 
-     private:
+     protected:
     const xsi::Design* design;
     const Clock* clk;
 
@@ -63,6 +65,8 @@ class S_AXIS_Control : public AXIS_Control {
     S_AXIS_Control(S_AXIS_Control&& other) = default;
     S_AXIS_Control& operator=(S_AXIS_Control&& other) = default;
 
+    void writeBack() override;
+
     size_t job_ticks;   // throttle if job_size < job_ticks
     size_t await_iter;  // iteration allowing start of next job
 };
@@ -76,6 +80,8 @@ class M_AXIS_Control : public AXIS_Control {
 
     M_AXIS_Control(M_AXIS_Control&& other) = default;
     M_AXIS_Control& operator=(M_AXIS_Control&& other) = default;
+
+    void writeBack() override;
 
     size_t lastComplete = 0;
     size_t interval = 0;
