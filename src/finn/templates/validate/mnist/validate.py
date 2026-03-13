@@ -1,3 +1,4 @@
+"""Validation script for the MNIST dataset."""
 import json
 import numpy as np
 import os
@@ -5,6 +6,7 @@ from dataset_loading import mnist
 
 
 def validate(cls_inst, *args, **kwargs):
+    """Run MNIST validation and report top-1 accuracy."""
     report_dir = kwargs.get("report_dir")
     dataset_path = kwargs.get("dataset_path", os.path.dirname(os.path.realpath(__file__)))
     bsize = cls_inst.batch_size

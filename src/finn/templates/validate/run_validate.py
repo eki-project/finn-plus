@@ -1,8 +1,10 @@
+"""Entry point for dispatching dataset-specific validation scripts."""
 import os
 import sys
 
 
 def run_validate(validation_dataset, cls_inst, *args, **kwargs):
+    """Dispatch validation to the appropriate dataset-specific validate function."""
     dp = os.path.join(os.path.dirname(os.path.realpath(__file__)))
     sys.path.insert(0, dp)
     try:

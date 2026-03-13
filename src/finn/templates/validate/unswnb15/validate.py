@@ -1,3 +1,4 @@
+"""Validation script for the UNSW-NB15 intrusion detection dataset."""
 import json
 import numpy as np
 import os
@@ -5,6 +6,7 @@ import os
 
 # From finn examples
 def validate(cls_inst, *args, **kwargs):
+    """Run UNSW-NB15 validation and report accuracy."""
     report_dir = kwargs.get("report_dir")
     dataset_path = kwargs.get(
         "dataset_path", os.path.join(os.environ["DATASET_DIR"], "unsw_nb15_binarized.npz")

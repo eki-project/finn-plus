@@ -1,3 +1,4 @@
+"""Validation script for the ImageNet (ILSVRC2012) dataset."""
 import json
 import numpy as np
 import os
@@ -6,6 +7,7 @@ from PIL import Image
 
 
 def img_resize(img, size):
+    """Resize an image so its shorter side equals the given size."""
     w, h = img.size
     if (w <= h and w == size) or (h <= w and h == size):
         return img
@@ -20,6 +22,7 @@ def img_resize(img, size):
 
 
 def img_center_crop(img, size):
+    """Center-crop an image to a square of the given size."""
     crop_height, crop_width = (size, size)
     image_width, image_height = img.size
     crop_top = int(round((image_height - crop_height) / 2.0))
@@ -28,6 +31,7 @@ def img_center_crop(img, size):
 
 
 def pre_process(img_np):
+    """Resize and center-crop a numpy image array for ImageNet inference."""
     img = Image.fromarray(img_np.astype(np.uint8))
     img = img_resize(img, 256)
     img = img_center_crop(img, 224)
@@ -36,6 +40,7 @@ def pre_process(img_np):
 
 
 def setup_dataloader(val_path, label_file_path=None, batch_size=100, n_images=50000):
+    """Create an image queue for streaming ImageNet validation images."""
     files = ["ILSVRC2012_val_{:08d}.JPEG".format(i) for i in range(1, n_images + 1)]
     labels = np.loadtxt(label_file_path, dtype=int, usecols=1)
     file_queue = FileQueue()
@@ -46,6 +51,7 @@ def setup_dataloader(val_path, label_file_path=None, batch_size=100, n_images=50
 
 
 def validate(cls_inst, *args, **kwargs):
+    """Run ImageNet validation and report top-1 accuracy."""
     report_dir = kwargs.get("report_dir")
     dataset_path = kwargs.get(
         "dataset_path",

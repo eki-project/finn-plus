@@ -1,3 +1,4 @@
+"""Validation script for the RadioML 2018.01A dataset."""
 import h5py
 import json
 import math
@@ -6,6 +7,7 @@ import os
 
 
 def quantize(data):
+    """Quantize float data to int8 in the range [-2, 2]."""
     quant_min = -2.0
     quant_max = 2.0
     quant_range = quant_max - quant_min
@@ -17,6 +19,7 @@ def quantize(data):
 
 
 def validate(cls_inst, *args, **kwargs):
+    """Run RadioML validation and report accuracy on high-SNR test samples."""
     report_dir = kwargs.get("report_dir")
     dataset_path = kwargs.get(
         "dataset_path", os.path.join(os.environ["DATASET_DIR"], "GOLD_XYZ_OSC.0001_1024.hdf5")

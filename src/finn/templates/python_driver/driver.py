@@ -753,6 +753,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             self.error = True
 
     def ctrl_read(self, opcode=0x00, fifo_id=0x0000, check_success=False):
+        """Read a value from the FIFO controller via AXI-Lite."""
         address = (fifo_id << 8) | opcode
         # Shift by 2 because FIFO controller operates on word addresses
         response = self.fifo_controller_0.read(offset=(address << 2))
@@ -765,6 +766,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         return response
 
     def ctrl_write(self, opcode=0x00, fifo_id=0x0000, value=0x00000000):
+        """Write a value to the FIFO controller via AXI-Lite."""
         address = (fifo_id << 8) | opcode
         # Shift by 2 because FIFO controller operates on word addresses
         self.fifo_controller_0.write(offset=(address << 2), value=value)
@@ -1415,6 +1417,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         return super().experiment_instrumentation(**kwargs)
 
     def validate(self, *args, **kwargs):
+        """Run validation in DMA mode."""
         self.set_current_mode("dma")
         return super().validate(*args, **kwargs)
 
