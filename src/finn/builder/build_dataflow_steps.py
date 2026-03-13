@@ -69,6 +69,7 @@ from finn.builder.build_dataflow_config import (
     DataflowOutputType,
     ShellFlowType,
     VerificationStepType,
+    AutoFIFOSizingMethod
 )
 from finn.builder.passes import step_passes_frontend
 from finn.core.onnx_exec import execute_onnx
@@ -684,6 +685,8 @@ def step_hw_ipgen(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 # TODO: Both this and the step_size_... steps will be reworked before merging into dev
+# TODO: These are also included in step_set_fifo_depths if the correct FIFO sizing method
+# was selected
 def step_build_simulation(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Build the simulation binaries for isolated and connected simulations."""
     from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
@@ -881,6 +884,12 @@ def step_set_fifo_depths(model: ModelWrapper, cfg: DataflowBuildConfig):
             )
             # InsertAndSetFIFODepths internally removes any shallow FIFOs
             # so no need to call RemoveShallowFIFOs here
+        elif cfg.auto_fifo_strategy == AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION:
+            # TODO: When merging into dev, this should be finalized
+            model = step_build_simulation(model, cfg)
+            model = step_size_fifo_connected(model, cfg)
+            model = step_apply_fifosizes(model, cfg)
+            return model
         else:
             assert "Unsupported auto_fifo_strategy: " + cfg.auto_fifo_strategy
     else:

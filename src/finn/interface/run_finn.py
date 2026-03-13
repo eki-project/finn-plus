@@ -934,7 +934,7 @@ def bench(
     # Late import because we need prepare_finn to setup remaining dependencies first
     from finn.benchmarking.bench import start_bench_run
 
-    exit_code = start_bench_run(bench_config)
+    exit_code = start_bench_run(str(bench_config))
     sys.exit(exit_code)
 
 

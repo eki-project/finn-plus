@@ -97,6 +97,7 @@ class AutoFIFOSizingMethod(str, Enum):
 
     CHARACTERIZE = "characterize"
     LARGEFIFO_RTLSIM = "largefifo_rtlsim"
+    DISTRIBUTED_SIMULATION = "distributed_sim"
 
 
 class ShellFlowType(str, Enum):
