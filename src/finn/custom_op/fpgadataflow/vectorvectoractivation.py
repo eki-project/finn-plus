@@ -51,6 +51,7 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.memstream import MemStreamSupport
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 
 class VVAU(MemStreamSupport, HWCustomOp):
@@ -1006,8 +1007,8 @@ class VVAU(MemStreamSupport, HWCustomOp):
 
             # Instantiate a streamer and connect it to the IP
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-            axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
-            ms_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
+            axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
+            ms_rtllib_dir = os.path.join(get_settings().finn_rtllib, "memstream/hdl/")
             file_suffix = "_memstream_wrapper.v"
             # automatically find memstream verilog component in code generation directory
             for fname in os.listdir(code_gen_dir):

@@ -53,7 +53,7 @@ class MoveAddPastMul(Transformation):
     The aim is to have them next to each other such that they can be collapsed into
     a single add."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper):
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -97,6 +97,10 @@ class MoveAddPastMul(Transformation):
                     graph.node.insert(node_ind + 1, new_add)
                     # replace add value
                     model.set_initializer(add_weight_name, BA)
+
+                    if np.any(np.asarray(np.round(BA), dtype=np.int64) != BA):
+                        model.set_tensor_datatype(add_weight_name, None)
+
                     # remove old nodes
                     graph.node.remove(n)
                     graph.node.remove(consumer)
@@ -274,7 +278,9 @@ class MoveAddPastConv(Transformation):
                         exec_ctx = model.make_empty_exec_context()
                         exec_ctx[conv_in_name] = conv_in_const
                         # execute the conv node only
-                        execute_node(conv_node, exec_ctx, model.graph)
+                        opset_imports = model.get_opset_imports()
+                        opset_version = opset_imports[conv_node.domain]
+                        execute_node(conv_node, exec_ctx, model.graph, opset_version)
                         # retrieve the conv output
                         Anew = exec_ctx[end_name]
 

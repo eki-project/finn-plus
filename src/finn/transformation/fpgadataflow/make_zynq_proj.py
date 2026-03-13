@@ -28,7 +28,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Transformation to create Zynq Vivado projects for FINN dataflow designs."""
-
+import json
 import math
 import os
 from qonnx.core.modelwrapper import ModelWrapper
@@ -55,8 +55,8 @@ from finn.util.basic import (
     pynq_native_port_width,
     pynq_part_map,
 )
-from finn.util.deps import get_deps_path
 from finn.util.exception import FINNError, FINNUserError
+from finn.util.settings import get_settings
 
 from . import templates
 
@@ -97,11 +97,20 @@ class MakeZYNQProject(Transformation):
     value.
     """
 
-    def __init__(self, platform, period_ns, enable_debug=False):
+    def __init__(
+        self,
+        platform,
+        period_ns,
+        enable_debug=False,
+        enable_finn_switch=False,
+        live_fifo_sizing=False,
+    ):
         """Initialize MakeZYNQProject with platform settings."""
         super().__init__()
         self.platform = platform
         self.period_ns = period_ns
+        self.enable_finn_switch = enable_finn_switch
+        self.live_fifo_sizing = live_fifo_sizing
         self.enable_debug = 1 if enable_debug else 0
         self.enable_gpio_reset = 0
 
@@ -119,9 +128,18 @@ class MakeZYNQProject(Transformation):
 
         # instantiate instrumentation IP if it was generated
         instr_ip_dir = model.get_metadata_prop("instrumentation_ipgen")
-        if instr_ip_dir is not None and os.path.isdir(instr_ip_dir):
-            use_instrumentation = True
 
+        if self.enable_finn_switch:
+            # TODO: Add ‑copy_to
+            module_dir = os.environ["FINN_RTLLIB"] + "/finn_switch/hdl/switch.v"
+            config.append(
+                "add_files -copy_to [get_property DIRECTORY [current_project]] -norecurse %s"
+                % module_dir
+            )
+            config.append("create_bd_cell -type module -reference finn_switch finn_switch")
+
+        use_instrumentation = instr_ip_dir is not None and os.path.isdir(instr_ip_dir)
+        if use_instrumentation:
             # instantiate GPIO IP to trigger reset
             self.enable_gpio_reset = 1
             # in the template this will connect to first port of interconnect_0
@@ -155,8 +173,42 @@ class MakeZYNQProject(Transformation):
             )
             config.append("assign_axi_addr_proc instrumentation_wrap_0/s_axi_ctrl")
             master_axilite_idx += 1
-        else:
-            use_instrumentation = False
+
+        if self.live_fifo_sizing:
+            # instantiate virtual FIFO controller
+            rtl_path = os.environ["FINN_RTLLIB"]
+            files = [
+                os.path.join(rtl_path, "axi/hdl/axilite.sv"),
+                os.path.join(rtl_path, "fifo_virtual/hdl/fifo_gauge_pkg.sv"),
+                os.path.join(rtl_path, "fifo_virtual/hdl/fifo_controller.sv"),
+                os.path.join(rtl_path, "fifo_virtual/hdl/fifo_controller_wrapper.v"),
+            ]
+            for f in files:
+                config.append(f"add_files -norecurse {f}")
+            config.append(
+                "create_bd_cell -type module -reference fifo_controller_wrapper fifo_controller_0"
+            )
+
+            # connect clock & reset
+            config.append(
+                "connect_bd_net [get_bd_pins fifo_controller_0/ap_clk] "
+                "[get_bd_pins smartconnect_0/aclk]"
+            )
+            config.append(
+                "connect_bd_net [get_bd_pins fifo_controller_0/ap_rst_n] "
+                "[get_bd_pins smartconnect_0/aresetn]"
+            )
+
+            # connect AXI-lite control interface
+            config.append(
+                "connect_bd_intf_net [get_bd_intf_pins fifo_controller_0/s_axi] "
+                "[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]" % (master_axilite_idx)
+            )
+            # Do not use assign_axi_addr_proc here. It doesn't map the 32-bit aperture correctly.
+            # Instead, let assign_bd_address command assign the address later.
+            # TODO: Support 32-bit systems by making aperture smaller?
+            # config.append("assign_axi_addr_proc fifo_controller_0/s_axi")
+            master_axilite_idx += 1
 
         # instantiate nested AXI interconnects if required
         # only the nested interconnects and all interfaces connected before this line
@@ -201,11 +253,14 @@ class MakeZYNQProject(Transformation):
         else:
             axilite_idx = master_axilite_idx
 
+        num_sdps = len(model.graph.node)
+        prev_node_name = None
         for node in model.graph.node:
             assert node.op_type == "StreamingDataflowPartition", "Invalid link graph"
             sdp_node = getCustomOp(node)
             dataflow_model_filename = sdp_node.get_nodeattr("model")
             kernel_model = ModelWrapper(dataflow_model_filename)
+            sdp_id = int(node.name.split("_")[-1])
 
             ipstitch_path = kernel_model.get_metadata_prop("vivado_stitch_proj")
             if ipstitch_path is None or (not os.path.isdir(ipstitch_path)):
@@ -245,7 +300,9 @@ class MakeZYNQProject(Transformation):
             # name kernels connected to graph inputs as idmaxx
             # name kernels connected to graph outputs as odmaxx
             # do not expect IDMA/ODMA when instrumentation is enabled
-            if not use_instrumentation and ((producer is None) or (consumer == [])):
+            if (not use_instrumentation or self.enable_finn_switch) and (
+                (producer is None) or (consumer == [])
+            ):
                 # TODO not a good way of checking for external inp&out
                 # should look at the list of top-level in/out instead
                 if producer is None:
@@ -327,7 +384,86 @@ class MakeZYNQProject(Transformation):
                 "[get_bd_pins smartconnect_0/aresetn]" % instance_names[node.name]
             )
             # connect streams
-            if producer is not None:
+            if self.enable_finn_switch:
+                for i in range(len(node.input)):
+                    if producer is not None:
+                        producer = model.find_producer(node.input[i])
+                        j = list(producer.output).index(node.input[i])
+                        producer_model = ModelWrapper(getCustomOp(producer).get_nodeattr("model"))
+                        producer_idma = any(
+                            s.name.startswith("IODMA") for s in producer_model.graph.output
+                        )
+                        # node_model = ModelWrapper(getCustomOp(node).get_nodeattr("model"))
+                        node_odma = any(
+                            s.name.startswith("TLastMarker") for s in kernel_model.graph.input
+                        )
+                        if not (producer_idma or node_odma):
+                            config.append(
+                                "connect_bd_intf_net [get_bd_intf_pins %s/s_axis_%d] "
+                                "[get_bd_intf_pins %s/m_axis_%d]"
+                                % (
+                                    instance_names[node.name],
+                                    i,
+                                    instance_names[producer.name],
+                                    j,
+                                )
+                            )
+                        elif producer_idma:
+                            config.append(
+                                "connect_bd_intf_net [get_bd_intf_pins %s/m_axis_%d] "
+                                "[get_bd_intf_pins finn_switch/A_IN0]"
+                                % (
+                                    instance_names[producer.name],
+                                    j,
+                                )
+                            )
+
+                            config.append(
+                                "connect_bd_intf_net [get_bd_intf_pins finn_switch/A_IN1] "
+                                "[get_bd_intf_pins instrumentation_wrap_0/finnix]"
+                            )
+
+                            config.append(
+                                "connect_bd_intf_net [get_bd_intf_pins %s/s_axis_0] "
+                                "[get_bd_intf_pins finn_switch/A_OUT]" % (instance_names[node.name])
+                            )
+
+                            ifnames = kernel_model.get_metadata_prop("vivado_stitch_ifnames")
+                            ifnames = json.loads(ifnames)
+                            width = ifnames["s_axis"][0][1]
+                            config.append(
+                                "set_property CONFIG.DATA_WIDTH_A {%d} [get_bd_cells finn_switch]"
+                                % width
+                            )
+                        else:
+                            config.append(
+                                "connect_bd_intf_net [get_bd_intf_pins %s/s_axis_%d] "
+                                "[get_bd_intf_pins finn_switch/B_OUT0]"
+                                % (
+                                    instance_names[node.name],
+                                    i,
+                                )
+                            )
+
+                            config.append(
+                                "connect_bd_intf_net [get_bd_intf_pins finn_switch/B_OUT1] "
+                                "[get_bd_intf_pins instrumentation_wrap_0/finnox]"
+                            )
+
+                            config.append(
+                                "connect_bd_intf_net [get_bd_intf_pins %s/m_axis_0] "
+                                "[get_bd_intf_pins finn_switch/B_IN]"
+                                % (instance_names[producer.name])
+                            )
+
+                            ifnames = kernel_model.get_metadata_prop("vivado_stitch_ifnames")
+                            ifnames = json.loads(ifnames)
+                            width = ifnames["s_axis"][0][1]
+                            config.append(
+                                "set_property CONFIG.DATA_WIDTH_B {%d} [get_bd_cells finn_switch]"
+                                % width
+                            )
+            else:
                 for i in range(len(node.input)):
                     producer = model.find_producer(node.input[i])
                     if producer is not None:
@@ -344,7 +480,7 @@ class MakeZYNQProject(Transformation):
                         )
 
             # connect first/last dataflow partition to instrumentation wrapper
-            if use_instrumentation:
+            if use_instrumentation and not self.enable_finn_switch:
                 if producer is None:
                     config.append(
                         "connect_bd_intf_net [get_bd_intf_pins %s/s_axis_0] "
@@ -358,8 +494,35 @@ class MakeZYNQProject(Transformation):
                         % (instance_names[node.name])
                     )
 
+            # connect ring bus for live FIFO sizing
+            if self.live_fifo_sizing:
+                if "icfg" not in ifnames["ap_none"] or "ocfg" not in ifnames["ap_none"]:
+                    raise FINNError(
+                        "Live FIFO sizing requested but no icfg/ocfg interfaces found "
+                        "on SDP %s" % node.name
+                    )
+                if sdp_id == 0:
+                    # connect first SDP to fifo_controller
+                    config.append(
+                        "connect_bd_net [get_bd_pins fifo_controller_0/ocfg] "
+                        f"[get_bd_pins {instance_names[node.name]}/icfg]"
+                    )
+                else:
+                    # connect previous SDP to this SDP
+                    config.append(
+                        f"connect_bd_net [get_bd_pins {instance_names[prev_node_name]}/ocfg] "
+                        f"[get_bd_pins {instance_names[node.name]}/icfg]"
+                    )
+                if sdp_id == num_sdps - 1:
+                    # connect last SDP to fifo_controller
+                    config.append(
+                        f"connect_bd_net [get_bd_pins {instance_names[node.name]}/ocfg] "
+                        "[get_bd_pins fifo_controller_0/icfg]"
+                    )
+                prev_node_name = node.name
+
         # TODO: WORKAROUND, do not instantiate smartconnect when not needed!
-        if use_instrumentation:
+        if use_instrumentation and not self.enable_finn_switch:
             config.append("delete_bd_objs [get_bd_cells smartconnect_0]")
             aximm_idx = 1
 
@@ -392,8 +555,9 @@ class MakeZYNQProject(Transformation):
                         config,
                         self.enable_debug,
                         self.enable_gpio_reset,
+                        self.enable_finn_switch,
                     )
-                ).replace("$BOARDFILES$", str(get_deps_path() / "board_files"))
+                ).replace("$BOARDFILES$", str(get_settings().finn_deps / "board_files"))
             )
 
         # create a TCL recipe for the project
@@ -456,6 +620,8 @@ class ZynqBuild(Transformation):
         period_ns,
         enable_debug=False,
         enable_instrumentation=False,
+        instrumentation_no_dma=False,
+        live_fifo_sizing=False,
         partition_model_dir=None,
     ):
         """Initialize ZynqBuild with platform and build settings."""
@@ -466,18 +632,36 @@ class ZynqBuild(Transformation):
         self.platform = platform
         self.enable_debug = enable_debug
         self.enable_instrumentation = enable_instrumentation
+        self.instrumentation_no_dma = instrumentation_no_dma
+        self.live_fifo_sizing = live_fifo_sizing
         self.partition_model_dir = partition_model_dir
 
     def apply(self, model):
         """Apply the ZynqBuild transformation to create a complete Zynq accelerator."""
         model = model.transform(InferDataLayouts())
         # prepare at global level, then break up into kernels
+        enable_finn_switch = (
+            self.enable_instrumentation
+            and (not self.instrumentation_no_dma)
+            and (not self.live_fifo_sizing)
+        )
         if self.enable_instrumentation:
-            prep_transforms = [
-                GenerateInstrumentationIP(self.fpga_part, self.period_ns),
-                Floorplan(),
-                CreateDataflowPartition(partition_model_dir=self.partition_model_dir),
-            ]
+            if self.instrumentation_no_dma is True or self.live_fifo_sizing is True:
+                prep_transforms = [
+                    GenerateInstrumentationIP(self.fpga_part, self.period_ns),
+                    Floorplan(),
+                    CreateDataflowPartition(partition_model_dir=self.partition_model_dir),
+                ]
+            else:
+                # DMA & Instrumentation Wrapper Case
+                prep_transforms = [
+                    GenerateInstrumentationIP(self.fpga_part, self.period_ns),
+                    InsertIODMA(self.axi_port_width),
+                    InsertDWC(),
+                    SpecializeLayers(self.fpga_part),
+                    Floorplan(),
+                    CreateDataflowPartition(partition_model_dir=self.partition_model_dir),
+                ]
         else:
             prep_transforms = [
                 InsertIODMA(self.axi_port_width),
@@ -513,7 +697,13 @@ class ZynqBuild(Transformation):
             kernel_model.save(dataflow_model_filename)
         # Assemble design from IPs
         model = model.transform(
-            MakeZYNQProject(self.platform, self.period_ns, enable_debug=self.enable_debug)
+            MakeZYNQProject(
+                self.platform,
+                self.period_ns,
+                enable_debug=self.enable_debug,
+                enable_finn_switch=enable_finn_switch,
+                live_fifo_sizing=self.live_fifo_sizing,
+            )
         )
 
         # set platform attribute for correct remote execution

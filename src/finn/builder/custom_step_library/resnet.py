@@ -69,17 +69,21 @@ from qonnx.util.cleanup import cleanup_model
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
 from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.streamline.absorb import (
     AbsorbAddIntoMultiThreshold,
     AbsorbSignBiasIntoMultiThreshold,
     AbsorbTransposeIntoMultiThreshold,
 )
+from finn.transformation.streamline.remove import RemoveIdentityReshape, RemoveIdentityTranspose
 
 # just for not linear
 from finn.transformation.streamline.reorder import (
     MoveMulPastAdd,
 )
+from finn.transformation.streamline.reorder import MoveMulPastAdd
+from finn.transformation.streamline.streamline_plus import StreamlinePlus as Streamline
 
 
 def step_resnet_tidy(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:  # noqa: ARG001
@@ -146,28 +150,33 @@ def step_temp_qonnx_to_finn(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
     model = model.transform(RemoveIdentityOps())
     return model
 
-def step_resnet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:  # noqa: ARG001
+
+
+def step_resnet_streamline(
+    model: ModelWrapper, cfg: DataflowBuildConfig
+) -> ModelWrapper:  # noqa: ARG001
     """Streamline ResNet models."""
-    transform = ComposedTransformation([
-        MoveMulPastAdd(),
-        AbsorbSignBiasIntoMultiThreshold(),
-    ])
+    transform = ComposedTransformation(
+        [
+            MoveMulPastAdd(),
+            AbsorbSignBiasIntoMultiThreshold(),
+        ]
+    )
     model = model.transform(transform)
     model = model.transform(Streamline())
-    transform2 = ComposedTransformation([
-        LowerConvsToMatMul(),
-        AbsorbAddIntoMultiThreshold(),
-        AbsorbTransposeIntoMultiThreshold()
-    ])
+    transform2 = ComposedTransformation(
+        [LowerConvsToMatMul(), AbsorbAddIntoMultiThreshold(), AbsorbTransposeIntoMultiThreshold()]
+    )
     model = model.transform(transform2)
     model = model.transform(Streamline())
-    #model = model.transform(InsertTopK())
-    #model = model.transform(AbsorbScalarMulAddIntoTopK())
-
+    # model = model.transform(InsertTopK())
+    # model = model.transform(AbsorbScalarMulAddIntoTopK())
     return model
 
 
-def step_resnet_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:  # noqa: ARG001
+def step_resnet_convert_to_hw(
+    model: ModelWrapper, cfg: DataflowBuildConfig
+) -> ModelWrapper:  # noqa: ARG001
     """Convert ResNet models to hardware-specific operations."""
     # Convert Squeeze and Unsqueeze operators to hardware operations
     model = model.transform(InferDataLayouts())
@@ -179,7 +188,7 @@ def step_resnet_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
         to_hw.InferChannelwiseLinearLayer,
         InferReplicateStream,
         to_hw.InferLabelSelectLayer,
-        to_hw.InferElementwiseBinaryOperation
+        to_hw.InferElementwiseBinaryOperation,
     ]
     for trn in to_hw_transformations:
         model = model.transform(trn())

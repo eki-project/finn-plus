@@ -48,9 +48,14 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from qonnx.util.basic import roundup_to_integer_multiple
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.util.basic import gen_finn_dt_tensor
+from typing import Dict
 
+from finn.util.data_packing import finnpy_to_packed_bytearray
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 # test boards used for bnn pynq tests
 test_board_map = ["Pynq-Z1", "KV260_SOM", "ZCU104", "U55C"]
@@ -164,7 +169,7 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str:
     Use this function instead of tempfile.mkdtemp to ensure any generated files
     will survive on the host after the FINN Docker container exits."""
     try:
-        build_dir = Path(os.environ["FINN_BUILD_DIR"])
+        build_dir = get_settings().finn_build_dir
     except KeyError as keyerror:
         raise Exception("""Environment variable FINN_BUILD_DIR is missing!""") from keyerror
 
@@ -312,60 +317,6 @@ class CppBuilder:
         launch_process_helper(bash_command, print_stdout=False)
 
 
-mem_primitives_versal = {
-    "URAM_72x4096": (72, 4096),
-    "URAM_36x8192": (36, 8192),
-    "URAM_18x16384": (18, 16384),
-    "URAM_9x32768": (9, 32768),
-    "BRAM18_36x512": (36, 512),
-    "BRAM18_18x1024": (18, 1024),
-    "BRAM18_9x2048": (9, 2048),
-    "LUTRAM": (1, 64),
-}
-
-
-def get_memutil_alternatives(
-    req_mem_spec, mem_primitives=mem_primitives_versal, sort_min_waste=True
-):
-    """Computes how many instances of a memory primitive are necessary to
-    implement a desired memory size, where req_mem_spec is the desired
-    size and the primitive_spec is the primitve size. The sizes are expressed
-    as tuples of (mem_width, mem_depth). Returns a list of tuples of the form
-    (primitive_name, (primitive_count, efficiency, waste)) where efficiency in
-    range [0,1] indicates how much of the total capacity is utilized, and waste
-    indicates how many bits of storage are wasted. If sort_min_waste is True,
-    the list is sorted by increasing waste.
-    """
-    ret = [
-        (primitive_name, memutil(req_mem_spec, primitive_spec))
-        for (primitive_name, primitive_spec) in mem_primitives.items()
-    ]
-    if sort_min_waste:
-        ret = sorted(ret, key=lambda x: x[1][2])
-    return ret
-
-
-def memutil(req_mem_spec, primitive_spec):
-    """Computes how many instances of a memory primitive are necessary to
-    implemented a desired memory size, where req_mem_spec is the desired
-    size and the primitive_spec is the primitve size. The sizes are expressed
-    as tuples of (mem_width, mem_depth). Returns (primitive_count, efficiency, waste)
-    where efficiency in range [0,1] indicates how much of the total capacity is
-    utilized, and waste indicates how many bits of storage are wasted."""
-
-    req_width, req_depth = req_mem_spec
-    prim_width, prim_depth = primitive_spec
-
-    match_width = roundup_to_integer_multiple(req_width, prim_width)
-    match_depth = roundup_to_integer_multiple(req_depth, prim_depth)
-    count_width = match_width // prim_width
-    count_depth = match_depth // prim_depth
-    count = count_depth * count_width
-    eff = (req_width * req_depth) / (count * prim_width * prim_depth)
-    waste = (count * prim_width * prim_depth) - (req_width * req_depth)
-    return (count, eff, waste)
-
-
 def is_versal(fpgapart):
     """Returns whether board is part of the Versal family"""
     return fpgapart[0:4] in ["xcvc", "xcve", "xcvp", "xcvm", "xqvc", "xqvm"] or fpgapart[0:5] in [
@@ -397,3 +348,96 @@ def get_dsp_block(fpgapart):
         return "DSP48E1"
     else:
         return "DSP48E2"
+
+
+def get_driver_shapes(model: ModelWrapper) -> Dict:
+    """Get all the IO shapes for the driver."""
+    idt = []
+    idma_names = []
+    ishape_normal = []
+    ishape_folded = []
+    ishape_packed = []
+    for idma_ind, graph_in in enumerate(model.graph.input):
+        i_tensor_name = graph_in.name
+        # get inp tensor properties
+        i_tensor_dt = model.get_tensor_datatype(i_tensor_name)
+        i_tensor_shape_normal = tuple(model.get_tensor_shape(i_tensor_name))
+        # go down into dataflow partition to get folded shape info etc
+        # TODO consider setting these as attributes during dataflow partitioning
+        i_consumer = model.find_consumer(i_tensor_name)
+        assert (
+            i_consumer.op_type == "StreamingDataflowPartition"
+        ), """
+            Ensure CreateDataflowPartition called before driver creation."""
+        first_df_model = ModelWrapper(getCustomOp(i_consumer).get_nodeattr("model"))
+        assert (
+            first_df_model.graph.node[0].op_type == "IODMA_hls"
+        ), "First partition must hold input IODMA"
+        successors = model.find_direct_successors(i_consumer)
+        successor_input_num = list(successors[0].input).index(i_consumer.output[0])
+        successor_sdp = getCustomOp(successors[0])
+        successor_df_model = ModelWrapper(successor_sdp.get_nodeattr("model"))
+        first_node = successor_df_model.find_consumer(
+            successor_df_model.graph.input[successor_input_num].name
+        )
+        i_tensor_shape_folded = tuple(getCustomOp(first_node).get_folded_input_shape())
+        # generate dummy folded i/o tensors and their packed versions
+        i_tensor_dummy_folded = gen_finn_dt_tensor(i_tensor_dt, i_tensor_shape_folded)
+        i_tensor_dummy_packed = finnpy_to_packed_bytearray(i_tensor_dummy_folded, i_tensor_dt)
+        i_tensor_shape_packed = i_tensor_dummy_packed.shape
+        # append all input tensor info to relevant lists
+        idt.append("DataType['%s']" % i_tensor_dt.name)
+        ishape_normal.append(i_tensor_shape_normal)
+        ishape_folded.append(i_tensor_shape_folded)
+        ishape_packed.append(i_tensor_shape_packed)
+        idma_names.append(getCustomOp(i_consumer).get_nodeattr("instance_name"))
+
+    odt = []
+    odma_names = []
+    oshape_normal = []
+    oshape_folded = []
+    oshape_packed = []
+    for odma_ind, graph_out in enumerate(model.graph.output):
+        o_tensor_name = graph_out.name
+        # get inp tensor properties
+        o_tensor_dt = model.get_tensor_datatype(o_tensor_name)
+        o_tensor_shape_normal = tuple(model.get_tensor_shape(o_tensor_name))
+        # go down into IODMA partition to get folded shape info etc
+        # TODO consider setting these as attributes during dataflow partitioning
+        o_producer = model.find_producer(o_tensor_name)
+        assert (
+            o_producer.op_type == "StreamingDataflowPartition"
+        ), """
+            Ensure CreateDataflowPartition called before driver creation."""
+        df_model = ModelWrapper(getCustomOp(o_producer).get_nodeattr("model"))
+        assert df_model.graph.node[-1].op_type == "IODMA_hls", "Partition must hold output IODMA"
+        predecessors = model.find_direct_predecessors(o_producer)
+        predecessor_output_num = list(predecessors[0].output).index(o_producer.input[0])
+        predecessor_sdp = getCustomOp(predecessors[0])
+        predecessor_df_model = ModelWrapper(predecessor_sdp.get_nodeattr("model"))
+        last_node = predecessor_df_model.find_producer(
+            predecessor_df_model.graph.output[predecessor_output_num].name
+        )
+        o_tensor_shape_folded = tuple(getCustomOp(last_node).get_folded_output_shape())
+        o_tensor_dummy_folded = gen_finn_dt_tensor(o_tensor_dt, o_tensor_shape_folded)
+        o_tensor_dummy_packed = finnpy_to_packed_bytearray(o_tensor_dummy_folded, o_tensor_dt)
+        o_tensor_shape_packed = o_tensor_dummy_packed.shape
+        # append all output tensor info to relevant lists
+        odt.append("DataType['%s']" % o_tensor_dt.name)
+        oshape_normal.append(o_tensor_shape_normal)
+        oshape_folded.append(o_tensor_shape_folded)
+        oshape_packed.append(o_tensor_shape_packed)
+        odma_names.append(getCustomOp(o_producer).get_nodeattr("instance_name"))
+
+    return {
+        "idt": idt,
+        "idma_names": idma_names,
+        "ishape_normal": ishape_normal,
+        "ishape_folded": ishape_folded,
+        "ishape_packed": ishape_packed,
+        "odt": odt,
+        "odma_names": odma_names,
+        "oshape_normal": oshape_normal,
+        "oshape_folded": oshape_folded,
+        "oshape_packed": oshape_packed,
+    }

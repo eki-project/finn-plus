@@ -45,7 +45,7 @@
  * @param PENDING	maximum number of feature maps in the FINN dataflow pipeline
  * @param ILEN		number of input transactions per IFM
  * @param OLEN		number of output transactions per OFM
- * @param KO           number of subwords within output payload vector
+ * @param KO        number of subwords within output payload vector
  * @param TI		type of input payload vector
  * @param TO		type of output payload vector
  *******************************************************************************/
@@ -139,7 +139,8 @@
  void instrument(
      hls::stream<TI> &finnix,
      hls::stream<TO> &finnox,
-     ap_uint<32>  cfg,   	// [0] - 0:hold, 1:lfsr; [31:16] - LFSR seed
+     ap_uint<32>  cfg,   	// [0] - 0:hold, 1:lfsr; [31:1] - minimum interval (cycles) between IFM starts
+     ap_uint<32>  seed,  	// [31:16] - LFSR seed (only upper 16 bits used)
      ap_uint<32> &status,	// [0] - timestamp overflow; [1] - timestamp underflow
      ap_uint<32> &latency,
      ap_uint<32> &interval,
@@ -163,18 +164,31 @@
      constexpr unsigned  LFSR_WIDTH = (TI::width+15)/16 * 16;
      static ap_uint<clog2nz(ILEN)>  icnt = 0;
      static ap_uint<LFSR_WIDTH>  lfsr;
+     static clock_t  last_ifm_start = 0;  // Timestamp of last IFM transmission start
  #pragma HLS reset variable=icnt
  #pragma HLS reset variable=lfsr off
+ #pragma HLS reset variable=last_ifm_start
      if(!finnix.full()) {
 
          bool const  first = icnt == 0;
-         bool  wr;
+         bool  wr = false;
+
+         // Rate limiting: enforce minimum interval between IFM starts
+         ap_uint<31> const  min_interval = cfg(31, 1);
+         bool const  interval_ok = (min_interval == 0) || ((cnt_clk - last_ifm_start) >= min_interval);
+
          if(first) {
-             // Start of new feature map
-             wr = cfg[0];
-             for(unsigned  i = 0; i < LFSR_WIDTH; i += 16) {
+             // Start of new feature map (only if minimum interval elapsed)
+             if(interval_ok) {
+                 wr = cfg[0];
+                 if(wr) {
+                     // Initialize LFSR with configurable seed
+                     for(unsigned  i = 0; i < LFSR_WIDTH; i += 16) {
  #pragma HLS unroll
-                 lfsr(15+i, i) = cfg(31, 16) ^ (i>>4)*33331;
+                         lfsr(15+i, i) = seed(31, 16) ^ (i>>4)*33331;
+                     }
+                     last_ifm_start = cnt_clk;  // Record start timestamp
+                 }
              }
          }
          else {
@@ -227,9 +241,9 @@
  #pragma HLS unroll
              auto const  v0 = DefaultSubwordSlicer<TO, KO>()(oval, j);
              constexpr unsigned  W = 1 + (decltype(v0)::width-1)/23;
-             ap_uint<KO*23>  v = v0;
-             ap_uint<   23>  w = 0;
-             for(unsigned  k = 0; k < W; k++)  w ^= v(23*k+22, 23*k);
+             ap_uint<W*23>  v = v0;	// Expand to width as multiple of 23
+             ap_uint<  23>  w = 0;	// XOR across all 23-bit slices
+             for(unsigned  k = 0; k < W; k++)  w ^= v(23*(k+1)-1, 23*k);
              psum += (coeff[j%3][1]? (w, ap_uint<1>(0)) : ap_uint<24>(0)) + (coeff[j%3][0]? w : ap_uint<23>(0));
          }
 
@@ -273,6 +287,7 @@
      hls::stream<TI> &finnix,
      hls::stream<TO> &finnox,
      ap_uint<32>  cfg,
+     ap_uint<32>  seed,
      ap_uint<32> &status,
      ap_uint<32> &latency,
      ap_uint<32> &interval,
@@ -282,6 +297,7 @@
  #pragma HLS interface axis port=finnix
  #pragma HLS interface axis port=finnox
  #pragma HLS interface s_axilite bundle=ctrl port=cfg
+ #pragma HLS interface s_axilite bundle=ctrl port=seed
  #pragma HLS interface s_axilite bundle=ctrl port=status
  #pragma HLS interface s_axilite bundle=ctrl port=latency
  #pragma HLS interface s_axilite bundle=ctrl port=interval
@@ -299,7 +315,7 @@
      move(finnox, finnox0);
 
      // Main
-     instrument<PENDING, ILEN, OLEN, KO>(finnix0, finnox0, cfg, status, latency, interval, checksum, min_latency);
+     instrument<PENDING, ILEN, OLEN, KO>(finnix0, finnox0, cfg, seed, status, latency, interval, checksum, min_latency);
 
      // FIFO -> AXI-Stream
      move(finnix0, finnix);

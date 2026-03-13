@@ -42,6 +42,8 @@ __pycache__/*
 *.ipynb_checkpoints*
 *.sif
 .DS_Store
+*.idx
+**/build/*
 
 # Project files
 .vscode
@@ -67,6 +69,8 @@ poetry.lock
 finn_xsi/finn_xsi/unittests/*.cmake
 finn_xsi/finn_xsi/unittests/Makefile
 
+settings.yaml
+*/.cache/*
 
 # Package files
 *.egg
@@ -86,6 +90,9 @@ coverage.xml
 build/*
 dist/*
 sdist/*
+*/build/*
+*/dist/*
+*/sdist/*
 docs/api/*
 docs/_rst/*
 docs/_build/*

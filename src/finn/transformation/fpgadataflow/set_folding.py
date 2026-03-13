@@ -26,6 +26,7 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""Automatically sets folding, i.e., parallelism attributes for all FINN operators."""
 
 import functools
 
@@ -46,12 +47,14 @@ from finn.util.logging import log
 
 
 def divisors(num):
+    """Yield divisors of num."""
     for x in range(1, num + 1):
         if (num % x) == 0:
             yield x
 
 
 def common_divisors(numbers):
+    """Return common divisors of the list of numbers."""
     separate_divisors = []
     for num in numbers:
         individual_divisors = list(divisors(num))
@@ -107,12 +110,14 @@ class SetFolding(Transformation):
     """
 
     def __init__(self, target_cycles_per_frame=1000, mvau_wwidth_max=36, two_pass_relaxation=True):
+        """Initializes the folding target and constraints."""
         super().__init__()
         self.target_cycles_per_frame = target_cycles_per_frame
         self.mvau_wwidth_max = mvau_wwidth_max
         self.two_pass_relaxation = two_pass_relaxation
 
     def optimize_attribute_val(self, node_inst, max_val, attr_name):
+        """Optimize the folding attribute until the target cycles are met."""
         node_inst.set_nodeattr(attr_name, 1)
         for val in divisors(max_val):
             node_inst.set_nodeattr(attr_name, val)
@@ -122,6 +127,7 @@ class SetFolding(Transformation):
                 break
 
     def apply(self, model):
+        """Apply SetFolding to all supported nodes in the model."""
         graph = model.graph
         # these ops use PE parallelism, up to a max value of NumChannels
         pe_ops = [
@@ -135,6 +141,7 @@ class SetFolding(Transformation):
             *ELEMENTWISE_BINARY_OPS,
             "Squeeze_hls",
             "Unsqueeze_hls",
+            "Reshape_rtl",
         ]
         # these ops use SIMD parallelism, up to a max value of NumChannels
         # ConvolutionInputGenerator has a special case when depthwise=1
@@ -147,6 +154,7 @@ class SetFolding(Transformation):
             # Streaming Split and Concat are SIMD operations
             "StreamingSplit_hls",
             "StreamingConcat_hls",
+            "LayerNorm_rtl",
         ]
         # these ops are preceded by depthwise SWG and have special behavior,
         # as explained in the SetFolding docstring
@@ -189,8 +197,8 @@ class SetFolding(Transformation):
                 # NumChannels attribute
                 except AttributeError:
                     # We can extract the channels from the normal, i.e., not
-                    # folded, shape of the input in these cases
-                    max_pe = node_inst.get_normal_input_shape()[-1]
+                    # folded, shape of the output in these cases
+                    max_pe = node_inst.get_normal_output_shape()[-1]
                 self.optimize_attribute_val(node_inst, max_pe, "PE")
             elif op_type == "LabelSelect_hls":
                 max_pe = node_inst.get_nodeattr("Labels")
@@ -260,6 +268,17 @@ class SetFolding(Transformation):
                         node_inst.set_nodeattr("SIMD", simd_val)
                         cyc = node_inst.get_exp_cycles()
                         if cyc < self.target_cycles_per_frame:
+                            break
+                elif op_type == "LayerNorm_rtl":
+                    node_inst.set_nodeattr("SIMD", 1)
+                    dim = int(node_inst.get_normal_input_shape()[-1])
+                    for simd_val in divisors(dim):
+                        if dim // simd_val > 12:
+                            node_inst.set_nodeattr("SIMD", simd_val)
+                            cyc = node_inst.get_exp_cycles()
+                            if cyc < self.target_cycles_per_frame:
+                                break
+                        else:
                             break
                 else:
                     # Note: Keep original behavior for all custom-ops defining

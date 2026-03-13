@@ -144,7 +144,7 @@ def split_api_documentation(api_file_path="docs/api.md", output_dir="wiki-conten
         "core": "⚙️",
         "custom_op": "🔧",
         "interface": "🔌",
-        "qnn-data": "📊",
+        "templates": "📊",
         "transformation": "🔄",
         "util": "🛠️",
     }

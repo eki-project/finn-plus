@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.templates import get_templates_folder
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
 from finn.util.basic import launch_process_helper, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -144,6 +145,7 @@ class CreateStitchedIP(Transformation):
             "m_axis": [],
             "aximm": [],
             "axilite": [],
+            "ap_none": [],
         }
 
     def is_double_pumped(self, node: "NodeProto") -> bool:
@@ -323,6 +325,7 @@ class CreateStitchedIP(Transformation):
                     f"set_property name {input_intf_name} [get_bd_ports {input_intf_name}_0]",
                 ]
             )
+            self.intf_names["ap_none"].append(input_intf_name)
 
     def insert_signature(self, checksum_count: int) -> None:
         """Insert AXI info signature component into the design."""
@@ -627,8 +630,8 @@ class CreateStitchedIP(Transformation):
                 ]
             )
         # add a rudimentary driver mdd to get correct ranges in xparameters.h later on
-        example_data_dir = Path(os.environ["FINN_QNN_DATA"]) / "mdd-data"
-        copytree(example_data_dir, f"{vivado_stitch_proj_dir}/data")
+        min_driver = get_templates_folder() / "ipcore_driver"
+        copytree(min_driver, vivado_stitch_proj_dir + "/data")
 
         #####
         # Core Cleanup Operations

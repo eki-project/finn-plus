@@ -25,11 +25,38 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""RTLBackend specializations of HWCustomOps."""
 
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+
+custom_op = dict()
+
+
+# Note: This must be defined first, before importing any custom op
+# implementation to avoid "importing partially initialized module" issues.
+def register_custom_op(cls):
+    """Registers a class into the custom_op dictionary"""
+    # The class must actually implement HWCustomOp
+    assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"
+    # The class must also implement the RTLBackend
+    assert issubclass(cls, RTLBackend), f"{cls} must subclass {RTLBackend}"
+    # Insert the class into the custom_op dictionary by its name
+    custom_op[cls.__name__] = cls
+    # Pass through the class unmodified
+    return cls
+
+
+# flake8: noqa
+# Disable linting from here, as all import will be flagged E402 and maybe F401
+
+import finn.custom_op.fpgadataflow.rtl.reshape_rtl
 from finn.custom_op.fpgadataflow.rtl.convolutioninputgenerator_rtl import (
     ConvolutionInputGenerator_rtl,
 )
 from finn.custom_op.fpgadataflow.rtl.fmpadding_rtl import FMPadding_rtl
+from finn.custom_op.fpgadataflow.rtl.inner_shuffle_rtl import InnerShuffle_rtl
+from finn.custom_op.fpgadataflow.rtl.layernorm_rtl import LayerNorm_rtl
 from finn.custom_op.fpgadataflow.rtl.matrixvectoractivation_rtl import MVAU_rtl
 from finn.custom_op.fpgadataflow.rtl.removedatapath_rtl import RemoveDataPath_rtl
 from finn.custom_op.fpgadataflow.rtl.streamingdatawidthconverter_rtl import (
@@ -39,15 +66,15 @@ from finn.custom_op.fpgadataflow.rtl.streamingfifo_rtl import StreamingFIFO_rtl
 from finn.custom_op.fpgadataflow.rtl.thresholding_rtl import Thresholding_rtl
 from finn.custom_op.fpgadataflow.rtl.vectorvectoractivation_rtl import VVAU_rtl
 
-custom_op = dict()
-
 # make sure new HLSCustomOp subclasses are imported here so that they get
 # registered and plug in correctly into the infrastructure
 custom_op["ConvolutionInputGenerator_rtl"] = ConvolutionInputGenerator_rtl
 custom_op["FMPadding_rtl"] = FMPadding_rtl
+custom_op["LayerNorm_rtl"] = LayerNorm_rtl
 custom_op["StreamingDataWidthConverter_rtl"] = StreamingDataWidthConverter_rtl
 custom_op["StreamingFIFO_rtl"] = StreamingFIFO_rtl
 custom_op["MVAU_rtl"] = MVAU_rtl
 custom_op["VVAU_rtl"] = VVAU_rtl
 custom_op["Thresholding_rtl"] = Thresholding_rtl
 custom_op["RemoveDataPath_rtl"] = RemoveDataPath_rtl
+custom_op["InnerShuffle_rtl"] = InnerShuffle_rtl

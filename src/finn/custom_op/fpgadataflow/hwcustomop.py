@@ -45,10 +45,17 @@ from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, cast
 
-from finn.util.basic import get_liveness_threshold_cycles
+from finn.util.basic import get_liveness_threshold_cycles, is_versal
 from finn.util.deprecated import deprecated
+from finn import xsi
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
+from finn.util.settings import get_settings
+
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
+
+finnxsi = xsi if xsi.is_available() else None
 
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
@@ -58,7 +65,8 @@ class HWCustomOp(CustomOp):
     """HWCustomOp class all custom ops that can be implemented with either
     HLS or RTL backend are based on. Contains different functions every fpgadataflow
     custom node should have. Some as abstract methods, these have to be filled
-    when writing a new fpgadataflow custom op node."""
+    when writing a new fpgadataflow custom op node.
+    """
 
     def __init__(self, onnx_node: NodeProto, **kwargs: Any) -> None:
         """Initialize HWCustomOp with an ONNX node.
@@ -161,7 +169,8 @@ class HWCustomOp(CustomOp):
         'axis' tuples correspond to the list of node inputs in order,
         each tuple is (interface_name, interface_width_bits).
         axilite always assumed to be 32 bits and is not tuple (name only).
-        Each block must have at most one aximm and one axilite."""
+        Each block must have at most one aximm and one axilite.
+        """
         node = self.onnx_node
         intf_names = {}
         intf_names["clk"] = ["ap_clk"]
@@ -415,10 +424,65 @@ class HWCustomOp(CustomOp):
         out_width = self.get_outstream_width(ind=ind)
         return roundup_to_integer_multiple(out_width, 8)
 
+    def calc_tmem(self) -> int:
+        """Calculate and returns the TMEM."""
+        raise NotImplementedError()
+
+    def calc_wmem(self) -> int:
+        """Calculate and returns the WMEM."""
+        raise NotImplementedError()
+
+    def generate_hdl_memstream(self, fpgapart, pumped_memory=0):
+        """Helper function to generate verilog code for memstream component.
+        Currently utilized by MVAU, VVAU and HLS Thresholding layer."""
+        ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls"]
+        if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
+            template_path = str(
+                Path(get_settings().finn_rtllib)
+                / "memstream"
+                / "hdl"
+                / "memstream_wrapper_template.v"
+            )
+            mname = self.onnx_node.name
+            if self.onnx_node.op_type.startswith("Thresholding"):
+                depth = self.calc_tmem()
+            else:
+                depth = self.calc_wmem()
+            padded_width = self.get_instream_width_padded(1)
+            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+
+            ram_style = self.get_nodeattr("ram_style")
+            init_file = code_gen_dir + "/memblock.dat"
+            if ram_style == "ultra" and not is_versal(fpgapart):
+                init_file = ""
+            code_gen_dict = {
+                "$MODULE_NAME$": [mname],
+                "$SETS$": ["1"],
+                "$DEPTH$": [str(depth)],
+                "$WIDTH$": [str(padded_width)],
+                "$INIT_FILE$": [init_file],
+                "$RAM_STYLE$": [ram_style],
+                "$PUMPED_MEMORY$": [str(pumped_memory)],
+            }
+            # apply code generation to template
+            with open(template_path, "r") as f:
+                template_wrapper = f.read()
+            for key in code_gen_dict:
+                # transform list into long string separated by '\n'
+                code_gen_line = "\n".join(code_gen_dict[key])
+                template_wrapper = template_wrapper.replace(key, code_gen_line)
+            with open(
+                os.path.join(code_gen_dir, mname + "_memstream_wrapper.v"),
+                "w",
+            ) as f:
+                f.write(template_wrapper)
+        else:
+            pass
+
     def generate_hdl_dynload(self) -> None:
         """Generate HDL for dynamic load wrapper."""
         template_path = (
-            Path(os.environ["FINN_RTLLIB"]) / "dynload/hdl/dynamic_load_wrapper_template.v"
+            Path(get_settings().finn_rtllib) / "dynload" / "hdl" / "dynamic_load_wrapper_template.v"
         )
         mname = self.onnx_node.name
         pe = self.get_nodeattr("PE")
@@ -478,7 +542,7 @@ class HWCustomOp(CustomOp):
         if exp_cycles == 0:
             # try to come up with an optimistic estimate
             exp_cycles = min(n_inps, n_outs)
-        if exp_cycles < period:
+        if exp_cycles > period:
             raise ValueError(
                 f"Period {period} too short to characterize {self.onnx_node.name} : "
                 f"expects min {n_inps} cycles"
@@ -521,6 +585,7 @@ class HWCustomOp(CustomOp):
             txns_out[k] = [int(c) for c in str(txns_out[k])]
 
         def accumulate_char_fxn(chrc: list) -> npt.NDArray[np.int32]:
+            """Accumulate characteristic function over two periods."""
             p = len(chrc)
             ret = []
             for t in range(2 * p):

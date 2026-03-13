@@ -144,6 +144,34 @@ class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
     """
 
     def apply(self, model):
+        opset_imports = model.get_opset_imports()
+        if "qonnx.custom_op.general" in opset_imports:
+            trunc_opset = opset_imports["qonnx.custom_op.general"]
+        elif "onnx.brevitas" in opset_imports:
+            trunc_opset = opset_imports["onnx.brevitas"]
+        else:
+            trunc_opset = 1  # Default to v1 if no opset found
+        if trunc_opset == 1:
+            model = model.transform(AvgPoolAndTruncv1ToQuantAvgPool())
+            return model, False
+        elif trunc_opset == 2:
+            model = model.transform(AvgPoolAndTruncv2ToQuantAvgPool())
+            return model, False
+        else:
+            raise NotImplementedError(
+                f"AvgPoolAndTruncToQuantAvgPool not implemented for "
+                f"Trunc opset version {trunc_opset}."
+            )
+
+
+class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
+    """
+    Convert a section of nodes of the pattern:
+    AveragePool -> Mul (scalar) -> Trunc (v1)
+    To the FINN op: Div -> QuantAvgPool2d -> Mul
+    """
+
+    def apply(self, model):
         graph = model.graph
         node_ind = 0
         for n in graph.node:

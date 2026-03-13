@@ -35,9 +35,15 @@ import subprocess
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import gen_finn_dt_tensor
 
+from finn.templates import get_templates_folder
 from finn.util.basic import make_build_dir
-from finn.util.data_packing import npy_to_rtlsim_input, numpy_to_hls_code
-from finn.util.deps import get_deps_path
+from finn.util.data_packing import (
+    finnpy_to_packed_bytearray,
+    npy_to_rtlsim_input,
+    numpy_to_hls_code,
+    packed_bytearray_to_finnpy,
+)
+from finn.util.settings import get_settings
 
 
 @pytest.mark.util
@@ -98,12 +104,10 @@ def test_npy2apintstream(test_shape, dtype):
     test_app_string += ["}"]
     with open(test_dir + "/test.cpp", "w") as f:
         f.write("\n".join(test_app_string))
-    cmd_compile = """
-g++ -o test_npy2apintstream test.cpp {}/cnpy/cnpy.cpp \
--I{}/cnpy/ -I{}/include -I$FINN_QNN_DATA/cpp \
---std=c++11 -lz""".format(
-        get_deps_path(), get_deps_path(), os.environ["XILINX_HLS"]
-    )
+    cmd_compile = f"""
+g++ -o test_npy2apintstream test.cpp {get_settings().finn_deps}/cnpy/cnpy.cpp \
+-I{get_settings().finn_deps}/cnpy/ -I{os.environ["XILINX_HLS"]}/include \
+    -I{get_templates_folder()}/npy2stream --std=c++11 -lz """
     with open(test_dir + "/compile.sh", "w") as f:
         f.write(cmd_compile)
     compile = subprocess.Popen(["sh", "compile.sh"], stdout=subprocess.PIPE, cwd=test_dir)
@@ -181,3 +185,46 @@ def test_npy_to_rtlsim_input(dtype):
 
     assert all([(x >> dtype.bitwidth()) == 0 for x in output_fast]), "extraneous bits detected"
     assert np.all(output_fast == output_slow_split), "different behavior of packing modes detected"
+
+
+@pytest.mark.util
+@pytest.mark.parametrize("simd", [1, 2, 4, 8])
+@pytest.mark.parametrize("reverse_inner", [False, True])
+@pytest.mark.parametrize("reverse_endian", [False, True])
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        DataType["BINARY"],
+        DataType["BIPOLAR"],
+        DataType["TERNARY"],
+        DataType["UINT2"],
+        DataType["UINT3"],
+        DataType["INT7"],
+        DataType["INT8"],
+        DataType["INT22"],
+        DataType["INT32"],
+        DataType["UINT7"],
+        DataType["UINT8"],
+        DataType["UINT15"],
+        DataType["UINT32"],
+        DataType["UINT63"],
+        DataType["FIXED<7,4>"],
+        DataType["FIXED<9,6>"],
+        DataType["FIXED<31,23>"],
+        DataType["FLOAT32"],
+    ],
+)
+def test_driver_pack_unpack(dtype, reverse_inner, reverse_endian, simd):
+    folded_shape = (10, 8 // simd, simd)  # N H W FOLD SIMD
+    input = gen_finn_dt_tensor(dtype, folded_shape)
+    input_packed = finnpy_to_packed_bytearray(input, dtype, reverse_inner, reverse_endian, True)
+
+    input_unpacked = packed_bytearray_to_finnpy(
+        input_packed, dtype, folded_shape, reverse_inner, reverse_endian
+    )
+
+    assert input_unpacked.dtype == np.float32
+    # Check shape
+    assert input.shape == input_unpacked.shape
+    # Check values
+    assert np.all(input == input_unpacked)

@@ -96,7 +96,8 @@ class InsertDWC(Transformation):
                             node_optype = "StreamingDataWidthConverter"
 
                             # determine shape for dwc
-                            dwc_shape = n0.get_normal_output_shape(out_idx)
+                            dwc_in_shape = n0.get_normal_output_shape(out_idx)
+                            dwc_out_shape = n1.get_normal_input_shape(in_idx)
 
                             # determine FINN dtype for dwc
                             dtype = n0.get_output_datatype(out_idx)
@@ -107,7 +108,7 @@ class InsertDWC(Transformation):
                             dwc_output_tensor = oh.make_tensor_value_info(
                                 model.make_new_valueinfo_name(),
                                 n0_tensor_dtype,
-                                dwc_shape,
+                                dwc_out_shape,
                             )
                             graph.value_info.append(dwc_output_tensor)
 
@@ -117,7 +118,8 @@ class InsertDWC(Transformation):
                                 [dwc_output_tensor.name],
                                 domain="finn.custom_op.fpgadataflow",
                                 backend="fpgadataflow",
-                                shape=dwc_shape,
+                                inShape=dwc_in_shape,
+                                outShape=dwc_out_shape,
                                 inWidth=dwc_in_width,
                                 outWidth=dwc_out_width,
                                 dataType=str(dtype.name),

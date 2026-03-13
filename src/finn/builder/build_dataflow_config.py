@@ -45,15 +45,18 @@ This configuration system allows users to customize the entire FINN dataflow
 build process through a single, serializable configuration object.
 """
 
+# ruff: noqa: UP045
 from __future__ import annotations
 
+import logging
+import mashumaro.config
 import numpy as np
-import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
-from typing import Any, Literal, Optional
+from pathlib import Path, PosixPath, PurePath
+from typing import Any, Literal, Optional, cast
 
 from finn.util.basic import alveo_default_platform, part_map
 from finn.util.exception import FINNConfigurationError
@@ -70,6 +73,25 @@ class LogLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 
+def to_logging_level(level: LogLevel) -> int:
+    """Return the logging module loglevel for the StrEnum LogLevel value."""
+    match level:
+        case LogLevel.NONE:
+            return 0
+        case LogLevel.DEBUG:
+            return logging.DEBUG
+        case LogLevel.INFO:
+            return logging.INFO
+        case LogLevel.WARNING:
+            return logging.WARNING
+        case LogLevel.ERROR:
+            return logging.ERROR
+        case LogLevel.CRITICAL:
+            return logging.CRITICAL
+        case _:
+            return 0
+
+
 class AutoFIFOSizingMethod(str, Enum):
     """Select the type of automatic FIFO sizing strategy."""
 
@@ -79,7 +101,8 @@ class AutoFIFOSizingMethod(str, Enum):
 
 class ShellFlowType(str, Enum):
     """For builds that produce a bitfile, select the shell flow that will integrate
-    the FINN-generated accelerator."""
+    the FINN-generated accelerator.
+    """
 
     VIVADO_ZYNQ = "vivado_zynq"
     VITIS_ALVEO = "vitis_alveo"
@@ -140,6 +163,8 @@ class VerificationStepType(str, Enum):
     NODE_BY_NODE_RTLSIM = "node_by_node_rtlsim"
     #: verify after step_create_stitched_ip, using stitched-ip Verilog
     STITCHED_IP_RTLSIM = "stitched_ip_rtlsim"
+    #: verify during step_passes_frontend using ONNX Runtime execution
+    PASSES_FRONTEND = "passes_frontend"
 
 
 #: List of steps that will be run as part of the standard dataflow build, in the
@@ -155,6 +180,7 @@ default_build_dataflow_steps = [
     "step_target_fps_parallelization",
     "step_apply_folding_config",
     "step_minimize_bit_width",
+    "step_transpose_decomposition",
     "step_generate_estimate_reports",
     "step_set_fifo_depths",
     "step_hw_codegen",
@@ -193,8 +219,103 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     See list of attributes below for more information on the build configuration.
     """
 
+    class Config(mashumaro.config.BaseConfig):
+        """Config for (de)serialization of the dataflow builder class."""  # noqa
+
+        forbid_extra_keys = True
+
+    @classmethod
+    def construct_from(cls, from_this: Path | DataflowBuildConfig) -> DataflowBuildConfig:
+        """The only deserialization method that should be used.
+        - Identifies the source format (if from file)
+        - Patches in the config_path variable and corrects paths (if from file or if config_path is set)
+        - Makes sure that either target_fps or folding_config_file is defined
+
+        Args:
+            from_this: The file to construct the DataflowBuildConfig from, or the initial DFBC object
+                to modify.
+
+        Returns:
+            The completed config object
+        """  # noqa
+        dfbc: DataflowBuildConfig
+
+        # Read the config
+        if type(from_this) in [Path, PosixPath, PurePath]:
+            # Needed because type-checker doesn't recognize the check above this line
+            from_this = cast("Path", from_this)
+
+            data = from_this.read_text()
+            match from_this.suffix:
+                case ".json":
+                    dfbc = DataflowBuildConfig.from_json(data)
+                case ".yml" | ".yaml":
+                    dfbc = DataflowBuildConfig.from_yaml(data)
+            dfbc.config_path = from_this.absolute()
+        elif type(from_this) is DataflowBuildConfig:
+            dfbc = from_this
+        else:
+            raise FINNConfigurationError(
+                f"Cannot construct DataflowBuildConfig from type "
+                f"{type(from_this)}. Please pass either a path to a "
+                f"YAML/JSON file, or an already existing "
+                f"DataflowBuildConfig object."
+            )
+
+        # Correct relative paths
+        if dfbc.config_path is not None:
+            dfbc.correct_paths()
+
+        # Make sure either target_fps or folding_config_file is set (and the file exists if given).
+        if dfbc.target_fps is None and dfbc.folding_config_file is None:
+            raise FINNConfigurationError(
+                "Set either target_fps or folding_config_file in your "
+                "flow config, so that FINN can determine the folding "
+                "configuration for your accelerator."
+            )
+        if dfbc.folding_config_file is not None and not dfbc.folding_config_file.exists():
+            raise FINNConfigurationError(
+                f"No folding config file could be found " f"at {dfbc.folding_config_file}."
+            )
+
+        return dfbc
+
+    def correct_paths(self) -> None:
+        """Fix paths by (if needed) joining them with the config path, so that
+        files can be found relative to the config file, not relative to the python
+        execution start point.
+
+        This is called by __post_deserialize when using DataflowBuildConfig.from_yaml/from_json,
+        but can also be called explicitly when constructing an object manually.
+        """
+
+        def _fix_path(p: Path | None) -> Path | None:
+            """Return the fixed path (which should now be relative to the flow config)."""
+            if self.config_path is None:
+                raise FINNConfigurationError(
+                    "Cannot fix paths since "
+                    "DataflowBuildConfig.config_path is set to None! "
+                    "Either use DataflowBuildConfig.construct_from() or "
+                    "manually set config_path and call correct_paths()."
+                )
+            if p is not None and not p.is_absolute() and str(self.config_path.parent) not in str(p):
+                return (self.config_path.parent / p).absolute()
+            return p
+
+        self.specialize_layers_config_file = _fix_path(self.specialize_layers_config_file)
+        self.folding_config_file = _fix_path(self.folding_config_file)
+        self.layouts_config_file = _fix_path(self.layouts_config_file)
+
+    #: Path to the config from which this object was created. Can be left on None
+    #: for cases in which "finn run" is used, but should otherwise be set to correctly
+    #: infer flow-config relative paths (like specialization JSONs, etc.)
+    config_path: Path | None = None
+
+    #: Path to the model. This CAN be set by the startup, but must not necessarily.
+    model_path: Path | None = None
+
     #: Directory where the final build outputs will be written into
-    output_dir: str = "finn_build_output"
+    output_dir: str | Path = "finn_build_output"
 
     #: Target clock frequency (in nanoseconds) for Vivado synthesis.
     #: e.g. synth_clk_period_ns=5.0 will target a 200 MHz clock.
@@ -203,23 +324,38 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: Which output(s) to generate from the build flow.  See documentation of
     #: DataflowOutputType for available options.
-    generate_outputs: Optional[list[DataflowOutputType]] = None
+    generate_outputs: Optional[list[DataflowOutputType]] = field(
+        default_factory=lambda: [
+            DataflowOutputType.STITCHED_IP,
+            DataflowOutputType.ESTIMATE_REPORTS,
+            DataflowOutputType.OOC_SYNTH,
+            DataflowOutputType.RTLSIM_PERFORMANCE,
+            DataflowOutputType.BITFILE,
+            DataflowOutputType.PYNQ_DRIVER,
+            DataflowOutputType.CPP_DRIVER,
+            DataflowOutputType.DEPLOYMENT_PACKAGE,
+        ]
+    )
 
     #: (Optional) Path to configuration JSON file in which user can specify
     #: a preferred implementation style (HLS or RTL) for each node.
     #: The SpecializeLayers transformation picks up these settings and if possible
     #: fulfills the desired implementation style for each layer by converting the
     #: node into its HLS or RTL variant.
-    #: Will be applied with :py:mod:`qonnx.transformation.general.ApplyConfig`
-    specialize_layers_config_file: Optional[str] = None
+    #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
+    specialize_layers_config_file: Path | None = None
 
     #: (Optional) Path to configuration JSON file. May include parallelization,
     #: FIFO sizes, RAM and implementation style attributes and so on.
     #: If the parallelization attributes (PE, SIMD) are part of the config,
     #: this will override the automatically generated parallelization
     #: attributes inferred from target_fps (if any)
-    #: Will be applied with :py:mod:`qonnx.transformation.general.ApplyConfig`
-    folding_config_file: Optional[str] = None
+    #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
+    folding_config_file: Path | None = None
+
+    #: (Optional) Path to configuration YAML file listing layout assumptions and
+    #: conversion (permutation) for global model inputs and outputs.
+    layouts_config_file: Path | None = None
 
     #: (Optional) Target inference performance in frames per second.
     #: Note that target may not be achievable due to specific layer constraints,
@@ -242,11 +378,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: (Only relevant if verify_steps is set)
     #: Name of .npy file that will be used as the input for verification.
-    verify_input_npy: str = "input.npy"
+    verify_input_npy: str | Path = "input.npy"
 
     #: (Only relevant if verify_steps is set)
     #: Name of .npy file that will be used as the expected output for verification.
-    verify_expected_output_npy: str = "expected_output.npy"
+    verify_expected_output_npy: str | Path = "expected_output.npy"
 
     #: (Only relevant if verify_steps is set)
     #: Save full execution context for each of the verify_steps.
@@ -340,6 +476,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     fifosim_input_throttle: bool = True
 
     #: (Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM)
+    #: Manually specify the number of inferences for simulation-based FIFO sizing
+    fifosim_n_inferences: int = 2
+
+    #: (Only relevant if auto_fifo_strategy = LARGEFIFO_RTLSIM)
     #: Enable saving waveforms from simulation-based FIFO sizing.
     fifosim_save_waveform: bool = False
 
@@ -361,7 +501,8 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: (Optional, only relevant when shell_flow_type = VITIS_ALVEO)
     #: Path to JSON config file assigning each layer to an SLR.
-    #: Will be applied with :py:mod:`qonnx.transformation.general.ApplyConfig`
+    #: Only relevant when `shell_flow_type = ShellFlowType.VITIS_ALVEO`
+    #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
     vitis_floorplan_file: Optional[str] = None
 
     #: (Only relevant when shell_flow_type = VITIS_ALVEO)
@@ -379,9 +520,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: When set to true, decorates every step in the build flow with a function
     #: that catches exceptions, snapshots the ONNX model, the config and the build log,
-    #: saves them into the location of FINN_BUILD_DIR, and re-raises the exception for
+    #: saves them into the crash_reports directory in output_dir, and re-raises the exception for
     #: further error handling. By default this does _not_ save FINN itself; however
-    #: any step can still be manually decorated to do so (see finn/utils/exception.py).
+    #: any step can still be manually decorated to do so (see finn/utils/exception_snapshot.py).
     enable_exception_snapshots: bool = False
 
     #: Whether hardware debugging will be enabled (e.g. ILA cores inserted to
@@ -391,6 +532,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Whether the accelerator will be simulated and synthesized with an
     #: instrumentation wrapper attached to accurately measure performance.
     enable_instrumentation: bool = False
+
+    #: If enable_instrumentation is True, one can disable the DMA with this flag
+    instrumentation_no_dma: Optional[bool] = False
 
     #: Whether pdb postmortem debugging will be launched when the build fails.
     enable_build_pdb_debug: bool = False
@@ -451,6 +595,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Whether to use "functional" or "timing" simulation for Vivado power estimation.
     vivado_power_simulation_type: Literal["timing", "functional"] = "functional"
 
+    #: If set, appends experiments_config to settings file during driver generation
+    experiments_config_path: Optional[str] = None
+
     def _resolve_hls_clk_period(self) -> float:
         """Resolve the HLS clock period, falling back to synthesis clock period if not set.
 
@@ -505,7 +652,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             except KeyError:
                 raise FINNConfigurationError(
                     "Couldn't resolve fpga_part for " + self.board
-                )  # noqa: B904
+                ) from None
         else:
             # return as-is when explicitly specified
             return self.fpga_part
@@ -544,7 +691,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             return self.vitis_platform
         if (self.vitis_platform is None) and (self.board is not None):
             return alveo_default_platform[self.board]
-        raise Exception(
+        raise FINNConfigurationError(
             "Could not resolve Vitis platform: need either board or vitis_platform specified"
         )
 
@@ -575,13 +722,13 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """
         if self.verify_steps is None:
             return None
-        assert os.path.isfile(self.verify_input_npy), (
-            "verify_input_npy not found: " + self.verify_input_npy
-        )
+        if not Path(self.verify_input_npy).is_file():
+            raise FINNConfigurationError("verify_input_npy not found: " + str(self.verify_input_npy))
         verify_input_npy = np.load(self.verify_input_npy)
-        assert os.path.isfile(self.verify_expected_output_npy), (
-            "verify_expected_output_npy not found: " + self.verify_expected_output_npy
-        )
+        if not Path(self.verify_expected_output_npy).is_file():
+            raise FINNConfigurationError(
+                "verify_expected_output_npy not found: " + str(self.verify_expected_output_npy)
+            )
         verify_expected_output_npy = np.load(self.verify_expected_output_npy)
         return (
             verify_input_npy,
