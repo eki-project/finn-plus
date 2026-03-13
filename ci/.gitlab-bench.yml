@@ -88,6 +88,7 @@ Result Collection:
   script:
     # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
     - dvc pull
+    - git fetch --tags
     - python3.10 ci/collect/collect.py
     - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
   artifacts:
@@ -97,6 +98,8 @@ Result Collection:
       - build_artifacts/
       - measurement_artifacts/
       - followup_bench_config.json
+      - metric_report_plots.png
+      - metric_report.json
 
 # Follow-up stages for live FIFO sizing experiments
 # These stages re-run experiments with the FIFO sizes determined during measurement
