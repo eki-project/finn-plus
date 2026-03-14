@@ -52,8 +52,8 @@ numpy = "1.26.4"  # numpy<=1.26.4 required by brevitas
 scipy = "~1.15.0"
 onnx = "1.17.0"
 onnxruntime = "1.20.1"
-onnxscript = ">=0.5.0"                                # TODO: the onnx-passes installation will overwrite this version
-protobuf = "4.25.8"
+onnxscript = ">=0.6.2"                                # TODO: the onnx-passes installation will overwrite this version
+protobuf = "5.29.6"
 pyyaml = "~6.0.2"
 mip = "~1.13.0"
 cmake = "~4.0.3"

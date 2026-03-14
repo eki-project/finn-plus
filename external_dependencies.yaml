@@ -11,7 +11,7 @@ git_deps:
         install_editable: False
     finn-hlslib:
         url: "https://github.com/Xilinx/finn-hlslib.git"
-        commit: "206e57f5ea993630250f1209dce5a66291210269"
+        commit: "a2cd3e6ce653a03e59af6bcb9fbeaa71618d160e"
         pip_install: False
         install_editable: False
     attention-hlslib:

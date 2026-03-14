@@ -15,6 +15,7 @@ from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from typing import List, Optional, Tuple
+from finn.util.logging import log
 
 
 def shuffle_perfect_loopnest_coeffs(shape: tuple[int], perm: tuple[int]) -> tuple[int]:
@@ -346,10 +347,10 @@ class ShuffleDecomposition(Transformation):
                     perm, transpose_in_shape, simd
                 )
                 if len(P_list) == 0:
-                    print("\tNo swaps necessary (identity permutation).")
+                    log.info("\tNo swaps necessary (identity permutation).")
                     continue
             except RuntimeError as e:
-                print(f"\tSkipping node {node.name}: {e}")
+                log.info(f"\tSkipping node {node.name}: {e}")
                 continue
             orig_input = list(node.input)
             orig_output = list(node.output)
@@ -358,7 +359,7 @@ class ShuffleDecomposition(Transformation):
                 # Transpose usually has one input and one output; if not,
                 # skip replacement
                 # TODO: Should this raise an exception? Probably need to be handled.
-                print(f"\tSkipping node {node.name}: unexpected number of inputs/outputs.")
+                log.warning(f"\tSkipping node {node.name}: unexpected number of inputs/outputs.")
                 continue
 
             prev_tensor = orig_input[0]

@@ -131,7 +131,7 @@ class MakeZYNQProject(Transformation):
 
         if self.enable_finn_switch:
             # TODO: Add ‑copy_to
-            module_dir = os.environ["FINN_RTLLIB"] + "/finn_switch/hdl/switch.v"
+            module_dir = os.path.join(get_settings().finn_rtllib, "finn_switch", "hdl", "switch.v")
             config.append(
                 "add_files -copy_to [get_property DIRECTORY [current_project]] -norecurse %s"
                 % module_dir
@@ -176,7 +176,7 @@ class MakeZYNQProject(Transformation):
 
         if self.live_fifo_sizing:
             # instantiate virtual FIFO controller
-            rtl_path = os.environ["FINN_RTLLIB"]
+            rtl_path = get_settings().finn_rtllib
             files = [
                 os.path.join(rtl_path, "axi/hdl/axilite.sv"),
                 os.path.join(rtl_path, "fifo_virtual/hdl/fifo_gauge_pkg.sv"),
