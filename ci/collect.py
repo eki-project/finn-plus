@@ -480,18 +480,44 @@ if __name__ == "__main__":
         # Prepare benchmarking config for follow-up runs after live FIFO-sizing
         # Only generate follow-up config if this is not already a follow-up run
         if not args.followup:
-            folding_config_lfs_path = os.path.join(
+            # Choose the search order with the lowest fifo_size_total_kB
+            lfs_base_dir = os.path.join(
                 "measurement_artifacts",
                 "runs_output",
                 "run_%d" % (id),
                 "reports",
                 "experiment_fifosizing",
                 "exp_itr_1",
-                "largest_first",  # TODO: make configurable or choose best available FIFO-sizing
-                "both",
-                "folding_config_lfs.json",
             )
-            if os.path.isfile(folding_config_lfs_path):
+            best_search_order = None
+            best_fifo_size = float("inf")
+            if os.path.isdir(lfs_base_dir):
+                for search_order in os.listdir(lfs_base_dir):
+                    sizing_report_path = os.path.join(
+                        lfs_base_dir, search_order, "both", "fifo_sizing_report.json"
+                    )
+                    if os.path.isfile(sizing_report_path):
+                        with open(sizing_report_path, "r") as f:
+                            sizing_report = json.load(f)
+                        fifo_size = sizing_report.get("fifo_size_total_kB", float("inf"))
+                        if fifo_size < best_fifo_size:
+                            best_fifo_size = fifo_size
+                            best_search_order = search_order
+            if best_search_order is not None:
+                print(
+                    "Selecting search order '%s' with fifo_size_total_kB=%.2f"
+                    % (best_search_order, best_fifo_size)
+                )
+                folding_config_lfs_path = os.path.join(
+                    lfs_base_dir, best_search_order, "both", "folding_config_lfs.json"
+                )
+            else:
+                print(
+                    "No valid search order with fifo_sizing_report.json found in %s." % lfs_base_dir
+                )
+                folding_config_lfs_path = None
+
+            if folding_config_lfs_path is not None and os.path.isfile(folding_config_lfs_path):
                 print(
                     "Creating follow-up experiment config based on lfs folding config: %s"
                     % folding_config_lfs_path

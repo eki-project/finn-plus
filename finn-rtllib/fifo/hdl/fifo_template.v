@@ -37,8 +37,13 @@ input   ap_clk,
 (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
 input   ap_rst_n,
 
+`ifdef FINN_SIMULATION
+output [31:0] count,
+output [31:0] maxcount,
+`else
 output $COUNT_RANGE$ count,
 output $COUNT_RANGE$ maxcount,
+`endif
 
 //- AXI Stream - Input --------------
 output   in0_V_TREADY,
@@ -52,7 +57,7 @@ output  $OUT_RANGE$ out0_V_TDATA
 );
 
 `ifdef FINN_SIMULATION
-	fifo_gauge #(.WIDTH($WIDTH$), .COUNT_WIDTH($COUNT_WIDTH$)) fifo (
+	fifo_gauge #(.WIDTH($WIDTH$), .COUNT_WIDTH(32)) fifo (
 		.clk(ap_clk), .rst(!ap_rst_n),
 		.idat(in0_V_TDATA), .ivld(in0_V_TVALID), .irdy(in0_V_TREADY),
 		.odat(out0_V_TDATA), .ovld(out0_V_TVALID), .ordy(out0_V_TREADY),
