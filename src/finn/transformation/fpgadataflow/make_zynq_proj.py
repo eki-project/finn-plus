@@ -57,9 +57,9 @@ from finn.util.basic import (
     pynq_native_port_width,
     pynq_part_map,
 )
-from finn.util.deps import get_deps_path
 from finn.util.exception import FINNError, FINNUserError
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 from . import templates
 
@@ -591,7 +591,7 @@ class MakeZYNQProject(Transformation):
                         self.enable_gpio_reset,
                         self.enable_finn_switch,
                     )
-                ).replace("$BOARDFILES$", str(get_deps_path() / "board_files"))
+                ).replace("$BOARDFILES$", str(get_settings().finn_deps / "board_files"))
             )
 
         # create a TCL recipe for the project

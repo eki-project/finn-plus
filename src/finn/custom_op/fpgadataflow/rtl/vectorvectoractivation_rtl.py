@@ -26,6 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""RTL implementation of Vector-Vector Activation Unit (VVAU).
+
+This module provides an RTL-based implementation of the Vector-Vector Activation
+Unit for DSP-based computation of quantized neural network activations in FPGA
+dataflow architectures.
+"""
+
 import numpy as np
 import os
 from qonnx.core.datatype import DataType
@@ -34,21 +41,54 @@ from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU
 from finn.util.basic import is_versal
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.util.settings import get_settings
 
 
 class VVAU_rtl(VVAU, RTLBackend):
-    """Class that corresponds to finn-rtl Vector Vector Unit."""
+    """RTL implementation of Vector-Vector Activation Unit.
+
+    Implements DSP-based activation functions using vector-vector
+    multiply-accumulate operations for efficient FPGA execution.
+    """
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the RTL Vector-Vector Activation Unit node.
+
+        Parameters
+        ----------
+        onnx_node : NodeProto
+            ONNX node to wrap
+        **kwargs : dict
+            Additional arguments passed to parent class
+        """
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Get dictionary of attribute names and their types for this node.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping attribute names to type specifications,
+            combining VVAU and RTLBackend attributes
+        """
         my_attrs = {}
         my_attrs.update(VVAU.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
     def execute_node(self, context, graph):
+        """Execute this VVAU node.
+
+        Performs vector-vector activation using C++ or RTL simulation.
+
+        Parameters
+        ----------
+        context : dict
+            Dictionary mapping tensor names to numpy arrays
+        graph : GraphProto
+            ONNX graph containing this node
+        """
         mode = self.get_nodeattr("exec_mode")
         mem_mode = self.get_nodeattr("mem_mode")
         node = self.onnx_node
@@ -137,18 +177,44 @@ class VVAU_rtl(VVAU, RTLBackend):
             )
 
     def lut_estimation(self):
+        """Estimate LUT utilization for this VVAU node.
+
+        Returns
+        -------
+        int
+            LUT count estimate (always 0 for VVAU as it uses DSPs)
+        """
         return 0
 
     def dsp_estimation(self, fpgapart):
+        """Estimate DSP utilization for this VVAU node.
+
+        Parameters
+        ----------
+        fpgapart : str
+            Target FPGA part name
+
+        Returns
+        -------
+        int
+            Number of DSP blocks required (PE * ceil(SIMD/3))
+        """
         P = self.get_nodeattr("PE")
         Q = self.get_nodeattr("SIMD")
         return int(P * np.ceil(Q / 3))
 
     def instantiate_ip(self, cmd):
+        """Add RTL IP instantiation commands to Vivado script.
+
+        Parameters
+        ----------
+        cmd : list
+            List of Vivado TCL commands to append to
+        """
         # instantiate the RTL IP
         node_name = self.onnx_node.name
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "mvu/")
+        rtllib_dir = os.path.join(get_settings().finn_rtllib, "mvu/")
         sourcefiles = [
             "mvu_pkg.sv",
             "mvu_vvu_axi.sv",
@@ -190,6 +256,17 @@ class VVAU_rtl(VVAU, RTLBackend):
         )
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Generate HDL code for this VVAU node.
+
+        Parameters
+        ----------
+        model : ModelWrapper
+            ONNX model wrapper containing weights
+        fpgapart : str
+            Target FPGA part name
+        clk : float
+            Target clock period in nanoseconds
+        """
         # Generate params as part of IP preparation
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         self.generate_params(model, code_gen_dir)
@@ -234,6 +311,18 @@ class VVAU_rtl(VVAU, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def _resolve_segment_len(self, clk):
+        """Resolve DSP chain segment length based on clock target.
+
+        Parameters
+        ----------
+        clk : float
+            Target clock period in nanoseconds
+
+        Returns
+        -------
+        float
+            Maximum DSP chain length that meets timing
+        """
         # Insert pipeline registers in the DSP58 chain to meet target clock frequency
         # ~0.741 ns seems the worst-case delay through first DSP
         # ~0.605 ns seems to be (on average) delay for all subsequent DSPs
@@ -250,6 +339,23 @@ class VVAU_rtl(VVAU, RTLBackend):
         return dsp_chain_len
 
     def _resolve_dsp_version(self, fpgapart):
+        """Resolve DSP version based on target FPGA part.
+
+        Parameters
+        ----------
+        fpgapart : str
+            Target FPGA part name
+
+        Returns
+        -------
+        int
+            DSP version (3 for Versal DSP58)
+
+        Raises
+        ------
+        AssertionError
+            If LUT-based compute or non-Versal device is targeted
+        """
         # Based on target device and activation/weight-width, choose the
         # supported RTL compute core
         assert (
@@ -266,7 +372,22 @@ class VVAU_rtl(VVAU, RTLBackend):
         return 3
 
     def prepare_codegen_default(self, fpgapart, clk):
-        template_path = os.path.join(os.environ["FINN_RTLLIB"], "mvu/mvu_vvu_axi_wrapper.v")
+        """Prepare default code generation dictionary for HDL templates.
+
+        Parameters
+        ----------
+        fpgapart : str
+            Target FPGA part name
+        clk : float
+            Target clock period in nanoseconds
+
+        Returns
+        -------
+        tuple
+            (template_path, code_gen_dict) where template_path is the path to
+            the Verilog wrapper template and code_gen_dict contains substitutions
+        """
+        template_path = os.path.join(get_settings().finn_rtllib, "mvu/mvu_vvu_axi_wrapper.v")
 
         code_gen_dict = {}
         code_gen_dict["$IS_MVU$"] = [str(0)]
@@ -288,9 +409,21 @@ class VVAU_rtl(VVAU, RTLBackend):
         return template_path, code_gen_dict
 
     def get_rtl_file_list(self, abspath=False):
+        """Get list of RTL files needed for this VVAU node.
+
+        Parameters
+        ----------
+        abspath : bool, optional
+            Whether to return absolute paths (default: False)
+
+        Returns
+        -------
+        list
+            List of RTL file paths required for synthesis
+        """
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "mvu/")
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "mvu/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
@@ -309,7 +442,8 @@ class VVAU_rtl(VVAU, RTLBackend):
 
         return verilog_files
 
-    def get_verilog_paths(self):
+    def get_verilog_paths(self) -> list[str]:
+        """Get list of Verilog paths required for this node."""
         verilog_paths = super().get_verilog_paths()
-        verilog_paths.append(os.path.join(os.environ["FINN_RTLLIB"], "mvu"))
+        verilog_paths.append(os.path.join(get_settings().finn_rtllib, "mvu"))
         return verilog_paths

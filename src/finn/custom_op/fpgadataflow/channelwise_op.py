@@ -34,6 +34,7 @@ from qonnx.util.basic import qonnx_make_model
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.basic import Characteristic_Node
+from finn.util.deprecated import deprecated
 from finn.util.logging import log
 
 # ONNX i/o tensor shape assumptions for channelwise ops:
@@ -77,6 +78,7 @@ def get_smallest_possible(vals):
 class ChannelwiseOp(HWCustomOp):
     """Abstraction layer for HW implementation of ChannelwiseOp."""
 
+    @deprecated
     def __init__(self, onnx_node, **kwargs):
         super().__init__(onnx_node, **kwargs)
 

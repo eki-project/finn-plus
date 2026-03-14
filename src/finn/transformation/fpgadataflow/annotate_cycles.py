@@ -26,13 +26,20 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""Annotate the estimate of clock cycles per sample taken by each fpgadataflow node as an attribute
+on the node.
+"""
 
 import qonnx.custom_op.registry as registry
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from typing import TYPE_CHECKING, Literal, cast
 
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 
 class AnnotateCycles(Transformation):
@@ -40,22 +47,24 @@ class AnnotateCycles(Transformation):
     node as an attribute on the node.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Constucts the AnnotateCycles transformation."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Annotate the estimate of clock cycles per sample taken for each layer."""
         graph = model.graph
         # annotate node cycles
         for node in graph.node:
             if is_hls_node(node) or is_rtl_node(node):
-                op_inst = registry.getCustomOp(node)
+                op_inst = cast("HWCustomOp", registry.getCustomOp(node))
                 cycles = op_inst.get_exp_cycles()
-                op_inst.set_nodeattr("cycles_estimate", cycles)
+                op_inst.set_nodeattr("cycles_estimate", int(cycles))
             elif node.op_type == "StreamingDataflowPartition":
                 # recurse into model to manually annotate per-layer cycles
                 sdp_model_filename = getCustomOp(node).get_nodeattr("model")
-                sdp_model = ModelWrapper(sdp_model_filename)
+                sdp_model = ModelWrapper(cast("str", sdp_model_filename))
                 sdp_model = sdp_model.transform(AnnotateCycles())
                 # save transformed model
-                sdp_model.save(sdp_model_filename)
+                sdp_model.save(cast("str", sdp_model_filename))
         return (model, False)

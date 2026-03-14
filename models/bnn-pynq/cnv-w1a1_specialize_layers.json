@@ -15,7 +15,7 @@
   "MVAU_1": {
     "preferred_impl_style": "hls"
   },
-  "StreamingMaxPool_0": {
+  "Pool_0": {
     "preferred_impl_style": "hls"
   },
   "ConvolutionInputGenerator_2": {
@@ -30,7 +30,7 @@
   "MVAU_3": {
     "preferred_impl_style": "hls"
   },
-  "StreamingMaxPool_1": {
+  "Pool_1": {
     "preferred_impl_style": "hls"
   },
   "ConvolutionInputGenerator_4": {
@@ -40,6 +40,12 @@
     "preferred_impl_style": "hls"
   },
   "ConvolutionInputGenerator_5": {
+    "preferred_impl_style": "rtl"
+  },
+  "ConvolutionInputGenerator_6": {
+    "preferred_impl_style": "rtl"
+  },
+  "ConvolutionInputGenerator_7": {
     "preferred_impl_style": "rtl"
   },
   "MVAU_5": {

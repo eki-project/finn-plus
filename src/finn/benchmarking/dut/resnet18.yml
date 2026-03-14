@@ -1,0 +1,23 @@
+steps:
+  - step_qonnx_to_finn
+  - step_tidy_up
+  - finn.builder.custom_step_library.resnet.step_resnet_tidy
+  - finn.builder.custom_step_library.resnet.step_resnet_streamline
+  - step_convert_to_hw
+  - finn.builder.custom_step_library.resnet.step_resnet_convert_to_hw
+  - step_create_dataflow_partition
+  - step_specialize_layers
+  - step_target_fps_parallelization
+  - step_apply_folding_config
+  - step_minimize_bit_width
+  - step_generate_estimate_reports
+  - step_set_fifo_depths
+  - step_hw_codegen
+  - step_hw_ipgen
+  - step_create_stitched_ip
+  - step_synthesize_bitfile
+  - step_make_driver
+  - step_deployment_package
+
+# Required to use RTL MVAUs
+standalone_thresholds: true

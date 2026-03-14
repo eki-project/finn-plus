@@ -48,6 +48,7 @@ def is_available() -> bool:
         _attempt_auto_install()
         # Check again after auto-install attempt
         if not xsi_so.exists():
+            print("XSI INSTALL: xsi.so does not exist")
             return False
 
     # Try loading the modules (this will cache them if successful)
@@ -106,6 +107,7 @@ def _load_modules() -> bool:
     xsi_so = xsi_path / "xsi.so"
 
     if not xsi_so.exists():
+        print("XSI INSTALL: xsi.so does not exist (load modules)")
         return False
 
     # Temporarily add to path for import
@@ -126,10 +128,12 @@ def _load_modules() -> bool:
     except ImportError as e:
         # Log the specific import error for debugging
         log.debug(f"Failed to import finn_xsi modules: {e}")
+        print("XSI INSTALL: import error: " + str(e))
         return False
     except Exception as e:
         # Catch any unexpected errors during module loading
         log.warning(f"Unexpected error loading finn_xsi: {type(e).__name__}: {e}")
+        print(f"Unexpected error loading finn_xsi: {type(e).__name__}: {e}")
         return False
     finally:
         # Remove from path if we added it
@@ -156,14 +160,14 @@ def __getattr__(name: str) -> Any:
     """Dynamically wrap finn_xsi.adapter functions."""
     if name in _ADAPTER_FUNCTIONS:
 
-        def wrapper(*args, **kwargs):
+        def _wrapper(*args, **kwargs):
             if not _load_modules():
                 raise ImportError("finn_xsi not available. Run: python -m finn.xsi.setup")
             return getattr(_adapter_module, name)(*args, **kwargs)
 
-        wrapper.__name__ = name
-        wrapper.__doc__ = f"Wrapper for finn_xsi.adapter.{name}"
-        return wrapper
+        _wrapper.__name__ = name
+        _wrapper.__doc__ = f"Wrapper for finn_xsi.adapter.{name}"
+        return _wrapper
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
@@ -172,11 +176,13 @@ class SimEngine:
     """Wrapper for finn_xsi.sim_engine.SimEngine."""
 
     def __init__(self, *args, **kwargs):
+        """Create a new SimEngine."""
         if not _load_modules():
             raise ImportError("finn_xsi not available. Run: python -m finn.xsi.setup")
         self._engine = _sim_engine_module.SimEngine(*args, **kwargs)
 
     def __getattr__(self, name):
+        """Get attribute of the given name."""
         return getattr(self._engine, name)
 
 
