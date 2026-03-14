@@ -1,5 +1,8 @@
 {
   "Defaults": {},
+  "Thresholding_rtl_0":{
+    "PE": 1
+  },
   "MVAU_hls_0": {
     "PE": 32,
     "SIMD": 10,
