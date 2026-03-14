@@ -6,6 +6,7 @@ import json
 import matplotlib.pyplot as plt
 import os
 import shutil
+import subprocess
 import sys
 import yaml
 from datetime import date
@@ -481,9 +482,20 @@ class ExperimentComparator:
         tag = self.collect_cfg.get("Compare").get("compare_tag")
         git_remote = "git@github.com:eki-project/finn-plus.git"
 
+        subprocess.run(
+            ["git", "fetch", git_remote, "+refs/exps/*:refs/exps/*", "--prune"],
+            check=True,
+        )
+
         with Repo(".") as repo:
-            repo.experiments.pull(git_remote=git_remote, rev=tag)
-            
+            remote_exp_map = repo.experiments.ls(git_remote=git_remote, rev=tag)
+            remote_exps = set()
+            for _, exps in remote_exp_map.items():
+                remote_exps.update(a for a, b in exps)
+
+            if not remote_exps:
+                raise ValueError("No experiments found with tag %s" % tag)
+
             exp_data = {}
             for exp_state in repo.experiments.show(revs=tag):
                 for exp_range in exp_state.experiments or []:
