@@ -482,28 +482,8 @@ class ExperimentComparator:
         git_remote = "git@github.com:eki-project/finn-plus.git"
 
         with Repo(".") as repo:
-            local_exps = set(
-                exp_range.name
-                for exp_state in repo.experiments.show(revs=tag)
-                for exp_range in (exp_state.experiments or [])
-                if exp_range.name
-            )
-
-            # List remote experiments and pull only if remote has something new
-            remote_exp_map = repo.experiments.ls(git_remote=git_remote, rev=tag)
-            remote_exps = set()
-            for _, exps in remote_exp_map.items():
-                remote_exps.update(a for a, b in exps)
-
-            new_exps = remote_exps - local_exps
-            if new_exps:
-                print("Pulling %d new experiment(s) from remote:" % (len(new_exps)))
-                repo.experiments.pull(git_remote=git_remote, rev=tag)
-
-            total_exps = remote_exps | local_exps
-            if not total_exps:
-                raise ValueError("No experiments found with tag %s" % tag)
-
+            repo.experiments.pull(git_remote=git_remote, rev=tag)
+            
             exp_data = {}
             for exp_state in repo.experiments.show(revs=tag):
                 for exp_range in exp_state.experiments or []:
