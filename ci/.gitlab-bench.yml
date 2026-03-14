@@ -134,7 +134,7 @@ FINN Build (Follow-up):
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
-      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers $CPU_CORES_BENCH --bench_config followup
+      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $CPU_CORES_BENCH --bench_config followup
   cache:
     key: $CI_COMMIT_SHA
     policy: pull
