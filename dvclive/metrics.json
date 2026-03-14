@@ -1,0 +1,8 @@
+{
+    "status": "failed",
+    "time": {
+        "step_mobilenet_streamline": 14,
+        "step_mobilenet_lower_convs": 0,
+        "total_build_time": 14
+    }
+}
