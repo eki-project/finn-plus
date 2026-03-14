@@ -90,15 +90,15 @@
     },
 
     # ResNet-18 (CIFAR100)
-    {
-        "dut": ["resnet18"],
-        "model_path": [models/resnet18/resnet18_w3a3_cifar100.onnx],
-        "folding_config_file": [models/resnet18/resnet18_folding_config.json],
-        "specialize_layers_config_file": [models/resnet18/resnet18_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    # {
+    #     "dut": ["resnet18"],
+    #     "model_path": [models/resnet18/resnet18_w3a3_cifar100.onnx],
+    #     "folding_config_file": [models/resnet18/resnet18_folding_config.json],
+    #     "specialize_layers_config_file": [models/resnet18/resnet18_specialize_layers.json],
+    #     "live_fifo_sizing": [True],
+    #     "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #     "synth_clk_period_ns": [10],
+    # },
 
     ### NEW Transformer models (dvc-imported from finn-transformers repo):
     # radioml model
