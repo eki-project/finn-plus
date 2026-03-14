@@ -9,8 +9,7 @@
           "0V85",
           "3V3"
         ],
-        "sensors": [],
-        "board": "rfsoc2x2"
+        "sensors": []
       }
     },
     "experiments": [
@@ -36,13 +35,25 @@
           }
         ]
       },
-            {
+      {
         "name": "throughput_experiment_2",
         "warmup": 1,
         "num_runs": 1,
         "functions": [
           {
             "function_name": "throughput_test",
+            "kwargs" : {}
+          }
+        ]
+      },
+      {
+        "name": "validate_experiment",
+        "warmup": 1,
+        "num_runs": 1,
+        "batch_size": 100,
+        "functions": [
+          {
+            "function_name": "validate",
             "kwargs" : {}
           }
         ]

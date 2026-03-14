@@ -9,8 +9,7 @@
           "0V85",
           "3V3"
         ],
-        "sensors": [],
-        "board": "rfsoc2x2"
+        "sensors": []
       }
     },
     "experiments": [

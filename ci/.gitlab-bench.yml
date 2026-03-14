@@ -68,7 +68,7 @@ Measurement:
     # Install dependencies for FINN driver
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && chmod +x scripts/driver_install_dependencies.sh && scripts/driver_install_dependencies.sh"
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
-    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python ci/measure.py"
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && python ci/measure.py"
   artifacts:
     name: "measurement_artifacts"
     when: always
@@ -88,7 +88,8 @@ Result Collection:
   script:
     # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
     - dvc pull
-    - python3.10 ci/collect.py
+    - git fetch origin +refs/heads/*:refs/remotes/origin/*
+    - python3.10 ci/collect/collect.py
     - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
   artifacts:
     name: "collected_artifacts"
@@ -97,6 +98,8 @@ Result Collection:
       - build_artifacts/
       - measurement_artifacts/
       - followup_bench_config.json
+      - metric_report_plots.png
+      - metric_report.json
 
 # Follow-up stages for live FIFO sizing experiments
 # These stages re-run experiments with the FIFO sizes determined during measurement
@@ -171,7 +174,7 @@ Measurement (Follow-up):
     # Install dependencies for FINN driver
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && chmod +x scripts/driver_install_dependencies.sh && scripts/driver_install_dependencies.sh"
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
-    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python ci/measure.py --followup"
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && python ci/measure.py --followup"
   artifacts:
     name: "measurement_artifacts_followup"
     when: always
@@ -201,7 +204,7 @@ Result Collection (Follow-up):
       fi
     # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
     - dvc pull
-    - python3.10 ci/collect.py --followup
+    - python3.10 ci/collect/collect.py --followup
     - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
   artifacts:
     name: "all_artifacts"

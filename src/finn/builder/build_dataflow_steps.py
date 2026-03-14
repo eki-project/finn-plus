@@ -1050,6 +1050,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig):
                 clk_period_ns=cfg.synth_clk_period_ns,
                 validation_datset=cfg.validation_dataset,
                 experiment_info=experiment_info,
+                board=cfg.board,
             )
         )
 
