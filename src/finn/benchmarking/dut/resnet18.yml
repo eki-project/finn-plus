@@ -1,3 +1,7 @@
+model_path: models/resnet18/resnet18_w3a3_cifar100.onnx
+folding_config_file: models/resnet18/resnet18_folding_config.json
+specialize_layers_config_file: models/resnet18/resnet18_specialize_layers.json
+
 steps:
   - step_qonnx_to_finn
   - step_tidy_up
@@ -11,13 +15,13 @@ steps:
   - step_apply_folding_config
   - step_minimize_bit_width
   - step_generate_estimate_reports
-  - step_build_simulation
-  - step_size_fifo_connected
-  - step_apply_fifosizes
-  - step_generate_estimate_reports
+  - step_set_fifo_depths
   - step_hw_codegen
   - step_hw_ipgen
   - step_create_stitched_ip
   - step_synthesize_bitfile
   - step_make_driver
   - step_deployment_package
+
+# Required to use RTL MVAUs
+standalone_thresholds: true

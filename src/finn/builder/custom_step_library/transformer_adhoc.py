@@ -150,7 +150,7 @@ def _set_folding_attention(model: ModelWrapper, target_cycles_per_frame):
             # parallelism in steps following the common divisors the inputs.
             for fold in reversed(common_divisors([qkdim, vdim])):
                 # Configure the folding attribute
-                inst.set_nodeattr("EmbFold", fold)
+                inst.set_nodeattr("EmbFold", int(fold))
                 # Check if this is sufficient to meet the cycles target
                 if inst.get_exp_cycles() <= target_cycles_per_frame:
                     break
@@ -159,7 +159,7 @@ def _set_folding_attention(model: ModelWrapper, target_cycles_per_frame):
             # parallelism in steps divisors of the key and value sequence.
             for fold in reversed(common_divisors([kvlen])):
                 # Configure the folding attribute
-                inst.set_nodeattr("SeqFold", fold)
+                inst.set_nodeattr("SeqFold", int(fold))
                 # Check if this is sufficient to meet the cycles target
                 if inst.get_exp_cycles() <= target_cycles_per_frame:
                     break

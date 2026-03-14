@@ -52,6 +52,13 @@ from rich.traceback import Traceback
 from typing import Any, TextIO
 
 import finn.util.logging
+from finn.util.exception import (
+    FINNConfigurationError,
+    FINNDataflowError,
+    FINNError,
+    FINNUserError,
+)
+from finn.util.exception_snapshot import snapshot_on_exception
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     LogLevel,
@@ -60,8 +67,6 @@ from finn.builder.build_dataflow_config import (
 )
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
 from finn.util.basic import get_vivado_root
-from finn.util.exception import FINNConfigurationError, FINNDataflowError, FINNError, FINNUserError
-from finn.util.exception_snapshot import snapshot_on_exception
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
@@ -345,7 +350,7 @@ def create_model_wrapper(model_filename: str, cfg: DataflowBuildConfig) -> Model
         f"Building dataflow accelerator from intermediate"
         f" checkpoint {intermediate_model_filename}"
     )
-    return ModelWrapper(intermediate_model_filename)
+    return ModelWrapper(str(intermediate_model_filename))
 
 
 def build_dataflow_cfg(model_filename: str, cfg: DataflowBuildConfig) -> int:

@@ -36,6 +36,7 @@ from qonnx.core.datatype import DataType
 
 from finn import xsi
 from finn.custom_op.fpgadataflow import templates
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.templates import get_templates_folder
 from finn.util.basic import CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
@@ -47,7 +48,7 @@ from finn.util.settings import get_settings
 finnxsi = xsi if xsi.is_available() else None
 
 
-class HLSBackend(ABC):
+class HLSBackend(HWCustomOp, ABC):
     """HLSBackend class all custom ops that correspond to a finn-hlslib
     function are using functionality of. Contains different functions every HLS
     custom node should have. Some as abstract methods, these have to be filled
@@ -55,15 +56,19 @@ class HLSBackend(ABC):
 
     def get_nodeattr_types(self):
         """Return dictionary of node attribute types and properties."""
-        return {
-            "code_gen_dir_cppsim": ("s", False, ""),
-            "executable_path": ("s", False, ""),
-            "res_hls": ("s", False, ""),
-            # temporary node attribute to keep track of interface style of hls ops
-            "cpp_interface": ("s", False, "packed", {"packed", "hls_vector"}),
-            # temporary node attribute to keep track of execution style of hls ops
-            "hls_style": ("s", False, "ifm_aware", {"ifm_aware", "freerunning"}),
-        }
+        super_types = super().get_nodeattr_types()
+        super_types.update(
+            {
+                "code_gen_dir_cppsim": ("s", False, ""),
+                "executable_path": ("s", False, ""),
+                "res_hls": ("s", False, ""),
+                # temporary node attribute to keep track of interface style of hls ops
+                "cpp_interface": ("s", False, "packed", {"packed", "hls_vector"}),
+                # temporary node attribute to keep track of execution style of hls ops
+                "hls_style": ("s", False, "ifm_aware", {"ifm_aware", "freerunning"}),
+            }
+        )
+        return super_types
 
     def get_all_verilog_paths(self):
         """Return list of all folders containing Verilog code for this node."""

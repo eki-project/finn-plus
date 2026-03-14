@@ -56,6 +56,19 @@ tags
 poetry.lock
 *.code-workspace
 .env
+*.vim
+
+# Cmake files
+**/CMakeFiles
+**/cmake_install.cmake
+**/CMakeCache.txt
+**/compile_commands.json
+**/.cache
+**/build
+**/_deps
+finn_xsi/finn_xsi/unittests/*.cmake
+finn_xsi/finn_xsi/unittests/Makefile
+
 settings.yaml
 */.cache/*
 
@@ -100,6 +113,9 @@ MANIFEST
 /data/
 *.csv
 
+# Mock templated simulation config
+finn_xsi/finn_xsi/rtlsim_config.hpp
+
 # Google Drive key for dashboard
 /gdrive-key/
 
@@ -108,7 +124,7 @@ MANIFEST
 
 # downloaded dep repos
 /deps/
-/finn_deps/
+finn_deps/
 
 # local test directories for benchmarking infrastructure
 bench_input

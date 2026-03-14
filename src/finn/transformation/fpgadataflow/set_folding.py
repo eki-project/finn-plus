@@ -265,7 +265,7 @@ class SetFolding(Transformation):
                     node_inst.set_nodeattr("SIMD", 1)
                     channels_per_stream = node_inst.get_nodeattr("ChannelsPerStream")
                     for simd_val in common_divisors(channels_per_stream):
-                        node_inst.set_nodeattr("SIMD", simd_val)
+                        node_inst.set_nodeattr("SIMD", int(simd_val))
                         cyc = node_inst.get_exp_cycles()
                         if cyc < self.target_cycles_per_frame:
                             break
@@ -274,7 +274,7 @@ class SetFolding(Transformation):
                     dim = int(node_inst.get_normal_input_shape()[-1])
                     for simd_val in divisors(dim):
                         if dim // simd_val > 12:
-                            node_inst.set_nodeattr("SIMD", simd_val)
+                            node_inst.set_nodeattr("SIMD", int(simd_val))
                             cyc = node_inst.get_exp_cycles()
                             if cyc < self.target_cycles_per_frame:
                                 break

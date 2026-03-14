@@ -97,6 +97,7 @@ class AutoFIFOSizingMethod(str, Enum):
 
     CHARACTERIZE = "characterize"
     LARGEFIFO_RTLSIM = "largefifo_rtlsim"
+    DISTRIBUTED_SIMULATION = "distributed_sim"
 
 
 class ShellFlowType(str, Enum):
@@ -455,6 +456,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Enables experimental live FIFO sizing on the FPGA.
     live_fifo_sizing: bool = False
 
+    #: Whether to use functional simulation when available. Takes some time
+    #: to synthesize, but results in much faster simulations.
+    functional_simulation: bool = True
+
     #: Whether FIFO nodes with depth larger than 32768 will be split.
     #: Allow to configure very large FIFOs in the folding_config_file.
     split_large_fifos: bool = False
@@ -638,6 +643,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """
         if self.fpga_part is None:
             # lookup from part map if not specified
+            if self.board is None:
+                raise FINNConfigurationError(
+                    "Either board or fpga_part must be specified in flow config."
+                )
             try:
                 fpga_part = part_map[self.board]
                 return fpga_part
@@ -715,11 +724,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         if self.verify_steps is None:
             return None
         if not Path(self.verify_input_npy).is_file():
-            raise FINNConfigurationError("verify_input_npy not found: " + self.verify_input_npy)
+            raise FINNConfigurationError("verify_input_npy not found: " + str(self.verify_input_npy))
         verify_input_npy = np.load(self.verify_input_npy)
         if not Path(self.verify_expected_output_npy).is_file():
             raise FINNConfigurationError(
-                "verify_expected_output_npy not found: " + self.verify_expected_output_npy
+                "verify_expected_output_npy not found: " + str(self.verify_expected_output_npy)
             )
         verify_expected_output_npy = np.load(self.verify_expected_output_npy)
         return (

@@ -31,7 +31,7 @@ from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 
-class TLastMarker_hls(HWCustomOp, HLSBackend):
+class TLastMarker_hls(HLSBackend, HWCustomOp):
     """Node that adds/removes AXI stream TLAST signals where needed. Its behavior
     is transparent in node-by-node execution, only visible in IP-stitched rtlsim or
     actual hardware.

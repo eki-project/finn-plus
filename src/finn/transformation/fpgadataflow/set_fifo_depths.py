@@ -220,11 +220,15 @@ class CapConvolutionFIFODepths(Transformation):
 
 
 def xsi_fifosim(
-    model: ModelWrapper,
-    n_inferences: int,
-    max_iters: float | None = None,
-    throttle_cycles: int = 0,
-) -> dict[str, int]:
+    model,
+    n_inferences,
+    is_single_node,
+    total_nodes: int = 1,
+    current_node_index: int | None = None,
+    previous_node_name: str | None = None,
+    max_iters=None,
+    throttle_cycles=0,
+):
     """Create a XSI model of stitched IP and use a simple C++
     driver to drive the input stream. Useful for FIFO sizing, latency
     and throughput measurement. If max_iters is None, use the default
@@ -243,6 +247,10 @@ def xsi_fifosim(
     ret_dict = rtlsim_exec_cppxsi(
         model,
         ctx,
+        is_single_node,
+        total_nodes=total_nodes,
+        current_node_index=current_node_index,
+        previous_node_name=previous_node_name,
         dummy_data_mode=True,
         timeout_cycles=max_iters,
         throttle_cycles=throttle_cycles,
@@ -608,6 +616,10 @@ class SplitLargeFIFOs(Transformation):
                     dtype = cast("str", n_inst.get_nodeattr("dataType"))
                     ram_style = n_inst.get_nodeattr("ram_style")
                     shape = model.get_tensor_shape(node.input[0])
+                    log.info(
+                        f"Splitting FIFO {node.name} of depth {depth} "
+                        f"into {len(cfgs)} FIFOs with depths {[c[0] for c in cfgs]}"
+                    )
                     for i, (fifo_depth, impl_style) in enumerate(cfgs):
                         inp = node.input[0] if i == 0 else node.name + "_" + str(i - 1) + "_out"
                         if i == len(cfgs) - 1:

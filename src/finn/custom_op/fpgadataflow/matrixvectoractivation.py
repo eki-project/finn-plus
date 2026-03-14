@@ -48,6 +48,7 @@ from qonnx.util.basic import (
 )
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.memstream import MemStreamSupport
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.logging import log
 from finn.util.settings import get_settings
@@ -60,7 +61,7 @@ from finn.util.settings import get_settings
 # the ... here can be any shape (representing groups of vectors)
 
 
-class MVAU(HWCustomOp):
+class MVAU(MemStreamSupport, HWCustomOp):
     """Abstraction layer for HW implementation of MatrixVectorActivation layers."""
 
     def __init__(self, onnx_node, **kwargs):

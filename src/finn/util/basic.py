@@ -164,7 +164,7 @@ def get_liveness_threshold_cycles():
     return int(os.getenv("LIVENESS_THRESHOLD", 1000000))
 
 
-def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path:
+def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str:
     """Creates a folder with given prefix to be used as a build dir.
     Use this function instead of tempfile.mkdtemp to ensure any generated files
     will survive on the host after the FINN Docker container exits."""
@@ -185,7 +185,7 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
     return str(tmpdir)
 
 
-def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
+def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True, print_stderr=True):
     """Helper function to launch a process in a way that facilitates logging
     stdout/stderr with Python loggers.
     Returns (cmd_out, cmd_err) if successful, raises CalledProcessError otherwise."""
@@ -204,7 +204,7 @@ def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
     # Handle stderr, depending on return code
     if process.returncode == 0:
         # Process completed successfully, log stderr only as WARNING
-        if cmd_err:
+        if cmd_err and print_stderr:
             log.warning(cmd_err)
     else:
         # Process failed, log stderr as ERROR
