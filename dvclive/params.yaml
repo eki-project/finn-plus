@@ -1,0 +1,16 @@
+params:
+  dut: cybsec
+  auto_fifo_depths: true
+  auto_fifo_strategy: analytical
+  tav_generation_strategy: rtlsim
+  tav_utilization_strategy: aggressive_relaxation
+  generate_outputs:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+  model_path: models/cybsec/unsw_nb15-mlp-w2a2.onnx
+metadata:
+  tool_version: '2024.2'
