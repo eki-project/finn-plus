@@ -1,0 +1,47 @@
+{
+    "status": "ok",
+    "hls_estimate": {
+        "resources": {
+            "LUT": 165854.0,
+            "FF": 147901.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 474.0,
+            "URAM": 0.0
+        }
+    },
+    "rtlsim": {
+        "performance": {
+            "N": 3,
+            "TIMEOUT": 0,
+            "latency_cycles": 2540472,
+            "cycles": 4346821,
+            "fclk[mhz]": 100.0,
+            "throughput[images-s]": 69.01595441818286,
+            "stable_throughput[images-s]": 166.08086255756777
+        }
+    },
+    "fifosizing": {
+        "total_fifo_size_kB": 3805.73775
+    },
+    "time": {
+        "step_resnet50_tidy": 13,
+        "step_resnet50_streamline": 217,
+        "step_resnet50_convert_to_hw": 6,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 13,
+        "step_generate_estimate_reports": 0,
+        "step_set_fifo_depths": 8753,
+        "step_hw_codegen": 1,
+        "step_hw_ipgen": 536,
+        "step_create_stitched_ip": 2044,
+        "step_measure_rtlsim_performance": 23377,
+        "step_out_of_context_synthesis": 0,
+        "step_synthesize_bitfile": 0,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 34960
+    }
+}
