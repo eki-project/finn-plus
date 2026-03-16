@@ -39,4 +39,14 @@
         "validation_dataset" : ["mnist"],
         "experiments_config_path": ["ci/experiments/default.json"]
     },
+    # cnv-w1a1 with live FIFO sizing
+    {
+        "dut": ["bnn-pynq"],
+        "model_path": [models/bnn-pynq/cnv-w1a1_qonnx.onnx],
+        "folding_config_file": [models/bnn-pynq/cnv-w1a1_folding_config.json],
+        "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a1_specialize_layers.json],
+        "live_fifo_sizing": [True],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+    },
 ]
