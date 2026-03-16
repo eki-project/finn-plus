@@ -17,6 +17,7 @@ import shutil
 
 from finn.custom_op.fpgadataflow.layernorm import LayerNorm
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.util.settings import get_settings
 
 
 class LayerNorm_rtl(LayerNorm, RTLBackend):
@@ -34,8 +35,8 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
         return my_attrs
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "layernorm/")
-        template_path = rtllib_dir + "layernorm_wrapper_template.v"
+        rtllib_dir = os.path.join(get_settings().finn_rtllib, "layernorm")
+        template_path = os.path.join(rtllib_dir, "layernorm_wrapper_template.v")
         simd = self.get_nodeattr("SIMD")
         topname = self.get_verilog_top_module_name()
         n = self.get_normal_input_shape()[-1]
@@ -69,7 +70,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
 
         sv_files = ["layernorm.sv", "queue.sv", "accuf.sv", "binopf.sv", "rsqrtf.sv"]
         for sv_file in sv_files:
-            shutil.copy(rtllib_dir + sv_file, code_gen_dir)
+            shutil.copy(os.path.join(rtllib_dir, sv_file), code_gen_dir)
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
         self.set_nodeattr("ipgen_path", code_gen_dir)
@@ -78,18 +79,18 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "layernorm/")
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "layernorm")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
 
         verilog_files = [
-            rtllib_dir + "layernorm.sv",
-            rtllib_dir + "queue.sv",
-            rtllib_dir + "accuf.sv",
-            rtllib_dir + "binopf.sv",
-            rtllib_dir + "rsqrtf.sv",
-            code_gen_dir + self.get_nodeattr("gen_top_module") + ".v",
+            os.path.join(rtllib_dir, "layernorm.sv"),
+            os.path.join(rtllib_dir, "queue.sv"),
+            os.path.join(rtllib_dir, "accuf.sv"),
+            os.path.join(rtllib_dir, "binopf.sv"),
+            os.path.join(rtllib_dir, "rsqrtf.sv"),
+            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + ".v"),
         ]
         return verilog_files
 

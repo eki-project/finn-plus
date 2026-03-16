@@ -50,6 +50,7 @@ from qonnx.util.basic import (
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.logging import log
+from finn.util.settings import get_settings
 
 
 class VVAU(HWCustomOp):
@@ -534,17 +535,21 @@ class VVAU(HWCustomOp):
             thresholds = None
         idt = self.get_input_datatype(0)
 
-        (acc_min, acc_max) = calculate_matvec_accumulator_range(weights, idt)
-        # if runtime-writeable weights, then the values of the weights can
+        # if runtime-writeable weights or mem_mode=external, then the values of the weights can
         # change and we need to use the worst-case values from the datatypes
-        if self.get_nodeattr("runtime_writeable_weights"):
+        if (
+            self.get_nodeattr("runtime_writeable_weights")
+            or self.get_nodeattr("mem_mode") == "external"
+        ):
             wdt = self.get_input_datatype(1)
-            lower_worst = wdt.min() * np.ones_like(weights)
+            lower_worst = wdt.min() * np.ones((k_h * k_w, fm))
             lower_range = calculate_matvec_accumulator_range(lower_worst, idt)
-            upper_worst = wdt.max() * np.ones_like(weights)
+            upper_worst = wdt.max() * np.ones((k_h * k_w, fm))
             upper_range = calculate_matvec_accumulator_range(upper_worst, idt)
             acc_min = min(min(lower_range), min(upper_range))
             acc_max = max(max(lower_range), max(upper_range))
+        else:
+            (acc_min, acc_max) = calculate_matvec_accumulator_range(weights, idt)
 
         # if the thresholds can be used to determine range, then adjust the range
         # according to the known values of the thresholds
@@ -602,7 +607,10 @@ class VVAU(HWCustomOp):
 
     def minimize_weight_bit_width(self, model):
         """Minimize the bit width based on the values of the weights"""
-        if not self.get_nodeattr("runtime_writeable_weights"):
+        if not (
+            self.get_nodeattr("runtime_writeable_weights")
+            or self.get_nodeattr("mem_mode") == "external"
+        ):
             weights = model.get_initializer(self.onnx_node.input[1])
             w_min = weights.min()
             w_max = weights.max()
@@ -1005,8 +1013,8 @@ class VVAU(HWCustomOp):
 
             # Instantiate a streamer and connect it to the IP
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-            axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
-            ms_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
+            axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
+            ms_rtllib_dir = os.path.join(get_settings().finn_rtllib, "memstream/hdl/")
             file_suffix = "_memstream_wrapper.v"
             # automatically find memstream verilog component in code generation directory
             for fname in os.listdir(code_gen_dir):

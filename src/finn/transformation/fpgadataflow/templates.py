@@ -218,7 +218,8 @@ validate_bd_design
 
 set_property SYNTH_CHECKPOINT_MODE "Hierarchical" [ get_files top.bd ]
 make_wrapper -files [get_files top.bd] -import -fileset sources_1 -top
-set_property top top_wrapper [current_fileset]
+set_property top top_wrapper [get_filesets sim_1]
+set_property top top_wrapper [get_filesets sources_1]
 update_compile_order -fileset sources_1
 
 # TODO: make strategies and optimization options configurable

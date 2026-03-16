@@ -74,8 +74,8 @@ def execute_parent(parent_path, child_path, input_tensor_npy, return_full_ctx=Fa
         numpy.ndarray or dict: Output tensor or full execution context
     """
     parent_model = load_model_checkpoint(parent_path)
-    iname = parent_model.graph.input[0].name
-    oname = parent_model.graph.output[0].name
+    iname = parent_model.get_first_global_in()
+    oname = parent_model.get_first_global_out()
     sdp_node = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
     sdp_node = getCustomOp(sdp_node)
     sdp_node.set_nodeattr("model", child_path)

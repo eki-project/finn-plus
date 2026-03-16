@@ -140,6 +140,7 @@ class Experiment:
 
     def load_experiment_overlay(self):
         """Load and initialize the experiment overlay."""
+        sys.setrecursionlimit(10000)  # PYNQ cache seems to crash otherwise for large designs
         PL.reset()  # See https://github.com/Xilinx/PYNQ/issues/1409
 
         if self.insert_kwargs:

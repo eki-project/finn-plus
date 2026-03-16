@@ -27,12 +27,17 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Transformations for inserting and sizing FIFOs in FINN dataflow graphs."""
+
 import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames, SortGraph
+from qonnx.util.basic import gen_finn_dt_tensor
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.core.rtlsim_exec import rtlsim_exec_cppxsi
@@ -43,31 +48,49 @@ from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from finn.util.exception import FINNInternalError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
-def reset_implementation(node):
+
+# Only used for type checking
+class _SimProtocol(Protocol):
+    """Protocol for simulation objects used in signal access helpers."""
+
+    inputs: list[tuple[str, ...]]
+    outputs: list[tuple[str, ...]]
+    io: dict[str, int]
+
+
+def reset_implementation(node: "HWCustomOp") -> None:
+    """Reset IP generation attributes of a node to trigger re-synthesis."""
     node.set_nodeattr("code_gen_dir_ipgen", "")
     node.set_nodeattr("ipgen_path", "")
     node.set_nodeattr("ip_path", "")
 
 
-def set_signal(sim, keyw, value):
+def set_signal(sim: _SimProtocol, keyw: str, value: int) -> None:
+    """Set the first simulation input signal whose name contains keyw to value."""
     for i in range(len(sim.inputs)):
         input_name = sim.inputs[i][0]
         if keyw in input_name:
             sim.io[input_name] = value
 
 
-def get_signal(sim, keyw):
+def get_signal(sim: _SimProtocol, keyw: str) -> int | None:
+    """Return the value of the first simulation output signal whose name contains keyw."""
     for i in range(len(sim.outputs)):
         output_name = sim.outputs[i][0]
         if keyw in output_name:
             return sim.io[output_name]
+    return None
 
 
-def optimize_depth(depth):
+def optimize_depth(depth: int) -> int:
+    """Round depth to avoid resource-inefficient FIFO sizes."""
     if depth <= 2:
         return 2
     if depth <= 32:
@@ -82,14 +105,17 @@ def optimize_depth(depth):
 class RemoveShallowFIFOs(Transformation):
     """Remove zero-depth FIFOs The threshold used to be 2 instead of 0, but
     with increasing number of FINN RTL components 2-depth FIFOs are still
-    important for decoupling.."""
+    important for decoupling..
+    """
 
     # TODO add unit test
 
-    def __init__(self, shallow_threshold=0):
+    def __init__(self, shallow_threshold: int = 0) -> None:
+        """Initialize RemoveShallowFIFOs with the given depth threshold."""
         self.shallow_threshold = shallow_threshold
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Remove FIFOs at or below the shallow threshold depth."""
         shallow_fifos = []
         for node in model.graph.node:
             if len(node.input) > 0:
@@ -98,14 +124,16 @@ class RemoveShallowFIFOs(Transformation):
                 is_first_node = True
             if (
                 node.op_type.startswith("StreamingFIFO")
-                and getCustomOp(node).get_nodeattr("depth") <= self.shallow_threshold
-                and (not is_first_node)
+                and cast("int", getCustomOp(node).get_nodeattr("depth")) <= self.shallow_threshold
+                and (not is_first_node or getCustomOp(node).get_nodeattr("mlo_max_iter"))
             ):
                 # bypass shallow fifos
                 shallow_fifos.append(node)
                 consumers = model.find_consumers(node.output[0])
                 if consumers == []:
                     producer = model.find_producer(node.input[0])
+                    if producer is None:
+                        raise FINNInternalError("Producer not found for FIFO input")
                     for idx, inp in enumerate(producer.output):
                         if inp == node.input[0]:
                             producer.output[idx] = node.output[0]
@@ -152,11 +180,13 @@ class CapConvolutionFIFODepths(Transformation):
 
     # TODO add unit test
 
-    def __init__(self, max_qsrl_depth=256):
+    def __init__(self, max_qsrl_depth: int = 256) -> None:
+        """Initialize CapConvolutionFIFODepths with the given maximum SRL FIFO depth."""
         super().__init__()
         self.max_qsrl_depth = max_qsrl_depth
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Cap FIFO depths between ConvolutionInputGenerator and MVAU nodes."""
         # TODO move this to own transformation
         for node in model.graph.node:
             # look for following pattern:
@@ -172,11 +202,11 @@ class CapConvolutionFIFODepths(Transformation):
                     continue
                 if not fifo_cons.op_type.startswith("MVAU"):
                     continue
-                op_inst = getCustomOp(node)
-                depth = op_inst.get_nodeattr("depth")
+                op_inst = cast("HWCustomOp", getCustomOp(node))
+                depth = cast("int", op_inst.get_nodeattr("depth"))
                 # SWG has an internal buffer of 1 row, so we use this as a
                 # rule of thumb to set FIFO depth to be no larger than 1 row
-                (bs, h, w, ifold, simd) = op_inst.get_folded_input_shape()
+                (_bs, _h, w, ifold, _simd) = op_inst.get_folded_input_shape()
                 new_depth = optimize_depth(w * ifold)
                 new_depth = min(new_depth, depth)
                 op_inst.set_nodeattr("depth", new_depth)
@@ -190,16 +220,21 @@ class CapConvolutionFIFODepths(Transformation):
         return (model, False)
 
 
-def xsi_fifosim(model, n_inferences, max_iters=None, throttle_cycles=0):
+def xsi_fifosim(
+    model: ModelWrapper,
+    n_inferences: int,
+    max_iters: float | None = None,
+    throttle_cycles: int = 0,
+) -> dict[str, int]:
     """Create a XSI model of stitched IP and use a simple C++
     driver to drive the input stream. Useful for FIFO sizing, latency
     and throughput measurement. If max_iters is None, use the default
     liveness threshold instead. throttle_cycles can be used for throttling
-    the input stream every time a frame is finished."""
-
-    iname = model.graph.input[0].name
+    the input stream every time a frame is finished.
+    """
+    iname = model.get_first_global_in()
     first_node = model.find_consumer(iname)
-    oname = model.graph.output[0].name
+    oname = model.get_first_global_out()
     last_node = model.find_producer(oname)
     assert (first_node is not None) and (last_node is not None), "Failed to find first/last nodes"
     # define execution context for dummy data mode:
@@ -262,15 +297,16 @@ class InsertAndSetFIFODepths(Transformation):
 
     def __init__(
         self,
-        fpgapart,
-        clk_ns=10.0,
-        max_qsrl_depth=256,
-        max_depth=None,
-        swg_exception=False,
-        vivado_ram_style="auto",
-        fifosim_input_throttle=True,
-        cfg_n_inferences=2,
-    ):
+        fpgapart: str,
+        clk_ns: float = 10.0,
+        max_qsrl_depth: int = 256,
+        max_depth: int | None = None,
+        swg_exception: bool = False,
+        vivado_ram_style: str = "auto",
+        fifosim_input_throttle: bool = True,
+        cfg_n_inferences: int = 2,
+    ) -> None:
+        """Initialize InsertAndSetFIFODepths with synthesis and simulation parameters."""
         super().__init__()
         self.fpgapart = fpgapart
         self.clk_ns = clk_ns
@@ -280,14 +316,34 @@ class InsertAndSetFIFODepths(Transformation):
         self.vivado_ram_style = vivado_ram_style
         self.fifosim_input_throttle = fifosim_input_throttle
         self.cfg_n_inferences = cfg_n_inferences
+        self.mlo_max_iter = 0
+        self.ind_map = {}
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Insert and size StreamingFIFOs using RTL simulation."""
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
+        for x in model.graph.node:
+            if x.op_type == "FINNLoop":
+                reset_implementation(getCustomOp(x))
+                return (model, False)
+
         # these optypes may potentially use external weights
+        # but don't have the param input exposed as a graph input
         # we'll temporarily change them to use decoupled mode for FIFO sizing
         extw_optypes = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl"]
-        # change external to decoupled and warn user
-        # this way we are sure we have exactly one input/output
-        modified_fc_nodes = []
+        modified_extw_nodes = []
+
+        # these optypes may potentially be param nodes in an mlo
+        # we'll temporarily change them to use external mode for FIFO sizing
+        mlo_optypes = [
+            "MVAU_hls",
+            "MVAU_rtl",
+            "Thresholding_rtl",
+            "ElementwiseAdd_hls",
+            "ElementwiseMul_hls",
+        ]
+        modified_mlo_nodes = []
         for node in model.graph.node:
             # verify assumptions
             assert is_hls_node(node) or is_rtl_node(node), "Found non-fpgadataflow node: " + str(
@@ -295,15 +351,16 @@ class InsertAndSetFIFODepths(Transformation):
             )
             op_type = node.op_type
             assert not op_type.startswith("StreamingFIFO"), "Found existing StreamingFIFO node"
-            node = getCustomOp(node)
-            ifd = node.get_nodeattr("inFIFODepths")
-            ofd = node.get_nodeattr("outFIFODepths")
+            node = cast("HWCustomOp", getCustomOp(node))
+            ifd = cast("list", node.get_nodeattr("inFIFODepths"))
+            ofd = cast("list", node.get_nodeattr("outFIFODepths"))
             if self.max_depth is not None:
                 ifd = [self.max_depth] * len(ifd)
                 ofd = [self.max_depth] * len(ofd)
             else:
                 # set each FIFO to its tensor size
                 # (except stream width hence the :-1)
+                tensor_size = 1
                 for i in range(len(ifd)):
                     # safe guard that for very small tensors depth is not set to 1
                     tensor_size = np.prod(node.get_folded_input_shape(i)[:-1])
@@ -312,19 +369,47 @@ class InsertAndSetFIFODepths(Transformation):
                     # safe guard that for very small tensors depth is not set to 1
                     depth = np.prod(node.get_folded_output_shape(o)[:-1])
                     ofd[o] = tensor_size if tensor_size > 1 else 2
-            node.set_nodeattr("inFIFODepths", ifd)
-            node.set_nodeattr("outFIFODepths", ofd)
+            # set node attribute and ensure that it gets saved as list of integers
+            node.set_nodeattr("inFIFODepths", [int(fifo) for fifo in ifd])
+            node.set_nodeattr("outFIFODepths", [int(fifo) for fifo in ofd])
+            # do necessary temporary settinggs for external weights nodes
             if node.onnx_node.op_type in extw_optypes:
+                input_names_set = {inp.name for inp in model.graph.input}
                 mmode = node.get_nodeattr("mem_mode")
-                if mmode == "external":
-                    modified_fc_nodes.append(node.onnx_node.name)
+                if mmode == "external" and node.onnx_node.input[1] not in input_names_set:
+                    modified_extw_nodes.append(node.onnx_node.name)
                     node.set_nodeattr("mem_mode", "internal_decoupled")
                     reset_implementation(node)
                     log.warning(
-                        f"Changed mem_mode from external"
-                        f" to internal_decoupled for {node.onnx_node.name}"
+                        "Changed mem_mode from external to internal_decoupled for "
+                        + node.onnx_node.name
                     )
-
+            # do necessary temporary settings for mlo nodes
+            if node.onnx_node.op_type in mlo_optypes:
+                mlo_max_iter = node.get_nodeattr("mlo_max_iter")
+                if mlo_max_iter:
+                    modified_mlo_nodes.append(node.onnx_node.name)
+                    node.set_nodeattr("mlo_max_iter", 0)
+                    if node.onnx_node.op_type.startswith("MVAU"):
+                        node.set_nodeattr("mem_mode", "external")
+                    elif (
+                        node.onnx_node.op_type == "Thresholding_rtl"
+                        or node.onnx_node.op_type.startswith("Elementwise")
+                    ):
+                        # set thresholding array to a dummy value
+                        param_input = node.onnx_node.input[1]
+                        # remember index of input
+                        inputs = [x.name for x in model.graph.input]
+                        ind = inputs.index(param_input)
+                        tdt = model.get_tensor_datatype(param_input)
+                        tshape = model.get_tensor_shape(param_input)
+                        dummy_threshs = gen_finn_dt_tensor(tdt, tuple(tshape))
+                        if node.onnx_node.op_type == "Thresholding_rtl":
+                            dummy_threshs = np.sort(dummy_threshs, axis=1)
+                        model.set_initializer(param_input, dummy_threshs)
+                        self.ind_map[node.onnx_node.name] = ind
+                    self.mlo_max_iter = mlo_max_iter
+                    reset_implementation(node)
         # insert stream infrastructure (DWC/FIFO)
         model = model.transform(InsertDWC())
         model = model.transform(InsertFIFO(create_shallow_fifos=True))
@@ -347,8 +432,8 @@ class InsertAndSetFIFODepths(Transformation):
         # insert FIFOs and do all transformations for RTLsim
         model = model.transform(AnnotateCycles())
         perf = model.analysis(dataflow_performance)
-        latency = perf["critical_path_cycles"]
-        max_cycles = perf["max_cycles"]
+        latency = cast("int", perf["critical_path_cycles"])
+        max_cycles = cast("int", perf["max_cycles"])
         model = model.transform(PrepareIP(self.fpgapart, self.clk_ns))
         model = model.transform(HLSSynthIP())
         model = model.transform(CreateStitchedIP(self.fpgapart, self.clk_ns))
@@ -360,18 +445,18 @@ class InsertAndSetFIFODepths(Transformation):
 
         # set up rate limit for input throttling
         if self.fifosim_input_throttle:
-            first_node = getCustomOp(model.graph.node[0])
+            first_node = cast("HWCustomOp", getCustomOp(model.graph.node[0]))
             inp_fold = np.prod(first_node.get_folded_input_shape()[:-1])
             throttle_cycles = max(0, max_cycles - inp_fold)
         else:
             throttle_cycles = 0
 
         sim = xsi_fifosim(
-            model, self.cfg_n_inferences, max_iters=max_iters, throttle_cycles=throttle_cycles
+            model, self.cfg_n_inferences, max_iters=max_iters, throttle_cycles=int(throttle_cycles)
         )
 
         for ind, node in enumerate(fifo_nodes):
-            maxcount_name = "maxcount_%d" % ind
+            maxcount_name = f"maxcount_{ind}"
             if ind == 0:
                 maxcount_name = "maxcount"
             fifos[node.name] = sim[maxcount_name]
@@ -386,7 +471,7 @@ class InsertAndSetFIFODepths(Transformation):
                 assert node.name in fifos, "FIFO node not found in size dictionary"
                 # set depth of FIFO
                 depth = optimize_depth(fifos[node.name])
-                node_inst = getCustomOp(node)
+                node_inst = cast("HWCustomOp", getCustomOp(node))
                 node_inst.set_nodeattr("depth", depth)
                 node_inst.set_nodeattr("depth_monitor", 0)
                 # exception for top-level IO FIFOs which cause a bug in simulation
@@ -407,20 +492,60 @@ class InsertAndSetFIFODepths(Transformation):
                 # (removed setting of node FIFO size attributes to 0 here)
                 # for every extw node we changed from external to decoupled,
                 # change back and reset implementation
-                if node.op_type in extw_optypes:
-                    if node.name in modified_fc_nodes:
+                if node.op_type in extw_optypes and node.name in modified_extw_nodes:
+                    node_inst = cast("HWCustomOp", getCustomOp(node))
+                    node_inst.set_nodeattr("mem_mode", "external")
+                    reset_implementation(node_inst)
+                    modified_extw_nodes.remove(node.name)
+                # do the same resetting for mlo nodes
+                if node.op_type in mlo_optypes:
+                    if node.name in modified_mlo_nodes and node.op_type.startswith("MVAU"):
                         node_inst = getCustomOp(node)
-                        node_inst.set_nodeattr("mem_mode", "external")
+                        node_inst.set_nodeattr("mlo_max_iter", self.mlo_max_iter)
+                        node_inst.set_nodeattr("mem_mode", "internal_decoupled")
                         reset_implementation(node_inst)
-                        modified_fc_nodes.remove(node.name)
+                        modified_mlo_nodes.remove(node.name)
+
+        sorted_ind_map = dict(sorted(self.ind_map.items(), key=lambda item: item[1]))
+        for k, v in sorted_ind_map.items():
+            node = model.get_node_from_name(k)
+            node_inst = getCustomOp(node)
+            node_inst.set_nodeattr("mlo_max_iter", self.mlo_max_iter)
+            # remove initializer again
+            param_input = node.input[1]
+            param_input_vi = model.get_tensor_valueinfo(param_input)
+            model.del_initializer(param_input)
+            model.graph.input.insert(self.ind_map[node.name], param_input_vi)
+            model.graph.value_info.remove(param_input_vi)
+            if node.op_type.startswith("Elementwise"):
+                node_inst.set_nodeattr("rhs_style", "input")
+            reset_implementation(node_inst)
+            modified_mlo_nodes.remove(node.name)
 
         assert (
-            len(modified_fc_nodes) == 0 and len(fifos.keys()) == 0
+            len(modified_extw_nodes) == 0 and len(fifos.keys()) == 0
+        ), "FIFO/FC nodes left untouched after model reconfiguration"
+        assert (
+            len(modified_mlo_nodes) == 0 and len(fifos.keys()) == 0
         ), "FIFO/FC nodes left untouched after model reconfiguration"
 
         # handle custom sizing for SWG FIFOs if desired
         if self.swg_exception:
             model = model.transform(CapConvolutionFIFODepths(max_qsrl_depth=self.max_qsrl_depth))
+
+        # remove FIFOs from mlo parameter inputs
+        for op_type in mlo_optypes:
+            nodes = model.get_nodes_by_op_type(op_type)
+            for node in nodes:
+                node_inst = getCustomOp(node)
+                if node_inst.get_nodeattr("mlo_max_iter"):
+                    # Check if there is a FIFO inserted at param input
+                    fifo_node = model.find_producer(node.input[1])
+                    if fifo_node and fifo_node.op_type.startswith("StreamingFIFO"):
+                        fifo_inst = getCustomOp(fifo_node)
+                        fifo_inst.set_nodeattr("depth", 0)
+                        fifo_inst.set_nodeattr("mlo_max_iter", 1)
+
         # remove shallow FIFOs
         model = model.transform(RemoveShallowFIFOs())
 
@@ -437,7 +562,7 @@ class InsertAndSetFIFODepths(Transformation):
         # reflect final values in attributes
         for node in model.graph.node:
             if not node.op_type.startswith("StreamingFIFO"):
-                node_inst = getCustomOp(node)
+                node_inst = cast("HWCustomOp", getCustomOp(node))
                 fifodepth_in = []
                 for node_inp in node.input:
                     prod = model.find_producer(node_inp)
@@ -452,7 +577,7 @@ class InsertAndSetFIFODepths(Transformation):
                     else:
                         # there is a producer for this input
                         if prod.op_type.startswith("StreamingFIFO"):
-                            prod_inst = getCustomOp(prod)
+                            prod_inst = cast("HWCustomOp", getCustomOp(prod))
                             fifodepth_in.append(prod_inst.get_nodeattr("depth"))
                         else:
                             # explicitly no FIFO on this dynamic input
@@ -476,30 +601,34 @@ class InsertAndSetFIFODepths(Transformation):
                         else:
                             # explicitly no FIFO on this dynamic output
                             fifodepth_out.append(0)
-                node_inst.set_nodeattr("inFIFODepths", fifodepth_in)
-                node_inst.set_nodeattr("outFIFODepths", fifodepth_out)
+                # set node attribute and ensure that it gets saved as list of integers
+                node_inst.set_nodeattr("inFIFODepths", [int(fifo) for fifo in fifodepth_in])
+                node_inst.set_nodeattr("outFIFODepths", [int(fifo) for fifo in fifodepth_out])
 
         return (model, False)
 
 
-def get_fifo_split_configs(depth, max_qsrl_depth=256, max_vivado_depth=32768):
-    """Break non-power-of-2 sized FIFO depths into several ones"""
+def get_fifo_split_configs(
+    depth: int, max_qsrl_depth: int = 256, max_vivado_depth: int = 32768
+) -> list[tuple[int, str]]:
+    """Break non-power-of-2 sized FIFO depths into several ones."""
 
-    def floor_pow2(x):
+    def floor_pow2(x: int) -> int:
+        """Return the largest power of 2 less than or equal to x."""
         if (x & (x - 1) == 0) and x != 0:
             return x
-        else:
-            return 1 << ((x - 1).bit_length() - 1)
+        return 1 << ((x - 1).bit_length() - 1)
 
-    def decompose_pow2(x):
+    def decompose_pow2(x: int) -> list[int]:
+        """Decompose x into a sum of powers of 2,
+        with each power of 2 no larger than max_qsrl_depth.
+        """
         if x <= max_qsrl_depth:
             return [x]
-        else:
-            r = floor_pow2(x)
-            if x == r:
-                return [x]
-            else:
-                return [r, *decompose_pow2(x - r)]
+        r = floor_pow2(x)
+        if x == r:
+            return [x]
+        return [r, *decompose_pow2(x - r)]
 
     ret = []
     # trivial case: for small FIFOs, return as-is with rtl style
@@ -534,7 +663,7 @@ def get_fifo_split_configs(depth, max_qsrl_depth=256, max_vivado_depth=32768):
 
 
 class SplitLargeFIFOs(Transformation):
-    """Split large FIFOs before implementation, for two reasons:
+    """Split large FIFOs before implementation, for two reasons.
 
     - impl_style="vivado" supports a max depth of 32k. Any larger
       FIFOs must be implemented as a sequence of smaller FIFOs.
@@ -546,32 +675,29 @@ class SplitLargeFIFOs(Transformation):
 
     """
 
-    def __init__(self, max_qsrl_depth=256, max_vivado_depth=32768):
+    def __init__(self, max_qsrl_depth: int = 256, max_vivado_depth: int = 32768) -> None:
+        """Initialize SplitLargeFIFOs with maximum FIFO depth constraints."""
         super().__init__()
         self.max_qsrl_depth = max_qsrl_depth
         self.max_vivado_depth = max_vivado_depth
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Split large FIFOs into chains of smaller power-of-two FIFOs."""
         graph = model.graph
-        node_ind = 0
         graph_modified = False
-        for node in graph.node:
-            node_ind += 1
+        for node_ind, node in enumerate(graph.node, 1):
             if node.op_type == ("StreamingFIFO_rtl"):
-                n_inst = getCustomOp(node)
-                depth = n_inst.get_nodeattr("depth")
+                n_inst = cast("HWCustomOp", getCustomOp(node))
+                depth = cast("int", n_inst.get_nodeattr("depth"))
                 cfgs = get_fifo_split_configs(depth, self.max_qsrl_depth, self.max_vivado_depth)
                 if len(cfgs) > 1:
                     fld_shape = n_inst.get_folded_output_shape()
                     n_shape = n_inst.get_normal_output_shape()
-                    dtype = n_inst.get_nodeattr("dataType")
+                    dtype = cast("str", n_inst.get_nodeattr("dataType"))
                     ram_style = n_inst.get_nodeattr("ram_style")
                     shape = model.get_tensor_shape(node.input[0])
                     for i, (fifo_depth, impl_style) in enumerate(cfgs):
-                        if i == 0:
-                            inp = node.input[0]
-                        else:
-                            inp = node.name + "_" + str(i - 1) + "_out"
+                        inp = node.input[0] if i == 0 else node.name + "_" + str(i - 1) + "_out"
                         if i == len(cfgs) - 1:
                             outp = node.output[0]
                         else:

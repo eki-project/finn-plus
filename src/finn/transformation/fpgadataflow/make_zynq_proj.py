@@ -55,8 +55,8 @@ from finn.util.basic import (
     pynq_native_port_width,
     pynq_part_map,
 )
-from finn.util.deps import get_deps_path
 from finn.util.exception import FINNError, FINNUserError
+from finn.util.settings import get_settings
 
 from . import templates
 
@@ -97,12 +97,20 @@ class MakeZYNQProject(Transformation):
     value.
     """
 
-    def __init__(self, platform, period_ns, enable_debug=False, enable_finn_switch=False):
+    def __init__(
+        self,
+        platform,
+        period_ns,
+        enable_debug=False,
+        enable_finn_switch=False,
+        live_fifo_sizing=False,
+    ):
         """Initialize MakeZYNQProject with platform settings."""
         super().__init__()
         self.platform = platform
         self.period_ns = period_ns
         self.enable_finn_switch = enable_finn_switch
+        self.live_fifo_sizing = live_fifo_sizing
         self.enable_debug = 1 if enable_debug else 0
         self.enable_gpio_reset = 0
         self.enable_selectable = 1  # TODO make this optional
@@ -136,7 +144,7 @@ class MakeZYNQProject(Transformation):
 
         if self.enable_finn_switch:
             # TODO: Add ‑copy_to
-            module_dir = os.environ["FINN_RTLLIB"] + "/finn_switch/hdl/switch.v"
+            module_dir = os.path.join(get_settings().finn_rtllib, "finn_switch", "hdl", "switch.v")
             config.append(
                 "add_files -copy_to [get_property DIRECTORY [current_project]] -norecurse %s"
                 % module_dir
@@ -177,6 +185,42 @@ class MakeZYNQProject(Transformation):
                 "[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]" % (master_axilite_idx)
             )
             config.append("assign_axi_addr_proc instrumentation_wrap_0/s_axi_ctrl")
+            master_axilite_idx += 1
+
+        if self.live_fifo_sizing:
+            # instantiate virtual FIFO controller
+            rtl_path = get_settings().finn_rtllib
+            files = [
+                os.path.join(rtl_path, "axi/hdl/axilite.sv"),
+                os.path.join(rtl_path, "fifo_virtual/hdl/fifo_gauge_pkg.sv"),
+                os.path.join(rtl_path, "fifo_virtual/hdl/fifo_controller.sv"),
+                os.path.join(rtl_path, "fifo_virtual/hdl/fifo_controller_wrapper.v"),
+            ]
+            for f in files:
+                config.append(f"add_files -norecurse {f}")
+            config.append(
+                "create_bd_cell -type module -reference fifo_controller_wrapper fifo_controller_0"
+            )
+
+            # connect clock & reset
+            config.append(
+                "connect_bd_net [get_bd_pins fifo_controller_0/ap_clk] "
+                "[get_bd_pins smartconnect_0/aclk]"
+            )
+            config.append(
+                "connect_bd_net [get_bd_pins fifo_controller_0/ap_rst_n] "
+                "[get_bd_pins smartconnect_0/aresetn]"
+            )
+
+            # connect AXI-lite control interface
+            config.append(
+                "connect_bd_intf_net [get_bd_intf_pins fifo_controller_0/s_axi] "
+                "[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]" % (master_axilite_idx)
+            )
+            # Do not use assign_axi_addr_proc here. It doesn't map the 32-bit aperture correctly.
+            # Instead, let assign_bd_address command assign the address later.
+            # TODO: Support 32-bit systems by making aperture smaller?
+            # config.append("assign_axi_addr_proc fifo_controller_0/s_axi")
             master_axilite_idx += 1
 
         # instantiate nested AXI interconnects if required
@@ -222,11 +266,14 @@ class MakeZYNQProject(Transformation):
         else:
             axilite_idx = master_axilite_idx
 
+        num_sdps = len(model.graph.node)
+        prev_node_name = None
         for node in model.graph.node:
             assert node.op_type == "StreamingDataflowPartition", "Invalid link graph"
             sdp_node = getCustomOp(node)
             dataflow_model_filename = sdp_node.get_nodeattr("model")
             kernel_model = ModelWrapper(dataflow_model_filename)
+            sdp_id = int(node.name.split("_")[-1])
 
             ipstitch_path = kernel_model.get_metadata_prop("vivado_stitch_proj")
             if ipstitch_path is None or (not os.path.isdir(ipstitch_path)):
@@ -483,6 +530,33 @@ class MakeZYNQProject(Transformation):
                         % (instance_names[node.name])
                     )
 
+            # connect ring bus for live FIFO sizing
+            if self.live_fifo_sizing:
+                if "icfg" not in ifnames["ap_none"] or "ocfg" not in ifnames["ap_none"]:
+                    raise FINNError(
+                        "Live FIFO sizing requested but no icfg/ocfg interfaces found "
+                        "on SDP %s" % node.name
+                    )
+                if sdp_id == 0:
+                    # connect first SDP to fifo_controller
+                    config.append(
+                        "connect_bd_net [get_bd_pins fifo_controller_0/ocfg] "
+                        f"[get_bd_pins {instance_names[node.name]}/icfg]"
+                    )
+                else:
+                    # connect previous SDP to this SDP
+                    config.append(
+                        f"connect_bd_net [get_bd_pins {instance_names[prev_node_name]}/ocfg] "
+                        f"[get_bd_pins {instance_names[node.name]}/icfg]"
+                    )
+                if sdp_id == num_sdps - 1:
+                    # connect last SDP to fifo_controller
+                    config.append(
+                        f"connect_bd_net [get_bd_pins {instance_names[node.name]}/ocfg] "
+                        "[get_bd_pins fifo_controller_0/icfg]"
+                    )
+                prev_node_name = node.name
+
         # TODO: WORKAROUND, do not instantiate smartconnect when not needed!
         if use_instrumentation and not self.enable_finn_switch:
             config.append("delete_bd_objs [get_bd_cells smartconnect_0]")
@@ -519,7 +593,7 @@ class MakeZYNQProject(Transformation):
                         self.enable_gpio_reset,
                         self.enable_finn_switch,
                     )
-                ).replace("$BOARDFILES$", str(get_deps_path() / "board_files"))
+                ).replace("$BOARDFILES$", str(get_settings().finn_deps / "board_files"))
             )
 
         # create a TCL recipe for the project
@@ -667,6 +741,7 @@ class ZynqBuild(Transformation):
                 self.period_ns,
                 enable_debug=self.enable_debug,
                 enable_finn_switch=enable_finn_switch,
+                live_fifo_sizing=self.live_fifo_sizing,
             )
         )
 

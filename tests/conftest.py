@@ -43,6 +43,21 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import finn.util.settings
+from finn.interface.settings import FINNSettings
+from finn.util.settings import get_settings
+
+
+@pytest.fixture(scope="session", autouse=True)
+def load_settings(request) -> None:
+    """Load settings passed from run_finn.py and make them available globally."""
+    # Load settings. run_finn.py in finn test set these file to use in FINN_SETTINGS
+    # which has the highest priority when loading settings
+    settings = FINNSettings.init(
+        flow_config=Path("/tmp/FINN_TEST_BUILD_DIR/dummy.yaml"), auto_set_environmenmt_vars=True
+    )
+    finn.util.settings._SETTINGS = settings  # noqa
+
 
 @pytest.fixture(scope="class", autouse=True)
 def isolate_build_dir(request):
@@ -51,7 +66,7 @@ def isolate_build_dir(request):
     cleanup = os.environ.get("FINN_TESTS_CLEANUP_BUILD_DIRS", "0") == "1"
 
     # Create the top test dir if it doesnt exist yet
-    top_build_dir = Path(os.environ["FINN_BUILD_DIR"])
+    top_build_dir = get_settings().finn_build_dir
     if not top_build_dir.exists():
         top_build_dir.mkdir(parents=True)
 
@@ -64,7 +79,7 @@ def isolate_build_dir(request):
             # fall back to class name in case of class scope
             name = request.node.name
         test_build_dir = Path(tempfile.mkdtemp(prefix=name + "_", dir=top_build_dir))
-        os.environ["FINN_BUILD_DIR"] = str(test_build_dir)
+        get_settings().finn_build_dir = test_build_dir
 
     # Execute test(s)
     yield
@@ -73,7 +88,7 @@ def isolate_build_dir(request):
     if isolate:
         if cleanup:
             shutil.rmtree(test_build_dir)
-        os.environ["FINN_BUILD_DIR"] = str(top_build_dir)
+        get_settings().finn_build_dir = top_build_dir
 
 
 @pytest.fixture(scope="session", autouse=True)
