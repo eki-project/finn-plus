@@ -1,6 +1,7 @@
 """Collect and log benchmark results to DVC."""
 
 import argparse
+import subprocess
 import collect_fn
 import json
 import matplotlib.pyplot as plt
@@ -701,6 +702,16 @@ if __name__ == "__main__":
         help="Indicate this is a follow-up run (prevents generating new follow-up configs)",
     )
     args = parser.parse_args()
+
+    # TODO: This is currently a workaround and should be moved to the .gitlab-bench.yml.
+    # But somehow it does not work currently. 
+    git_remote = "git@github.com:eki-project/finn-plus.git"
+    subprocess.run(
+        ["git", "fetch", git_remote, "+refs/exps/*:refs/exps/*"],
+        check=True,
+        stdout = subprocess.DEVNULL,
+        stderr = subprocess.DEVNULL
+    )
 
     if args.followup:
         run_dir_list = os.listdir(os.path.join("build_artifacts_followup", "runs_output"))
