@@ -88,7 +88,8 @@ Result Collection:
   script:
     # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
     - dvc pull
-    - git fetch origin +refs/heads/*:refs/remotes/origin/*
+    - git fetch origin +refs/tags/*:refs/tags/*
+    - git fetch origin +refs/exps/*:refs/exps/*
     - python3.10 ci/collect/collect.py
     - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
   artifacts:

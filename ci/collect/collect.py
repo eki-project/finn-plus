@@ -6,7 +6,6 @@ import json
 import matplotlib.pyplot as plt
 import os
 import shutil
-import subprocess
 import sys
 import yaml
 from datetime import date
@@ -481,11 +480,6 @@ class ExperimentComparator:
     def _get_experiment_data(self):
         tag = self.collect_cfg.get("Compare").get("compare_tag")
         git_remote = "git@github.com:eki-project/finn-plus.git"
-
-        subprocess.run(
-            ["git", "fetch", git_remote, "+refs/exps/*:refs/exps/*", "--prune"],
-            check=True,
-        )
 
         with Repo(".") as repo:
             remote_exp_map = repo.experiments.ls(git_remote=git_remote, rev=tag)
@@ -1059,10 +1053,11 @@ if __name__ == "__main__":
             collect_cfg_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), "collect.yaml"
             )
-            comp = ExperimentComparator(dvc_logger, collect_cfg_path)
-            metrics = comp.aggregate_metrics_across_reports()
-            report = comp.compare_metrics_across_reports(metrics)
-            metric_reports[metrics[0].get("dut")] = report
+            if not args.followup:
+                comp = ExperimentComparator(dvc_logger, collect_cfg_path)
+                metrics = comp.aggregate_metrics_across_reports()
+                report = comp.compare_metrics_across_reports(metrics)
+                metric_reports[metrics[0].get("dut")] = report
 
     # Save microbenchmark results as (DVC-tracked? TODO) JSON for each DUT
     for dut in microbench_result_data:
@@ -1102,21 +1097,24 @@ if __name__ == "__main__":
             json.dump(follow_up_bench_cfg, f, indent=2)
 
     # Save metric comparison report as JSON
-    metric_artifact_path = "metric_report.json"
-    print("Saving metric report as artifact: %s" % metric_artifact_path)
-    with open(metric_artifact_path, "w") as f:
-        json.dump(metric_reports, f, indent=2)
+    if not args.followup:
+        metric_artifact_path = "metric_report.json"
+        print("Saving metric report as artifact: %s" % metric_artifact_path)
+        with open(metric_artifact_path, "w") as f:
+            json.dump(metric_reports, f, indent=2)
 
     # Plot comparisons
-    generate_metric_plots(metric_reports, "metric_report_plots.png")
+    if not args.followup:
+        generate_metric_plots(metric_reports, "metric_report_plots.png")
 
     # Fail collect if any required metric is not ok
     fail = False
-    for dut, report in metric_reports.items():
-        for metric, result in report["metrics"].items():
-            if result.get("required") and result.get("status") != "ok":
-                fail = True
-                print("Required metric %s for DUT %s is not ok: %s" % (metric, dut, result))
+    if not args.followup:
+        for dut, report in metric_reports.items():
+            for metric, result in report["metrics"].items():
+                if result.get("required") and result.get("status") != "ok":
+                    fail = True
+                    print("Required metric %s for DUT %s is not ok: %s" % (metric, dut, result))
 
     if fail:
         print("One or more required metrics are not ok, failing collect")
