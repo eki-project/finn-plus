@@ -427,37 +427,6 @@ class NodeContainer(HWCustomOp, RTLBackend):
         elif inst.onnx_node.op_type.startswith("Elementwise"):
             source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
 
-            axi_dir = os.path.join(os.environ["FINN_RTLLIB"], "axi/hdl/")
-            ms_rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "memstream/hdl/")
-            sourcefiles = [
-                axi_dir + "axilite.sv",
-                ms_rtllib_dir + "memstream_axi.sv",
-                ms_rtllib_dir + "memstream.sv",
-            ]
-            for f in sourcefiles:
-                cmd += ["add_files -copy_to %s -norecurse %s" % (source_target, f)]
-            memstream = inst.onnx_node.name + "_memstream_wrapper"
-            memstream_path = os.path.join(
-                self.get_nodeattr("code_gen_dir_ipgen"),
-                inst.onnx_node.name + "_memstream_wrapper.v",
-            )
-            cmd += ["add_files -copy_to %s -norecurse %s" % (source_target, memstream_path)]
-            cmd += [
-                "create_bd_cell -type module -reference %s %s"
-                % (memstream, self.onnx_node.name + "_memstream_wrapper")
-            ]
-            cmd += [
-                "connect_bd_net [get_bd_pins %s/ap_clk] [get_bd_pins %s/ap_clk]"
-                % (self.onnx_node.name, self.onnx_node.name + "_memstream_wrapper")
-            ]
-            cmd += [
-                "connect_bd_net [get_bd_pins %s/ap_clk] [get_bd_pins %s/ap_clk2x]"
-                % (self.onnx_node.name, self.onnx_node.name + "_memstream_wrapper")
-            ]
-            cmd += [
-                "connect_bd_net [get_bd_pins %s/ap_rst_n] [get_bd_pins %s/ap_rst_n]"
-                % (self.onnx_node.name, self.onnx_node.name + "_memstream_wrapper")
-            ]
             stname = "IN_%s" % self.onnx_node.name
             stream_tap = os.path.join(
                 self.get_nodeattr("code_gen_dir_ipgen"), stname + "_stream_tap_wrapper.v"
@@ -484,12 +453,8 @@ class NodeContainer(HWCustomOp, RTLBackend):
                 % (self.onnx_node.name, stname + "_stream_tap_wrapper")
             ]
             cmd += [
-                "connect_bd_intf_net [get_bd_intf_pins %s/m_axis_1] [get_bd_intf_pins %s/s_axis_0]"
-                % (stname + "_stream_tap_wrapper", self.onnx_node.name + "_memstream_wrapper")
-            ]
-            cmd += [
-                "connect_bd_intf_net [get_bd_intf_pins %s/m_axis_0] [get_bd_intf_pins %s/in1_V]"
-                % (self.onnx_node.name + "_memstream_wrapper", self.onnx_node.name)
+                "connect_bd_intf_net [get_bd_intf_pins %s/m_axis_1] [get_bd_intf_pins %s/%s/s_axis_0]"
+                % (stname + "_stream_tap_wrapper", self.onnx_node.name, self.onnx_node.name + "_wstrm")
             ]
             cmd += [
                 "make_bd_intf_pins_external -name %s [get_bd_intf_pins %s/s_axis_0]"
