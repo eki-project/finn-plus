@@ -7,9 +7,11 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
 ## Unreleased
-Planned for 1.5.0.
+Planned release: 1.5.0.
 
-**TODO**
+#### Added
+- Added a `CHANGELOG.md` file
+- Error lines from Vivado logs are printed to console in case of failing synthesis runs
 
 
 ## 1.4.0 - 03.03.2026
