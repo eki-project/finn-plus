@@ -487,8 +487,8 @@ if __name__ == "__main__":
                 "reports",
                 "experiment_fifosizing",
                 "exp_itr_1",
-                "largest_first",  # TODO: make configurable or choose best available FIFO-sizing
-                "both",
+                "forward",  # TODO: make configurable or choose best available FIFO-sizing
+                "interval",
                 "folding_config_lfs.json",
             )
             if os.path.isfile(folding_config_lfs_path):
