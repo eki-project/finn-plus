@@ -1048,15 +1048,15 @@ if __name__ == "__main__":
             collect_cfg_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), "collect.yaml"
             )
-            if not is_fifo_sizing:
-                comp = ExperimentComparator(dvc_logger, collect_cfg_path)
-                metrics = comp.aggregate_metrics_across_reports()
-                report = comp.compare_metrics_across_reports(metrics)
-                if args.followup:
-                    name = metrics[0].get("dut") + f"_followup_r{id}"
-                else:
-                    name = metrics[0].get("dut") + f"_r{id}"
-                metric_reports[name] = report
+        if not is_fifo_sizing:
+            comp = ExperimentComparator(dvc_logger, collect_cfg_path)
+            metrics = comp.aggregate_metrics_across_reports()
+            report = comp.compare_metrics_across_reports(metrics)
+            if args.followup:
+                name = metrics[0].get("dut") + f"_followup_r{id}"
+            else:
+                name = metrics[0].get("dut") + f"_r{id}"
+            metric_reports[name] = report
 
     # Save microbenchmark results as (DVC-tracked? TODO) JSON for each DUT
     for dut in microbench_result_data:
