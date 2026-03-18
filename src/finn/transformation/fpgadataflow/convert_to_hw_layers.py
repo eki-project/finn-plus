@@ -285,6 +285,15 @@ class InferThresholdingLayer(Transformation):
                 node_inst = getCustomOp(node)
                 try:
                     mt_layout = node_inst.get_nodeattr("data_layout")
+                    string_to_layout_map = {
+                        "NHWC": DataLayout.NHWC,
+                        "NCHW": DataLayout.NCHW,
+                        "NCW": DataLayout.NCW,
+                        "NWC": DataLayout.NWC,
+                        "NC": DataLayout.NC,
+                    }
+                    if mt_layout in string_to_layout_map:
+                        mt_layout = string_to_layout_map[mt_layout]
                 except AttributeError:
                     log.warning(f"MultiThreshold ({node.name}) is missing a layout annotation.")
                     mt_layout = "missing"
