@@ -11,7 +11,20 @@ authors:
     given-names: Linus
   - family-names: Wintermann
     given-names: Bjarne
-identifiers:
-  - type: doi
-    value: 10.5281/zenodo.19100351
 url: https://github.com/eki-project/finn-plus
+preferred-citation:
+  type: software
+  title: "FINN+"
+  authors:
+    - family-names: Jentzsch
+      given-names: Felix
+    - family-names: Berganski
+      given-names: Christoph
+    - family-names: Jungemann
+      given-names: Linus
+    - family-names: Wintermann
+      given-names: Bjarne
+  year: 2026
+  publisher: Zenodo
+  doi: 10.5281/zenodo.19100351
+  url: https://github.com/eki-project/finn-plus
