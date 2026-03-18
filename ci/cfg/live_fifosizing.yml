@@ -105,7 +105,7 @@
     {
         "dut": ["resnet50"],
         "live_fifo_sizing": [True],
-        "generate_outputs": [["stitched_ip", "rtlsim_performance"]],
+        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "synth_clk_period_ns": [10],
     },
 
