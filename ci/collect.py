@@ -518,7 +518,13 @@ if __name__ == "__main__":
                         configuration["generate_outputs"] = [
                             ["stitched_ip", "rtlsim_performance", "bitfile"]
                         ]
-
+                    else:
+                        configuration["board"] = ["U55C"]
+                        configuration["enable_instrumentation"] = [False]
+                        configuration["generate_outputs"] = [
+                                ["bitfile", "pynq_driver", "deployment_package"]
+                        ]
+                        configuration["shell_flow_type"]=["vitis_alveo"]
                 follow_up_bench_cfg.append(configuration)
 
     # Save microbenchmark results as (DVC-tracked? TODO) JSON for each DUT
