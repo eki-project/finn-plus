@@ -2,6 +2,7 @@
 
 # Dataflow Compiler for Fast, Scalable Quantized Neural Network Inference on FPGAs
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19100351.svg)](https://doi.org/10.5281/zenodo.19100351)
 [![PyPI Downloads](https://static.pepy.tech/personalized-badge/finn-plus?period=total&units=ABBREVIATION&left_color=GREY&right_color=GREEN&left_text=Downloads)](https://pepy.tech/projects/finn-plus)
 [![PyPI version](https://img.shields.io/pypi/v/finn-plus?logo=pypi&logoColor=white&color=brightgreen)](https://badge.fury.io/py/finn-plus)
 [![GitHub license](https://img.shields.io/badge/License-BSD-purple.svg?logo=bsd)](https://raw.githubusercontent.com/eki-project/finn-plus/refs/heads/main/LICENSE.txt)
@@ -25,6 +26,7 @@ The framework is fully open-source in order to give a higher degree of flexibili
 - **[Wiki Documentation](https://github.com/eki-project/finn-plus/wiki)** - Complete documentation and guides
 - **[Feature Tracker](https://github.com/orgs/eki-project/projects/1)** - Current development status
 - **[Contributing](#contributing)** - Learn how to contribute to FINN+
+- **[Citing FINN+](#citing-finn)** - How to cite FINN+ in your research
 
 ## What's New in FINN+
 
@@ -95,6 +97,29 @@ To get started:
 4. **Submit a pull request** with a clear description of your changes.
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on code style, testing, and the review process.
+
+## Citing FINN+
+
+If you find FINN+ useful in your research, please cite the [Zenodo record](https://doi.org/10.5281/zenodo.19100351) using the following BibTeX entry:
+
+```bibtex
+@software{finn-plus,
+  author       = {Jentzsch, Felix and Berganski, Christoph and Jungemann, Linus and Wintermann, Bjarne},
+  title        = {{FINN+}},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.19100351},
+  url          = {https://github.com/eki-project/finn-plus}
+}
+```
+
+If you use a specific feature, please additionally cite the corresponding publication:
+
+**High-performance driver:** Jungemann et al., ["FINN-HPC: Closing the Gap for Energy-Efficient Neural Network Inference on FPGAs in HPC"](https://doi.org/10.1145/3728179.3728189) (HEART '25)
+
+**Multi-FPGA:** Pape, Wintermann et al., ["AuroraFlow, an Easy-to-Use, Low-Latency FPGA Communication Solution Demonstrated on Multi-FPGA Neural Network Inference"](https://doi.org/10.1145/3728179.3728190) (HEART '25)
+
+**Transformer support:** Berganski et al., ["FINN-T: Compiling Custom Dataflow Accelerators for Quantized Transformers"](https://doi.org/10.1109/ICFPT64416.2024.11113391) (FPT '24)
 
 ## About Us
 
