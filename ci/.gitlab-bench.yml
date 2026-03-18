@@ -216,3 +216,5 @@ Result Collection (Follow-up):
       - followup_bench_config.json
       - build_artifacts_followup/
       - measurement_artifacts_followup/
+      - metric_report_plots.png
+      - metric_report.json
