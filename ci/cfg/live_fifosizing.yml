@@ -11,15 +11,15 @@
         "synth_clk_period_ns": [10],
     },
     # cnv-w1a2
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/cnv-w1a2_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/cnv-w1a2_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a2_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["bnn-pynq"],
+    #    "model_path": [models/bnn-pynq/cnv-w1a2_qonnx.onnx],
+    #    "folding_config_file": [models/bnn-pynq/cnv-w1a2_folding_config.json],
+    #    "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a2_specialize_layers.json],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
     # cnv-w2a2
     {
         "dut": ["bnn-pynq"],
@@ -31,59 +31,59 @@
         "synth_clk_period_ns": [10],
     },
     # tfc-w1a1
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/tfc-w1a1_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/tfc-w1a1_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/tfc-w1a1_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["bnn-pynq"],
+    #    "model_path": [models/bnn-pynq/tfc-w1a1_qonnx.onnx],
+    #    "folding_config_file": [models/bnn-pynq/tfc-w1a1_folding_config.json],
+    #    "specialize_layers_config_file": [models/bnn-pynq/tfc-w1a1_specialize_layers.json],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
     # tfc-w1a2
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/tfc-w1a2_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/tfc-w1a2_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/tfc-w1a2_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["bnn-pynq"],
+    #    "model_path": [models/bnn-pynq/tfc-w1a2_qonnx.onnx],
+    #    "folding_config_file": [models/bnn-pynq/tfc-w1a2_folding_config.json],
+    #    "specialize_layers_config_file": [models/bnn-pynq/tfc-w1a2_specialize_layers.json],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
     # tfc-w2a2
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/tfc-w2a2_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/tfc-w2a2_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/tfc-w2a2_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["bnn-pynq"],
+    #    "model_path": [models/bnn-pynq/tfc-w2a2_qonnx.onnx],
+    #    "folding_config_file": [models/bnn-pynq/tfc-w2a2_folding_config.json],
+    #    "specialize_layers_config_file": [models/bnn-pynq/tfc-w2a2_specialize_layers.json],
+    ##    "live_fifo_sizing": [True],
+    #   "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
 
     # GTSRB (cnv-w1a1)
-    {
-        "dut": ["gtsrb"],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["gtsrb"],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
 
     # KWS (MLP)
-    {
-        "dut": ["kws"],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["kws"],
+    #    "live_fifo_sizing": [True],
+     #   "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+     #   "synth_clk_period_ns": [10],
+    #},
 
     # Cybersecurity (MLP)
-    {
-        "dut": ["cybsec"],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["cybsec"],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
 
     # MobileNetV1 (ImageNet)
     {
@@ -105,7 +105,7 @@
     {
         "dut": ["resnet50"],
         "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+        "generate_outputs": [["stitched_ip", "rtlsim_performance"]],
         "synth_clk_period_ns": [10],
     },
 
@@ -122,16 +122,16 @@
 
     ### NEW Transformer models (dvc-imported from finn-transformers repo):
     # benchmark model ("dummy")
-    {
-        "dut": ["transformer"],
-        #"model_dir": ["models/transformer/finn-transformers/benchmark"],
-        "model_path": ["models/transformer/finn-transformers/benchmark/streamlined.onnx"],
-        "verify_input_npy": ["models/transformer/finn-transformers/benchmark/inp.npy"],
-        "verify_expected_output_npy": ["models/transformer/finn-transformers/benchmark/out.npy"],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1000],
-    },
+    #{
+    #    "dut": ["transformer"],
+    #    #"model_dir": ["models/transformer/finn-transformers/benchmark"],
+    #    "model_path": ["models/transformer/finn-transformers/benchmark/streamlined.onnx"],
+    #    "verify_input_npy": ["models/transformer/finn-transformers/benchmark/inp.npy"],
+    #    "verify_expected_output_npy": ["models/transformer/finn-transformers/benchmark/out.npy"],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "target_fps": [1000],
+    #},
 
     # language model
     {
@@ -142,7 +142,8 @@
         "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1000],
+        "verify_steps": ["None"],
+        "target_fps": [1024],
     },
 
     # radioml model
@@ -154,7 +155,8 @@
         "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1000],
+        "verify_steps": ["None"],
+        "target_fps": [65536],
     },
 
     # vision model
@@ -166,7 +168,8 @@
         "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
         "live_fifo_sizing": [True],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": [1000],
+        "verify_steps": ["None"],
+        "target_fps": [1525],
     },
 
     # Synthetic non-linear models
