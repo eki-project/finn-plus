@@ -1,7 +1,6 @@
 """Collect and log benchmark results to DVC."""
 
 import argparse
-import subprocess
 import collect_fn
 import json
 import matplotlib.pyplot as plt
@@ -703,16 +702,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # TODO: This is currently a workaround and should be moved to the .gitlab-bench.yml.
-    # But somehow it does not work currently. 
-    git_remote = "git@github.com:eki-project/finn-plus.git"
-    subprocess.run(
-        ["git", "fetch", git_remote, "+refs/exps/*:refs/exps/*"],
-        check=True,
-        stdout = subprocess.DEVNULL,
-        stderr = subprocess.DEVNULL
-    )
-
     if args.followup:
         run_dir_list = os.listdir(os.path.join("build_artifacts_followup", "runs_output"))
     else:
@@ -745,6 +734,16 @@ if __name__ == "__main__":
             + str(id)
             + ")"
         )
+
+        # check every subfolder in measurement_artifacts/runs_output/run_%d for folding_config_lfs
+        run_output_dir = os.path.join("measurement_artifacts", "runs_output", "run_%d" % (id))
+        is_fifo_sizing = False
+        if os.path.isdir(run_output_dir):
+            for root, dirs, files in os.walk(run_output_dir):
+                if "folding_config_lfs.json" in files:
+                    is_fifo_sizing = True
+                    break
+        is_fifo_sizing = is_fifo_sizing or args.followup  # Ignore if followup
 
         # initialize logging wrapper with input parameters logged by benchmarking infrastructure
         metadata_bench = open_json_report(id, "metadata_bench.json", args.followup)
@@ -970,17 +969,6 @@ if __name__ == "__main__":
             exp_metrics = exp.remove_ignored_metrics_and_apply_fn(exp_reports)
             exp.log_metrics(exp_metrics)
 
-            # live fifosizing graph png
-            image = os.path.join(
-                "measurement_artifacts",
-                "runs_output",
-                "run_%d" % (id),
-                "reports",
-                "fifo_sizing_graph.png",
-            )
-            if os.path.isfile(image):
-                dvc_logger.log_image("fifosizing_pass_1", image)
-
             # time_per_step.json
             dvc_logger.log_all_metrics_from_report("time_per_step.json", prefix="time/")
 
@@ -1064,11 +1052,15 @@ if __name__ == "__main__":
             collect_cfg_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), "collect.yaml"
             )
-            if not args.followup:
+            if not is_fifo_sizing:
                 comp = ExperimentComparator(dvc_logger, collect_cfg_path)
                 metrics = comp.aggregate_metrics_across_reports()
                 report = comp.compare_metrics_across_reports(metrics)
-                metric_reports[metrics[0].get("dut")] = report
+                if args.followup:
+                    name = metrics[0].get("dut") + f"_followup_r{id}"
+                else:
+                    name = metrics[0].get("dut") + f"_r{id}"
+                metric_reports[name] = report
 
     # Save microbenchmark results as (DVC-tracked? TODO) JSON for each DUT
     for dut in microbench_result_data:
@@ -1108,24 +1100,21 @@ if __name__ == "__main__":
             json.dump(follow_up_bench_cfg, f, indent=2)
 
     # Save metric comparison report as JSON
-    if not args.followup:
-        metric_artifact_path = "metric_report.json"
-        print("Saving metric report as artifact: %s" % metric_artifact_path)
-        with open(metric_artifact_path, "w") as f:
-            json.dump(metric_reports, f, indent=2)
+    metric_artifact_path = "metric_report.json"
+    print("Saving metric report as artifact: %s" % metric_artifact_path)
+    with open(metric_artifact_path, "w") as f:
+        json.dump(metric_reports, f, indent=2)
 
     # Plot comparisons
-    if not args.followup:
-        generate_metric_plots(metric_reports, "metric_report_plots.png")
+    generate_metric_plots(metric_reports, "metric_report_plots.png")
 
     # Fail collect if any required metric is not ok
     fail = False
-    if not args.followup:
-        for dut, report in metric_reports.items():
-            for metric, result in report["metrics"].items():
-                if result.get("required") and result.get("status") != "ok":
-                    fail = True
-                    print("Required metric %s for DUT %s is not ok: %s" % (metric, dut, result))
+    for dut, report in metric_reports.items():
+        for metric, result in report["metrics"].items():
+            if result.get("required") and result.get("status") != "ok":
+                fail = True
+                print("Required metric %s for DUT %s is not ok: %s" % (metric, dut, result))
 
     if fail:
         print("One or more required metrics are not ok, failing collect")
