@@ -351,7 +351,7 @@ def create_model_wrapper(model_filename: str, cfg: DataflowBuildConfig) -> Model
         f"Building dataflow accelerator from intermediate"
         f" checkpoint {intermediate_model_filename}"
     )
-    return ModelWrapper(intermediate_model_filename)
+    return ModelWrapper(str(intermediate_model_filename))
 
 
 def build_dataflow_cfg(model_filename: str, cfg: DataflowBuildConfig) -> int:
