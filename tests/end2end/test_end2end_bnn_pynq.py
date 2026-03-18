@@ -28,11 +28,13 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """End-to-end tests for BNN models on PYNQ platforms."""
-
 import pytest
 
 import itertools
 import numpy as np
+
+from finn.util.exception import FINNSynthesisError
+from finn.util.logging import log
 
 # as of Feb'20 there is a bug that segfaults ONNX shape inference if we
 # import pytorch before onnx, so we make sure to import onnx first
@@ -837,8 +839,24 @@ class TestEnd2End:
             pytest.skip("XILINX_VITIS not set")
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "fifodepth")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
-        model = model.transform(build_data["build_fxn"])
-        model = model.transform(AnnotateResources("synth", build_data["part"]))
+        try:
+            model = model.transform(build_data["build_fxn"])
+            model = model.transform(AnnotateResources("synth", build_data["part"]))
+        except FINNSynthesisError as e:
+            if e.vivado_logfile.exists():
+                lines = e.vivado_logfile.read_text().split("\n")
+                log.error("Synthesis failed. Listing errors from Vivado's logfile:")
+                for line in lines:
+                    if "ERROR" in line:
+                        log.error(line)
+                log.error(e.msg)
+            else:
+                log.error(f"Synthesis failed and no logfile was found at {e.vivado_logfile}")
+                log.error(e.msg)
+            raise e
+        except Exception as e:
+            raise e
+
         model.save(get_checkpoint_name(board, topology, wbits, abits, "build"))
 
     @pytest.mark.slow
