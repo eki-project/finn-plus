@@ -688,10 +688,6 @@ class ExperimentComparator:
 
 if __name__ == "__main__":
     """Go through all runs found in the artifacts and log their results to DVC."""
-    os.environ["CI_PIPELINE_NAME"] = "DevRun"
-    os.environ["CI_PIPELINE_ID"] = "99999999999"
-    os.environ["CI_COMMIT_SHA"] = "99999999991"
-    os.environ["LOCAL_BENCHMARK_DIR_STORE"] = "test"
 
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Collect and log benchmark results to DVC.")
