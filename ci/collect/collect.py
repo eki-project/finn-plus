@@ -739,7 +739,7 @@ if __name__ == "__main__":
                 if "folding_config_lfs.json" in files:
                     is_fifo_sizing = True
                     break
-        is_fifo_sizing = is_fifo_sizing or args.followup  # Ignore if followup
+        is_fifo_sizing = is_fifo_sizing and not args.followup  # Ignore if followup
 
         # initialize logging wrapper with input parameters logged by benchmarking infrastructure
         metadata_bench = open_json_report(id, "metadata_bench.json", args.followup)
