@@ -1096,13 +1096,16 @@ if __name__ == "__main__":
             json.dump(follow_up_bench_cfg, f, indent=2)
 
     # Save metric comparison report as JSON
-    metric_artifact_path = "metric_report.json"
-    print("Saving metric report as artifact: %s" % metric_artifact_path)
-    with open(metric_artifact_path, "w") as f:
+    report_name = "metric_report.json" if not args.followup else "metric_report_followup.json"
+    print("Saving metric report as artifact: %s" % report_name)
+    with open(report_name, "w") as f:
         json.dump(metric_reports, f, indent=2)
 
     # Plot comparisons
-    generate_metric_plots(metric_reports, "metric_report_plots.png")
+    plot_name = (
+        "metric_report_plots.png" if not args.followup else "metric_report_plots_followup.png"
+    )
+    generate_metric_plots(metric_reports, plot_name)
 
     # Fail collect if any required metric is not ok
     fail = False
