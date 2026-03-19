@@ -845,15 +845,14 @@ class TestEnd2End:
         except FINNSynthesisError as e:
             if e.vivado_logfile.exists():
                 lines = e.vivado_logfile.read_text().split("\n")
-                log.error("Synthesis failed. Listing errors from Vivado's logfile:")
+                e.msg += "\nSynthesis failed. Listing errors from Vivado's logfile:"
                 for line in lines:
                     if "ERROR" in line:
-                        log.error(line)
-                log.error(e.msg)
+                        e.msg += "\n" + line
             else:
-                log.error(f"Synthesis failed and no logfile was found at {e.vivado_logfile}")
-                log.error(e.msg)
-            raise e
+                e.msg += "\n" + f"Synthesis failed and no logfile was found at {e.vivado_logfile}"
+            e.msg += "\n"
+            raise FINNSynthesisError(e.msg, e.vivado_logfile) from e
         except Exception as e:
             raise e
 
