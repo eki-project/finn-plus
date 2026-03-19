@@ -12,6 +12,7 @@ Planned release: 1.5.0.
 #### Added
 - Added a `CHANGELOG.md` file
 - Error lines from Vivado logs are printed to console in case of failing synthesis runs
+- Added `CITATION.cff` file
 
 
 ## 1.4.0 - 03.03.2026
