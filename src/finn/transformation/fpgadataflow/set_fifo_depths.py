@@ -347,7 +347,7 @@ class InsertAndSetFIFODepths(Transformation):
                     ifd[i] = tensor_size if tensor_size > 1 else 2
                 for o in range(len(ofd)):
                     # safe guard that for very small tensors depth is not set to 1
-                    depth = np.prod(node.get_folded_output_shape(o)[:-1])
+                    tensor_size = np.prod(node.get_folded_output_shape(o)[:-1])
                     ofd[o] = tensor_size if tensor_size > 1 else 2
             # set node attribute and ensure that it gets saved as list of integers
             node.set_nodeattr("inFIFODepths", [int(fifo) for fifo in ifd])

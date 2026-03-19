@@ -95,8 +95,28 @@ def to_logging_level(level: LogLevel) -> int:
 class AutoFIFOSizingMethod(str, Enum):
     """Select the type of automatic FIFO sizing strategy."""
 
-    CHARACTERIZE = "characterize"
+    ANALYTIC = "analytical"
     LARGEFIFO_RTLSIM = "largefifo_rtlsim"
+
+
+class TAVGenerationMethod(str, Enum):
+    "Select the strategy for constructing token access vectors of an operator."
+    RTLSIM = "rtlsim"
+    TREE_MODEL = "tree_model"
+
+
+class TAVUtilizationMethod(str, Enum):
+    """Select the strategy for utilizing token access vectors of an operator
+    for buffer sizing."""
+
+    # worst-case ratio of data rates between a consumer and producer
+    CONSERVATIVE_RELAXATION = "conservative_relaxation"
+
+    # average-case ratio of data rates between a consumer and producer
+    AGGRESSIVE_RELAXATION = "aggressive_relaxation"
+
+    # no relaxation, use the token access vectors as-is
+    NO_RELAXATION = "no_relaxation"
 
 
 class ShellFlowType(str, Enum):
@@ -462,6 +482,25 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: (Only relevant when auto_fifo_depths is enabled)
     #: Select which method will be used for setting the FIFO sizes.
     auto_fifo_strategy: AutoFIFOSizingMethod = AutoFIFOSizingMethod.LARGEFIFO_RTLSIM
+
+    #: Which strategy will be used for token access vector generation for FIFO sizing.
+    #: RTLSIM will result in performing RTLSIM for each node
+    #: to deduce the token access vectors empirically
+    #: TREE_MODEL will use the tree mode of an operator if available, avoiding the generation
+    #: of IP cores.
+    tav_generation_strategy: TAVGenerationMethod = TAVGenerationMethod.RTLSIM
+
+    #: Which strategy will be used for token access vector generation for FIFO sizing.
+    #: RTLSIM will result in performing RTLSIM for each node
+    #: to deduce the token access vectors empirically
+    #: TREE_MODEL will use the tree mode of an operator if available, avoiding the generation
+    #: of IP cores.
+    tav_utilization_strategy: TAVUtilizationMethod = TAVUtilizationMethod.CONSERVATIVE_RELAXATION
+
+    #: When True, skips the resynthesis steps after fifo sizing. This makes it
+    #: possible to run the step for rapid fifo size analysis during
+    #: automatic folding optimizations or as a first approximation.
+    skip_resynth_during_fifo_sizing: bool = True
 
     #: (Only relevant when auto_fifo_depths is enabled)
     #: Memory resource type for large FIFOs.
