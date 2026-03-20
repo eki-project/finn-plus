@@ -1,15 +1,15 @@
 [
     ### BNN-PYNQ ###
     # cnv-w1a1
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/cnv-w1a1_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/cnv-w1a1_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a1_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["bnn-pynq"],
+    #    "model_path": [models/bnn-pynq/cnv-w1a1_qonnx.onnx],
+    #    "folding_config_file": [models/bnn-pynq/cnv-w1a1_folding_config.json],
+    #    "specialize_layers_config_file": [models/bnn-pynq/cnv-w1a1_specialize_layers.json],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
     # cnv-w1a2
     #{
     #    "dut": ["bnn-pynq"],
@@ -21,15 +21,15 @@
     #    "synth_clk_period_ns": [10],
     #},
     # cnv-w2a2
-    {
-        "dut": ["bnn-pynq"],
-        "model_path": [models/bnn-pynq/cnv-w2a2_qonnx.onnx],
-        "folding_config_file": [models/bnn-pynq/cnv-w2a2_folding_config.json],
-        "specialize_layers_config_file": [models/bnn-pynq/cnv-w2a2_specialize_layers.json],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["bnn-pynq"],
+    #    "model_path": [models/bnn-pynq/cnv-w2a2_qonnx.onnx],
+    #    "folding_config_file": [models/bnn-pynq/cnv-w2a2_folding_config.json],
+    #    "specialize_layers_config_file": [models/bnn-pynq/cnv-w2a2_specialize_layers.json],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
     # tfc-w1a1
     #{
     #    "dut": ["bnn-pynq"],
@@ -86,28 +86,28 @@
     #},
 
     # MobileNetV1 (ImageNet)
-    {
-        "dut": ["mobilenetv1"],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["mobilenetv1"],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
 
     # VGG-10 (1D CNN) (RadioML)
-    {
-        "dut": ["vgg10"],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["vgg10"],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
 
     # ResNet-50 (ImageNet)
-    {
-        "dut": ["resnet50"],
-        "live_fifo_sizing": [True],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    #{
+    #    "dut": ["resnet50"],
+    #    "live_fifo_sizing": [True],
+    #    "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #    "synth_clk_period_ns": [10],
+    #},
 
     # ResNet-18 (CIFAR100)
     {
