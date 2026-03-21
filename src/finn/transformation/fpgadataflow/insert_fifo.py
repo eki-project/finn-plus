@@ -133,6 +133,8 @@ class InsertFIFO(Transformation):
 
                         # check if outFIFOdepths attribute of first node
                         # and inFIFOdepths attribute of consumer node is equal
+                        idx_out = min(idx_out, len(n0.get_nodeattr("outFIFODepths")) - 1)
+                        idx_inp = min(idx_inp, len(n1.get_nodeattr("inFIFODepths")) - 1)
                         n0_depth = n0.get_nodeattr("outFIFODepths")[idx_out]
                         n1_depth = n1.get_nodeattr("inFIFODepths")[idx_inp]
 

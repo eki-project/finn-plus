@@ -413,7 +413,11 @@ class InsertAndSetFIFODepths(Transformation):
             throttle_cycles = 0
 
         sim = xsi_fifosim(
-            model, self.cfg_n_inferences, max_iters=max_iters, throttle_cycles=int(throttle_cycles)
+            model,
+            self.cfg_n_inferences,
+            False,
+            max_iters=max_iters,
+            throttle_cycles=int(throttle_cycles),
         )
 
         for ind, node in enumerate(fifo_nodes):
@@ -459,9 +463,9 @@ class InsertAndSetFIFODepths(Transformation):
                     reset_implementation(node_inst)
                     modified_fc_nodes.remove(node.name)
 
-        assert (
-            len(modified_fc_nodes) == 0 and len(fifos.keys()) == 0
-        ), "FIFO/FC nodes left untouched after model reconfiguration"
+        assert len(modified_fc_nodes) == 0 and len(fifos.keys()) == 0, (
+            "FIFO/FC nodes left untouched after model reconfiguration"
+        )
 
         # handle custom sizing for SWG FIFOs if desired
         if self.swg_exception:
