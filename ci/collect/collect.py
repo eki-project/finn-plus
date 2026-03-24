@@ -168,7 +168,7 @@ def generate_metric_plots(metric_reports, file):
                     ax.text(
                         bar.get_x() + bar.get_width() / 2,
                         val,
-                        f"{val:.4g}",
+                        f"{val:.4f}".rstrip("0").rstrip("."),
                         ha="center",
                         va="bottom",
                         fontsize=8,

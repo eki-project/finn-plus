@@ -30,7 +30,7 @@
         "num_runs": 1,
         "functions": [
           {
-            "function_name": "run_throughput_test",
+            "function_name": "throughput_test",
             "kwargs" : {}
           }
         ]

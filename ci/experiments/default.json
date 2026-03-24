@@ -14,17 +14,6 @@
     },
     "experiments": [
       {
-        "name": "throughput_experiment",
-        "warmup": 1,
-        "num_runs": 1,
-        "functions": [
-          {
-            "function_name": "throughput_test",
-            "kwargs" : {}
-          }
-        ]
-      },
-      {
         "name": "instrumentation_experiment",
         "warmup": 1,
         "num_runs": 1,
@@ -36,7 +25,7 @@
         ]
       },
       {
-        "name": "throughput_experiment_2",
+        "name": "throughput_experiment",
         "warmup": 1,
         "num_runs": 1,
         "functions": [

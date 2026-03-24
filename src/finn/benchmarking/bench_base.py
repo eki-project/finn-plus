@@ -98,7 +98,7 @@ class bench:
         else:
             self._params["shell_flow_type"] = build_cfg.ShellFlowType.VIVADO_ZYNQ
 
-        # Do best afford in mapping DUT to a dataset
+        # Best effort DUT <-> dataset mapping
         if "validation_dataset" in self._params:
             pass
         elif self._params["dut"] == "bnn-pynq":
@@ -139,10 +139,7 @@ class bench:
                 )
             else:
                 # Default experiment config for normal builds
-                # TODO: Switch to default.json to run instr. + DMA validation exp. by default
-                self.experiments_config = os.path.join(
-                    "ci", "experiments", "instrument_only_default.json"
-                )
+                self.experiments_config = os.path.join("ci", "experiments", "default.json")
 
         dut_yaml_name = self._params["dut"] + ".yml"
         dut_path = os.path.join(os.path.dirname(__file__), "dut", dut_yaml_name)
