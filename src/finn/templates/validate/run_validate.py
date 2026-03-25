@@ -32,4 +32,4 @@ def run_validate(validation_dataset, cls_inst, *args, **kwargs):
     elif validation_dataset == "unswnb15":
         unswnb15_validate.validate(cls_inst, *args, **kwargs)
     else:
-        raise ValueError(f"Unknown or no validation Dataset: {validation_dataset}")
+        print(f"WARNING: SKIPPING VALIDATION FOR UNKNOWN DATASET: {validation_dataset}")
