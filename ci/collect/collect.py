@@ -488,7 +488,8 @@ class ExperimentComparator:
                 remote_exps.update(a for a, b in exps)
 
             if not remote_exps:
-                raise ValueError("No experiments found with tag %s" % tag)
+                print("WARNING: No experiments found with tag %s, skipping comparison" % tag)
+                return {}
 
             exp_data = {}
             for exp_state in repo.experiments.show(revs=tag):
@@ -543,10 +544,11 @@ class ExperimentComparator:
                     newest_date = exp_date
                     newest_exp = (exp_name, exp_data)
         else:
-            raise ValueError(
-                "No matching experiments found with model_name %s" % current_model_name
+            print(
+                "WARNING: No matching experiments found with model_name %s, skipping comparison"
+                % current_model_name
             )
-            # TODO do some other error handling? So we dont interrupt every task?
+            return None
 
         compare = {
             "name": "Comparison",
@@ -1051,12 +1053,15 @@ if __name__ == "__main__":
         if not is_fifo_sizing:
             comp = ExperimentComparator(dvc_logger, collect_cfg_path)
             metrics = comp.aggregate_metrics_across_reports()
-            report = comp.compare_metrics_across_reports(metrics)
-            if args.followup:
-                name = metrics[0].get("dut") + f"_followup_r{id}"
+            if metrics is None:
+                print("WARNING: Skipping metric comparison for run %d" % id)
             else:
-                name = metrics[0].get("dut") + f"_r{id}"
-            metric_reports[name] = report
+                report = comp.compare_metrics_across_reports(metrics)
+                if args.followup:
+                    name = metrics[0].get("dut") + f"_followup_r{id}"
+                else:
+                    name = metrics[0].get("dut") + f"_r{id}"
+                metric_reports[name] = report
 
     # Save microbenchmark results as (DVC-tracked? TODO) JSON for each DUT
     for dut in microbench_result_data:
