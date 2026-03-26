@@ -699,9 +699,10 @@ class TestEnd2End:
         """Minimize accumulator and weight bit widths."""
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "fold")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
-        model = model.transform(MinimizeAccumulatorWidth())
         model = model.transform(MinimizeWeightBitWidth())
+        model = model.transform(MinimizeAccumulatorWidth())
         model = model.transform(RoundAndClipThresholds())
+        model = model.transform(MinimizeWeightBitWidth())
         curr_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "minimize_bit_width")
         model.save(curr_chkpt_name)
 

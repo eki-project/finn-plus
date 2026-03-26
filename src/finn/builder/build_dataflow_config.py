@@ -435,6 +435,12 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: writeable weights is not enabled.
     minimize_bit_width: bool = True
 
+    #: Whether to skip converting the first Transpose node
+    #: to a Shuffle layer. This is useful for image classification networks where
+    #: the first transpose converts NCHW to NHWC layout for data preprocessing.
+    #: Enabled by default.
+    infer_shuffle_skip_first: bool = True
+
     #: (Only needed for generating full bitfiles with shell integration)
     #: Target board, e.g. "Pynq-Z1" or "U250".
     board: Optional[str] = None

@@ -54,6 +54,11 @@ import finn.custom_op.fpgadataflow.rtl.reshape_rtl
 from finn.custom_op.fpgadataflow.rtl.convolutioninputgenerator_rtl import (
     ConvolutionInputGenerator_rtl,
 )
+from finn.custom_op.fpgadataflow.rtl.elementwise_binary_rtl import (
+    ElementwiseAdd_rtl,
+    ElementwiseMul_rtl,
+    ElementwiseSub_rtl,
+)
 from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
 from finn.custom_op.fpgadataflow.rtl.fmpadding_rtl import FMPadding_rtl
 from finn.custom_op.fpgadataflow.rtl.inner_shuffle_rtl import InnerShuffle_rtl
@@ -69,6 +74,9 @@ from finn.custom_op.fpgadataflow.rtl.vectorvectoractivation_rtl import VVAU_rtl
 # make sure new HLSCustomOp subclasses are imported here so that they get
 # registered and plug in correctly into the infrastructure
 custom_op["ConvolutionInputGenerator_rtl"] = ConvolutionInputGenerator_rtl
+custom_op["ElementwiseAdd_rtl"] = ElementwiseAdd_rtl
+custom_op["ElementwiseSub_rtl"] = ElementwiseSub_rtl
+custom_op["ElementwiseMul_rtl"] = ElementwiseMul_rtl
 custom_op["FMPadding_rtl"] = FMPadding_rtl
 custom_op["LayerNorm_rtl"] = LayerNorm_rtl
 custom_op["StreamingDataWidthConverter_rtl"] = StreamingDataWidthConverter_rtl
