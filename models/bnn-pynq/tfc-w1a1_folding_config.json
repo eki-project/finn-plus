@@ -1,7 +1,10 @@
 {
   "Defaults": {},
+  "Reshape_rtl_0": {
+    "PE": 28
+  },
   "Thresholding_rtl_0": {
-    "PE": 49
+    "PE": 28
   },
   "MVAU_hls_0": {
     "PE": 16,

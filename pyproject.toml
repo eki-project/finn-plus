@@ -49,6 +49,7 @@ numpy = "1.26.4"  # numpy<=1.26.4 required by brevitas
 # Upgrading onnxruntime fixes some MaxPool edge case which however requires onnx
 # to be upgraded to produce a consistent model, but this in turn cannot be done
 # due to the model IR version support issue...
+scipy = "~1.15.0"
 onnx = "1.17.0"
 onnxruntime = "1.20.1"
 onnxscript = ">=0.6.2"                                # TODO: the onnx-passes installation will overwrite this version

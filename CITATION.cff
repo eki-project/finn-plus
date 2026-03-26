@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "FINN+"
+authors:
+  - family-names: Jentzsch
+    given-names: Felix
+  - family-names: Berganski
+    given-names: Christoph
+  - family-names: Jungemann
+    given-names: Linus
+  - family-names: Wintermann
+    given-names: Bjarne
+url: https://github.com/eki-project/finn-plus
+preferred-citation:
+  type: software
+  title: "FINN+"
+  authors:
+    - family-names: Jentzsch
+      given-names: Felix
+    - family-names: Berganski
+      given-names: Christoph
+    - family-names: Jungemann
+      given-names: Linus
+    - family-names: Wintermann
+      given-names: Bjarne
+  year: 2026
+  publisher: Zenodo
+  doi: 10.5281/zenodo.19100351
+  url: https://github.com/eki-project/finn-plus

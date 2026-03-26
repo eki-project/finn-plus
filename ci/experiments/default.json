@@ -9,11 +9,21 @@
           "0V85",
           "3V3"
         ],
-        "sensors": [],
-        "board": "rfsoc2x2"
+        "sensors": []
       }
     },
     "experiments": [
+      {
+        "name": "instrumentation_experiment",
+        "warmup": 1,
+        "num_runs": 1,
+        "functions": [
+          {
+            "function_name": "experiment_instrumentation",
+            "kwargs" : {"runtime": 20}
+          }
+        ]
+      },
       {
         "name": "throughput_experiment",
         "warmup": 1,
@@ -26,23 +36,13 @@
         ]
       },
       {
-        "name": "instrumentation_experiment",
+        "name": "validate_experiment",
         "warmup": 1,
         "num_runs": 1,
+        "batch_size": 100,
         "functions": [
           {
-            "function_name": "experiment_instrumentation",
-            "kwargs" : {"runtime": 20}
-          }
-        ]
-      },
-            {
-        "name": "throughput_experiment_2",
-        "warmup": 1,
-        "num_runs": 1,
-        "functions": [
-          {
-            "function_name": "throughput_test",
+            "function_name": "validate",
             "kwargs" : {}
           }
         ]

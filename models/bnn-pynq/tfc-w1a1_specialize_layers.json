@@ -1,5 +1,8 @@
 {
   "Defaults": {},
+  "Reshape_0": {
+    "preferred_impl_style": "rtl"
+  },
   "Thresholding_0": {
     "preferred_impl_style": "rtl"
   },
