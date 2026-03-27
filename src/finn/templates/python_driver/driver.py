@@ -9,8 +9,6 @@ import os
 import random
 import sys
 import time
-from dataset_loading import FileQueue, ImgQueue
-from PIL import Image
 
 # from pynq import PL
 from pynq import Overlay, allocate
@@ -36,6 +34,7 @@ class FINNDMAOverlay(Overlay):
         device=None,
         download=True,
         runtime_weight_dir="runtime_weights/",
+        validation_dataset=None,
         **kwargs,
     ):
         """Initialize the FINN accelerator.
@@ -67,6 +66,7 @@ class FINNDMAOverlay(Overlay):
         self.platform = platform
         self.batch_size = batch_size
         self.fclk_mhz = fclk_mhz
+        self.validation_dataset = validation_dataset
         self.idma = []
         self.odma = []
         self.odma_handle = []
@@ -127,7 +127,13 @@ class FINNDMAOverlay(Overlay):
                 # weight_buf.sync_to_device()
                 weight_buf.flush()
 
-                self.external_weights += [(iwdma, weight_buf, idma_name)]
+                input_shape = self._io_shape_dict["external_weights_input_shapes"][idma_name]
+                # NHWC input?
+                if len(input_shape) == 4:
+                    num_repeats = input_shape[1] * input_shape[2]
+                else:
+                    num_repeats = 1
+                self.external_weights += [(iwdma, weight_buf, idma_name, num_repeats)]
 
         if "number_of_external_weights" in self.io_shape_dict:
             hw_ext_weights = self.io_shape_dict["number_of_external_weights"]
@@ -370,10 +376,10 @@ class FINNDMAOverlay(Overlay):
             for o in range(self.num_outputs):
                 assert self.odma[o].read(0x00) & 0x4 != 0, "Output DMA %d is not idle" % (o)
             # manually launch IODMAs since signatures are missing
-            for iwdma, iwbuf, iwdma_name in self.external_weights:
+            for iwdma, iwbuf, iwdma_name, num_repeats in self.external_weights:
                 iwdma.write(0x10, iwbuf.device_address & 0xFFFFFFFF)
                 iwdma.write(0x14, (iwbuf.device_address >> 32) & 0xFFFFFFFF)
-                iwdma.write(0x1C, batch_size)
+                iwdma.write(0x1C, batch_size * num_repeats)
                 iwdma.write(0x00, 1)
             for o in range(self.num_outputs):
                 self.odma[o].write(0x10, self.obuf_packed_device[o].device_address & 0xFFFFFFFF)
@@ -394,8 +400,8 @@ class FINNDMAOverlay(Overlay):
                 assert self.odma_handle[o] is None, "Output DMA %d is already running" % o
             for i in range(self.num_inputs):
                 self.idma[i].start(self.ibuf_packed_device[i], batch_size)
-            for iwdma, iwbuf, iwdma_name in self.external_weights:
-                iwdma.start(iwbuf, batch_size)
+            for iwdma, iwbuf, iwdma_name, num_repeats in self.external_weights:
+                iwdma.start(iwbuf, batch_size * num_repeats)
             for o in range(self.num_outputs):
                 self.odma_handle[o] = self.odma[o].start(self.obuf_packed_device[o], batch_size)
         else:
@@ -463,9 +469,9 @@ class FINNDMAOverlay(Overlay):
         for o in range(self.num_outputs):
             total_out += np.prod(self.oshape_packed(o))
         res["DRAM_out_bandwidth[MB/s]"] = total_out * 0.000001 / runtime
-        for iwdma, iwbuf, iwdma_name in self.external_weights:
+        for iwdma, iwbuf, iwdma_name, num_repeats in self.external_weights:
             res["DRAM_extw_%s_bandwidth[MB/s]" % iwdma_name] = (
-                self.batch_size * np.prod(iwbuf.shape) * 0.000001 / runtime
+                self.batch_size * np.prod(iwbuf.shape) * num_repeats * 0.000001 / runtime
             )
         if self.platform == "zynq-iodma":
             res["fclk[mhz]"] = Clocks.fclk0_mhz
@@ -518,152 +524,20 @@ class FINNDMAOverlay(Overlay):
 
     def validate(self, *args, **kwargs):
         """Validate accelerator accuracy on dataset."""
-        print("Validate is currently not implemented")
-        return
-        report_dir = kwargs.get("report_dir")
-        dataset = kwargs.get("validation_dataset")
-        dataset_root = kwargs.get("dataset_root")
-        bsize = self.batch_size
+        validation_dataset = kwargs.get("validation_dataset", self.validation_dataset)
+        dataset_root = kwargs.get(
+            "dataset_root", os.path.join(os.path.dirname(os.path.realpath(__file__)), "validate")
+        )
 
-        def img_resize(img, size):
-            """Resize image to specified size."""
-            w, h = img.size
-            if (w <= h and w == size) or (h <= w and h == size):
-                return img
-            if w < h:
-                ow = size
-                oh = int(size * h / w)
-                return img.resize((ow, oh), Image.BILINEAR)
-            else:
-                oh = size
-                ow = int(size * w / h)
-                return img.resize((ow, oh), Image.BILINEAR)
+        sys.path.insert(0, dataset_root)
+        try:
+            import run_validate
+        finally:
+            # Remove the added path to avoid side effects
+            if dataset_root in sys.path:
+                sys.path.remove(dataset_root)
 
-        def img_center_crop(img, size):
-            """Center crop image to specified size."""
-            crop_height, crop_width = (size, size)
-            image_width, image_height = img.size
-            crop_top = int(round((image_height - crop_height) / 2.0))
-            crop_left = int(round((image_width - crop_width) / 2.0))
-            return img.crop((crop_left, crop_top, crop_left + crop_width, crop_top + crop_height))
-
-        def pre_process(img_np):
-            """Preprocess image for validation."""
-            img = Image.fromarray(img_np.astype(np.uint8))
-            img = img_resize(img, 256)
-            img = img_center_crop(img, 224)
-            img = np.array(img, dtype=np.uint8)
-            return img
-
-        def setup_dataloader(val_path, label_file_path=None, batch_size=100, n_images=50000):
-            """Setup dataloader for validation dataset."""
-            if label_file_path is None:
-                val_folders = [f.name for f in os.scandir(val_path) if f.is_dir()]
-                val_folders = sorted(val_folders)
-                assert len(val_folders) == 1000, "Expected 1000 subfolders in ILSVRC2012 val"
-                files = []
-                labels = []
-                for idx, folder in enumerate(val_folders):
-                    current_files = sorted(os.listdir(os.path.join(val_path, folder)))
-                    current_files = [os.path.join(folder, file) for file in current_files]
-                    files.extend(current_files)
-                    labels.extend([idx] * len(current_files))
-                files = files[:n_images]
-            else:
-                files = ["ILSVRC2012_val_{:08d}.JPEG".format(i) for i in range(1, n_images + 1)]
-                labels = np.loadtxt(label_file_path, dtype=int, usecols=1)
-
-            file_queue = FileQueue()
-            file_queue.load_epochs(list(zip(files, labels)), shuffle=False)
-            img_queue = ImgQueue(maxsize=batch_size)
-            img_queue.start_loaders(
-                file_queue, num_threads=1, img_dir=val_path, transform=pre_process
-            )
-            return img_queue
-
-        if dataset == "mnist":
-            from dataset_loading import mnist
-
-            trainx, trainy, testx, testy, valx, valy = mnist.load_mnist_data(
-                dataset_root, download=True, one_hot=False
-            )
-        elif dataset == "cifar10":
-            from dataset_loading import cifar
-
-            trainx, trainy, testx, testy, valx, valy = cifar.load_cifar_data(
-                dataset_root, download=True, one_hot=False
-            )
-        elif dataset == "cifar100":
-            from dataset_loading import cifar
-
-            trainx, trainy, testx, testy, valx, valy = cifar.load_cifar_data(
-                dataset_root, download=True, one_hot=False, cifar10=False
-            )
-        elif dataset == "imagenet":
-            val_dir = dataset_root + "/ImageNet/2012/val"
-            label_file = dataset_root + "/ImageNet/2012/val.txt"
-            img_queue = setup_dataloader(val_dir, label_file, bsize)
-            total = 50000
-        else:
-            raise Exception("Unrecognized dataset")
-
-        # run accelerator on dataset
-        if dataset in ["mnist", "cifar10", "cifar100"]:
-            test_imgs = testx
-            test_labels = testy
-
-            ok = 0
-            nok = 0
-            total = test_imgs.shape[0]
-
-            n_batches = int(total / bsize)
-
-            test_imgs = test_imgs.reshape(n_batches, bsize, -1)
-            test_labels = test_labels.reshape(n_batches, bsize)
-
-            print("Starting validation..")
-            for i in range(n_batches):
-                ibuf_normal = test_imgs[i].reshape(self.ishape_normal())
-                exp = test_labels[i]
-                obuf_normal = self.execute(ibuf_normal)
-                # obuf_normal = obuf_normal.reshape(bsize, -1)[:,0]
-                if obuf_normal.shape[1] > 1:
-                    obuf_normal = np.argmax(obuf_normal, axis=1)
-                ret = np.bincount(obuf_normal.flatten() == exp.flatten(), minlength=2)
-                nok += ret[0]
-                ok += ret[1]
-                print("batch %d / %d : total OK %d NOK %d" % (i + 1, n_batches, ok, nok))
-        elif dataset in ["imagenet"]:
-            ok = 0
-            nok = 0
-            i = 0
-            print("Starting validation..")
-            while not img_queue.last_batch:
-                imgs, lbls = img_queue.get_batch(bsize, timeout=None)
-                imgs = np.array(imgs)
-                exp = np.array(lbls)
-                ibuf_normal = imgs.reshape(self.ishape_normal())
-                obuf_normal = self.execute(ibuf_normal)
-                # obuf_normal = obuf_normal.reshape(bsize, -1)[:,0]
-                if obuf_normal.shape[1] > 1:
-                    obuf_normal = np.argmax(obuf_normal, axis=1)
-                ret = np.bincount(obuf_normal.flatten() == exp.flatten(), minlength=2)
-                nok += ret[0]
-                ok += ret[1]
-                i += 1
-                print("batch %d : total OK %d NOK %d" % (i, ok, nok))
-
-        # calculate top-1 accuracy
-        acc = 100.0 * ok / (total)
-        print("Final accuracy: %f" % acc)
-
-        # write report to file
-        report = {
-            "top-1_accuracy": acc,
-        }
-        reportfile = os.path.join(report_dir, "report_dma_validate.json")
-        with open(reportfile, "w") as f:
-            json.dump(report, f, indent=2)
+        run_validate.run_validate(validation_dataset, self, *args, **kwargs)
 
     def idle(self, *args, **kwargs):
         """Run idle for specified time."""
@@ -879,6 +753,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             self.error = True
 
     def ctrl_read(self, opcode=0x00, fifo_id=0x0000, check_success=False):
+        """Read a value from the FIFO controller via AXI-Lite."""
         address = (fifo_id << 8) | opcode
         # Shift by 2 because FIFO controller operates on word addresses
         response = self.fifo_controller_0.read(offset=(address << 2))
@@ -891,6 +766,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         return response
 
     def ctrl_write(self, opcode=0x00, fifo_id=0x0000, value=0x00000000):
+        """Write a value to the FIFO controller via AXI-Lite."""
         address = (fifo_id << 8) | opcode
         # Shift by 2 because FIFO controller operates on word addresses
         self.fifo_controller_0.write(offset=(address << 2), value=value)
@@ -1489,6 +1365,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         device=None,
         download=True,
         runtime_weight_dir="runtime_weights/",
+        validation_dataset=None,
         batch_size=1,
         seed=1,
         **kwargs,
@@ -1502,6 +1379,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             device=device,
             download=download,
             runtime_weight_dir=runtime_weight_dir,
+            validation_dataset=validation_dataset,
             batch_size=batch_size,
             seed=seed,
         )
@@ -1537,6 +1415,11 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         """Run instrumentation experiment (instrumentation mode)."""
         self.set_current_mode("instr")
         return super().experiment_instrumentation(**kwargs)
+
+    def validate(self, *args, **kwargs):
+        """Run validation in DMA mode."""
+        self.set_current_mode("dma")
+        return super().validate(*args, **kwargs)
 
 
 def parse_kv(ctx, self, value):

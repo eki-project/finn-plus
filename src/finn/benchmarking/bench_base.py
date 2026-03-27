@@ -21,6 +21,7 @@ import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.util import delete_dir_contents
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.util.basic import alveo_default_platform, alveo_part_map, part_map
+from finn.util.logging import log
 from finn.util.settings import get_settings
 
 
@@ -97,6 +98,27 @@ class bench:
         else:
             self._params["shell_flow_type"] = build_cfg.ShellFlowType.VIVADO_ZYNQ
 
+        # Best effort DUT <-> dataset mapping
+        if "validation_dataset" in self._params:
+            pass
+        elif self._params["dut"] == "bnn-pynq":
+            log.warning(
+                "DUT bnn-pynq selected. Selecting mnist as the validation dataset. "
+                "This might be incorrect. If so configure a validation_dataset in the config"
+            )
+            self._params["validation_dataset"] = "mnist"
+        elif self._params["dut"] == "vgg10":
+            self._params["validation_dataset"] = "radioml"
+        elif self._params["dut"] in ["mobilenetv1", "resnet50"]:
+            self._params["validation_dataset"] = "imagenet"
+        elif self._params["dut"] == "cybsec":
+            self._params["validation_dataset"] = "unswnb15"
+        else:
+            # TODO implement for gtsrb, kws, transformer, synthetic_nonlinear (?), mvau (?)
+            log.warning(
+                "No dataset available for the selected DUT. Configure manually if possible."
+            )
+
         # Load custom (= non build_dataflow_config) parameters from topology-specific .yml
         custom_params = [
             "model_dir",  # used to setup onnx/npy input
@@ -117,10 +139,7 @@ class bench:
                 )
             else:
                 # Default experiment config for normal builds
-                # TODO: Switch to default.json to run instr. + DMA validation exp. by default
-                self.experiments_config = os.path.join(
-                    "ci", "experiments", "instrument_only_default.json"
-                )
+                self.experiments_config = os.path.join("ci", "experiments", "default.json")
 
         dut_yaml_name = self._params["dut"] + ".yml"
         dut_path = os.path.join(os.path.dirname(__file__), "dut", dut_yaml_name)
