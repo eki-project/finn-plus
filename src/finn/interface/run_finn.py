@@ -498,6 +498,8 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
         )
         os.environ["XILINX_LOCAL_USER_DATA"] = "no"
 
+    # TODO: these are deprecated and mostly intended as fallback
+    # e.g., still used in templates.py
     os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
     os.environ["FINN_NOTEBOOKS"] = resolve_module_path("notebooks")

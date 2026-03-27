@@ -28,6 +28,7 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 from torch import nn
 
 import finn.core.onnx_exec as oxe
+from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.convert_to_hw_layers import InferShuffle
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
@@ -92,8 +93,8 @@ def construct_onnx_model(
         qonnx_cleanup(temp_file.name, out_file=temp_file.name)
 
         new_model = ModelWrapper(temp_file.name)
-        new_model.set_tensor_datatype(new_model.graph.input[0].name, dt)
-        new_model.set_tensor_datatype(new_model.graph.output[0].name, dt)
+        new_model.set_tensor_datatype(new_model.get_first_global_in(), dt)
+        new_model.set_tensor_datatype(new_model.get_first_global_out(), dt)
         new_model.transform(InferShapes())
         new_model.transform(InferDataTypes())
         return new_model
@@ -179,15 +180,15 @@ def test_cppsim_shuffle_layer(cpp_shuffle_param, datatype, simd):
     )
 
     input = gen_finn_dt_tensor(dt, in_shape)
-    in_name = model.graph.input[0].name
-    out_name = model.graph.output[0].name
+    in_name = model.get_first_global_in()
+    out_name = model.get_first_global_out()
     input_t = {in_name: input}
 
     # Get a reference for the shuffle
     y_ref = oxe.execute_onnx(model, input_t)[out_name]
 
     # Attempt to build the HLS for this
-    model = model.transform(InferShuffle())
+    model = model.transform(InferShuffle(_filter=lambda *_: True))
     model = model.transform(SpecializeLayers(test_fpga_part))
 
     model = model.transform(SetShuffleSIMD(simd))
@@ -442,15 +443,15 @@ def test_rtlsim_shuffle_layer(shuffle_param, datatype, simd):
     )
 
     input = gen_finn_dt_tensor(dt, in_shape)
-    in_name = model.graph.input[0].name
-    out_name = model.graph.output[0].name
+    in_name = model.get_first_global_in()
+    out_name = model.get_first_global_out()
     input_t = {in_name: input}
 
     # Get a reference for the shuffle
     y_ref = oxe.execute_onnx(model, input_t)[out_name]
 
     # Attempt to build the HLS/RTL for this
-    model = model.transform(InferShuffle())
+    model = model.transform(InferShuffle(_filter=lambda *_: True))
     model = model.transform(SpecializeLayers(test_fpga_part))
     model = model.transform(SetShuffleSIMD(simd, enable_waveforms=True))
 
@@ -468,6 +469,14 @@ def test_rtlsim_shuffle_layer(shuffle_param, datatype, simd):
 
     y_hw = oxe.execute_onnx(model, input_t)[out_name]
     assert np.allclose(y_ref, y_hw), "Model output does not match expected output"
+
+    for node in model.graph.node:
+        inst = getCustomOp(node)
+        cycles_rtlsim = inst.get_nodeattr("cycles_rtlsim")
+        exp_cycles_dict = model.analysis(exp_cycles_per_layer)
+        exp_cycles = exp_cycles_dict[node.name]
+        assert np.isclose(exp_cycles, cycles_rtlsim, atol=10)
+        assert exp_cycles != 0
 
 
 @pytest.mark.parametrize(
@@ -537,14 +546,14 @@ def test_stitched_ip_shuffle_layer(shuffle_sip_param, datatype, simd):
     )
 
     input = gen_finn_dt_tensor(dt, in_shape)
-    in_name = model.graph.input[0].name
-    out_name = model.graph.output[0].name
+    in_name = model.get_first_global_in()
+    out_name = model.get_first_global_out()
     input_t = {in_name: input}
 
     # Get a reference for the shuffle
     y_ref = oxe.execute_onnx(model, input_t)[out_name]
 
-    model = model.transform(InferShuffle())
+    model = model.transform(InferShuffle(_filter=lambda *_: True))
     model = model.transform(SpecializeLayers(test_fpga_part))
     model = model.transform(SetShuffleSIMD(simd))
 
@@ -576,7 +585,7 @@ def test_shuffle_config_consolidation():
         dt=dt,
     )
 
-    model = model.transform(InferShuffle())
+    model = model.transform(InferShuffle(_filter=lambda *_: True))
     model = model.transform(SpecializeLayers(test_fpga_part))
     model = model.transform(SetShuffleSIMD(4))
 

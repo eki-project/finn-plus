@@ -746,23 +746,6 @@ class Thresholding_hls(Thresholding, HLSBackend):
             raise Exception("Unrecognized mem_mode for Thresholding_Batch")
         return cmd
 
-    def get_verilog_top_module_intf_names(self) -> dict[str, list[tuple[str, int]] | list[str]]:
-        """Get the names of Verilog top module interfaces.
-
-        Returns
-        -------
-        dict[str, list[tuple[str, int]] | list[str]]
-            Dictionary mapping interface type to list of interface names.
-        """
-        intf_names = super().get_verilog_top_module_intf_names()
-        mem_mode = self.get_nodeattr("mem_mode")
-        if mem_mode == "internal_decoupled":
-            # only expose axilite interface if attribute is set
-            runtime_writable = self.get_nodeattr("runtime_writeable_weights") == 1
-            if runtime_writable:
-                intf_names["axilite"] = ["s_axilite"]
-        return intf_names
-
     def get_op_and_param_counts(self) -> dict[str, int]:
         """Get operation and parameter counts for this layer.
 
