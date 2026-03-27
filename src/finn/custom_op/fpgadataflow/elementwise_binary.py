@@ -290,12 +290,13 @@ class ElementwiseBinaryOperation(HWCustomOp):
     # Widths of the input data stream of the input at index ind
     def get_instream_width(self, ind=0):
         mem_mode = self.get_nodeattr("mem_mode")
+        mlo_enabled = self.get_nodeattr("mlo_max_iter")
         lhs_const = self.get_nodeattr("lhs_style") == "const"
         rhs_const = self.get_nodeattr("rhs_style") == "const"
         # Constant inputs are not exposed as streams
-        if ind == 0 and lhs_const and mem_mode == "internal_embedded":
+        if ind == 0 and lhs_const and mem_mode == "internal_embedded" and not mlo_enabled:
             return 0
-        if ind == 1 and rhs_const and mem_mode == "internal_embedded":
+        if ind == 1 and rhs_const and mem_mode == "internal_embedded" and not mlo_enabled:
             return 0
 
         # Get the number of bits used to represent the input
