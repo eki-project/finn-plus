@@ -45,8 +45,9 @@ from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, cast
 
-from finn import xsi
 from finn.util.basic import get_liveness_threshold_cycles, is_versal
+from finn.util.deprecated import deprecated
+from finn import xsi
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 from finn.util.settings import get_settings
@@ -55,6 +56,9 @@ if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
 
 finnxsi = xsi if xsi.is_available() else None
+
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
 
 class HWCustomOp(CustomOp):
@@ -334,10 +338,9 @@ class HWCustomOp(CustomOp):
     def verify_node(self) -> None:
         """Can be implemented to verify that all attributes the node needs
         are there and that particular attributes are set correctly. Can also
-        check if the number of inputs is equal to the expected number.
-        """
+        check if the number of inputs is equal to the expected number."""
 
-    def generate_params(self, model: "ModelWrapper", path: str) -> None:
+    def generate_params(self, model: Any, path: str) -> None:
         """Generate parameters (i.e. weights and thresholds).
 
         Member function of HWCustomOp class that must be implemented by every node
@@ -514,6 +517,7 @@ class HWCustomOp(CustomOp):
         with output_path.open("w") as f:
             f.write(template_wrapper)
 
+    @deprecated
     def derive_characteristic_fxns(
         self, period: int, override_rtlsim_dict: dict | None = None
     ) -> None:

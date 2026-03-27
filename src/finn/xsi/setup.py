@@ -72,7 +72,7 @@ def get_build_paths() -> Tuple[List[str], str, List[str]]:
         compiler = "clang++"
 
     # Compile flags
-    extra_compile_args = ["--std=c++17", "-Wall", "-O3", "-shared", "-fPIC"]
+    extra_compile_args = ["--std=c++20", "-Wall", "-O3", "-shared", "-fPIC"]
 
     return include_dirs, compiler, extra_compile_args
 
@@ -147,7 +147,7 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
     include_dirs, compiler, compile_args = get_build_paths()
 
     # Source files
-    source_files = ["xsi_bind.cpp", "xsi_finn.cpp"]
+    source_files = ["xsi_bind.cpp", "src/Port.cpp", "src/Design.cpp", "src/Kernel.cpp", "src/SharedLibrary.cpp"]
 
     # Build command
     cmd = [compiler] + compile_args
@@ -155,6 +155,7 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
     # Add include directories
     for inc_dir in include_dirs:
         cmd.extend(["-I", inc_dir])
+    cmd.extend(["-I", "./include"])
 
     # Output file
     cmd.extend(["-o", "xsi.so"])

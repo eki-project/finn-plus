@@ -102,9 +102,12 @@ def start_bench_run(config_name):
             is_followup = True
             save_dir = save_dir + "_followup"
         else:
-            config_path = os.path.join("ci", "cfg", config_name + ".yml")
+            if config_name.endswith(".yaml") or config_name.endswith(".yml"):
+                config_path = config_name
+            else:
+                config_path = os.path.join("ci", "cfg", config_name + ".yml")
         print("Job launched with SLURM ID: %d" % (job_id))
-    except KeyError:
+    except KeyError as e:
         # Launched without SLURM, assume test run on local machine
         job_id = 0
         experiment_dir = "bench_output/" + time.strftime("%d_%H_%M")

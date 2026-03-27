@@ -1,3 +1,7 @@
+model_path: models/resnet18/resnet18_w3a3_cifar100.onnx
+folding_config_file: models/resnet18/resnet18_folding_config.json
+specialize_layers_config_file: models/resnet18/resnet18_specialize_layers.json
+
 steps:
   - step_qonnx_to_finn
   - step_tidy_up

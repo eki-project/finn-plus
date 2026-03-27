@@ -37,11 +37,12 @@ from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.util.basic import interleave_matrix_outer_dim_from_partitions
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.memstream import MemStreamSupport
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
 
-class Thresholding(HWCustomOp):
+class Thresholding(MemStreamSupport, HWCustomOp):
     """Abstraction layer for HW implementation of Thresholding."""
 
     def __init__(self, onnx_node, **kwargs):

@@ -8,8 +8,11 @@
  * @author	Thomas B. Preußer <thomas.preusser@amd.com>
  ***************************************************************************/
 
+#include <Port.h>
+#include <Design.h>
+#include <Kernel.h>
+
 #include <pybind11/pybind11.h>
-#include "xsi_finn.hpp"
 #include <mutex>
 #include <map>
 
@@ -31,11 +34,6 @@ namespace {
 
 PYBIND11_MODULE(xsi, m) {
 
-	py::class_<Kernel, std::shared_ptr<Kernel>>(m, "Kernel")
-		.def(py::init<std::string const&>())
-		.def("hex_in_lower", &Kernel::hex_in_lower)
-		.def("hex_in_upper", &Kernel::hex_in_upper);
-
 	py::class_<Design, std::unique_ptr<Design, DesignDeleter>>(m, "Design")
 		.def(py::init([](
 			std::shared_ptr<Kernel> const &kernel,
@@ -54,7 +52,7 @@ PYBIND11_MODULE(xsi, m) {
 		.def("get_status",     &Design::get_status)
 		.def("get_error_info", &Design::get_error_info)
 		.def("num_ports",      &Design::num_ports)
-		.def("getPort",        static_cast<Port* (Design::*)(std::string const&)>(&Design::getPort))
+		.def("getPort",        static_cast<Port& (Design::*)(std::string const&)>(&Design::getPort))
 		.def("ports", [](Design &d) {
 			auto const  e = d.ports();
 			return  py::make_iterator(e.begin(), e.end());

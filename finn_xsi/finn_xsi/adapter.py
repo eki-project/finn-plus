@@ -78,15 +78,15 @@ def compile_sim_obj(top_module_name, source_list, sim_out_dir, debug=False, beha
         "floating_point_v7_1_18",
         "floating_point_v7_1_15",
         "floating_point_v7_1_19",
+        "work",
     ]
 
     cmd_xelab = [
         "xelab",
-        "work." + top_module_name,
+        "work." + "finn_design_wrapper",
         "-relax",
-        "-prj",
-        "rtlsim.prj",
         "-dll",
+        "--O3",
         "-s",
         top_module_name,
     ]
@@ -105,7 +105,10 @@ def compile_sim_obj(top_module_name, source_list, sim_out_dir, debug=False, beha
     if locate_glbl() is not None:
         cmd_xelab.insert(1, "work.glbl")
 
-    launch_process_helper(cmd_xelab, cwd=sim_out_dir)
+    cmd_xvlog = "xvlog --incr --relax -prj rtlsim.prj".split()
+
+    launch_process_helper(cmd_xvlog, cwd=sim_out_dir, print_stdout=False)
+    launch_process_helper(cmd_xelab, cwd=sim_out_dir, print_stdout=False)
     out_so_relative_path = "xsim.dir/%s/xsimk.so" % top_module_name
     out_so_full_path = sim_out_dir + "/" + out_so_relative_path
 

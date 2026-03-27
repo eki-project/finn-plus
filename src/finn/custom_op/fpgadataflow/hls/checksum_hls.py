@@ -35,7 +35,7 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.logging import log
 
 
-class CheckSum_hls(HWCustomOp, HLSBackend):
+class CheckSum_hls(HLSBackend, HWCustomOp):
     """Class that corresponds to custom_hls checksum function."""
 
     def __init__(self, onnx_node, **kwargs):
