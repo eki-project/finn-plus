@@ -19,6 +19,7 @@ from finn.util.data_packing import (
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
+from finn.util.settings import get_settings
 
 
 class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
@@ -90,7 +91,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         self.generate_params(model, code_gen_dir)
 
-        rtlsrc = f'{os.environ["FINN_ROOT"]}/finn-rtllib/eltwisef'
+        rtlsrc = os.path.join(get_settings().finn_rtllib, "eltwisef")
         template_path = f"{rtlsrc}/eltwisef_template.v"
         pe = self.get_nodeattr("PE")
 
@@ -123,7 +124,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
     def get_rtl_file_list(self, abspath=False):
         if abspath:
             code_gen_dir = f"{self.get_nodeattr('code_gen_dir_ipgen')}/"
-            rtllib_dir = f'{os.environ["FINN_ROOT"]}/finn-rtllib/eltwisef/'
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "eltwisef/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
@@ -228,8 +229,8 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         runtime_writable = self.get_nodeattr("runtime_writeable_weights") == 1
 
-        axi_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/axi/hdl/")
-        ms_rtllib_dir = os.path.join(os.environ["FINN_ROOT"], "finn-rtllib/memstream/hdl/")
+        axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
+        ms_rtllib_dir = os.path.join(get_settings().finn_rtllib, "memstream/hdl/")
         file_suffix = "_memstream_wrapper.v"
 
         strm_tmpl = None
