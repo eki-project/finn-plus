@@ -438,7 +438,7 @@ class DependencyUpdater:
         debug(f"Trying to install DIRECT DOWNLOAD dependency: {package_name}", False)
         if shutil.which("wget") is None or shutil.which("unzip") is None:
             # TODO: Allow curl and gzip etc. as well
-            raise FINNConfigurationError(
+            raise FINNDependencyInstallationError(
                 'Make sure that both "wget" and "unzip" are available on your system.'
             )
         url, do_unzip, target_directory = self.deps.get_fields(
