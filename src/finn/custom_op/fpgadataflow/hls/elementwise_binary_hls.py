@@ -1016,6 +1016,16 @@ class ElementwiseSub_hls(
     """HLS implementation of elementwise subtraction operation."""
 
 
+# Derive a specialization to implement elementwise absolute difference of two inputs
+@register_custom_op
+class ElementwiseAbsDiff_hls(
+    # CapWords convention
+    ElementwiseBinaryOperation_hls,
+    elementwise_binary.ElementwiseAbsDiff,
+):
+    pass
+
+
 # Derive a specialization to implement elementwise multiplication of two inputs
 @register_custom_op
 class ElementwiseMul_hls(

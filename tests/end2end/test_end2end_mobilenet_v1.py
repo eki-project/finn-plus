@@ -227,7 +227,7 @@ class Test_end2end_mobilenet:
         model = model.transform(to_hw.InferThresholdingLayer())
         model = model.transform(to_hw.InferVectorVectorActivation())
         model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-        model = model.transform(to_hw.InferChannelwiseLinearLayer())
+        model = model.transform(to_hw.InferElementwiseBinaryOperation())
         model = model.transform(to_hw.InferLabelSelectLayer())
         model = model.transform(InferShapes())
         model = model.transform(GiveUniqueNodeNames())
