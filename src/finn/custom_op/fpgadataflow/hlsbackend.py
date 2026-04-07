@@ -186,7 +186,7 @@ class HLSBackend(ABC):
         """Return a list of extra TCL directives for HLS synthesis."""
         return []
 
-    def ipgen_singlenode_code(self):
+    def ipgen_singlenode_code(self, fpgapart=None):
         """Build the bash script for IP generation using the CallHLS utility."""
         node = self.onnx_node
         code_gen_dir = Path(self.get_nodeattr("code_gen_dir_ipgen"))

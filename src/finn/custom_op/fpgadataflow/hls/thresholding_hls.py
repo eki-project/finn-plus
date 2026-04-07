@@ -746,23 +746,6 @@ class Thresholding_hls(Thresholding, HLSBackend):
             raise Exception("Unrecognized mem_mode for Thresholding_Batch")
         return cmd
 
-    def get_verilog_top_module_intf_names(self) -> dict[str, list[tuple[str, int]] | list[str]]:
-        """Get the names of Verilog top module interfaces.
-
-        Returns
-        -------
-        dict[str, list[tuple[str, int]] | list[str]]
-            Dictionary mapping interface type to list of interface names.
-        """
-        intf_names = super().get_verilog_top_module_intf_names()
-        mem_mode = self.get_nodeattr("mem_mode")
-        if mem_mode == "internal_decoupled":
-            # only expose axilite interface if attribute is set
-            runtime_writable = self.get_nodeattr("runtime_writeable_weights") == 1
-            if runtime_writable:
-                intf_names["axilite"] = ["s_axilite"]
-        return intf_names
-
     def get_op_and_param_counts(self) -> dict[str, int]:
         """Get operation and parameter counts for this layer.
 
@@ -820,3 +803,35 @@ class Thresholding_hls(Thresholding, HLSBackend):
             num_w_reps = np.prod(self.get_nodeattr("numInputVectors"))
             io_dict["inputs"]["in1"] = [0 for i in range(num_w_reps * n_weight_inps)]
         super().derive_characteristic_fxns(period, override_rtlsim_dict=io_dict)
+
+    def minimize_weight_bit_width(self, model):
+        """Minimize threshold datatype, with HLS-specific adjustments.
+
+        The HLS implementation uses the threshold datatype for comparisons.
+        When the threshold datatype is narrower than the input datatype,
+        input values get truncated, which can cause incorrect results.
+        To prevent this, ensure threshold datatype is at least as wide as
+        input datatype."""
+        # First, call the base class implementation
+        tdt = super().minimize_weight_bit_width(model)
+
+        # Check if we need HLS-specific adjustments
+        idt = self.get_input_datatype(0)
+        if not idt.is_integer() or not tdt.is_integer():
+            return tdt
+
+        # If threshold datatype is smaller than input datatype, widen it
+        # to match input datatype to prevent truncation issues
+        if tdt.bitwidth() < idt.bitwidth():
+            # Use input datatype to ensure no truncation
+            new_tdt = idt
+            thresholds = model.get_initializer(self.onnx_node.input[1])
+            threshold_tensor = self.get_hw_compatible_threshold_tensor(thresholds)
+            assert np.vectorize(new_tdt.allowed)(
+                threshold_tensor
+            ).all(), "Thresholds can't be expressed with type %s" % str(new_tdt)
+            self.set_nodeattr("weightDataType", new_tdt.name)
+            model.set_tensor_datatype(self.onnx_node.input[1], new_tdt)
+            return new_tdt
+
+        return tdt

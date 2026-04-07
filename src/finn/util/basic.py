@@ -48,6 +48,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import gen_finn_dt_tensor
@@ -185,6 +186,19 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
     return str(tmpdir)
 
 
+class VerboseCalledProcessError(subprocess.CalledProcessError):
+    """CalledProcessError that includes captured stdout/stderr in its string representation."""
+
+    def __str__(self):
+        base = super().__str__()
+        parts = [base]
+        if self.output:
+            parts.append(f"stdout:\n{self.output.strip()}")
+        if self.stderr:
+            parts.append(f"stderr:\n{self.stderr.strip()}")
+        return "\n".join(parts)
+
+
 def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
     """Helper function to launch a process in a way that facilitates logging
     stdout/stderr with Python loggers.
@@ -218,8 +232,11 @@ def launch_process_helper(args, proc_env=None, cwd=None, print_stdout=True):
             cmd = args
         log.error(f"Launched process returned non-zero exit code ({process.returncode}): {cmd}")
 
-    # Raise CalledProcessError for non-zero return code
-    process.check_returncode()
+    # Raise CalledProcessError for non-zero return code, including captured output
+    if process.returncode != 0:
+        raise VerboseCalledProcessError(
+            process.returncode, args, output=process.stdout, stderr=process.stderr
+        )
     return (cmd_out, cmd_err)
 
 

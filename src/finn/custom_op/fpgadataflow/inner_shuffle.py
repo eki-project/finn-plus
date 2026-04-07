@@ -7,10 +7,10 @@
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class InnerShuffle(HWCustomOp):
@@ -58,7 +58,7 @@ class InnerShuffle(HWCustomOp):
             warn_str = (
                 f"data_type changing for {node.name}: {str(self.get_input_datatype())} -> {str(dt)}"
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("data_type", dt.name)
         model.set_tensor_datatype(node.output[0], dt)
 
@@ -90,3 +90,19 @@ class InnerShuffle(HWCustomOp):
         fold = int(np.prod(normal_ishape) / simd)
         folded_ishape = [fold, simd]
         return tuple(folded_ishape)
+
+    def get_exp_cycles(self):
+        """Estimate cycles for the double-buffered InnerShuffle RTL.
+
+        The RTL uses two BRAM banks with page_size = I*J/SIMD. The first page
+        must be fully written before reads can begin, adding one extra page of
+        latency beyond the streaming throughput. Empirically verified to match
+        cycles_rtlsim within atol=10.
+        """
+        in_shape = self.get_nodeattr("in_shape")
+        simd = self.get_nodeattr("SIMD")
+        I_dim = in_shape[-2]
+        J_dim = in_shape[-1]
+        page_size = I_dim * J_dim // simd
+        total_elems = int(np.prod(in_shape)) // simd
+        return 2 * total_elems + page_size
