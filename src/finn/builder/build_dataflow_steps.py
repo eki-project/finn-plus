@@ -916,6 +916,8 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(HLSSynthIP())
 
     if DataflowOutputType.STITCHED_IP in cfg.generate_outputs:
+        report_dir = cfg.output_dir + "/report"
+        os.makedirs(report_dir, exist_ok=True)
         stitched_ip_dir = cfg.output_dir + "/stitched_ip"
         model = model.transform(
             CreateStitchedIP(
@@ -930,6 +932,15 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
             model.get_metadata_prop("vivado_stitch_proj"), stitched_ip_dir, dirs_exist_ok=True
         )
         log.info(f"Vivado stitched IP written into {stitched_ip_dir}")
+
+        if cfg.stitched_ip_gen_dcp:
+            copy(
+                model.get_metadata_prop("vivado_synth_rpt"),
+                report_dir + "/post_synth_resources_dcp.xml",
+            )
+            post_synth_resources = model.analysis(post_synth_res)
+            with open(report_dir + "/post_synth_resources_dcp.json", "w") as f:
+                json.dump(post_synth_resources, f, indent=2)
     if VerificationStepType.STITCHED_IP_RTLSIM in cfg._resolve_verification_steps():
         # prepare ip-stitched rtlsim
         verify_model = deepcopy(model)
