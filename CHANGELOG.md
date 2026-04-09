@@ -14,6 +14,9 @@ Planned release: 1.5.0.
 - Error lines from Vivado logs are printed to console in case of failing synthesis runs
 - Added `CITATION.cff` file
 
+#### Changed
+- Vivado Stitch Projects have names specifying the nodes they contain if there are 3 or fewer nodes in the project
+
 
 ## 1.4.0 - 03.03.2026
 #### Added
