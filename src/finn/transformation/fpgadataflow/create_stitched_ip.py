@@ -401,7 +401,7 @@ class CreateStitchedIP(Transformation):
         prjname = "finn_vivado_stitch_proj"
         build_dir_prefix = "vivado_stitch_proj_"
         if len(model.graph.node) <= 3:
-            build_dir_prefix = +"".join([node.name + "_" for node in model.graph.node])
+            build_dir_prefix = "".join([node.name + "_" for node in model.graph.node])
         vivado_stitch_proj_dir = make_build_dir(prefix=build_dir_prefix)
         model.set_metadata_prop("vivado_stitch_proj", vivado_stitch_proj_dir)
         # start building the tcl script
