@@ -31,6 +31,7 @@
 
 import json
 import os
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -52,7 +53,7 @@ from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import launch_process_helper, make_build_dir
-from finn.util.exception import FINNError, FINNUserError
+from finn.util.exception import FINNError, FINNSynthesisError, FINNUserError
 from finn.util.logging import log
 
 from . import templates
@@ -342,10 +343,16 @@ class VitisLink(Transformation):
         try:
             launch_process_helper(bash_command, print_stdout=False)
         except CalledProcessError as e:
-            raise FINNUserError(f"Linking failed. Check {link_dir} for further details.") from e
+            raise FINNSynthesisError(
+                f"Linking failed. Check {link_dir} for further details.",
+                Path(link_dir) / "vivado.log",
+            ) from e
         xclbin = link_dir + "/a.xclbin"
         if not os.path.isfile(xclbin):
-            raise FINNError("Vitis .xclbin file not created, check logs under %s" % link_dir)
+            raise FINNSynthesisError(
+                "Vitis .xclbin file not created, check logs under %s" % link_dir,
+                Path(link_dir) / "vivado.log",
+            )
 
         # TODO rename xclbin appropriately here?
         model.set_metadata_prop("bitfile", xclbin)
