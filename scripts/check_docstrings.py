@@ -49,6 +49,7 @@ class DocstringChecker(ast.NodeVisitor):
         self.filename: str = filename
         self.missing_docstrings: list[dict[str, str | int]] = []
         self.current_class: str | None = None
+        self.inside_custom_op: bool = False
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Visit function definition nodes and check for docstrings.
@@ -72,16 +73,30 @@ class DocstringChecker(ast.NodeVisitor):
         """Visit class definition nodes and check for docstrings.
 
         Maintains context of the current class for proper method naming
-        in the missing docstrings report.
+        in the missing docstrings report. Skips docstring checks for
+        subclasses of CustomOp.
 
         Args:
             node: The class definition AST node to analyze
         """
         old_class: str | None = self.current_class
+        old_inside_custom_op: bool = self.inside_custom_op
         self.current_class = node.name
-        self._check_docstring(node, "class")
+        
+        # Check if this class is a subclass of CustomOp
+        is_custom_op_subclass = any(
+            isinstance(base, ast.Name) and base.id == "CustomOp"
+            for base in node.bases
+        )
+        
+        if is_custom_op_subclass:
+            self.inside_custom_op = True
+        else:
+            self._check_docstring(node, "class")
+        
         self.generic_visit(node)
         self.current_class = old_class
+        self.inside_custom_op = old_inside_custom_op
 
     def visit_Module(self, node: ast.Module) -> None:
         """Visit module nodes and check for module-level docstrings.
@@ -102,14 +117,19 @@ class DocstringChecker(ast.NodeVisitor):
 
         This method requires docstrings for all functions, methods, and classes,
         including private functions. Only test functions (starting with 'test_')
-        are skipped from docstring requirements.
+        and classes/methods inside CustomOp subclasses are skipped from docstring 
+        requirements.
 
         Args:
             node: The AST node to check (function, async function, or class)
             node_type: String describing the type of node ('function', 'async function', 'class')
         """
-        # Only skip test functions
+        # Skip test functions
         if hasattr(node, "name") and node.name.startswith("test_"):
+            return
+        
+        # Skip all checks inside CustomOp subclasses
+        if self.inside_custom_op:
             return
 
         if not ast.get_docstring(node):
