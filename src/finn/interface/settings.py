@@ -293,7 +293,7 @@ class FINNSettings(BaseModel):
         modified_data = self.model_dump()
         for key in data.keys():
             lkey = key.lower()
-            if lkey in modified_data data[key] is not None:
+            if lkey in modified_data and data[key] is not None:
                 modified_data[lkey] = data[key]
         try:
             new_model = FINNSettings.model_validate(modified_data)
