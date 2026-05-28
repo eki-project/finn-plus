@@ -171,9 +171,7 @@ class VerificationStepType(str, Enum):
 #: specified order. Use the `steps` as part of build config to restrict which
 #: steps will be run.
 default_build_dataflow_steps = [
-    "step_qonnx_to_finn",
-    "step_tidy_up",
-    "step_streamline",
+    "step_passes_frontend",
     "step_convert_to_hw",
     "step_create_dataflow_partition",
     "step_specialize_layers",
@@ -195,9 +193,7 @@ default_build_dataflow_steps = [
 
 #: List of steps to run for an estimate-only (no synthesis) dataflow build
 estimate_only_dataflow_steps = [
-    "step_qonnx_to_finn",
-    "step_tidy_up",
-    "step_streamline",
+    "step_passes_frontend",
     "step_convert_to_hw",
     "step_create_dataflow_partition",
     "step_specialize_layers",

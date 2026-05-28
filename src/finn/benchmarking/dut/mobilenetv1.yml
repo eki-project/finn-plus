@@ -3,8 +3,7 @@ folding_config_file: models/mobilenetv1/ZCU102_folding_config_live_fifo.json
 specialize_layers_config_file: models/mobilenetv1/ZCU102_specialize_layers.json
 
 steps:
-  - finn.builder.custom_step_library.mobilenet.step_mobilenet_streamline # Custom step
-  - finn.builder.custom_step_library.mobilenet.step_mobilenet_lower_convs # Custom step
+  - step_passes_frontend
   - finn.builder.custom_step_library.mobilenet.step_mobilenet_convert_to_hw_layers_separate_th # Custom step
   - step_create_dataflow_partition
   - step_specialize_layers

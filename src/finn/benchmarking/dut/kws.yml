@@ -7,9 +7,7 @@ specialize_layers_config_file: models/kws/kws_specialize_layers.json
 
 steps:
   - finn.builder.custom_step_library.general.add_postproc_top1 # Custom step
-  - step_qonnx_to_finn
-  - step_tidy_up
-  - step_streamline
+  - step_passes_frontend
   - step_convert_to_hw
   - step_create_dataflow_partition
   - step_specialize_layers

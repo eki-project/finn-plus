@@ -4,13 +4,7 @@ specialize_layers_config_file: src/finn/benchmarking/dut/transformer_specializat
 
 # Sequence of steps to transform, optimize and build the accelerator
 steps:
-  #- step_passes_frontend
-  # TODO: broken with step_passes_frontend, use pre-streamlined model instead
-  - finn.builder.passes.export
-  # Default FINN frontend step sequence (TODO: remove after new frontend is complete)
-  - step_qonnx_to_finn
-  - step_tidy_up
-  - step_streamline
+  - step_passes_frontend
   # Customized adhoc hardware conversion step: Includes inferring the fused
   # operator for scaled dot-product attention
   - finn.builder.custom_step_library.transformer_adhoc.step_convert_to_hw
