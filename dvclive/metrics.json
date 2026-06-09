@@ -1,0 +1,56 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 0.0,
+            "DSP": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 1024,
+            "max_cycles": 1024,
+            "max_cycles_node_name": "NodeContainer_0",
+            "estimated_throughput_fps": 97656.25,
+            "estimated_latency_ns": 10240.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 24787,
+            "FF": 29330,
+            "SRL": 1042,
+            "DSP": 1,
+            "BRAM_18K": 2,
+            "BRAM_36K": 33,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 3.980738644067802,
+            "avg_3V3_power": 3.2536683050847452,
+            "avg_total_power": 7.234406949152549,
+            "min_0V85_power": 3.980738644067802,
+            "min_3V3_power": 3.2536683050847452,
+            "min_total_power": 7.234406949152549,
+            "max_0V85_power": 3.980738644067802,
+            "max_3V3_power": 3.2536683050847452,
+            "max_total_power": 7.234406949152549
+        }
+    },
+    "time": {
+        "step_apply_multi_dnn": 0,
+        "step_collapse_multi_dnn": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "step_prepare_nodecontainer": 224,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 0,
+        "step_create_stitched_ip": 0,
+        "step_synthesize_bitfile": 1415,
+        "step_make_driver": 1,
+        "step_deployment_package": 0,
+        "total_build_time": 1640
+    }
+}
