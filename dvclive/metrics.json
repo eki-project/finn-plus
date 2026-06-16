@@ -1,0 +1,66 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 3706.0,
+            "DSP": 0.0,
+            "BRAM_18K": 0.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 99328,
+            "max_cycles": 65536,
+            "max_cycles_node_name": "StreamingConcat_hls_0",
+            "estimated_throughput_fps": 3051.7578125,
+            "estimated_latency_ns": 496640.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 3864.0,
+            "FF": 1117.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 8.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 14152,
+            "FF": 19874,
+            "SRL": 624,
+            "DSP": 0,
+            "BRAM_18K": 0,
+            "BRAM_36K": 5,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 3.9878577777777773,
+            "avg_3V3_power": 3.2374666666666667,
+            "avg_total_power": 7.225324444444445,
+            "min_0V85_power": 3.9878577777777773,
+            "min_3V3_power": 3.2374666666666667,
+            "min_total_power": 7.225324444444445,
+            "max_0V85_power": 3.9878577777777773,
+            "max_3V3_power": 3.2374666666666667,
+            "max_total_power": 7.225324444444445
+        }
+    },
+    "time": {
+        "step_apply_multi_dnn": 0,
+        "step_collapse_multi_dnn": 0,
+        "step_minimize_bit_width": 0,
+        "step_generate_estimate_reports": 0,
+        "step_prepare_nodecontainer": 0,
+        "step_hw_codegen": 0,
+        "step_hw_ipgen": 41,
+        "step_create_stitched_ip": 0,
+        "step_synthesize_bitfile": 633,
+        "step_make_driver": 2,
+        "step_deployment_package": 0,
+        "total_build_time": 676
+    }
+}
