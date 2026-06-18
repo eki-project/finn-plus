@@ -1,0 +1,21 @@
+params:
+  dut: vgg10
+  board: RFSoC4x2
+  synth_clk_period_ns: 5
+  instrumentation_avg_n: 64
+  experiments_config: /tmp/ci/cfg/../experiments/multi_dnn.json
+  auto_fifo_depths: false
+  standalone_thresholds: true
+  minimize_bit_width: false
+  multi_dnn_config_path: models/multi_dnn/vgg10/multi_dnn_cfgs/vgg10_multidnn_config_type3.json
+  folding_config_file: models/multi_dnn/vgg10/type3/vgg10_fc_full_type3_decoupled_block.json
+  generate_outputs:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  shell_flow_type: vivado_zynq
+  validation_dataset: radioml
+  model_path: models/vgg10/radioml_w4a4_small_tidy.onnx
+metadata:
+  tool_version: '2024.2'
