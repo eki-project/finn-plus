@@ -1,0 +1,51 @@
+params:
+  dut: mvau_multi_dnn
+  board: RFSoC4x2
+  synth_clk_period_ns: 5
+  instrumentation_avg_n: 64
+  experiments_config: /tmp/ci/cfg/../experiments/multi_dnn.json
+  idt: INT4
+  wdt: INT4
+  sparsity_amount: 0.5
+  nhw:
+  - 1
+  - 32
+  - 32
+  mw: 32
+  mh: 32
+  pe_simd:
+  - 8
+  - 16
+  m: 1
+  scenario_mem_mode:
+  - 3
+  - internal_decoupled
+  ram_style: distributed
+  ram_style_thr: distributed
+  backend: hls
+  generate_outputs:
+  - estimate_reports
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  simd: 16
+  pe: 8
+  sparsity_amount: 0.5
+  mw: 32
+  mh: 32
+  idt: INT4
+  wdt: INT4
+  m: 1
+  nhw:
+  - 1
+  - 32
+  - 32
+  mem_mode: internal_decoupled
+  ram_style: distributed
+  backend: hls
+  scenario: 3
+  zero_weights: 0.53
