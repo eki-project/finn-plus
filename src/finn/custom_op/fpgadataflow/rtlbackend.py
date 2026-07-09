@@ -37,7 +37,7 @@ import numpy as np
 import numpy.typing as npt
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 if TYPE_CHECKING:
     from onnx import GraphProto
@@ -80,6 +80,63 @@ class RTLBackend(HWCustomOp, ABC):
             }
         )
         return super_attrs
+
+    @overload
+    def get_nodeattr(
+        self,
+        name: Literal[
+            "backend",
+            "preferred_impl_style",
+            "code_gen_dir_ipgen",
+            "ipgen_path",
+            "ip_path",
+            "ip_vlnv",
+            "exec_mode",
+            "rtlsim_trace",
+            "res_estimate",
+            "res_synth",
+            "rtlsim_so",
+            "mem_port",
+            "output_hook",
+            "gen_top_module",
+        ],
+    ) -> str:
+        ...
+
+    @overload
+    def get_nodeattr(
+        self,
+        name: Literal[
+            "cycles_rtlsim",
+            "cycles_estimate",
+            "slr",
+            "partition_id",
+            "device_id",
+            "mlo_max_iter",
+        ],
+    ) -> int:
+        ...
+
+    @overload
+    def get_nodeattr(
+        self, name: Literal["inFIFODepths", "outFIFODepths"]
+    ) -> list[str | int | float]:
+        ...
+
+    @overload
+    def get_nodeattr(
+        self, name: str
+    ) -> int | float | str | bool | npt.NDArray | list[str | int | float] | None:
+        ...
+
+    def get_nodeattr(
+        self, name: str
+    ) -> int | float | str | bool | npt.NDArray | list[str | int | float] | None:
+        """Return node attribute value with static typing support for known keys."""
+        return cast(
+            "int | float | str | bool | npt.NDArray | list[str | int | float] | None",
+            super().get_nodeattr(name),
+        )
 
     @abstractmethod
     def generate_hdl(self, model: "ModelWrapper", fpgapart: str, clk: float) -> None:

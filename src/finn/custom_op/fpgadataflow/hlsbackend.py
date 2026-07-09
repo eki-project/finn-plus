@@ -35,7 +35,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 from finn import xsi as finnxsi
 from finn.custom_op.fpgadataflow import templates
@@ -79,6 +79,67 @@ class HLSBackend(HWCustomOp, ABC):
             }
         )
         return super_types
+
+    @overload
+    def get_nodeattr(
+        self,
+        name: Literal[
+            "backend",
+            "preferred_impl_style",
+            "code_gen_dir_ipgen",
+            "ipgen_path",
+            "ip_path",
+            "ip_vlnv",
+            "exec_mode",
+            "rtlsim_trace",
+            "res_estimate",
+            "res_synth",
+            "rtlsim_so",
+            "mem_port",
+            "output_hook",
+            "code_gen_dir_cppsim",
+            "executable_path",
+            "res_hls",
+            "cpp_interface",
+            "hls_style",
+        ],
+    ) -> str:
+        ...
+
+    @overload
+    def get_nodeattr(
+        self,
+        name: Literal[
+            "cycles_rtlsim",
+            "cycles_estimate",
+            "slr",
+            "partition_id",
+            "device_id",
+            "mlo_max_iter",
+        ],
+    ) -> int:
+        ...
+
+    @overload
+    def get_nodeattr(
+        self, name: Literal["inFIFODepths", "outFIFODepths"]
+    ) -> list[str | int | float]:
+        ...
+
+    @overload
+    def get_nodeattr(
+        self, name: str
+    ) -> int | float | str | bool | npt.NDArray | list[str | int | float] | None:
+        ...
+
+    def get_nodeattr(
+        self, name: str
+    ) -> int | float | str | bool | npt.NDArray | list[str | int | float] | None:
+        """Return node attribute value with static typing support for known keys."""
+        return cast(
+            "int | float | str | bool | npt.NDArray | list[str | int | float] | None",
+            super().get_nodeattr(name),
+        )
 
     def get_all_verilog_paths(self) -> list[str]:
         """Return list of all folders containing Verilog code for this node."""
@@ -340,7 +401,9 @@ compilation transformations?
         return "V"
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+        self,
+        context: dict[str, np.ndarray],
+        graph: "GraphProto",  # noqa: ARG002
     ) -> None:
         """Execute node in specified mode (cppsim or rtlsim)."""
         mode = self.get_nodeattr("exec_mode")
@@ -376,7 +439,11 @@ compilation transformations?
                 # Convert the input to floating point representation as the
                 # container datatype
                 inp_val = inp_val.astype(np.float32)
-            assert inp_val.shape == exp_ishape, "Input shape doesn't match expected shape."
+            if inp_val.shape != exp_ishape:
+                raise FINNUserError(
+                    f"Input shape {inp_val.shape} doesn't match expected shape {exp_ishape} "
+                    f"for node {node.name} for input {inp} in simulation input."
+                )
             export_idt = self.get_input_datatype(i)
 
             if export_idt == DataType["BIPOLAR"]:
@@ -399,9 +466,12 @@ compilation transformations?
             self.npy_to_dynamic_output(context)
             for o, outp in enumerate(node.output):
                 exp_oshape = tuple(self.get_normal_output_shape(o))
-                assert (
-                    context[outp].shape == exp_oshape
-                ), "cppsim did not produce expected output shape"
+                if context[outp].shape != exp_oshape:
+                    raise FINNUserError(
+                        f"Output shape {context[outp].shape} doesn't match expected shape "
+                        f"{exp_oshape} "
+                        f"for node {node.name} for output {outp} in cppsim."
+                    )
                 # binary -> bipolar if needed
                 if self.get_output_datatype(o) == DataType["BIPOLAR"]:
                     out = context[outp]
@@ -434,9 +504,12 @@ compilation transformations?
                 output = np.asarray([output], dtype=np.float32).reshape(*exp_oshape)
                 context[outp] = output
 
-                assert (
-                    context[outp].shape == exp_oshape
-                ), "Output shape doesn't match expected shape."
+                if context[outp].shape != exp_oshape:
+                    raise FINNUserError(
+                        f"Output shape {context[outp].shape} doesn't match expected shape "
+                        f"{exp_oshape} "
+                        f"for node {node.name} for output {outp} in rtlsim."
+                    )
 
         else:
             raise Exception(
@@ -446,9 +519,9 @@ compilation transformations?
 
     @abstractmethod
     def global_includes(self) -> None:
-        """Set the global includes for c++ code that has to be generated
-        for cppsim or rtlsim, is member function of HLSBackend class but has to
-        be filled by every node."""
+        """Set the global includes for the generated c++ code provides a HLS kernel frontend
+        for the templated backend. Should populate self.code_gen_dict["$GLOBALINCLUDES$"]
+        with a list of include statements."""
 
     @abstractmethod
     def defines(self, var: str) -> None:
@@ -489,9 +562,9 @@ compilation transformations?
                     f'("{npy_in}", in{i}_V);'
                 )
             else:
-                folded_shape = self.get_folded_input_shape()
+                pe = self.get_pe_in(i)
                 self.code_gen_dict["$READNPYDATA$"].append(
-                    f"npy2vectorstream<{elem_hls_type}, {npy_type}, {folded_shape[-1]}>"
+                    f"npy2vectorstream<{elem_hls_type}, {npy_type}, {pe}>"
                     f'("{npy_in}", in{i}_V, false);'
                 )
 
@@ -524,7 +597,7 @@ compilation transformations?
 
                     self.code_gen_dict["$STREAMDECLARATIONS$"].append(
                         f"hls::stream<hls::vector<{elem_input_hls_type},"
-                        f'{self.get_folded_input_shape(i)[-1]}>> in{i}_V ("in{i}_V");'
+                        f'{self.get_pe_in(i)}>> in{i}_V ("in{i}_V");'
                     )
 
             elem_output_hls_type = None
@@ -538,7 +611,7 @@ compilation transformations?
 
                     self.code_gen_dict["$STREAMDECLARATIONS$"].append(
                         f"hls::stream<hls::vector<{elem_output_hls_type},"
-                        f'{self.get_folded_output_shape(o)[-1]}>> out{o}_V ("out{o}_V");'
+                        f'{self.get_pe_out(o)}>> out{o}_V ("out{o}_V");'
                     )
 
             if self.get_nodeattr("hls_style") == "freerunning":
@@ -546,14 +619,14 @@ compilation transformations?
                     if self.get_outstream_width(o):
                         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
                             f"hls::stream<hls::vector<{elem_output_hls_type},"
-                            f'{self.get_folded_output_shape(o)[-1]}>> strm{o} ("strm{o}");'
+                            f'{self.get_pe_out(o)}>> strm{o} ("strm{o}");'
                         )
 
     @abstractmethod
     def docompute(self) -> None:
-        """Generate the commands for the computational part of the
-        c++ code, is member function of HLSBackend class but has to be filled
-        by every node."""
+        """Generate the commands for the body of the HLS function.
+
+        Should self.code_gen_dict["$DOCOMPUTE$"]."""
 
     def dataoutstrm(self) -> None:
         """Generate commands for reading out data from C++ and converting to npy format.
@@ -584,12 +657,12 @@ compilation transformations?
                     f'(out{o}_V, {oshape_cpp_str}, "{npy_out}");'
                 )
             else:
-                folded_shape = self.get_folded_output_shape(o)
+                pe = self.get_pe_out(o)
                 out_vector = (
                     f"strm{o}" if self.get_nodeattr("hls_style") == "freerunning" else f"out{o}_V"
                 )
                 self.code_gen_dict["$DATAOUTSTREAM$"].append(
-                    f"vectorstream2npy<{elem_hls_type}, {npy_type}, {folded_shape[-1]}>"
+                    f"vectorstream2npy<{elem_hls_type}, {npy_type}, {pe}>"
                     f'({out_vector}, {oshape_cpp_str}, "{npy_out}");'
                 )
 
@@ -600,8 +673,9 @@ compilation transformations?
     @abstractmethod
     def blackboxfunction(self) -> None:
         """Generate a blackbock function in c++ from which an IP block
-        will be generated, is member function of HLSBackend class but has to be filled
-        by every node."""
+        will be generated.
+
+        Should fill self.code_gen_dict["$BLACKBOXFUNCTION$"]"""
 
     def pragmas(self) -> None:
         """Generate pragma commands in C++.

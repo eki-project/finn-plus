@@ -41,7 +41,7 @@ from pathlib import Path
 from qonnx.core.datatype import BaseDataType
 from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 from finn.util.basic import get_liveness_threshold_cycles, is_versal
 from finn.util.exception import FINNInternalError
@@ -53,6 +53,8 @@ if TYPE_CHECKING:
 
 import finn.xsi as finnxsi
 from finn.xsi import SimEngine
+
+NodeAttrValue = int | float | str | bool | npt.NDArray | list[str | int | float] | None
 
 
 class HWCustomOp(CustomOp):
@@ -70,7 +72,7 @@ class HWCustomOp(CustomOp):
             **kwargs: Additional keyword arguments passed to parent class.
         """
         super().__init__(onnx_node, **kwargs)
-        self.code_gen_dict = {}
+        self.code_gen_dict: dict[str, list[str]] = {}
 
     def get_nodeattr_types(
         self,
@@ -122,6 +124,55 @@ class HWCustomOp(CustomOp):
             "output_hook": ("s", False, ""),
             "mlo_max_iter": ("i", False, 0),
         }
+
+    @overload
+    def get_nodeattr(
+        self,
+        name: Literal[
+            "backend",
+            "preferred_impl_style",
+            "code_gen_dir_ipgen",
+            "ipgen_path",
+            "ip_path",
+            "ip_vlnv",
+            "exec_mode",
+            "rtlsim_trace",
+            "res_estimate",
+            "res_synth",
+            "rtlsim_so",
+            "mem_port",
+            "output_hook",
+        ],
+    ) -> str:
+        ...
+
+    @overload
+    def get_nodeattr(
+        self,
+        name: Literal[
+            "cycles_rtlsim",
+            "cycles_estimate",
+            "slr",
+            "partition_id",
+            "device_id",
+            "mlo_max_iter",
+        ],
+    ) -> int:
+        ...
+
+    @overload
+    def get_nodeattr(
+        self, name: Literal["inFIFODepths", "outFIFODepths"]
+    ) -> list[str | int | float]:
+        ...
+
+    @overload
+    def get_nodeattr(self, name: str) -> NodeAttrValue:
+        ...
+
+    def get_nodeattr(self, name: str) -> NodeAttrValue:
+        """Return node attribute value with static typing support for known keys."""
+        return cast("NodeAttrValue", super().get_nodeattr(name))
 
     def make_shape_compatible_op(self, model: "ModelWrapper") -> NodeProto:  # noqa: ARG002
         """Make a shape compatible operation.
@@ -405,6 +456,22 @@ class HWCustomOp(CustomOp):
         """
         out_width = self.get_outstream_width(ind=ind)
         return roundup_to_integer_multiple(out_width, 8)
+
+    def get_pe_in(self, ind: int = 0) -> int:
+        """Return PE of the input stream at index ind.
+
+        By default will always return the last dimension of the folded input
+        shape. Can be overwritten by nodes that have a different PE
+        definition."""
+        return self.get_folded_input_shape(ind=ind)[-1]
+
+    def get_pe_out(self, ind: int = 0) -> int:
+        """Return PE of the output stream at index ind.
+
+        By default will always return the last dimension of the folded
+        output shape. Can be overwritten by nodes that have a different PE
+        definition, e.g. when the output PE differs from the input PE."""
+        return self.get_folded_output_shape(ind=ind)[-1]
 
     def calc_tmem(self) -> int:
         """Calculate and returns the TMEM."""

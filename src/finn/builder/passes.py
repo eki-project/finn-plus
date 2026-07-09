@@ -10,6 +10,9 @@ import numpy as np
 # with the model, graph, nodes and values
 import onnx_ir as ir
 
+# Makes custom QONNX import and inlining passes available
+import onnx_passes.passes.imports.qonnx
+
 # YAML for loading layout assumption/conversion configuration from file
 import yaml
 
@@ -28,6 +31,7 @@ from onnx_passes.passes.base import RewriteRulePass, Transformation
 
 # Utility testing IR values for being constant (or initializers) tensors
 from onnx_passes.passes.util import is_constant
+from pathlib import Path
 
 # QONNX datatype annotations for quantized tensors
 from qonnx.core.datatype import DataType
@@ -40,25 +44,30 @@ from qonnx.core.modelwrapper import ModelWrapper
 # step
 from finn.builder.build_dataflow_config import DataflowBuildConfig, VerificationStepType
 
-# Makes custom QONNX import and inlining passes available
+import onnx_passes.passes.inline.qonnx  # noqa
 
 
-def _make_pass_config(cfg: DataflowBuildConfig):
-    """Creates ONNX Passes configuration from FINN build configuration."""
+def _make_pass_config(
+    cfg: DataflowBuildConfig,
+) -> dict[str, dict[str, list[Path] | bool | float | list[list[str | dict]] | dict]]:
+    """Create ONNX Passes configuration from FINN build configuration."""
     # If specified, load data layout annotations from file
     if cfg.layouts_config_file is not None:
         with cfg.layouts_config_file.open("r") as file:
-            layouts = yaml.safe_load(file)
+            layouts: dict = yaml.safe_load(file)
     # Otherwise assume emtpy layout annotations
     else:
-        layouts = {}
+        layouts: dict = {}
 
     # Construct configuration dictionary with subset of options from the
     # DataflowBuildConfig and some other ONNX Passes specific options
     return {
         # Reference data for verification and analysis: Inputs, expected
         # outputs, ...
-        "reference": {"inp": [cfg.verify_input_npy], "out": [cfg.verify_expected_output_npy]},
+        "reference": {
+            "inp": [Path(cfg.verify_input_npy)],
+            "out": [Path(cfg.verify_expected_output_npy)],
+        },
         # Configuration ONNX Runtime used for model evaluation during
         # verification and analysis passes - see the ONNX Runtime API
         # documentation for details
@@ -74,7 +83,7 @@ def _make_pass_config(cfg: DataflowBuildConfig):
             # np.allclose(...)
             "tolerance": {"atol": cfg.verification_atol, "rtol": cfg.verification_rtol}
         }
-        if VerificationStepType.PASSES_FRONTEND in cfg._resolve_verification_steps()
+        if VerificationStepType.PASSES_FRONTEND in cfg._resolve_verification_steps()  # noqa: SLF001
         else {},  # noqa: protected
         # Configuration of the model checker pass: Options according to the ONNX
         # IR reference: https://onnx.ai/ir-py/api/ir_passes_common.html
@@ -90,22 +99,22 @@ def _make_pass_config(cfg: DataflowBuildConfig):
     }
 
 
-def _apply_passes(model: ir.Model, passes: list[str], cfg: dict, state: dict):
-    """Resolves and applies the list of passes to the ONNX model."""
+def _apply_passes(model: ir.Model, passes: list[str | type], cfg: dict, state: dict) -> ir.Model:
+    """Resolve and applies the list of passes to the ONNX model."""
     # Collect and instantiate all ONNX IR passes from the sequence by name and
     # connect each pass to the shared configuration and state dictionary
-    passes = [cls(cfg, state) for cls in collect(passes)]
+    passes_list = [cls(cfg, state) for cls in collect(passes)]
     # Pass manager instance which repeatedly runs the sequence of passes on
     # the model and evaluates pre- and post-conditions of each pass, e.g.,
     # for automatic verification.
-    passes = ir.passes.PassManager(passes=passes, steps=1)
+    passes_manager = ir.passes.PassManager(passes=passes_list, steps=1)
     # Inject custom operator ONNX functions into the model before applying the
     # configured pass sequence
-    return passes(inject_custom_ops(model)).model
+    return passes_manager(inject_custom_ops(model)).model
 
 
 def prepare(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Prepares a model to be processed by ONNX Passes."""
+    """Prepare a model to be processed by ONNX Passes."""
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
