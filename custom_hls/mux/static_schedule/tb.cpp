@@ -3,112 +3,156 @@
 #include <iostream>
 #include <numeric>
 #include <algorithm>
+#include <bitset>
 
 #include "static_mux_tb_top.h"
 
 
-/**
- * Check results. Return true if all results are correct.
- */
-template<typename T>
-bool check_results(std::vector<T> &expected, std::vector<T> &received) {
-    if (expected.size() != received.size()) {
-        std::cout << "Expected " << expected.size() << " elements, but received " << received.size() << std::endl;
+template<typename T, int F>
+bool checkStream(hls::stream<T, F> &stream, int expected) {
+    T value = stream.read();
+    if (value != static_cast<T>(expected)) {
+        std::cout << "FAIL: Expected value " << expected << " but got " << value << std::endl;
         return false;
     }
+    return true;
+}
+
+bool test_mux_demux() {
     bool success = true;
-    for (unsigned int i =  0; i < expected.size(); ++i) {
-        if (expected[i] != received[i]) {
-            std::cout << "[ " << i << " ] Expected: " << expected[i] << ". Got: " << received[i] << ". " << std::endl;
+    S1 a_in, a_out;
+    S2 b_in, d_in, e_in, b_out, d_out, e_out;
+    S3 c_in, c_out;
+    SOut net_in, net_out;
+    std::vector<ap_int<TOut::width>> expected;
+    std::vector<TOut> received;
+
+    // Basic test
+    a_in.write(1);
+    b_in.write(22);
+    c_in.write(-33);
+    d_in.write(-44);
+    e_in.write(55);
+    MuxDemuxOutOfOrder(
+        a_in, b_in, c_in, d_in, e_in,
+        net_in, net_out,
+        a_out, b_out, c_out, d_out, e_out
+    );
+
+    // The order is defined in the testing top function.
+    expected.insert(expected.end(), {1, -44, 22, -33, 55});
+
+    // Read data to check its order and "send" it back from the network to the demux
+    std::cout << "Checking order of packets..." << std::endl;
+    while (!net_in.empty()) {
+        received.push_back(net_in.read());
+    }
+
+    // Check that the number of elements match
+    if (expected.size() != received.size()) {
+        std::cout << "FAIL: Expected " << expected.size()
+            << " values but received " << received.size()
+            << std::endl;
+        return false;
+    }
+
+    // Check that the order matches
+    constexpr std::size_t streamCount = 5;
+    for (std::size_t i = 0; i < expected.size(); i++) {
+        auto split = splitHeader<
+            bitwidth(streamCount),
+            ap_int<TOut::width-bitwidth(streamCount)>,
+            TOut::width
+        >(
+            received[i]
+        );
+        ap_int<TOut::width> data = std::get<1>(split);
+        if (data != static_cast<ap_int<TOut::width>>(expected[i])) {
+            std::cout << "FAIL: Expected ordered value "
+                << expected[i] << " but got " << data
+                << " (header: " << std::get<0>(split)
+                << ") " << std::endl;
             success = false;
         }
     }
-    if (!success) {
-        std::cout << "EXPECTED: ";
-        for (auto& val : expected) { std::cout << val << " ";}
-        std::cout << "\nRECEIVED: ";
-        for (auto& val : received) { std::cout << val << " ";}
-        std::cout << std::endl;
+
+    // Check that the values were demuxd correctly (after sending values to demux)
+    for (auto value : received) {
+        net_out.write(value);
     }
-    std::cout << "\t" << (success ? "SUCCESS" : "FAIL") << std::endl;
+    MuxDemuxOutOfOrder(
+        a_in, b_in, c_in, d_in, e_in,
+        net_in, net_out,
+        a_out, b_out, c_out, d_out, e_out
+    );
+
+    std::cout << "Checking demux results..." << std::endl;
+    success &= checkStream(a_out, 1);
+    success &= checkStream(b_out, 22);
+    success &= checkStream(c_out, -33);
+    success &= checkStream(d_out, -44);
+    success &= checkStream(e_out, 55);
     return success;
 }
 
-/**
- * Simply pass streams and check that they arrive in the correct order. If a stream has no data, it is skipped.
- **/
-bool verify_normal() {
-    std::cout << "TEST: Normal execution." << std::endl;
-    std::vector<T3> expected;
-    std::vector<T3> received;
-    S1 a;
-    S2 b, d, e;
-    S3 c, out;
-
-    // Check that empty streams are skipped
-    // Execute Mux twice, since we have a leftover value in stream a
-    a.write(1); a.write(1); b.write(2); c.write(3); d.write(4);
-    expected.insert(expected.end(), {1, 2, 3, 4, 1});
-    Mux(a, b, c, d, e, out);
-    Mux(a, b, c, d, e, out);
-    for (unsigned int i = 0; i < 5; ++i) {
-        received.push_back(out.read());
-    }
-
-    // Check normal operation
-    a.write(1); b.write(2); c.write(3); d.write(4); e.write(5);
-    expected.insert(expected.end(), {1, 2, 3, 4, 5});
-    Mux(a, b, c, d, e, out);
-    for (unsigned int i = 0; i < 5; i++) {
-        received.push_back(out.read());
-    }
-
-    // Check results
-    return check_results(expected, received);
-}
-
-/**
- * Two arguments are the same stream
- **/
-bool verify_preference() {
-    std::cout << "TEST: Multiple same streams." << std::endl;
-    std::vector<T3> expected;
-    std::vector<T3> received;
-    S1 a;
-    S2 b, d;
-    S3 c, out;
-
-    // At first, since b does not have 2 values, it will be skipped,
-    // the second Mux call does not do anything
-    a.write(1); b.write(2); c.write(3); d.write(4);
-    expected.insert(expected.end(), {1, 2, 3, 4});
-    Mux(a, b, c, d, b, out);
-    Mux(a, b, c, d, b, out);
-    for (unsigned int i = 0; i < 4; ++i) {
-        received.push_back(out.read());
-    }
-
-    // Now we expect to read b much more often. After the second Mux call,
-    // the component would have read 4x from b already, so no "2"s are left.
-    a.write(1); b.write(2); c.write(3); d.write(4);
-    a.write(1); b.write(2); c.write(3); d.write(4);
-    a.write(1); b.write(2); c.write(3); d.write(4);
-    expected.insert(expected.end(), {1, 2, 3, 4, 2});
-    expected.insert(expected.end(), {1, 2, 3, 4});
-    expected.insert(expected.end(), {1, 3, 4});
-    Mux(a, b, c, d, b, out);
-    Mux(a, b, c, d, b, out);
-    Mux(a, b, c, d, b, out);
-    for (unsigned int i = 0; i < 12; ++i) {
-        received.push_back(out.read());
-    }
-
-    // Check results
-    return check_results(expected, received);
-}
-
-const std::initializer_list<std::function<bool()>> test_functions = { verify_normal, verify_preference };
-
 int main() {
-    return !std::all_of(test_functions.begin(), test_functions.end(), [](auto f){ return f(); });
+    std::cout << "Checking header split/merge functions..." << std::endl;
+    {
+        // Data type
+        constexpr int DWS = 10;
+        using DTS = ap_int<DWS>;
+        constexpr int DWU = 10;
+        using DTU = ap_int<DWS>;
+
+        // Header type
+        constexpr int HW = 3;
+        using HT = ap_uint<HW>;
+
+        // Total packet width
+        constexpr int OW = 20;
+
+        // Index
+        constexpr std::size_t idx = 2;
+
+        bool anyErrors = false;
+        DTS minSigned = -(1 << (DWS-1));
+        DTS maxSigned = (1 << (DWS-1)) - 1;
+        DTU maxUnsigned = (1 << (DWS-1)) - 1;
+
+        std::cout << "Testing signed values from " << minSigned << " to " << maxSigned << std::endl;
+        for (auto i = minSigned; i <= maxSigned; i++) {
+            ap_uint<OW> packet = prefixHeader<HW, DTS, OW, idx>(i);
+            std::tuple<HT, DTS> result = splitHeader<HW, DTS, OW>(packet);
+            if (std::get<0>(result) != idx || std::get<1>(result) != i) {
+                anyErrors = true;
+                std::cout << "Expected DATA=" << i << ", HEADER=" << idx << std::endl;
+                std::cout << "\tGot DATA=" << std::get<1>(result) << "; HEADER=" << std::get<0>(result) << std::endl;
+                std::cout << "\tSigned: True. Datawidth: " << DWS << ". Headerwidth: " << HW << ". Packetwidth: " << OW << "." << std::endl;
+                std::cout << "\tPacket: " << std::bitset<OW>(packet) << std::endl;
+            }
+            if (i == maxSigned) break;
+        }
+
+        std::cout << "Testing unsigned values from " << 0 << " to " << maxUnsigned << std::endl;
+        for (auto i = 0; i <= maxUnsigned; i++) {
+            ap_uint<OW> packet = prefixHeader<HW, DTU, OW, idx>(i);
+            std::tuple<HT, DTU> result = splitHeader<HW, DTU, OW>(packet);
+            if (std::get<0>(result) != idx || std::get<1>(result) != i) {
+                anyErrors = true;
+                std::cout << "Expected DATA=" << i << ", HEADER=" << idx << std::endl;
+                std::cout << "\tGot DATA=" << std::get<1>(result) << "; HEADER=" << std::get<0>(result) << std::endl;
+                std::cout << "\tSigned: False. Datawidth: " << DWU << ". Headerwidth: " << HW << ". Packetwidth: " << OW << "." << std::endl;
+                std::cout << "\tPacket: " << std::bitset<OW>(packet) << std::endl;
+            }
+        }
+        if (anyErrors) {
+            return 1;
+        }
+
+        if (test_mux_demux()) {
+            std::cout << "SUCCESS." << std::endl;
+            return 0;
+        }
+        return 1;
+    }
 }
