@@ -1,5 +1,0 @@
-{# Template for Round-Robin multiplexing. The output is being written to from every
-input stream in order via blocking writes and reads. Note that this could also be done using C++ templates. #}
-{%- for instream in data.instreams %}
-    out.write({{ instream }}.read());
-{%- endfor %}
