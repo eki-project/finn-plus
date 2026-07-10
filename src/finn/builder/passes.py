@@ -10,6 +10,10 @@ import numpy as np
 # with the model, graph, nodes and values
 import onnx_ir as ir
 
+# Need to import the passes module to set up the registry and make the
+# @passes.register decorator work
+import onnx_passes.passes as passes
+
 # Makes custom QONNX import and inlining passes available
 import onnx_passes.passes.imports.qonnx
 
@@ -27,10 +31,11 @@ from onnx_passes.ops.qonnx import DOMAIN as QONNX_DOMAIN
 
 # Collects named passes from the ONNX Passes registry
 from onnx_passes.passes import collect
-from onnx_passes.passes.base import RewriteRulePass, Transformation
+from onnx_passes.passes.base import RewriteRulePass, RewriteRuleSetPass, Transformation
 
+# Collecting node attributes with optional defaults
 # Utility testing IR values for being constant (or initializers) tensors
-from onnx_passes.passes.util import is_constant
+from onnx_passes.passes.util import collect_attrs, is_constant
 from pathlib import Path
 
 # QONNX datatype annotations for quantized tensors
@@ -39,6 +44,7 @@ from qonnx.core.datatype import DataType
 # QONNX representation wrapper of ONNX models is used on the interface side to
 # bridge between the FINN and the new ONNX IR representation
 from qonnx.core.modelwrapper import ModelWrapper
+from typing import Callable, cast
 
 # FINN steps are configured via a global configuration object passed into each
 # step
@@ -148,6 +154,8 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
         "lower-conv",
         # Expresses pooling as Im2Col + Reshape + Reduce* (+ transposes)
         "lower-pooling",
+        # Move reduction axes to the back of reduction operators to allow hardware implementation
+        "inline-move-reduce-axis",
         # Adds shape annotations
         "shape-inference",
         # Make sure the model is still valid
@@ -285,6 +293,187 @@ class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
 
         # Omit precomputed access pattern and transplant into the QONNX domain
         return op.Im2Col(x, **attributes, _domain=QONNX_DOMAIN)
+
+
+class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
+    """Moves the reduce axis to the back of the tensor."""
+
+    __OP__: Callable
+    __OPAX__: Callable
+
+    def _normalize_axes(self, axes, ndim: int):
+        """Convert axis spec to sorted tuple of unique positive axes."""
+        if axes is None:
+            return tuple(range(ndim))
+        if isinstance(axes, int):
+            axes = (axes,)
+
+        out: list[int] = []
+        for a in axes:
+            if a < 0:
+                a += ndim
+            if not (0 <= a < ndim):
+                raise ValueError(f"Axis {a} out of range for ndim={ndim}")
+            out.append(int(a))
+
+        if len(set(out)) != len(out):
+            raise ValueError(f"Duplicate axes in {axes}")
+
+        return tuple(sorted(out))
+
+    def pattern(self):
+        # ReduceSum optionally receives axes as a second input.
+        return [
+            lambda op, x, axes: self.__OPAX__(x, axes, _outputs=["y"]),
+            lambda op, x: self.__OP__(x, _outputs=["y"]),
+        ]
+
+    def check(self):
+        """Match condition."""
+
+        def _check(
+            op,
+            x: ir.Value,
+            axes: ir.Value | None = None,
+        ):
+            # QONNX needs statically annotated input shape as this will be turned
+            # into an attribute of the node
+            if not (x.shape is not None and x.shape.is_static()):
+                return False
+            if axes is not None:
+                if not (axes.shape is not None and axes.shape.is_static()):
+                    return False
+            else:
+                return False
+            # Check if the axes are already at the back of the tensor
+            # Last dimension (C) is handled differently and can be ignored
+            shape = cast("ir.Shape", x.shape)
+            ax = ir.convenience.get_const_tensor(axes)
+            if ax is None:
+                return False
+            ax = self._normalize_axes(ax, shape.rank())
+            if ax[-1] == shape.rank() - 1:
+                ax = ax[:-1]
+            return any(a != shape.rank() - 2 - i for i, a in enumerate(reversed(ax)))
+
+        return [
+            lambda op, x, axes: _check(op, x, axes),
+            lambda op, x: _check(op, x),
+        ]
+
+    def rewrite(self):
+        """Replacement pattern."""
+
+        def _replace(
+            op,
+            x: ir.Value,
+            y: ir.Value,
+            axes: ir.Value | None = None,
+        ):
+            # Defaults according to ONNX operators reference documentation:
+            #   https://onnx.ai/onnx/operators/onnx__ReduceLogSumExp.html
+            attributes = collect_attrs(
+                y.producer(),
+                {
+                    "keepdims": (ir.AttributeType.INT, 1),
+                    "noop_with_empty_axes": (ir.AttributeType.INT, 0),
+                },
+            )
+
+            # Implementation for replacement logic
+            if axes is None:
+                return op
+
+            ax = ir.convenience.get_const_tensor(axes)
+            if ax is None:
+                raise ValueError("Axes must be a constant tensor for replacement.")
+            ax = ax.numpy()
+            shape = cast("ir.Shape", x.shape)
+            in_shape = shape.numpy()
+            ndim = shape.rank()
+            red_axes = self._normalize_axes(ax, ndim)
+            keep_axes = tuple(i for i in range(ndim) if i not in red_axes)
+            perm = keep_axes + red_axes
+            shuf_shape = tuple(in_shape[p] for p in perm)
+
+            reshuffled_axes = []
+            for a in red_axes:
+                # Find the new position of the axis after permutation
+                new_a = perm.index(a)
+                reshuffled_axes.append(new_a)
+
+            ret = self.__OPAX__(
+                op.Reshape(
+                    op.Transpose(x, perm=ir.Attr("perm", ir.AttributeType.INTS, perm)),
+                    op.Constant(value_ints=shuf_shape),
+                ),
+                axes=op.Constant(value=ir.tensor(reshuffled_axes, name="axes")),
+                keepdims=attributes["keepdims"],
+                noop_with_empty_axes=attributes["noop_with_empty_axes"],
+            )
+            if not attributes["keepdims"].as_bool():
+                return ret
+            # If keepdims is True, we need to reshuffle + reshape the
+            # output back to the original shape
+            keep_shape = tuple(in_shape[a] for a in keep_axes)
+            y_pre_shape = keep_shape + tuple(1 for _ in red_axes)
+
+            inv_perm = tuple(np.argsort(perm))
+            target_shape = tuple(1 if i in red_axes else in_shape[i] for i in range(ndim))
+
+            return op.Reshape(
+                op.Transpose(
+                    op.Reshape(ret, op.Constant(value_ints=y_pre_shape)),
+                    perm=ir.Attr("perm", ir.AttributeType.INTS, inv_perm),
+                ),
+                op.Constant(value_ints=target_shape),
+            )
+
+        # Omit precomputed access pattern and transplant into the QONNX domain
+        return [
+            lambda op, x, axes, y: _replace(op, x, y, axes),
+            lambda op, x, y: _replace(op, x, y),
+        ]
+
+
+@passes.verify.tolerance
+@passes.register("inline-move-reduce-axis")
+class MoveReduceSumAxis(_MoveReduceAxisToBack):
+    def __OP__(_, op, x):
+        return op.ReduceSum(x)
+
+    def __OPAX__(_, op, x, axes):
+        return op.ReduceSum(x, axes)
+
+
+@passes.verify.tolerance
+@passes.register("inline-move-reduce-axis")
+class MoveReduceMinAxis(_MoveReduceAxisToBack):
+    def __OP__(_, op, x):
+        return op.ReduceMin(x)
+
+    def __OPAX__(_, op, x, axes):
+        return op.ReduceMin(x, axes)
+
+
+@passes.verify.tolerance
+@passes.register("inline-move-reduce-axis")
+class MoveReduceMaxAxis(_MoveReduceAxisToBack):
+    def __OP__(_, op, x):
+        return op.ReduceMax(x)
+
+    def __OPAX__(_, op, x, axes):
+        return op.ReduceMax(x, axes)
+
+
+@passes.verify.tolerance
+@passes.register("inline-move-reduce-axis")
+class MoveReduceProdAxis(_MoveReduceAxisToBack):
+    def __OP__(_, op, x):
+        return op.ReduceProd(x)
+
+    def __OPAX__(_, op, x, axes):
+        return op.ReduceProd(x, axes)
 
 
 def _export_im2col_to_finn(model: ir.Model):
