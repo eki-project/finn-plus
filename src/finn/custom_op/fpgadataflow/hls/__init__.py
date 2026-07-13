@@ -69,6 +69,7 @@ from finn.custom_op.fpgadataflow.hls.attention_hls import ScaledDotProductAttent
 from finn.custom_op.fpgadataflow.hls.checksum_hls import CheckSum_hls
 from finn.custom_op.fpgadataflow.hls.concat_hls import StreamingConcat_hls
 from finn.custom_op.fpgadataflow.hls.crop_hls import Crop_hls
+from finn.custom_op.fpgadataflow.hls.demultiplexer_hls import Demultiplexer_hls
 from finn.custom_op.fpgadataflow.hls.duplicatestreams_hls import DuplicateStreams_hls
 from finn.custom_op.fpgadataflow.hls.fmpadding_pixel_hls import FMPadding_Pixel_hls
 from finn.custom_op.fpgadataflow.hls.globalaccpool_hls import GlobalAccPool_hls
@@ -123,3 +124,4 @@ custom_op["HWSoftmax_hls"] = HWSoftmax_hls
 custom_op["OuterShuffle_hls"] = OuterShuffle_hls
 
 custom_op["Multiplexer_hls"] = Multiplexer_hls
+custom_op["Demultiplexer_hls"] = Demultiplexer_hls

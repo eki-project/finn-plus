@@ -782,8 +782,6 @@ class InferAddStreamsLayer(Transformation):
             "InferAddStreamsLayer is deprecated. "
             "Use InferElementwiseBinaryOperation instead. "
             "AddStreams is being replaced by ElementwiseAdd operations.",
-            DeprecationWarning,
-            stacklevel=2,
         )
         # Delegate to the new transformation
         return InferElementwiseBinaryOperation().apply(model)
@@ -953,8 +951,6 @@ class InferChannelwiseLinearLayer(Transformation):
             "InferChannelwiseLinearLayer is deprecated. "
             "Use InferElementwiseBinaryOperation instead. "
             "ChannelwiseOp is being replaced by ElementwiseBinary operations.",
-            DeprecationWarning,
-            stacklevel=2,
         )
         # Delegate to the new transformation
         return InferElementwiseBinaryOperation().apply(model)
@@ -1683,8 +1679,6 @@ class InferStreamingEltwise(Transformation):
             "InferStreamingEltwise is deprecated. "
             "Use InferElementwiseBinaryOperation instead. "
             "StreamingEltwise is being replaced by ElementwiseSub/ElementwiseAbsDiff.",
-            DeprecationWarning,
-            stacklevel=2,
         )
         # Delegate to the new transformation
         return InferElementwiseBinaryOperation().apply(model)

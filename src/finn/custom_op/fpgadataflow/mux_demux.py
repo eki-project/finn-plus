@@ -12,6 +12,10 @@ class MuxDemux(HWCustomOp):
         """Create a mux node."""
         super().__init__(onnx_node, **kwargs)
 
+    def global_includes(self) -> None:
+        """Add the global includes for all mux variants."""
+        self.code_gen_dict["$GLOBALS$"] = ['#include "mux/static_schedule/static_mux.hpp"']
+
     def get_nodeattr_types(self) -> dict:
         """Node attribute defs."""
         attrs = HWCustomOp.get_nodeattr_types(self)
@@ -40,8 +44,8 @@ class MuxDemux(HWCustomOp):
         names = len(self.get_stream_names())
         widths = len(self.get_stream_widths())
         dts = len(self.get_stream_dts())
-        foldeds = len(cast("list", self.get_nodeattr("streamFoldedShapes")))
-        normals = len(cast("list", self.get_nodeattr("streamNormalShapes")))
+        foldeds = len(cast("list", self.get_nodeattr("streamsFoldedShapes")))
+        normals = len(cast("list", self.get_nodeattr("streamsNormalShapes")))
         if not (names == widths and widths == dts and dts == foldeds and foldeds == normals):
             raise FINNInternalError(
                 f"(De)Mux operator attributes incorrect. "
@@ -69,11 +73,11 @@ class MuxDemux(HWCustomOp):
 
     def get_stream_folded_shape(self, ind: int) -> list[int]:
         """Return the folded shape of the given stream."""
-        return self.nodeattr_string_to_shape("streamFoldedShapes", ind)
+        return self.nodeattr_string_to_shape("streamsFoldedShapes", ind)
 
     def get_stream_normal_shape(self, ind: int) -> list[int]:
         """Return the normal shape of the given stream."""
-        return self.nodeattr_string_to_shape("streamNormalShapes", ind)
+        return self.nodeattr_string_to_shape("streamsNormalShapes", ind)
 
     def required_bitwidth(self, count: int) -> int:
         """Return number of bits required to count to this number."""

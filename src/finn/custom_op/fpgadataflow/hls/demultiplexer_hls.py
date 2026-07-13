@@ -19,9 +19,8 @@ class Demultiplexer_hls(MuxDemux, HLSBackend):
         """Create a mux node."""
         super().__init__(onnx_node, **kwargs)
 
-    def global_includes(self) -> None:
-        """Add the global includes for all mux variants."""
-        self.code_gen_dict["$GLOBALS$"] = ['#include "static_mux.hpp"']
+    def defines(self, var) -> None:
+        self.code_gen_dict["$DEFINES$"] = []
 
     def docompute(self) -> None:
         """Render the mux from a template and insert into the code gen dict."""
