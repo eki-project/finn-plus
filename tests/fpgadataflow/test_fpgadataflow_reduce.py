@@ -14,10 +14,11 @@ from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import finn.core.onnx_exec as oxe
-from finn.custom_op.fpgadataflow.reduce import Reduce
+from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.builder.passes import step_passes_frontend
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.convert_to_hw_layers import InferReduce
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -28,6 +29,9 @@ from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.exception import FINNUserError
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.reduce import Reduce
 
 test_fpga_part: str = "xczu7ev-ffvc1156-2-e"
 target_clk_ns = 5
@@ -396,4 +400,48 @@ def test_fpgadataflow_hwreduce_depthwise(
         model = model.transform(PrepareRTLSim())
 
     y_hw = oxe.execute_onnx(model, input_t)[out_name]
+    assert np.allclose(y_ref, y_hw, atol=tolerance)
+
+
+@pytest.mark.fpgadataflow
+@pytest.mark.vivado
+@pytest.mark.slow
+def test_move_axis() -> None:
+    datatype = DataType["INT8"]
+    model = make_reduce_model(
+        op_type="ReduceSum",
+        ishape=[1, 4, 5, 8],
+        axes=[1],
+        keepdims=1,
+        idt=datatype,
+    )
+
+    in_name = model.graph.input[0].name
+    out_name = model.graph.output[0].name
+    inp = gen_finn_dt_tensor(datatype, [1, 4, 5, 8])
+    input_t = {in_name: inp}
+
+    y_ref = oxe.execute_onnx(model, input_t)[out_name]
+
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = test_fpga_part
+    cfg.synth_clk_period_ns = target_clk_ns
+
+    model = step_passes_frontend(model, cfg)
+    model.save("test_move_axis_step_passes.onnx")
+    model = model.transform(InferReduce())
+    model = model.transform(SpecializeLayers(test_fpga_part))
+
+    model = model.transform(GiveUniqueNodeNames())
+    model = model.transform(SetExecMode("cppsim"))
+    model = model.transform(MinimizeAccumulatorWidth(), apply_to_subgraphs=True)
+    # make sure the changed datatypes are propagated through the network
+    model = model.transform(InferDataTypes(), apply_to_subgraphs=True)
+    model = model.transform(InferDataLayouts(), apply_to_subgraphs=True)
+
+    model = model.transform(PrepareCppSim())
+    model = model.transform(CompileCppSim())
+
+    y_hw = oxe.execute_onnx(model, input_t)[out_name]
+    tolerance = 1e-5
     assert np.allclose(y_ref, y_hw, atol=tolerance)

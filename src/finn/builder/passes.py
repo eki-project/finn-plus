@@ -324,8 +324,8 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
     def pattern(self):
         # ReduceSum optionally receives axes as a second input.
         return [
-            lambda op, x, axes: self.__OPAX__(x, axes, _outputs=["y"]),
-            lambda op, x: self.__OP__(x, _outputs=["y"]),
+            lambda op, x, axes: self.__OPAX__(op, x, axes),
+            lambda op, x: self.__OP__(op, x),
         ]
 
     def check(self):
@@ -351,14 +351,14 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
             ax = ir.convenience.get_const_tensor(axes)
             if ax is None:
                 return False
-            ax = self._normalize_axes(ax, shape.rank())
+            ax = self._normalize_axes(ax.numpy(), shape.rank())
             if ax[-1] == shape.rank() - 1:
                 ax = ax[:-1]
             return any(a != shape.rank() - 2 - i for i, a in enumerate(reversed(ax)))
 
         return [
-            lambda op, x, axes: _check(op, x, axes),
-            lambda op, x: _check(op, x),
+            lambda op, x, axes, *args, **kwargs: _check(op, x, axes),
+            lambda op, x, *args, **kwargs: _check(op, x),
         ]
 
     def rewrite(self):
@@ -393,7 +393,12 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
             ndim = shape.rank()
             red_axes = self._normalize_axes(ax, ndim)
             keep_axes = tuple(i for i in range(ndim) if i not in red_axes)
-            perm = keep_axes + red_axes
+            last_axis_reduction = red_axes[-1] == ndim - 1
+            if last_axis_reduction:
+                perm = keep_axes + red_axes
+            else:
+                perm = keep_axes[:-1] + red_axes + (keep_axes[-1],)
+            print(f"AxesPermutation: {perm}")
             shuf_shape = tuple(in_shape[p] for p in perm)
 
             reshuffled_axes = []
@@ -403,6 +408,7 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
                 reshuffled_axes.append(new_a)
 
             ret = self.__OPAX__(
+                op,
                 op.Reshape(
                     op.Transpose(x, perm=ir.Attr("perm", ir.AttributeType.INTS, perm)),
                     op.Constant(value_ints=shuf_shape),
@@ -411,7 +417,7 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
                 keepdims=attributes["keepdims"],
                 noop_with_empty_axes=attributes["noop_with_empty_axes"],
             )
-            if not attributes["keepdims"].as_bool():
+            if not bool(attributes["keepdims"].value):
                 return ret
             # If keepdims is True, we need to reshuffle + reshape the
             # output back to the original shape
@@ -431,49 +437,49 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
 
         # Omit precomputed access pattern and transplant into the QONNX domain
         return [
-            lambda op, x, axes, y: _replace(op, x, y, axes),
-            lambda op, x, y: _replace(op, x, y),
+            lambda op, x, axes, reduced: _replace(op, x, reduced, axes),
+            lambda op, x, reduced: _replace(op, x, reduced),
         ]
 
 
 @passes.verify.tolerance
 @passes.register("inline-move-reduce-axis")
 class MoveReduceSumAxis(_MoveReduceAxisToBack):
-    def __OP__(_, op, x):
-        return op.ReduceSum(x)
+    def __OP__(_, op, x, **kwargs):
+        return op.ReduceSum(x, _outputs=["reduced"], **kwargs)
 
-    def __OPAX__(_, op, x, axes):
-        return op.ReduceSum(x, axes)
+    def __OPAX__(_, op, x, axes, **kwargs):
+        return op.ReduceSum(x, axes, _outputs=["reduced"], **kwargs)
 
 
 @passes.verify.tolerance
 @passes.register("inline-move-reduce-axis")
 class MoveReduceMinAxis(_MoveReduceAxisToBack):
-    def __OP__(_, op, x):
-        return op.ReduceMin(x)
+    def __OP__(_, op, x, **kwargs):
+        return op.ReduceMin(x, _outputs=["reduced"], **kwargs)
 
-    def __OPAX__(_, op, x, axes):
-        return op.ReduceMin(x, axes)
+    def __OPAX__(_, op, x, axes, **kwargs):
+        return op.ReduceMin(x, axes, _outputs=["reduced"], **kwargs)
 
 
 @passes.verify.tolerance
 @passes.register("inline-move-reduce-axis")
 class MoveReduceMaxAxis(_MoveReduceAxisToBack):
-    def __OP__(_, op, x):
-        return op.ReduceMax(x)
+    def __OP__(_, op, x, **kwargs):
+        return op.ReduceMax(x, _outputs=["reduced"], **kwargs)
 
-    def __OPAX__(_, op, x, axes):
-        return op.ReduceMax(x, axes)
+    def __OPAX__(_, op, x, axes, **kwargs):
+        return op.ReduceMax(x, axes, _outputs=["reduced"], **kwargs)
 
 
 @passes.verify.tolerance
 @passes.register("inline-move-reduce-axis")
 class MoveReduceProdAxis(_MoveReduceAxisToBack):
-    def __OP__(_, op, x):
-        return op.ReduceProd(x)
+    def __OP__(_, op, x, **kwargs):
+        return op.ReduceProd(x, _outputs=["reduced"], **kwargs)
 
-    def __OPAX__(_, op, x, axes):
-        return op.ReduceProd(x, axes)
+    def __OPAX__(_, op, x, axes, **kwargs):
+        return op.ReduceProd(x, axes, _outputs=["reduced"], **kwargs)
 
 
 def _export_im2col_to_finn(model: ir.Model):
@@ -545,6 +551,8 @@ def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Meta build step calling the ONNX Passes steps in the expected order."""
     model = prepare(model, cfg)
     model = inline(model, cfg)
+    model.save("test_move_axis_inline.onnx")
+    print("Saved model after inline passes to test_move_axis_inline.onnx")
     model = streamline(model, cfg)
     model = export(model, cfg)
 
