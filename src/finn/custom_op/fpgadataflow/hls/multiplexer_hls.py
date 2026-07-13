@@ -26,7 +26,7 @@ class Multiplexer_hls(HWCustomOp, HLSBackend):
         attrs = HWCustomOp.get_nodeattr_types(self)
         attrs.update(
             {
-                "muxStrategy": ("s", True, "round_robin"),
+                "muxStrategy": ("s", True, "static_schedule_round_robin"),
                 "inStreams": ("strings", True, []),
                 "inStreamWidths": ("ints", True, []),
                 "inStreamDataTypes": ("strings", True, []),
