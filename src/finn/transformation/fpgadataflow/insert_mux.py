@@ -109,6 +109,17 @@ class InsertMuxDemuxPairByName(Transformation):
             # Find the names of the connecting tensor
             tensor, out_index, in_index = self.find_connecting_tensor(model, a, b)
 
+            # Check if widths match
+            out_width = node_op_a.get_outstream_width(out_index)
+            in_width = node_op_b.get_instream_width(in_index)
+            if out_width != in_width:
+                raise FINNInternalError(
+                    f"Cannot mux/demux streams with non matching "
+                    f"stream widths. Mux-input has width: {out_width}, "
+                    f"Demux-output has width: {in_width}. "
+                    f"Consider inserting DWCs first."
+                )
+
             # Add all instream widths. We add them in the order of the node-edges given
             in_stream_widths.append(node_op_a.get_outstream_width(out_index))
             out_stream_widths.append(node_op_b.get_instream_width(in_index))

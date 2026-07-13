@@ -218,7 +218,7 @@ void _static_demux(
     hls::stream<ap_uint<InWidth>, InDepth> &in,
     hls::stream<T, F> &current
 ) {
-    static_assert(DataWidth > is_arbitrary_precision_type<T>::width);
+    static_assert(DataWidth >= is_arbitrary_precision_type<T>::width);
     if (idx == targetIndex) {
         // We need to cast here, since we received a blank ap_uint.
         current.write(static_cast<T>(data));
@@ -252,7 +252,7 @@ void _static_demux(
     hls::stream<T, F> &current,
     hls::stream<Ts, Fs>& ...streams
 ) {
-    static_assert(DataWidth > is_arbitrary_precision_type<T>::width);
+    static_assert(DataWidth >= is_arbitrary_precision_type<T>::width);
     if (idx == targetIndex) {
         // We need to cast here, since we received a blank ap_uint.
         current.write(static_cast<T>(data));

@@ -66,9 +66,6 @@ class Demultiplexer_hls(MuxDemux, HLSBackend):
             f"{outstream_parameters})"
         ]
 
-    def global_includes(self) -> None:  # noqa
-        self.code_gen_dict["$GLOBALS$"] = []
-
     def execute_node(self, context, graph) -> None:  # noqa
         HLSBackend.execute_node(self, context, graph)
 

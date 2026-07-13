@@ -70,9 +70,6 @@ class Multiplexer_hls(MuxDemux, HLSBackend):
             f"hls::stream<{outstream_dt}> &out0_V)"
         ]
 
-    def global_includes(self) -> None:  # noqa
-        self.code_gen_dict["$GLOBALS$"] = []
-
     def execute_node(self, context, graph) -> None:  # noqa
         HLSBackend.execute_node(self, context, graph)
 
