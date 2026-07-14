@@ -146,9 +146,9 @@ class CreateVitisXO(Transformation):
         with open(package_xo_sh, "w") as f:
             f.write("#!/bin/bash \n")
             f.write("set -e\n")
-            f.write("cd {}\n".format(vivado_proj_dir))
+            f.write(f"cd {vivado_proj_dir}\n")
             f.write("vivado -mode batch -source gen_xo.tcl\n")
-            f.write("cd {}\n".format(working_dir))
+            f.write(f"cd {working_dir}\n")
         bash_command = ["bash", package_xo_sh]
         try:
             launch_process_helper(bash_command, print_stdout=False)
@@ -324,7 +324,7 @@ class VitisLink(Transformation):
         with open(script, "w") as f:
             f.write("#!/bin/bash \n")
             f.write("set -e\n")
-            f.write("cd {}\n".format(link_dir))
+            f.write(f"cd {link_dir}\n")
             f.write(
                 "v++ -t hw --platform %s --link %s"
                 " --kernel_frequency %d --config config.txt --optimize %s"
@@ -337,7 +337,7 @@ class VitisLink(Transformation):
                     " ".join(debug_commands),
                 )
             )
-            f.write("cd {}\n".format(working_dir))
+            f.write(f"cd {working_dir}\n")
         bash_command = ["bash", script]
 
         try:
@@ -362,10 +362,10 @@ class VitisLink(Transformation):
         working_dir = os.getcwd()
         with open(gen_rep_xml_sh, "w") as f:
             f.write("#!/bin/bash \n")
-            f.write("cd {}\n".format(link_dir))
+            f.write(f"cd {link_dir}\n")
             f.write("set -e\n")
             f.write("vivado -mode batch -source %s\n" % (link_dir + "/gen_report_xml.tcl"))
-            f.write("cd {}\n".format(working_dir))
+            f.write(f"cd {working_dir}\n")
         bash_command = ["bash", gen_rep_xml_sh]
         try:
             launch_process_helper(bash_command, print_stdout=False)

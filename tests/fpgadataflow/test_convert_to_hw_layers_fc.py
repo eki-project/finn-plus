@@ -60,12 +60,11 @@ from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from tests.testing_util.test import get_test_model_trained
 
-export_onnx_path = "test_convert_to_hw_layers_fc.onnx"
-
 
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 def test_convert_to_hw_layers_tfc_w1a1():
+    export_onnx_path = "test_convert_to_hw_layers_tfc_w1a1.onnx"
     tfc = get_test_model_trained("TFC", 1, 1)
     export_qonnx(tfc, torch.randn(1, 1, 28, 28), export_onnx_path)
     qonnx_cleanup(export_onnx_path, out_file=export_onnx_path)
@@ -142,6 +141,7 @@ def test_convert_to_hw_layers_tfc_w1a1():
 @pytest.mark.vivado
 def test_convert_to_hw_layers_tfc_w1a2():
     tfc = get_test_model_trained("TFC", 1, 2)
+    export_onnx_path = "test_convert_to_hw_layers_tfc_w1a2.onnx"
     export_qonnx(tfc, torch.randn(1, 1, 28, 28), export_onnx_path)
     qonnx_cleanup(export_onnx_path, out_file=export_onnx_path)
     model = ModelWrapper(export_onnx_path)

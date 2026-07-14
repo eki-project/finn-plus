@@ -26,9 +26,7 @@ steps:
   # Default FINN backend step sequence
   - step_minimize_bit_width
   - step_generate_estimate_reports
-  - step_set_fifo_depths
-  - step_hw_codegen
-  - step_hw_ipgen
+  - step_generate_hardware
   - step_create_stitched_ip
   - step_measure_rtlsim_performance
   - step_out_of_context_synthesis
@@ -63,7 +61,3 @@ standalone_thresholds: true
 max_multithreshold_bit_width: 16
 # Maximum width of MVAU stream per PE
 mvau_wwidth_max: 2048
-# FIFO nodes with depth larger than 32768 will be split
-split_large_fifos: true
-# Disable automatic FIFO-sizing (rely on live FIFO-sizing for now)
-auto_fifo_depths: false

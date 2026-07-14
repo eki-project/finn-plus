@@ -10,6 +10,7 @@
 #
 ###################################################################################
 
+"""Module for crop."""
 import numpy as np
 from qonnx.core.datatype import DataType
 
@@ -21,9 +22,11 @@ class Crop(HWCustomOp):
     """Abstraction layer for Crop layers."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             "DataType": ("s", True, ""),
             "ImgDim": ("ints", True, []),  # [h, w]
@@ -39,6 +42,7 @@ class Crop(HWCustomOp):
         return my_attrs
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         num_vec = self.get_nodeattr("numInputVectors")
         h, w = self.get_nodeattr("ImgDim")
         if h == 0:
@@ -49,6 +53,7 @@ class Crop(HWCustomOp):
         return num_vec + img_dim + [ch] if num_vec != [0] else img_dim + [ch]
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         num_vec = self.get_nodeattr("numInputVectors")
         height, width = self.get_nodeattr("ImgDim")
         ch = self.get_nodeattr("NumChannels")
@@ -65,6 +70,7 @@ class Crop(HWCustomOp):
         return num_vec + o_img_dim + [ch] if num_vec != [0] else o_img_dim + [ch]
 
     def execute_node(self, context, graph):
+        """Execute node."""
         node = self.onnx_node
         h, w = self.get_nodeattr("ImgDim")
         crop_north = self.get_nodeattr("CropNorth")
@@ -84,32 +90,38 @@ class Crop(HWCustomOp):
         context[node.output[0]] = cropped_slice
 
     def get_input_datatype(self, ind=0):
+        """Return input datatype."""
         return DataType[self.get_nodeattr("DataType")]
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         dt = model.get_tensor_datatype(node.input[0])
         if dt != self.get_input_datatype():
             warn_str = (
-                f"data_type changing for {node.name}: {str(self.get_input_datatype())} -> {str(dt)}"
+                f"data_type changing for {node.name}: {self.get_input_datatype()!s} -> {dt!s}"
             )
             log.warning(warn_str)
         self.set_nodeattr("DataType", dt.name)
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         ibits = self.get_input_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return ibits * simd
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         obits = self.get_output_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return obits * simd
 
     def get_output_datatype(self, ind=0):
+        """Return output datatype."""
         return DataType[self.get_nodeattr("DataType")]
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         normal_oshape = list(self.get_normal_output_shape())
         simd = self.get_nodeattr("SIMD")
         assert normal_oshape[-1] % simd == 0, "Innermost dimension must be divisible by SIMD"
@@ -118,6 +130,7 @@ class Crop(HWCustomOp):
         return tuple(folded_oshape)
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         normal_ishape = list(self.get_normal_input_shape())
         simd = self.get_nodeattr("SIMD")
         assert normal_ishape[-1] % simd == 0, "Innermost dimension must be divisible by SIMD"
@@ -126,6 +139,7 @@ class Crop(HWCustomOp):
         return tuple(folded_ishape)
 
     def get_exp_cycles(self):
+        """Return exp cycles."""
         simd = self.get_nodeattr("SIMD")
         num_vec = self.get_nodeattr("numInputVectors")
         height, width = self.get_nodeattr("ImgDim")

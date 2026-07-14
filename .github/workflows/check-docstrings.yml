@@ -208,6 +208,9 @@ jobs:
           const commentMarker = '<!-- docstring-check-comment -->';
           body = commentMarker + '\n' + body;
 
+          const updatedAt = new Date().toISOString();
+          body += `\n\n_Last updated: ${updatedAt}_`;
+
           // Find existing comment from this action
           const comments = await github.rest.issues.listComments({
             issue_number: context.issue.number,

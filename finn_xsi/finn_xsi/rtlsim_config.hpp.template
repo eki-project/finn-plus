@@ -1,43 +1,48 @@
-/****************************************************************************
- * Copyright (C) 2025, Advanced Micro Devices, Inc.
- * All rights reserved.
- *
- * SPDX-License-Identifier: BSD-3-Clause
- *
- * @brief	Configuration template for C++ rtlsim driver for Verilog designs.
- * @author	Yaman Umuroğlu <yaman.umuroglu@amd.com>
- * @note
- *	All code template arguments formatted like @TEMPLATE@ must be filled in
- *	prior to compilation.
- ***************************************************************************/
+#include <cstddef>
+#include <initializer_list>
+#include <string>
+#include <optional>
+#include <helper.h>
+#include <string_view>
 
-struct stream_desc {
-	char const *name;
-	size_t      job_size;
-	// Next job can only start this many clock ticks after start of predecessor.
-	size_t      job_ticks;
-};
+namespace RTLSimConfig {
+	// Log during simulation. Turned off by default. Might increase runtime if used.
+	constexpr bool LoggingEnabled = true;
+	constexpr bool IsInputNode = {{ IS_INPUT_NODE }};
+	constexpr bool IsOutputNode = {{ IS_OUTPUT_NODE }};
 
-// sim kernel .so to use (depends on Vivado version)
-static char const  kernel_libname[] = "@SIMKERNEL_SO@";
+	/**** General RTLSIM Configuration Parameters ****/
+	constexpr std::array<std::string_view, {{ INPUT_INTERFACE_COUNT }}> inputInterfaceNames { {{ INPUT_INTERFACE_NAMES }} };
+	constexpr std::array<std::string_view, {{ OUTPUT_INTERFACE_COUNT }}> outputInterfaceNames { {{ OUTPUT_INTERFACE_NAMES }} };
 
-// design library .so to use (important to use this relative path here,
-// due to how XSI looks for certain files)
-static char const  design_libname[] = "xsim.dir/@TOP_MODULE_NAME@/xsimk.so";
+	// Which index node this simulation executes
+	// In a complete design simulation this is 0
+	constexpr size_t NodeIndex = {{ NODE_INDEX }};
 
-// AXI stream descriptors {stream_name, transactions_per_inference}
-// input AXI stream descriptors
-static std::initializer_list<stream_desc> const  istream_descs { @ISTREAM_DESC@ };
+	// Number of total nodes in the simulation (over all processes)
+	// In a complete design simulation this is 1
+	constexpr size_t TotalNodes = {{ TOTAL_NODES }};
 
-// output AXI stream descriptors
-static std::initializer_list<stream_desc> const  ostream_descs { @OSTREAM_DESC@ };
+	// sim kernel .so to use (depends on Vivado version)
+	static char const  kernel_libname[] = "{{ SIMKERNEL_SO }}";
 
-// number of inferences to perform
-constexpr unsigned  n_inferences = @N_INFERENCES@;
+	// design library .so to use (important to use this relative path here,
+	// due to how XSI looks for certain files)
+	static char const  design_libname[] = "xsim.dir/{{ TOP_MODULE_NAME }}/xsimk.so";
 
-// max number of cycles to wait for output activity on any stream before timeout
-constexpr unsigned  max_iters = @TIMEOUT_CYCLES@;
+	// AXI stream descriptors {stream_name, transactions_per_inference}
+	// input AXI stream descriptors
+	constexpr std::array istream_descs { {{ ISTREAM_DESC }} };
 
-// filename for trace and debug, if enabled. This needs xelab -debug option too.
-static char const *const trace_filename = @TRACE_FILE@;
-static char const *const xsim_log_filename = @XSIM_LOG_FILE@;
+	// output AXI stream descriptors
+	constexpr std::array ostream_descs { {{ OSTREAM_DESC }} };
+
+	// max number of cycles to wait for output activity on any stream before timeout
+	constexpr unsigned max_iters = {{ TIMEOUT_CYCLES }};
+	constexpr bool preciseTimeout = {{ PRECISE_TIMEOUT }};
+
+	// filename for trace and debug, if enabled. This needs xelab -debug option too.
+	static const std::optional<std::string> trace_filename = {{ TRACE_FILE }};
+	static const std::string xsim_log_filename = {{ XSIM_LOG_FILE }};
+
+}

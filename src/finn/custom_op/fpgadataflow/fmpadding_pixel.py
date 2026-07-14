@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for fmpadding pixel."""
 import numpy as np
 from qonnx.core.datatype import DataType
 
@@ -34,10 +35,14 @@ from finn.util.logging import log
 
 
 class FMPadding_Pixel(HWCustomOp):
+    """Class for FM Padding Pixel."""
+
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             # spatial size of input images
             "ImgDim": ("ints", True, []),
@@ -56,7 +61,7 @@ class FMPadding_Pixel(HWCustomOp):
         return my_attrs
 
     def get_padded_odim(self):
-        "Return the padded spatial size of the output."
+        """Return the padded spatial size of the output."""
         idim_h, idim_w = self.get_nodeattr("ImgDim")
         stride_h, stride_w = self.get_nodeattr("Stride")
         odim_h = idim_h + (idim_h - 1) * (stride_h - 1)
@@ -64,6 +69,7 @@ class FMPadding_Pixel(HWCustomOp):
         return [odim_h, odim_w]
 
     def get_exp_cycles(self):
+        """Return exp cycles."""
         odim_h, odim_w = self.get_padded_odim()
         channels = self.get_nodeattr("NumChannels")
         simd = self.get_nodeattr("SIMD")
@@ -72,18 +78,21 @@ class FMPadding_Pixel(HWCustomOp):
         return int(exp_cycles)
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         idim_h, idim_w = self.get_nodeattr("ImgDim")
         num_ch = self.get_nodeattr("NumChannels")
         ishape = (1, idim_h, idim_w, num_ch)
         return ishape
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         odim_h, odim_w = self.get_padded_odim()
         num_ch = self.get_nodeattr("NumChannels")
         oshape = (1, odim_h, odim_w, num_ch)
         return oshape
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         normal_ishape = list(self.get_normal_input_shape())
         ifm_ch = self.get_nodeattr("NumChannels")
         simd = self.get_nodeattr("SIMD")
@@ -93,6 +102,7 @@ class FMPadding_Pixel(HWCustomOp):
         return tuple(folded_ishape)
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         normal_oshape = list(self.get_normal_output_shape())
         ifm_ch = self.get_nodeattr("NumChannels")
         simd = self.get_nodeattr("SIMD")
@@ -102,6 +112,7 @@ class FMPadding_Pixel(HWCustomOp):
         return tuple(folded_oshape)
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -127,17 +138,20 @@ class FMPadding_Pixel(HWCustomOp):
         return self.get_input_datatype()
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         ibits = self.get_input_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return ibits * simd
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         obits = self.get_output_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return obits * simd
 
     def execute_node(self, context, graph):
         # simulate behavior with Python functionality
+        """Execute node."""
         node = self.onnx_node
         s_h, s_w = self.get_nodeattr("Stride")
         inp_values = context[node.input[0]]

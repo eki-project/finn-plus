@@ -34,13 +34,19 @@ various weight memory modes.
 """
 
 import numpy as np
+import numpy.typing as npt
 import os
+from typing import TYPE_CHECKING, Literal
 
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import get_dsp_block, is_versal
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
+
+if TYPE_CHECKING:
+    from onnx import NodeProto
 
 # ONNX i/o tensor shape assumptions for MatrixVectorActivation_rtl:
 # input 0 is the input tensor, shape (.., i_size) = (..., MW)
@@ -52,7 +58,7 @@ from finn.util.settings import get_settings
 class MVAU_rtl(MVAU, RTLBackend):
     """Class that corresponds to finn-rtl Matrix Vector Unit."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
         """Initialize the RTL Matrix Vector Activation Unit.
 
         Parameters
@@ -64,7 +70,13 @@ class MVAU_rtl(MVAU, RTLBackend):
         """
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(
+        self,
+    ) -> dict[
+        str,
+        tuple[str, bool, int | float | str | bool | npt.NDArray | list]
+        | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+    ]:
         """Get dictionary of attribute names and their types for this node.
 
         Returns
@@ -73,7 +85,11 @@ class MVAU_rtl(MVAU, RTLBackend):
             Dictionary mapping attribute names to type specifications,
             including pumpedCompute for double-pumped DSP operation
         """
-        my_attrs = {
+        my_attrs: dict[
+            str,
+            tuple[str, bool, int | float | str | bool | npt.NDArray | list]
+            | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+        ] = {
             # Double-pumped DSPs enabled
             "pumpedCompute": ("i", False, 0, {0, 1}),
         }
@@ -127,16 +143,15 @@ class MVAU_rtl(MVAU, RTLBackend):
                         reshaped_input,
                     )
 
-                if in_ind == 1:
-                    if dynamic_input or self.get_nodeattr("mlo_max_iter"):
-                        reshaped_input = context[inputs].reshape(-1, context[inputs].shape[-1])
-                        self.make_weight_file(
-                            reshaped_input, "decoupled_npy", "{}/input_1.npy".format(code_gen_dir)
-                        )
+                if in_ind == 1 and (dynamic_input or self.get_nodeattr("mlo_max_iter")):
+                    reshaped_input = context[inputs].reshape(-1, context[inputs].shape[-1])
+                    self.make_weight_file(
+                        reshaped_input, "decoupled_npy", f"{code_gen_dir}/input_1.npy"
+                    )
 
             sim = self.get_rtlsim()
             nbits = self.get_instream_width()
-            inp = npy_to_rtlsim_input("{}/input_0.npy".format(code_gen_dir), export_idt, nbits)
+            inp = npy_to_rtlsim_input(f"{code_gen_dir}/input_0.npy", export_idt, nbits)
             super().reset_rtlsim(sim)
             if (
                 dynamic_input
@@ -148,7 +163,7 @@ class MVAU_rtl(MVAU, RTLBackend):
                     wnbits = wnbits * self.get_nodeattr("SIMD")
                 export_wdt = self.get_input_datatype(1)
 
-                wei = npy_to_rtlsim_input("{}/input_1.npy".format(code_gen_dir), export_wdt, wnbits)
+                wei = npy_to_rtlsim_input(f"{code_gen_dir}/input_1.npy", export_wdt, wnbits)
                 num_w_reps = np.prod(self.get_nodeattr("numInputVectors"))
 
                 io_dict = {
@@ -166,7 +181,7 @@ class MVAU_rtl(MVAU, RTLBackend):
             odt = self.get_output_datatype()
             target_bits = odt.bitwidth()
             packed_bits = self.get_outstream_width()
-            out_npy_path = "{}/output.npy".format(code_gen_dir)
+            out_npy_path = f"{code_gen_dir}/output.npy"
             out_shape = self.get_folded_output_shape()
             rtlsim_output_to_npy(output, out_npy_path, odt, out_shape, packed_bits, target_bits)
 
@@ -177,10 +192,8 @@ class MVAU_rtl(MVAU, RTLBackend):
             context[node.output[0]] = output
         else:
             raise Exception(
-                """Invalid value for attribute exec_mode! Is currently set to: {}
-            has to be set to one of the following value ("cppsim", "rtlsim")""".format(
-                    mode
-                )
+                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
+            has to be set to one of the following value ("cppsim", "rtlsim")"""
             )
 
     def lut_estimation(self):
@@ -318,16 +331,14 @@ class MVAU_rtl(MVAU, RTLBackend):
 
         assert (
             ref_clk > 0.741
-        ), """Infeasible clk target of {} ns has been set,
-        consider lowering the targeted clock frequency!""".format(
-            ref_clk
-        )
+        ), f"""Infeasible clk target of {ref_clk} ns has been set,
+        consider lowering the targeted clock frequency!"""
         critical_path_dsps = np.floor((ref_clk - 0.741) / 0.605 + 1)
         max_chain_len = np.ceil(self.get_nodeattr("SIMD") / simd_factor)
         dsp_chain_len = critical_path_dsps if critical_path_dsps < max_chain_len else max_chain_len
         return dsp_chain_len
 
-    def _resolve_dsp_version(self, dsp_block):
+    def _resolve_dsp_version(self, dsp_block: str) -> Literal[3, 2, 1]:
         """Resolve DSP version based on target FPGA device.
 
         Selects the appropriate RTL compute core version for the target DSP type.
@@ -344,12 +355,12 @@ class MVAU_rtl(MVAU, RTLBackend):
         """
         # Based on target device and activation/weight-width, choose the
         # supported RTL compute core
-        assert (
-            self.get_nodeattr("resType") != "lut"
-        ), """LUT-based RTL-MVU implementation currently not supported!
-        Please change resType for {} to 'dsp' or consider switching to HLS-based MVAU!""".format(
-            self.onnx_node.name
-        )
+        if self.get_nodeattr("resType") == "lut":
+            raise FINNUserError(
+                f"LUT-based RTL-MVU implementation currently not supported!"
+                f"Please change resType for {self.onnx_node.name} to 'dsp' "
+                f"or consider switching to HLS-based MVAU!"
+            )
 
         match dsp_block:
             case "DSP58":
@@ -395,7 +406,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         self.set_nodeattr("gen_top_module", self.get_verilog_top_module_name())
 
         # apply code generation to template
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template_wrapper = f.read()
         for key in code_gen_dict:
             # transform list into long string separated by '\n'

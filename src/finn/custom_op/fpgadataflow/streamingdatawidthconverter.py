@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for streamingdatawidthconverter."""
 import math
 import numpy as np
 from qonnx.core.datatype import DataType
@@ -41,6 +42,7 @@ class StreamingDataWidthConverter(HWCustomOp):
     """Abstraction layer for HW implementation of StreamingDataWidthConverter"""
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             # shape of input tensor
             "inShape": ("ints", True, []),
@@ -65,19 +67,23 @@ class StreamingDataWidthConverter(HWCustomOp):
         return DataType[self.get_nodeattr("dataType")]
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         ishape = self.get_nodeattr("inShape")
         return ishape
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         oshape = self.get_nodeattr("outShape")
         return oshape
 
     def get_iowidth_lcm(self):
+        """Return iowidth lcm."""
         iwidth = self.get_nodeattr("inWidth")
         owidth = self.get_nodeattr("outWidth")
         return int(np.lcm(iwidth, owidth))
 
     def needs_lcm(self):
+        """Return needs lcm."""
         iwidth = self.get_nodeattr("inWidth")
         owidth = self.get_nodeattr("outWidth")
         maxwidth = max(iwidth, owidth)
@@ -85,9 +91,11 @@ class StreamingDataWidthConverter(HWCustomOp):
         return maxwidth % minwidth != 0
 
     def check_divisible_iowidths(self):
+        """Return check divisible iowidths."""
         pass
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         self.check_divisible_iowidths()
         iwidth = self.get_nodeattr("inWidth")
         ishape = self.get_normal_input_shape()
@@ -108,6 +116,7 @@ class StreamingDataWidthConverter(HWCustomOp):
         return dummy_t.shape
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         self.check_divisible_iowidths()
         owidth = self.get_nodeattr("outWidth")
         oshape = self.get_normal_output_shape()
@@ -129,14 +138,17 @@ class StreamingDataWidthConverter(HWCustomOp):
         return dummy_t.shape
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         in_width = self.get_nodeattr("inWidth")
         return in_width
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         out_width = self.get_nodeattr("outWidth")
         return out_width
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -151,6 +163,7 @@ class StreamingDataWidthConverter(HWCustomOp):
         model.set_tensor_datatype(node.output[0], idt)
 
     def verify_node(self):
+        """Verify node."""
         info_messages = []
         # verify that "backend" is set to "fpgadataflow"
         backend_value = self.get_nodeattr("backend")
@@ -168,6 +181,7 @@ class StreamingDataWidthConverter(HWCustomOp):
         return info_messages
 
     def execute_node(self, context, graph):
+        """Execute node."""
         node = self.onnx_node
         exp_shape = self.get_normal_input_shape()
         inp = context[node.input[0]]

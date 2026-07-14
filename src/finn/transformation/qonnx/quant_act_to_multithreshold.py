@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for quant act to multithreshold."""
 from qonnx.transformation.base import Transformation
 
 from finn.transformation.qonnx.qonnx_activation_handlers import (
@@ -36,8 +37,7 @@ from finn.util.logging import log
 
 
 def default_filter_function_generator(max_multithreshold_bit_width=8):
-    """
-    This function generates the default filter function for the
+    """Generate the default filter function for the
     ConvertQuantActToMultiThreshold transformation. Per default the returned
     function disables the conversion of Quant nodes which have a bit width above 8 bit.
 
@@ -46,6 +46,7 @@ def default_filter_function_generator(max_multithreshold_bit_width=8):
     """
 
     def filter_function(model, q_node):
+        """Return filter function."""
         if q_node.op_type == "Quant":
             bit_width = model.get_initializer(q_node.input[3])
         elif q_node.op_type == "BipolarQuant":
@@ -88,10 +89,12 @@ class ConvertQuantActToMultiThreshold(Transformation):
         self,
         filter_function=default_filter_function_generator(max_multithreshold_bit_width=8),
     ):
+        """Initialize instance."""
         super().__init__()
         self._filter_function = filter_function
 
     def apply(self, model):
+        """Apply transformation."""
         graph = model.graph
         node_ind = 0
         graph_modified = False

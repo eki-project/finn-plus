@@ -16,6 +16,7 @@ import tempfile
 import torch
 import torch.onnx
 from brevitas.export import export_qonnx
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -610,7 +611,7 @@ def test_shuffle_config_consolidation():
     assert len(decomposed_nodes) > 0
 
     consolidated_file = os.environ["FINN_BUILD_DIR"] + "/consolidated.json"
-    extract_model_config_consolidate_shuffles(model, consolidated_file, ["SIMD"])
+    extract_model_config_consolidate_shuffles(model, Path(consolidated_file), ["SIMD"])
 
     with open(consolidated_file, "r") as f:
         consolidated_config = json.load(f)

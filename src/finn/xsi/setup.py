@@ -22,12 +22,14 @@ Options:
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
 import sysconfig
 from pathlib import Path
 from typing import List, Tuple
+from finn.util.settings import get_settings
 
 
 def get_build_paths() -> Tuple[List[str], str, List[str]]:
@@ -72,7 +74,7 @@ def get_build_paths() -> Tuple[List[str], str, List[str]]:
         compiler = "clang++"
 
     # Compile flags
-    extra_compile_args = ["--std=c++17", "-Wall", "-O3", "-shared", "-fPIC"]
+    extra_compile_args = ["--std=c++20", "-Wall", "-O3", "-shared", "-fPIC"]
 
     return include_dirs, compiler, extra_compile_args
 
@@ -115,29 +117,45 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
     Returns:
         bool: True if build successful
     """
-    xsi_path = Path(os.environ["FINN_XSI"])
+    xsi_path = get_settings().finn_xsi
+
+    vivado_path = os.environ.get("XILINX_VIVADO")
+    if vivado_path is None:
+        raise EnvironmentError(
+            "XILINX_VIVADO environment variable not set. Please source Vivado settings."
+        )
+    match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path)
+    if not match:
+        raise ValueError(f"Could not parse Vivado version from XILINX_VIVADO path: {vivado_path}")
+    year, minor = int(match.group(1)), int(match.group(2))
 
     if not xsi_path.exists():
         print(f"Error: finn_xsi source not found at {xsi_path}")
         return False
 
+    version_file = xsi_path / "VERSION"
     # Check if already built
     if not force:
         xsi_so = xsi_path / "xsi.so"
-        if xsi_so.exists():
-            # Try importing to see if it works
-            sys.path.insert(0, str(xsi_path))
-            try:
-                import xsi
+        if xsi_so.exists() and version_file.exists():
+            with version_file.open() as f:
+                version_info = f.read().strip()
+            if version_info == f"Vivado {year}.{minor}":
+                if verbose:
+                    print("xsi.so is already built for the current Vivado version.")
+                # Try importing to see if it works
+                sys.path.insert(0, str(xsi_path))
+                try:
+                    import xsi
 
-                sys.path.pop(0)
-                if verbose:
-                    print("xsi.so is already built and working.")
-                return True
-            except ImportError:
-                sys.path.pop(0)
-                if verbose:
-                    print("xsi.so exists but failed to import, rebuilding...")
+                    sys.path.pop(0)
+                    if verbose:
+                        print("xsi.so is already built and working.")
+                    return True
+                except ImportError:
+                    sys.path.pop(0)
+                    if verbose:
+                        print("xsi.so exists but failed to import, rebuilding...")
         # else: Need to build
 
     if verbose:
@@ -147,7 +165,13 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
     include_dirs, compiler, compile_args = get_build_paths()
 
     # Source files
-    source_files = ["xsi_bind.cpp", "xsi_finn.cpp"]
+    source_files = [
+        "xsi_bind.cpp",
+        "src/Port.cpp",
+        "src/Design.cpp",
+        "src/Kernel.cpp",
+        "src/SharedLibrary.cpp",
+    ]
 
     # Build command
     cmd = [compiler] + compile_args
@@ -155,6 +179,7 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
     # Add include directories
     for inc_dir in include_dirs:
         cmd.extend(["-I", inc_dir])
+    cmd.extend(["-I", "./include"])
 
     # Output file
     cmd.extend(["-o", "xsi.so"])
@@ -188,6 +213,10 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
     if verbose and result.stdout:
         print(result.stdout)
 
+    # Write version info    version_file = xsi_path / "VERSION"
+    with version_file.open("w") as f:
+        f.write(f"Vivado {year}.{minor}")
+
     if verbose:
         print("Build completed successfully.")
     return True
@@ -195,7 +224,7 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
 
 def verify_installation() -> bool:
     """Verify that finn_xsi can be imported and works."""
-    xsi_path = Path(os.environ["FINN_XSI"])
+    xsi_path = get_settings().finn_xsi
 
     # Check if xsi.so exists
     xsi_so = xsi_path / "xsi.so"
@@ -232,7 +261,7 @@ def verify_installation() -> bool:
 
 def clean_build() -> bool:
     """Clean build artifacts."""
-    xsi_path = Path(os.environ["FINN_XSI"])
+    xsi_path = get_settings().finn_xsi
 
     print(f"Cleaning build artifacts in {xsi_path}...")
 

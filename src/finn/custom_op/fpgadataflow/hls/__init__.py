@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for init."""
 from finn.custom_op.fpgadataflow.hls.streamingfifo_hls import StreamingFIFO_hls
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
@@ -37,8 +38,9 @@ custom_op = dict()
 # Registers a class into the custom_op dictionary
 # Note: This must be defined first, before importing any custom op
 # implementation to avoid "importing partially initialized module" issues.
-def register_custom_op(cls):
+def register_custom_op(cls) -> type[HLSBackend]:
     # The class must actually implement HWCustomOp
+    """Register a custom HLS operation."""
     assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"
     # The class must also implement the HLSBackend
     assert issubclass(cls, HLSBackend), f"{cls} must subclass {HLSBackend}"
