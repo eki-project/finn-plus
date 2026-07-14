@@ -31,7 +31,7 @@ class DocstringChecker(ast.NodeVisitor):
     This class traverses the Abstract Syntax Tree of a Python file and
     identifies functions, methods, classes, and modules that lack docstrings.
     It follows PEP 257 conventions and requires documentation for all functions
-    including private functions, but skips test functions.
+    including private functions, but skips test functions and @overload stubs.
 
     Attributes:
         filename: Path to the file being analyzed
@@ -50,13 +50,31 @@ class DocstringChecker(ast.NodeVisitor):
         self.missing_docstrings: list[dict[str, str | int]] = []
         self.current_class: str | None = None
 
+    def _is_overload_decorated(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        """Return True if function/method has an overload decorator.
+
+        Supports:
+        - @overload
+        - @typing.overload
+        - @t.overload  (or any alias via attribute access)
+        """
+        for dec in node.decorator_list:
+            # @overload
+            if isinstance(dec, ast.Name) and dec.id == "overload":
+                return True
+            # @typing.overload / @t.overload
+            if isinstance(dec, ast.Attribute) and dec.attr == "overload":
+                return True
+        return False
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Visit function definition nodes and check for docstrings.
 
         Args:
             node: The function definition AST node to analyze
         """
-        self._check_docstring(node, "function")
+        if not self._is_overload_decorated(node):
+            self._check_docstring(node, "function")
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
@@ -65,7 +83,8 @@ class DocstringChecker(ast.NodeVisitor):
         Args:
             node: The async function definition AST node to analyze
         """
-        self._check_docstring(node, "async function")
+        if not self._is_overload_decorated(node):
+            self._check_docstring(node, "async function")
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
@@ -102,7 +121,7 @@ class DocstringChecker(ast.NodeVisitor):
 
         This method requires docstrings for all functions, methods, and classes,
         including private functions. Only test functions (starting with 'test_')
-        are skipped from docstring requirements.
+        and overload-decorated call signatures are skipped.
 
         Args:
             node: The AST node to check (function, async function, or class)

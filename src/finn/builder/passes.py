@@ -445,9 +445,11 @@ class MoveReduceSumAxis(_MoveReduceAxisToBack):
     """Moves the reduce axis to the back of the tensor for ReduceSum."""
 
     def __OP__(_, op, x, **kwargs):
+        """Replacement pattern for ReduceSum without axes input."""  # noqa: D401
         return op.ReduceSum(x, _outputs=["reduced"], **kwargs)
 
     def __OPAX__(_, op, x, axes, **kwargs):
+        """Replacement pattern for ReduceSum with axes input."""  # noqa: D401
         return op.ReduceSum(x, axes, _outputs=["reduced"], **kwargs)
 
 
@@ -457,9 +459,11 @@ class MoveReduceMinAxis(_MoveReduceAxisToBack):
     """Moves the reduce axis to the back of the tensor for ReduceMin."""
 
     def __OP__(_, op, x, **kwargs):
+        """Replacement pattern for ReduceMin without axes input."""  # noqa: D401
         return op.ReduceMin(x, _outputs=["reduced"], **kwargs)
 
     def __OPAX__(_, op, x, axes, **kwargs):
+        """Replacement pattern for ReduceMin with axes input."""  # noqa: D401
         return op.ReduceMin(x, axes, _outputs=["reduced"], **kwargs)
 
 
@@ -469,9 +473,11 @@ class MoveReduceMaxAxis(_MoveReduceAxisToBack):
     """Moves the reduce axis to the back of the tensor for ReduceMax."""
 
     def __OP__(_, op, x, **kwargs):
+        """Replacement pattern for ReduceMax without axes input."""  # noqa: D401
         return op.ReduceMax(x, _outputs=["reduced"], **kwargs)
 
     def __OPAX__(_, op, x, axes, **kwargs):
+        """Replacement pattern for ReduceMax with axes input."""  # noqa: D401
         return op.ReduceMax(x, axes, _outputs=["reduced"], **kwargs)
 
 
@@ -481,9 +487,11 @@ class MoveReduceProdAxis(_MoveReduceAxisToBack):
     """Moves the reduce axis to the back of the tensor for ReduceProd."""
 
     def __OP__(_, op, x, **kwargs):
+        """Replacement pattern for ReduceProd without axes input."""  # noqa: D401
         return op.ReduceProd(x, _outputs=["reduced"], **kwargs)
 
     def __OPAX__(_, op, x, axes, **kwargs):
+        """Replacement pattern for ReduceProd with axes input."""  # noqa: D401
         return op.ReduceProd(x, axes, _outputs=["reduced"], **kwargs)
 
 
