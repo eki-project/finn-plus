@@ -442,6 +442,8 @@ def test_move_axis() -> None:
     model = model.transform(PrepareCppSim())
     model = model.transform(CompileCppSim())
 
-    y_hw = oxe.execute_onnx(model, input_t)[out_name]
+    input_t_hw = {"global_input_0": inp}
+    y_hw = oxe.execute_onnx(model, input_t_hw)["global_output_0"]
+    print(y_hw)
     tolerance = 1e-5
     assert np.allclose(y_ref, y_hw, atol=tolerance)

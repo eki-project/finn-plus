@@ -322,6 +322,7 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
         return tuple(sorted(out))
 
     def pattern(self):
+        """Target pattern to match."""
         # ReduceSum optionally receives axes as a second input.
         return [
             lambda op, x, axes: self.__OPAX__(op, x, axes),
@@ -335,7 +336,8 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
             op,
             x: ir.Value,
             axes: ir.Value | None = None,
-        ):
+        ) -> bool:
+            """Check if the axes are not already at the back of the tensor."""
             # QONNX needs statically annotated input shape as this will be turned
             # into an attribute of the node
             if not (x.shape is not None and x.shape.is_static()):
@@ -370,6 +372,8 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
             y: ir.Value,
             axes: ir.Value | None = None,
         ):
+            """Replace the Reduce* operator with a new one that has the axes moved to the back of
+            the tensor."""
             # Defaults according to ONNX operators reference documentation:
             #   https://onnx.ai/onnx/operators/onnx__ReduceLogSumExp.html
             attributes = collect_attrs(
@@ -389,7 +393,6 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
                 raise ValueError("Axes must be a constant tensor for replacement.")
             ax = ax.numpy()
             shape = cast("ir.Shape", x.shape)
-            in_shape = shape.numpy()
             ndim = shape.rank()
             red_axes = self._normalize_axes(ax, ndim)
             keep_axes = tuple(i for i in range(ndim) if i not in red_axes)
@@ -398,8 +401,6 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
                 perm = keep_axes + red_axes
             else:
                 perm = keep_axes[:-1] + red_axes + (keep_axes[-1],)
-            print(f"AxesPermutation: {perm}")
-            shuf_shape = tuple(in_shape[p] for p in perm)
 
             reshuffled_axes = []
             for a in red_axes:
@@ -409,30 +410,26 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
 
             ret = self.__OPAX__(
                 op,
-                op.Reshape(
-                    op.Transpose(x, perm=ir.Attr("perm", ir.AttributeType.INTS, perm)),
-                    op.Constant(value_ints=shuf_shape),
+                op.LayoutConverter(
+                    x,
+                    assumes=[],
+                    perm=ir.Attr("perm", ir.AttributeType.INTS, perm),
+                    _domain=CUSTOM_DOMAIN,
                 ),
                 axes=op.Constant(value=ir.tensor(reshuffled_axes, name="axes")),
                 keepdims=attributes["keepdims"],
                 noop_with_empty_axes=attributes["noop_with_empty_axes"],
             )
+
             if not bool(attributes["keepdims"].value):
                 return ret
-            # If keepdims is True, we need to reshuffle + reshape the
-            # output back to the original shape
-            keep_shape = tuple(in_shape[a] for a in keep_axes)
-            y_pre_shape = keep_shape + tuple(1 for _ in red_axes)
+            # If keepdims is True, we need to reshuffle the output back to the original shape
 
             inv_perm = tuple(np.argsort(perm))
-            target_shape = tuple(1 if i in red_axes else in_shape[i] for i in range(ndim))
 
-            return op.Reshape(
-                op.Transpose(
-                    op.Reshape(ret, op.Constant(value_ints=y_pre_shape)),
-                    perm=ir.Attr("perm", ir.AttributeType.INTS, inv_perm),
-                ),
-                op.Constant(value_ints=target_shape),
+            return op.Transpose(
+                ret,
+                perm=ir.Attr("perm", ir.AttributeType.INTS, inv_perm),
             )
 
         # Omit precomputed access pattern and transplant into the QONNX domain
@@ -445,6 +442,8 @@ class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
 @passes.verify.tolerance
 @passes.register("inline-move-reduce-axis")
 class MoveReduceSumAxis(_MoveReduceAxisToBack):
+    """Moves the reduce axis to the back of the tensor for ReduceSum."""
+
     def __OP__(_, op, x, **kwargs):
         return op.ReduceSum(x, _outputs=["reduced"], **kwargs)
 
@@ -455,6 +454,8 @@ class MoveReduceSumAxis(_MoveReduceAxisToBack):
 @passes.verify.tolerance
 @passes.register("inline-move-reduce-axis")
 class MoveReduceMinAxis(_MoveReduceAxisToBack):
+    """Moves the reduce axis to the back of the tensor for ReduceMin."""
+
     def __OP__(_, op, x, **kwargs):
         return op.ReduceMin(x, _outputs=["reduced"], **kwargs)
 
@@ -465,6 +466,8 @@ class MoveReduceMinAxis(_MoveReduceAxisToBack):
 @passes.verify.tolerance
 @passes.register("inline-move-reduce-axis")
 class MoveReduceMaxAxis(_MoveReduceAxisToBack):
+    """Moves the reduce axis to the back of the tensor for ReduceMax."""
+
     def __OP__(_, op, x, **kwargs):
         return op.ReduceMax(x, _outputs=["reduced"], **kwargs)
 
@@ -475,6 +478,8 @@ class MoveReduceMaxAxis(_MoveReduceAxisToBack):
 @passes.verify.tolerance
 @passes.register("inline-move-reduce-axis")
 class MoveReduceProdAxis(_MoveReduceAxisToBack):
+    """Moves the reduce axis to the back of the tensor for ReduceProd."""
+
     def __OP__(_, op, x, **kwargs):
         return op.ReduceProd(x, _outputs=["reduced"], **kwargs)
 
