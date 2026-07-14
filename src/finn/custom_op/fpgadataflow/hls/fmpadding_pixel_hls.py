@@ -26,24 +26,31 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for fmpadding pixel hls."""
 from finn.custom_op.fpgadataflow.fmpadding_pixel import FMPadding_Pixel
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 
 
 class FMPadding_Pixel_hls(FMPadding_Pixel, HLSBackend):
+    """Class for FM Padding Pixel hls."""
+
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(FMPadding_Pixel.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
     def global_includes(self):
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "streamtools.h"']
 
     def defines(self, var):
+        """Return defines."""
         odim_h, odim_w = self.get_padded_odim()
         stride_h, stride_w = self.get_nodeattr("Stride")
         self.code_gen_dict["$DEFINES$"] = [
@@ -65,18 +72,18 @@ class FMPadding_Pixel_hls(FMPadding_Pixel, HLSBackend):
         ]
 
     def docompute(self):
+        """Return docompute."""
         in_t = self.get_input_datatype().get_hls_datatype_str()
         odim_h, odim_w = self.get_padded_odim()
         stride_h, stride_w = self.get_nodeattr("Stride")
         hls_call = "FMPadding_Pixel_Nonsquare"
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            """{}<OutputDim_x, OutputDim_y, Stride_x, Stride_y, NumChannels,
-            SIMD, {}> (in0_V, out0_V);""".format(
-                hls_call, in_t
-            )
+            f"""{hls_call}<OutputDim_x, OutputDim_y, Stride_x, Stride_y, NumChannels,
+            SIMD, {in_t}> (in0_V, out0_V);"""
         ]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         packed_bits = self.get_instream_width()
         packed_hls_type = "ap_uint<%d>" % packed_bits
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
@@ -89,4 +96,5 @@ class FMPadding_Pixel_hls(FMPadding_Pixel, HLSBackend):
         ]
 
     def execute_node(self, context, graph):
+        """Execute node."""
         HLSBackend.execute_node(self, context, graph)

@@ -27,31 +27,35 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-# This module contains helpers for handling the MLO rtlsimulation. It instantiates
-# aximm simulation tasks for handling the aximm interfaces.
+"""Module contains helpers for handling the MLO rtlsimulation. It instantiates
+aximm simulation tasks for handling the aximm interfaces."""
 
 import numpy as np
+from collections.abc import Callable
+from numpy._typing._array_like import NDArray
+from onnx import NodeProto
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
-from typing import Callable
+from typing import TYPE_CHECKING, cast
 
-from finn import xsi
+from finn.util.exception import FINNInternalError
+from finn.xsi import SimEngine
 
-SimEngine = xsi.SimEngine if xsi.is_available() else None
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
 
 
 def is_mlo(model: ModelWrapper) -> bool:
-    """Returns True if the model is an MLO model, false otherwise"""
-    for node in model.graph.node:
-        if node.op_type == "FINNLoop":
-            return True
-    return False
+    """Return True if the model is an MLO model, false otherwise."""
+    return any(node.op_type == "FINNLoop" for node in model.graph.node)
 
 
-def dat_file_to_numpy_array(file_path):
+def dat_file_to_numpy_array(file_path: Path) -> NDArray[np.uint8]:
+    """Load a .dat file of hex strings into a uint8 numpy array."""
     byte_values = []
 
-    with open(file_path, "r") as file:
+    with file_path.open() as file:
         for line in file:
             hex_string = line.strip()
             for i in range(len(hex_string) - 2, -1, -2):
@@ -64,34 +68,40 @@ def dat_file_to_numpy_array(file_path):
     return byte_array
 
 
-def mlo_prehook_func_factory(node) -> Callable[[SimEngine], None]:
-    """Factory that will construct a prehook function to
-    setup the axi memory mapped interfaces for MLO validation.
+def mlo_prehook_func_factory(node: NodeProto) -> Callable[[SimEngine], None]:
+    """Construct a prehook function to
+    setup the axi memory mapped interfaces for MLO validation using a function factory.
     """
-
     # Get the FINNLoop
-    finnloop_op = getCustomOp(node)
+    finnloop_op = cast("FINNLoop", getCustomOp(node))
 
-    finnloop_body = finnloop_op.get_nodeattr("body")
+    finnloop_body = cast("ModelWrapper", finnloop_op.get_nodeattr("body"))
 
-    mvau_hbm_weights = {}
+    mvau_hbm_weights: dict[int, dict[str, np.ndarray | str | int]] = {}
     extern_idx = 0
     for idx, lb_inp in enumerate(finnloop_body.graph.input):
         downstream = finnloop_body.find_consumer(lb_inp.name)
+        if downstream is None:
+            raise FINNInternalError(
+                f"Input {lb_inp.name} has no consumer in the FINNLoop body graph"
+            )
         if downstream.op_type.startswith("MVAU"):
             mvau_hbm_weights[idx] = {}
             mvau_hbm_weights[idx]["name"] = lb_inp.name
             datfile = (
                 f"{finnloop_op.get_nodeattr('code_gen_dir_ipgen')}/memblock_MVAU_rtl_id_{idx}.dat"
             )
-            mvau_hbm_weights[idx]["value"] = dat_file_to_numpy_array(datfile)
+            mvau_hbm_weights[idx]["value"] = dat_file_to_numpy_array(Path(datfile))
             mvau_hbm_weights[idx]["extern_idx"] = extern_idx
             mvau_hbm_weights[idx]["extern_name"] = f"m_axi_MVAU_id_{idx}"
             extern_idx += 1
 
-    def mlo_rtlsim_prehook(sim):
+    def mlo_rtlsim_prehook(sim: SimEngine) -> None:
+        """Prehook that queues and populates AXI memory for MLO sims."""
         sim.aximm_queue("m_axi_hbm")
-        for name, intf in mvau_hbm_weights.items():
-            sim.aximm_ro_image(intf["extern_name"], 0, intf["value"].flatten())
+        for intf in mvau_hbm_weights.values():
+            sim.aximm_ro_image(
+                cast("str", intf["extern_name"]), 0, cast("np.ndarray", intf["value"]).flatten()
+            )
 
     return mlo_rtlsim_prehook

@@ -1,3 +1,6 @@
+"""For every node: compile C++ code in node attribute "code_gen_dir_cppsim"
+and save path to executables in node attribute "executable_path".
+All nodes in the graph must have the fpgadataflow backend attribute."""
 # Copyright (C) 2020, Xilinx, Inc.
 # Copyright (C) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -28,9 +31,15 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import qonnx.custom_op.registry as registry
+from onnx import NodeProto
 from qonnx.transformation.base import NodeLocalTransformation
+from typing import TYPE_CHECKING, cast
 
+from finn.util.exception import FINNUserError
 from finn.util.fpgadataflow import is_hls_node
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 
 
 class CompileCppSim(NodeLocalTransformation):
@@ -46,30 +55,34 @@ class CompileCppSim(NodeLocalTransformation):
       NodeLocalTransformation for more details.
     """
 
-    def __init__(self, num_workers=None):
+    def __init__(self, num_workers: int | None = None) -> None:
+        """Initialize the transformation."""
         super().__init__(num_workers=num_workers)
 
-    def applyNodeLocal(self, node):
+    def applyNodeLocal(self, node: NodeProto) -> tuple[NodeProto, bool]:  # noqa: N802
+        """Compile C++ code for a single node."""
         op_type = node.op_type
         if is_hls_node(node):
             try:
                 # lookup op_type in registry of CustomOps
-                inst = registry.getCustomOp(node)
+                inst = cast("HLSBackend", registry.getCustomOp(node))
                 # ensure that code is generated
-                assert (
-                    inst.get_nodeattr("code_gen_dir_cppsim") != ""
-                ), """Node
-                attribute "code_gen_dir_cppsim" is not set. Please run
-                Transformation PrepareCppSim first."""
+                if inst.get_nodeattr("code_gen_dir_cppsim") == "":
+                    raise FINNUserError(
+                        "Node attribute 'code_gen_dir_cppsim' is not set. Please run "
+                        "Transformation PrepareCppSim first."
+                    )
                 # call the compilation function for this node
                 inst.compile_singlenode_code()
                 # ensure that executable path is now set
-                assert (
-                    inst.get_nodeattr("executable_path") != ""
-                ), """Transformation
-                compile was not successful, there is no path to executables set
-                in node attribute "executable_path"."""
+                if inst.get_nodeattr("executable_path") == "":
+                    raise FINNUserError(
+                        "Transformation compile was not successful, there is no path to "
+                        "executables set in node attribute 'executable_path'."
+                    )
             except KeyError:
                 # exception if op_type is not supported
-                raise Exception("Custom op_type %s is currently not supported." % op_type)
+                raise FINNUserError(
+                    f"Custom op_type {op_type} is currently not supported."
+                ) from None
         return (node, False)

@@ -1,3 +1,8 @@
+"""For a graph with generated RTL sources (after HLSSynthIP), create an
+emulation library for each node to prepare for rtlsim
+execution and set the rtlsim_so property to the path to the generated
+emulation library."""
+
 # Copyright (C) 2020, Xilinx, Inc.
 # Copyright (C) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -27,11 +32,19 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import qonnx.custom_op.registry as registry
+from onnx import NodeProto
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import NodeLocalTransformation
+from typing import TYPE_CHECKING, Literal, cast
 
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
+from finn.util.basic import getHWCustomOp
+from finn.util.exception import FINNUserError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+    from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 
 
 class PrepareRTLSim(NodeLocalTransformation):
@@ -48,28 +61,32 @@ class PrepareRTLSim(NodeLocalTransformation):
       NodeLocalTransformation for more details.
     """
 
-    def __init__(self, behav=False, num_workers=None):
+    def __init__(self, behav: bool = False, num_workers: int | None = None) -> None:
+        """Construct the transformation."""
         super().__init__(num_workers=num_workers)
         self.behav = behav
 
-    def apply(self, model):
+    def apply(self, model: "ModelWrapper") -> tuple[ModelWrapper, bool]:
+        """Apply the transformation to the model."""
         model = model.transform(ReplaceVerilogRelPaths())
         return super().apply(model)
 
-    def applyNodeLocal(self, node):
+    def applyNodeLocal(self, node: NodeProto) -> tuple[NodeProto, Literal[False]]:  # noqa: N802
+        """Apply the transformation to a single node."""
         op_type = node.op_type
         if is_hls_node(node) or is_rtl_node(node):
             try:
                 # lookup op_type in registry of CustomOps
-                inst = registry.getCustomOp(node)
+                inst = cast("HLSBackend | RTLBackend", getHWCustomOp(node))
                 inst.prepare_rtlsim(self.behav)
                 # ensure that executable path is now set
-                assert (
-                    inst.get_nodeattr("rtlsim_so") != ""
-                ), "Failed to prepare RTLSim, no rtlsim_so attribute found."
+                if inst.get_nodeattr("rtlsim_so") == "":
+                    raise FINNUserError("Failed to prepare RTLSim, no rtlsim_so attribute found.")
             except KeyError:
                 # exception if op_type is not supported
-                raise Exception("Custom op_type %s is currently not supported." % op_type)
+                raise FINNUserError(
+                    f"Custom op_type {op_type} is currently not supported."
+                ) from None
             except NotImplementedError:
                 # Some custom ops (Vivado StreamingFIFO) may gracefully skip rtlsim
                 pass

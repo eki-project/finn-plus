@@ -1,3 +1,5 @@
+"""Transformation that inserts TLastMarker_hls nodes at the beginning and/or end of a graph
+if they are not already present."""
 # Copyright (c) 2020, Xilinx
 # All rights reserved.
 #
@@ -27,11 +29,25 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-from onnx import TensorProto
+from collections.abc import Sequence
+from onnx import AttributeProto, TensorProto
 from onnx import helper as oh
-from qonnx.custom_op.registry import getCustomOp
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name
+from typing import cast
+
+from finn.util.basic import getHWCustomOp
+from finn.util.exception import FINNInternalError
+from finn.util.fpgadataflow import is_fpgadataflow_node
+
+
+def _get_by_name(attributes: Sequence[AttributeProto], name: str) -> AttributeProto:
+    """Get attribute by name from a list of attributes."""
+    ret = get_by_name(attributes, name)
+    if ret is not None:
+        return ret
+    raise FINNInternalError(f"Attribute {name} not found in node attributes")
 
 
 class InsertTLastMarker(Transformation):
@@ -41,22 +57,33 @@ class InsertTLastMarker(Transformation):
     More information available on the TLastMarker documentation.
     """
 
-    def __init__(self, both=False, external=True, dynamic=True):
+    def __init__(self, both: bool = False, external: bool = True, dynamic: bool = True) -> None:
+        """Construct the InsertTLastMarker transformation."""
         super().__init__()
         self.dyniters = dynamic
         self.external = external
         self.both = both
 
-    def apply(self, model):
-        # TODO only makes sense for a pure fpgadataflow graph -- check!
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Apply the InsertTLastMarker transformation to the provided model."""
+        for node in model.graph.node:
+            if not is_fpgadataflow_node(node):
+                raise FINNInternalError(
+                    "InsertTLastMarker transformation can only be applied to fpgadataflow graphs "
+                    f"but found node {node.name} of type {node.op_type} with domain {node.domain}."
+                )
         graph_out_name = model.get_first_global_out()
         final_node = model.find_producer(graph_out_name)
+        if final_node is None:
+            raise FINNInternalError(
+                "Graph output has no producer node in InsertTLastMarker transformation"
+            )
         graph_modified = False
         if final_node.op_type != "TLastMarker_hls" and not (
             final_node.op_type == "IODMA_hls"
-            and get_by_name(final_node.attribute, "direction").s.decode("UTF-8") == "out"
+            and _get_by_name(final_node.attribute, "direction").s.decode("UTF-8") == "out"
         ):
-            custom_op = getCustomOp(final_node)
+            custom_op = getHWCustomOp(final_node)
             num_iters = int(custom_op.get_number_output_values())
             stream_width = int(custom_op.get_outstream_width())
             out_shape = model.get_tensor_shape(graph_out_name)
@@ -82,6 +109,8 @@ class InsertTLastMarker(Transformation):
                 Protocol=("external" if self.external else "internal"),
                 domain="finn.custom_op.fpgadataflow.hls",
                 backend="fpgadataflow",
+                normal_shape=out_shape,
+                dataType=out_dtype.name,
             )
             model.graph.node.append(tlast_node)
             graph_modified = True
@@ -104,16 +133,16 @@ class InsertTLastMarker(Transformation):
                 #    initializer (TODO: fix this with a clean-up transform)
                 if (
                     first_node.op_type.startswith("MVAU")
-                    and get_by_name(first_node.attribute, "mem_mode").s.decode("UTF-8")
+                    and _get_by_name(first_node.attribute, "mem_mode").s.decode("UTF-8")
                     != "external"
                 ):
                     continue
                 # 2. node is either a TLastMarker or an input IODMA
                 if first_node.op_type != "TLastMarker_hls" and not (
                     first_node.op_type == "IODMA_hls"
-                    and get_by_name(first_node.attribute, "direction").s.decode("UTF-8") == "in"
+                    and _get_by_name(first_node.attribute, "direction").s.decode("UTF-8") == "in"
                 ):
-                    custom_op = getCustomOp(first_node)
+                    custom_op = getHWCustomOp(first_node)
                     num_iters = np.prod(custom_op.get_folded_input_shape()[1:-1])
                     inp_idx = list(first_node.input).index(graph_in_name)
                     if inp_idx > 0:
@@ -143,7 +172,7 @@ class InsertTLastMarker(Transformation):
                     ini = model.get_initializer(graph_in_name)
                     # copy initializer if it exists
                     if ini is not None:
-                        model.set_initializer(first_node_in.name, ini)
+                        model.set_initializer(first_node_in.name, cast("np.ndarray", ini))
                     # reroute final node output to first_node_in_name
                     first_node.input[inp_idx] = first_node_in.name
                     tlast_node = oh.make_node(

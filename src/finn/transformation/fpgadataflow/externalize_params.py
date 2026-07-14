@@ -26,6 +26,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Transformation for externalizing weight parameters via IODMA inputs."""
+
 
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name
@@ -36,12 +38,15 @@ class ExternalizeParams(Transformation):
     marked as external using mem_mode="external"."""
 
     def __init__(self):
+        """Initialize the transformation."""
         super().__init__()
 
     def apply(self, model):
+        """Apply the transformation to externalize DMA-fed weights."""
         graph_modified = False
 
         def filter_fc_extw(x):
+            """Return True for IODMA nodes using external wrap burst mode."""
             if x.op_type == "IODMA_hls":
                 burst_mode = get_by_name(x.attribute, "burstMode")
                 if burst_mode is not None:
@@ -55,17 +60,16 @@ class ExternalizeParams(Transformation):
             extw_tensor_name_out = dma_extw.output[0]
             if extw_tensor_name in [x.name for x in model.graph.input]:
                 continue
-            else:
-                extw_vi = model.get_tensor_valueinfo(extw_tensor_name)
-                assert extw_vi is not None
-                model.graph.value_info.remove(extw_vi)
-                model.graph.input.append(extw_vi)
-                iodma_init = model.get_initializer(extw_vi.name)
-                assert iodma_init is not None
-                # remove output-side initializer to get correct dataflow partitioning
-                model.graph.initializer.remove(
-                    [x for x in model.graph.initializer if x.name == extw_tensor_name_out][0]
-                )
-                graph_modified = True
+            extw_vi = model.get_tensor_valueinfo(extw_tensor_name)
+            assert extw_vi is not None
+            model.graph.value_info.remove(extw_vi)
+            model.graph.input.append(extw_vi)
+            iodma_init = model.get_initializer(extw_vi.name)
+            assert iodma_init is not None
+            # remove output-side initializer to get correct dataflow partitioning
+            model.graph.initializer.remove(
+                [x for x in model.graph.initializer if x.name == extw_tensor_name_out][0]
+            )
+            graph_modified = True
 
         return (model, graph_modified)

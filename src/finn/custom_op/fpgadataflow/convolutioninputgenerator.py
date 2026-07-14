@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for convolutioninputgenerator."""
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
@@ -46,9 +47,11 @@ class ConvolutionInputGenerator(HWCustomOp):
     """Abstraction layer for HW implementation of ConvolutionInputGenerator"""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             "ConvKernelDim": ("ints", True, []),  # [H, W] = [Y, X]
             "IFMChannels": ("i", True, 0),
@@ -84,12 +87,14 @@ class ConvolutionInputGenerator(HWCustomOp):
         return my_attrs
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         ifm_dim_h, ifm_dim_w = self.get_nodeattr("IFMDim")
         ifm_ch = self.get_nodeattr("IFMChannels")
         ishape = (1, ifm_dim_h, ifm_dim_w, ifm_ch)
         return ishape
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         ifm_dim_h, ifm_dim_w = self.get_nodeattr("IFMDim")
         ifm_ch = self.get_nodeattr("IFMChannels")
         simd = self.get_nodeattr("SIMD")
@@ -99,6 +104,7 @@ class ConvolutionInputGenerator(HWCustomOp):
         return folded_ishape
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         k_h, k_w = self.get_nodeattr("ConvKernelDim")
         ifm_dim_h, ifm_dim_w = self.get_nodeattr("IFMDim")
         ifm_ch = self.get_nodeattr("IFMChannels")
@@ -111,6 +117,7 @@ class ConvolutionInputGenerator(HWCustomOp):
         return oshape
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         k_h, k_w = self.get_nodeattr("ConvKernelDim")
         ifm_dim_h, ifm_dim_w = self.get_nodeattr("IFMDim")
         ifm_ch = self.get_nodeattr("IFMChannels")
@@ -130,6 +137,7 @@ class ConvolutionInputGenerator(HWCustomOp):
         return folded_oshape
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         # data type stays the same
         dtype = model.get_tensor_datatype(node.input[0])
@@ -175,13 +183,13 @@ class ConvolutionInputGenerator(HWCustomOp):
         return in_width
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         if self.use_parallel_window_output():
             # feed all window pixels in parallel
             k_h, k_w = self.get_nodeattr("ConvKernelDim")
             return self.get_instream_width() * k_h * k_w
-        else:
-            # if parallel variant not in use: same width for output and input stream
-            return self.get_instream_width()
+        # if parallel variant not in use: same width for output and input stream
+        return self.get_instream_width()
 
     def get_1d_conv_attrs_normalized(self):
         # support both (1, D) and (D, 1) cases transparently:
@@ -192,6 +200,7 @@ class ConvolutionInputGenerator(HWCustomOp):
         # returns the attributes of the layer as follows:
         # [H, W] = [Y, X] = [1, D] or [D, 1] are always mapped to [1, D].
         # The dummy ('1') dimension is the Y-dimension.
+        """Return 1d conv attrs normalized."""
         ifm_ch = self.get_nodeattr("IFMChannels")
         k = self.get_nodeattr("ConvKernelDim")
         ifm_dim = self.get_nodeattr("IFMDim")
@@ -210,19 +219,24 @@ class ConvolutionInputGenerator(HWCustomOp):
         return (ifm_ch, ifm_dim, ofm_dim, k, stride, dilation)
 
     def get_exp_cycles(self):
+        """Return exp cycles."""
         return 0
 
     def bram_estimation(self):
+        """Return bram estimation."""
         return 0
 
     def lut_estimation(self):
+        """Return lut estimation."""
         return 0
 
     def uram_estimation(self):
+        """Return uram estimation."""
         return 0
 
     def execute_node(self, context, graph):
         # using Im2Col node to calculate output
+        """Execute node."""
         node = self.onnx_node
         ifm_dim = self.get_nodeattr("IFMDim")
         k = self.get_nodeattr("ConvKernelDim")
@@ -242,7 +256,7 @@ class ConvolutionInputGenerator(HWCustomOp):
             stride=[s[0], s[1]],
             kernel_size=[k[0], k[1]],
             dilations=[d[0], d[1]],
-            input_shape="(1,{},{},{})".format(ifm_dim[0], ifm_dim[1], ifm_ch),
+            input_shape=f"(1,{ifm_dim[0]},{ifm_dim[1]},{ifm_ch})",
         )
         graph_im2col = helper.make_graph(
             nodes=[im2col_node],

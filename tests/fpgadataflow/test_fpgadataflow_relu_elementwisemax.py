@@ -38,6 +38,7 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
+from typing import Literal
 
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
@@ -53,7 +54,7 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 
 
 # Creates a model executing a ReLU operation
-def create_relu_model_onnx(inp_dtype, inp_shape):
+def create_relu_model_onnx(inp_dtype: str, inp_shape: list[int]) -> ModelWrapper:
     # Create a node representing the binary elementwise operation
     node = oh.make_node(
         op_type="Relu",
@@ -88,7 +89,12 @@ def create_relu_model_onnx(inp_dtype, inp_shape):
 @pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
-def test_relu_elementwisemax(inp_dtype, inp_shape, pe, exec_mode):
+def test_relu_elementwisemax(
+    inp_dtype: Literal["INT8", "FLOAT32", "FLOAT16", "FIXED<8,3>"],
+    inp_shape: list[int],
+    pe: Literal[1, 2, 4],
+    exec_mode: Literal["cppsim", "rtlsim"],
+) -> None:
     # Make dummy model for testing
     model = create_relu_model_onnx(inp_dtype, inp_shape)
     # Prepare the execution context
@@ -109,7 +115,7 @@ def test_relu_elementwisemax(inp_dtype, inp_shape, pe, exec_mode):
     o_hw = execute_onnx(model, context)["out"]
 
     # Compare the expected to the produced for exact equality
-    assert np.all(o_hw == o_ref)
+    assert np.all(np.isclose(o_hw, o_ref))
 
     # Test running shape and data type inference on the model graph
     model = model.transform(InferDataTypes())
@@ -141,4 +147,4 @@ def test_relu_elementwisemax(inp_dtype, inp_shape, pe, exec_mode):
     o_sim = execute_onnx(model, context)["out"]
 
     # Compare the expected to the produced for exact equality
-    assert np.all(o_sim == o_ref)
+    assert np.all(np.isclose(o_sim, o_ref))

@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Module for requant rtl."""
 import numpy as np
 import os
 
@@ -17,9 +18,11 @@ class Requant_rtl(Requant, RTLBackend):
     """RTL backend for Requant operation using finn-rtllib/requant."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(Requant.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
@@ -92,7 +95,7 @@ class Requant_rtl(Requant, RTLBackend):
 
         # Generate SystemVerilog implementation module (with _impl suffix)
         sv_template_path = rtllib_dir + "requant_wrapper_template.sv"
-        with open(sv_template_path, "r") as f:
+        with open(sv_template_path) as f:
             sv_template = f.read()
 
         sv_code = sv_template
@@ -113,7 +116,7 @@ class Requant_rtl(Requant, RTLBackend):
 
         # Generate Verilog stub wrapper (for IP packaging - must be .v)
         v_template_path = rtllib_dir + "requant_wrapper_template.v"
-        with open(v_template_path, "r") as f:
+        with open(v_template_path) as f:
             v_template = f.read()
 
         v_code = v_template
@@ -152,10 +155,10 @@ class Requant_rtl(Requant, RTLBackend):
 
         if abspath:
             return rtl_files
-        else:
-            return [os.path.basename(f) for f in rtl_files]
+        return [os.path.basename(f) for f in rtl_files]
 
     def code_generation_ipi(self):
+        """Return code generation ipi."""
         sourcefiles = self.get_rtl_file_list(abspath=True)
 
         cmd = []
@@ -188,9 +191,7 @@ class Requant_rtl(Requant, RTLBackend):
             reshaped_input = inp_val.reshape(folded_ishape)
             np.save(os.path.join(code_gen_dir, "input_0.npy"), reshaped_input)
             nbits = self.get_instream_width(0)
-            rtlsim_inp = npy_to_rtlsim_input(
-                "{}/input_0.npy".format(code_gen_dir), export_idt, nbits
-            )
+            rtlsim_inp = npy_to_rtlsim_input(f"{code_gen_dir}/input_0.npy", export_idt, nbits)
 
             io_dict = {
                 "inputs": {"in0": rtlsim_inp},
@@ -207,7 +208,7 @@ class Requant_rtl(Requant, RTLBackend):
             odt = self.get_output_datatype(0)
             target_bits = odt.bitwidth()
             packed_bits = self.get_outstream_width(0)
-            out_npy_path = "{}/output.npy".format(code_gen_dir)
+            out_npy_path = f"{code_gen_dir}/output.npy"
             out_shape = self.get_folded_output_shape(0)
             rtlsim_output_to_npy(
                 rtlsim_output, out_npy_path, odt, out_shape, packed_bits, target_bits

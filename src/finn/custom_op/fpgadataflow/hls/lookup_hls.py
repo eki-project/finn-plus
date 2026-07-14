@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for lookup hls."""
 import numpy as np
 from math import ceil, log2
 from qonnx.core.datatype import DataType
@@ -36,18 +37,21 @@ from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_
 
 
 class Lookup_hls(Lookup, HLSBackend):
-    "Streaming elementwise HLS lookup, mapping indices to values."
+    """Streaming elementwise HLS lookup, mapping indices to values."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(Lookup.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
     def global_includes(self):
+        """Return global includes."""
         mem_mode = self.get_nodeattr("mem_mode")
         global_incls = []
         global_incls.append('#include "lookup.hpp"')
@@ -56,6 +60,7 @@ class Lookup_hls(Lookup, HLSBackend):
         self.code_gen_dict["$GLOBALS$"] = global_incls
 
     def defines(self, var):
+        """Return defines."""
         n_inputs = np.prod(self.get_folded_input_shape()[:-1])
         dtype = self.get_input_datatype()
         elem_hls_type = dtype.get_hls_datatype_str()
@@ -82,6 +87,7 @@ class Lookup_hls(Lookup, HLSBackend):
         self.code_gen_dict["$DEFINES$"] = my_defines
 
     def dataoutstrm(self):
+        """Return dataoutstrm."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
         if dtype == DataType["BIPOLAR"]:
@@ -110,6 +116,7 @@ class Lookup_hls(Lookup, HLSBackend):
         ]
 
     def docompute(self):
+        """Return docompute."""
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_embedded":
             self.code_gen_dict["$DOCOMPUTE$"] = [
@@ -123,6 +130,7 @@ class Lookup_hls(Lookup, HLSBackend):
             ]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         mem_mode = self.get_nodeattr("mem_mode")
         ibits = self.get_instream_width()
         packed_input_hls_type = "ap_uint<%d>" % ibits
@@ -147,6 +155,7 @@ class Lookup_hls(Lookup, HLSBackend):
             ]
 
     def pragmas(self):
+        """Return pragmas."""
         mem_mode = self.get_nodeattr("mem_mode")
         my_pragmas = ["#pragma HLS INTERFACE axis port=in0_V"]
         my_pragmas.append("#pragma HLS INTERFACE axis port=out0_V")
@@ -164,11 +173,12 @@ class Lookup_hls(Lookup, HLSBackend):
         self.code_gen_dict["$PRAGMAS$"] = my_pragmas
 
     def generate_params(self, model, path):
+        """Generate params."""
         mem_mode = self.get_nodeattr("mem_mode")
         embeddings = model.get_initializer(self.onnx_node.input[1])
         if mem_mode == "internal_embedded":
             code_gen_dir = path
-            weight_filename = "{}/embeddings.hpp".format(code_gen_dir)
+            weight_filename = f"{code_gen_dir}/embeddings.hpp"
             edt = DataType[self.get_nodeattr("EmbeddingType")]
             # obits = self.get_outstream_width()
             # packed_output_hls_type = "ap_uint<%d>" % obits
@@ -187,8 +197,7 @@ class Lookup_hls(Lookup, HLSBackend):
             ext_mem_width = self.get_nodeattr("ext_mem_width")
             assert edt.bitwidth() == 8, (
                 "Lookup with mem_mode=external "
-                + "only works with 8-bit embeddings but found "
-                + str(edt)
+                "only works with 8-bit embeddings but found " + str(edt)
             )
             emb_dim = self.get_nodeattr("EmbeddingDim")
             # need to zero-pad embeddings in external mode for burst alignment
@@ -212,6 +221,7 @@ class Lookup_hls(Lookup, HLSBackend):
             raise Exception("Unrecognized mem_mode: " + mem_mode)
 
     def execute_node(self, context, graph):
+        """Execute node."""
         mem_mode = self.get_nodeattr("mem_mode")
         assert (
             mem_mode == "internal_embedded"
@@ -219,10 +229,10 @@ class Lookup_hls(Lookup, HLSBackend):
         HLSBackend.execute_node(self, context, graph)
 
     def get_ap_int_max_w(self):
+        """Return ap int max w."""
         parent_max = super().get_ap_int_max_w()
         mem_mode = self.get_nodeattr("mem_mode")
         ext_mem_width = self.get_nodeattr("ext_mem_width")
         if mem_mode == "external":
             return max(ext_mem_width, parent_max)
-        else:
-            return parent_max
+        return parent_max

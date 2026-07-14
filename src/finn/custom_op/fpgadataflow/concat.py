@@ -27,6 +27,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for concat."""
 import math
 import numpy as np
 from qonnx.core.datatype import DataType
@@ -40,9 +41,11 @@ class StreamingConcat(HWCustomOp):
     Only supports concatenating along the last (channel) axis."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             "SIMD": ("i", True, 0),
             # number of elements from each stream to concat
@@ -59,13 +62,16 @@ class StreamingConcat(HWCustomOp):
         return my_attrs
 
     def get_n_inputs(self):
+        """Return number of inputs."""
         return len(self.get_nodeattr("ChannelsPerStream"))
 
     def get_total_elems(self):
+        """Return total elems."""
         elems_per_stream = self.get_nodeattr("ChannelsPerStream")
         return int(np.sum(elems_per_stream))
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         elems_per_stream = self.get_nodeattr("ChannelsPerStream")
         elems = elems_per_stream[ind]
         vecs = list(self.get_nodeattr("numInputVectors"))
@@ -73,17 +79,20 @@ class StreamingConcat(HWCustomOp):
         return ishape
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         simd = self.get_nodeattr("SIMD")
         folds = self.get_nodeattr("ChannelsPerStream")[ind] // simd
         vecs = list(self.get_nodeattr("numInputVectors"))
         return tuple(vecs + [folds, simd])
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         total_elems = self.get_total_elems()
         vecs = list(self.get_nodeattr("numInputVectors"))
         return tuple(vecs + [total_elems])
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         total_elems = self.get_total_elems()
         simd = self.get_nodeattr("SIMD")
         folds = total_elems // simd
@@ -92,6 +101,7 @@ class StreamingConcat(HWCustomOp):
 
     def infer_node_datatype(self, model):
         # check all input datatypes
+        """Infer node datatype."""
         for i, inp in enumerate(self.onnx_node.input):
             idt = model.get_tensor_datatype(inp)
             if idt != self.get_input_datatype(i):
@@ -109,10 +119,12 @@ class StreamingConcat(HWCustomOp):
 
     def get_input_datatype(self, ind=0):
         # input dt identical for all inputs
+        """Return input datatype."""
         return DataType[self.get_nodeattr("inputDataTypes")[ind]]
 
     def get_output_datatype(self, ind=0):
         # infer output datatype from declared inputDataTypes
+        """Return output datatype."""
         min_input = 0
         max_input = 0
         for i in range(len(self.get_nodeattr("inputDataTypes"))):
@@ -134,18 +146,22 @@ class StreamingConcat(HWCustomOp):
         return odt
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         ibits = self.get_input_datatype(ind).bitwidth()
         return ibits * self.get_nodeattr("SIMD")
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         obits = self.get_output_datatype().bitwidth()
         out_width = obits * self.get_nodeattr("SIMD")
         return out_width
 
     def get_exp_cycles(self):
+        """Return exp cycles."""
         return np.prod(self.get_folded_output_shape()[:-1])
 
     def execute_node(self, context, graph):
+        """Execute node."""
         node = self.onnx_node
         inp_values = []
         for inp in node.input:

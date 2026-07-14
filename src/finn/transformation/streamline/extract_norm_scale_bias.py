@@ -13,6 +13,7 @@
 #
 ############################################################################
 
+"""Module for extracting norm scale bias."""
 import numpy as np
 from onnx import TensorProto
 from onnx import helper as oh
@@ -26,9 +27,11 @@ class ExtractNormScaleBias(Transformation):
     and set initializers to 1 or 0 respectively."""
 
     def __init__(self):
+        """Initialize instance."""
         super().__init__()
 
     def apply(self, model):
+        """Apply transformation."""
         graph = model.graph
         for node in graph.node:
             if node.op_type == "LayerNormalization":

@@ -27,6 +27,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for checksum hls."""
 import numpy as np
 from qonnx.core.datatype import DataType
 
@@ -35,13 +36,15 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.logging import log
 
 
-class CheckSum_hls(HWCustomOp, HLSBackend):
+class CheckSum_hls(HLSBackend, HWCustomOp):
     """Class that corresponds to custom_hls checksum function."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             # number of data words in a frame
             "words_per_frame": ("i", True, 0),
@@ -57,6 +60,7 @@ class CheckSum_hls(HWCustomOp, HLSBackend):
         return my_attrs
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -72,27 +76,31 @@ class CheckSum_hls(HWCustomOp, HLSBackend):
         model.set_tensor_datatype(node.output[0], odt)
 
     def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
+        """Return FINN DataType of input."""
         return DataType[self.get_nodeattr("inputDataType")]
 
     def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output."""
+        """Return FINN DataType of output."""
         # here same as input data type
         return DataType[self.get_nodeattr("inputDataType")]
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         dtype = DataType[self.get_nodeattr("inputDataType")]
         folded_shape = self.get_nodeattr("folded_shape")
         in_width = folded_shape[-1] * dtype.bitwidth()
         return in_width
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         return self.get_instream_width()
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         return self.get_nodeattr("folded_shape")
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         return self.get_nodeattr("folded_shape")
 
     def get_normal_input_shape(self, ind=0):
@@ -105,6 +113,7 @@ class CheckSum_hls(HWCustomOp, HLSBackend):
         # and together with all previous dimensions
         # this gives the normal input shape
 
+        """Return normal input shape."""
         folded_shape = self.get_nodeattr("folded_shape")
         # extract inner dimension
         inner_dim = folded_shape[-1]
@@ -119,42 +128,48 @@ class CheckSum_hls(HWCustomOp, HLSBackend):
         return normal_ishape
 
     def get_ap_int_max_w(self):
+        """Return ap int max w."""
         return max(super().get_ap_int_max_w(), 32)
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         if ind == 0:
             # same shape as input
             return self.get_normal_input_shape()
         # second output is scalar checksum output
-        elif ind == 1:
+        if ind == 1:
             return tuple([1])
-        else:
-            raise Exception("Undefined input ind for this layer type")
+        raise Exception("Undefined input ind for this layer type")
 
     def npy_to_dynamic_output(self, context):
+        """Return npy to dynamic output."""
         super().npy_to_dynamic_output(context)
         node = self.onnx_node
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
-        output_checksum = np.load("{}/output_1.npy".format(code_gen_dir))
+        output_checksum = np.load(f"{code_gen_dir}/output_1.npy")
         context[node.output[1]] = output_checksum
 
     def execute_node(self, context, graph):
+        """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
     def global_includes(self):
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "checksum.hpp"']
 
     def defines(self, var):
+        """Return defines."""
         items_per_word = self.get_nodeattr("items_per_word")
         words_per_frame = self.get_nodeattr("words_per_frame")
         word_size = self.get_instream_width()
         my_defines = []
-        my_defines.append("#define WORDS_PER_FRAME {}".format(words_per_frame))
-        my_defines.append("#define ITEMS_PER_WORD {}".format(items_per_word))
-        my_defines.append("#define WORD_SIZE {}".format(word_size))
+        my_defines.append(f"#define WORDS_PER_FRAME {words_per_frame}")
+        my_defines.append(f"#define ITEMS_PER_WORD {items_per_word}")
+        my_defines.append(f"#define WORD_SIZE {word_size}")
         self.code_gen_dict["$DEFINES$"] = my_defines
 
     def read_npy_data(self):
+        """Return read npy data."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_input_datatype()
         elem_bits = dtype.bitwidth()
@@ -177,23 +192,26 @@ class CheckSum_hls(HWCustomOp, HLSBackend):
         )
 
     def strm_decl(self):
+        """Return strm decl."""
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            'hls::stream<ap_uint<{}>> in0_V ("in0_V");'.format(self.get_instream_width())
+            f'hls::stream<ap_uint<{self.get_instream_width()}>> in0_V ("in0_V");'
         )
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            'hls::stream<ap_uint<{}>> out0_V ("out0_V");'.format(self.get_outstream_width())
+            f'hls::stream<ap_uint<{self.get_outstream_width()}>> out0_V ("out0_V");'
         )
         self.code_gen_dict["$STREAMDECLARATIONS$"].append("ap_uint<32> chk;")
         # set drain = false for cppsim
         self.code_gen_dict["$STREAMDECLARATIONS$"].append("ap_uint<1> drain = false;")
 
     def docompute(self):
+        """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = [
             """checksum<WORDS_PER_FRAME, ITEMS_PER_WORD>(in0_V, out0_V, chk, drain);"""
         ]
 
     def dataoutstrm(self):
+        """Return dataoutstrm."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
         if dtype == DataType["BIPOLAR"]:
@@ -225,14 +243,14 @@ class CheckSum_hls(HWCustomOp, HLSBackend):
         ]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            """using T = ap_uint<WORD_SIZE>;\n void {}(hls::stream<T> &in0_V,
-            hls::stream<T> &out0_V, ap_uint<32> &chk, ap_uint<1> &drain)""".format(
-                self.onnx_node.name
-            )
+            f"""using T = ap_uint<WORD_SIZE>;\n void {self.onnx_node.name}(hls::stream<T> &in0_V,
+            hls::stream<T> &out0_V, ap_uint<32> &chk, ap_uint<1> &drain)"""
         ]
 
     def pragmas(self):
+        """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS interface axis port=in0_V"]
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS interface axis port=out0_V")
         self.code_gen_dict["$PRAGMAS$"].append(
@@ -246,6 +264,7 @@ class CheckSum_hls(HWCustomOp, HLSBackend):
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS dataflow disable_start_propagation")
 
     def get_verilog_top_module_intf_names(self):
+        """Return verilog top module intf names."""
         intf_names = super().get_verilog_top_module_intf_names()
         # expose axilite interface
         intf_names["axilite"] = ["s_axi_checksum"]

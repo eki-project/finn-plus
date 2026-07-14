@@ -26,25 +26,25 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""
-Utility functions for executing ONNX models in FINN.
+"""Utility functions for executing ONNX models in FINN.
 
 This module contains functions for executing parent models containing
 StreamingDataflowPartition nodes and other execution-related utilities.
 """
 
-import os
+import numpy as np
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 
 from finn.core.onnx_exec import execute_onnx
 
 
-def load_model_checkpoint(filename):
+def load_model_checkpoint(filename: str | Path) -> ModelWrapper:
     """Load given .onnx file and return ModelWrapper.
 
     Args:
-        filename (str): Path to the ONNX model file
+        filename (str|Path): Path to the ONNX model file
 
     Returns:
         ModelWrapper: Loaded model
@@ -52,20 +52,24 @@ def load_model_checkpoint(filename):
     Raises:
         FileNotFoundError: If the model file doesn't exist
     """
-    if os.path.isfile(filename):
-        model = ModelWrapper(filename)
+    if Path(filename).is_file():
+        model = ModelWrapper(str(filename))
         return model
-    else:
-        raise FileNotFoundError(f"Model file {filename} not found")
+    raise FileNotFoundError(f"Model file {filename} not found")
 
 
-def execute_parent(parent_path, child_path, input_tensor_npy, return_full_ctx=False):
+def execute_parent(
+    parent_path: str | Path,
+    child_path: str | Path,
+    input_tensor_npy: np.ndarray,
+    return_full_ctx: bool = False,
+) -> np.ndarray | dict[str, np.ndarray]:
     """Execute parent model containing a single StreamingDataflowPartition by
     replacing it with the model at child_path and return result.
 
     Args:
-        parent_path (str): Path to the parent ONNX model file
-        child_path (str): Path to the child ONNX model file to replace the partition
+        parent_path (str|Path): Path to the parent ONNX model file
+        child_path (str|Path): Path to the child ONNX model file to replace the partition
         input_tensor_npy (numpy.ndarray): Input tensor data
         return_full_ctx (bool): If True, return full execution context,
                                otherwise return only output tensor
@@ -73,15 +77,14 @@ def execute_parent(parent_path, child_path, input_tensor_npy, return_full_ctx=Fa
     Returns:
         numpy.ndarray or dict: Output tensor or full execution context
     """
-    parent_model = load_model_checkpoint(parent_path)
+    parent_model = load_model_checkpoint(str(parent_path))
     iname = parent_model.get_first_global_in()
     oname = parent_model.get_first_global_out()
     sdp_node = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
     sdp_node = getCustomOp(sdp_node)
-    sdp_node.set_nodeattr("model", child_path)
+    sdp_node.set_nodeattr("model", str(child_path))
     sdp_node.set_nodeattr("return_full_exec_context", 1 if return_full_ctx else 0)
     ret = execute_onnx(parent_model, {iname: input_tensor_npy}, True)
     if return_full_ctx:
         return ret
-    else:
-        return ret[oname]
+    return ret[oname]

@@ -32,8 +32,8 @@ def validate(cls_inst, *args, **kwargs):
     # do not pre-load large dataset into memory
     np.random.seed(2018)
     test_indices = []
-    for mod in range(0, 24):  # all modulations (0 to 23)
-        for snr_idx in range(0, 26):  # all SNRs (0 to 25 = -20dB to +30dB)
+    for mod in range(24):  # all modulations (0 to 23)
+        for snr_idx in range(26):  # all SNRs (0 to 25 = -20dB to +30dB)
             start_idx = 26 * 4096 * mod + 4096 * snr_idx
             indices_subclass = list(range(start_idx, start_idx + 4096))
 
@@ -69,7 +69,7 @@ def validate(cls_inst, *args, **kwargs):
         print("batch %d : total OK %d NOK %d" % (i_batch, ok, nok))
 
     acc = 100.0 * ok / (total)
-    print("Measured top-1 accuracy: {}%".format(acc))
+    print(f"Measured top-1 accuracy: {acc}%")
 
     # write report to file
     report = {

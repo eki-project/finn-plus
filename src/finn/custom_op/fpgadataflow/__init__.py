@@ -27,7 +27,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for init."""
+
+from typing import TypeVar
+
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+THWCustomOp = TypeVar("THWCustomOp", bound=HWCustomOp)
 
 # Dictionary of HWCustomOp implementations
 custom_op = dict()
@@ -36,8 +42,9 @@ custom_op = dict()
 # Registers a class into the custom_op dictionary
 # Note: This must be defined first, before importing any custom op
 # implementation to avoid "importing partially initialized module" issues.
-def register_custom_op(cls):
+def register_custom_op(cls: type[THWCustomOp]) -> type[THWCustomOp]:
     # The class must actually implement HWCustomOp
+    """Register a custom operation."""
     assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"
     # Insert the class into the custom_op dictionary by its name
     custom_op[cls.__name__] = cls
@@ -52,6 +59,10 @@ def register_custom_op(cls):
 # Import the submodule containing specializations of ElementwiseBinaryOperation
 # Note: This will automatically register all decorated classes into this domain
 import finn.custom_op.fpgadataflow.elementwise_binary
+
+# Import the submodule containing the Reduce operation
+# Note: This will automatically register all decorated classes into this domain
+import finn.custom_op.fpgadataflow.reduce
 
 # Import the submodule containing the Squeeze operation
 # Note: This will automatically register all decorated classes into this domain

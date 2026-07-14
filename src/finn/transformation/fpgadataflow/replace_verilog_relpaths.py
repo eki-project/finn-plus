@@ -27,42 +27,47 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
+"""Replace relative paths inside generated Verilog with absolute paths."""
+
 import qonnx.custom_op.registry as registry
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
+from typing import Literal, cast
 
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
 
 class ReplaceVerilogRelPaths(Transformation):
-    """Convert ./ relative file paths to absolute ones for generated Verilog"""
+    """Convert ./ relative file paths to absolute ones for generated Verilog."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize the transformation."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: "ModelWrapper") -> tuple[ModelWrapper, Literal[False]]:
+        """Replace relative $readmemh paths in Verilog files under IP gen dirs."""
         for node in model.graph.node:
             if is_hls_node(node) or is_rtl_node(node):
                 try:
                     # lookup op_type in registry of CustomOps
                     inst = registry.getCustomOp(node)
                     # find the IP gen dir
-                    ipgen_path = inst.get_nodeattr("ipgen_path")
-                    if ipgen_path is not None and os.path.isdir(ipgen_path):
-                        for dname, dirs, files in os.walk(ipgen_path):
-                            for fname in files:
-                                if fname.endswith(".v"):
-                                    fpath = os.path.join(dname, fname)
-                                    with open(fpath, "r") as f:
-                                        s = f.read()
-                                    old = '$readmemh(".'
-                                    new = '$readmemh("%s' % dname
-                                    s = s.replace(old, new)
-                                    old = '"./'
-                                    new = '"%s/' % dname
-                                    s = s.replace(old, new)
-                                    with open(fpath, "w") as f:
-                                        f.write(s)
+                    ipgen_path = Path(cast("str", inst.get_nodeattr("ipgen_path")))
+                    if ipgen_path is not None and ipgen_path.is_dir():
+                        for fpath in ipgen_path.rglob("*.v"):
+                            with fpath.open() as f:
+                                s = f.read()
+                            dname = fpath.parent
+                            dname_str = dname.resolve().as_posix()
+                            old = '$readmemh(".'
+                            new = f'$readmemh("{dname_str}'
+                            s = s.replace(old, new)
+                            old = '"./'
+                            new = f'"{dname_str}/'
+                            s = s.replace(old, new)
+                            with fpath.open("w") as f:
+                                f.write(s)
                 except KeyError:
                     pass
         return (model, False)

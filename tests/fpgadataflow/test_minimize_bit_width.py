@@ -56,7 +56,7 @@ def make_unit_test_model(
     thresholds: Optional[np.ndarray] = None,
     add_successor: bool = False,
 ):
-    """Creates a toy finn-onnx model for unit testing.
+    """Create a toy finn-onnx model for unit testing.
 
     :param wdt: Weight datatype
     :param idt: Input datatype

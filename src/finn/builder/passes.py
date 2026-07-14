@@ -10,6 +10,13 @@ import numpy as np
 # with the model, graph, nodes and values
 import onnx_ir as ir
 
+# Need to import the passes module to set up the registry and make the
+# @passes.register decorator work
+import onnx_passes.passes as passes
+
+# Makes custom QONNX import and inlining passes available
+import onnx_passes.passes.imports.qonnx
+
 # YAML for loading layout assumption/conversion configuration from file
 import yaml
 
@@ -19,15 +26,17 @@ from onnx_passes.ops import DOMAIN as CUSTOM_DOMAIN
 from onnx_passes.ops import inject_custom_ops
 
 # Make custom Im2Col operator available for convolution lowering
-from onnx_passes.ops.im2col import Im2Col  # noqa: Used indirectly via registry
+from onnx_passes.ops.im2col import Im2Col  # noqa # noqa: Used indirectly via registry
 from onnx_passes.ops.qonnx import DOMAIN as QONNX_DOMAIN
 
 # Collects named passes from the ONNX Passes registry
 from onnx_passes.passes import collect
-from onnx_passes.passes.base import RewriteRulePass, Transformation
+from onnx_passes.passes.base import RewriteRulePass, RewriteRuleSetPass, Transformation
 
+# Collecting node attributes with optional defaults
 # Utility testing IR values for being constant (or initializers) tensors
-from onnx_passes.passes.util import is_constant
+from onnx_passes.passes.util import collect_attrs, is_constant
+from pathlib import Path
 
 # QONNX datatype annotations for quantized tensors
 from qonnx.core.datatype import DataType
@@ -35,32 +44,36 @@ from qonnx.core.datatype import DataType
 # QONNX representation wrapper of ONNX models is used on the interface side to
 # bridge between the FINN and the new ONNX IR representation
 from qonnx.core.modelwrapper import ModelWrapper
+from typing import Callable, cast
 
 # FINN steps are configured via a global configuration object passed into each
 # step
 from finn.builder.build_dataflow_config import DataflowBuildConfig, VerificationStepType
 
-# Makes custom QONNX import and inlining passes available
-import onnx_passes.passes.imports.qonnx  # isort:skip # noqa: Used indirectly via registry
-import onnx_passes.passes.inline.qonnx  # isort:skip # noqa: Used indirectly via registry
+import onnx_passes.passes.inline.qonnx  # noqa
 
 
-def _make_pass_config(cfg: DataflowBuildConfig):
-    """Creates ONNX Passes configuration from FINN build configuration."""
+def _make_pass_config(
+    cfg: DataflowBuildConfig,
+) -> dict[str, dict[str, list[Path] | bool | float | list[list[str | dict]] | dict]]:
+    """Create ONNX Passes configuration from FINN build configuration."""
     # If specified, load data layout annotations from file
     if cfg.layouts_config_file is not None:
         with cfg.layouts_config_file.open("r") as file:
-            layouts = yaml.safe_load(file)
+            layouts: dict = yaml.safe_load(file)
     # Otherwise assume emtpy layout annotations
     else:
-        layouts = {}
+        layouts: dict = {}
 
     # Construct configuration dictionary with subset of options from the
     # DataflowBuildConfig and some other ONNX Passes specific options
     return {
         # Reference data for verification and analysis: Inputs, expected
         # outputs, ...
-        "reference": {"inp": [cfg.verify_input_npy], "out": [cfg.verify_expected_output_npy]},
+        "reference": {
+            "inp": [Path(cfg.verify_input_npy)],
+            "out": [Path(cfg.verify_expected_output_npy)],
+        },
         # Configuration ONNX Runtime used for model evaluation during
         # verification and analysis passes - see the ONNX Runtime API
         # documentation for details
@@ -76,7 +89,7 @@ def _make_pass_config(cfg: DataflowBuildConfig):
             # np.allclose(...)
             "tolerance": {"atol": cfg.verification_atol, "rtol": cfg.verification_rtol}
         }
-        if VerificationStepType.PASSES_FRONTEND in cfg._resolve_verification_steps()
+        if VerificationStepType.PASSES_FRONTEND in cfg._resolve_verification_steps()  # noqa: SLF001
         else {},  # noqa: protected
         # Configuration of the model checker pass: Options according to the ONNX
         # IR reference: https://onnx.ai/ir-py/api/ir_passes_common.html
@@ -92,24 +105,22 @@ def _make_pass_config(cfg: DataflowBuildConfig):
     }
 
 
-def _apply_passes(model: ir.Model, passes: list[str], cfg: dict, state: dict):
-    """Resolves and applies the list of passes to the ONNX model."""
-
+def _apply_passes(model: ir.Model, passes: list[str | type], cfg: dict, state: dict) -> ir.Model:
+    """Resolve and applies the list of passes to the ONNX model."""
     # Collect and instantiate all ONNX IR passes from the sequence by name and
     # connect each pass to the shared configuration and state dictionary
-    passes = [cls(cfg, state) for cls in collect(passes)]
+    passes_list = [cls(cfg, state) for cls in collect(passes)]
     # Pass manager instance which repeatedly runs the sequence of passes on
     # the model and evaluates pre- and post-conditions of each pass, e.g.,
     # for automatic verification.
-    passes = ir.passes.PassManager(passes=passes, steps=1)
+    passes_manager = ir.passes.PassManager(passes=passes_list, steps=1)
     # Inject custom operator ONNX functions into the model before applying the
     # configured pass sequence
-    return passes(inject_custom_ops(model)).model
+    return passes_manager(inject_custom_ops(model)).model
 
 
 def prepare(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Prepares a model to be processed by ONNX Passes."""
-
+    """Prepare a model to be processed by ONNX Passes."""
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
@@ -126,7 +137,6 @@ def prepare(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
 def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Applies ONNX Passes inlining transformations."""
-
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
@@ -144,6 +154,8 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
         "lower-conv",
         # Expresses pooling as Im2Col + Reshape + Reduce* (+ transposes)
         "lower-pooling",
+        # Move reduction axes to the back of reduction operators to allow hardware implementation
+        "inline-move-reduce-axis",
         # Adds shape annotations
         "shape-inference",
         # Make sure the model is still valid
@@ -157,7 +169,6 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
 def streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Applies ONNX Passes streamlining transformations."""
-
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
@@ -176,12 +187,10 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
 
     def pattern(self, op, x, thresholds, weights):
         """Target pattern to match."""
-
         return op.MultiThreshold(x, thresholds, weights, _domain=CUSTOM_DOMAIN)
 
     def check(self, op, x, thresholds, weights):
         """Match condition."""
-
         # Threshold parameter tensors must be constant, otherwise compatibility
         # with FINN cannot be checked...
         # TODO: Extend this to support non-constant thresholds to support
@@ -204,7 +213,6 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
 
     def rewrite(self, op, x, thresholds, weights):
         """Replacement pattern."""
-
         # Remove leading dimensions from the thresholds parameter tensor as
         # expected by QONNX
         thresholds = ir.convenience.get_const_tensor(thresholds).numpy()
@@ -247,7 +255,6 @@ class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
 
     def pattern(self, op, x, indices, dilations, kernel_shape, strides):
         """Target pattern to match."""
-
         return op.Im2Col(
             # Proper input and auxiliary index input holding the access pattern
             x,
@@ -262,14 +269,12 @@ class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
 
     def check(self, op, x, indices, dilations, kernel_shape, strides):
         """Match condition."""
-
         # QONNX needs statically annotated input shape as this will be turned
         # into an attribute of the node
         return x.shape is not None and x.shape.is_static()
 
     def rewrite(self, op, x, indices, dilations, kernel_shape, strides):
         """Replacement pattern."""
-
         # Convert attributes to format required by QONNX
         attributes = {
             # TODO: Apparently QONNX needs the shape as a string...
@@ -290,6 +295,206 @@ class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
         return op.Im2Col(x, **attributes, _domain=QONNX_DOMAIN)
 
 
+class _MoveReduceAxisToBack(Transformation, RewriteRuleSetPass):
+    """Moves the reduce axis to the back of the tensor."""
+
+    __OP__: Callable
+    __OPAX__: Callable
+
+    def _normalize_axes(self, axes, ndim: int):
+        """Convert axis spec to sorted tuple of unique positive axes."""
+        if axes is None:
+            return tuple(range(ndim))
+        if isinstance(axes, int):
+            axes = (axes,)
+
+        out: list[int] = []
+        for a in axes:
+            if a < 0:
+                a += ndim
+            if not (0 <= a < ndim):
+                raise ValueError(f"Axis {a} out of range for ndim={ndim}")
+            out.append(int(a))
+
+        if len(set(out)) != len(out):
+            raise ValueError(f"Duplicate axes in {axes}")
+
+        return tuple(sorted(out))
+
+    def pattern(self):
+        """Target pattern to match."""
+        # ReduceSum optionally receives axes as a second input.
+        return [
+            lambda op, x, axes: self.__OPAX__(op, x, axes),
+            lambda op, x: self.__OP__(op, x),
+        ]
+
+    def check(self):
+        """Match condition."""
+
+        def _check(
+            op,
+            x: ir.Value,
+            axes: ir.Value | None = None,
+        ) -> bool:
+            """Check if the axes are not already at the back of the tensor."""
+            # QONNX needs statically annotated input shape as this will be turned
+            # into an attribute of the node
+            if not (x.shape is not None and x.shape.is_static()):
+                return False
+            if axes is not None:
+                if not (axes.shape is not None and axes.shape.is_static()):
+                    return False
+            else:
+                return False
+            # Check if the axes are already at the back of the tensor
+            # Last dimension (C) is handled differently and can be ignored
+            shape = cast("ir.Shape", x.shape)
+            ax = ir.convenience.get_const_tensor(axes)
+            if ax is None:
+                return False
+            ax = self._normalize_axes(ax.numpy(), shape.rank())
+            if ax[-1] == shape.rank() - 1:
+                ax = ax[:-1]
+            return any(a != shape.rank() - 2 - i for i, a in enumerate(reversed(ax)))
+
+        return [
+            lambda op, x, axes, *args, **kwargs: _check(op, x, axes),
+            lambda op, x, *args, **kwargs: _check(op, x),
+        ]
+
+    def rewrite(self):
+        """Replacement pattern."""
+
+        def _replace(
+            op,
+            x: ir.Value,
+            y: ir.Value,
+            axes: ir.Value | None = None,
+        ):
+            """Replace the Reduce* operator with a new one that has the axes moved to the back of
+            the tensor."""
+            # Defaults according to ONNX operators reference documentation:
+            #   https://onnx.ai/onnx/operators/onnx__ReduceLogSumExp.html
+            attributes = collect_attrs(
+                y.producer(),
+                {
+                    "keepdims": (ir.AttributeType.INT, 1),
+                    "noop_with_empty_axes": (ir.AttributeType.INT, 0),
+                },
+            )
+
+            # Implementation for replacement logic
+            if axes is None:
+                return op
+
+            ax = ir.convenience.get_const_tensor(axes)
+            if ax is None:
+                raise ValueError("Axes must be a constant tensor for replacement.")
+            ax = ax.numpy()
+            shape = cast("ir.Shape", x.shape)
+            ndim = shape.rank()
+            red_axes = self._normalize_axes(ax, ndim)
+            keep_axes = tuple(i for i in range(ndim) if i not in red_axes)
+            last_axis_reduction = red_axes[-1] == ndim - 1
+            if last_axis_reduction:
+                perm = keep_axes + red_axes
+            else:
+                perm = keep_axes[:-1] + red_axes + (keep_axes[-1],)
+
+            reshuffled_axes = []
+            for a in red_axes:
+                # Find the new position of the axis after permutation
+                new_a = perm.index(a)
+                reshuffled_axes.append(new_a)
+
+            ret = self.__OPAX__(
+                op,
+                op.LayoutConverter(
+                    x,
+                    assumes=[],
+                    perm=ir.Attr("perm", ir.AttributeType.INTS, perm),
+                    _domain=CUSTOM_DOMAIN,
+                ),
+                axes=op.Constant(value=ir.tensor(reshuffled_axes, name="axes")),
+                keepdims=attributes["keepdims"],
+                noop_with_empty_axes=attributes["noop_with_empty_axes"],
+            )
+
+            if not bool(attributes["keepdims"].value):
+                return ret
+            # If keepdims is True, we need to reshuffle the output back to the original shape
+
+            inv_perm = tuple(np.argsort(perm))
+
+            return op.Transpose(
+                ret,
+                perm=ir.Attr("perm", ir.AttributeType.INTS, inv_perm),
+            )
+
+        # Omit precomputed access pattern and transplant into the QONNX domain
+        return [
+            lambda op, x, axes, reduced: _replace(op, x, reduced, axes),
+            lambda op, x, reduced: _replace(op, x, reduced),
+        ]
+
+
+@passes.verify.tolerance
+@passes.register("inline-move-reduce-axis")
+class MoveReduceSumAxis(_MoveReduceAxisToBack):
+    """Moves the reduce axis to the back of the tensor for ReduceSum."""
+
+    def __OP__(_, op, x, **kwargs):
+        """Replacement pattern for ReduceSum without axes input."""  # noqa: D401
+        return op.ReduceSum(x, _outputs=["reduced"], **kwargs)
+
+    def __OPAX__(_, op, x, axes, **kwargs):
+        """Replacement pattern for ReduceSum with axes input."""  # noqa: D401
+        return op.ReduceSum(x, axes, _outputs=["reduced"], **kwargs)
+
+
+@passes.verify.tolerance
+@passes.register("inline-move-reduce-axis")
+class MoveReduceMinAxis(_MoveReduceAxisToBack):
+    """Moves the reduce axis to the back of the tensor for ReduceMin."""
+
+    def __OP__(_, op, x, **kwargs):
+        """Replacement pattern for ReduceMin without axes input."""  # noqa: D401
+        return op.ReduceMin(x, _outputs=["reduced"], **kwargs)
+
+    def __OPAX__(_, op, x, axes, **kwargs):
+        """Replacement pattern for ReduceMin with axes input."""  # noqa: D401
+        return op.ReduceMin(x, axes, _outputs=["reduced"], **kwargs)
+
+
+@passes.verify.tolerance
+@passes.register("inline-move-reduce-axis")
+class MoveReduceMaxAxis(_MoveReduceAxisToBack):
+    """Moves the reduce axis to the back of the tensor for ReduceMax."""
+
+    def __OP__(_, op, x, **kwargs):
+        """Replacement pattern for ReduceMax without axes input."""  # noqa: D401
+        return op.ReduceMax(x, _outputs=["reduced"], **kwargs)
+
+    def __OPAX__(_, op, x, axes, **kwargs):
+        """Replacement pattern for ReduceMax with axes input."""  # noqa: D401
+        return op.ReduceMax(x, axes, _outputs=["reduced"], **kwargs)
+
+
+@passes.verify.tolerance
+@passes.register("inline-move-reduce-axis")
+class MoveReduceProdAxis(_MoveReduceAxisToBack):
+    """Moves the reduce axis to the back of the tensor for ReduceProd."""
+
+    def __OP__(_, op, x, **kwargs):
+        """Replacement pattern for ReduceProd without axes input."""  # noqa: D401
+        return op.ReduceProd(x, _outputs=["reduced"], **kwargs)
+
+    def __OPAX__(_, op, x, axes, **kwargs):
+        """Replacement pattern for ReduceProd with axes input."""  # noqa: D401
+        return op.ReduceProd(x, axes, _outputs=["reduced"], **kwargs)
+
+
 def _export_im2col_to_finn(model: ir.Model):
     """Exports Im2Col representation from ONNX Passes to FINN format."""
     return _ExportIm2ColToFINN(config={}, state={})(model).model
@@ -297,7 +502,6 @@ def _export_im2col_to_finn(model: ir.Model):
 
 def _infer_qonnx_datatypes(model: ModelWrapper):
     """Adds QONNX datatypes to a model by inferring types from values."""
-
     # Try inferring new datatype annotations for all tensors in the model
     for name in model.get_all_tensor_names():
         # Only apply datatype inference on initializer tensors, for all other
@@ -318,7 +522,6 @@ def _infer_qonnx_datatypes(model: ModelWrapper):
 
 def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Converts the model back to the FINN compatible format."""
-
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
@@ -359,9 +562,10 @@ def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
 def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Meta build step calling the ONNX Passes steps in the expected order."""
-
     model = prepare(model, cfg)
     model = inline(model, cfg)
+    model.save("test_move_axis_inline.onnx")
+    print("Saved model after inline passes to test_move_axis_inline.onnx")
     model = streamline(model, cfg)
     model = export(model, cfg)
 

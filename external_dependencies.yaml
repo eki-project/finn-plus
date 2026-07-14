@@ -51,8 +51,3 @@ direct_download_deps:
         url: "https://dpoauwgwqsy2x.cloudfront.net/Download/pynq-z2.zip"
         do_unzip: True
         target_directory: "board_files"
-
-custom_deps:
-    finn_xsi:
-        installation_function: "_install_finn_xsi"
-        outdated_function: "_is_outdated_finn_xsi"

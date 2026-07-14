@@ -1,3 +1,5 @@
+"""Helpers for manipulating ONNX Script IR graphs in FINN."""
+
 import ast
 from collections.abc import Iterable
 from onnx_ir import _enums
@@ -11,7 +13,9 @@ from onnxscript.rewriter.pattern import (
     pattern_builder,
 )
 from qonnx.custom_op.registry import is_custom_op
-from typing import List, Optional
+from typing import Literal, cast
+
+from finn.util.exception import FINNInternalError
 
 
 class SubGraphView(ir.GraphView):
@@ -25,7 +29,10 @@ class SubGraphView(ir.GraphView):
             subgraph nodes as part of the subgraph.
     """
 
-    def __init__(self, graph, name, nodes, include_initializers=False):
+    def __init__(
+        self, graph: ir.Graph, name: str, nodes: list[ir.Node], include_initializers: bool = False
+    ) -> None:
+        """Initialize a subgraph view over the selected nodes."""
         self._assert_graph_subset(graph, nodes)
         self.include_initializers = include_initializers
         super().__init__(
@@ -36,31 +43,33 @@ class SubGraphView(ir.GraphView):
             nodes=nodes,
         )
 
-    def _assert_graph_subset(self, graph, nodes):
+    def _assert_graph_subset(self, graph: ir.Graph, nodes: list[ir.Node]) -> None:
+        """Validate that all nodes belong to the supplied graph."""
         for node in nodes:
             if node.graph != graph:
-                raise ValueError("All nodes must belong to the same graph")
+                raise FINNInternalError("All nodes must belong to the same graph")
 
-    def _identify_inputs(self, nodes):
+    def _identify_inputs(self, nodes: list[ir.Node]) -> list[ir.Value]:
+        """Return the external input values for the subgraph."""
         inputs = set()
         for node in nodes:
-            for input in node.inputs:
-                if input.is_graph_input():
-                    inputs.add(input)
-                elif input.producer() not in nodes:
-                    inputs.add(input)
+            for inp in node.inputs:
+                if inp is not None and (inp.is_graph_input() or inp.producer() not in nodes):
+                    inputs.add(inp)
         return list(inputs)
 
-    def _identify_initializers(self, nodes):
+    def _identify_initializers(self, nodes: list[ir.Node]) -> list[ir.Value]:
+        """Return initializers connected to the subgraph when enabled."""
         initializers = set()
         if self.include_initializers:
             for node in nodes:
-                for input in node.inputs:
-                    if input.is_initializer():
-                        initializers.add(input)
+                for inp in node.inputs:
+                    if inp is not None and inp.is_initializer():
+                        initializers.add(inp)
         return list(initializers)
 
-    def _identify_outputs(self, nodes):
+    def _identify_outputs(self, nodes: list[ir.Node]) -> list[ir.Value]:
+        """Return values that exit the subgraph boundary."""
         outputs = set()
         for node in nodes:
             for output in node.outputs:
@@ -82,7 +91,8 @@ class PytorchMetadataNode:
     querying instance/class names at different nesting depths.
     """
 
-    def __init__(self, node):
+    def __init__(self, node: ir.Node) -> None:
+        """Wrap a node and parse exporter metadata when present."""
         self._node = node
 
         if self.check_node_metadata_exists():
@@ -93,32 +103,28 @@ class PytorchMetadataNode:
                 self._node.metadata_props["pkg.torch.onnx.class_hierarchy"]
             )
 
-    def check_node_metadata_exists(self):
-        if (
+    def check_node_metadata_exists(self) -> bool:
+        """Return True if the required PyTorch metadata keys are present."""
+        return bool(
             "pkg.torch.onnx.name_scopes" in self._node.metadata_props
             and "pkg.torch.onnx.class_hierarchy" in self._node.metadata_props
-        ):
-            return True
-        else:
-            return False
+        )
 
-    def is_last_level(self, level):
-        if len(self.instance_metadata) - 1 == level:
-            return True
-        else:
-            return False
+    def is_last_level(self, level: int) -> bool:
+        """Return True if the provided level is the last metadata entry."""
+        return len(self.instance_metadata) - 1 == level
 
-    def get_instance_name(self, depth=0):
+    def get_instance_name(self, depth: int = 0) -> str | None:
+        """Return the instance name at the given depth, if available."""
         if depth >= len(self.instance_metadata):
             return None
-        else:
-            return self.instance_metadata[depth]
+        return self.instance_metadata[depth]
 
-    def get_class_name(self, depth=0):
+    def get_class_name(self, depth: int = 0) -> str | None:
+        """Return the class name at the given depth, if available."""
         if depth >= len(self.instance_metadata):
             return None
-        else:
-            return self.class_metadata[depth]
+        return self.class_metadata[depth]
 
 
 class PytorchHierarchyNode:
@@ -147,13 +153,15 @@ class PytorchHierarchyNode:
     depth matches the length of the serialized ``name_scopes`` list.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize an empty hierarchy node."""
         self.instance_name = None
         self.module_type = None
         self.children = []
         self.nodes = []
 
-    def print_hierarchy(self, instance_hierarchy: Optional[List[str]] = None):
+    def print_hierarchy(self, instance_hierarchy: list[str] | None = None) -> None:
+        """Print the module hierarchy and nodes to stdout."""
         if instance_hierarchy is None:
             instance_hierarchy = []
         if self.instance_name is not None:
@@ -164,30 +172,31 @@ class PytorchHierarchyNode:
 
         for node in self.nodes:
             print(
-                f"Node: {node._node.name}, Instance: {'/'.join(instance_hierarchy)},"
+                f"Node: {node._node.name}, "  # noqa: SLF001
+                f"Instance: {'/'.join(instance_hierarchy)},"
                 f" Module: {self.module_type}"
             )
 
-    def get_unwrapped_nodes(self):
+    def get_unwrapped_nodes(self) -> list[ir.Node]:
+        """Return the underlying IR nodes stored in this hierarchy node."""
         # Return _node from self._nodes
-        return [node._node for node in self.nodes]
+        return [node._node for node in self.nodes]  # noqa: SLF001
 
     # Checks if the search hierarchy matches the instance hierarchy
     def hierarchy_matches(
-        self, search_hierarchy: List[str], instance_hierarchy: Optional[List[str]] = None
-    ):
+        self, search_hierarchy: list[str], instance_hierarchy: list[str] | None = None
+    ) -> bool:
+        """Return True if the instance path matches the search prefix."""
         if instance_hierarchy is None:
             instance_hierarchy = []
         search_length = min(len(search_hierarchy), len(instance_hierarchy))
-        for i in range(search_length):
-            if search_hierarchy[i] != instance_hierarchy[i]:
-                return False
-        return True
+        return all(search_hierarchy[i] == instance_hierarchy[i] for i in range(search_length))
 
     # Return all nodes from the given name hierarchy on down
     def get_nodes(
-        self, search_hierarchy: List[str], instance_hierarchy: Optional[List[str]] = None
-    ):
+        self, search_hierarchy: list[str], instance_hierarchy: list[str] | None = None
+    ) -> list[ir.Node]:
+        """Return all IR nodes under the matched hierarchy path."""
         if instance_hierarchy is None:
             instance_hierarchy = []
 
@@ -209,7 +218,8 @@ class PytorchHierarchyNode:
 
         return nodes_to_return
 
-    def add_node(self, node, level=0):
+    def add_node(self, node: PytorchMetadataNode | ir.Node, level: int = 0) -> bool:
+        """Insert a node into the hierarchy, creating children as needed."""
         if not isinstance(node, PytorchMetadataNode):
             node = PytorchMetadataNode(node)
             if node.check_node_metadata_exists() is False:
@@ -231,20 +241,19 @@ class PytorchHierarchyNode:
         if node.is_last_level(level):
             self.nodes.append(node)
             return True
-        else:
-            for child in self.children:
-                if child.instance_name == node.get_instance_name(level + 1):
-                    return child.add_node(node, level + 1)
+        for child in self.children:
+            if child.instance_name == node.get_instance_name(level + 1):
+                return child.add_node(node, level + 1)
 
-            # if no child matches the next level of the hierarchy, create a new child node
-            new_child = PytorchHierarchyNode()
-            new_child.instance_name = node.get_instance_name(level + 1)
-            new_child.module_type = node.get_class_name(level + 1)
-            self.children.append(new_child)
-            return new_child.add_node(node, level + 1)
+        # if no child matches the next level of the hierarchy, create a new child node
+        new_child = PytorchHierarchyNode()
+        new_child.instance_name = node.get_instance_name(level + 1)
+        new_child.module_type = node.get_class_name(level + 1)
+        self.children.append(new_child)
+        return new_child.add_node(node, level + 1)
 
 
-def direct_convert_ir_graph_to_pattern(graph):
+def direct_convert_ir_graph_to_pattern(graph: ir.Graph) -> GraphPattern:
     """Convert an IR graph into an ONNX Script ``GraphPattern``.
 
     The conversion walks nodes in order, mapping each IR ``Value`` to the
@@ -255,20 +264,20 @@ def direct_convert_ir_graph_to_pattern(graph):
     # Transform IR values to ValuePatterns
 
     vmap = {}
-    for input in graph.inputs:
-        vmap[input] = ValuePattern(input.name)
+    for inp in graph.inputs:
+        vmap[inp] = ValuePattern(inp.name)
 
     for init in graph.initializers:
         vmap[init] = ValuePattern(init)
 
-    for node in graph._nodes:
+    for node in graph._nodes:  # noqa: SLF001
         if node.op_type == "Constant":
             vmap[node.outputs[0]] = ValuePattern(node.outputs[0].name)
 
     builder = OpsetPatternBuilder("", record=True)
 
     with pattern_builder(builder):
-        for node in graph._nodes:
+        for node in graph._nodes:  # noqa: SLF001
             ninputs = []
             for ninput in node.inputs:
                 ninputs.append(vmap[ninput])
@@ -284,8 +293,8 @@ def direct_convert_ir_graph_to_pattern(graph):
                 vmap[node.outputs[vp_output.output_index]] = vp_output
 
     pinputs = []
-    for input in graph.inputs:
-        pinputs.append(vmap[input])
+    for inp in graph.inputs:
+        pinputs.append(vmap[inp])
 
     # build graph outputs
     poutputs = []
@@ -295,32 +304,40 @@ def direct_convert_ir_graph_to_pattern(graph):
     return GraphPattern(inputs=pinputs, outputs=poutputs, nodes=builder.nodes())
 
 
-def remove_input_from_node(node, inp):
-    node._inputs = [x for x in node._inputs if x is not inp]
-    inp._remove_usage(node)
+def remove_input_from_node(node: ir.Node, inp: ir.Value) -> None:
+    """Remove a single input value from a node and update usages."""
+    index = None
+    for i, ninput in enumerate(node.inputs):
+        if ninput == inp:
+            index = i
+            break
+    if index is None:
+        raise FINNInternalError("Input value not found in node inputs")
+    node._inputs = tuple([x for x in node._inputs if x is not inp])  # noqa: SLF001
+    inp._remove_usage(node, index)  # noqa: SLF001
 
 
-def same(input_list):
+def same(input_list: tuple[ir.Value | None, ...]) -> bool:
+    """Return True if all values in the tuple are identical."""
     return len(set(input_list)) == 1
 
 
-def vdisconnect(value):
-    value._uses = {}
-    value._producer = None
-    value._index = None
-    value._graph = None
+def vdisconnect(value: ir.Value) -> ir.Value:
+    """Clear graph connectivity metadata from a value."""
+    value._uses = {}  # noqa: SLF001
+    value._producer = None  # noqa: SLF001
+    value._index = None  # noqa: SLF001
+    value._graph = None  # noqa: SLF001
     return value
 
 
-def is_fpgadataflow_onnxir_node(node):
-    """Returns True if given node is fpgadataflow node. Otherwise False."""
+def is_fpgadataflow_onnxir_node(node: ir.Node) -> bool:
+    """Return True if given node is fpgadataflow node. Otherwise False."""
     is_node = False
-    if node is not None:
-        if is_custom_op(node.domain):
-            if "backend" in node.attributes:
-                backend_value = node.attributes["backend"].as_string()
-                if backend_value == "fpgadataflow":
-                    is_node = True
+    if node is not None and is_custom_op(node.domain) and "backend" in node.attributes:
+        backend_value = node.attributes["backend"].as_string()
+        if backend_value == "fpgadataflow":
+            is_node = True
 
     return is_node
 
@@ -334,10 +351,12 @@ class ReplacementPatternGraph(ReplacementPatternFunction):
     match result.
     """
 
-    def __init__(self, ir_graph):
+    def __init__(self, ir_graph: ir.Graph) -> None:
+        """Store the IR graph to materialize during rewrite."""
         self._graph = ir_graph
 
     def get_replacement(self, match: MatchResult) -> ReplacementSubgraph | None:
+        """Build the replacement subgraph for a successful match."""
         context = RewriterContext()
         # ``match.bindings`` maps ``value_name`` (str) from the replacement
         # subgraph pattern to actual IR values.
@@ -349,7 +368,7 @@ class ReplacementPatternGraph(ReplacementPatternFunction):
             else:
                 vvmap[value] = value
 
-        for node in self._graph._nodes:
+        for node in self._graph._nodes:  # noqa: SLF001
             ninputs = []
             for ninput in node.inputs:
                 ninputs.append(vvmap[ninput])
@@ -365,8 +384,8 @@ class ReplacementPatternGraph(ReplacementPatternFunction):
                 coutput = [coutput]
 
             for i, cout in enumerate(coutput):
-                cout._type = node.outputs[i].type
-                cout._shape = node.outputs[i].shape
+                cout._type = node.outputs[i].type  # noqa: SLF001
+                cout._shape = node.outputs[i].shape  # noqa: SLF001
                 for key in node.outputs[i].meta:
                     cout.meta[key] = node.outputs[i].meta[key]
                 vvmap[node.outputs[cout.index()]] = cout
@@ -377,7 +396,8 @@ class ReplacementPatternGraph(ReplacementPatternFunction):
         )
 
 
-def find_nodes_of_optype(graph, layername):
+def find_nodes_of_optype(graph: ir.Graph, layername: str) -> list[ir.Node]:
+    """Return all nodes matching the requested op type."""
     nodes = []
     for node in ir.traversal.RecursiveGraphIterator(graph):
         if node.op_type == layername:
@@ -385,7 +405,8 @@ def find_nodes_of_optype(graph, layername):
     return nodes
 
 
-def build_constant_from_tensor(name, tensor):
+def build_constant_from_tensor(name: str, tensor: ir.Tensor) -> ir.Node:
+    """Create a Constant node holding the provided tensor."""
     value_attribute = ir.Attr(name="value", type=ir.AttributeType.TENSOR, value=tensor)
     ir_value_out = ir.Value(name=name + "_out", type=ir.TensorType(tensor.dtype))
     return ir.Node(
@@ -393,40 +414,49 @@ def build_constant_from_tensor(name, tensor):
     )
 
 
-def build_concat_node_from_inputs(inputs):
+def build_concat_node_from_inputs(inputs: tuple[ir.Value | None, ...]) -> ir.Node:
+    """Build a Concat node that joins the provided inputs along axis 0."""
     axis = ir.Attr(name="axis", type=ir.AttributeType.INT, value=0)
-
-    ndim = len(inputs) * inputs[0].shape.dims[0]
+    if inputs[0] is None:
+        raise FINNInternalError("First input to concat cannot be None")
+    if inputs[0].shape is None:
+        raise FINNInternalError("Input to concat must have known shape")
+    ndim = len(inputs) * cast("int", inputs[0].shape.dims[0])
     output_shape = ir.Shape([ndim, *inputs[0].shape.dims[1:]])
     output = ir.Value(name=f"{inputs[0].name}_concat", shape=output_shape, type=inputs[0].type)
     return ir.Node("", "Concat", inputs=inputs, attributes=[axis], outputs=[output])
 
 
-def build_reshape_node(inp, reshape_shape):
+def build_reshape_node(inp: ir.Value, reshape_shape: ir.Value) -> ir.Node:
+    """Build a Reshape node using the provided shape value."""
     reshape_out = ir.Value(name=f"{inp.name}_reshape", type=inp.type)
     return ir.Node("", "Reshape", inputs=[inp, reshape_shape], outputs=[reshape_out])
 
 
-def tensor_type_to_finn_datatype_string(tensor_type):
+def tensor_type_to_finn_datatype_string(
+    tensor_type: ir.TensorType,
+) -> Literal[
+    "FLOAT32", "INT8", "INT16", "INT32", "INT64", "UINT8", "UINT16", "UINT32", "UINT64", "BOOL"
+]:
+    """Map an ONNX Script tensor type to a FINN datatype string."""
     if tensor_type == ir.TensorType(_enums.DataType.FLOAT):
         return "FLOAT32"
-    elif tensor_type == ir.TensorType(_enums.DataType.INT8):
+    if tensor_type == ir.TensorType(_enums.DataType.INT8):
         return "INT8"
-    elif tensor_type == ir.TensorType(_enums.DataType.INT16):
+    if tensor_type == ir.TensorType(_enums.DataType.INT16):
         return "INT16"
-    elif tensor_type == ir.TensorType(_enums.DataType.INT32):
+    if tensor_type == ir.TensorType(_enums.DataType.INT32):
         return "INT32"
-    elif tensor_type == ir.TensorType(_enums.DataType.INT64):
+    if tensor_type == ir.TensorType(_enums.DataType.INT64):
         return "INT64"
-    elif tensor_type == ir.TensorType(_enums.DataType.UINT8):
+    if tensor_type == ir.TensorType(_enums.DataType.UINT8):
         return "UINT8"
-    elif tensor_type == ir.TensorType(_enums.DataType.UINT16):
+    if tensor_type == ir.TensorType(_enums.DataType.UINT16):
         return "UINT16"
-    elif tensor_type == ir.TensorType(_enums.DataType.UINT32):
+    if tensor_type == ir.TensorType(_enums.DataType.UINT32):
         return "UINT32"
-    elif tensor_type == ir.TensorType(_enums.DataType.UINT64):
+    if tensor_type == ir.TensorType(_enums.DataType.UINT64):
         return "UINT64"
-    elif tensor_type == ir.TensorType(_enums.DataType.BOOL):
+    if tensor_type == ir.TensorType(_enums.DataType.BOOL):
         return "BOOL"
-    else:
-        raise ValueError(f"Unsupported tensor type: {tensor_type}")
+    raise FINNInternalError(f"Unsupported tensor type: {tensor_type}")

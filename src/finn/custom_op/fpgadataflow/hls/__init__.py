@@ -26,9 +26,15 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for init."""
+
+from typing import TypeVar
+
 from finn.custom_op.fpgadataflow.hls.streamingfifo_hls import StreamingFIFO_hls
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+THLSCustomOp = TypeVar("THLSCustomOp", bound=HLSBackend)
 
 # Dictionary of HLSBackend implementations
 custom_op = dict()
@@ -37,8 +43,9 @@ custom_op = dict()
 # Registers a class into the custom_op dictionary
 # Note: This must be defined first, before importing any custom op
 # implementation to avoid "importing partially initialized module" issues.
-def register_custom_op(cls):
+def register_custom_op(cls: type[THLSCustomOp]) -> type[THLSCustomOp]:
     # The class must actually implement HWCustomOp
+    """Register a custom HLS operation."""
     assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"
     # The class must also implement the HLSBackend
     assert issubclass(cls, HLSBackend), f"{cls} must subclass {HLSBackend}"
@@ -54,6 +61,7 @@ def register_custom_op(cls):
 # Import the submodule containing specializations of ElementwiseBinaryOperation
 # Note: This will automatically register all decorated classes into this domain
 import finn.custom_op.fpgadataflow.hls.elementwise_binary_hls
+import finn.custom_op.fpgadataflow.hls.reduce_hls
 
 # Import the submodule containing the specialization of the Squeeze operation
 # Note: This will automatically register all decorated classes into this domain
@@ -61,7 +69,6 @@ import finn.custom_op.fpgadataflow.hls.squeeze_hls
 
 # Import the submodule containing the specialization of the Unsqueeze operation
 import finn.custom_op.fpgadataflow.hls.unsqueeze_hls
-
 from finn.custom_op.fpgadataflow.hls.attention_heads_hls import (
     MergeMultiHeads_hls,
     SplitMultiHeads_hls,

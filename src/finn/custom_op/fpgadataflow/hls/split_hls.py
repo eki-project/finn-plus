@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for split hls."""
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.split import StreamingSplit
 
@@ -35,21 +36,26 @@ class StreamingSplit_hls(StreamingSplit, HLSBackend):
     Only supports splitting along the last axis."""
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(StreamingSplit.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
     def execute_node(self, context, graph):
+        """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
     def global_includes(self):
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "split.hpp"']
 
     def defines(self, var):
+        """Return defines."""
         self.code_gen_dict["$DEFINES$"] = []
 
     def docompute(self):
+        """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = []
         n_outputs = self.get_n_outputs()
         output_folds = [str(self.get_folded_output_shape(i)[-2]) for i in range(n_outputs)]
@@ -62,6 +68,7 @@ class StreamingSplit_hls(StreamingSplit, HLSBackend):
         self.code_gen_dict["$DOCOMPUTE$"] = [comp_call]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         input_elem_hls_type = self.get_input_datatype().get_hls_datatype_str()
         simd = self.get_nodeattr("SIMD")
         in_stream = "hls::stream<hls::vector<%s, %d>> &in0_V" % (input_elem_hls_type, simd)
@@ -75,6 +82,7 @@ class StreamingSplit_hls(StreamingSplit, HLSBackend):
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [blackbox_hls]
 
     def pragmas(self):
+        """Return pragmas."""
         pragmas = []
         pragmas.append("#pragma HLS INTERFACE axis port=in0_V")
         for i in range(self.get_n_outputs()):
@@ -86,13 +94,15 @@ class StreamingSplit_hls(StreamingSplit, HLSBackend):
         self.code_gen_dict["$PRAGMAS$"] = pragmas
 
     def timeout_condition(self):
+        """Return timeout condition."""
         condition = []
         for i in range(self.get_n_outputs()):
-            condition.append("out{}_V.empty()".format(i))
+            condition.append(f"out{i}_V.empty()")
         condition = " && ".join(condition)
         self.code_gen_dict["$TIMEOUT_CONDITION$"] = [condition]
 
     def timeout_read_stream(self):
+        """Return timeout read stream."""
         read_stream_command = []
         for i in range(self.get_n_outputs()):
             read_stream_command.append(

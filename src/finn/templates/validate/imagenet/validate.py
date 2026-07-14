@@ -15,10 +15,9 @@ def img_resize(img, size):
         ow = size
         oh = int(size * h / w)
         return img.resize((ow, oh), Image.BILINEAR)
-    else:
-        oh = size
-        ow = int(size * w / h)
-        return img.resize((ow, oh), Image.BILINEAR)
+    oh = size
+    ow = int(size * w / h)
+    return img.resize((ow, oh), Image.BILINEAR)
 
 
 def img_center_crop(img, size):
@@ -41,7 +40,7 @@ def pre_process(img_np):
 
 def setup_dataloader(val_path, label_file_path=None, batch_size=100, n_images=50000):
     """Create an image queue for streaming ImageNet validation images."""
-    files = ["ILSVRC2012_val_{:08d}.JPEG".format(i) for i in range(1, n_images + 1)]
+    files = [f"ILSVRC2012_val_{i:08d}.JPEG" for i in range(1, n_images + 1)]
     labels = np.loadtxt(label_file_path, dtype=int, usecols=1)
     file_queue = FileQueue()
     file_queue.load_epochs(list(zip(files, labels)), shuffle=False)
@@ -80,7 +79,7 @@ def validate(cls_inst, *args, **kwargs):
 
     total = 50000
     acc = 100.0 * ok / (total)
-    print("Final top-1 accuracy: {}%".format(acc))
+    print(f"Final top-1 accuracy: {acc}%")
 
     # write report to file
     report = {
