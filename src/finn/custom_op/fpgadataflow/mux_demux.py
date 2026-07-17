@@ -1,5 +1,8 @@
 """Base class for both Mux and Demux."""
+import jinja2
+from abc import abstractmethod
 from onnx import NodeProto
+from pathlib import Path
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import cast
 
@@ -8,9 +11,128 @@ from finn.util.exception import FINNInternalError
 
 
 class MuxDemux(HWCustomOp):
+    """General mux/demux operator. Do not instantiate directly. Does a best effort to
+    already set pragmas, blackboxfunction, etc. For special cases, these methods need to
+    be overwritten in the inheriting class.
+
+    This operator has some nodeattributes describing streams. For a Mux, these are the input
+    streams, for a Demux these are the output streams. The default signature for these functions
+    are then something like:
+    ```
+    void Multiplexer_hls(
+        hls::stream<..> &in0_V, hls::stream<..> &in1_V, ...,
+        hls::stream<..> &out0_V
+    )
+    ```
+
+    and
+
+    ```
+    void Demultiplexer_hls(
+        hls::stream<..> &in0_V
+        hls::stream<..> &out0_V, hls::stream<..> &out1_V, ...
+    )
+    ```
+
+    with matching pragmas provided as well.
+    """
+
     def __init__(self, onnx_node: NodeProto, **kwargs) -> None:  # noqa
         """Create a mux node."""
         super().__init__(onnx_node, **kwargs)
+
+    @abstractmethod
+    def get_op_type(self) -> str:
+        """Overwritten by inheriting classes. Should return "mux" or "demux".
+        Could also be read from the type name, however using a custom
+        method is more flexible with regard to future extensions.
+        """
+
+    def defines(self, var) -> None:  # noqa
+        self.code_gen_dict["$DEFINES$"] = []
+
+    def pragmas(self) -> None:  # noqa
+        self.code_gen_dict["$PRAGMAS$"] = []
+        op_type = self.get_op_type()
+        if op_type in ["mux", "combined"]:
+            for i in range(self.get_stream_count()):
+                self.code_gen_dict["$PRAGMAS$"].append(f"#pragma HLS INTERFACE axis port=in{i}_V")
+        else:
+            self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=in0_V")
+        if op_type in ["demux", "combined"]:
+            for i in range(self.get_stream_count()):
+                self.code_gen_dict["$PRAGMAS$"].append(f"#pragma HLS INTERFACE axis port=out{i}_V")
+        else:
+            self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
+        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
+
+    def get_input_stream_types(self) -> str:
+        """Get a comma separated list of hls::stream types for the inputs."""
+        op_type = self.get_op_type()
+        if op_type in ["mux", "combined"]:
+            return ", ".join(
+                [
+                    f"hls::stream<{self.get_input_datatype(i).get_hls_datatype_str()}> &in{i}_V"
+                    for i in range(self.get_stream_count())
+                ]
+            )
+        elif op_type == "demux":  # noqa
+            return f"hls::stream<{self.get_connection_dtype().get_hls_datatype_str()}> &in0_V"
+        return "UNDEFINED"
+
+    def get_output_stream_types(self) -> str:
+        """Get a comma separated list of hls::stream types for the outputs."""
+        op_type = self.get_op_type()
+        if op_type in ["demux", "combined"]:
+            return ", ".join(
+                [
+                    f"hls::stream<{self.get_output_datatype(i).get_hls_datatype_str()}> &out{i}_V"
+                    for i in range(self.get_stream_count())
+                ]
+            )
+        elif op_type == "mux":  # noqa
+            return f"hls::stream<{self.get_connection_dtype().get_hls_datatype_str()}> &out0_V"
+        return "UNDEFINED"
+
+    def blackboxfunction(self) -> None:  # noqa
+        ins = self.get_input_stream_types()
+        outs = self.get_output_stream_types()
+        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [f"void {self.onnx_node.name}({ins}, {outs});"]
+
+    def render_compute_template(self, **kwargs) -> str:  # noqa
+        """Render a template of the given variant with the passed keyword arguments.
+        If no such template is found, raise an error.
+
+        `op_type` can be "mux" or "demux".
+        """
+        op_type = self.get_op_type()
+        variant = str(self.get_nodeattr("muxVariant"))
+        subtype = str(self.get_nodeattr("muxVariantSubtype"))
+        template_map = {
+            "mux": {"static_schedule": {"round_robin": "static_schedule/docompute_mux.cpp.jinja2"}},
+            "demux": {
+                "static_schedule": {"round_robin": "static_schedule/docompute_demux.cpp.jinja2"}
+            },
+            "combined": {
+                "static_schedule": {
+                    "round_robin": "static_schedule/docompute_combined_muxdemux.cpp.jinja2"
+                }
+            },
+        }
+        try:
+            template_path = template_map[op_type][variant][subtype]
+        except KeyError:
+            raise FINNInternalError(
+                f"Cannot instantiate template for operator: No such "
+                f"variant found: {op_type} - {variant} - {subtype}."
+            ) from None
+        env = jinja2.Environment(
+            loader=jinja2.FileSystemLoader(
+                Path(__file__).parent.parent.parent.parent.parent / "mux"
+            )
+        )
+        template = env.get_template(template_path)
+        return template.render(**kwargs)
 
     def global_includes(self) -> None:
         """Add the global includes for all mux variants."""

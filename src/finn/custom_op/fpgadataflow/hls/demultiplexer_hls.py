@@ -9,7 +9,6 @@ from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.mux_demux import MuxDemux
-from finn.util.exception import FINNInternalError
 
 
 class Demultiplexer_hls(MuxDemux, HLSBackend):
@@ -19,52 +18,13 @@ class Demultiplexer_hls(MuxDemux, HLSBackend):
         """Create a mux node."""
         super().__init__(onnx_node, **kwargs)
 
-    def defines(self, var) -> None:
-        self.code_gen_dict["$DEFINES$"] = []
+    def get_op_type(self) -> str:
+        return "demux"
 
     def docompute(self) -> None:
         """Render the mux from a template and insert into the code gen dict."""
-        variant = str(self.get_nodeattr("muxVariant"))
-        subtype = str(self.get_nodeattr("muxVariantSubtype"))
-        call = ""
-        match variant:
-            case "static_schedule":
-                match subtype:
-                    case "round_robin":
-                        outputs = ", ".join([f"out{i}_V" for i in range(self.get_stream_count())])
-                        call = f"static_demux(in0_V, {outputs});"
-                    case "random":
-                        raise NotImplementedError()
-                    case _:
-                        raise FINNInternalError(
-                            f"Unknown subvariant: {subtype} (of mux variant {variant})."
-                        )
-            case _:
-                raise FINNInternalError(f"Unknown mux variant: {variant}")
-
-        self.code_gen_dict["$DOCOMPUTE$"] = [call]
-
-    def pragmas(self) -> None:
-        """Add pragmas."""
-        self.code_gen_dict["$PRAGMAS$"] = []
-        for i in range(self.get_stream_count()):
-            self.code_gen_dict["$PRAGMAS$"].append(f"  #pragma HLS INTERFACE axis port=out{i}_V")
-        self.code_gen_dict["$PRAGMAS$"].append("  #pragma HLS INTERFACE axis port=in0_V")
-        self.code_gen_dict["$PRAGMAS$"].append("  #pragma HLS INTERFACE ap_ctrl_none port=return")
-
-    def blackboxfunction(self) -> None:
-        """Create the function definition."""
-        outstream_parameters = ", ".join(
-            [
-                f"hls::stream<{self.get_output_datatype(i).get_hls_datatype_str()}> &out{i}_V"
-                for i in range(self.get_stream_count())
-            ]
-        )
-        outstream_dt = str(self.get_input_datatype().get_hls_datatype_str())
-        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            f"void {self.onnx_node.name}(hls::stream<{outstream_dt}> &in0_V, "
-            f"{outstream_parameters})"
-        ]
+        outputs = ", ".join([f"out{i}_V" for i in range(self.get_stream_count())])
+        self.code_gen_dict["$DOCOMPUTE$"] = [self.render_compute_template(outputs=outputs)]
 
     def execute_node(self, context, graph) -> None:  # noqa
         HLSBackend.execute_node(self, context, graph)

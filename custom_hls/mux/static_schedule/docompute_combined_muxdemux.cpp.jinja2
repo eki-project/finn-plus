@@ -1,0 +1,7 @@
+hls::stream<{{ connection_type }}> connection;
+while (true) {
+    static_mux(std::index_sequence<{{ sequence }}>, connection, {{ inputs }});
+    if (!connection.empty()) {
+        static_demux(connection, {{ outputs }});
+    }
+}
