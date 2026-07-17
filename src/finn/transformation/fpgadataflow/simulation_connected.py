@@ -742,6 +742,7 @@ class RunLayerParallelSimulation(Transformation):
         model = sim.model  # TODO:clean up
 
         work_folder = cast("Path", make_build_dir("fifo_results_", True))
+        model.set_metadata_prop("fifo_results_dir", str(work_folder))
 
         # Create empty table for datapoints that will be collected
         # First create as a nested dict, since not all data is avilable at the same time

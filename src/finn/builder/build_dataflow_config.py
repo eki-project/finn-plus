@@ -96,7 +96,7 @@ class AutoFIFOSizingMethod(str, Enum):
     """Select the type of automatic FIFO sizing strategy."""
 
     LIVE_FIFO = "live_fifo"
-    DISTRIBUTED_SIMULATION = "distributed_sim"
+    DISTRIBUTED_SIMULATION = "distributed_simulation"
 
 
 class ShellFlowType(str, Enum):

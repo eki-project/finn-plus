@@ -101,19 +101,19 @@ class InterprocessCommunicationChannel {
         // Perform handshake to verify communication works
         if constexpr (IsSender) {
             // Sender: send test request and wait for response
-            std::cout << "Sending handshake test request for " << sharedMemoryName << std::endl;
+            std::cout << "Sending handshake test request to " << sharedMemoryName << std::endl;
             Request test_request{};
             Response test_response = send_request(test_request);
-            std::cout << "Received handshake test response for " << sharedMemoryName << std::endl;
+            std::cout << "Received handshake test response from " << sharedMemoryName << std::endl;
             // Communication verified if we got here without hanging
         } else {
             // Receiver: wait for test request and send response
-            std::cout << "Waiting for handshake test request for " << sharedMemoryName << std::endl;
+            std::cout << "Waiting for handshake test request from " << sharedMemoryName << std::endl;
             Request test_request = receive_request();
-            std::cout << "Received handshake test request for " << sharedMemoryName << std::endl;
+            std::cout << "Received handshake test request from " << sharedMemoryName << std::endl;
             Response test_response{};
             send_response(test_response);
-            std::cout << "Sent handshake test response for " << sharedMemoryName << std::endl;
+            std::cout << "Sent handshake test response to " << sharedMemoryName << std::endl;
             // Communication verified if we got here
         }
     }

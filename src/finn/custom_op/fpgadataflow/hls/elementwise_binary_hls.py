@@ -78,9 +78,9 @@ class ElementwiseBinaryOperation_hls(
             Dictionary of node attribute names and their types.
         """
         # Start from parent operator class attributes
-        attrs = ElementwiseBinaryOperation.get_nodeattr_types(self)
         # Add the HLSBackend default attributes on top
-        attrs.update(HLSBackend.get_nodeattr_types(self))
+        attrs = HLSBackend.get_nodeattr_types(self)
+        attrs.update(ElementwiseBinaryOperation.get_nodeattr_types(self))
         # Add/Specialize implementation specific attributes here...
         # Return the updated attributes dictionary
         return attrs

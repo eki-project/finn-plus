@@ -14,7 +14,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <future>
 #include <fstream>
+#include <thread>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -105,7 +107,7 @@ struct CommData {
 //                      │         ready            ready       │
 //                      │                  (sim)               │
 //                      └──────────────────────────────────────┘
-template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes, bool FirstNode, bool LastNode, bool PreciseTimeout>
+template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t NodeIndex, size_t TotalNodes, bool FirstNode, bool LastNode, bool PreciseTimeout, std::size_t HandshakeTimeoutSeconds = 30>
 class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
     using ConsumingInterface = InterprocessCommunicationChannel<CommData, CommData, true>;
     using ProducingInterface = InterprocessCommunicationChannel<CommData, CommData, false>;
@@ -237,18 +239,38 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
 
         std::cout << "Initialized " << IStreamsSize << " consuming interfaces for predecessor communication" << std::endl;
 
-        // Verify communication works
+        // Verify communication works.
+        // This is handled in independent threads to avoid deadlocks.
+        // (In cases where there are two connections between two nodes A and B,
+        // A might request a handshake on the one branch while B waits on the other,
+        // causing a deadlock.)
+        std::vector<std::jthread> handles;
         if constexpr (!LastNode) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                toConsumerInterface[i].handshake();
+                handles.emplace_back(&ProducingInterface::handshake, std::ref(toConsumerInterface[i]));
             }
         }
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                fromProducerInterface[i].handshake();
+                handles.emplace_back(&ConsumingInterface::handshake, std::ref(fromProducerInterface[i]));
             }
         }
 
+        // Wait for all handshake threads to join
+        // If, after the timeout-window, not every handshake has completed, throw an error and stop,
+        // since its unlikely that a handshake will complete in the future.
+        std::future<void> waitFuture = std::async(std::launch::async, [this, &handles]() {
+            for (auto& h : handles) {
+                h.join();
+            }
+        });
+        if (waitFuture.wait_for(std::chrono::seconds(HandshakeTimeoutSeconds)) == std::future_status::timeout) {
+            throw std::runtime_error(
+                "Handshake timeout after " + std::to_string(HandshakeTimeoutSeconds) + " seconds"
+            );
+        }
+
+        // Handshake successesful, initialize streams.
         this->clk.clockHigh();
         initStreams();
         this->clk.clockLow();
