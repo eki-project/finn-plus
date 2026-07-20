@@ -69,6 +69,7 @@ from finn.custom_op.fpgadataflow.hls.attention_heads_hls import (
 )
 from finn.custom_op.fpgadataflow.hls.attention_hls import ScaledDotProductAttention_hls
 from finn.custom_op.fpgadataflow.hls.checksum_hls import CheckSum_hls
+from finn.custom_op.fpgadataflow.hls.combined_mux_demux_hls import CombinedMuxDemux_hls
 from finn.custom_op.fpgadataflow.hls.concat_hls import StreamingConcat_hls
 from finn.custom_op.fpgadataflow.hls.crop_hls import Crop_hls
 from finn.custom_op.fpgadataflow.hls.demultiplexer_hls import Demultiplexer_hls
@@ -127,3 +128,4 @@ custom_op["OuterShuffle_hls"] = OuterShuffle_hls
 
 custom_op["Multiplexer_hls"] = Multiplexer_hls
 custom_op["Demultiplexer_hls"] = Demultiplexer_hls
+custom_op["CombinedMuxDemux_hls"] = CombinedMuxDemux_hls

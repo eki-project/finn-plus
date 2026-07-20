@@ -1,17 +1,18 @@
 """Combined mux and demux operator for simulation purposes."""
 # ruff: noqa: D102
 import numpy as np
+from collections.abc import Sequence
 from numpy import typing as npt
 from onnx import NodeProto
 from qonnx.core.datatype import BaseDataType
 from qonnx.core.modelwrapper import ModelWrapper
-from typing import Sequence
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.mux_demux import MuxDemux
+from finn.util.exception import FINNInternalError
 
 
-class CombinedMuxDemux(MuxDemux, HLSBackend):
+class CombinedMuxDemux_hls(MuxDemux, HLSBackend):
     """Operator that combines a Mux and Demux operators (connected) into
     a single operator. This is done so that functional FIFO sizing can be used.
     If the operators were separate, the constant propagation would disable the
@@ -26,6 +27,20 @@ class CombinedMuxDemux(MuxDemux, HLSBackend):
 
     def get_op_type(self) -> str:
         return "combined"
+
+    def get_ap_int_max_w(self) -> int:
+        """Get AP INT max width. Has to be overwritten, since this is normally
+        derived from the max of the largest out/instream widths. But since this
+        operator has the largest dtype on the inside, the `AP_INT_MAX_W` define
+        is wrong when using the base class method.
+        """
+        val = self.get_connection_dtype().bitwidth()
+        if val > 8191:
+            raise FINNInternalError(
+                f"Largest AP INT width in node {self.onnx_node.name} is "
+                f"larger than the maximum allowed limit: {val} > 8191."
+            )
+        return val
 
     def docompute(self) -> None:
         inputs = ", ".join([f"in{i}_V" for i in range(self.get_stream_count())])

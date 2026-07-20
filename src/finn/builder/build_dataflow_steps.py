@@ -31,7 +31,6 @@
 """Collection of default build steps for building and verifying a dataflow
 accelerator from an ONNX model.
 """
-
 import json
 import math
 import numpy as np
@@ -86,6 +85,7 @@ from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
+from finn.transformation.fpgadataflow.insert_mux import MergeMuxDemuxIntoCombinedOperator
 from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
 from finn.transformation.fpgadataflow.loop_rolling import LoopExtraction, LoopRolling
 from finn.transformation.fpgadataflow.make_driver import (
@@ -436,6 +436,18 @@ def step_set_fifo_depths(
     Coherency with config file node naming is ensured by calling
     `GiveUniqueNodeNamesRecursive`.
     """
+    # If necessary, merge mux operators for functional FIFO sizing
+    if (
+        cfg.auto_fifo_depths
+        and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION
+        and cfg.functional_simulation
+    ):
+        model = model.transform(
+            MergeMuxDemuxIntoCombinedOperator(
+                cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period()
+            )
+        )
+
     if cfg.auto_fifo_depths:
         if cfg.fifosim_save_waveform:
             report_dir = Path(cfg.output_dir) / "report"

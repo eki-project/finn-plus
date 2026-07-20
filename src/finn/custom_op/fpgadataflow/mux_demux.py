@@ -97,7 +97,7 @@ class MuxDemux(HWCustomOp):
     def blackboxfunction(self) -> None:  # noqa
         ins = self.get_input_stream_types()
         outs = self.get_output_stream_types()
-        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [f"void {self.onnx_node.name}({ins}, {outs});"]
+        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [f"void {self.onnx_node.name}({ins}, {outs})"]
 
     def render_compute_template(self, **kwargs) -> str:  # noqa
         """Render a template of the given variant with the passed keyword arguments.
@@ -128,7 +128,7 @@ class MuxDemux(HWCustomOp):
             ) from None
         env = jinja2.Environment(
             loader=jinja2.FileSystemLoader(
-                Path(__file__).parent.parent.parent.parent.parent / "mux"
+                Path(__file__).parent.parent.parent.parent.parent / "custom_hls" / "mux"
             )
         )
         template = env.get_template(template_path)

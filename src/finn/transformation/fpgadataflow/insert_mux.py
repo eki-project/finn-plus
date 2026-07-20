@@ -2,7 +2,7 @@
 # ruff: noqa: D102, D107
 import json
 import onnx.helper as oh
-from onnx import NodeProto
+from onnx import NodeProto, ValueInfoProto
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -15,6 +15,7 @@ from qonnx.transformation.general import (
 )
 from typing import TYPE_CHECKING, Any, cast
 
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.util.deprecated import deprecated
@@ -24,8 +25,8 @@ from finn.util.logging import log
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from finn.custom_op.fpgadataflow.hls.demultiplexer_hls import Demultiplexer_hls
     from finn.custom_op.fpgadataflow.hls.multiplexer_hls import Multiplexer_hls
-    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 
 def get_io_index(source: NodeProto, target: NodeProto) -> tuple[int, int]:
@@ -358,6 +359,109 @@ class InsertMuxDemuxPairByName(Transformation):
         )
 
         return model, False
+
+
+class MergeMuxDemuxIntoCombinedOperator(Transformation):
+    """Merge Mux/Demux pairs into a combined operator. This is useful for FIFO sizing, which
+    cannot use the `functional` mode (for faster simulations) if the operators are separated.
+    After FIFO-Sizing is done, the combined operator should be split again.
+    """
+
+    def __init__(self, part: str, clk: float) -> None:
+        super().__init__()
+        self.part = part
+        self.clk = clk
+
+    def check_same_attributes(self, a: HWCustomOp, b: HWCustomOp, attrs: list[str]) -> None:
+        """Check that the given node attributes are the same on both operators."""
+        for attr in attrs:
+            value_a = a.get_nodeattr(attr)
+            value_b = b.get_nodeattr(attr)
+            if value_a != value_b:
+                raise FINNInternalError(
+                    f"Nodes {a.onnx_node.name} and {b.onnx_node.name} have different "
+                    f"values for attribute '{attr}': '{value_a}' and '{value_b}'"
+                )
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        # Search a pair of mux/demux ops
+        mux = None
+        demux = None
+        for node in model.graph.node:
+            if node.op_type == "Multiplexer_hls":
+                suc = model.find_direct_successors(node)
+                if suc is None:
+                    raise FINNInternalError(
+                        f"Found multiplexer without matching demultiplexer: {node.name}!"
+                    )
+                if len(suc) != 1:
+                    raise FINNInternalError(f"Multiplexer {node.name} has 0 or >1 outputs!")
+                if suc[0].op_type != "Demultiplexer_hls":
+                    raise FINNInternalError(
+                        f"Successor of multiplexer node is not a demultiplexer: {suc[0].name}"
+                    )
+                mux = node
+                demux = suc[0]
+                break
+        if mux is None or demux is None:
+            return model, False
+        log.info(f"Merging operators: {mux.name}, {demux.name}")
+
+        # Get their operators
+        muxop = cast("Multiplexer_hls", getCustomOp(mux))
+        demuxop = cast("Demultiplexer_hls", getCustomOp(demux))
+
+        # Make sure the ops match
+        self.check_same_attributes(
+            muxop,
+            demuxop,
+            [
+                "muxVariant",
+                "muxVariantSubtype",
+                "streamWidths",
+                "streamDataTypes",
+                "streamsFoldedShapes",
+                "streamsNormalShapes",
+            ],
+        )
+
+        # Construct the new node
+        combined = oh.make_node(
+            "CombinedMuxDemux_hls",
+            domain="finn.custom_op.fpgadataflow.hls",
+            backend="fpgadataflow",
+            name="CombinedMuxDemux",
+            inputs=mux.input,
+            outputs=demux.output,
+            muxVariant=muxop.get_nodeattr("muxVariant"),
+            muxVariantSubtype=muxop.get_nodeattr("muxVariantSubtype"),
+            streamNames=[f"stream{i}" for i in range(muxop.get_stream_count())],
+            streamWidths=muxop.get_nodeattr("streamWidths"),
+            streamDataTypes=muxop.get_nodeattr("streamDataTypes"),
+            streamsFoldedShapes=muxop.get_nodeattr("streamsFoldedShapes"),
+            streamsNormalShapes=muxop.get_nodeattr("streamsNormalShapes"),
+            inFIFODepths=muxop.get_nodeattr("inFIFODepths"),
+            outFIFODepths=demuxop.get_nodeattr("outFIFODepths"),
+            connectionStream="none",
+        )
+
+        # Remove connector value info
+        vi = cast("ValueInfoProto", model.get_tensor_valueinfo(mux.output[0]))
+        model.graph.value_info.remove(vi)
+
+        # Remove old nodes, add new one
+        idx = cast("int", model.get_node_index(mux))
+        model.graph.node.remove(mux)
+        model.graph.node.remove(demux)
+        model.graph.node.insert(idx, combined)
+
+        # Cleanup and rerun synthesis
+        model = model.transform(SortGraph())
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
+        model = model.transform(PrepareIP(self.part, self.clk))
+        model = model.transform(HLSSynthIP())
+        return model, True
 
 
 class AdjustMuxDemuxAdjacentFIFOs(Transformation):
