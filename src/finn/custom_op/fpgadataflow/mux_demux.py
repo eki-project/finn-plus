@@ -136,7 +136,8 @@ class MuxDemux(HWCustomOp):
 
     def global_includes(self) -> None:
         """Add the global includes for all mux variants."""
-        self.code_gen_dict["$GLOBALS$"] = ['#include "mux/static_schedule/static_mux.hpp"']
+        self.code_gen_dict["$GLOBALS$"] = ['#include "hls_task.h"']
+        self.code_gen_dict["$GLOBALS$"] += ['#include "mux/static_schedule/static_mux.hpp"']
 
     def get_nodeattr_types(self) -> dict:
         """Node attribute defs."""
@@ -211,6 +212,8 @@ class MuxDemux(HWCustomOp):
         integer with the bitwidth of the largest stream
         dtype, with additional bits to accommodate the header with the source stream index.
         """
+        assert self.required_bitwidth(11) == 4
+        assert self.required_bitwidth(2) == 2
         stream_widths = self.get_stream_widths()
         largest_dt_bitwidth = max(stream_widths)
         header_bitwidth = self.required_bitwidth(len(stream_widths))

@@ -1,6 +1,7 @@
 #ifndef STATIC_MUX_TOP_H
 #define STATIC_MUX_TOP_H
 
+#include "hls_task.h"
 #include "static_mux.hpp"
 
 using T1 = ap_uint<2>;

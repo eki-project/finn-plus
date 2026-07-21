@@ -8,6 +8,28 @@
 #include "static_mux_tb_top.h"
 
 
+/**
+ * Get the widest stream width of all streams passed.
+ */
+template<typename A>
+constexpr std::size_t max_width(std::size_t current, hls::stream<A> &a) {
+    constexpr std::size_t width = is_arbitrary_precision_type<A>::width;
+    return (current > width ? current : width);
+}
+
+/**
+ * Get the widest stream width of all streams passed.
+ */
+template<typename A, typename ...N>
+constexpr std::size_t max_width(std::size_t current, hls::stream<A> &a, hls::stream<N>& ...ns) {
+    constexpr std::size_t newWidth = is_arbitrary_precision_type<A>::width;
+    return max_width((current > newWidth ? current : newWidth), ns...);
+}
+
+/**
+ * Check if the stream has the expected value. If not, print an
+ * error to stdout and return false, otherwise true.
+ */
 template<typename T, int F>
 bool checkStream(hls::stream<T, F> &stream, int expected) {
     T value = stream.read();
@@ -95,64 +117,92 @@ bool test_mux_demux() {
     return success;
 }
 
+bool test_header_prefix() {
+    // Data type
+    constexpr int DWS = 10;
+    using DTS = ap_int<DWS>;
+    constexpr int DWU = 10;
+    using DTU = ap_uint<DWS>;
+
+    // Header type
+    constexpr int HW = 3;
+    using HT = ap_uint<HW>;
+
+    // Total packet width
+    constexpr int OW = 20;
+
+    // Index
+    constexpr std::size_t idx = 2;
+
+    bool anyErrors = false;
+    DTS minSigned = -(1 << (DWS-1));
+    DTS maxSigned = (1 << (DWS-1)) - 1;
+    DTU maxUnsigned = (1 << (DWS-1)) - 1;
+
+    std::cout << "Testing signed values from " << minSigned << " to " << maxSigned << std::endl;
+    for (auto i = minSigned; i <= maxSigned; i++) {
+        ap_uint<OW> packet = prefixHeader<HW, DTS, OW, idx>(i);
+        std::tuple<HT, DTS> result = splitHeader<HW, DTS, OW>(packet);
+        if (std::get<0>(result) != idx || std::get<1>(result) != i) {
+            anyErrors = true;
+            std::cout << "Expected DATA=" << i << ", HEADER=" << idx << std::endl;
+            std::cout << "\tGot DATA=" << std::get<1>(result) << "; HEADER=" << std::get<0>(result) << std::endl;
+            std::cout << "\tSigned: True. Datawidth: " << DWS << ". Headerwidth: " << HW << ". Packetwidth: " << OW << "." << std::endl;
+            std::cout << "\tPacket: " << std::bitset<OW>(packet) << std::endl;
+        }
+        if (i == maxSigned) break;
+    }
+
+    std::cout << "Testing unsigned values from " << 0 << " to " << maxUnsigned << std::endl;
+    for (auto i = 0; i <= maxUnsigned; i++) {
+        ap_uint<OW> packet = prefixHeader<HW, DTU, OW, idx>(i);
+        std::tuple<HT, DTU> result = splitHeader<HW, DTU, OW>(packet);
+        if (std::get<0>(result) != idx || std::get<1>(result) != i) {
+            anyErrors = true;
+            std::cout << "Expected DATA=" << i << ", HEADER=" << idx << std::endl;
+            std::cout << "\tGot DATA=" << std::get<1>(result) << "; HEADER=" << std::get<0>(result) << std::endl;
+            std::cout << "\tSigned: False. Datawidth: " << DWU << ". Headerwidth: " << HW << ". Packetwidth: " << OW << "." << std::endl;
+            std::cout << "\tPacket: " << std::bitset<OW>(packet) << std::endl;
+        }
+    }
+    return !anyErrors;
+}
+
+bool test_header_prefix2() {
+    std::cout << "Running second header prefix test..." << std::endl;
+    constexpr int DW0 = 5;
+    constexpr int DW1 = 3;
+    constexpr int DW2 = 7;
+    constexpr int HW = bitwidth(3);
+    constexpr int OW = HW + DW2;
+    ap_uint<OW> packet0 = prefixHeader<HW, ap_int<DW0>, OW, 0>(0);
+    ap_uint<OW> packet1 = prefixHeader<HW, ap_int<DW1>, OW, 1>(0);
+    ap_uint<OW> packet2 = prefixHeader<HW, ap_uint<DW2>, OW, 2>(0);
+    std::tuple<ap_uint<HW>, ap_int<DW0>> split0 = splitHeader<HW, ap_int<DW0>, OW>(packet0);
+    std::tuple<ap_uint<HW>, ap_int<DW1>> split1 = splitHeader<HW, ap_int<DW1>, OW>(packet1);
+    std::tuple<ap_uint<HW>, ap_uint<DW2>> split2 = splitHeader<HW, ap_uint<DW2>, OW>(packet2);
+    bool success = true;
+    if (std::get<0>(split0) != 0) {
+        std::cout << "Expected header 0, got " << std::get<0>(split0) << std::endl;
+        success = false;
+    }
+    if (std::get<0>(split1) != 1) {
+        std::cout << "Expected header 1, got " << std::get<0>(split1) << std::endl;
+        success = false;
+    }
+    if (std::get<0>(split2) != 2) {
+        std::cout << "Expected header 2, got " << std::get<0>(split2) << std::endl;
+        success = false;
+    }
+    return success;
+}
+
 int main() {
     std::cout << "Checking header split/merge functions..." << std::endl;
-    {
-        // Data type
-        constexpr int DWS = 10;
-        using DTS = ap_int<DWS>;
-        constexpr int DWU = 10;
-        using DTU = ap_int<DWS>;
 
-        // Header type
-        constexpr int HW = 3;
-        using HT = ap_uint<HW>;
-
-        // Total packet width
-        constexpr int OW = 20;
-
-        // Index
-        constexpr std::size_t idx = 2;
-
-        bool anyErrors = false;
-        DTS minSigned = -(1 << (DWS-1));
-        DTS maxSigned = (1 << (DWS-1)) - 1;
-        DTU maxUnsigned = (1 << (DWS-1)) - 1;
-
-        std::cout << "Testing signed values from " << minSigned << " to " << maxSigned << std::endl;
-        for (auto i = minSigned; i <= maxSigned; i++) {
-            ap_uint<OW> packet = prefixHeader<HW, DTS, OW, idx>(i);
-            std::tuple<HT, DTS> result = splitHeader<HW, DTS, OW>(packet);
-            if (std::get<0>(result) != idx || std::get<1>(result) != i) {
-                anyErrors = true;
-                std::cout << "Expected DATA=" << i << ", HEADER=" << idx << std::endl;
-                std::cout << "\tGot DATA=" << std::get<1>(result) << "; HEADER=" << std::get<0>(result) << std::endl;
-                std::cout << "\tSigned: True. Datawidth: " << DWS << ". Headerwidth: " << HW << ". Packetwidth: " << OW << "." << std::endl;
-                std::cout << "\tPacket: " << std::bitset<OW>(packet) << std::endl;
-            }
-            if (i == maxSigned) break;
-        }
-
-        std::cout << "Testing unsigned values from " << 0 << " to " << maxUnsigned << std::endl;
-        for (auto i = 0; i <= maxUnsigned; i++) {
-            ap_uint<OW> packet = prefixHeader<HW, DTU, OW, idx>(i);
-            std::tuple<HT, DTU> result = splitHeader<HW, DTU, OW>(packet);
-            if (std::get<0>(result) != idx || std::get<1>(result) != i) {
-                anyErrors = true;
-                std::cout << "Expected DATA=" << i << ", HEADER=" << idx << std::endl;
-                std::cout << "\tGot DATA=" << std::get<1>(result) << "; HEADER=" << std::get<0>(result) << std::endl;
-                std::cout << "\tSigned: False. Datawidth: " << DWU << ". Headerwidth: " << HW << ". Packetwidth: " << OW << "." << std::endl;
-                std::cout << "\tPacket: " << std::bitset<OW>(packet) << std::endl;
-            }
-        }
-        if (anyErrors) {
-            return 1;
-        }
-
-        if (test_mux_demux()) {
-            std::cout << "SUCCESS." << std::endl;
-            return 0;
-        }
-        return 1;
+    if (test_mux_demux() && test_header_prefix() && test_header_prefix2()) {
+        std::cout << "SUCCESS." << std::endl;
+        return 0;
     }
+    return 1;
 }

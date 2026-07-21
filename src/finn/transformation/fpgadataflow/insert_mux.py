@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
+from finn.transformation.fpgadataflow.set_fifo_depths import SplitLargeFIFOs
 from finn.util.deprecated import deprecated
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
@@ -630,7 +631,8 @@ class AdjustMuxDemuxAdjacentFIFOs(Transformation):
             self.set_surrounding_depths(model, node, initial_estimate_depth)
             log.info(f"Adjusted depth of {node.name}: {old_value} -> {new_value}")
 
-        # Rerun synthesis
+        # Split (probably very large) FIFOs, rerun synthesis
+        model = model.transform(SplitLargeFIFOs())
         model = model.transform(PrepareIP(fpgapart=self.part, clk=self.clk))
         model = model.transform(HLSSynthIP())
         return model, False
