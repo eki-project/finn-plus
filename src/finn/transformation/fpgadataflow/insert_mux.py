@@ -771,61 +771,58 @@ class AdjustMuxDemuxAdjacentFIFOs(Transformation):
 
         # For every mux/demux, we need to collect all following nodes and adjust their fifo sizes
         while True:
-            found_node = None
+            any_changed = False
             for node in model.graph.node:
                 if node.op_type in ["CombinedMuxDemux_hls", "Demux_hls"]:
-                    found_node = node
-                    break
-            if found_node is None:
-                break
+                    nodes = self.get_all_downstream_nodes(model, node)
+                    for node in nodes:
+                        if node.op_type == "Mux_hls":
+                            log.warning(
+                                f"Skipping depth adjustment after Mux_hls "
+                                f"node '{node.name}', since this "
+                                "FIFO depth is likely set outside of FINN!"
+                            )
+                            continue
+                        if "StreamingFIFO" in node.op_type:
+                            continue
 
-            any_changed = False
-            nodes = self.get_all_downstream_nodes(model, found_node)
-            for node in nodes:
-                if node.op_type == "Mux_hls":
-                    log.warning(
-                        f"Skipping depth adjustment after Mux_hls node '{node.name}', since this "
-                        "FIFO depth is likely set outside of FINN!"
-                    )
-                    continue
-                if "StreamingFIFO" in node.op_type:
-                    continue
+                        # Delivers successors in output order
+                        suc = model.find_direct_successors(node)
+                        if suc is None:
+                            continue
 
-                # Delivers successors in output order
-                suc = model.find_direct_successors(node)
-                if suc is None:
-                    continue
+                        for i, successor in enumerate(suc):
+                            if "StreamingFIFO" not in successor.op_type:
+                                raise FINNInternalError(
+                                    f"Expected FIFO as {i}th successor of node '{node.name}', "
+                                    f"but found: type '{successor.op_type}', name "
+                                    f"'{successor.name}'"
+                                )
+                            if node.name not in self.data:
+                                raise FINNInternalError(
+                                    f"Could not find FIFO utilization information "
+                                    f"for node '{node.name}' in data!"
+                                )
 
-                for i, successor in enumerate(suc):
-                    if "StreamingFIFO" not in successor.op_type:
-                        raise FINNInternalError(
-                            f"Expected FIFO as {i}th successor of node '{node.name}', "
-                            f"but found: type '{successor.op_type}', name '{successor.name}'"
-                        )
-                    if node.name not in self.data:
-                        raise FINNInternalError(
-                            f"Could not find FIFO utilization information "
-                            f"for node '{node.name}' in data!"
-                        )
-
-                    # Adjust value
-                    # The new value might be smaller due to the Hardware-aware minimization search
-                    # phase of the FIFO sizing algorithm. In this case, we simply
-                    # keep the old value. We also set the inFIFODepths and outFIFODepths of the
-                    # surrounding nodes accordingly
-                    new_depth = self.data[node.name][i]
-                    old_value, new_value = self.set_attribute(successor, "depth", new_depth)
-                    if old_value < new_value:
-                        any_changed = True
-                        self.set_surrounding_depths(model, successor, new_depth)
-                        increase = (new_value / float(old_value)) * 100.0
-                        log.info(
-                            f"Adjusted depth of {node.name}: {old_value} -> "
-                            f"{new_value} ({increase:.2f}% increase)"
-                        )
-                    elif old_value > new_value:
-                        # Adjust back if the previous value was larger
-                        _, _ = self.set_attribute(successor, "depth", old_value)
+                            # Adjust value
+                            # The new value might be smaller due to the Hardware-aware
+                            # minimization search phase of the FIFO sizing algorithm.
+                            # In this case, we simply keep the old value. We also set
+                            # the inFIFODepths and outFIFODepths of the
+                            # surrounding nodes accordingly
+                            new_depth = self.data[node.name][i]
+                            old_value, new_value = self.set_attribute(successor, "depth", new_depth)
+                            if old_value < new_value:
+                                any_changed = True
+                                self.set_surrounding_depths(model, successor, new_depth)
+                                increase = (new_value / float(old_value)) * 100.0
+                                log.info(
+                                    f"Adjusted depth of {node.name}: {old_value} -> "
+                                    f"{new_value} ({increase:.2f}% increase)"
+                                )
+                            elif old_value > new_value:
+                                # Adjust back if the previous value was larger
+                                _, _ = self.set_attribute(successor, "depth", old_value)
 
             # No more transformations to be done
             if not any_changed:
