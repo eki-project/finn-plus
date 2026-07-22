@@ -35,7 +35,7 @@ enable = true
 finn = "finn.interface.run_finn:main"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.12"
+python = ">=3.11,<3.12"
 bitstring = "~4.3.1"
 clize = "~5.0.2"
 gspread = "~3.6.0"
@@ -48,8 +48,8 @@ numpy = "1.26.4"  # numpy<=1.26.4 required by brevitas
 # Upgrading onnxruntime fixes some MaxPool edge case which however requires onnx
 # to be upgraded to produce a consistent model, but this in turn cannot be done
 # due to the model IR version support issue...
-onnx = "1.17.0"
-onnxruntime = "1.20.1"
+onnx = ">=1.17.0"
+onnxruntime = ">=1.20.1"
 pre-commit = "~4.2.0"
 protobuf = "3.20.3"  # protobuf==3.20.3 required by qonnx
 psutil = "~5.9.4"
@@ -94,13 +94,14 @@ setuptools = ">40.8.0,<70.0.0"  # setuptools<70.0.0 required by brevitas
 pytest-xdist = {version = "~3.6.1", extras = ["setproctitle"]}
 cmake = "~4.0.3"
 
-# TODO: Eventually use the PyPI version...
-onnx-passes = { git = "https://github.com/iksnagreb/onnx-passes.git", rev = "3ffb808" }
+onnxscript = ">=0.7.0"
+onnx-ir = ">=0.1.15"
+onnx-passes = "~0.4.1"
 
 termcolor = "^2.5.0"
 rich = "^13.9.4"
 click = "^8.1.8"
-onnxoptimizer = "^0.3.13"
+onnxoptimizer = "^0.4.2"
 mashumaro = {extras = ["yaml"], version = "^3.15"}
 
 [build-system]
