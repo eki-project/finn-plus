@@ -149,13 +149,11 @@ class MuxDemux(HWCustomOp):
                 # Describes the subtype. Round-robin is for example a
                 # statically scheduled variant.
                 "muxVariantSubtype": ("s", True, "round_robin"),
-                "streamNames": ("strings", True, []),
                 "streamWidths": ("ints", True, []),
                 "streamDataTypes": ("strings", True, []),
                 # A shape is stored as a string with "," separating the tuple elements
                 "streamsFoldedShapes": ("strings", True, []),
                 "streamsNormalShapes": ("strings", True, []),
-                "connectionStream": ("s", True, ""),
             }
         )
         return attrs
@@ -164,12 +162,11 @@ class MuxDemux(HWCustomOp):
         """Check that all node attributes have the correct count.
         If not, raise an error.
         """
-        names = len(self.get_stream_names())
         widths = len(self.get_stream_widths())
         dts = len(self.get_stream_dts())
         foldeds = len(cast("list", self.get_nodeattr("streamsFoldedShapes")))
         normals = len(cast("list", self.get_nodeattr("streamsNormalShapes")))
-        if not (names == widths and widths == dts and dts == foldeds and foldeds == normals):
+        if not (widths == dts and dts == foldeds and foldeds == normals):
             raise FINNInternalError(
                 f"(De)Mux operator attributes incorrect. "
                 f"Non equal number of names, widths, datatypes, "
@@ -180,11 +177,7 @@ class MuxDemux(HWCustomOp):
     def get_stream_count(self) -> int:
         """Return the number of connected streams (inputs for mux, outputs for demux)."""
         self.check_correct_nodeattributes()
-        return len(self.get_stream_names())
-
-    def get_stream_names(self) -> list[str]:
-        """Return a list of stream names."""
-        return cast("list[str]", self.get_nodeattr("streamNames"))
+        return len(self.get_stream_widths())
 
     def get_stream_widths(self) -> list[int]:
         """Return a list of all stream widths."""

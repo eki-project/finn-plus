@@ -1,7 +1,10 @@
 """Transformations for inserting and managing muxes and demuxes."""
 # ruff: noqa: D102, D107
+import builtins
+import contextlib
 import json
 import onnx.helper as oh
+from json import JSONDecodeError
 from onnx import NodeProto, ValueInfoProto
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
@@ -17,10 +20,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
+from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.set_fifo_depths import SplitLargeFIFOs
 from finn.util.deprecated import deprecated
-from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
@@ -52,7 +56,7 @@ class InsertMuxDemuxPairByName(Transformation):
     When the insertion is done between nodes on different devices, this implicitly
     multiplexes multiple branches across a single network channel.
 
-    For multiple mux/demux pairs, the transformation has be called multiple times.
+    For multiple mux/demux pairs the transformation has be called multiple times.
     """
 
     def __init__(
@@ -317,14 +321,12 @@ class InsertMuxDemuxPairByName(Transformation):
             outputs=[connector.name],
             muxVariant=self.variant,
             muxVariantSubtype=self.subvariant,
-            streamNames=[f"in{i}_V" for i in range(len(mux_inputs))],
             streamWidths=in_stream_widths,
             streamDataTypes=in_stream_dts,
             streamsFoldedShapes=in_stream_folded_shapes,
             streamsNormalShapes=in_stream_normal_shapes,
             inFIFODepths=in_stream_out_fifodepths,
-            outFIFODepths=[2],
-            connectionStream="out",
+            outFIFODepths=[32],
         )
         demux = oh.make_node(
             "Demultiplexer_hls",
@@ -335,14 +337,12 @@ class InsertMuxDemuxPairByName(Transformation):
             outputs=demux_outputs,
             muxVariant=self.variant,
             muxVariantSubtype=self.subvariant,
-            streamNames=[f"out{i}_V" for i in range(len(demux_outputs))],
             streamWidths=out_stream_widths,
             streamDataTypes=out_stream_dts,
             streamsFoldedShapes=out_stream_folded_shapes,
             streamsNormalShapes=out_stream_normal_shapes,
-            inFIFODepths=[2],
+            inFIFODepths=[32],
             outFIFODepths=out_stream_in_fifodepths,
-            connectionStream="in",
         )
         model.graph.node.append(mux)
         model.graph.node.append(demux)
@@ -465,10 +465,139 @@ class MergeMuxDemuxIntoCombinedOperator(Transformation):
         return model, True
 
 
+class SplitCombinedMuxDemuxIntoSeparateNodes(Transformation):
+    """Inverse of `MergeMuxDemuxIntoCombinedOperator`: Take a CombinedMuxDemux operator
+    (likely after FIFO sizing and FIFO depth adjustment) and split it into two separate nodes.
+
+    Details: Creates two nodes, fills their node attributes, inserts them where the combined mux
+    was before, creates a connection between these nodes (FIFO Depth 32), re-sorts the graph,
+    inserts new FIFOs, re-runs IP preparation and HLS synthesis.
+
+    To give the nodes the correct FIFO size (blocking mux operators),
+    call `AdjustMuxDemuxAdjacentFIFOs` first.
+    """
+
+    def __init__(self, fpgapart: str, clk: float) -> None:
+        super().__init__()
+        self.part = fpgapart
+        self.clk = clk
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        combined = None
+        for node in model.graph.node:
+            if node.op_type == "CombinedMuxDemux_hls":
+                combined = node
+                break
+        if combined is None:
+            return model, False
+
+        log.info(f"Splitting node {combined.name} into separate mux/demux nodes...")
+
+        # Create connector value info
+        connector = oh.make_empty_tensor_value_info("connector")
+        model.graph.value_info.append(connector)
+
+        # Create new nodes
+        op = getCustomOp(combined)
+        mux = oh.make_node(
+            "Multiplexer_hls",
+            domain="finn.custom_op.fpgadataflow.hls",
+            backend="fpgadataflow",
+            name="MuxNode",
+            inputs=combined.input,
+            outputs=[connector.name],
+            muxVariant=op.get_nodeattr("muxVariant"),
+            muxVariantSubtype=op.get_nodeattr("muxVariantSubtype"),
+            streamWidths=op.get_nodeattr("streamWidths"),
+            streamDataTypes=op.get_nodeattr("streamDataTypes"),
+            streamsFoldedShapes=op.get_nodeattr("streamsFoldedShapes"),
+            streamsNormalShapes=op.get_nodeattr("streamsNormalShapes"),
+            inFIFODepths=op.get_nodeattr("inFIFODepths"),
+            outFIFODepths=[32],
+        )
+        demux = oh.make_node(
+            "Demultiplexer_hls",
+            domain="finn.custom_op.fpgadataflow.hls",
+            backend="fpgadataflow",
+            name="DeMuxNode",
+            inputs=[connector.name],
+            outputs=combined.output,
+            muxVariant=op.get_nodeattr("muxVariant"),
+            muxVariantSubtype=op.get_nodeattr("muxVariantSubtype"),
+            streamWidths=op.get_nodeattr("streamWidths"),
+            streamDataTypes=op.get_nodeattr("streamDataTypes"),
+            streamsFoldedShapes=op.get_nodeattr("streamsFoldedShapes"),
+            streamsNormalShapes=op.get_nodeattr("streamsNormalShapes"),
+            inFIFODepths=[32],
+            outFIFODepths=op.get_nodeattr("outFIFODepths"),
+        )
+
+        # Exchange nodes in the graph
+        combined_index = model.get_node_index(combined)
+        assert combined_index is not None
+        model.graph.node.remove(combined)
+        model.graph.node.insert(combined_index, mux)
+        model.graph.node.insert(combined_index + 1, demux)
+
+        # Run necessary transformations
+        model = model.transform(SortGraph())
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
+        model = model.transform(InsertFIFO())
+        model = model.transform(SortGraph())
+        model = model.transform(GiveUniqueNodeNames())
+        model = model.transform(GiveReadableTensorNames())
+        model = model.transform(PrepareIP(self.part, self.clk))
+        model = model.transform(HLSSynthIP())
+        return model, True
+
+
+class MergeSuccessiveFIFOs(Transformation):
+    """Merge successive FIFOs into one."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        first = None
+        second = None
+        for node in model.graph.node:
+            if "StreamingFIFO" in node.op_type:
+                sucs = model.find_direct_successors(node)
+                if sucs is None:
+                    continue
+                if len(sucs) == 1 and "StreamingFIFO" in sucs[0].op_type:
+                    first = node
+                    second = sucs[0]
+        if first is None or second is None:
+            return model, False
+        log.info(f"Merging FIFOs: {first.name}, {second.name}")
+        a_op = getCustomOp(first)
+        b_op = getCustomOp(second)
+        a_op.set_nodeattr(
+            "depth", a_op.get_nodeattr("depth") + b_op.get_nodeattr("depth")  # type: ignore
+        )
+        a_op.set_nodeattr("outFIFODepths", b_op.get_nodeattr("outFIFODepths"))
+        with contextlib.suppress(builtins.BaseException):
+            model.graph.value_info.remove(first.output[0])
+
+        # Cannot directly assign to a nodeproto.output, so we work around it
+        to_remove = list(first.output)
+        for t in to_remove:
+            first.output.remove(t)
+        for new in second.output:
+            first.output.append(new)
+
+        # Remove second FIFO
+        model.graph.node.remove(second)
+        return model, True
+
+
 class AdjustMuxDemuxAdjacentFIFOs(Transformation):
     """In order for blocking mux/demux pairs to work, the demux may never stall,
     and thus the FIFO between the demux and a given layer needs to be as large as measured
-    by the initial (infinite FIFO size) node-connected FIFO simulation.
+    by the initial (infinite FIFO size) node-connected FIFO simulation, as well as all
+    downstream FIFOs too.
 
     NOTE: This is only necessary for blocking Mux/Demux variants to avoid deadlocks,
     which can be caused by a blocking write from a Demux onto a stalled FIFO.
@@ -482,14 +611,14 @@ class AdjustMuxDemuxAdjacentFIFOs(Transformation):
         - FIFOs are placed between Mux/Demux and their surrounding nodes.
 
     If successful:
-        - FIFOs surrounding any Mux/Demux nodes have adjust 'depth' attributes.
+        - All downstream FIFOs from the demux have adjusted depths
         - Node surrounding these FIFOs have adjusted inFIFODepths and outFIFODepths.
         - IP preparation and HLS synthesis has been re-run.
     """
 
-    def __init__(
-        self, fpgapart: str, clk: int, initial_sizes: None | Path | dict[str, int] = None
-    ) -> None:  # noqa
+    def __init__(  # noqa
+        self, fpgapart: str, clk: float, initial_sizes: None | Path | dict[str, list[int]] = None
+    ) -> None:
         """Read the initial FIFO sizes and prepare the change in the graph.
 
         Parameters
@@ -498,26 +627,57 @@ class AdjustMuxDemuxAdjacentFIFOs(Transformation):
                 If None: Try to read the data from the file "initial_fifo_sizes_sim_connected.json",
                 the directory of which is read from the metadata property "fifo_results_dir".
                 If Path: Try to read the data from the given JSON file.
-                If dict: Read the data directly from the given data.
+                If dict: Read the data directly from the given data. (node name -> depth mapping)
                 Notably, the data must not necessarily contain all nodes, only the ones attached
                 to Mux/Demux nodes.
         """
         self.part = fpgapart
         self.clk = clk
         self.data = None
-        if initial_sizes is None:
+        if initial_sizes is None or type(initial_sizes) is Path:
             # Do nothing here, only read when applying the transform.
             pass
-        elif type(initial_sizes) is Path:
-            try:
-                self.data = json.loads(initial_sizes.read_text())
-            except Exception:
-                raise FINNInternalError(
-                    f"Could not read initial FIFO size file: {initial_sizes}. "
-                    f"Make sure that the file is correctly formatted JSON."
-                )
         elif type(initial_sizes) is dict:
             self.data = initial_sizes
+
+    def try_read_from_file(self, p: Path) -> dict[str, list[int]]:
+        """Try to read from file. Expects either a direct mapping (name -> depth), or the format
+        emitted by the FIFO sizing (list of dicts with {name: ..., fifo_utilization: ...}).
+        Raises an error of neither format works. Does not check if the contents are correct.
+        """
+        data = {}
+        try:
+            data = json.loads(p.read_text())
+        except FileNotFoundError:
+            raise FINNInternalError(
+                f"Could not read initial FIFO depth estimates from non-existing file: {p}"
+            ) from None
+        except JSONDecodeError as e:
+            raise FINNInternalError(
+                f"There was an error while parsing the FIFO depth estimate file: {e}"
+            ) from None
+
+        # Figure out the format
+        result = {}
+        if type(data) is list:
+            for layer_info in data:
+                if "name" not in layer_info:
+                    raise FINNInternalError(
+                        "Missing 'name' field in node information in FIFO initial depth file. "
+                        "Expected format: {node0: <depth0>} or {name: 'node0', "
+                        "fifo_utilization: '<depth0>'}"
+                    )
+                if "fifo_utilization" not in layer_info:
+                    raise FINNInternalError(
+                        "Missing 'fifo_utilization' field in node information in "
+                        "FIFO initial depth file. "
+                        "Expected format: {node0: <depth0>} or {name: 'node0', "
+                        "fifo_utilization: '<depth0>'}"
+                    )
+                result[layer_info["name"]] = layer_info["fifo_utilization"]
+        elif type(data) is dict:
+            result = data
+        return result
 
     def get_neighbors(self, model: ModelWrapper, node: NodeProto) -> list[NodeProto]:
         """Return all predecessors and successors of the given node in one list."""
@@ -550,7 +710,21 @@ class AdjustMuxDemuxAdjacentFIFOs(Transformation):
         except AttributeError:
             raise FINNInternalError(
                 f"Node {node.name} has no attribute / attribute for key is not set: {key}."
-            )
+            ) from None
+
+    def get_all_downstream_nodes(self, model: ModelWrapper, origin: NodeProto) -> list[NodeProto]:
+        """Get all downstream nodes from the origin node, including it. Does not necessarily cover
+        all nodes that come "later" then the origin node, since this does not include nodes
+        on parallel branches.
+        """
+        visited = []
+        current = [origin]
+        while len(current) != 0:
+            suc = model.find_direct_successors(current[0])
+            visited.append(current.pop(0))
+            if suc is not None:
+                current += suc
+        return visited
 
     def replace_in_fifo_depth(self, source: NodeProto, target: NodeProto, value: int) -> None:
         """Replace the inFIFODepth at given index of the target node to value."""
@@ -590,46 +764,72 @@ class AdjustMuxDemuxAdjacentFIFOs(Transformation):
                     "to run 'step_set_fifo_depths' with the node-connected simulation first."
                 )
             filename = Path(fifo_results_dir) / "initial_fifo_sizes_sim_connected.json"
-            self.data = json.loads(filename.read_text())
+            self.data = self.try_read_from_file(filename)
 
-        # First collect all relevant nodes: These must be nodes conncted either to a Mux or Demux
-        muxdemux_nodes = model.get_nodes_by_op_type("Multiplexer_hls") + model.get_nodes_by_op_type(
-            "Demultiplexer_hls"
-        )
-        if len(muxdemux_nodes) == 0:
-            log.warning("No Mux/Demux nodes found - skipping FIFO depth adjustment. ")
-            return model, False
+        # merge fifos first, otherwise this becomes difficult (they are split in the end again)
+        model = model.transform(MergeSuccessiveFIFOs())
 
-        to_check: list[NodeProto] = []
-        for node in muxdemux_nodes:
-            to_check += self.get_neighbors(model, node)
+        # For every mux/demux, we need to collect all following nodes and adjust their fifo sizes
+        while True:
+            found_node = None
+            for node in model.graph.node:
+                if node.op_type in ["CombinedMuxDemux_hls", "Demux_hls"]:
+                    found_node = node
+                    break
+            if found_node is None:
+                break
 
-        # Try to look up the estimate values and apply them to the FIFOs
-        for node in to_check:
-            if "StreamingFIFO" not in node.op_type:
-                log.warning(
-                    f"Node {node.name} is connected to a Mux/Demux but "
-                    f"is not a FIFO. Skipping FIFO depth adjustment."
-                )
-                continue
-            if node.name not in self.data.keys():
-                raise FINNUserError(
-                    f"Cannot adjust depth of Mux/Demux adjacent FIFO: {node.name}. "
-                    f"Initial FIFO size estimation for this node is "
-                    f"not available. Make sure 'step_set_fifo_depths' "
-                    f"(in the node-connected simulation variant) was run before."
-                )
-            initial_estimate_depth = self.data[node.name]
-            if type(initial_estimate_depth) is not int:
-                raise FINNInternalError(
-                    f"Initial FIFO depth estimation has incorrect type: expected "
-                    f"int, got {type(initial_estimate_depth).__name__}"
-                )
+            any_changed = False
+            nodes = self.get_all_downstream_nodes(model, found_node)
+            for node in nodes:
+                if node.op_type == "Mux_hls":
+                    log.warning(
+                        f"Skipping depth adjustment after Mux_hls node '{node.name}', since this "
+                        "FIFO depth is likely set outside of FINN!"
+                    )
+                    continue
+                if "StreamingFIFO" in node.op_type:
+                    continue
 
-            # Set the new depth
-            old_value, new_value = self.set_attribute(node, "depth", initial_estimate_depth)
-            self.set_surrounding_depths(model, node, initial_estimate_depth)
-            log.info(f"Adjusted depth of {node.name}: {old_value} -> {new_value}")
+                # Delivers successors in output order
+                suc = model.find_direct_successors(node)
+                if suc is None:
+                    continue
+
+                for i, successor in enumerate(suc):
+                    if "StreamingFIFO" not in successor.op_type:
+                        raise FINNInternalError(
+                            f"Expected FIFO as {i}th successor of node '{node.name}', "
+                            f"but found: type '{successor.op_type}', name '{successor.name}'"
+                        )
+                    if node.name not in self.data:
+                        raise FINNInternalError(
+                            f"Could not find FIFO utilization information "
+                            f"for node '{node.name}' in data!"
+                        )
+
+                    # Adjust value
+                    # The new value might be smaller due to the Hardware-aware minimization search
+                    # phase of the FIFO sizing algorithm. In this case, we simply
+                    # keep the old value. We also set the inFIFODepths and outFIFODepths of the
+                    # surrounding nodes accordingly
+                    new_depth = self.data[node.name][i]
+                    old_value, new_value = self.set_attribute(successor, "depth", new_depth)
+                    if old_value < new_value:
+                        any_changed = True
+                        self.set_surrounding_depths(model, successor, new_depth)
+                        increase = (new_value / float(old_value)) * 100.0
+                        log.info(
+                            f"Adjusted depth of {node.name}: {old_value} -> "
+                            f"{new_value} ({increase:.2f}% increase)"
+                        )
+                    elif old_value > new_value:
+                        # Adjust back if the previous value was larger
+                        _, _ = self.set_attribute(successor, "depth", old_value)
+
+            # No more transformations to be done
+            if not any_changed:
+                break
 
         # Split (probably very large) FIFOs, rerun synthesis
         model = model.transform(SplitLargeFIFOs())
@@ -663,4 +863,5 @@ class InsertMuxDemuxPairForMultiFPGA(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Walk the graph, collect device crossings and insert muxes between them."""
+        raise NotImplementedError()
         return model, False
