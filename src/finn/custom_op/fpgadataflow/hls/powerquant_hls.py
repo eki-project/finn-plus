@@ -329,13 +329,13 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
         """Generate the signature of the C++ top-level function."""
 
         blackboxfunction = f"""
-        void powerquant(
+        void {self.onnx_node.name}(
             hls::stream<hls::vector<XType, SIMD>>& in0_{self.hls_sname()},
             hls::stream<hls::vector<YType, PE>>& out0_{self.hls_sname()}
         )
         """
 
-        self.code_gen_dict["$DOCOMPUTE$"] = [
+        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             *dedent(blackboxfunction).strip().split("\n")
         ]
 

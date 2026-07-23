@@ -157,6 +157,7 @@ class HLSBackend(ABC):
         self.code_gen_dict["$FINNHLSLIB$"] = [str(get_deps_path() / "finn-hlslib")]
         self.code_gen_dict["$ATTENTIONHLSLIB$"] = [str(get_deps_path() / "attention-hlslib")]
         self.code_gen_dict["$MULTITHRESHOLD_HLS$"] = [str(get_deps_path() / "multithreshold-hls/include")]
+        self.code_gen_dict["$POWERQUANT_HLS$"] = [str(get_deps_path() / "powerquant-hls/include")]
 
         template = templates.ipgentcl_template
 
