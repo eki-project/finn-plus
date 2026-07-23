@@ -84,7 +84,7 @@ class PowerQuantMatMul(HWCustomOp):
     def get_normal_output_shape(self, ind=0):
         """Regular output shape as seen by the ONNX standard."""
         *nx, l, k = self.get_nodeattr("input_shape")
-        *nw, k, m = self.get_nodeattr("weight_shape")
+        *nw, k, m = self.get_nodeattr("weights_shape")
 
         # Leading (batch matrix-matrix multiplication) dimensions must match
         assert nx == nw, "Incompatible shapes"
@@ -245,8 +245,8 @@ class PowerQuantMatMul(HWCustomOp):
         dtype = DataType[f"INT{bits}"]
 
         # Update the node attribute and the output tensor type annotation
-        self.set_nodeattr("weights_type", dtype.name)
-        model.set_tensor_datatype(self.onnx_node.input[1], dtype)
+        self.set_nodeattr("output_type", dtype.name)
+        model.set_tensor_datatype(self.onnx_node.output[0], dtype)
 
     def minimize_weight_bit_width(self, model: ModelWrapper):
         """Minimize the weight bitwidth based on the values of the weights"""
