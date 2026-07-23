@@ -60,7 +60,7 @@ FINN_DEPS = {
     ),
     "powerquant-hls": (
         "https://github.com/iksnagreb/powerquant-hls",
-        "557887fbfe8a59130d4d2a523a9807bf9bd3c1a6",
+        "66ca914960bd7a28d32975c8d2af7a17432c42e9",
         False
     )
 }
