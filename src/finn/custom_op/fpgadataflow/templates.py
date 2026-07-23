@@ -140,13 +140,15 @@ set config_attentionlibdir "$ATTENTIONHLSLIB$"
 puts "attention-hlslib dir: $config_attentionlibdir"
 set config_multithresholdhlsdir "$MULTITHRESHOLD_HLS$"
 puts "multithreshold-hls dir: $config_multithresholdhlsdir"
+set config_powerquanthlsdir "$POWERQUANT_HLS$"
+puts "powerquant-hls dir: $config_powerquanthlsdir"
 set config_customhlsdir "$::env(FINN_CUSTOM_HLS)"
 puts "custom HLS dir: $config_customhlsdir"
 set config_toplevelfxn "$TOPFXN$"
 set config_clkperiod $CLKPERIOD$
 
 open_project $config_proj_name
-add_files $config_hwsrcdir/top_$TOPFXN$.cpp -cflags "-std=c++14 -I$config_bnnlibdir -I$config_customhlsdir -I$config_attentionlibdir -I$config_multithresholdhlsdir"
+add_files $config_hwsrcdir/top_$TOPFXN$.cpp -cflags "-std=c++14 -I$config_bnnlibdir -I$config_customhlsdir -I$config_attentionlibdir -I$config_multithresholdhlsdir" -I$config_powerquanthlsdir"
 
 set_top $config_toplevelfxn
 open_solution sol1

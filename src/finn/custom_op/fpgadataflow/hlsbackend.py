@@ -283,6 +283,7 @@ class HLSBackend(ABC):
         #  attention operator? Eventually integrate this into the finn-hlslib?
         builder.append_includes("-I" + str(get_deps_path() / "attention-hlslib"))
         builder.append_includes("-I" + str(get_deps_path() / "multithreshold-hls/include"))
+        builder.append_includes("-I" + str(get_deps_path() / "powerquant-hls/include"))
         builder.append_includes("-I$FINN_CUSTOM_HLS")
         builder.append_includes("-I{}/include".format(os.environ["XILINX_HLS"]))
         builder.append_includes("--std=c++14")

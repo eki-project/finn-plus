@@ -65,6 +65,10 @@ import finn.custom_op.fpgadataflow.hls.unsqueeze_hls
 # operation
 import finn.custom_op.fpgadataflow.hls.multithreshold_hls
 
+# Import the submodule containing the specialization of the PowerQuantMatMul
+# operation
+import finn.custom_op.fpgadataflow.hls.powerquant_hls
+
 from finn.custom_op.fpgadataflow.hls.addstreams_hls import AddStreams_hls
 from finn.custom_op.fpgadataflow.hls.attention_heads_hls import (
     MergeMultiHeads_hls,

@@ -63,6 +63,9 @@ import finn.custom_op.fpgadataflow.unsqueeze
 # Import the submodule containing the MultiThreshold operation
 import finn.custom_op.fpgadataflow.multithreshold
 
+# Import the submodule containing the PowerQuantMatMul operation
+import finn.custom_op.fpgadataflow.powerquant
+
 from finn.custom_op.fpgadataflow.addstreams import AddStreams
 from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
 from finn.custom_op.fpgadataflow.attention_heads import MergeMultiHeads, SplitMultiHeads
