@@ -71,7 +71,7 @@ from finn.builder.build_dataflow_config import (
     ShellFlowType,
     VerificationStepType,
 )
-from finn.builder.passes import step_passes_frontend
+from finn.builder.passes import step_passes_frontend, step_infer_qonnx_datatypes
 from finn.core.onnx_exec import execute_onnx
 from finn.core.rtlsim_exec import rtlsim_exec
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
@@ -428,6 +428,10 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(to_hw.InferBinaryMatrixVectorActivation())
     # needed for non-bipolar MatMul layers
     model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
+    model = model.transform(to_hw.InferPowerQuantMatMul())
+    model = model.transform(to_hw.InferElementwiseBinaryOperation(
+        to_hw.InferElementwiseBinaryOperation.reject_output_dequant
+    ))
     # TopK to LabelSelect
     model = model.transform(to_hw.InferLabelSelectLayer())
     # input quantization (if any) as standalone threshold
@@ -1161,6 +1165,7 @@ def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig):
 #: map step name strings to step functions
 build_dataflow_step_lookup = {
     "step_passes_frontend": step_passes_frontend,
+    "step_infer_qonnx_datatypes": step_infer_qonnx_datatypes,
     "step_qonnx_to_finn": step_qonnx_to_finn,
     "step_tidy_up": step_tidy_up,
     "step_streamline": step_streamline,

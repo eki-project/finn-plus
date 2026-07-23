@@ -2535,3 +2535,85 @@ class InferMultiThreshold(Transformation):
         # Return the transformed model and indicate whether the graph actually
         # has been transformed
         return model, graph_modified
+
+
+class InferPowerQuantMatMul(Transformation):
+    """Converts PowerQuantMatMul operator to the corresponding HWCustomOp."""
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Apply the transform to convert PowerQuantMatMul hardware."""
+
+        # Get the model graph out of the model wrapper object
+        graph = model.graph
+        # Keep track of whether the graph has been modified
+        graph_modified = False
+
+        # Transplant each PowerQuantMatMul operator into the custom domain
+        for index, node in enumerate(graph.node):
+            if node.op_type == "PowerQuantMatMul":
+                # Skip already converted nodes
+                if node.domain == "finn.custom_op.fpgadataflow":
+                    continue
+
+                # There must be a constant weights tensor as the second input
+                if (weights := model.get_initializer(node.input[1])) is None:
+                    continue
+
+                # There must be a constant scalar power as the third input
+                if (alpha := model.get_initializer(node.input[2])) is None:
+                    continue
+
+                if np.prod(model.get_tensor_shape(node.input[2])) != 1:
+                    continue
+
+                # Remove the alpha input from the input list
+                node.input.remove(node.input[2])
+
+                # Transplant this operator into our FINN domain
+                node.domain = "finn.custom_op.fpgadataflow"  # noqa: Duplicate
+                # Now we can get the CustomOp wrapper instance providing easier
+                # attribute access
+                inst: HWCustomOp = getCustomOp(node)
+                # Set the backend attribute to mark this an operation supported
+                # to be implemented on an FPGA by FINN
+                inst.set_nodeattr("backend", "fpgadataflow")
+
+                # Collect node attributes required by the FINN HWCustomOp
+                attrs = {
+                    # Shape and QONNX type of the static weight tensor
+                    "weights_shape": weights.shape,
+                    "weights_type": model.get_tensor_datatype(node.input[1]),
+
+                    # Shape and QONNX type of the dynamic input tensor
+                    "input_shape": model.get_tensor_shape(node.input[0]),
+                    "input_type": model.get_tensor_datatype(node.input[0]),
+
+                    # QONNX type of the output tensor (shape is derived from the
+                    # inputs)
+                    "output_type": model.get_tensor_datatype(node.output[0]),
+
+                    # The power of the PowerQuant weight/input transformation
+                    "alpha": 1.0 / float(alpha.item())
+                }
+
+                # Convert all QONNX DataType instances to the string
+                # representation of the datatype name
+                for key, value in attrs.items():
+                    if isinstance(value, BaseDataType):
+                        attrs[key] = value.name
+
+                # Annotate the HWCustomOp instance with the collected attributes
+                for key, value in attrs.items():
+                    inst.set_nodeattr(key, value)
+
+                # Consider the graph to be modified after transplanting the node
+                graph_modified = True
+
+        # Re-do shape and data type annotations after potential changes to the
+        # model graph
+        model = model.transform(InferShapes())
+        model = model.transform(InferDataTypes())
+
+        # Return the transformed model and indicate whether the graph actually
+        # has been transformed
+        return model, graph_modified

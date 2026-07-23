@@ -10,17 +10,10 @@ from onnx_passes.passes import collect
 # Utility testing IR values for being constant (or initializers) tensors
 from onnx_passes.passes.util import is_constant
 
-# Makes custom QONNX import and inlining passes available
-import onnx_passes.passes.imports.qonnx  # noqa: Used indirectly via registry
-import onnx_passes.passes.inline.qonnx  # noqa: Used indirectly via registry
-
 # ONNX Passes provides onnxruntime-executable reference implementations of
 # custom operators which we need to transplant back into the QONNX domain
-from onnx_passes.ops import DOMAIN as CUSTOM_DOMAIN, inject_custom_ops
+from onnx_passes.ops import DOMAIN as CUSTOM_DOMAIN, link_ops
 from onnx_passes.ops.qonnx import DOMAIN as QONNX_DOMAIN
-
-# Make custom Im2Col operator available for convolution lowering
-from onnx_passes.ops.im2col import Im2Col  # noqa: Used indirectly via registry
 
 # QONNX representation wrapper of ONNX models is used on the interface side to
 # bridge between the FINN and the new ONNX IR representation
@@ -113,7 +106,7 @@ def _apply_passes(model: ir.Model, passes: list[str], cfg: dict, state: dict):
     passes = ir.passes.PassManager(passes=passes, steps=1)
     # Inject custom operator ONNX functions into the model before applying the
     # configured pass sequence
-    return passes(inject_custom_ops(model)).model
+    return passes(link_ops(model)).model
 
 
 def prepare(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
@@ -379,3 +372,8 @@ def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = export(model, cfg)
 
     return model
+
+
+def step_infer_qonnx_datatypes(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Build step QONNX datatype inference from values."""
+    return _infer_qonnx_datatypes(model)
