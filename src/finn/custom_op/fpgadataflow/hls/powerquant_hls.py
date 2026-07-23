@@ -114,7 +114,7 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
         """
 
         self.code_gen_dict["$GLOBALS$"] = [
-            *dedent(includes.strip()).split("\n")
+            *dedent(includes).strip().split("\n")
         ]
 
     def defines(self, var):
@@ -125,8 +125,8 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
         using MatMul = PowerQuantMatMul<{{max}}, {{integer}}, {{fractional}}>;
         
         // Set the input, weight and output types and shapes
-        using XType = ap_int<{{bits_x}}+1>;
-        using WType = ap_int<{{bits_w}}>;
+        using XType = {{x_type}};
+        using WType = {{w_type}};
         using YType = ap_int<MatMul::Accumulator<{{shape_x[-1]}}>::width>;
         
         using XShape = Shape<{{render_array(shape_x, no_fmt=True)}}>;
@@ -167,22 +167,47 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
         # input expected
         integer: int = int(np.ceil(np.log2(maximum ** alpha)))
 
+        # The HLS implementation always expects 3-D shapes. If the shapes are
+        # shorter or longer, we can expand/flatten as long as they are otherwise
+        # compatible.
+        shape_x = self.get_normal_input_shape(0)
+        shape_w = self.get_normal_input_shape(1)
+        shape_y = self.get_normal_output_shape(0)
+
+        while len(shape_x) < 3:
+            shape_x = (1, *shape_x)
+
+        if len(shape_x) > 3:
+            shape_x = (np.prod(shape_x[:-2], *shape_x[-2:]))
+
+        while len(shape_w) < 3:
+            shape_w = (1, *shape_w)
+
+        if len(shape_w) > 3:
+            shape_w = (np.prod(shape_w[:-2], *shape_w[-2:]))
+
+        while len(shape_y) < 3:
+            shape_y = (1, *shape_y)
+
+        if len(shape_y) > 3:
+            shape_y = (np.prod(shape_y[:-2], *shape_y[-2:]))
+
         defines = Template(dedent(defines)).render(
             max=maximum,
             integer=integer,
             fractional=fractional,
-            bits_x=input_type.bitwidth(),
-            bits_w=weight_type.bitwidth(),
-            shape_x=self.get_normal_input_shape(0),
-            shape_w=self.get_normal_input_shape(1),
-            shape_y=self.get_normal_output_shape(0),
+            x_type=input_type.get_hls_datatype_str(),
+            w_type=weight_type.get_hls_datatype_str(),
+            shape_x=shape_x,
+            shape_w=shape_w,
+            shape_y=shape_y,
             SIMD=self.simd,
             PE=self.pe,
             render_array=render_array
         )
 
         self.code_gen_dict["$DEFINES$"] = [
-            *dedent(defines.strip()).split("\n")
+            *dedent(defines).strip().split("\n")
         ]
 
     def read_npy_data(self):
@@ -199,7 +224,7 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
 
         # Insert a single npy to stream into the C++ node execution template
         self.code_gen_dict["$READNPYDATA$"] = [
-            f'npy2vectorstream<{dtype}, float, {self.pe}>('
+            f'npy2vectorstream<{dtype}, float, {self.simd}>('
             f'  "{os.path.join(code_gen_dir, "input_0.npy")}", in0_V, false'
             f');'
         ]
@@ -235,6 +260,7 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
 
         # Get the shape and type configuration of the operator to generate the
         # HLS C++ types and shape containers
+        simd = self.get_nodeattr("SIMD")
         pe = self.get_nodeattr("PE")
 
         otype = self.get_output_datatype(ind=0).get_hls_datatype_str()
@@ -242,8 +268,8 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
 
         # Generate a single input and a single output stream
         self.code_gen_dict["$STREAMDECLARATIONS$"] = [
-            f"hls::stream<hls::vector<{xtype}, {pe}>> in0_{self.hls_sname()};",
-            f"hls::stream<hls::vector<{otype}, {pe}>> out0_{self.hls_sname()};",
+            f"hls::stream<hls::vector<{xtype},{simd}>> in0_{self.hls_sname()};",
+            f"hls::stream<hls::vector<{otype},{pe}>> out0_{self.hls_sname()};",
         ]
 
     def generate_params(self, model: ModelWrapper, path):
@@ -272,7 +298,7 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
         };
         """
 
-        params = Template(params).render(
+        params = Template(dedent(params).strip()).render(
             alpha=self.get_nodeattr("alpha"),
             weights=weights,
             render_array=render_array
@@ -282,7 +308,7 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
         # parameters as C++ code
         with open(f"{path}/params.hpp", "w") as file:
             # Write lines of C++ code separated by newlines to the file
-            file.write(dedent(params.strip()))
+            file.write(params)
 
     def docompute(self):
         """Generate C++ code for the computation part of the operator."""
@@ -296,7 +322,7 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
         """
 
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            *dedent(docompute.strip()).split("\n")
+            *dedent(docompute).strip().split("\n")
         ]
 
     def blackboxfunction(self):
@@ -310,7 +336,7 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
         """
 
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            *dedent(blackboxfunction.strip()).split("\n")
+            *dedent(blackboxfunction).strip().split("\n")
         ]
 
     def pragmas(self):
