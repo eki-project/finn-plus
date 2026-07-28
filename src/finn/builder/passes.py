@@ -353,7 +353,7 @@ def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     model = _apply_passes(model, passes, cfg, state)
 
     # Export custom operators to the FINN representation
-    model = _export_thresholds_to_finn(model)
+    # model = _export_thresholds_to_finn(model)
     model = _export_im2col_to_finn(model)
 
     # Finalize the data layout annotations and get rid of custom functions:
