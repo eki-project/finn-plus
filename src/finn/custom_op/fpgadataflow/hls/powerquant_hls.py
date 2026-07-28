@@ -314,7 +314,6 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
         """Generate C++ code for the computation part of the operator."""
 
         docompute = f"""
-        #pragma HLS dataflow
         #pragma HLS bind_storage variable=weights type=ROM_NP impl=LUTRAM
             matmul.apply<XShape, WShape, YShape, SIMD, PE>(
                 in0_{self.hls_sname()}, weights, out0_{self.hls_sname()}
