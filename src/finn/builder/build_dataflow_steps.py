@@ -34,6 +34,7 @@ import json
 import numpy as np
 import os
 import shutil
+import yaml
 from copy import deepcopy
 from functools import partial
 from qonnx.core.modelwrapper import ModelWrapper
@@ -566,6 +567,102 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(CompileCppSim())
         model = model.transform(SetExecMode("cppsim"))
         verify_step(model, cfg, "folded_hls_cppsim", need_parent=True)
+    return model
+
+
+
+def step_apply_folding_yaml(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Apply the folding configuration file onto the model to set folding (parallelization)
+    and other attributes, if config file is specified."""
+
+    # If a folding configuration file is given, load and parse YAML and apply to
+    # all nodes in the model
+    if cfg.folding_config_file is not None:
+        with (open(cfg.folding_config_file, "r") as file):
+            config = yaml.safe_load(file)
+
+        for index, node in enumerate(model.graph.node):
+            # A node should not be named "defaults" or "globals"...
+            assert node.name not in {"defaults", "globals"}, \
+                f"Node has reserved name '{node.name}'"
+
+            # Convert this to the custom-op instance for easy access to node
+            # attributes
+            inst = getCustomOp(node)
+
+            # Apply global model wide default configurations to the node
+            if "globals" in config:
+                # Run over all default options to be applied to this node
+                for key, value in config["globals"].items():
+                    # Only set if the attribute is accepted by the operator
+                    if key in inst.get_nodeattr_types():
+                        # Set the nodes attribute to the default option value
+                        inst.set_nodeattr(key, value)
+
+            # Apply the per operator type default configurations to the node
+            if "defaults" in config and node.op_type in config["defaults"]:
+                # Run over all default options to be applied to this node
+                for key, value in config["defaults"][node.op_type].items():
+                    # Set the nodes attribute to the default option value
+                    inst.set_nodeattr(key, value)
+
+            # If there is an individual, node-specific configuration apply
+            # this next, potentially overriding the defaults set above
+            if node.name in config:
+                # Run over all node-specific options to be applied to this
+                # node
+                for key, value in config[node.name].items():
+                    # Set the nodes attribute to the option value
+                    inst.set_nodeattr(key, value)
+
+    # Update cylce estimates
+    model = model.transform(AnnotateCycles())
+
+    # Start collecting the configuration from the model graph as a
+    # dictionary
+    config = {"globals": {}, "defaults": {}}
+
+    # Iterate all nodes in the graph keeping track of the index
+    for index, node in enumerate(model.graph.node):
+        # Convert this to the custom-op instance for easy access to node
+        # attributes
+        inst = getCustomOp(node)
+        # Prepare the node-specific configuration entry for this node
+        config[node.name] = {}
+        # Collect attribute values for all specified hardware attributes
+        for key in inst.get_nodeattr_types():
+            # Some hardware attributes may not be present for all nodes or
+            # op-types, this will be signaled via exception
+            try:
+                # Do not extract the configuration if it still has the
+                # default value
+                if np.any(inst.get_nodeattr(key)
+                          != inst.get_nodeattr_def(key)[2]):
+                    # Try extracting the configuration value from the node
+                    # custom-op instance
+                    config[node.name][key] = inst.get_nodeattr(key)
+            # Missing attributes are signaled via AttributeError
+            except AttributeError:
+                pass
+        # Cleanup: If no attribute is present for this node, there is no
+        # need to keep this in the configuration dictionary as there is
+        # nothing to be restored later
+        if not config[node.name]:
+            # Remove the entry form the configuration dictionary
+            del config[node.name]
+
+    # Create/Open a YAML file to store the configuration for later reuse
+    with open(cfg.output_dir + "/folding_config.yaml", "w") as file:
+        yaml.safe_dump(config, file)
+
+    if VerificationStepType.FOLDED_HLS_CPPSIM in cfg._resolve_verification_steps():
+        # prepare cppsim
+        model = model.transform(PrepareCppSim())
+        model = model.transform(CompileCppSim())
+        model = model.transform(SetExecMode("cppsim"))
+        verify_step(model, cfg, "folded_hls_cppsim", need_parent=True)
+
+    # Model with applied auto and manual folding configuration
     return model
 
 
@@ -1174,6 +1271,7 @@ build_dataflow_step_lookup = {
     "step_create_dataflow_partition": step_create_dataflow_partition,
     "step_target_fps_parallelization": step_target_fps_parallelization,
     "step_apply_folding_config": step_apply_folding_config,
+    "step_apply_folding_yaml": step_apply_folding_yaml,
     "step_minimize_bit_width": step_minimize_bit_width,
     "step_generate_estimate_reports": step_generate_estimate_reports,
     "step_hw_codegen": step_hw_codegen,
