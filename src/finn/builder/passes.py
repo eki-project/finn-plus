@@ -14,6 +14,8 @@ from onnx_passes.passes.util import is_constant
 # custom operators which we need to transplant back into the QONNX domain
 from onnx_passes.ops import DOMAIN as CUSTOM_DOMAIN, link_ops
 from onnx_passes.ops.qonnx import DOMAIN as QONNX_DOMAIN
+from onnx_passes.passes.imports import qonnx
+from onnx_passes.passes.inline import qonnx
 
 # QONNX representation wrapper of ONNX models is used on the interface side to
 # bridge between the FINN and the new ONNX IR representation
@@ -356,7 +358,7 @@ def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
     # Finalize the data layout annotations and get rid of custom functions:
     # more of a workaround as qonnx execution does not understand these...
-    model = _apply_passes(model, ["absorb-layouts", "inline-functions"], {}, {})
+    model = _apply_passes(model, ["absorb-layouts"], {}, {})
 
     # Serialize the resulting ONNX IR format back to ONNX proto wrapped by QONNX
     # and add quantization datatype annotations

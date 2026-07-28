@@ -200,7 +200,7 @@ def rtlsim_exec_cppxsi(
         fnode_inst = getCustomOp(first_node)
         top_ind = list(first_node.input).index(iname)
         ishape_folded = fnode_inst.get_folded_input_shape(ind=top_ind)
-        instream_iters.append(np.prod(ishape_folded[:-1]))
+        instream_iters.append(int(np.prod(ishape_folded[:-1])))
     for top_out in model.graph.output:
         oname = top_out.name
         last_node = model.find_producer(oname)
@@ -208,7 +208,7 @@ def rtlsim_exec_cppxsi(
         lnode_inst = getCustomOp(last_node)
         top_ind = list(last_node.output).index(oname)
         oshape_folded = lnode_inst.get_folded_output_shape(ind=top_ind)
-        outstream_iters.append(np.prod(oshape_folded[:-1]))
+        outstream_iters.append(int(np.prod(oshape_folded[:-1])))
 
     # retrieve the number of inputs from execution_context
     n_inferences = execution_context[model.graph.input[0].name]
@@ -224,7 +224,7 @@ def rtlsim_exec_cppxsi(
     instream_names = [x[0] for x in ifnames["s_axis"]]
     outstream_names = [x[0] for x in ifnames["m_axis"]]
     instream_descrs = [
-        (instream_names[i], instream_iters[i], instream_iters[i] + throttle_cycles)
+        (instream_names[i], instream_iters[i], instream_iters[i] + int(throttle_cycles))
         for i in range(len(instream_names))
     ]
     instream_descrs_str = str(instream_descrs).replace("[", "").replace("]", "")
