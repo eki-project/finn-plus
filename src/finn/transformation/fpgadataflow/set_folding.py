@@ -164,9 +164,12 @@ class SetFolding(Transformation):
                 continue
             op_type = node.op_type
             node_inst = getCustomOp(node)
-            if op_type in ["MVAU_hls", "MVAU_rtl"]:
-                max_simd = node_inst.get_nodeattr("MW")
-                max_pe = node_inst.get_nodeattr("MH")
+            if op_type in ["MVAU_hls", "MVAU_rtl", "PowerQuantMatMul_hls"]:
+                try:
+                    max_simd = node_inst.get_nodeattr("MW")
+                    max_pe = node_inst.get_nodeattr("MH")
+                except AttributeError:
+                    max_simd, max_pe = node_inst.get_normal_input_shape(1)
                 node_inst.set_nodeattr("PE", 1)
                 node_inst.set_nodeattr("SIMD", 1)
                 # increase SIMD until either we meet
