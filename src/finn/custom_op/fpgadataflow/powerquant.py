@@ -138,7 +138,13 @@ class PowerQuantMatMul(HWCustomOp):
 
     def get_exp_cycles(self):
         """Expected cycles for the operation given the folding."""
-        return np.prod(self.get_folded_output_shape()[:-1])
+        *nx, l, k = self.get_nodeattr("input_shape")
+        *nw, k, m = self.get_nodeattr("weights_shape")
+
+        # Leading (batch matrix-matrix multiplication) dimensions must match
+        assert nx == nw, "Incompatible shapes"
+
+        return int(np.prod(nx) * l * k * m // self.simd // self.pe)
 
     def infer_node_datatype(self, model: ModelWrapper):
         """Infers the datatype of the node output from the model graph."""
@@ -241,7 +247,7 @@ class PowerQuantMatMul(HWCustomOp):
         # Required accumulator size, mirrors size derivation in powerquant.hpp,
         # without specifying the fractional part here as FINN/streamlining
         # treats this as and integer with implicit scale.
-        bits = int(np.ceil(np.log2(k)) + 2 * integer + fractional)
+        bits = int(np.ceil(np.log2(k)) + 2 * integer + fractional + 1)
         dtype = DataType[f"INT{bits}"]
 
         # Update the node attribute and the output tensor type annotation
