@@ -41,7 +41,7 @@ from pathlib import Path
 from qonnx.core.datatype import BaseDataType
 from qonnx.custom_op.base import CustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from finn.util.basic import get_liveness_threshold_cycles, is_versal
 from finn.util.exception import FINNInternalError
@@ -76,8 +76,8 @@ class HWCustomOp(CustomOp):
         self,
     ) -> dict[
         str,
-        tuple[str, bool, int | float | str | bool | npt.NDArray | list]
-        | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+        tuple[str, bool, int | float | str | bool | np.ndarray | list]
+        | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
     ]:
         """Return node attribute types for HWCustomOp.
 
@@ -317,7 +317,7 @@ class HWCustomOp(CustomOp):
 
         self.set_nodeattr("cycles_rtlsim", total_cycle_count)
 
-    def verify_node(self) -> None:
+    def verify_node(self) -> Any:
         """Can be implemented to verify that all attributes the node needs
         are there and that particular attributes are set correctly. Can also
         check if the number of inputs is equal to the expected number."""

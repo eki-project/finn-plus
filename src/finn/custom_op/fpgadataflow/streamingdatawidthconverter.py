@@ -27,23 +27,41 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Module for streamingdatawidthconverter."""
+
 import math
 import numpy as np
-from qonnx.core.datatype import DataType
+from numpy._typing._shape import _Shape
+from qonnx.core.datatype import BaseDataType, DataType
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+    from qonnx.core.modelwrapper import ModelWrapper
 
 # does not do anything at the ONNX node-by-node level, and input-output
 # tensor shapes are the same. performs data width conversion at the rtlsim level
 
 
 class StreamingDataWidthConverter(HWCustomOp):
-    """Abstraction layer for HW implementation of StreamingDataWidthConverter"""
+    """Abstraction layer for HW implementation of StreamingDataWidthConverter."""
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(
+        self,
+    ) -> dict[
+        str,
+        tuple[str, bool, int | float | str | bool | np.ndarray | list]
+        | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+    ]:
         """Return nodeattr types."""
-        my_attrs = {
+        my_attrs: dict[
+            str,
+            tuple[str, bool, int | float | str | bool | np.ndarray | list]
+            | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+        ] = {
             # shape of input tensor
             "inShape": ("ints", True, []),
             # shape of output tensor, usually the same as inShape,
@@ -58,113 +76,105 @@ class StreamingDataWidthConverter(HWCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
-        return DataType[self.get_nodeattr("dataType")]
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of input."""
+        return DataType[cast("str", self.get_nodeattr("dataType"))]
 
-    def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output."""
-        return DataType[self.get_nodeattr("dataType")]
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of output."""
+        return DataType[cast("str", self.get_nodeattr("dataType"))]
 
-    def get_normal_input_shape(self, ind=0):
+    def get_normal_input_shape(self, ind: int = 0) -> list[int]:  # noqa: ARG002
         """Return normal input shape."""
-        ishape = self.get_nodeattr("inShape")
+        ishape = cast("list[int]", self.get_nodeattr("inShape"))
         return ishape
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> list[int]:  # noqa: ARG002
         """Return normal output shape."""
-        oshape = self.get_nodeattr("outShape")
+        oshape = cast("list[int]", self.get_nodeattr("outShape"))
         return oshape
 
-    def get_iowidth_lcm(self):
+    def get_iowidth_lcm(self) -> int:
         """Return iowidth lcm."""
-        iwidth = self.get_nodeattr("inWidth")
-        owidth = self.get_nodeattr("outWidth")
+        iwidth = cast("int", self.get_nodeattr("inWidth"))
+        owidth = cast("int", self.get_nodeattr("outWidth"))
         return int(np.lcm(iwidth, owidth))
 
-    def needs_lcm(self):
+    def needs_lcm(self) -> bool:
         """Return needs lcm."""
-        iwidth = self.get_nodeattr("inWidth")
-        owidth = self.get_nodeattr("outWidth")
+        iwidth = cast("int", self.get_nodeattr("inWidth"))
+        owidth = cast("int", self.get_nodeattr("outWidth"))
         maxwidth = max(iwidth, owidth)
         minwidth = min(iwidth, owidth)
         return maxwidth % minwidth != 0
 
-    def check_divisible_iowidths(self):
+    def check_divisible_iowidths(self) -> None:
         """Return check divisible iowidths."""
-        pass
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> _Shape:  # noqa: ARG002
         """Return folded input shape."""
         self.check_divisible_iowidths()
-        iwidth = self.get_nodeattr("inWidth")
+        iwidth = cast("int", self.get_nodeattr("inWidth"))
         ishape = self.get_normal_input_shape()
-        dummy_t = np.random.randn(*ishape)
+        dummy_t = np.empty(ishape)
         ibits = self.get_input_datatype().bitwidth()
-        assert (
-            iwidth % ibits == 0
-        ), """DWC input width must be divisible by
-        input element bitwidth"""
+        if iwidth % ibits != 0:
+            raise FINNInternalError(
+                f"DWC input width {iwidth} must be divisible by input element bitwidth {ibits}"
+            )
         ielems = int(iwidth // ibits)
         ichannels = ishape[-1]
-        new_shape = []
-        for i in ishape[:-1]:
-            new_shape.append(i)
+        new_shape = list(ishape[:-1])
         new_shape.append(int(ichannels // ielems))
         new_shape.append(ielems)
         dummy_t = dummy_t.reshape(new_shape)
         return dummy_t.shape
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> _Shape:  # noqa: ARG002
         """Return folded output shape."""
         self.check_divisible_iowidths()
-        owidth = self.get_nodeattr("outWidth")
+        owidth = cast("int", self.get_nodeattr("outWidth"))
         oshape = self.get_normal_output_shape()
-        dummy_t = np.random.randn(*oshape)
+        dummy_t = np.empty(oshape)
         obits = self.get_output_datatype().bitwidth()
-        assert (
-            owidth % obits == 0
-        ), """DWC output width must be divisible by
-        input element bitwidth"""
+        if owidth % obits != 0:
+            raise FINNInternalError(
+                f"DWC output width {owidth} must be divisible by input element bitwidth {obits}"
+            )
         oelems = int(owidth // obits)
         ochannels = oshape[-1]
-        new_shape = []
-        for i in oshape[:-1]:
-            new_shape.append(i)
+        new_shape = list(oshape[:-1])
         new_shape.append(int(ochannels // oelems))
         new_shape.append(oelems)
         dummy_t = dummy_t.reshape(new_shape)
 
         return dummy_t.shape
 
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return instream width."""
-        in_width = self.get_nodeattr("inWidth")
+        in_width = cast("int", self.get_nodeattr("inWidth"))
         return in_width
 
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return outstream width."""
-        out_width = self.get_nodeattr("outWidth")
+        out_width = cast("int", self.get_nodeattr("outWidth"))
         return out_width
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: "ModelWrapper") -> None:
         """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
-            warn_str = "inputDataType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_input_datatype()),
-                str(idt),
+            log.warning(
+                f"inputDataType changing for {node.name}: {self.get_input_datatype()!s} -> {idt!s} "
             )
-            log.warning(warn_str)
         self.set_nodeattr("dataType", idt.name)
         # data type stays the same
         model.set_tensor_datatype(node.output[0], idt)
 
-    def verify_node(self):
+    def verify_node(self) -> list[str]:
         """Verify node."""
-        info_messages = []
+        info_messages: list[str] = []
         # verify that "backend" is set to "fpgadataflow"
         backend_value = self.get_nodeattr("backend")
         if backend_value == "fpgadataflow":
@@ -180,20 +190,26 @@ class StreamingDataWidthConverter(HWCustomOp):
 
         return info_messages
 
-    def execute_node(self, context, graph):
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"
+    ) -> None:  # noqa: ARG002
         """Execute node."""
         node = self.onnx_node
         exp_shape = self.get_normal_input_shape()
         inp = context[node.input[0]]
-        assert str(inp.dtype) == "float32", "Input datatype is not float32"
-        assert inp.shape == tuple(exp_shape), "Input shape does not match expected shape."
+        if str(inp.dtype) != "float32":
+            raise FINNInternalError(f"Input datatype for {node.name} is not float32")
+        if inp.shape != tuple(exp_shape):
+            raise FINNInternalError(
+                f"Input shape for {node.name} does not match expected shape ({exp_shape})"
+            )
 
         output = inp
         output = np.asarray([output], dtype=np.float32).reshape(*exp_shape)
         context[node.output[0]] = output
 
-    def lut_estimation(self):
-        """Calculates resource estimations for LUTs"""
+    def lut_estimation(self) -> int:
+        """Calculate resource estimations for LUTs."""
         inw = self.get_instream_width()
         outw = self.get_outstream_width()
 
