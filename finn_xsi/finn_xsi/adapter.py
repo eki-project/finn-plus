@@ -133,7 +133,7 @@ def compile_sim_obj(
         cmd_xvlog,
         cwd=sim_out_dir,
         print_stdout=False,
-        timeout=240,
+        timeout=None,  # xvlog can take a long time for large designs, so no timeout
         start_new_session=True,
         kill_process_group=True,
     )
@@ -141,7 +141,7 @@ def compile_sim_obj(
         cmd_xelab,
         cwd=sim_out_dir,
         print_stdout=False,
-        timeout=300,
+        timeout=None,  # xelab can take a long time for large designs, so no timeout
         start_new_session=True,
         kill_process_group=True,
     )

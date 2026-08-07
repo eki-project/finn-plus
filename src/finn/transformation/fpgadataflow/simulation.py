@@ -1,6 +1,7 @@
 """Manages the Simulation superclass as well as general simulation related transforms."""
 
 import json
+import os
 import pandas as pd
 import socket
 import subprocess
@@ -189,6 +190,7 @@ class SimulationController:
         console: Console,
         poll_interval: float = 1.0,
         with_progressbar: bool = True,
+        enable_core_pinning: bool = False,
     ) -> None:
         """Create a new controller, without starting the simulation.
 
@@ -199,6 +201,7 @@ class SimulationController:
             console: The rich.console.Console to print with.
             poll_interval: How long the wait between checks of the processes stdout/stdin is.
             with_progressbar: Whether or not to display a progressbar for the cycle count.
+            enable_core_pinning: Whether to pin each simulation process to a CPU core.
         """
         if len(names) != len(binaries):
             raise FINNInternalError(
@@ -217,6 +220,16 @@ class SimulationController:
         self.running = 0
         self.total = len(names)
         self.logdir = Path(make_build_dir("simulation_logfiles_"))
+        self.enable_core_pinning = enable_core_pinning
+        self.available_cpus = self._get_available_cpus_for_pinning()
+
+        if self.available_cpus is not None:
+            log.info(
+                "[SimulationController] Core pinning enabled on "
+                f"{len(self.available_cpus)} available CPU(s)."
+            )
+        elif self.enable_core_pinning:
+            log.info("[SimulationController] Core pinning disabled; running simulations unpinned.")
 
         # Socket communication management
         self.processes: list[tuple[subprocess.Popen, Any, Any]] = []
@@ -225,6 +238,41 @@ class SimulationController:
         # Early termination flag
         self.should_stop = False
         self.stop_lock = Lock()
+
+    def _get_available_cpus_for_pinning(self) -> list[int] | None:
+        """Return available CPU IDs for core pinning, or None if unsupported/unavailable."""
+        if not self.enable_core_pinning:
+            return None
+
+        if not hasattr(os, "sched_getaffinity") or not hasattr(os, "sched_setaffinity"):
+            log.warning(
+                "[SimulationController] Core pinning requested, but sched affinity APIs "
+                "are unavailable on this platform."
+            )
+            return None
+
+        try:
+            cpus = sorted(os.sched_getaffinity(0))
+        except OSError as e:
+            log.warning(
+                "[SimulationController] Failed to read current CPU affinity mask for core "
+                f"pinning: {e}."
+            )
+            return None
+
+        if len(cpus) == 0:
+            log.warning(
+                "[SimulationController] Core pinning requested but current affinity mask "
+                "contains no CPUs."
+            )
+            return None
+        return cpus
+
+    def _get_cpu_for_process(self, process_id: int) -> int | None:
+        """Return the CPU to pin *process_id* to, or None if pinning is disabled."""
+        if self.available_cpus is None:
+            return None
+        return self.available_cpus[process_id % len(self.available_cpus)]
 
     def _start_process(self, binary: Path, process_id: int) -> int:
         """Start a single C++ simulation process with its own Unix socket.
@@ -261,6 +309,22 @@ class SimulationController:
         # Start C++ process - redirect stdout/stderr to files
         cwd = binary.parent
         proc = subprocess.Popen(cmd, stdout=stdout_file, stderr=stderr_file, text=True, cwd=cwd)
+
+        # Pin to CPU core before the simulation is configured/started.
+        cpu_for_process = self._get_cpu_for_process(process_id)
+        if cpu_for_process is not None:
+            try:
+                os.sched_setaffinity(proc.pid, {cpu_for_process})
+                log.debug(
+                    "[SimulationController] Pinned simulation process "
+                    f"{process_id} (pid={proc.pid}) to CPU {cpu_for_process}."
+                )
+            except OSError as e:
+                log.warning(
+                    "[SimulationController] Failed to pin simulation process "
+                    f"{process_id} (pid={proc.pid}) to CPU {cpu_for_process}: {e}. "
+                    "Running this process unpinned."
+                )
 
         # Check if process started successfully
         time.sleep(0.2)  # Give process time to fail if there's an immediate error

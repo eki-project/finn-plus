@@ -99,7 +99,13 @@ class NodeConnectedSimulationController(SimulationController):
     ) -> None:
         """Set up node connected simulation."""
         super().__init__(
-            parallel_simulations, names, binaries, console, poll_interval, with_progressbar
+            parallel_simulations,
+            names,
+            binaries,
+            console,
+            poll_interval,
+            with_progressbar,
+            enable_core_pinning=True,
         )
         # Synchronization barrier for configuration phase
         self.sync_barrier: Barrier | None = None
@@ -1442,11 +1448,12 @@ class RunLayerParallelSimulation(Transformation):
             return False
         # Return False if exactly the minimum number of possible BRAM blocks is used for this
         # bitwidth and depth is sufficiently large that further optimization is unlikely to succeed
-        return not (
-            calculate_bram_blocks(fifo_depth, bitwidth)
-            <= self._get_valid_block_counts(1, bitwidth, bitwidth)[0]
-            and fifo_depth > math.floor(self.max_qsrl_depth * 1.1)
-        )
+        # return not (
+        #     calculate_bram_blocks(fifo_depth, bitwidth)
+        #     <= self._get_valid_block_counts(1, bitwidth, bitwidth)[0]
+        #     and fifo_depth > math.floor(self.max_qsrl_depth * 1.1)
+        # )
+        return True
 
 
 def calculate_bram_blocks(depth: int, bitwidth: int) -> int:

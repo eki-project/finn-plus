@@ -624,9 +624,9 @@ def step_generate_hardware(
         loop_model = step_generate_hardware(loop_model, cfg, parent_node=node.name)
 
         node_inst.set_nodeattr("body", loop_model.graph)
-
     # Codegen for the current model
     model = step_hw_codegen(model, cfg, parent_node=parent_node)
+    log.info("Codegen for the current model done, starting IP generation...")
 
     # Stitch submodels
     for node in model.get_nodes_by_op_type("FINNLoop"):
@@ -643,9 +643,11 @@ def step_generate_hardware(
         node_inst.set_nodeattr("body", loop_model.graph)
     # IP Gen for the current model
     model = step_hw_ipgen(model, cfg, parent_node=parent_node)
+    log.info("IP generation for the current model done, starting FIFO sizing...")
 
     # FIFO sizing for the current model
     model = step_set_fifo_depths(model, cfg, parent_node=parent_node)
+    log.info("FIFO sizing for the current model done.")
 
     return model
 
