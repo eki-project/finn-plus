@@ -141,7 +141,6 @@ class SetFolding(Transformation):
             *ELEMENTWISE_BINARY_OPS,
             "Squeeze_hls",
             "Unsqueeze_hls",
-            "Reshape_rtl",
             "MultiThreshold_hls"
         ]
         # these ops use SIMD parallelism, up to a max value of NumChannels
@@ -205,6 +204,11 @@ class SetFolding(Transformation):
                 self.optimize_attribute_val(node_inst, max_pe, "PE")
             elif op_type == "LabelSelect_hls":
                 max_pe = node_inst.get_nodeattr("Labels")
+                self.optimize_attribute_val(node_inst, max_pe, "PE")
+            elif op_type == "Reshape_rtl":
+                max_inp: int = node_inst.get_normal_input_shape()[-1]
+                max_out: int = node_inst.get_normal_output_shape()[-1]
+                max_pe = min(max_inp, max_out)
                 self.optimize_attribute_val(node_inst, max_pe, "PE")
             elif op_type in depthwise_op_exceptions:
                 # init/reset SIMD of VVAU
