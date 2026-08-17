@@ -96,7 +96,7 @@ cmake = "~4.0.3"
 
 onnxscript = ">=0.7.0"
 onnx-ir = ">=0.1.15"
-onnx-passes = { git = "https://github.com/iksnagreb/onnx-passes.git", rev = "c5e6e0f" }
+onnx-passes = { git = "https://github.com/iksnagreb/onnx-passes.git", rev = "34e6941" }
 
 termcolor = "^2.5.0"
 rich = "^13.9.4"
