@@ -70,6 +70,148 @@ class SimulationCommMode(str, Enum):
     HYBRID_MPI = "hybrid_mpi"
 
 
+def _get_local_cores() -> int:
+    """Return the number of CPU cores available to this process."""
+    if hasattr(os, "sched_getaffinity"):
+        try:
+            return max(1, len(os.sched_getaffinity(0)))
+        except OSError:
+            pass
+    cpu_count = os.cpu_count()
+    return max(1, int(cpu_count) if cpu_count is not None else 1)
+
+
+def _parse_hosts_with_slots(raw: str | None) -> list[tuple[str, int]]:
+    """Parse a "host[:slots],host[:slots],..." string into (host, slots) pairs.
+
+    Hosts without an explicit slot count default to the local core count.
+    """
+    if raw is None or raw.strip() == "":
+        return [("localhost", _get_local_cores())]
+
+    hosts_with_slots: list[tuple[str, int]] = []
+    default_slots = _get_local_cores()
+    for entry in raw.split(","):
+        token = entry.strip()
+        if token == "":
+            continue
+        host = token
+        slots = default_slots
+        if ":" in token:
+            host_part, slot_part = token.split(":", 1)
+            host = host_part.strip()
+            try:
+                parsed_slots = int(slot_part.strip())
+                if parsed_slots > 0:
+                    slots = parsed_slots
+            except ValueError:
+                pass
+        if host != "":
+            hosts_with_slots.append((host, slots))
+
+    if len(hosts_with_slots) == 0:
+        return [("localhost", default_slots)]
+    return hosts_with_slots
+
+
+def destribute_mpi_ranks(
+    model: ModelWrapper,
+) -> tuple[dict[str, int], dict[str, int], dict[str, str]]:
+    """Return the hybrid-MPI rank/worker/host maps for the given model, computing and
+    storing them in the model's metadata if missing or stale.
+
+    Maps assign each non-FIFO node a global rank, a worker (host) index, and a host
+    name, filling each host to its slot capacity before moving to the next one.
+    Recomputed whenever the stored maps don't cover every non-FIFO node currently in the
+    graph, since graph mutations between the initial computation and later use (e.g.
+    BuildSimulation inserting DWCs) can leave a stale map misaligned with the current
+    node set.
+
+    For sim_comm_mode other than "hybrid_mpi", this only loads (never computes) whatever
+    maps happen to already be stored, returning empty dicts if none are set.
+
+    Returns:
+        (rank_map, worker_map, host_map), each keyed by node name.
+    """
+    rank_map_meta = model.get_metadata_prop("sim_rank_map")
+    worker_map_meta = model.get_metadata_prop("sim_worker_map")
+    host_map_meta = model.get_metadata_prop("sim_host_map")
+    sim_comm_mode_meta = model.get_metadata_prop("sim_comm_mode")
+    sim_comm_mode = cast("str", sim_comm_mode_meta) if sim_comm_mode_meta is not None else "shm"
+
+    rank_map = cast(
+        "dict[str, int]", literal_eval(rank_map_meta) if rank_map_meta is not None else {}
+    )
+    worker_map = cast(
+        "dict[str, int]", literal_eval(worker_map_meta) if worker_map_meta is not None else {}
+    )
+    host_map = cast(
+        "dict[str, str]", literal_eval(host_map_meta) if host_map_meta is not None else {}
+    )
+
+    if sim_comm_mode != SimulationCommMode.HYBRID_MPI.value:
+        return rank_map, worker_map, host_map
+
+    # BuildSimulation mutates the graph (e.g. inserts DWCs), so metadata precomputed
+    # earlier can become stale/misaligned. Recompute if coverage is incomplete.
+    sim_nodes_for_build = [n for n in model.graph.node if "FIFO" not in n.name]
+    need_recompute = (len(rank_map) == 0) or (len(worker_map) == 0)
+    if not need_recompute:
+        for n in sim_nodes_for_build:
+            if n.name not in rank_map or n.name not in worker_map:
+                need_recompute = True
+                break
+
+    if not need_recompute:
+        return rank_map, worker_map, host_map
+
+    hosts_with_slots = _parse_hosts_with_slots(model.get_metadata_prop("sim_mpi_hosts"))
+    rank_map = {}
+    worker_map = {}
+    host_map = {}
+
+    # Compute how many simulations per node to distribute evenly across hosts.
+    # This is used to determine how many ranks to assign to each host.
+    simulations_per_node = math.ceil(len(sim_nodes_for_build) / len(hosts_with_slots))
+
+    for rank, node in enumerate(sim_nodes_for_build):
+        worker_id = rank // simulations_per_node
+        host = hosts_with_slots[worker_id][0]
+        rank_map[node.name] = rank
+        worker_map[node.name] = worker_id
+        host_map[node.name] = host
+
+    has_border_channels = False
+    for node in sim_nodes_for_build:
+        for outp in node.output:
+            consumers = model.find_consumers(outp)
+            for consumer in consumers:
+                if consumer.name not in worker_map:
+                    continue
+                if worker_map[consumer.name] != worker_map[node.name]:
+                    has_border_channels = True
+                    break
+            if has_border_channels:
+                break
+        if has_border_channels:
+            break
+
+    model.set_metadata_prop("sim_rank_map", str(rank_map))
+    model.set_metadata_prop("sim_worker_map", str(worker_map))
+    model.set_metadata_prop("sim_host_map", str(host_map))
+    model.set_metadata_prop("sim_has_mpi_border_channels", str(has_border_channels).lower())
+    model.set_metadata_prop(
+        "sim_mpi_hosts",
+        ",".join([f"{host}:{slots}" for host, slots in hosts_with_slots]),
+    )
+    log.info(
+        "[BuildSimulation] Recomputed hybrid MPI rank/worker/host maps "
+        "to match the current transformed graph."
+    )
+
+    return rank_map, worker_map, host_map
+
+
 class SimulationBuilder:
     """Build simulations in FINN."""
 
@@ -655,11 +797,7 @@ class SimulationBuilder:
             Path: Path to the executable shell script to run the binary
         """
         sim_comm_mode = (
-            cast(
-                "str",
-                self.model.get_metadata_prop("sim_comm_mode")
-                or os.environ.get("FINN_SIM_COMM_MODE", "shm"),
-            )
+            cast("str", self.model.get_metadata_prop("sim_comm_mode") or "shm")
         ).lower()
         enable_mpi = sim_comm_mode == SimulationCommMode.HYBRID_MPI.value
 
@@ -994,122 +1132,9 @@ class SimulationBuilder:
         """
         log.info(f"Building simulation binaries for {len(self.model.graph.node)} layers.")
 
-        rank_map_meta = self.model.get_metadata_prop("sim_rank_map")
-        worker_map_meta = self.model.get_metadata_prop("sim_worker_map")
         sim_comm_mode_meta = self.model.get_metadata_prop("sim_comm_mode")
         sim_comm_mode = cast("str", sim_comm_mode_meta) if sim_comm_mode_meta is not None else "shm"
-        rank_map = cast(
-            "dict[str, int]",
-            literal_eval(rank_map_meta) if rank_map_meta is not None else {},
-        )
-        worker_map = cast(
-            "dict[str, int]",
-            literal_eval(worker_map_meta) if worker_map_meta is not None else {},
-        )
-        host_map_meta = self.model.get_metadata_prop("sim_host_map")
-        host_map = cast(
-            "dict[str, str]",
-            literal_eval(host_map_meta) if host_map_meta is not None else {},
-        )
-
-        if sim_comm_mode == SimulationCommMode.HYBRID_MPI.value:
-
-            def _get_local_cores() -> int:
-                if hasattr(os, "sched_getaffinity"):
-                    try:
-                        return max(1, len(os.sched_getaffinity(0)))
-                    except OSError:
-                        pass
-                cpu_count = os.cpu_count()
-                return max(1, int(cpu_count) if cpu_count is not None else 1)
-
-            def _parse_hosts_with_slots(raw: str | None) -> list[tuple[str, int]]:
-                if raw is None or raw.strip() == "":
-                    local_cores = _get_local_cores()
-                    return [("localhost", local_cores)]
-
-                hosts_with_slots: list[tuple[str, int]] = []
-                default_slots = _get_local_cores()
-                for entry in raw.split(","):
-                    token = entry.strip()
-                    if token == "":
-                        continue
-                    host = token
-                    slots = default_slots
-                    if ":" in token:
-                        host_part, slot_part = token.split(":", 1)
-                        host = host_part.strip()
-                        try:
-                            parsed_slots = int(slot_part.strip())
-                            if parsed_slots > 0:
-                                slots = parsed_slots
-                        except ValueError:
-                            pass
-                    if host != "":
-                        hosts_with_slots.append((host, slots))
-
-                if len(hosts_with_slots) == 0:
-                    return [("localhost", default_slots)]
-                return hosts_with_slots
-
-            # BuildSimulation mutates the graph (e.g. inserts DWCs), so metadata precomputed
-            # earlier can become stale/misaligned. Recompute if coverage is incomplete.
-            sim_nodes_for_build = [n for n in self.model.graph.node if "FIFO" not in n.name]
-            need_recompute = (len(rank_map) == 0) or (len(worker_map) == 0)
-            if not need_recompute:
-                for n in sim_nodes_for_build:
-                    if n.name not in rank_map or n.name not in worker_map:
-                        need_recompute = True
-                        break
-
-            if need_recompute:
-                hosts_with_slots = _parse_hosts_with_slots(
-                    self.model.get_metadata_prop("sim_mpi_hosts")
-                )
-                rank_map = {}
-                worker_map = {}
-                host_map = {}
-
-                # Compute how many simulations per node to distribute evenly across hosts.
-                # This is used to determine how many ranks to assign to each host.
-                simulations_per_node = math.ceil(len(sim_nodes_for_build) / len(hosts_with_slots))
-
-                for rank, node in enumerate(sim_nodes_for_build):
-                    worker_id = rank // simulations_per_node
-                    host = hosts_with_slots[worker_id][0]
-                    rank_map[node.name] = rank
-                    worker_map[node.name] = worker_id
-                    host_map[node.name] = host
-
-                has_border_channels = False
-                for node in sim_nodes_for_build:
-                    for outp in node.output:
-                        consumers = self.model.find_consumers(outp)
-                        for consumer in consumers:
-                            if consumer.name not in worker_map:
-                                continue
-                            if worker_map[consumer.name] != worker_map[node.name]:
-                                has_border_channels = True
-                                break
-                        if has_border_channels:
-                            break
-                    if has_border_channels:
-                        break
-
-                self.model.set_metadata_prop("sim_rank_map", str(rank_map))
-                self.model.set_metadata_prop("sim_worker_map", str(worker_map))
-                self.model.set_metadata_prop("sim_host_map", str(host_map))
-                self.model.set_metadata_prop(
-                    "sim_has_mpi_border_channels", str(has_border_channels).lower()
-                )
-                self.model.set_metadata_prop(
-                    "sim_mpi_hosts",
-                    ",".join([f"{host}:{slots}" for host, slots in hosts_with_slots]),
-                )
-                log.info(
-                    "[BuildSimulation] Recomputed hybrid MPI rank/worker/host maps "
-                    "to match the current transformed graph."
-                )
+        rank_map, worker_map, host_map = destribute_mpi_ranks(self.model)
 
         def _build(
             node_index: int,
@@ -1419,11 +1444,7 @@ class BuildSimulation(Transformation):
         """Build / compile the model. Modifies the model."""
         self.model = model
         sim_comm_mode = (
-            cast(
-                "str",
-                self.model.get_metadata_prop("sim_comm_mode")
-                or os.environ.get("FINN_SIM_COMM_MODE", "shm"),
-            )
+            cast("str", self.model.get_metadata_prop("sim_comm_mode") or "shm")
         ).lower()
         enable_mpi = sim_comm_mode == SimulationCommMode.HYBRID_MPI.value
 

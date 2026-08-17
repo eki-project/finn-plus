@@ -33,7 +33,10 @@ from finn.transformation.fpgadataflow.simulation import (
     SimulationType,
     store_fifo_data,
 )
-from finn.transformation.fpgadataflow.simulation_build import SimulationCommMode
+from finn.transformation.fpgadataflow.simulation_build import (
+    SimulationCommMode,
+    destribute_mpi_ranks,
+)
 from finn.util.basic import getHWCustomOp, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
@@ -42,6 +45,10 @@ from finn.util.logging import log
 # model (which has exact capacity). This constant accounts for that overhead so that the
 # minimization algorithm finds depths that are safe to deploy on hardware.
 BRAM_FIFO_PIPELINE_OVERHEAD = 2
+
+# Number of retries (at ~0.1s apart) when connecting to each MPI rank's control socket,
+# i.e. ~120s total per rank before giving up.
+MPI_SOCKET_CONNECT_RETRIES = 1200
 
 
 def _count_bram_sub_fifos(depth: int, max_qsrl_depth: int) -> int:
@@ -108,6 +115,8 @@ class NodeConnectedSimulationController(SimulationController):
         mpi_launcher: str = "mpirun",
         mpi_hosts: str | None = None,
         mpi_host_map: dict[str, str] | None = None,
+        mpi_oversubscribe: bool = True,
+        mpi_args: str = "",
         poll_interval: float = 1.0,
         with_progressbar: bool = True,
     ) -> None:
@@ -127,6 +136,8 @@ class NodeConnectedSimulationController(SimulationController):
         self.use_mpi_launcher = use_mpi_launcher
         self.mpi_launcher = mpi_launcher
         self.mpi_hosts = mpi_hosts
+        self.mpi_oversubscribe = mpi_oversubscribe
+        self.mpi_args = mpi_args
         self.mpi_launcher_proc: subprocess.Popen | None = None
         self.mpi_host_map = mpi_host_map
         self.mpi_launcher_stdout: Any = None
@@ -139,6 +150,12 @@ class NodeConnectedSimulationController(SimulationController):
 
     def _start_mpi_group(self) -> None:
         """Start one MPI job that launches one simulation backend per rank."""
+        if self.mpi_host_map is None:
+            raise FINNInternalError(
+                "NodeConnectedSimulationController was constructed with "
+                "use_mpi_launcher=True but mpi_host_map=None."
+            )
+
         launcher_path = which(self.mpi_launcher)
         if launcher_path is None:
             raise FINNUserError(
@@ -158,8 +175,7 @@ class NodeConnectedSimulationController(SimulationController):
             # In SLURM allocations, OpenMPI may infer available slots from --ntasks
             # (often just a small number), while FINN launches one MPI rank per layer.
             # Oversubscribe by default so mapping does not fail with "Out of resource".
-            oversubscribe = os.environ.get("FINN_SIM_MPI_OVERSUBSCRIBE", "1").lower()
-            if oversubscribe in {"1", "true", "yes", "on"}:
+            if self.mpi_oversubscribe:
                 cmd.append("--oversubscribe")
             # The number of ranks per host must match the number of endpoints assigned to
             # that host in endpoint_map, so that (with --map-by slot fill-first) local rank
@@ -168,7 +184,7 @@ class NodeConnectedSimulationController(SimulationController):
             # whenever hosts don't get an even share of the simulated nodes.
             hosts_with_slots = ",".join(f"{host}:{len(v)}" for host, v in endpoint_map.items())
             cmd.extend(["-H", hosts_with_slots])
-            mpi_extra_args = os.environ.get("FINN_SIM_MPI_ARGS", "").strip()
+            mpi_extra_args = self.mpi_args.strip()
             if mpi_extra_args != "":
                 cmd.extend(shlex.split(mpi_extra_args))
             # World size must be the total number of simulation endpoints, not the size of
@@ -216,10 +232,13 @@ class NodeConnectedSimulationController(SimulationController):
         for v in host_map.values():
             count = max(count, len(v))
         if count == 0:
-            raise FINNInternalError("Count is 0")
+            raise FINNInternalError(
+                "No simulation nodes were assigned to any MPI worker host "
+                "(mpi_host_map is non-empty but every host list is empty)."
+            )
 
         probe_cmd = [launcher_path]
-        nodes = len(cast("str", self.mpi_hosts).split(","))
+        nodes = len(hosts)
         probe_cmd.extend(
             [
                 "--map-by",
@@ -259,17 +278,29 @@ class NodeConnectedSimulationController(SimulationController):
                     f"{obj.get('error', 'unknown error')}"
                 )
             host_to_ports[obj["hostname"]] = obj["ports"]
+
+        # Exact (not substring) lookup: matching by "name in str(binary_path)" would
+        # mis-assign a binary whenever one node's name is a substring of another's
+        # directory name (e.g. "MVAU_hls_1" is a substring of ".../MVAU_hls_10_.../").
+        name_to_binary = dict(zip(self.names, self.binaries, strict=True))
+
         endpoint_map: dict[str, list[tuple[int, str]]] = {}
         for k, v in host_map.items():
+            if k not in host_to_ports:
+                raise FINNInternalError(
+                    f"Free-port probe did not report a result for host {k!r}. "
+                    f"Hosts probed: {sorted(host_to_ports.keys())}."
+                )
             endpoint_map[k] = []
             for i, name in enumerate(v):
                 port = host_to_ports[k][i]
-                path = ""
-                for bi in self.binaries:
-                    if name in str(bi):
-                        path = str(bi)
-                        break
-                endpoint_map[k].append((port, path))
+                binary = name_to_binary.get(name)
+                if binary is None:
+                    raise FINNInternalError(
+                        f"No simulation binary found for node {name!r} while building "
+                        "the MPI rank mapping."
+                    )
+                endpoint_map[k].append((port, str(binary)))
         mapping_file.write_text(
             json.dumps(
                 endpoint_map,
@@ -292,7 +323,7 @@ class NodeConnectedSimulationController(SimulationController):
 
         # Connect to each rank's socket server.
         self.sockets = []
-        max_retries = int(os.environ.get("FINN_SIM_MPI_CONNECT_RETRIES", "1200"))
+        max_retries = MPI_SOCKET_CONNECT_RETRIES
         for host, endpoint in endpoint_map.items():
             for port, _bin in endpoint:
                 endpoint_port = cast("int", port)
@@ -300,7 +331,7 @@ class NodeConnectedSimulationController(SimulationController):
                 connected = False
                 for _ in range(max_retries):
                     if self.mpi_launcher_proc.poll() is not None:
-                        raise RuntimeError(
+                        raise FINNInternalError(
                             "MPI launcher process exited before all sockets connected"
                         )
                     try:
@@ -311,7 +342,7 @@ class NodeConnectedSimulationController(SimulationController):
                         time.sleep(0.1)
                 if not connected:
                     self._cleanup_sockets()
-                    raise RuntimeError(
+                    raise FINNInternalError(
                         f"Failed to connect to MPI rank control endpoint: {host}:{endpoint_port}"
                     )
                 self.sockets.append((sock, f"tcp://{host}:{endpoint_port}"))
@@ -705,7 +736,7 @@ class NodeConnectedSimulationController(SimulationController):
                         if self.should_stop:
                             try:
                                 stop_response = self._send_and_receive(proc_idx, "stop", {})
-                            except (BrokenPipeError, ConnectionResetError, RuntimeError):
+                            except (BrokenPipeError, ConnectionResetError, FINNInternalError):
                                 # Process may have already exited - that's ok during shutdown
                                 stop_response = None
                             if stop_response:
@@ -740,7 +771,7 @@ class NodeConnectedSimulationController(SimulationController):
                         _print("Lost connection to simulation", "red")
                         with self.stop_lock:
                             self.should_stop = True
-                        raise RuntimeError("Lost connection to simulation")
+                        raise FINNInternalError("Lost connection to simulation")
 
                     state = response.get("state", "unknown")
 
@@ -773,7 +804,7 @@ class NodeConnectedSimulationController(SimulationController):
                         # Signal other simulations to stop
                         with self.stop_lock:
                             self.should_stop = True
-                        raise RuntimeError(f"Simulation error: {error_msg}")
+                        raise FINNInternalError(f"Simulation error: {error_msg}")
 
                 # Stop the simulation
                 stop_response = self._send_and_receive(proc_idx, "stop", {})
@@ -826,12 +857,18 @@ class NodeConnectedSimulation(Simulation):
         workers: int | None = None,
         max_qsrl_depth: int = 256,
         performance_sim: bool = False,
+        sim_comm_mode: str = SimulationCommMode.SHM.value,
+        mpi_launcher: str = "mpirun",
+        mpi_oversubscribe: bool = True,
+        mpi_args: str = "",
     ) -> None:
-        """Initialize node-connected simulation."""
-        sim_comm_mode = (
-            model.get_metadata_prop("sim_comm_mode")
-            or os.environ.get("FINN_SIM_COMM_MODE", SimulationCommMode.SHM.value)
-        ).lower()
+        """Initialize node-connected simulation.
+
+        sim_comm_mode/mpi_launcher/mpi_oversubscribe/mpi_args are only used as
+        defaults: if the model already has sim_comm_mode metadata set (e.g. by a
+        prior BuildSimulation run), that value wins.
+        """
+        sim_comm_mode = (model.get_metadata_prop("sim_comm_mode") or sim_comm_mode).lower()
         allowed_modes = {SimulationCommMode.SHM.value, SimulationCommMode.HYBRID_MPI.value}
         if sim_comm_mode not in allowed_modes:
             raise FINNUserError(
@@ -840,29 +877,6 @@ class NodeConnectedSimulation(Simulation):
             )
         model.set_metadata_prop("sim_comm_mode", sim_comm_mode)
         self.sim_comm_mode = sim_comm_mode
-
-        def _get_local_cores() -> int:
-            if hasattr(os, "sched_getaffinity"):
-                try:
-                    return max(1, len(os.sched_getaffinity(0)))
-                except OSError:
-                    pass
-            cpu_count = os.cpu_count()
-            return max(1, cast("int", cpu_count if cpu_count is not None else 1))
-
-        def _parse_hosts(raw: str | None) -> list[str]:
-            if raw is None or raw.strip() == "":
-                return ["localhost"]
-            hosts: list[str] = []
-            for entry in raw.split(","):
-                host = entry.strip()
-                if host == "":
-                    continue
-                # Accept both "host" and "host:slots" formats.
-                if ":" in host:
-                    host = host.split(":", 1)[0]
-                hosts.append(host)
-            return hosts if hosts else ["localhost"]
 
         def _parse_list_metadata(name: str) -> list[Any] | None:
             val = model.get_metadata_prop(name)
@@ -875,67 +889,10 @@ class NodeConnectedSimulation(Simulation):
                 )
             return parsed
 
-        if (
-            sim_comm_mode == SimulationCommMode.HYBRID_MPI.value
-            and model.get_metadata_prop("sim_rank_map") is None
-        ):
-            # Automatic rank/worker allocation strategy:
-            # fill up first host to local-core capacity, then move to next host.
-            local_cores = _get_local_cores()
-            hosts = _parse_hosts(
-                model.get_metadata_prop("sim_mpi_hosts") or os.environ.get("FINN_SIM_MPI_HOSTS")
-            )
-
-            sim_nodes = (
-                [n for n in model.graph.node if "FIFO" not in n.op_type]
-                if performance_sim
-                else list(model.graph.node)
-            )
-            total_capacity = len(hosts) * local_cores
-            if len(sim_nodes) > total_capacity:
-                log.warning(
-                    "Not enough MPI node capacity for requested simulation partitioning. "
-                    f"Need {len(sim_nodes)} ranks, but hosts={hosts} with "
-                    f"{local_cores} cores/node provide only {total_capacity} slots."
-                    "This can lead to reduced performance."
-                )
-
-            rank_map: dict[str, int] = {}
-            worker_map: dict[str, int] = {}
-            host_map: dict[str, str] = {}
-
-            # Compute how many simulations per node to distribute evenly across hosts.
-            # This is used to determine how many ranks to assign to each host.
-            simulations_per_node = math.ceil(len(sim_nodes) / len(hosts))
-
-            for rank, node in enumerate(sim_nodes):
-                worker_id = rank // simulations_per_node
-                rank_map[node.name] = rank
-                worker_map[node.name] = worker_id
-                host_map[node.name] = hosts[worker_id]
-
-            # Determine whether any graph edge crosses workers.
-            has_border_channels = False
-            for node in sim_nodes:
-                for outp in node.output:
-                    consumers = model.find_consumers(outp)
-                    for consumer in consumers:
-                        if worker_map.get(consumer.name, -1) != worker_map.get(node.name, -1):
-                            has_border_channels = True
-                            break
-                    if has_border_channels:
-                        break
-                if has_border_channels:
-                    break
-
-            model.set_metadata_prop("sim_rank_map", str(rank_map))
-            model.set_metadata_prop("sim_worker_map", str(worker_map))
-            model.set_metadata_prop("sim_host_map", str(host_map))
-            model.set_metadata_prop("sim_has_mpi_border_channels", str(has_border_channels).lower())
-
-            # Build mpirun host list with explicit slots for deterministic fill-first behavior.
-            hosts_with_slots = ",".join([f"{h}:{local_cores}" for h in hosts])
-            model.set_metadata_prop("sim_mpi_hosts", hosts_with_slots)
+        # Computes and stores sim_rank_map/sim_worker_map/sim_host_map/sim_mpi_hosts
+        # metadata if missing or stale; a no-op otherwise (e.g. already computed by
+        # BuildSimulation, which normally runs before this).
+        destribute_mpi_ranks(model)
 
         input_channel_types = _parse_list_metadata("sim_input_channel_types")
         output_channel_types = _parse_list_metadata("sim_output_channel_types")
@@ -981,10 +938,10 @@ class NodeConnectedSimulation(Simulation):
             sim_comm_mode == SimulationCommMode.HYBRID_MPI.value
             and self.sim_has_mpi_border_channels
         )
-        self.mpi_launcher = os.environ.get("FINN_SIM_MPI_LAUNCHER", "mpirun")
-        self.mpi_hosts = model.get_metadata_prop("sim_mpi_hosts") or os.environ.get(
-            "FINN_SIM_MPI_HOSTS"
-        )
+        self.mpi_launcher = mpi_launcher
+        self.mpi_oversubscribe = mpi_oversubscribe
+        self.mpi_args = mpi_args
+        self.mpi_hosts = model.get_metadata_prop("sim_mpi_hosts")
 
         super().__init__(
             model, simulation_type, fpgapart, clk_ns, functional_sim, workers, performance_sim
@@ -1058,6 +1015,8 @@ class NodeConnectedSimulation(Simulation):
             mpi_launcher=self.mpi_launcher,
             mpi_hosts=self.mpi_hosts,
             mpi_host_map=sim_host_map,
+            mpi_oversubscribe=self.mpi_oversubscribe,
+            mpi_args=self.mpi_args,
             poll_interval=0.1,
             with_progressbar=False,
         )
@@ -1197,6 +1156,10 @@ class RunLayerParallelSimulation(Transformation):
             self.cfg.functional_simulation,
             shm_prefix=shm_prefix,
             max_qsrl_depth=self.max_qsrl_depth,
+            sim_comm_mode=self.cfg.fifosim_comm_mode,
+            mpi_launcher=self.cfg.fifosim_mpi_launcher,
+            mpi_oversubscribe=self.cfg.fifosim_mpi_oversubscribe,
+            mpi_args=self.cfg.fifosim_mpi_args,
         )
         model = sim.model  # TODO:clean up
 

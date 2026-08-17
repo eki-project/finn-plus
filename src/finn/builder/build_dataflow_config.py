@@ -99,6 +99,21 @@ class AutoFIFOSizingMethod(str, Enum):
     DISTRIBUTED_SIMULATION = "distributed_sim"
 
 
+class FifosimCommMode(str, Enum):
+    """Communication backend mode for the distributed (MPI-based) FIFO-sizing /
+    performance simulation.
+
+    Deliberately independent from (but value-compatible with)
+    finn.transformation.fpgadataflow.simulation_build.SimulationCommMode: that module
+    transitively imports finn.xsi, which runs Vivado-availability checks at import time
+    and can raise if XSI isn't installed. build_dataflow_config must stay importable
+    (e.g. for config validation/docs) without that dependency.
+    """
+
+    SHM = "shm"
+    HYBRID_MPI = "hybrid_mpi"
+
+
 class ShellFlowType(str, Enum):
     """For builds that produce a bitfile, select the shell flow that will integrate
     the FINN-generated accelerator.
@@ -481,6 +496,35 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: Enable saving waveforms from simulation-based FIFO sizing.
     fifosim_save_waveform: bool = False
+
+    #: (Only relevant when auto_fifo_strategy == AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION)
+    #: Communication backend mode for the distributed simulation. "shm" uses local shared
+    #: memory only (single host). "hybrid_mpi" additionally allows cross-host communication
+    #: via MPI, distributing simulation nodes across multiple hosts (see fifosim_mpi_*
+    #: options below).
+    fifosim_comm_mode: FifosimCommMode = FifosimCommMode.SHM
+
+    #: (Only relevant if fifosim_comm_mode == "hybrid_mpi") Name/path of the MPI launcher
+    #: executable used to distribute simulation ranks across hosts.
+    fifosim_mpi_launcher: str = "mpirun"
+
+    #: (Only relevant if fifosim_comm_mode == "hybrid_mpi") Whether to pass --oversubscribe
+    #: to the MPI launcher. Needed because SLURM allocations may report fewer slots than
+    #: the number of simulation ranks FINN wants to launch (one rank per simulated node).
+    fifosim_mpi_oversubscribe: bool = True
+
+    #: (Only relevant if fifosim_comm_mode == "hybrid_mpi") Extra CLI arguments appended
+    #: verbatim (shell-split) to the MPI launcher command line, for site-specific tuning.
+    fifosim_mpi_args: str = ""
+
+    #: (Only relevant if fifosim_comm_mode == "hybrid_mpi") Comma-separated list of hosts
+    #: (optionally "host:slots") to distribute simulation nodes across, e.g.
+    #: "cn0101:32,cn0103:32". If not set, FINN auto-detects the allocation from
+    #: SLURM_JOB_NODELIST/SLURM_NODELIST when running under SLURM (no configuration
+    #: needed in that case), falling back to a single "localhost" worker otherwise. Set
+    #: this explicitly to override auto-detection, e.g. outside SLURM or to use only a
+    #: subset of the allocation.
+    fifosim_mpi_hosts: Optional[str] = None
 
     #: (Optional) Target clock frequency (in nanoseconds) for Vitis HLS synthesis.
     #: e.g. `hls_clk_period_ns=5.0` will target a 200 MHz clock.

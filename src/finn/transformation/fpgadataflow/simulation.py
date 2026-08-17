@@ -338,7 +338,7 @@ class SimulationController:
                 f"Stderr: {stderr_output}\nStdout: {stdout_output}"
             )
             self.console.log(str(process_id) + ": " + msg)
-            raise RuntimeError(msg)
+            raise FINNInternalError(msg)
 
         # Create Unix socket and connect
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -358,7 +358,7 @@ class SimulationController:
                     f"Stderr: {stderr_output}\nStdout: {stdout_output}"
                 )
                 self.console.log(str(process_id) + ": " + msg)
-                raise RuntimeError(msg)
+                raise FINNInternalError(msg)
 
             try:
                 sock.connect(str(socket_path))
@@ -375,7 +375,7 @@ class SimulationController:
                         f"Stderr: {stderr_output}\nStdout: {stdout_output}"
                     )
                     self.console.log(str(process_id) + ": " + msg)
-                    raise RuntimeError(msg) from e
+                    raise FINNInternalError(msg) from e
                 time.sleep(0.2)
 
         if not connected:
@@ -388,7 +388,7 @@ class SimulationController:
                 f"Stderr: {stderr_output}\nStdout: {stdout_output}"
             )
             self.console.log(str(process_id) + ": " + msg)
-            raise RuntimeError(msg)
+            raise FINNInternalError(msg)
 
         self.processes.append((proc, stdout_file, stderr_file))
         self.sockets.append((sock, str(socket_path)))
@@ -466,7 +466,7 @@ class SimulationController:
             Response dictionary
 
         Raises:
-            RuntimeError: If the subprocess has terminated with an error
+            FINNInternalError: If the subprocess has terminated with an error
         """
 
         def _get_process_entry(idx: int) -> tuple[subprocess.Popen, Any, Any] | None:
@@ -508,7 +508,7 @@ class SimulationController:
                         f"Stderr:\n{stderr_output}\n"
                         f"Stdout:\n{stdout_output}"
                     )
-                    raise RuntimeError(msg) from None
+                    raise FINNInternalError(msg) from None
 
             return response
         except (BrokenPipeError, ConnectionResetError, TimeoutError) as err:
@@ -539,7 +539,7 @@ class SimulationController:
                     f"Stderr:\n{stderr_output}\n"
                     f"Stdout:\n{stdout_output}"
                 )
-                raise RuntimeError(msg) from err  # from None
+                raise FINNInternalError(msg) from err  # from None
 
             # If process exited cleanly (returncode == 0) or hasn't exited yet,
             # this is an unexpected connection error
