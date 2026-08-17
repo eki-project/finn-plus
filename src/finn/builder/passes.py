@@ -298,6 +298,27 @@ def _export_im2col_to_finn(model: ir.Model):
     return _ExportIm2ColToFINN(config={}, state={})(model).model
 
 
+class _ExportLayoutConverterToFINN(Transformation, RewriteRulePass):
+    """Exports LayoutConverter from ONNX Passes to FINN format."""
+
+    def pattern(self, op, x, perm, assumes):
+        """Target pattern to match."""
+
+        return op.LayoutConverter(
+            x, perm=perm, assumes=assumes, _domain=CUSTOM_DOMAIN
+        )
+
+    def rewrite(self, op, x, perm, assumes):
+        """Replacement pattern."""
+
+        return op.Transpose(x, perm=perm)
+
+
+def _export_layout_converter_to_finn(model: ir.Model):
+    """Exports LayoutConverter from ONNX Passes to FINN format."""
+    return _ExportLayoutConverterToFINN(config={}, state={})(model).model
+
+
 # QONNX datatype inference transformation: Adds quantized datatype annotations
 # to tensors
 from qonnx.transformation.infer_datatypes import InferDataTypes
@@ -353,12 +374,13 @@ def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     model = _apply_passes(model, passes, cfg, state)
 
     # Export custom operators to the FINN representation
-    # model = _export_thresholds_to_finn(model)
+    model = _export_thresholds_to_finn(model)
     model = _export_im2col_to_finn(model)
+    model = _export_layout_converter_to_finn(model)
 
     # Finalize the data layout annotations and get rid of custom functions:
     # more of a workaround as qonnx execution does not understand these...
-    model = _apply_passes(model, ["absorb-layouts"], {}, {})
+    model = _apply_passes(model, ["cleanup", "absorb-layouts"], {}, {})
 
     # Serialize the resulting ONNX IR format back to ONNX proto wrapped by QONNX
     # and add quantization datatype annotations
