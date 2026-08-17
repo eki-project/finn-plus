@@ -24,6 +24,12 @@ find_package(Threads REQUIRED)
 #OpenMP
 find_package(OpenMP REQUIRED)
 
+# Optional MPI support for hybrid SHM+MPI simulation channels
+option(FIFOSIM_ENABLE_MPI "Enable MPI support for hybrid simulation channels" OFF)
+if(FIFOSIM_ENABLE_MPI)
+  find_package(MPI REQUIRED)
+endif()
+
 #Compiler Options
 add_library(fifosim_options INTERFACE)
 add_library(fifosim::options ALIAS fifosim_options)
@@ -117,6 +123,10 @@ target_include_directories(SimulationBackendLib PUBLIC "${CMAKE_BINARY_DIR}") # 
 target_include_directories(SimulationBackendLib PUBLIC "$ENV{XILINX_VIVADO}/data/xsim/include") # Add xsim includes
 target_include_directories(SimulationBackendLib PUBLIC "include")
 target_link_libraries(SimulationBackendLib PUBLIC fifosim::options nlohmann_json::nlohmann_json Threads::Threads OpenMP::OpenMP_CXX -ldl -lrt)
+if(FIFOSIM_ENABLE_MPI)
+  target_compile_definitions(SimulationBackendLib PUBLIC FINN_XSI_ENABLE_MPI=1)
+  target_link_libraries(SimulationBackendLib PUBLIC MPI::MPI_CXX)
+endif()
 
 # Build the executable for connected simulations
 add_executable(LayerSimulationBackend LayerSimulationBackend.cpp)

@@ -468,13 +468,25 @@ class SimulationController:
         Raises:
             RuntimeError: If the subprocess has terminated with an error
         """
+
+        def _get_process_entry(idx: int) -> tuple[subprocess.Popen, Any, Any] | None:
+            if idx < len(self.processes):
+                return self.processes[idx]
+            # MPI launcher mode may have a single shared process entry for many ranks.
+            if len(self.processes) == 1:
+                return self.processes[0]
+            return None
+
         try:
             self._send_command(process_idx, command, payload)
             response = self._receive_response(process_idx)
 
             # If we got None (timeout or connection error), check if process crashed
             if response is None:
-                proc, stdout_file, stderr_file = self.processes[process_idx]
+                process_entry = _get_process_entry(process_idx)
+                if process_entry is None:
+                    return None
+                proc, stdout_file, stderr_file = process_entry
                 returncode = proc.poll()
 
                 if returncode is not None and returncode != 0:
@@ -483,8 +495,8 @@ class SimulationController:
                     stdout_file.flush()
                     stderr_file.flush()
 
-                    stdout_log = self.logdir / f"{process_idx}_stdout_cpp.log"
-                    stderr_log = self.logdir / f"{process_idx}_stderr_cpp.log"
+                    stdout_log = Path(stdout_file.name)
+                    stderr_log = Path(stderr_file.name)
 
                     stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
                     stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
@@ -502,7 +514,10 @@ class SimulationController:
         except (BrokenPipeError, ConnectionResetError, TimeoutError) as err:
             # Connection error or timeout means the subprocess may have died
             # Check if it exited with an error and raise that instead
-            proc, stdout_file, stderr_file = self.processes[process_idx]
+            process_entry = _get_process_entry(process_idx)
+            if process_entry is None:
+                return None
+            proc, stdout_file, stderr_file = process_entry
             returncode = proc.poll()
 
             if returncode is not None and returncode != 0:
@@ -511,8 +526,8 @@ class SimulationController:
                 stdout_file.flush()
                 stderr_file.flush()
 
-                stdout_log = self.logdir / f"{process_idx}_stdout_cpp.log"
-                stderr_log = self.logdir / f"{process_idx}_stderr_cpp.log"
+                stdout_log = Path(stdout_file.name)
+                stderr_log = Path(stderr_file.name)
 
                 stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
                 stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"

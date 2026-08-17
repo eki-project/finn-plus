@@ -2,6 +2,10 @@
 #define HELPER_H_
 
 #include <array>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <iostream>
 
@@ -21,5 +25,28 @@ struct StreamDescriptor {
 #else
 inline void debug(std::string_view s) { std::cout << "log [DBG] " << s << "\n"; }
 #endif
+
+inline std::string timestamp_now() {
+    using namespace std::chrono;
+    auto now = system_clock::now();
+    auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+    std::time_t t = system_clock::to_time_t(now);
+    std::tm tm{};
+    localtime_r(&t, &tm);
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << ms.count();
+    return oss.str();
+}
+
+inline std::string& log_prefix() {
+    static std::string prefix;
+    return prefix;
+}
+
+#define FINN_LOG(x)                                                                     \
+    do {                                                                                \
+        std::cout << "[" << timestamp_now() << "]" << log_prefix() << " " << x << "\n"; \
+        std::cout.flush();                                                              \
+    } while (0)
 
 #endif /* HELPER_H_ */

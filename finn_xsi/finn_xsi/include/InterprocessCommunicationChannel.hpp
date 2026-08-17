@@ -3,9 +3,10 @@
 
 #include <atomic>
 #include <boost/interprocess/managed_shared_memory.hpp>
-#include <new>
-#include <thread>
 #include <iostream>
+#include <new>
+#include <stop_token>
+#include <thread>
 
 #ifndef CACHE_LINE_SIZE
     #ifdef __cpp_lib_hardware_interference_size
@@ -94,7 +95,6 @@ class InterprocessCommunicationChannel {
 
         // Construct the channel data in shared memory
         channel = shmem.find_or_construct<SharedChannelData>("ChannelData")();
-
     }
 
     void handshake() {
@@ -234,7 +234,7 @@ class InterprocessCommunicationChannel {
         return req;
     }
 
-    void send_response(const Response& resp)
+    void send_response(const Response& resp, std::stop_token stoken = {})
         requires(!Sender<IsSender>)
     {
         int write_slot = channel->response_write_idx.load(std::memory_order_acquire) % 2;

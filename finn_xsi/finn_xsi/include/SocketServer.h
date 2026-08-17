@@ -1,6 +1,7 @@
 #ifndef SOCKET_SERVER_H
 #define SOCKET_SERVER_H
 
+#include <cstdint>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
@@ -10,14 +11,20 @@ using json = nlohmann::ordered_json;
 
 class SocketServer {
      private:
+    enum class Mode { Unix, Tcp };
+
     int server_fd{-1};
     int client_fd{-1};
+    Mode mode{Mode::Unix};
     std::string socket_path;
+    std::string bind_host;
+    std::uint16_t bind_port{0};
 
     void close_fd(int& fd) noexcept;
 
      public:
     explicit SocketServer(std::string_view path);
+    SocketServer(std::string_view host, std::uint16_t port);
     ~SocketServer();
 
     // Disable copy construction and assignment

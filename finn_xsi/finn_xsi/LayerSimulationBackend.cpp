@@ -7,17 +7,26 @@
 #include <SharedLibrary.h>
 #include <SocketServer.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <boost/program_options.hpp>
 #include <boost/program_options/options_description.hpp>
+#include <climits>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <thread>
 
+#ifdef FINN_XSI_ENABLE_MPI
+    #include <mpi.h>
+#endif
+
 #define NDEBUG
+#include <RTLSimConfigDump.hpp>
 #include <Simulation.hpp>
 #include <rtlsim_config.hpp>
 
@@ -328,21 +337,63 @@ void process_command(const json& request, json& response, SimulationController& 
 int main(int argc, const char* argv[]) {
     // Parse CLI options
     po::options_description desc{"Options"};
-    desc.add_options()("socket,s", po::value<std::string>(), "Unix domain socket path for IPC");
+    desc.add_options()("socket,s", po::value<std::string>(), "Unix domain socket path for IPC")("socket-host", po::value<std::string>(), "TCP host/interface for control server")(
+        "socket-port", po::value<int>(), "TCP port for control server")(
+        "print-config", "Print this binary's compiled-in RTLSimConfig as JSON and exit (no socket/MPI/simulation setup)");
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
     po::notify(vm);
 
+    if (vm.count("print-config")) {
+        std::cout << dump_rtlsim_config().dump(2) << std::endl;
+        return 0;
+    }
+
     std::cout << "Connected Simulation Node Index: " << RTLSimConfig::NodeIndex << " / " << RTLSimConfig::TotalNodes << std::endl;
 
+    bool mpiInitializedByBackend = false;
+    if (RTLSimConfig::SimCommMode == "hybrid_mpi") {
+#ifdef FINN_XSI_ENABLE_MPI
+        int mpiInitialized = 0;
+        MPI_Initialized(&mpiInitialized);
+        if (mpiInitialized == 0) {
+            char** mpiArgv = const_cast<char**>(argv);
+            MPI_Init(&argc, &mpiArgv);
+            mpiInitializedByBackend = true;
+        }
+#else
+        throw std::runtime_error(
+            "Simulation config requested hybrid_mpi mode, but backend was built without MPI support. "
+            "Rebuild with -DFIFOSIM_ENABLE_MPI=ON.");
+#endif
+    }
+
     // Check if socket communication is enabled
-    if (vm.count("socket")) {
-        const std::string socket_path = vm["socket"].as<std::string>();
-        std::cout << "Initializing socket server at: " << socket_path << std::endl;
+    if (vm.count("socket") || (vm.count("socket-host") && vm.count("socket-port"))) {
+        std::optional<std::string> endpoint_message = std::nullopt;
+        std::optional<SocketServer> server = std::nullopt;
+
+        if (vm.count("socket")) {
+            const std::string socket_path = vm["socket"].as<std::string>();
+            endpoint_message = "unix://" + socket_path;
+            server.emplace(socket_path);
+        } else {
+            const std::string socket_host = vm["socket-host"].as<std::string>();
+            const int socket_port = vm["socket-port"].as<int>();
+            if (socket_port <= 0 || socket_port > 65535) {
+                throw std::runtime_error("Invalid socket-port. Must be in range 1..65535.");
+            }
+            endpoint_message = "tcp://" + socket_host + ":" + std::to_string(socket_port);
+            server.emplace(socket_host, static_cast<std::uint16_t>(socket_port));
+        }
+
+        char hostname[HOST_NAME_MAX + 1];
+        gethostname(hostname, HOST_NAME_MAX + 1);
+
+        std::cout << "Initializing socket server at: " << endpoint_message.value() << " for host " << hostname << std::endl;
         std::cout.flush();
 
-        SocketServer server(socket_path);
-        if (auto error = server.initialize(); error.has_value()) {
+        if (auto error = server->initialize(); error.has_value()) {
             std::cerr << "Failed to initialize socket server: " << *error << std::endl;
             std::cerr.flush();
             return 1;
@@ -354,15 +405,16 @@ int main(int argc, const char* argv[]) {
         // Construct simulation
         SingleNodeSimulation<InstreamCount, OutstreamCount, RTLSimConfig::LoggingEnabled, RTLSimConfig::NodeIndex, RTLSimConfig::TotalNodes, RTLSimConfig::IsInputNode,
                              RTLSimConfig::IsOutputNode, RTLSimConfig::preciseTimeout>
-            sim(RTLSimConfig::kernel_libname, RTLSimConfig::design_libname, RTLSimConfig::xsim_log_filename.c_str(), RTLSimConfig::trace_filename.value_or("").c_str(), RTLSimConfig::istream_descs, RTLSimConfig::ostream_descs,
-                RTLSimConfig::inputInterfaceNames, RTLSimConfig::outputInterfaceNames, 2);
+            sim(RTLSimConfig::kernel_libname, RTLSimConfig::design_libname, RTLSimConfig::xsim_log_filename.c_str(), RTLSimConfig::trace_filename.value_or("").c_str(),
+                RTLSimConfig::istream_descs, RTLSimConfig::ostream_descs, RTLSimConfig::inputInterfaceNames, RTLSimConfig::outputInterfaceNames, RTLSimConfig::inputChannelTypes,
+                RTLSimConfig::outputChannelTypes, RTLSimConfig::inputPeerRanks, RTLSimConfig::outputPeerRanks, 2);
 
         // Create simulation controller
         SimulationController controller(sim);
 
         // Command processing loop
         while (true) {
-            auto request = server.receive_message();
+            auto request = server->receive_message();
             if (!request.has_value()) {
                 std::cout << "Connection closed or error occurred" << std::endl;
                 break;
@@ -370,7 +422,7 @@ int main(int argc, const char* argv[]) {
 
             json response;
             process_command(*request, response, controller);
-            server.send_message(response);
+            server->send_message(response);
 
             // Exit if stop command received
             if ((*request)["command"] == "stop") {
@@ -379,6 +431,12 @@ int main(int argc, const char* argv[]) {
         }
     } else {
         throw std::runtime_error("Socket path not provided. Socket communication is required.");
+    }
+
+    if (mpiInitializedByBackend) {
+#ifdef FINN_XSI_ENABLE_MPI
+        MPI_Finalize();
+#endif
     }
 
     return 0;

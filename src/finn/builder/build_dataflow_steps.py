@@ -108,7 +108,11 @@ from finn.transformation.fpgadataflow.set_fifo_depths import (
 )
 from finn.transformation.fpgadataflow.set_folding import SetFolding
 from finn.transformation.fpgadataflow.set_loop_boundary import SetLoopBoundary
-from finn.transformation.fpgadataflow.simulation_build import BuildSimulation, SimulationType
+from finn.transformation.fpgadataflow.simulation_build import (
+    BuildSimulation,
+    SimulationCommMode,
+    SimulationType,
+)
 from finn.transformation.fpgadataflow.simulation_connected import (
     NodeConnectedSimulation,
     RunLayerParallelSimulation,
@@ -442,6 +446,103 @@ def step_set_fifo_depths(
             report_dir.mkdir(parents=True, exist_ok=True)
             model.set_metadata_prop("rtlsim_trace", str(report_dir.resolve() / "fifosim_trace.wdb"))
         if cfg.auto_fifo_strategy == AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION:
+            requested_sim_comm_mode = (
+                model.get_metadata_prop("sim_comm_mode")
+                or os.environ.get("FINN_SIM_COMM_MODE", SimulationCommMode.SHM.value)
+            ).lower()
+            if requested_sim_comm_mode == SimulationCommMode.HYBRID_MPI.value:
+                # Make the request explicit on the model so both build and run transforms
+                # can pick it up deterministically during this step.
+                model.set_metadata_prop("sim_comm_mode", SimulationCommMode.HYBRID_MPI.value)
+                os.environ["FINN_SIM_COMM_MODE"] = SimulationCommMode.HYBRID_MPI.value
+
+                # Pre-compute rank/worker assignment before BuildSimulation so that
+                # simulation_build can generate per-node channel types/peer ranks.
+                # Without this, all channels default to SHM and cross-node links can
+                # deadlock/time out in multi-node runs.
+                def _get_local_cores() -> int:
+                    if hasattr(os, "sched_getaffinity"):
+                        try:
+                            return max(1, len(os.sched_getaffinity(0)))
+                        except OSError:
+                            pass
+                    cpu_count = os.cpu_count()
+                    return max(1, int(cpu_count) if cpu_count is not None else 1)
+
+                def _parse_hosts(raw: str | None) -> list[str]:
+                    if raw is None or raw.strip() == "":
+                        return ["localhost"]
+                    hosts: list[str] = []
+                    for entry in raw.split(","):
+                        host = entry.strip()
+                        if host == "":
+                            continue
+                        # Accept both "host" and "host:slots" input forms.
+                        if ":" in host:
+                            host = host.split(":", 1)[0]
+                        hosts.append(host)
+                    return hosts if hosts else ["localhost"]
+
+                local_cores = _get_local_cores()
+                hosts = _parse_hosts(
+                    model.get_metadata_prop("sim_mpi_hosts") or os.environ.get("FINN_SIM_MPI_HOSTS")
+                )
+                sim_nodes = list(model.graph.node)
+
+                total_capacity = len(hosts) * local_cores
+                if len(sim_nodes) > total_capacity:
+                    log.warning(
+                        "Not enough MPI node capacity for requested simulation partitioning. "
+                        f"Need {len(sim_nodes)} ranks, but hosts={hosts} with "
+                        f"{local_cores} cores/node provide only {total_capacity} slots. "
+                        "Using oversubscription, which may lead to suboptimal performance."
+                    )
+
+                rank_map: dict[str, int] = {}
+                worker_map: dict[str, int] = {}
+                host_map: dict[str, str] = {}
+
+                sims_per_node = math.ceil(len(sim_nodes) / len(hosts))
+                log.info(
+                    f"Distributing {len(sim_nodes)} simulation nodes across {len(hosts)} hosts, "
+                    f"with {sims_per_node} nodes per host"
+                )
+
+                for rank, node in enumerate(sim_nodes):
+                    worker_id = rank // sims_per_node
+                    rank_map[node.name] = rank
+                    worker_map[node.name] = worker_id
+                    host_map[node.name] = hosts[worker_id]
+
+                has_border_channels = False
+                for node in sim_nodes:
+                    for outp in node.output:
+                        consumers = model.find_consumers(outp)
+                        for consumer in consumers:
+                            if worker_map.get(consumer.name, -1) != worker_map.get(node.name, -1):
+                                has_border_channels = True
+                                break
+                        if has_border_channels:
+                            break
+                    if has_border_channels:
+                        break
+
+                model.set_metadata_prop("sim_rank_map", str(rank_map))
+                model.set_metadata_prop("sim_worker_map", str(worker_map))
+                model.set_metadata_prop("sim_host_map", str(host_map))
+                model.set_metadata_prop(
+                    "sim_has_mpi_border_channels", str(has_border_channels).lower()
+                )
+                model.set_metadata_prop(
+                    "sim_mpi_hosts",
+                    ",".join([f"{h}:{local_cores}" for h in hosts]),
+                )
+                log.info(
+                    "Auto FIFO sizing: distributed_sim with hybrid_mpi requested. "
+                    "Building simulation backends with MPI support and running "
+                    "hybrid MPI simulation."
+                )
+
             if cfg.fifosim_save_waveform:
                 report_dir = Path(cfg.output_dir) / "report"
                 report_dir.mkdir(parents=True, exist_ok=True)

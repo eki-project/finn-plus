@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cstddef>
 #include <initializer_list>
 #include <string>
@@ -10,10 +12,15 @@ namespace RTLSimConfig {
 	constexpr bool LoggingEnabled = true;
 	constexpr bool IsInputNode = {{ IS_INPUT_NODE }};
 	constexpr bool IsOutputNode = {{ IS_OUTPUT_NODE }};
+	constexpr std::string_view SimCommMode = "{{ SIM_COMM_MODE }}";
 
 	/**** General RTLSIM Configuration Parameters ****/
 	constexpr std::array<std::string_view, {{ INPUT_INTERFACE_COUNT }}> inputInterfaceNames { {{ INPUT_INTERFACE_NAMES }} };
 	constexpr std::array<std::string_view, {{ OUTPUT_INTERFACE_COUNT }}> outputInterfaceNames { {{ OUTPUT_INTERFACE_NAMES }} };
+	constexpr std::array<std::string_view, {{ INPUT_INTERFACE_COUNT }}> inputChannelTypes { {{ INPUT_CHANNEL_TYPES }} };
+	constexpr std::array<std::string_view, {{ OUTPUT_INTERFACE_COUNT }}> outputChannelTypes { {{ OUTPUT_CHANNEL_TYPES }} };
+	constexpr std::array<int, {{ INPUT_INTERFACE_COUNT }}> inputPeerRanks { {{ INPUT_PEER_RANKS }} };
+	constexpr std::array<int, {{ OUTPUT_INTERFACE_COUNT }}> outputPeerRanks { {{ OUTPUT_PEER_RANKS }} };
 
 	// Which index node this simulation executes
 	// In a complete design simulation this is 0

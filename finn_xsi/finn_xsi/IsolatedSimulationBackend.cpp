@@ -1,5 +1,6 @@
 #include <IsolatedSimulation.hpp>
 #include <boost/program_options.hpp>
+#include <RTLSimConfigDump.hpp>
 #include <SocketServer.h>
 #include <chrono>
 #include <rtlsim_config.hpp>
@@ -20,10 +21,16 @@ std::string getTime() {
 int main(int argc, const char* argv[]) {
     // Parse CLI options
     po::options_description desc{"Options"};
-    desc.add_options()("socket,s", po::value<std::string>(), "Unix domain socket path for IPC");
+    desc.add_options()("socket,s", po::value<std::string>(), "Unix domain socket path for IPC")(
+        "print-config", "Print this binary's compiled-in RTLSimConfig as JSON and exit (no socket/simulation setup)");
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
     po::notify(vm);
+
+    if (vm.count("print-config")) {
+        std::cout << dump_rtlsim_config().dump(2) << std::endl;
+        return 0;
+    }
 
     // Create simulation
     IsolatedSimulation<RTLSimConfig::istream_descs.size(), RTLSimConfig::ostream_descs.size()> sim(

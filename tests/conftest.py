@@ -27,8 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # -*- coding: utf-8 -*-
-"""
-Dummy conftest.py for finn.
+"""Dummy conftest.py for finn.
 
 If you don't know what this is for, just leave it empty.
 Read more about conftest.py under:

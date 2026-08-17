@@ -1,6 +1,7 @@
 """Build FINN Simulations."""
 
 import contextlib
+import math
 import numpy as np
 import onnx
 import os
@@ -57,6 +58,16 @@ class SimulationType(str, Enum):
 
     # Individual node simulations, isolated. E.g. for analysis purposes
     NODE_BASED_ISOLATED = "NODE_BASED_ISOLATED"
+
+
+class SimulationCommMode(str, Enum):
+    """Communication backend mode for simulation interconnects."""
+
+    # Current default behavior: all streams use local shared memory.
+    SHM = "shm"
+
+    # Hybrid mode: intra-node streams use SHM, border streams may use MPI.
+    HYBRID_MPI = "hybrid_mpi"
 
 
 class SimulationBuilder:
@@ -643,6 +654,15 @@ class SimulationBuilder:
         Returns:
             Path: Path to the executable shell script to run the binary
         """
+        sim_comm_mode = (
+            cast(
+                "str",
+                self.model.get_metadata_prop("sim_comm_mode")
+                or os.environ.get("FINN_SIM_COMM_MODE", "shm"),
+            )
+        ).lower()
+        enable_mpi = sim_comm_mode == SimulationCommMode.HYBRID_MPI.value
+
         # Determine executable name
         compile_targets = ["LayerSimulationBackend", "IsolatedSimulationBackend"]
         if all((Path(sim_base) / execname).exists() for execname in compile_targets):
@@ -654,6 +674,8 @@ class SimulationBuilder:
 
         # Running CMake first
         cmake_call = f"{sys.executable} -m cmake -S {finnxsi_dir} -B {sim_base}"
+        if enable_mpi:
+            cmake_call += " -DFIFOSIM_ENABLE_MPI=ON"
         log.debug(f"Running cmake on RTLSIM Wrapper in {sim_base}")
         try:
             launch_process_helper(
@@ -714,6 +736,115 @@ class SimulationBuilder:
             instream_descrs_str,
             outstream_descrs_str,
         ) = self._get_stream_descriptions(model)
+
+        sim_comm_mode = cast(
+            "str",
+            model.get_metadata_prop("sim_comm_mode") or SimulationCommMode.SHM.value,
+        )
+        if sim_comm_mode not in {m.value for m in SimulationCommMode}:
+            raise FINNUserError(
+                "Invalid simulation communication mode "
+                f"'{sim_comm_mode}'. Expected one of: "
+                f"{', '.join(m.value for m in SimulationCommMode)}"
+            )
+
+        sim_input_channel_types_str = model.get_metadata_prop("sim_input_channel_types")
+        sim_output_channel_types_str = model.get_metadata_prop("sim_output_channel_types")
+        sim_input_peer_ranks_str = model.get_metadata_prop("sim_input_peer_ranks")
+        sim_output_peer_ranks_str = model.get_metadata_prop("sim_output_peer_ranks")
+        input_channel_types = cast(
+            "list[str] | None",
+            literal_eval(sim_input_channel_types_str)
+            if sim_input_channel_types_str is not None
+            else None,
+        )
+        output_channel_types = cast(
+            "list[str] | None",
+            literal_eval(sim_output_channel_types_str)
+            if sim_output_channel_types_str is not None
+            else None,
+        )
+        input_peer_ranks = cast(
+            "list[int] | None",
+            literal_eval(sim_input_peer_ranks_str)
+            if sim_input_peer_ranks_str is not None
+            else None,
+        )
+        output_peer_ranks = cast(
+            "list[int] | None",
+            literal_eval(sim_output_peer_ranks_str)
+            if sim_output_peer_ranks_str is not None
+            else None,
+        )
+
+        if input_interface_names is None:
+            input_interface_names = []
+        if output_interface_names is None:
+            output_interface_names = []
+
+        if input_channel_types is None:
+            input_channel_types = [SimulationCommMode.SHM.value] * len(input_interface_names)
+        if output_channel_types is None:
+            output_channel_types = [SimulationCommMode.SHM.value] * len(output_interface_names)
+        if input_peer_ranks is None:
+            input_peer_ranks = [-1] * len(input_interface_names)
+        if output_peer_ranks is None:
+            output_peer_ranks = [-1] * len(output_interface_names)
+
+        if len(input_channel_types) != len(input_interface_names):
+            raise FINNUserError(
+                "Length mismatch: sim_input_channel_types has "
+                f"{len(input_channel_types)} entries, but input interfaces have "
+                f"{len(input_interface_names)} entries."
+            )
+        if len(output_channel_types) != len(output_interface_names):
+            raise FINNUserError(
+                "Length mismatch: sim_output_channel_types has "
+                f"{len(output_channel_types)} entries, but output interfaces have "
+                f"{len(output_interface_names)} entries."
+            )
+        if len(input_peer_ranks) != len(input_interface_names):
+            raise FINNUserError(
+                "Length mismatch: sim_input_peer_ranks has "
+                f"{len(input_peer_ranks)} entries, but input interfaces have "
+                f"{len(input_interface_names)} entries."
+            )
+        if len(output_peer_ranks) != len(output_interface_names):
+            raise FINNUserError(
+                "Length mismatch: sim_output_peer_ranks has "
+                f"{len(output_peer_ranks)} entries, but output interfaces have "
+                f"{len(output_interface_names)} entries."
+            )
+
+        allowed_channel_types = {SimulationCommMode.SHM.value, "mpi"}
+        if any(
+            ch not in allowed_channel_types for ch in input_channel_types + output_channel_types
+        ):
+            raise FINNUserError(
+                "Invalid channel type in sim_input_channel_types/sim_output_channel_types. "
+                "Allowed values are 'shm' and 'mpi'."
+            )
+
+        has_mpi_channels = any(ch == "mpi" for ch in input_channel_types + output_channel_types)
+        if sim_comm_mode == SimulationCommMode.SHM.value and has_mpi_channels:
+            raise FINNUserError(
+                "sim_comm_mode='shm' is incompatible with channel type 'mpi'. "
+                "Set sim_comm_mode='hybrid_mpi' or use only 'shm' channels."
+            )
+        if sim_comm_mode == SimulationCommMode.HYBRID_MPI.value:
+            for ch, rank in zip(input_channel_types, input_peer_ranks, strict=True):
+                if ch == "mpi" and rank < 0:
+                    raise FINNUserError(
+                        "MPI input channel detected but sim_input_peer_ranks contains "
+                        "an invalid peer rank (< 0)."
+                    )
+            for ch, rank in zip(output_channel_types, output_peer_ranks, strict=True):
+                if ch == "mpi" and rank < 0:
+                    raise FINNUserError(
+                        "MPI output channel detected but sim_output_peer_ranks contains "
+                        "an invalid peer rank (< 0)."
+                    )
+
         template_dict = {
             "TIMEOUT_CYCLES": timeout_cycles,
             "PRECISE_TIMEOUT": str(self.performance_sim).lower(),
@@ -731,19 +862,20 @@ class SimulationBuilder:
             "INPUT_INTERFACE_NAMES": ",".join(
                 ['"' + self.shm_prefix + name + '"' for name in input_interface_names]
             )
-            if input_interface_names is not None
+            if input_interface_names != []
             else "",
             "OUTPUT_INTERFACE_NAMES": ",".join(
                 ['"' + self.shm_prefix + name + '"' for name in output_interface_names]
             )
-            if output_interface_names is not None
+            if output_interface_names != []
             else "",
-            "INPUT_INTERFACE_COUNT": len(input_interface_names)
-            if input_interface_names is not None
-            else 0,
-            "OUTPUT_INTERFACE_COUNT": len(output_interface_names)
-            if output_interface_names is not None
-            else 0,
+            "INPUT_CHANNEL_TYPES": ",".join(['"' + ch + '"' for ch in input_channel_types]),
+            "OUTPUT_CHANNEL_TYPES": ",".join(['"' + ch + '"' for ch in output_channel_types]),
+            "INPUT_PEER_RANKS": ",".join([str(v) for v in input_peer_ranks]),
+            "OUTPUT_PEER_RANKS": ",".join([str(v) for v in output_peer_ranks]),
+            "INPUT_INTERFACE_COUNT": len(input_interface_names),
+            "OUTPUT_INTERFACE_COUNT": len(output_interface_names),
+            "SIM_COMM_MODE": sim_comm_mode,
             "NODE_INDEX": node_index,
             "TOTAL_NODES": total_nodes,
             "IS_INPUT_NODE": model.get_metadata_prop("input_node"),
@@ -862,6 +994,123 @@ class SimulationBuilder:
         """
         log.info(f"Building simulation binaries for {len(self.model.graph.node)} layers.")
 
+        rank_map_meta = self.model.get_metadata_prop("sim_rank_map")
+        worker_map_meta = self.model.get_metadata_prop("sim_worker_map")
+        sim_comm_mode_meta = self.model.get_metadata_prop("sim_comm_mode")
+        sim_comm_mode = cast("str", sim_comm_mode_meta) if sim_comm_mode_meta is not None else "shm"
+        rank_map = cast(
+            "dict[str, int]",
+            literal_eval(rank_map_meta) if rank_map_meta is not None else {},
+        )
+        worker_map = cast(
+            "dict[str, int]",
+            literal_eval(worker_map_meta) if worker_map_meta is not None else {},
+        )
+        host_map_meta = self.model.get_metadata_prop("sim_host_map")
+        host_map = cast(
+            "dict[str, str]",
+            literal_eval(host_map_meta) if host_map_meta is not None else {},
+        )
+
+        if sim_comm_mode == SimulationCommMode.HYBRID_MPI.value:
+
+            def _get_local_cores() -> int:
+                if hasattr(os, "sched_getaffinity"):
+                    try:
+                        return max(1, len(os.sched_getaffinity(0)))
+                    except OSError:
+                        pass
+                cpu_count = os.cpu_count()
+                return max(1, int(cpu_count) if cpu_count is not None else 1)
+
+            def _parse_hosts_with_slots(raw: str | None) -> list[tuple[str, int]]:
+                if raw is None or raw.strip() == "":
+                    local_cores = _get_local_cores()
+                    return [("localhost", local_cores)]
+
+                hosts_with_slots: list[tuple[str, int]] = []
+                default_slots = _get_local_cores()
+                for entry in raw.split(","):
+                    token = entry.strip()
+                    if token == "":
+                        continue
+                    host = token
+                    slots = default_slots
+                    if ":" in token:
+                        host_part, slot_part = token.split(":", 1)
+                        host = host_part.strip()
+                        try:
+                            parsed_slots = int(slot_part.strip())
+                            if parsed_slots > 0:
+                                slots = parsed_slots
+                        except ValueError:
+                            pass
+                    if host != "":
+                        hosts_with_slots.append((host, slots))
+
+                if len(hosts_with_slots) == 0:
+                    return [("localhost", default_slots)]
+                return hosts_with_slots
+
+            # BuildSimulation mutates the graph (e.g. inserts DWCs), so metadata precomputed
+            # earlier can become stale/misaligned. Recompute if coverage is incomplete.
+            sim_nodes_for_build = [n for n in self.model.graph.node if "FIFO" not in n.name]
+            need_recompute = (len(rank_map) == 0) or (len(worker_map) == 0)
+            if not need_recompute:
+                for n in sim_nodes_for_build:
+                    if n.name not in rank_map or n.name not in worker_map:
+                        need_recompute = True
+                        break
+
+            if need_recompute:
+                hosts_with_slots = _parse_hosts_with_slots(
+                    self.model.get_metadata_prop("sim_mpi_hosts")
+                )
+                rank_map = {}
+                worker_map = {}
+                host_map = {}
+
+                # Compute how many simulations per node to distribute evenly across hosts.
+                # This is used to determine how many ranks to assign to each host.
+                simulations_per_node = math.ceil(len(sim_nodes_for_build) / len(hosts_with_slots))
+
+                for rank, node in enumerate(sim_nodes_for_build):
+                    worker_id = rank // simulations_per_node
+                    host = hosts_with_slots[worker_id][0]
+                    rank_map[node.name] = rank
+                    worker_map[node.name] = worker_id
+                    host_map[node.name] = host
+
+                has_border_channels = False
+                for node in sim_nodes_for_build:
+                    for outp in node.output:
+                        consumers = self.model.find_consumers(outp)
+                        for consumer in consumers:
+                            if consumer.name not in worker_map:
+                                continue
+                            if worker_map[consumer.name] != worker_map[node.name]:
+                                has_border_channels = True
+                                break
+                        if has_border_channels:
+                            break
+                    if has_border_channels:
+                        break
+
+                self.model.set_metadata_prop("sim_rank_map", str(rank_map))
+                self.model.set_metadata_prop("sim_worker_map", str(worker_map))
+                self.model.set_metadata_prop("sim_host_map", str(host_map))
+                self.model.set_metadata_prop(
+                    "sim_has_mpi_border_channels", str(has_border_channels).lower()
+                )
+                self.model.set_metadata_prop(
+                    "sim_mpi_hosts",
+                    ",".join([f"{host}:{slots}" for host, slots in hosts_with_slots]),
+                )
+                log.info(
+                    "[BuildSimulation] Recomputed hybrid MPI rank/worker/host maps "
+                    "to match the current transformed graph."
+                )
+
         def _build(
             node_index: int,
             total_nodes: int,
@@ -881,6 +1130,101 @@ class SimulationBuilder:
             output_interface_names = nodemodel.get_metadata_prop("successors")
             if output_interface_names is not None:
                 output_interface_names = literal_eval(output_interface_names)
+
+            # Optional automatic channel/rank assignment for hybrid MPI mode.
+            if sim_comm_mode == SimulationCommMode.HYBRID_MPI.value and rank_map and worker_map:
+                node_name = self.model.graph.node[node_index].name
+                node_worker = worker_map.get(node_name, -1)
+                node_rank = rank_map.get(node_name, -1)
+                node_host = host_map.get(node_name, "localhost")
+
+                input_channel_types: list[str] = []
+                output_channel_types: list[str] = []
+                input_peer_ranks: list[int] = []
+                output_peer_ranks: list[int] = []
+                input_route_log: list[str] = []
+                output_route_log: list[str] = []
+
+                log.info(
+                    "[BuildSimulation][Placement] "
+                    f"node={node_name} rank={node_rank} worker={node_worker} host={node_host}"
+                )
+
+                if input_interface_names is not None:
+                    for inp_name in input_interface_names:
+                        producer = self.model.find_producer(inp_name)
+                        if producer is None:
+                            input_channel_types.append("shm")
+                            input_peer_ranks.append(-1)
+                            input_route_log.append(f"{inp_name}:shm(peer=external)")
+                            continue
+                        producer_worker = worker_map.get(producer.name)
+                        producer_rank = rank_map.get(producer.name)
+                        producer_host = host_map.get(producer.name, "localhost")
+                        if (
+                            producer_worker is not None
+                            and producer_rank is not None
+                            and producer_worker != node_worker
+                        ):
+                            input_channel_types.append("mpi")
+                            input_peer_ranks.append(producer_rank)
+                            input_route_log.append(
+                                f"{inp_name}:mpi(peer={producer.name},"
+                                f"rank={producer_rank},host={producer_host})"
+                            )
+                        else:
+                            input_channel_types.append("shm")
+                            input_peer_ranks.append(-1)
+                            input_route_log.append(
+                                f"{inp_name}:shm(peer={producer.name},host={producer_host})"
+                            )
+
+                if output_interface_names is not None:
+                    for out_name in output_interface_names:
+                        consumers = self.model.find_consumers(out_name)
+                        if len(consumers) == 0:
+                            output_channel_types.append("shm")
+                            output_peer_ranks.append(-1)
+                            output_route_log.append(f"{out_name}:shm(peer=external)")
+                            continue
+                        # One stream per successor is expected by this flow.
+                        consumer = consumers[0]
+                        consumer_worker = worker_map.get(consumer.name)
+                        consumer_rank = rank_map.get(consumer.name)
+                        consumer_host = host_map.get(consumer.name, "localhost")
+                        if (
+                            consumer_worker is not None
+                            and consumer_rank is not None
+                            and consumer_worker != node_worker
+                        ):
+                            output_channel_types.append("mpi")
+                            output_peer_ranks.append(consumer_rank)
+                            output_route_log.append(
+                                f"{out_name}:mpi(peer={consumer.name},"
+                                f"rank={consumer_rank},host={consumer_host})"
+                            )
+                        else:
+                            output_channel_types.append("shm")
+                            output_peer_ranks.append(-1)
+                            output_route_log.append(
+                                f"{out_name}:shm(peer={consumer.name},host={consumer_host})"
+                            )
+
+                nodemodel.set_metadata_prop("sim_input_channel_types", str(input_channel_types))
+                nodemodel.set_metadata_prop("sim_output_channel_types", str(output_channel_types))
+                nodemodel.set_metadata_prop("sim_input_peer_ranks", str(input_peer_ranks))
+                nodemodel.set_metadata_prop("sim_output_peer_ranks", str(output_peer_ranks))
+                nodemodel.set_metadata_prop("sim_comm_mode", sim_comm_mode)
+
+                log.info(
+                    "[BuildSimulation][Interfaces][IN ] "
+                    f"node={node_name} routes={'; '.join(input_route_log)}"
+                )
+                log.info(
+                    "[BuildSimulation][Interfaces][OUT] "
+                    f"node={node_name} routes={'; '.join(output_route_log)}"
+                )
+
             return self.build_single_node_simulation(
                 nodemodel,
                 node_index,
@@ -1074,6 +1418,14 @@ class BuildSimulation(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build / compile the model. Modifies the model."""
         self.model = model
+        sim_comm_mode = (
+            cast(
+                "str",
+                self.model.get_metadata_prop("sim_comm_mode")
+                or os.environ.get("FINN_SIM_COMM_MODE", "shm"),
+            )
+        ).lower()
+        enable_mpi = sim_comm_mode == SimulationCommMode.HYBRID_MPI.value
 
         # Check if we already have stitched IPs and built simulations. If so, rerun only cmake/make
         needs_rebuild = True
@@ -1137,8 +1489,11 @@ class BuildSimulation(Transformation):
             # Run only compilation again, and avoid repeating building of the stitched IPs
             def _compile(binary: Path) -> None:
                 """Compile binary in path binary."""
+                cmake_cmd = "cmake"
+                if enable_mpi:
+                    cmake_cmd += " -DFIFOSIM_ENABLE_MPI=ON"
                 result = subprocess.run(
-                    "cmake .;make",
+                    f"{cmake_cmd} .;make",
                     shell=True,
                     cwd=str(binary),
                     text=True,

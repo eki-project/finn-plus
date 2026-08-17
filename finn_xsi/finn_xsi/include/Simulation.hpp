@@ -10,6 +10,7 @@
 #include <helper.h>
 
 #include <InterprocessCommunicationChannelInterface.hpp>
+#include <MPICommunicationChannel.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -21,6 +22,19 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <variant>
+
+enum class SimChannelType { SHM, MPI };
+
+inline SimChannelType parseChannelType(std::string_view v) {
+    if (v == "shm") {
+        return SimChannelType::SHM;
+    }
+    if (v == "mpi") {
+        return SimChannelType::MPI;
+    }
+    throw std::runtime_error("Unsupported simulation channel type: " + std::string(v));
+}
 
 
 template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled>
@@ -41,7 +55,19 @@ class Simulation {
 
     Simulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file,
                std::array<StreamDescriptor, IStreamsSize> _istream_descs, std::array<StreamDescriptor, OStreamsSize> _ostream_descs)
-        : kernel(kernel_lib), top(kernel, design_lib, xsim_log_file, trace_file), clk(top) {
+        : kernel([&]() {
+              FINN_LOG("Loading simulation kernel library: " << kernel_lib);
+              xsi::Kernel k(kernel_lib);
+              FINN_LOG("Loaded simulation kernel library.");
+              return k;
+          }()),
+          top([&]() {
+              FINN_LOG("Loading design library: " << design_lib);
+              xsi::Design d(kernel, design_lib, xsim_log_file, trace_file);
+              FINN_LOG("Loaded design library.");
+              return d;
+          }()),
+          clk(top) {
         if (trace_file) {
             top.trace_all();
         }
@@ -109,11 +135,36 @@ template<size_t IStreamsSize, size_t OStreamsSize, bool LoggingEnabled, size_t N
 class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, LoggingEnabled> {
     using ConsumingInterface = InterprocessCommunicationChannel<CommData, CommData, true>;
     using ProducingInterface = InterprocessCommunicationChannel<CommData, CommData, false>;
-    std::array<ConsumingInterface, IStreamsSize> fromProducerInterface;
-    std::array<ProducingInterface, OStreamsSize> toConsumerInterface;
+    using ConsumingMPIInterface = MPICommunicationChannel<CommData, CommData, true>;
+    using ProducingMPIInterface = MPICommunicationChannel<CommData, CommData, false>;
+    using ConsumingChannel = std::variant<ConsumingInterface, ConsumingMPIInterface>;
+    using ProducingChannel = std::variant<ProducingInterface, ProducingMPIInterface>;
+
+    std::array<ConsumingChannel, IStreamsSize> fromProducerInterface;
+    std::array<ProducingChannel, OStreamsSize> toConsumerInterface;
     std::size_t cyclesRun = 0;
     std::size_t completedMaps = 0;
     std::array<FIFO, OStreamsSize> fifo;
+
+    static bool _send_request(ConsumingChannel& ch, bool ready, std::stop_token stoken) {
+        return std::visit([&](auto& c) { return c.send_request(CommData{ready}, stoken).data; }, ch);
+    }
+
+    static bool _receive_request(ProducingChannel& ch, std::stop_token stoken) {
+        return std::visit([&](auto& c) { return c.receive_request(stoken).data; }, ch);
+    }
+
+    static void _send_response(ProducingChannel& ch, bool valid, std::stop_token stoken = {}) {
+        std::visit([&](auto& c) { c.send_response(CommData{valid}, stoken); }, ch);
+    }
+
+    static void _handshake(ConsumingChannel& ch) {
+        std::visit([&](auto& c) { c.handshake(); }, ch);
+    }
+
+    static void _handshake(ProducingChannel& ch) {
+        std::visit([&](auto& c) { c.handshake(); }, ch);
+    }
 
     /**
      * Initialize streams according to nodeindex
@@ -137,7 +188,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
                 // Interface SHM <-> sim
                 bool istreamReady = this->istreams[i].getInputReady();
-                bool fifoValid = fromProducerInterface[i].send_request(CommData{istreamReady}, stoken).data;
+                bool fifoValid = _send_request(fromProducerInterface[i], istreamReady, stoken);
                 this->istreams[i].setValid(fifoValid);  // deferred
             }
         }
@@ -146,12 +197,12 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 // Interface sim -valid-> FIFO
                 this->fifo[i].setInputValid(this->ostreams[i].getOutputValid(), stoken);
                 // Interface FIFO <-> SHM
-                this->fifo[i].setOutputReady(toConsumerInterface[i].receive_request(stoken).data, stoken);
+                this->fifo[i].setOutputReady(_receive_request(toConsumerInterface[i], stoken), stoken);
 
                 // Toggle FIFO clock
                 ret |= this->fifo[i].toggleClock();
                 bool fifoValid = this->fifo[i].getOutputValid();
-                toConsumerInterface[i].send_response(CommData{fifoValid});
+                _send_response(toConsumerInterface[i], fifoValid, stoken);
                 // FIFO -ready-> sim
                 this->ostreams[i].setReady(this->fifo[i].getInputReady());
             }
@@ -198,7 +249,8 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     SingleNodeSimulation(const std::string& kernel_lib, const std::string& design_lib, const char* xsim_log_file, const char* trace_file,
                          std::array<StreamDescriptor, IStreamsSize> _istream_descs, std::array<StreamDescriptor, OStreamsSize> _ostream_descs,
                          std::array<std::string_view, IStreamsSize> inputInterfaceNames, std::array<std::string_view, OStreamsSize> outputInterfaceNames,
-                         unsigned int initialFIFODepth = 2)
+                         std::array<std::string_view, IStreamsSize> inputChannelTypes, std::array<std::string_view, OStreamsSize> outputChannelTypes,
+                         std::array<int, IStreamsSize> inputPeerRanks, std::array<int, OStreamsSize> outputPeerRanks, unsigned int initialFIFODepth = 2)
         : Simulation<IStreamsSize, OStreamsSize, LoggingEnabled>(kernel_lib, design_lib, xsim_log_file, trace_file, _istream_descs, _ostream_descs) {
         if (!FirstNode && inputInterfaceNames.empty()) {
             throw std::runtime_error("Cannot communicate with predecessor because previous node name was not given!");
@@ -221,8 +273,14 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         if constexpr (!LastNode) {
             // Create consumer facing interfaces
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                std::string shmName{outputInterfaceNames[i]};
-                toConsumerInterface[i] = std::move(ProducingInterface(shmName));
+                SimChannelType channelType = parseChannelType(outputChannelTypes[i]);
+                if (channelType == SimChannelType::MPI) {
+                    int peerRank = outputPeerRanks[i];
+                    toConsumerInterface[i] = std::move(ProducingMPIInterface(outputInterfaceNames[i], peerRank));
+                } else {
+                    std::string shmName{outputInterfaceNames[i]};
+                    toConsumerInterface[i] = std::move(ProducingInterface(shmName));
+                }
             }
         }
 
@@ -230,8 +288,14 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
 
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                std::string shmName{inputInterfaceNames[i]};
-                fromProducerInterface[i] = std::move(ConsumingInterface(shmName));
+                SimChannelType channelType = parseChannelType(inputChannelTypes[i]);
+                if (channelType == SimChannelType::MPI) {
+                    int peerRank = inputPeerRanks[i];
+                    fromProducerInterface[i] = std::move(ConsumingMPIInterface(inputInterfaceNames[i], peerRank));
+                } else {
+                    std::string shmName{inputInterfaceNames[i]};
+                    fromProducerInterface[i] = std::move(ConsumingInterface(shmName));
+                }
             }
         }
 
@@ -240,12 +304,12 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         // Verify communication works
         if constexpr (!LastNode) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
-                toConsumerInterface[i].handshake();
+                _handshake(toConsumerInterface[i]);
             }
         }
         if constexpr (!FirstNode) {
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
-                fromProducerInterface[i].handshake();
+                _handshake(fromProducerInterface[i]);
             }
         }
 
@@ -356,9 +420,7 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     std::size_t getInputJobSize(std::size_t inputIndex = 0) { return this->istreams[inputIndex].job_size; }
 
     /// Get the latency in cycles of the specified output stream
-    std::size_t getLatencyCycles(std::size_t outputIndex = 0) {
-        return this->ostreams[outputIndex].first_complete;
-    }
+    std::size_t getLatencyCycles(std::size_t outputIndex = 0) { return this->ostreams[outputIndex].first_complete; }
 
     /// Get the number of cycles the simulation has run
     std::size_t getCyclesRun() const noexcept { return cyclesRun; }

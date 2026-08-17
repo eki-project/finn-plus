@@ -2,16 +2,25 @@
 
 import json
 import math
+import os
 import pandas as pd
+import shlex
+import signal
+import socket
+import subprocess
+import sys
 import time
 import traceback
+from ast import literal_eval
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import suppress
 from copy import deepcopy
 from enum import Enum
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from rich.console import Console
+from shutil import which
 from threading import Barrier
 from typing import Any, cast
 
@@ -24,6 +33,7 @@ from finn.transformation.fpgadataflow.simulation import (
     SimulationType,
     store_fifo_data,
 )
+from finn.transformation.fpgadataflow.simulation_build import SimulationCommMode
 from finn.util.basic import getHWCustomOp, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
@@ -94,6 +104,10 @@ class NodeConnectedSimulationController(SimulationController):
         binaries: list[Path],
         console: Console,
         shm_prefix: str,
+        use_mpi_launcher: bool = False,
+        mpi_launcher: str = "mpirun",
+        mpi_hosts: str | None = None,
+        mpi_host_map: dict[str, str] | None = None,
         poll_interval: float = 1.0,
         with_progressbar: bool = True,
     ) -> None:
@@ -110,10 +124,265 @@ class NodeConnectedSimulationController(SimulationController):
         # Synchronization barrier for configuration phase
         self.sync_barrier: Barrier | None = None
         self.shm_prefix = shm_prefix
+        self.use_mpi_launcher = use_mpi_launcher
+        self.mpi_launcher = mpi_launcher
+        self.mpi_hosts = mpi_hosts
+        self.mpi_launcher_proc: subprocess.Popen | None = None
+        self.mpi_host_map = mpi_host_map
+        self.mpi_launcher_stdout: Any = None
+        self.mpi_launcher_stderr: Any = None
+        self.mpi_launcher_pgid: int | None = None
         for binary in binaries:
             if not binary.exists():
                 console.log(f"Binary {binary} does not exist!")
                 raise FINNUserError(f"Binary {binary} does not exist!")
+
+    def _start_mpi_group(self) -> None:
+        """Start one MPI job that launches one simulation backend per rank."""
+        launcher_path = which(self.mpi_launcher)
+        if launcher_path is None:
+            raise FINNUserError(
+                f"Requested MPI launcher '{self.mpi_launcher}' was not found in PATH."
+            )
+
+        def _build_launcher_cmd(
+            launcher_script: Path,
+            mapping_file: Path,
+            endpoint_map: dict[str, list[tuple[int, str]]],
+        ) -> list[str]:
+            cmd = [launcher_path]
+            # Use slot-based mapping by default because FINN rank allocation is based on
+            # logical CPU slots, while MPI implementations often default to by-core mapping.
+            # This avoids launch failures like "failed to map ... Mapping policy: BYCORE".
+            cmd.extend(["--map-by", "slot", "--bind-to", "none"])
+            # In SLURM allocations, OpenMPI may infer available slots from --ntasks
+            # (often just a small number), while FINN launches one MPI rank per layer.
+            # Oversubscribe by default so mapping does not fail with "Out of resource".
+            oversubscribe = os.environ.get("FINN_SIM_MPI_OVERSUBSCRIBE", "1").lower()
+            if oversubscribe in {"1", "true", "yes", "on"}:
+                cmd.append("--oversubscribe")
+            # The number of ranks per host must match the number of endpoints assigned to
+            # that host in endpoint_map, so that (with --map-by slot fill-first) local rank
+            # i on a host always corresponds to endpoint_map[host][i]. Using a fixed slot
+            # count (e.g. local core count) here would misalign ranks with endpoints
+            # whenever hosts don't get an even share of the simulated nodes.
+            hosts_with_slots = ",".join(f"{host}:{len(v)}" for host, v in endpoint_map.items())
+            cmd.extend(["-H", hosts_with_slots])
+            mpi_extra_args = os.environ.get("FINN_SIM_MPI_ARGS", "").strip()
+            if mpi_extra_args != "":
+                cmd.extend(shlex.split(mpi_extra_args))
+            # World size must be the total number of simulation endpoints, not the size of
+            # the Slurm/MPI allocation FINN itself runs in (e.g. SLURM_NTASKS): FINN launches
+            # one MPI rank per simulated node, which is typically far more than the number of
+            # allocated Slurm tasks.
+            size = sum(len(v) for v in endpoint_map.values())
+            cmd.extend(
+                [
+                    "-np",
+                    str(size),
+                    sys.executable,
+                    str(launcher_script),
+                    str(mapping_file),
+                ]
+            )
+            return cmd
+
+        mapping_file = self.logdir / "mpi_rank_mapping.json"
+
+        launcher_script = (
+            Path(__file__).parent.parent.parent / "templates" / "mpi_scripts" / "mpi_run_script.py"
+        )
+
+        stdout_log = self.logdir / "mpi_launcher_stdout.log"
+        stderr_log = self.logdir / "mpi_launcher_stderr.log"
+
+        get_free_ports_script = (
+            Path(__file__).parent.parent.parent / "templates" / "mpi_scripts" / "get_free_ports.py"
+        )
+
+        # Preserve first-occurrence order (matches self.names, which is grouped in
+        # contiguous per-host blocks). A plain set() here would give hash-randomized
+        # order, so self.sockets (built by iterating hosts below) would end up
+        # misaligned with self.names, and _run_binary's self.sockets[self.names.index(name)]
+        # would talk to the wrong rank's control socket.
+        hosts = list(dict.fromkeys(self.mpi_host_map.values()))
+        host_map: dict[str, list[str]] = {}
+        for host in hosts:
+            host_map[host] = []
+            for k, v in self.mpi_host_map.items():
+                if v == host:
+                    host_map[v].append(k)
+        count = 0
+        for v in host_map.values():
+            count = max(count, len(v))
+        if count == 0:
+            raise FINNInternalError("Count is 0")
+
+        probe_cmd = [launcher_path]
+        nodes = len(cast("str", self.mpi_hosts).split(","))
+        probe_cmd.extend(
+            [
+                "--map-by",
+                "ppr:1:node",
+                "--prtemca",
+                "prte_silence_shared_fs",
+                "1",
+                "-np",
+                str(nodes),
+                sys.executable,
+                str(get_free_ports_script),
+                "--start",
+                "8000",
+                "--end",
+                "65535",
+                "--count",
+                str(count),
+            ]
+        )
+        res = subprocess.run(probe_cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            raise FINNInternalError(
+                f"Failed to probe free ports for MPI simulation: {res.stderr.strip()}, "
+                f"stdout: {res.stdout.strip()}"
+            )
+        # Returns one line per node, each line is a JSON object with a "ports" list.
+        raw = res.stdout.strip()
+        host_to_ports: dict[str, list[int]] = {}
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            if not obj.get("ok", False):
+                raise FINNInternalError(
+                    f"Failed to probe free ports for MPI simulation: "
+                    f"{obj.get('error', 'unknown error')}"
+                )
+            host_to_ports[obj["hostname"]] = obj["ports"]
+        endpoint_map: dict[str, list[tuple[int, str]]] = {}
+        for k, v in host_map.items():
+            endpoint_map[k] = []
+            for i, name in enumerate(v):
+                port = host_to_ports[k][i]
+                path = ""
+                for bi in self.binaries:
+                    if name in str(bi):
+                        path = str(bi)
+                        break
+                endpoint_map[k].append((port, path))
+        mapping_file.write_text(
+            json.dumps(
+                endpoint_map,
+                indent=2,
+            )
+        )
+
+        launcher_cmd = _build_launcher_cmd(launcher_script, mapping_file, endpoint_map)
+
+        self.mpi_launcher_stdout = stdout_log.open("w")
+        self.mpi_launcher_stderr = stderr_log.open("w")
+        self.mpi_launcher_proc = subprocess.Popen(
+            launcher_cmd,
+            stderr=self.mpi_launcher_stderr,
+            text=True,
+            start_new_session=True,
+        )
+        with suppress(ProcessLookupError):
+            self.mpi_launcher_pgid = os.getpgid(self.mpi_launcher_proc.pid)
+
+        # Connect to each rank's socket server.
+        self.sockets = []
+        max_retries = int(os.environ.get("FINN_SIM_MPI_CONNECT_RETRIES", "1200"))
+        for host, endpoint in endpoint_map.items():
+            for port, _bin in endpoint:
+                endpoint_port = cast("int", port)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                connected = False
+                for _ in range(max_retries):
+                    if self.mpi_launcher_proc.poll() is not None:
+                        raise RuntimeError(
+                            "MPI launcher process exited before all sockets connected"
+                        )
+                    try:
+                        sock.connect((host, endpoint_port))
+                        connected = True
+                        break
+                    except (ConnectionRefusedError, socket.gaierror, OSError):
+                        time.sleep(0.1)
+                if not connected:
+                    self._cleanup_sockets()
+                    raise RuntimeError(
+                        f"Failed to connect to MPI rank control endpoint: {host}:{endpoint_port}"
+                    )
+                self.sockets.append((sock, f"tcp://{host}:{endpoint_port}"))
+
+        # Provide one process entry for existing error handling path.
+        if self.mpi_launcher_proc is not None:
+            self.processes.append(
+                (
+                    self.mpi_launcher_proc,
+                    self.mpi_launcher_stdout,
+                    self.mpi_launcher_stderr,
+                )
+            )
+
+    def _cleanup_sockets(self) -> None:
+        """Close sockets and terminate processes; MPI mode has custom cleanup."""
+        if not self.use_mpi_launcher:
+            super()._cleanup_sockets()
+            return
+
+        # Send stop command to all ranks (best effort, non-blocking ack handling).
+        # In hybrid MPI mode some ranks may be blocked in MPI recv/send and therefore
+        # cannot acknowledge stop immediately. Waiting for each ack can deadlock the
+        # controller and prevent subsequent iterations from starting.
+        for i in range(len(self.sockets)):
+            with suppress(Exception):
+                self._send_command(i, "stop", {})
+
+        # Close sockets.
+        for sock, _endpoint in self.sockets:
+            with suppress(Exception):
+                sock.shutdown(socket.SHUT_RDWR)
+            with suppress(Exception):
+                sock.close()
+
+        self.sockets = []
+
+        # Let launcher/ranks exit gracefully first; then force-stop full process
+        # group if anything is still alive.
+        if self.mpi_launcher_proc is not None:
+            try:
+                self.mpi_launcher_proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                if self.mpi_launcher_pgid is not None:
+                    with suppress(ProcessLookupError):
+                        os.killpg(self.mpi_launcher_pgid, signal.SIGTERM)
+                else:
+                    with suppress(ProcessLookupError):
+                        self.mpi_launcher_proc.terminate()
+                try:
+                    self.mpi_launcher_proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    if self.mpi_launcher_pgid is not None:
+                        with suppress(ProcessLookupError):
+                            os.killpg(self.mpi_launcher_pgid, signal.SIGKILL)
+                    else:
+                        with suppress(ProcessLookupError):
+                            self.mpi_launcher_proc.kill()
+                    with suppress(Exception):
+                        self.mpi_launcher_proc.wait(timeout=3)
+
+        if self.mpi_launcher_stdout is not None:
+            self.mpi_launcher_stdout.close()
+        if self.mpi_launcher_stderr is not None:
+            self.mpi_launcher_stderr.close()
+
+        self.processes = []
+        self.mpi_launcher_proc = None
+        self.mpi_launcher_stdout = None
+        self.mpi_launcher_stderr = None
+        self.mpi_launcher_pgid = None
 
     def _cleanup_shm_resources(self) -> None:
         """Remove any existing shared memory segments and semaphores from /dev/shm."""
@@ -169,8 +438,15 @@ class NodeConnectedSimulationController(SimulationController):
         # Clean up any existing shared memory resources before starting
         self._cleanup_shm_resources()
 
+        # Ensure a fresh stop state for this run.
+        with self.stop_lock:
+            self.should_stop = False
+
         # Initialize barrier for all simulations to synchronize after configuration
         self.sync_barrier = Barrier(len(self.names))
+
+        if self.use_mpi_launcher:
+            self._start_mpi_group()
 
         if self.progress is not None:
             self.progress.start()
@@ -372,7 +648,11 @@ class NodeConnectedSimulationController(SimulationController):
 
             try:
                 # Start the simulation process with socket communication
-                proc_idx = self._start_process(binary, process_index)
+                proc_idx = (
+                    process_index
+                    if self.use_mpi_launcher
+                    else self._start_process(binary, process_index)
+                )
 
                 # Send configuration commands
                 # Last node has no output FIFOs, so don't configure FIFO depths
@@ -475,6 +755,10 @@ class NodeConnectedSimulationController(SimulationController):
                             "fifo_cycles_until_first_valid", []
                         )
                         latency_cycles = response.get("latency_cycles", [])
+                        # Stop all simulations once any node reaches terminal
+                        # state. In node-connected mode only the last node can
+                        # naturally reach "finished"; other nodes must be
+                        # terminated by controller stop broadcast.
                         with self.stop_lock:
                             self.should_stop = True
                         break
@@ -544,6 +828,164 @@ class NodeConnectedSimulation(Simulation):
         performance_sim: bool = False,
     ) -> None:
         """Initialize node-connected simulation."""
+        sim_comm_mode = (
+            model.get_metadata_prop("sim_comm_mode")
+            or os.environ.get("FINN_SIM_COMM_MODE", SimulationCommMode.SHM.value)
+        ).lower()
+        allowed_modes = {SimulationCommMode.SHM.value, SimulationCommMode.HYBRID_MPI.value}
+        if sim_comm_mode not in allowed_modes:
+            raise FINNUserError(
+                f"Unsupported simulation communication mode '{sim_comm_mode}'. "
+                f"Allowed values are: {', '.join(sorted(allowed_modes))}."
+            )
+        model.set_metadata_prop("sim_comm_mode", sim_comm_mode)
+        self.sim_comm_mode = sim_comm_mode
+
+        def _get_local_cores() -> int:
+            if hasattr(os, "sched_getaffinity"):
+                try:
+                    return max(1, len(os.sched_getaffinity(0)))
+                except OSError:
+                    pass
+            cpu_count = os.cpu_count()
+            return max(1, cast("int", cpu_count if cpu_count is not None else 1))
+
+        def _parse_hosts(raw: str | None) -> list[str]:
+            if raw is None or raw.strip() == "":
+                return ["localhost"]
+            hosts: list[str] = []
+            for entry in raw.split(","):
+                host = entry.strip()
+                if host == "":
+                    continue
+                # Accept both "host" and "host:slots" formats.
+                if ":" in host:
+                    host = host.split(":", 1)[0]
+                hosts.append(host)
+            return hosts if hosts else ["localhost"]
+
+        def _parse_list_metadata(name: str) -> list[Any] | None:
+            val = model.get_metadata_prop(name)
+            if val is None:
+                return None
+            parsed = literal_eval(val)
+            if not isinstance(parsed, list):
+                raise FINNUserError(
+                    f"Expected model metadata '{name}' to be a Python list literal."
+                )
+            return parsed
+
+        if (
+            sim_comm_mode == SimulationCommMode.HYBRID_MPI.value
+            and model.get_metadata_prop("sim_rank_map") is None
+        ):
+            # Automatic rank/worker allocation strategy:
+            # fill up first host to local-core capacity, then move to next host.
+            local_cores = _get_local_cores()
+            hosts = _parse_hosts(
+                model.get_metadata_prop("sim_mpi_hosts") or os.environ.get("FINN_SIM_MPI_HOSTS")
+            )
+
+            sim_nodes = (
+                [n for n in model.graph.node if "FIFO" not in n.op_type]
+                if performance_sim
+                else list(model.graph.node)
+            )
+            total_capacity = len(hosts) * local_cores
+            if len(sim_nodes) > total_capacity:
+                log.warning(
+                    "Not enough MPI node capacity for requested simulation partitioning. "
+                    f"Need {len(sim_nodes)} ranks, but hosts={hosts} with "
+                    f"{local_cores} cores/node provide only {total_capacity} slots."
+                    "This can lead to reduced performance."
+                )
+
+            rank_map: dict[str, int] = {}
+            worker_map: dict[str, int] = {}
+            host_map: dict[str, str] = {}
+
+            # Compute how many simulations per node to distribute evenly across hosts.
+            # This is used to determine how many ranks to assign to each host.
+            simulations_per_node = math.ceil(len(sim_nodes) / len(hosts))
+
+            for rank, node in enumerate(sim_nodes):
+                worker_id = rank // simulations_per_node
+                rank_map[node.name] = rank
+                worker_map[node.name] = worker_id
+                host_map[node.name] = hosts[worker_id]
+
+            # Determine whether any graph edge crosses workers.
+            has_border_channels = False
+            for node in sim_nodes:
+                for outp in node.output:
+                    consumers = model.find_consumers(outp)
+                    for consumer in consumers:
+                        if worker_map.get(consumer.name, -1) != worker_map.get(node.name, -1):
+                            has_border_channels = True
+                            break
+                    if has_border_channels:
+                        break
+                if has_border_channels:
+                    break
+
+            model.set_metadata_prop("sim_rank_map", str(rank_map))
+            model.set_metadata_prop("sim_worker_map", str(worker_map))
+            model.set_metadata_prop("sim_host_map", str(host_map))
+            model.set_metadata_prop("sim_has_mpi_border_channels", str(has_border_channels).lower())
+
+            # Build mpirun host list with explicit slots for deterministic fill-first behavior.
+            hosts_with_slots = ",".join([f"{h}:{local_cores}" for h in hosts])
+            model.set_metadata_prop("sim_mpi_hosts", hosts_with_slots)
+
+        input_channel_types = _parse_list_metadata("sim_input_channel_types")
+        output_channel_types = _parse_list_metadata("sim_output_channel_types")
+        has_mpi_from_channel_metadata = False
+        if input_channel_types is not None and any(ch == "mpi" for ch in input_channel_types):
+            has_mpi_from_channel_metadata = True
+        if output_channel_types is not None and any(ch == "mpi" for ch in output_channel_types):
+            has_mpi_from_channel_metadata = True
+
+        has_mpi_border_channels_meta = model.get_metadata_prop("sim_has_mpi_border_channels")
+        has_mpi_from_border_meta: bool | None = None
+        if has_mpi_border_channels_meta is not None:
+            has_mpi_from_border_meta = has_mpi_border_channels_meta.lower() == "true"
+
+        # Prefer exact per-channel metadata when available, because it directly captures
+        # whether this node model has any MPI links. Fall back to coarse border metadata
+        # for backward compatibility.
+        if input_channel_types is not None or output_channel_types is not None:
+            self.sim_has_mpi_border_channels = has_mpi_from_channel_metadata
+            if (
+                has_mpi_from_border_meta is not None
+                and has_mpi_from_border_meta != has_mpi_from_channel_metadata
+            ):
+                log.warning(
+                    "[Simulation] Inconsistent MPI metadata: "
+                    f"sim_has_mpi_border_channels={has_mpi_from_border_meta} but channel "
+                    f"metadata implies {has_mpi_from_channel_metadata}. "
+                    "Using channel metadata."
+                )
+        else:
+            self.sim_has_mpi_border_channels = bool(has_mpi_from_border_meta)
+
+        if (
+            sim_comm_mode == SimulationCommMode.HYBRID_MPI.value
+            and not self.sim_has_mpi_border_channels
+        ):
+            log.info(
+                "[Simulation] sim_comm_mode=hybrid_mpi enabled, but no cross-worker "
+                "border channels were detected. Falling back to pure SHM behavior."
+            )
+
+        self.use_mpi_launcher = (
+            sim_comm_mode == SimulationCommMode.HYBRID_MPI.value
+            and self.sim_has_mpi_border_channels
+        )
+        self.mpi_launcher = os.environ.get("FINN_SIM_MPI_LAUNCHER", "mpirun")
+        self.mpi_hosts = model.get_metadata_prop("sim_mpi_hosts") or os.environ.get(
+            "FINN_SIM_MPI_HOSTS"
+        )
+
         super().__init__(
             model, simulation_type, fpgapart, clk_ns, functional_sim, workers, performance_sim
         )
@@ -599,14 +1041,25 @@ class NodeConnectedSimulation(Simulation):
         # Run simulation
         start = time.time()
         output_json = Path(make_build_dir("simulation_results_")) / "simulation_data.json"
+        sim_host_map: dict[str, str] | None = None
+        if self.use_mpi_launcher:
+            sim_host_map_meta = self.model.get_metadata_prop("sim_host_map")
+            if sim_host_map_meta is not None:
+                sim_host_map = cast("dict[str, str]", literal_eval(sim_host_map_meta))
+            else:
+                raise FINNInternalError("MPI Host Map missing.")
         controller = NodeConnectedSimulationController(
             len(self.binaries),
             names,
             list(self.binaries.values()),
             Console(),
             self.shm_prefix,
-            0.1,
-            False,
+            use_mpi_launcher=self.use_mpi_launcher,
+            mpi_launcher=self.mpi_launcher,
+            mpi_hosts=self.mpi_hosts,
+            mpi_host_map=sim_host_map,
+            poll_interval=0.1,
+            with_progressbar=False,
         )
         controller.run(adjusted_depth, output_json, max_cycles, fifo_first_valid_cycles)
         end = time.time()
@@ -1448,12 +1901,12 @@ class RunLayerParallelSimulation(Transformation):
             return False
         # Return False if exactly the minimum number of possible BRAM blocks is used for this
         # bitwidth and depth is sufficiently large that further optimization is unlikely to succeed
-        # return not (
-        #     calculate_bram_blocks(fifo_depth, bitwidth)
-        #     <= self._get_valid_block_counts(1, bitwidth, bitwidth)[0]
-        #     and fifo_depth > math.floor(self.max_qsrl_depth * 1.1)
-        # )
-        return True
+        return not (
+            calculate_bram_blocks(fifo_depth, bitwidth)
+            <= self._get_valid_block_counts(1, bitwidth, bitwidth)[0]
+            and fifo_depth > math.floor(self.max_qsrl_depth * 1.1)
+        )
+        # return True
 
 
 def calculate_bram_blocks(depth: int, bitwidth: int) -> int:
