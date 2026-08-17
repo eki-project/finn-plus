@@ -27,17 +27,17 @@ packages = [{ include = "tests", from = ".." }]
 include = ["example_data/**/*"]
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.13"
-pytest = "~8.4.1"
+python = ">=3.11"
+pytest = "~9.1.1"
 pytest-metadata = "~3.1.1"
-pytest-html = "~4.1.1"
+pytest-html = "~4.2.0"
 pytest-html-merger = "~0.1.0"
-pytest-cov = "~6.2.1"
-pytest-forked = "~1.6.0"
-pytest-rerunfailures = "~15.1"
-pytest-dependency = "~0.6.0"
+pytest-cov = "~7.1.0"
+pytest-forked = "~1.7.5"
+pytest-rerunfailures = "~16.6"
+pytest-dependency = "~0.6.1"
 pytest-parallel = "~0.1.1"
-pytest-xdist = { version = "~3.6.1", extras = ["setproctitle"] }
+pytest-xdist = { version = "~3.8.0", extras = ["setproctitle"] }
 torch = "~2.7.1"
 torchvision = "~0.22.1"
 wget = "~3.2"

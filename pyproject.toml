@@ -39,10 +39,10 @@ enable = true
 finn = "finn.interface.run_finn:main"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.13"
+python = ">=3.11"
 pybind11 = "3.0.1"                              # pybind11==3.0.1 already for FIFO sim rework, after rework remove module load
 bitstring = "~4.3.1"
-numpy = "1.26.4"  # numpy<=1.26.4 required by brevitas
+numpy = "~2.4.6"
 # Cannot upgrade onnx and onnxruntime any further. For now this seems to be the
 # last compatible pair which is also consistent with qonnx.
 # Upgrading onnx will result in model IR version not supported by onnxruntime
@@ -59,7 +59,7 @@ protobuf = "5.29.6"
 pyyaml = "~6.0.2"
 mip = "~1.13.0"
 cmake = "~4.0.3"
-brevitas = "0.12.1"
+brevitas = "0.13.0"
 qonnx = "1.0.0"
 
 termcolor = "^2.5.0"
@@ -79,7 +79,7 @@ finn-plus-notebooks = { path = "./notebooks", develop = true }
 pygments = "~2.19.2"
 torch = "~2.7.1"                                      # required by CI
 torchvision = "~0.22.1"                               # required by CI
-dvc = { version = " ~3.66.0", extras = ["webdav"] }   # required by CI
+dvc = { version = " ~3.67.0", extras = ["webdav"] }   # required by CI
 dvclive = { version = "~3.49.0", extras = ["image"] } # required by CI
 
 [tool.poetry.extras]
