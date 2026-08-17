@@ -518,6 +518,7 @@ class SimulationController:
         """
 
         def _get_process_entry(idx: int) -> tuple[subprocess.Popen, Any, Any] | None:
+            """Return the (proc, stdout_file, stderr_file) entry for process index idx."""
             if idx < len(self.processes):
                 return self.processes[idx]
             # MPI launcher mode may have a single shared process entry for many ranks.

@@ -505,6 +505,7 @@ def step_set_fifo_depths(
                 # Without this, all channels default to SHM and cross-node links can
                 # deadlock/time out in multi-node runs.
                 def _get_local_cores() -> int:
+                    """Return the number of CPU cores available to this process."""
                     if hasattr(os, "sched_getaffinity"):
                         try:
                             return max(1, len(os.sched_getaffinity(0)))
@@ -514,6 +515,7 @@ def step_set_fifo_depths(
                     return max(1, int(cpu_count) if cpu_count is not None else 1)
 
                 def _parse_hosts(raw: str | None) -> list[str]:
+                    """Parse a "host[:slots],host[:slots],..." string into a plain host list."""
                     if raw is None or raw.strip() == "":
                         return ["localhost"]
                     hosts: list[str] = []

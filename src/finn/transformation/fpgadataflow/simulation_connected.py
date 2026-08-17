@@ -203,6 +203,7 @@ class NodeConnectedSimulationController(SimulationController):
             mapping_file: Path,
             endpoint_map: dict[str, list[tuple[int, str]]],
         ) -> list[str]:
+            """Build the mpirun command line that launches mpi_run_script.py per rank."""
             cmd = [launcher_path]
             # Use slot-based mapping by default because FINN rank allocation is based on
             # logical CPU slots, while MPI implementations often default to by-core mapping.
@@ -916,6 +917,7 @@ class NodeConnectedSimulation(Simulation):
         self.sim_comm_mode = sim_comm_mode
 
         def _parse_list_metadata(name: str) -> list[Any] | None:
+            """Return the model metadata prop `name` parsed as a Python list literal."""
             val = model.get_metadata_prop(name)
             if val is None:
                 return None
