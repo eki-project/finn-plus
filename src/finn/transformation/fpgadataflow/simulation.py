@@ -11,7 +11,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from rich.console import Console
 from threading import Lock
-from typing import Any, TypeAlias
+from typing import Any, NoReturn, TypeAlias
 
 from finn.transformation.fpgadataflow.simulation_build import BuildSimulation, SimulationType
 from finn.util.basic import make_build_dir
@@ -179,6 +179,36 @@ class Simulation:
         raise NotImplementedError("Call simulate() on subclasses.")
 
 
+def _raise_subprocess_terminated_error(
+    process_idx: int,
+    returncode: int,
+    stdout_file: Any,
+    stderr_file: Any,
+    cause: BaseException | None = None,
+) -> NoReturn:
+    """Flush the given log file handles, read back their contents, and raise
+    FINNInternalError describing the subprocess's unexpected termination.
+
+    Used by SimulationController._send_and_receive when a command fails because the
+    simulation subprocess died, either silently (no response) or via a socket error.
+    """
+    stdout_file.flush()
+    stderr_file.flush()
+
+    stdout_log = Path(stdout_file.name)
+    stderr_log = Path(stderr_file.name)
+
+    stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
+    stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
+
+    raise FINNInternalError(
+        f"Subprocess (process_idx={process_idx}) terminated with"
+        f" exit code {returncode}.\n"
+        f"Stderr:\n{stderr_output}\n"
+        f"Stdout:\n{stdout_output}"
+    ) from cause
+
+
 class SimulationController:
     """Control a node-node IPC connected simulation in threads."""
 
@@ -274,6 +304,31 @@ class SimulationController:
             return None
         return self.available_cpus[process_id % len(self.available_cpus)]
 
+    def _fail_started_process(
+        self,
+        process_id: int,
+        reason: str,
+        stdout_log: Path,
+        stderr_log: Path,
+        stdout_file: Any,
+        stderr_file: Any,
+        cause: BaseException | None = None,
+    ) -> NoReturn:
+        """Close the given log file handles, log their accumulated contents, and raise
+        FINNInternalError with `reason` plus the captured output.
+
+        Used by _start_process while waiting for a freshly spawned C++ process to become
+        ready, since it needs to report the same "process died, here's why" error at
+        several different waiting points.
+        """
+        stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
+        stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
+        stdout_file.close()
+        stderr_file.close()
+        msg = f"{reason}\nStderr: {stderr_output}\nStdout: {stdout_output}"
+        self.console.log(f"{process_id}: {msg}")
+        raise FINNInternalError(msg) from cause
+
     def _start_process(self, binary: Path, process_id: int) -> int:
         """Start a single C++ simulation process with its own Unix socket.
 
@@ -329,16 +384,14 @@ class SimulationController:
         # Check if process started successfully
         time.sleep(0.2)  # Give process time to fail if there's an immediate error
         if proc.poll() is not None:
-            stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
-            stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
-            stdout_file.close()
-            stderr_file.close()
-            msg = (
-                f"C++ process exited immediately with code {proc.returncode}\n"
-                f"Stderr: {stderr_output}\nStdout: {stdout_output}"
+            self._fail_started_process(
+                process_id,
+                f"C++ process exited immediately with code {proc.returncode}",
+                stdout_log,
+                stderr_log,
+                stdout_file,
+                stderr_file,
             )
-            self.console.log(str(process_id) + ": " + msg)
-            raise FINNInternalError(msg)
 
         # Create Unix socket and connect
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -349,16 +402,14 @@ class SimulationController:
         for i in range(max_retries):
             # Check if process is still alive
             if proc.poll() is not None:
-                stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
-                stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
-                stdout_file.close()
-                stderr_file.close()
-                msg = (
-                    f"C++ process died during socket wait with code {proc.returncode}\n"
-                    f"Stderr: {stderr_output}\nStdout: {stdout_output}"
+                self._fail_started_process(
+                    process_id,
+                    f"C++ process died during socket wait with code {proc.returncode}",
+                    stdout_log,
+                    stderr_log,
+                    stdout_file,
+                    stderr_file,
                 )
-                self.console.log(str(process_id) + ": " + msg)
-                raise FINNInternalError(msg)
 
             try:
                 sock.connect(str(socket_path))
@@ -366,29 +417,26 @@ class SimulationController:
                 break
             except (FileNotFoundError, ConnectionRefusedError) as e:
                 if i == max_retries - 1:
-                    stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
-                    stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
-                    stdout_file.close()
-                    stderr_file.close()
-                    msg = (
-                        f"Failed to connect to socket after {max_retries} retries\n"
-                        f"Stderr: {stderr_output}\nStdout: {stdout_output}"
+                    self._fail_started_process(
+                        process_id,
+                        f"Failed to connect to socket after {max_retries} retries",
+                        stdout_log,
+                        stderr_log,
+                        stdout_file,
+                        stderr_file,
+                        cause=e,
                     )
-                    self.console.log(str(process_id) + ": " + msg)
-                    raise FINNInternalError(msg) from e
                 time.sleep(0.2)
 
         if not connected:
-            stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
-            stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
-            stdout_file.close()
-            stderr_file.close()
-            msg = (
-                f"Failed to connect to socket {socket_path}\n"
-                f"Stderr: {stderr_output}\nStdout: {stdout_output}"
+            self._fail_started_process(
+                process_id,
+                f"Failed to connect to socket {socket_path}",
+                stdout_log,
+                stderr_log,
+                stdout_file,
+                stderr_file,
             )
-            self.console.log(str(process_id) + ": " + msg)
-            raise FINNInternalError(msg)
 
         self.processes.append((proc, stdout_file, stderr_file))
         self.sockets.append((sock, str(socket_path)))
@@ -490,25 +538,10 @@ class SimulationController:
                 returncode = proc.poll()
 
                 if returncode is not None and returncode != 0:
-                    # Process has terminated with an error
-                    # Flush and read error logs
-                    stdout_file.flush()
-                    stderr_file.flush()
-
-                    stdout_log = Path(stdout_file.name)
-                    stderr_log = Path(stderr_file.name)
-
-                    stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
-                    stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
-
-                    # Raise the actual error from the subprocess
-                    msg = (
-                        f"Subprocess (process_idx={process_idx}) terminated with"
-                        f" exit code {returncode}.\n"
-                        f"Stderr:\n{stderr_output}\n"
-                        f"Stdout:\n{stdout_output}"
+                    # Process has terminated with an error; raise it instead
+                    _raise_subprocess_terminated_error(
+                        process_idx, returncode, stdout_file, stderr_file
                     )
-                    raise FINNInternalError(msg) from None
 
             return response
         except (BrokenPipeError, ConnectionResetError, TimeoutError) as err:
@@ -521,25 +554,9 @@ class SimulationController:
             returncode = proc.poll()
 
             if returncode is not None and returncode != 0:
-                # Process has terminated with an error
-                # Flush and read error logs
-                stdout_file.flush()
-                stderr_file.flush()
-
-                stdout_log = Path(stdout_file.name)
-                stderr_log = Path(stderr_file.name)
-
-                stderr_output = stderr_log.read_text() if stderr_log.exists() else "No stderr"
-                stdout_output = stdout_log.read_text() if stdout_log.exists() else "No stdout"
-
-                # Raise the actual error from the subprocess
-                msg = (
-                    f"Subprocess (process_idx={process_idx}) terminated with"
-                    f" exit code {returncode}.\n"
-                    f"Stderr:\n{stderr_output}\n"
-                    f"Stdout:\n{stdout_output}"
+                _raise_subprocess_terminated_error(
+                    process_idx, returncode, stdout_file, stderr_file, cause=err
                 )
-                raise FINNInternalError(msg) from err  # from None
 
             # If process exited cleanly (returncode == 0) or hasn't exited yet,
             # this is an unexpected connection error

@@ -42,7 +42,8 @@ def run_doctests(num_workers: int) -> bool:
         )
         tests[-1].communicate()
     returncodes = [test.returncode for test in tests]
-    return any(returncodes)
+    # pytest exit code 5 means "no tests collected", not a failure
+    return any(rc not in (0, 5) for rc in returncodes)
 
 
 def run_test(variant: str, num_workers: str, name: str = "") -> None:

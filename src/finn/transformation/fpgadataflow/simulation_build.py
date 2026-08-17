@@ -114,7 +114,7 @@ def _parse_hosts_with_slots(raw: str | None) -> list[tuple[str, int]]:
     return hosts_with_slots
 
 
-def destribute_mpi_ranks(
+def distribute_mpi_ranks(
     model: ModelWrapper,
 ) -> tuple[dict[str, int], dict[str, int], dict[str, str]]:
     """Return the hybrid-MPI rank/worker/host maps for the given model, computing and
@@ -181,20 +181,13 @@ def destribute_mpi_ranks(
         worker_map[node.name] = worker_id
         host_map[node.name] = host
 
-    has_border_channels = False
-    for node in sim_nodes_for_build:
-        for outp in node.output:
-            consumers = model.find_consumers(outp)
-            for consumer in consumers:
-                if consumer.name not in worker_map:
-                    continue
-                if worker_map[consumer.name] != worker_map[node.name]:
-                    has_border_channels = True
-                    break
-            if has_border_channels:
-                break
-        if has_border_channels:
-            break
+    has_border_channels = any(
+        worker_map[consumer.name] != worker_map[node.name]
+        for node in sim_nodes_for_build
+        for outp in node.output
+        for consumer in model.find_consumers(outp)
+        if consumer.name in worker_map
+    )
 
     model.set_metadata_prop("sim_rank_map", str(rank_map))
     model.set_metadata_prop("sim_worker_map", str(worker_map))
@@ -1134,7 +1127,7 @@ class SimulationBuilder:
 
         sim_comm_mode_meta = self.model.get_metadata_prop("sim_comm_mode")
         sim_comm_mode = cast("str", sim_comm_mode_meta) if sim_comm_mode_meta is not None else "shm"
-        rank_map, worker_map, host_map = destribute_mpi_ranks(self.model)
+        rank_map, worker_map, host_map = distribute_mpi_ranks(self.model)
 
         def _build(
             node_index: int,
@@ -1160,8 +1153,6 @@ class SimulationBuilder:
             if sim_comm_mode == SimulationCommMode.HYBRID_MPI.value and rank_map and worker_map:
                 node_name = self.model.graph.node[node_index].name
                 node_worker = worker_map.get(node_name, -1)
-                node_rank = rank_map.get(node_name, -1)
-                node_host = host_map.get(node_name, "localhost")
 
                 input_channel_types: list[str] = []
                 output_channel_types: list[str] = []
@@ -1170,85 +1161,57 @@ class SimulationBuilder:
                 input_route_log: list[str] = []
                 output_route_log: list[str] = []
 
-                log.info(
-                    "[BuildSimulation][Placement] "
-                    f"node={node_name} rank={node_rank} worker={node_worker} host={node_host}"
-                )
+                def _classify_channel(
+                    peer: NodeProto | None, iface_name: str
+                ) -> tuple[str, int, str]:
+                    """Classify a single input/output channel relative to this node.
+
+                    peer is the producer (for an input channel) or the first consumer
+                    (for an output channel; only one stream per successor is expected
+                    by this flow), or None if the channel has no in-graph peer.
+
+                    Returns (channel_type, peer_rank, route_log_entry).
+                    """
+                    if peer is None:
+                        return "shm", -1, f"{iface_name}:shm(peer=external)"
+                    peer_worker = worker_map.get(peer.name)
+                    peer_rank = rank_map.get(peer.name)
+                    peer_host = host_map.get(peer.name, "localhost")
+                    if (
+                        peer_worker is not None
+                        and peer_rank is not None
+                        and peer_worker != node_worker
+                    ):
+                        return (
+                            "mpi",
+                            peer_rank,
+                            f"{iface_name}:mpi(peer={peer.name},rank={peer_rank},host={peer_host})",
+                        )
+                    return "shm", -1, f"{iface_name}:shm(peer={peer.name},host={peer_host})"
 
                 if input_interface_names is not None:
                     for inp_name in input_interface_names:
                         producer = self.model.find_producer(inp_name)
-                        if producer is None:
-                            input_channel_types.append("shm")
-                            input_peer_ranks.append(-1)
-                            input_route_log.append(f"{inp_name}:shm(peer=external)")
-                            continue
-                        producer_worker = worker_map.get(producer.name)
-                        producer_rank = rank_map.get(producer.name)
-                        producer_host = host_map.get(producer.name, "localhost")
-                        if (
-                            producer_worker is not None
-                            and producer_rank is not None
-                            and producer_worker != node_worker
-                        ):
-                            input_channel_types.append("mpi")
-                            input_peer_ranks.append(producer_rank)
-                            input_route_log.append(
-                                f"{inp_name}:mpi(peer={producer.name},"
-                                f"rank={producer_rank},host={producer_host})"
-                            )
-                        else:
-                            input_channel_types.append("shm")
-                            input_peer_ranks.append(-1)
-                            input_route_log.append(
-                                f"{inp_name}:shm(peer={producer.name},host={producer_host})"
-                            )
+                        ch_type, peer_rank, route = _classify_channel(producer, inp_name)
+                        input_channel_types.append(ch_type)
+                        input_peer_ranks.append(peer_rank)
+                        input_route_log.append(route)
 
                 if output_interface_names is not None:
                     for out_name in output_interface_names:
                         consumers = self.model.find_consumers(out_name)
-                        if len(consumers) == 0:
-                            output_channel_types.append("shm")
-                            output_peer_ranks.append(-1)
-                            output_route_log.append(f"{out_name}:shm(peer=external)")
-                            continue
                         # One stream per successor is expected by this flow.
-                        consumer = consumers[0]
-                        consumer_worker = worker_map.get(consumer.name)
-                        consumer_rank = rank_map.get(consumer.name)
-                        consumer_host = host_map.get(consumer.name, "localhost")
-                        if (
-                            consumer_worker is not None
-                            and consumer_rank is not None
-                            and consumer_worker != node_worker
-                        ):
-                            output_channel_types.append("mpi")
-                            output_peer_ranks.append(consumer_rank)
-                            output_route_log.append(
-                                f"{out_name}:mpi(peer={consumer.name},"
-                                f"rank={consumer_rank},host={consumer_host})"
-                            )
-                        else:
-                            output_channel_types.append("shm")
-                            output_peer_ranks.append(-1)
-                            output_route_log.append(
-                                f"{out_name}:shm(peer={consumer.name},host={consumer_host})"
-                            )
+                        consumer = consumers[0] if consumers else None
+                        ch_type, peer_rank, route = _classify_channel(consumer, out_name)
+                        output_channel_types.append(ch_type)
+                        output_peer_ranks.append(peer_rank)
+                        output_route_log.append(route)
 
                 nodemodel.set_metadata_prop("sim_input_channel_types", str(input_channel_types))
                 nodemodel.set_metadata_prop("sim_output_channel_types", str(output_channel_types))
                 nodemodel.set_metadata_prop("sim_input_peer_ranks", str(input_peer_ranks))
                 nodemodel.set_metadata_prop("sim_output_peer_ranks", str(output_peer_ranks))
                 nodemodel.set_metadata_prop("sim_comm_mode", sim_comm_mode)
-
-                log.info(
-                    "[BuildSimulation][Interfaces][IN ] "
-                    f"node={node_name} routes={'; '.join(input_route_log)}"
-                )
-                log.info(
-                    "[BuildSimulation][Interfaces][OUT] "
-                    f"node={node_name} routes={'; '.join(output_route_log)}"
-                )
 
             return self.build_single_node_simulation(
                 nodemodel,

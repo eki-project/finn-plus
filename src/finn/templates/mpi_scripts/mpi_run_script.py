@@ -26,20 +26,6 @@ from pathlib import Path
 from typing import Any
 
 
-def get_rank() -> int:
-    """Return the global MPI rank from common environment variables.
-
-    Falls back to 0 if none are present.
-    """
-    rank_str: str = (
-        os.environ.get("OMPI_COMM_WORLD_RANK")
-        or os.environ.get("PMI_RANK")
-        or os.environ.get("MPI_RANK")
-        or "0"
-    )
-    return int(rank_str)
-
-
 def get_local_rank() -> int:
     """Return the local rank (rank index within the current node).
 

@@ -15,6 +15,7 @@ from ast import literal_eval
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from copy import deepcopy
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
@@ -35,7 +36,7 @@ from finn.transformation.fpgadataflow.simulation import (
 )
 from finn.transformation.fpgadataflow.simulation_build import (
     SimulationCommMode,
-    destribute_mpi_ranks,
+    distribute_mpi_ranks,
 )
 from finn.util.basic import getHWCustomOp, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -83,6 +84,28 @@ def _safe_bram_starting_depth(peak_util: int, max_qsrl_depth: int) -> int:
     return max(d, 32)
 
 
+@dataclass
+class MpiSimConfig:
+    """Hybrid-MPI simulation settings, bundled to avoid threading a growing list of
+    individual keyword arguments through NodeConnectedSimulation.
+    """
+
+    sim_comm_mode: str = SimulationCommMode.SHM.value
+    mpi_launcher: str = "mpirun"
+    mpi_oversubscribe: bool = True
+    mpi_args: str = ""
+
+    @classmethod
+    def from_build_config(cls, cfg: DataflowBuildConfig) -> "MpiSimConfig":
+        """Build an MpiSimConfig from the relevant fields of a DataflowBuildConfig."""
+        return cls(
+            sim_comm_mode=cfg.fifosim_comm_mode,
+            mpi_launcher=cfg.fifosim_mpi_launcher,
+            mpi_oversubscribe=cfg.fifosim_mpi_oversubscribe,
+            mpi_args=cfg.fifosim_mpi_args,
+        )
+
+
 class MinimizationOrder(Enum):
     """The order in which the search algorithm minimizes the FIFO depths."""
 
@@ -101,6 +124,23 @@ class MinimizationOrder(Enum):
     REUSE_PREVIOUS_ORDER = 6
 
 
+@dataclass
+class MpiLaunchParams:
+    """Resolved MPI launch parameters for NodeConnectedSimulationController.
+
+    Distinct from MpiSimConfig: this also carries state resolved at runtime (whether
+    MPI is actually needed, and the model's host/rank assignment), not just the
+    user-configured settings.
+    """
+
+    use_mpi_launcher: bool = False
+    mpi_launcher: str = "mpirun"
+    mpi_hosts: str | None = None
+    mpi_host_map: dict[str, str] | None = None
+    mpi_oversubscribe: bool = True
+    mpi_args: str = ""
+
+
 class NodeConnectedSimulationController(SimulationController):
     """Run simulations for node connected cases."""
 
@@ -111,12 +151,7 @@ class NodeConnectedSimulationController(SimulationController):
         binaries: list[Path],
         console: Console,
         shm_prefix: str,
-        use_mpi_launcher: bool = False,
-        mpi_launcher: str = "mpirun",
-        mpi_hosts: str | None = None,
-        mpi_host_map: dict[str, str] | None = None,
-        mpi_oversubscribe: bool = True,
-        mpi_args: str = "",
+        mpi_params: MpiLaunchParams | None = None,
         poll_interval: float = 1.0,
         with_progressbar: bool = True,
     ) -> None:
@@ -130,16 +165,17 @@ class NodeConnectedSimulationController(SimulationController):
             with_progressbar,
             enable_core_pinning=True,
         )
+        mpi_params = mpi_params or MpiLaunchParams()
         # Synchronization barrier for configuration phase
         self.sync_barrier: Barrier | None = None
         self.shm_prefix = shm_prefix
-        self.use_mpi_launcher = use_mpi_launcher
-        self.mpi_launcher = mpi_launcher
-        self.mpi_hosts = mpi_hosts
-        self.mpi_oversubscribe = mpi_oversubscribe
-        self.mpi_args = mpi_args
+        self.use_mpi_launcher = mpi_params.use_mpi_launcher
+        self.mpi_launcher = mpi_params.mpi_launcher
+        self.mpi_hosts = mpi_params.mpi_hosts
+        self.mpi_oversubscribe = mpi_params.mpi_oversubscribe
+        self.mpi_args = mpi_params.mpi_args
         self.mpi_launcher_proc: subprocess.Popen | None = None
-        self.mpi_host_map = mpi_host_map
+        self.mpi_host_map = mpi_params.mpi_host_map
         self.mpi_launcher_stdout: Any = None
         self.mpi_launcher_stderr: Any = None
         self.mpi_launcher_pgid: int | None = None
@@ -314,6 +350,7 @@ class NodeConnectedSimulationController(SimulationController):
         self.mpi_launcher_stderr = stderr_log.open("w")
         self.mpi_launcher_proc = subprocess.Popen(
             launcher_cmd,
+            stdout=self.mpi_launcher_stdout,
             stderr=self.mpi_launcher_stderr,
             text=True,
             start_new_session=True,
@@ -857,18 +894,18 @@ class NodeConnectedSimulation(Simulation):
         workers: int | None = None,
         max_qsrl_depth: int = 256,
         performance_sim: bool = False,
-        sim_comm_mode: str = SimulationCommMode.SHM.value,
-        mpi_launcher: str = "mpirun",
-        mpi_oversubscribe: bool = True,
-        mpi_args: str = "",
+        mpi_config: MpiSimConfig | None = None,
     ) -> None:
         """Initialize node-connected simulation.
 
-        sim_comm_mode/mpi_launcher/mpi_oversubscribe/mpi_args are only used as
-        defaults: if the model already has sim_comm_mode metadata set (e.g. by a
-        prior BuildSimulation run), that value wins.
+        mpi_config is only used to supply defaults: if the model already has
+        sim_comm_mode metadata set (e.g. by a prior BuildSimulation run), that value
+        wins over mpi_config.sim_comm_mode.
         """
-        sim_comm_mode = (model.get_metadata_prop("sim_comm_mode") or sim_comm_mode).lower()
+        mpi_config = mpi_config or MpiSimConfig()
+        sim_comm_mode = (
+            model.get_metadata_prop("sim_comm_mode") or mpi_config.sim_comm_mode
+        ).lower()
         allowed_modes = {SimulationCommMode.SHM.value, SimulationCommMode.HYBRID_MPI.value}
         if sim_comm_mode not in allowed_modes:
             raise FINNUserError(
@@ -892,7 +929,7 @@ class NodeConnectedSimulation(Simulation):
         # Computes and stores sim_rank_map/sim_worker_map/sim_host_map/sim_mpi_hosts
         # metadata if missing or stale; a no-op otherwise (e.g. already computed by
         # BuildSimulation, which normally runs before this).
-        destribute_mpi_ranks(model)
+        distribute_mpi_ranks(model)
 
         input_channel_types = _parse_list_metadata("sim_input_channel_types")
         output_channel_types = _parse_list_metadata("sim_output_channel_types")
@@ -938,9 +975,9 @@ class NodeConnectedSimulation(Simulation):
             sim_comm_mode == SimulationCommMode.HYBRID_MPI.value
             and self.sim_has_mpi_border_channels
         )
-        self.mpi_launcher = mpi_launcher
-        self.mpi_oversubscribe = mpi_oversubscribe
-        self.mpi_args = mpi_args
+        self.mpi_launcher = mpi_config.mpi_launcher
+        self.mpi_oversubscribe = mpi_config.mpi_oversubscribe
+        self.mpi_args = mpi_config.mpi_args
         self.mpi_hosts = model.get_metadata_prop("sim_mpi_hosts")
 
         super().__init__(
@@ -1005,18 +1042,21 @@ class NodeConnectedSimulation(Simulation):
                 sim_host_map = cast("dict[str, str]", literal_eval(sim_host_map_meta))
             else:
                 raise FINNInternalError("MPI Host Map missing.")
-        controller = NodeConnectedSimulationController(
-            len(self.binaries),
-            names,
-            list(self.binaries.values()),
-            Console(),
-            self.shm_prefix,
+        mpi_params = MpiLaunchParams(
             use_mpi_launcher=self.use_mpi_launcher,
             mpi_launcher=self.mpi_launcher,
             mpi_hosts=self.mpi_hosts,
             mpi_host_map=sim_host_map,
             mpi_oversubscribe=self.mpi_oversubscribe,
             mpi_args=self.mpi_args,
+        )
+        controller = NodeConnectedSimulationController(
+            len(self.binaries),
+            names,
+            list(self.binaries.values()),
+            Console(),
+            self.shm_prefix,
+            mpi_params=mpi_params,
             poll_interval=0.1,
             with_progressbar=False,
         )
@@ -1156,10 +1196,7 @@ class RunLayerParallelSimulation(Transformation):
             self.cfg.functional_simulation,
             shm_prefix=shm_prefix,
             max_qsrl_depth=self.max_qsrl_depth,
-            sim_comm_mode=self.cfg.fifosim_comm_mode,
-            mpi_launcher=self.cfg.fifosim_mpi_launcher,
-            mpi_oversubscribe=self.cfg.fifosim_mpi_oversubscribe,
-            mpi_args=self.cfg.fifosim_mpi_args,
+            mpi_config=MpiSimConfig.from_build_config(self.cfg),
         )
         model = sim.model  # TODO:clean up
 
@@ -1321,7 +1358,7 @@ class RunLayerParallelSimulation(Transformation):
 
                     percentage = int(100.0 * float(done) / float(total_minimizations))
                     log.info(
-                        f"[ [bold green]{percentage}%[/bold green] ] "
+                        f"[ {percentage}% ] "
                         f"[ {node_idx}.{fifo_idx} / {len(fifo_depths) - 1} ] Simulation completed "
                         f"({iterations_needed} iterations).",
                         extra={"markup": True, "highlighter": None},
@@ -1331,7 +1368,7 @@ class RunLayerParallelSimulation(Transformation):
 
             order_percent = int(100.0 * float(k + 1) / float(len(self.minimization_orders)))
             log.info(
-                f"[ [bold gold1]{order_percent}%[/bold gold1] ] "
+                f"[ {order_percent}% ] "
                 f"-----  Minimization order {minimization_order.name} completed -----",
                 extra={"markup": True, "highlighter": None},
             )

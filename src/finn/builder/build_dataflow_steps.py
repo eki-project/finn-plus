@@ -113,8 +113,10 @@ from finn.transformation.fpgadataflow.simulation_build import (
     BuildSimulation,
     SimulationCommMode,
     SimulationType,
+    distribute_mpi_ranks,
 )
 from finn.transformation.fpgadataflow.simulation_connected import (
+    MpiSimConfig,
     NodeConnectedSimulation,
     RunLayerParallelSimulation,
 )
@@ -542,47 +544,16 @@ def step_set_fifo_depths(
                         "Using oversubscription, which may lead to suboptimal performance."
                     )
 
-                rank_map: dict[str, int] = {}
-                worker_map: dict[str, int] = {}
-                host_map: dict[str, str] = {}
-
-                sims_per_node = math.ceil(len(sim_nodes) / len(hosts))
-                log.info(
-                    f"Distributing {len(sim_nodes)} simulation nodes across {len(hosts)} hosts, "
-                    f"with {sims_per_node} nodes per host"
-                )
-
-                for rank, node in enumerate(sim_nodes):
-                    worker_id = rank // sims_per_node
-                    rank_map[node.name] = rank
-                    worker_map[node.name] = worker_id
-                    host_map[node.name] = hosts[worker_id]
-
-                has_border_channels = False
-                for node in sim_nodes:
-                    for outp in node.output:
-                        consumers = model.find_consumers(outp)
-                        for consumer in consumers:
-                            if worker_map.get(consumer.name, -1) != worker_map.get(node.name, -1):
-                                has_border_channels = True
-                                break
-                        if has_border_channels:
-                            break
-                    if has_border_channels:
-                        break
-
-                model.set_metadata_prop("sim_rank_map", str(rank_map))
-                model.set_metadata_prop("sim_worker_map", str(worker_map))
-                model.set_metadata_prop("sim_host_map", str(host_map))
+                # Make the per-host slot count explicit on the model so distribute_mpi_ranks
+                # (shared with simulation_build/simulation_connected) assigns ranks/workers
+                # using this same host list, and so the MPI launcher's -H flag later matches.
                 model.set_metadata_prop(
-                    "sim_has_mpi_border_channels", str(has_border_channels).lower()
+                    "sim_mpi_hosts", ",".join([f"{h}:{local_cores}" for h in hosts])
                 )
-                model.set_metadata_prop(
-                    "sim_mpi_hosts",
-                    ",".join([f"{h}:{local_cores}" for h in hosts]),
-                )
+                distribute_mpi_ranks(model)
                 log.info(
                     "Auto FIFO sizing: distributed_sim with hybrid_mpi requested. "
+                    f"Distributing {len(sim_nodes)} simulation nodes across {len(hosts)} hosts. "
                     "Building simulation backends with MPI support and running "
                     "hybrid MPI simulation."
                 )
@@ -1464,10 +1435,7 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
         max_qsrl_depth=256,
         performance_sim=True,
         shm_prefix=None,
-        sim_comm_mode=cfg.fifosim_comm_mode,
-        mpi_launcher=cfg.fifosim_mpi_launcher,
-        mpi_oversubscribe=cfg.fifosim_mpi_oversubscribe,
-        mpi_args=cfg.fifosim_mpi_args,
+        mpi_config=MpiSimConfig.from_build_config(cfg),
     )
 
     nodes = [node for node in model.graph.node if "FIFO" not in node.op_type]
