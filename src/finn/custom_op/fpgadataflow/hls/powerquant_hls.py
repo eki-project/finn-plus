@@ -53,7 +53,7 @@ def render_array(
     # If the array is a raw python list or tuple (potentially nested), convert
     # to NumPy array for convenient flattening.
     if not isinstance(array, np.ndarray):
-        array: np.ndarray = np.asarray(list(array))
+        array: np.ndarray = np.asarray(array)
 
     # Figure out the number of digits required to render the longest number from
     # the array.
@@ -178,19 +178,19 @@ class PowerQuantMatMul_hls(PowerQuantMatMul, HLSBackend):
             shape_x = (1, *shape_x)
 
         if len(shape_x) > 3:
-            shape_x = (np.prod(shape_x[:-2], *shape_x[-2:]))
+            shape_x = (np.prod(shape_x[:-2]), *shape_x[-2:])
 
         while len(shape_w) < 3:
             shape_w = (1, *shape_w)
 
         if len(shape_w) > 3:
-            shape_w = (np.prod(shape_w[:-2], *shape_w[-2:]))
+            shape_w = (np.prod(shape_w[:-2]), *shape_w[-2:])
 
         while len(shape_y) < 3:
             shape_y = (1, *shape_y)
 
         if len(shape_y) > 3:
-            shape_y = (np.prod(shape_y[:-2], *shape_y[-2:]))
+            shape_y = (np.prod(shape_y[:-2]), *shape_y[-2:])
 
         defines = Template(dedent(defines)).render(
             max=maximum,

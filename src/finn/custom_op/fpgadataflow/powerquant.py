@@ -87,7 +87,7 @@ class PowerQuantMatMul(HWCustomOp):
         *nw, k, m = self.get_nodeattr("weights_shape")
 
         # Leading (batch matrix-matrix multiplication) dimensions must match
-        assert nx == nw, "Incompatible shapes"
+        assert nx == nw or nw == [1] or nw == [], "Incompatible shapes"
 
         # Assemble the output shape of batched x @ weights
         return *nx, l, m
@@ -142,7 +142,7 @@ class PowerQuantMatMul(HWCustomOp):
         *nw, k, m = self.get_nodeattr("weights_shape")
 
         # Leading (batch matrix-matrix multiplication) dimensions must match
-        assert nx == nw, "Incompatible shapes"
+        assert nx == nw or nw == [1] or nw == [], "Incompatible shapes"
 
         return int(np.prod(nx) * l * k * m // self.simd // self.pe)
 
