@@ -49,7 +49,7 @@ numpy = "~2.4.6"
 # Upgrading onnxruntime fixes some MaxPool edge case which however requires onnx
 # to be upgraded to produce a consistent model, but this in turn cannot be done
 # due to the model IR version support issue...
-scipy = "~1.15.0"
+scipy = "~1.17.0"
 onnx = "1.21.0"
 onnxruntime = "1.25.1"
 onnxscript = ">=0.7.0"
