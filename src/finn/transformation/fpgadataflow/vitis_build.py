@@ -107,6 +107,7 @@ class ParallelVitisSynthesis(Transformation):
             for device, config in configs.items():
                 log.info(
                     f"Submitting config {device} for synthesis "
+                    f"(target frequency: {config.f_mhz} MHz)"
                     f"(at {config.run_script_path.parent})"
                 )
                 futures[device] = tpe.submit(self.link, config)
