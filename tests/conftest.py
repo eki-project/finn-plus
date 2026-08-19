@@ -73,7 +73,14 @@ def pytest_configure(config) -> None:  # noqa: ARG001
     import finn.util.settings
 
     finn.util.settings.initialize_dummy_settings()
-    import finn.xsi  # noqa
+
+    # Verify (and if needed, build/rebuild) XSI for the currently loaded Vivado
+    # version now, once, before any parallel work (pytest-xdist workers /
+    # multiprocessing.Pool inside tests) gets a chance to import finn.xsi
+    # transitively.
+    import finn.xsi
+
+    finn.xsi.ensure_available()
 
 
 @pytest.fixture(scope="class", autouse=True)
