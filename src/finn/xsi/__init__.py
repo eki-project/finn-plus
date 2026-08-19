@@ -35,7 +35,23 @@ _auto_install_attempted = False
 _adapter_module: Any | None = None
 _sim_engine_module: Any | None = None
 
-xsi_path = get_settings().finn_xsi
+_LAZY_NAMES = frozenset(
+    {
+        "SimEngine",
+        "locate_glbl",
+        "compile_sim_obj",
+        "get_simkernel_so",
+        "load_sim_obj",
+        "reset_rtlsim",
+        "close_rtlsim",
+        "rtlsim_multi_io",
+    }
+)
+
+
+def _xsi_path() -> Any:
+    """Return the current finn_xsi installation directory from FINN settings."""
+    return get_settings().finn_xsi
 
 
 def is_available() -> bool:
@@ -44,6 +60,8 @@ def is_available() -> bool:
     Returns:
         bool: True if finn_xsi can be imported, False otherwise
     """
+    xsi_path = _xsi_path()
+
     # Check if xsi.so exists
     xsi_so = xsi_path / "xsi.so"
     vivado_path = os.environ.get("XILINX_VIVADO")
@@ -124,6 +142,7 @@ def _load_modules() -> bool:
     if _adapter_module is not None:
         return True
 
+    xsi_path = _xsi_path()
     xsi_so = xsi_path / "xsi.so"
 
     if not xsi_so.exists():
