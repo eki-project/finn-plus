@@ -42,7 +42,9 @@ from typing import Literal
 
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import InferReLUAsElementwiseMax
+from finn.transformation.fpgadataflow.convert_to_hw.relu_as_elementwise_max import (
+    InferReLUAsElementwiseMax,
+)
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth

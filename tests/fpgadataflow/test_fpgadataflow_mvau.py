@@ -41,13 +41,15 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.util.basic import calculate_signed_dot_prod_range, gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn import xsi as finnxsi
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.core.rtlsim_exec import rtlsim_exec
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
@@ -733,7 +735,7 @@ def test_fpgadataflow_rtl_mvau(
     output_matmul = oxe.execute_onnx(model, input_dict)["global_out"]
 
     # Create MVAU (HLS)
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
     model = model.transform(GiveUniqueNodeNames())
 
     # Apply convert-to-rtl step
@@ -841,7 +843,7 @@ def test_fpgadataflow_rtl_dynamic_mvau(mh, mw, n_vectors, pe, simd, idt_wdt, par
     output_matmul = oxe.execute_onnx(model, input_dict)[outp_name]
 
     # Create MVAU
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
     model = model.transform(GiveUniqueNodeNames())
     for node in model.graph.node:
         # lookup op_type in registry of CustomOps

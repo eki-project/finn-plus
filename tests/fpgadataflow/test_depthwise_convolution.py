@@ -42,8 +42,8 @@ from qonnx.util.basic import calculate_signed_dot_prod_range, gen_finn_dt_tensor
 
 import finn.core.onnx_exec as oxe
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import (
-    InferConvInpGen,
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
     InferVectorVectorActivation,
 )
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP

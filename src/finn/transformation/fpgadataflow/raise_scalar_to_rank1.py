@@ -34,7 +34,9 @@ from collections.abc import Iterable
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    lift_to_rank1,
+)
 
 
 class RaiseScalarToRank1(Transformation):
@@ -72,6 +74,6 @@ class RaiseScalarToRank1(Transformation):
             if tensor_shape is None:
                 continue
             if len(tensor_shape) == 0:
-                to_hw.lift_to_rank1(tensor_name, model)
+                lift_to_rank1(tensor_name, model)
                 graph_modified = True
         return (model, graph_modified)

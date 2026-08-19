@@ -8,7 +8,6 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.transformation.remove import RemoveIdentityOps
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 import finn.transformation.streamline.reorder as reorder
 from finn.builder.build_dataflow_config import (
@@ -17,6 +16,19 @@ from finn.builder.build_dataflow_config import (
     VerificationStepType,
 )
 from finn.builder.build_dataflow_steps import verify_step
+from finn.transformation.fpgadataflow.convert_to_hw.channelwise_linear import (
+    InferChannelwiseLinearLayer,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.label_select import InferLabelSelectLayer
+from finn.transformation.fpgadataflow.convert_to_hw.pool import InferPool
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
+    InferVectorVectorActivation,
+)
 from finn.transformation.general import ApplyConfig
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.collapse_repeated import CollapseRepeatedMul
@@ -65,12 +77,12 @@ def step_mobilenet_lower_convs(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_mobilenet_convert_to_hw_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
-    model = model.transform(to_hw.InferPool())
-    model = model.transform(to_hw.InferConvInpGen())
-    model = model.transform(to_hw.InferVectorVectorActivation())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    model = model.transform(to_hw.InferChannelwiseLinearLayer())
-    model = model.transform(to_hw.InferLabelSelectLayer())
+    model = model.transform(InferPool())
+    model = model.transform(InferConvInpGen())
+    model = model.transform(InferVectorVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferChannelwiseLinearLayer())
+    model = model.transform(InferLabelSelectLayer())
     model = model.transform(InferShapes())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
@@ -102,13 +114,13 @@ def step_mobilenet_slr_floorplan(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_mobilenet_convert_to_hw_layers_separate_th(model: ModelWrapper, cfg: DataflowBuildConfig):
-    model = model.transform(to_hw.InferPool())
-    model = model.transform(to_hw.InferConvInpGen())
-    model = model.transform(to_hw.InferThresholdingLayer())
-    model = model.transform(to_hw.InferVectorVectorActivation())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    model = model.transform(to_hw.InferChannelwiseLinearLayer())
-    model = model.transform(to_hw.InferLabelSelectLayer())
+    model = model.transform(InferPool())
+    model = model.transform(InferConvInpGen())
+    model = model.transform(InferThresholdingLayer())
+    model = model.transform(InferVectorVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferChannelwiseLinearLayer())
+    model = model.transform(InferLabelSelectLayer())
     model = model.transform(InferShapes())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
