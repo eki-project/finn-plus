@@ -60,6 +60,7 @@
  constexpr unsigned  ILEN    = @ILEN@;    // Input words per IFM
  constexpr unsigned  OLEN    = @OLEN@;    // Output words per OFM
  constexpr unsigned  KO      = @KO@;      // Subwords within OFM transaction word
+ constexpr unsigned  AVG_N   = @AVG_N@;   // Max frames in averaging window
  using  TI = @TI@;  // IFM transaction word
  using  TO = @TO@;  // OFM transaction word
 
@@ -133,18 +134,23 @@
      unsigned  ILEN,
      unsigned  OLEN,
      unsigned  KO,
+     unsigned  AVG_N,
      typename  TI,
      typename  TO
  >
  void instrument(
      hls::stream<TI> &finnix,
      hls::stream<TO> &finnox,
-     ap_uint<32>  cfg,   	// [0] - 0:hold, 1:lfsr; [31:16] - LFSR seed
+     ap_uint<32>  cfg,   	// [0] - 0:hold, 1:lfsr; [31:1] - minimum interval (cycles) between IFM starts
+     ap_uint<32>  seed,  	// [31:16] - LFSR seed (only upper 16 bits used)
+     ap_uint<32>  avg_n, 	// [31:0] - averaging window size (1..AVG_N frames)
      ap_uint<32> &status,	// [0] - timestamp overflow; [1] - timestamp underflow
      ap_uint<32> &latency,
      ap_uint<32> &interval,
      ap_uint<32> &checksum,
-     ap_uint<32> &min_latency
+     ap_uint<32> &min_latency,
+     ap_uint<32> &avg_latency,
+     ap_uint<32> &avg_interval
  ) {
  #pragma HLS pipeline II=1 style=flp
 
@@ -163,18 +169,31 @@
      constexpr unsigned  LFSR_WIDTH = (TI::width+15)/16 * 16;
      static ap_uint<clog2nz(ILEN)>  icnt = 0;
      static ap_uint<LFSR_WIDTH>  lfsr;
+     static clock_t  last_ifm_start = 0;  // Timestamp of last IFM transmission start
  #pragma HLS reset variable=icnt
  #pragma HLS reset variable=lfsr off
+ #pragma HLS reset variable=last_ifm_start
      if(!finnix.full()) {
 
          bool const  first = icnt == 0;
-         bool  wr;
+         bool  wr = false;
+
+         // Rate limiting: enforce minimum interval between IFM starts
+         ap_uint<31> const  min_interval = cfg(31, 1);
+         bool const  interval_ok = (min_interval == 0) || ((cnt_clk - last_ifm_start) >= min_interval);
+
          if(first) {
-             // Start of new feature map
-             wr = cfg[0];
-             for(unsigned  i = 0; i < LFSR_WIDTH; i += 16) {
+             // Start of new feature map (only if minimum interval elapsed)
+             if(interval_ok) {
+                 wr = cfg[0];
+                 if(wr) {
+                     // Initialize LFSR with configurable seed
+                     for(unsigned  i = 0; i < LFSR_WIDTH; i += 16) {
  #pragma HLS unroll
-                 lfsr(15+i, i) = cfg(31, 16) ^ (i>>4)*33331;
+                         lfsr(15+i, i) = seed(31, 16) ^ (i>>4)*33331;
+                     }
+                     last_ifm_start = cnt_clk;  // Record start timestamp
+                 }
              }
          }
          else {
@@ -204,6 +223,26 @@
  #pragma HLS reset variable=last_latency
  #pragma HLS reset variable=last_interval
  #pragma HLS reset variable=cur_min_latency
+
+     // Sliding-Window Averaging State
+     static ap_uint<clog2nz(AVG_N)>    avg_head = 0;  // write pointer in circular buffer
+     static ap_uint<clog2nz(AVG_N+1)>  avg_fill = 0;  // number of valid entries (0..AVG_N)
+     static clock_t  lat_buf[AVG_N];
+     static clock_t  int_buf[AVG_N];
+     static ap_uint<64>  lat_sum = 0;
+     static ap_uint<64>  int_sum = 0;
+     static clock_t  last_avg_latency  = 0;
+     static clock_t  last_avg_interval = 0;
+     static ap_uint<32>  prev_avg_n = 0;
+ #pragma HLS reset variable=avg_head
+ #pragma HLS reset variable=avg_fill
+ #pragma HLS reset variable=lat_buf off
+ #pragma HLS reset variable=int_buf off
+ #pragma HLS reset variable=lat_sum
+ #pragma HLS reset variable=int_sum
+ #pragma HLS reset variable=last_avg_latency
+ #pragma HLS reset variable=last_avg_interval
+ #pragma HLS reset variable=prev_avg_n
 
      static ap_uint<8>  pkts = 0;
  #pragma HLS reset variable=pkts
@@ -250,6 +289,33 @@
                  last_interval = cnt_clk - ts1;	// completion - previous completion
                  cur_min_latency = std::min(cur_min_latency, last_latency);
                  ts1 = cnt_clk;	// mark completion ^
+
+                 // Sliding-window average update
+                 // TODO: II=1 but depth is ~70 cycles, can we optimize this?
+                 ap_uint<32>  win = (avg_n == 0 || avg_n > AVG_N) ? ap_uint<32>(AVG_N) : avg_n;
+                 if(prev_avg_n != win) {
+                     avg_head = 0;
+                     avg_fill = 0;
+                     lat_sum  = 0;
+                     int_sum  = 0;
+                     prev_avg_n = win;
+                 }
+                 clock_t  old_lat = lat_buf[avg_head];
+                 clock_t  old_int = int_buf[avg_head];
+                 lat_buf[avg_head] = last_latency;
+                 int_buf[avg_head] = last_interval;
+                 if(avg_fill < win) {
+                     lat_sum += last_latency;
+                     int_sum += last_interval;
+                     avg_fill++;
+                 } else {
+                     lat_sum = lat_sum + last_latency - old_lat;
+                     int_sum = int_sum + last_interval - old_int;
+                 }
+                 avg_head++;
+                 if(avg_head >= ap_uint<clog2nz(AVG_N)+1>(win))  avg_head = 0;
+                 last_avg_latency  = lat_sum / avg_fill;
+                 last_avg_interval = int_sum / avg_fill;
              }
              ocnt = 0;
 
@@ -265,7 +331,9 @@
      latency  = last_latency;
      interval = last_interval;
      checksum = last_checksum;
-     min_latency = cur_min_latency;
+     min_latency  = cur_min_latency;
+     avg_latency  = last_avg_latency;
+     avg_interval = last_avg_interval;
 
  } // instrument()
 
@@ -273,20 +341,28 @@
      hls::stream<TI> &finnix,
      hls::stream<TO> &finnox,
      ap_uint<32>  cfg,
+     ap_uint<32>  seed,
+     ap_uint<32>  avg_n,
      ap_uint<32> &status,
      ap_uint<32> &latency,
      ap_uint<32> &interval,
      ap_uint<32> &checksum,
-     ap_uint<32> &min_latency
+     ap_uint<32> &min_latency,
+     ap_uint<32> &avg_latency,
+     ap_uint<32> &avg_interval
  ) {
  #pragma HLS interface axis port=finnix
  #pragma HLS interface axis port=finnox
  #pragma HLS interface s_axilite bundle=ctrl port=cfg
+ #pragma HLS interface s_axilite bundle=ctrl port=seed
+ #pragma HLS interface s_axilite bundle=ctrl port=avg_n
  #pragma HLS interface s_axilite bundle=ctrl port=status
  #pragma HLS interface s_axilite bundle=ctrl port=latency
  #pragma HLS interface s_axilite bundle=ctrl port=interval
  #pragma HLS interface s_axilite bundle=ctrl port=checksum
  #pragma HLS interface s_axilite bundle=ctrl port=min_latency
+ #pragma HLS interface s_axilite bundle=ctrl port=avg_latency
+ #pragma HLS interface s_axilite bundle=ctrl port=avg_interval
  #pragma HLS interface ap_ctrl_none port=return
 
  #pragma HLS dataflow disable_start_propagation
@@ -299,7 +375,7 @@
      move(finnox, finnox0);
 
      // Main
-     instrument<PENDING, ILEN, OLEN, KO>(finnix0, finnox0, cfg, status, latency, interval, checksum, min_latency);
+     instrument<PENDING, ILEN, OLEN, KO, AVG_N>(finnix0, finnox0, cfg, seed, avg_n, status, latency, interval, checksum, min_latency, avg_latency, avg_interval);
 
      // FIFO -> AXI-Stream
      move(finnix0, finnix);

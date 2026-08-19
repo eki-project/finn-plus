@@ -51,7 +51,7 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
 from finn.util.basic import alveo_default_platform, alveo_part_map, pynq_part_map
-from finn.util.test import load_test_checkpoint_or_skip
+from tests.testing_util.test import load_test_checkpoint_or_skip
 
 
 def create_one_fc_model(mem_mode="internal_embedded"):

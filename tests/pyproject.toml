@@ -1,0 +1,69 @@
+[project]
+name = "finn-plus-tests"
+dynamic = ["version"]
+description = "Test suite for finn-plus"
+maintainers = [
+    { name = "Felix Jentzsch", email = "felix.jentzsch@upb.de" },
+    { name = "Christoph Berganski", email = "christoph.berganski@upb.de" },
+    { name = "Linus Jungemann", email = "linus.jungemann@upb.de" },
+    { name = "Bjarne Wintermann", email = "bjarne.wintermann@upb.de" },
+]
+
+[tool.poetry.requires-plugins]
+poetry-dynamic-versioning = { version = ">=1.0.0,<2.0.0", extras = ["plugin"] }
+
+[tool.poetry-dynamic-versioning]
+enable = true
+
+[project.urls]
+"GitHub" = "https://github.com/eki-project/finn-plus"
+"EKI Project" = "https://www.eki-project.tech/"
+
+[tool.poetry]
+name = "finn-plus-tests"
+version = "0.0.0"
+description = "Test suite for finn-plus"
+packages = [{ include = "tests", from = ".." }]
+include = ["example_data/**/*"]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.12"
+pytest = "~8.4.1"
+pytest-metadata = "~3.1.1"
+pytest-html = "~4.1.1"
+pytest-html-merger = "~0.1.0"
+pytest-cov = "~6.2.1"
+pytest-forked = "~1.6.0"
+pytest-rerunfailures = "~15.1"
+pytest-dependency = "~0.6.0"
+pytest-parallel = "~0.1.1"
+pytest-xdist = { version = "~3.6.1", extras = ["setproctitle"] }
+torch = "~2.7.1"
+torchvision = "~0.22.1"
+wget = "~3.2"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow",
+    "infrastructure: marks tests that refer to infrastructure functionality",
+    "vivado: mark tests that require Vivado or Vivado HLS",
+    "vitis: mark tests that require Vitis",
+    "board: mark tests that require a PYNQ board",
+    "brevitas_export : mark tests that test brevitas export functionality",
+    "streamline: mark tests that test streamlining functionality",
+    "util: mark tests that test util functions",
+    "transform: mark tests that test transformations (before hls layers)",
+    "fpgadataflow: mark tests related to hls layers",
+    "end2end: mark tests that run the end2end flow",
+    "notebooks: mark tests that execute all Jupyter notebooks",
+    "sanity_bnn: mark tests that execute the sanity BNN test",
+    "bnn_u250: mark tests that execute U250 BNN tests",
+    "bnn_kv260: mark tests that execute KV260 BNN tests",
+    "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
+    "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
+    "analysis: mark tests that run analysis tests",
+]
+
+[build-system]
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"

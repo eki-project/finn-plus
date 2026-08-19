@@ -18,10 +18,11 @@ from shutil import copytree
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
-
 from finn.benchmarking.util import delete_dir_contents
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.util.basic import alveo_default_platform, alveo_part_map, part_map
+from finn.util.logging import log
+from finn.util.settings import get_settings
 
 
 class bench:
@@ -97,6 +98,27 @@ class bench:
         else:
             self._params["shell_flow_type"] = build_cfg.ShellFlowType.VIVADO_ZYNQ
 
+        # Best effort DUT <-> dataset mapping
+        if "validation_dataset" in self._params:
+            pass
+        elif self._params["dut"] == "bnn-pynq":
+            log.warning(
+                "DUT bnn-pynq selected. Selecting mnist as the validation dataset. "
+                "This might be incorrect. If so configure a validation_dataset in the config"
+            )
+            self._params["validation_dataset"] = "mnist"
+        elif self._params["dut"] == "vgg10":
+            self._params["validation_dataset"] = "radioml"
+        elif self._params["dut"] in ["mobilenetv1", "resnet50"]:
+            self._params["validation_dataset"] = "imagenet"
+        elif self._params["dut"] == "cybsec":
+            self._params["validation_dataset"] = "unswnb15"
+        else:
+            # TODO implement for gtsrb, kws, transformer, synthetic_nonlinear (?), mvau (?)
+            log.warning(
+                "No dataset available for the selected DUT. Configure manually if possible."
+            )
+
         # Load custom (= non build_dataflow_config) parameters from topology-specific .yml
         custom_params = [
             "model_dir",  # used to setup onnx/npy input
@@ -104,6 +126,20 @@ class bench:
             # model-gen parameters, such as seed, simd, pe, etc.
             # TODO: separate these more cleanly from builder options
         ]
+
+        if "experiments_config" in params:
+            self.experiments_config = params["experiments_config"]
+        else:
+            # Set default experiment config if not explicitly defined as absolute or relative path
+            # TODO: this assumes we are running from the repo root, where ci/ is available
+            if "live_fifo_sizing" in params and params["live_fifo_sizing"] is True:
+                # Default experiment config for FIFO-Sizing
+                self.experiments_config = os.path.join(
+                    "ci", "experiments", "fifosizing_default.json"
+                )
+            else:
+                # Default experiment config for normal builds
+                self.experiments_config = os.path.join("ci", "experiments", "default.json")
 
         dut_yaml_name = self._params["dut"] + ".yml"
         dut_path = os.path.join(os.path.dirname(__file__), "dut", dut_yaml_name)
@@ -116,7 +152,7 @@ class bench:
 
         # Clear FINN tmp build dir before every run
         print("Clearing FINN BUILD DIR ahead of run")
-        delete_dir_contents(os.environ["FINN_BUILD_DIR"])
+        delete_dir_contents(get_settings().finn_build_dir)
 
         # Initialize dictionary to collect all benchmark results
         # TODO: remove completely or only use for meta data,
@@ -135,7 +171,7 @@ class bench:
             # Save entire FINN_BUILD_DIR
             # TODO: add option to only save upon error/exception
             self._local_artifacts_collection.append(
-                ("debug_finn_tmp", os.environ["FINN_BUILD_DIR"], True)
+                ("debug_finn_tmp", get_settings().finn_build_dir, True)
             )
 
         # SETUP
@@ -369,19 +405,47 @@ class bench:
         # cfg.default_swg_exception
         # cfg.large_fifo_mem_style
 
+        cfg.experiments_config_path = self.experiments_config
+
+        # Set verification i/o paths if available
+        if "input_npy_path" in self._build_inputs and "output_npy_path" in self._build_inputs:
+            cfg.verify_input_npy = self._build_inputs["input_npy_path"]
+            cfg.verify_expected_output_npy = self._build_inputs["output_npy_path"]
+
         # Overwrite build config settings with run-specific parameters
         # Filter to only valid DataflowBuildConfig attributes to avoid errors
         valid_params = {k: v for k, v in self._params.items() if hasattr(cfg, k)}
 
+        # Separate params into those that can go through from_dict and those that are None
+        params_for_from_dict = {}
+        params_with_none = {}
+
+        for k, v in valid_params.items():
+            if v == "None":
+                # Convert string "None" to actual None
+                params_with_none[k] = None
+            elif v is None:
+                # Explicit None value - set directly to override cfg defaults
+                params_with_none[k] = None
+            else:
+                # Regular value - use from_dict for proper validation and enum conversion
+                params_for_from_dict[k] = v
+
         # TODO: warn/error if there are unrecognized options set?
 
-        if valid_params:
-            # Use DataflowBuildConfig's from_dict method which handles enum conversion.
-            updated_cfg = DataflowBuildConfig.from_dict(valid_params)
-
-            # Only apply values that were explicitly specified in params (not defaults)
-            for param_key in valid_params.keys():
+        # Apply non-None values through from_dict for validation and enum conversion
+        if params_for_from_dict:
+            updated_cfg = DataflowBuildConfig.from_dict(params_for_from_dict)
+            for param_key in params_for_from_dict.keys():
                 setattr(cfg, param_key, getattr(updated_cfg, param_key))
+
+        # Apply None values directly to override existing cfg values
+        for param_key, param_value in params_with_none.items():
+            setattr(cfg, param_key, param_value)
+
+        # disable verification if live FIFO-sizing is on
+        if cfg.live_fifo_sizing:
+            cfg.verify_steps = None
 
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
         # TODO: make configurable or set on pipeline level?

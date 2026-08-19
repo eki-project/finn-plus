@@ -58,7 +58,7 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.util.test import get_test_model_trained
+from tests.testing_util.test import get_test_model_trained
 
 export_onnx_path = "test_convert_to_hw_layers_fc.onnx"
 
@@ -195,7 +195,7 @@ def test_convert_to_hw_layers_tfc_w1a2():
     # run using FINN-based execution
     input_dict = {"global_in": nph.to_array(input_tensor)}
     output_dict = oxe.execute_onnx(model, input_dict, True)
-    produced = output_dict[model.graph.output[0].name]
+    produced = output_dict[model.get_first_global_out()]
     model = ModelWrapper(export_onnx_path)
     model = model.transform(InferShapes())
     model = model.transform(FoldConstants())
@@ -203,6 +203,6 @@ def test_convert_to_hw_layers_tfc_w1a2():
     model = model.transform(GiveReadableTensorNames())
     model = model.transform(Streamline())
     golden_output_dict = oxe.execute_onnx(model, input_dict, True)
-    expected = golden_output_dict[model.graph.output[0].name]
+    expected = golden_output_dict[model.get_first_global_out()]
     assert np.isclose(produced, expected, atol=1e-3).all()
     os.remove(export_onnx_path)

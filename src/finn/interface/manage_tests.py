@@ -1,3 +1,4 @@
+"""Manage FINNs testsuite."""
 import os
 import shlex
 import subprocess
@@ -6,21 +7,84 @@ from pathlib import Path
 
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import status
+from finn.util.exception import FINNUserError
+from finn.util.settings import get_settings
 
 
-def run_test(variant: str, num_workers: str) -> None:
-    """Run a given test variant with the given number of workers"""
+def run_doctests(num_workers: int) -> bool:
+    """Run all doctests in FINN and report if any failed."""
+    returncodes = []
+    tests = []
+    for submodule in [
+        "analysis",
+        "builder",
+        "core",
+        "custom_op",
+        "interface",
+        "transformation",
+        "util",
+    ]:
+        status(f"Running doctest on submodule finn.{submodule}")
+        tests.append(
+            subprocess.Popen(
+                shlex.split(
+                    f"{sys.executable} -m pytest --doctest-modules "
+                    f"--doctest-continue-on-failure -n {num_workers} "
+                    f"--pyargs finn." + submodule,
+                    posix=IS_POSIX,
+                )
+            )
+        )
+        tests[-1].communicate()
+    returncodes = [test.returncode for test in tests]
+    return any(returncodes)
+
+
+def run_test(variant: str, num_workers: str, name: str = "") -> None:
+    """Run a given test variant with the given number of workers."""
     original_dir = Path.cwd()
 
     # TODO: Make this optional
     if "CI_PROJECT_DIR" in os.environ.keys():
         ci_project_dir = os.environ["CI_PROJECT_DIR"]
     else:
-        ci_project_dir = os.environ["FINN_BUILD_DIR"]
+        ci_project_dir = str(get_settings().finn_build_dir)
     status(f"Putting test reports into {ci_project_dir}")
 
     os.chdir(os.environ["FINN_TESTS"])
     match variant:
+        case "custom":
+            if name == "":
+                raise FINNUserError(
+                    "--variant custom was specified, but no test was "
+                    "given (please additionally pass --name "
+                    "<test-name> in pytest syntax)"
+                )
+            subprocess.run(
+                shlex.split(f"{sys.executable} -m pytest -n {num_workers} {name}", posix=IS_POSIX)
+            )
+        case "doctest":
+            if name == "":
+                status(
+                    "No test name was specified, running "
+                    "doctests on all relevant FINN submodules."
+                )
+                run_doctests(int(num_workers))
+                return
+            if name.endswith(".py"):
+                raise FINNUserError(
+                    "To run doctests, specify the name as a python module path. "
+                    "Instead of src/finn/interface/manage_tests.py do "
+                    "finn.interface.manage_tests!"
+                )
+            subprocess.run(
+                shlex.split(
+                    f"{sys.executable} -m pytest --doctest-modules "
+                    f"--doctest-continue-on-failure -n {num_workers} "
+                    f"--pyargs {name}",
+                    posix=IS_POSIX,
+                )
+            )
         case "quick":
             subprocess.run(
                 shlex.split(
@@ -70,6 +134,9 @@ def run_test(variant: str, num_workers: str) -> None:
             test_2_process.communicate()
             test_2_returncode = test_2_process.returncode
 
+            # Run doctests for all FINN submodules
+            test_3_returncode = run_doctests(int(num_workers))
+
             subprocess.run(
                 shlex.split(
                     (
@@ -80,7 +147,7 @@ def run_test(variant: str, num_workers: str) -> None:
                 )
             )
 
-            if test_1_returncode or test_2_returncode:
+            if test_1_returncode or test_2_returncode or test_3_returncode:
                 sys.exit(1)
 
         case _:

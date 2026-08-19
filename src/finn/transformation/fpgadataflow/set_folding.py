@@ -36,6 +36,7 @@ import numpy as np
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 # Import the elementwise binary operation module to extract names of all
 # specializations (which require PE parallelism to be configured)
@@ -45,15 +46,23 @@ from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
-def divisors(num):
+from collections.abc import Generator
+from qonnx.core.modelwrapper import ModelWrapper
+
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+
+
+def divisors(num: int) -> Generator[int, Any, None]:
     """Yield divisors of num."""
     for x in range(1, num + 1):
         if (num % x) == 0:
             yield x
 
 
-def common_divisors(numbers):
+def common_divisors(numbers: list[int]) -> np.ndarray:
     """Return common divisors of the list of numbers."""
     separate_divisors = []
     for num in numbers:
@@ -109,14 +118,19 @@ class SetFolding(Transformation):
       unfolded before SIMD is increased
     """
 
-    def __init__(self, target_cycles_per_frame=1000, mvau_wwidth_max=36, two_pass_relaxation=True):
-        """Initializes the folding target and constraints."""
+    def __init__(
+        self,
+        target_cycles_per_frame: int = 1000,
+        mvau_wwidth_max: int = 36,
+        two_pass_relaxation: bool = True,
+    ) -> None:
+        """Initialize the folding target and constraints."""
         super().__init__()
         self.target_cycles_per_frame = target_cycles_per_frame
         self.mvau_wwidth_max = mvau_wwidth_max
         self.two_pass_relaxation = two_pass_relaxation
 
-    def optimize_attribute_val(self, node_inst, max_val, attr_name):
+    def optimize_attribute_val(self, node_inst: HWCustomOp, max_val: int, attr_name: str) -> None:
         """Optimize the folding attribute until the target cycles are met."""
         node_inst.set_nodeattr(attr_name, 1)
         for val in divisors(max_val):
@@ -126,13 +140,11 @@ class SetFolding(Transformation):
                 # finish if target met
                 break
 
-    def apply(self, model):
+    def apply(self, model: "ModelWrapper") -> tuple[ModelWrapper, Literal[False]]:
         """Apply SetFolding to all supported nodes in the model."""
         graph = model.graph
         # these ops use PE parallelism, up to a max value of NumChannels
         pe_ops = [
-            "AddStreams_hls",
-            "ChannelwiseOp_hls",
             "DuplicateStreams_hls",
             "GlobalAccPool_hls",
             "Thresholding_hls",
@@ -154,6 +166,8 @@ class SetFolding(Transformation):
             # Streaming Split and Concat are SIMD operations
             "StreamingSplit_hls",
             "StreamingConcat_hls",
+            "LayerNorm_rtl",
+            "Shuffle",
         ]
         # these ops are preceded by depthwise SWG and have special behavior,
         # as explained in the SetFolding docstring
@@ -162,11 +176,11 @@ class SetFolding(Transformation):
             if not (is_hls_node(node) or is_rtl_node(node)):
                 continue
             op_type = node.op_type
-            node_inst = getCustomOp(node)
+            node_inst = cast("HWCustomOp", getCustomOp(node))
             if op_type in ["MVAU_hls", "MVAU_rtl", "PowerQuantMatMul_hls"]:
                 try:
-                    max_simd = node_inst.get_nodeattr("MW")
-                    max_pe = node_inst.get_nodeattr("MH")
+                    max_simd = cast("int", node_inst.get_nodeattr("MW"))
+                    max_pe = cast("int", node_inst.get_nodeattr("MH"))
                 except AttributeError:
                     max_simd, max_pe = node_inst.get_normal_input_shape(1)
                 node_inst.set_nodeattr("PE", 1)
@@ -182,7 +196,8 @@ class SetFolding(Transformation):
                         # finish if target met
                         break
                     if (
-                        node_inst.get_input_datatype(1).bitwidth() * node_inst.get_nodeattr("SIMD")
+                        node_inst.get_input_datatype(1).bitwidth()
+                        * cast("int", node_inst.get_nodeattr("SIMD"))
                         > self.mvau_wwidth_max
                     ):
                         # revert if we've gone above width threshold
@@ -194,16 +209,16 @@ class SetFolding(Transformation):
                 # Note: Keep original behavior for all custom-ops defining the
                 # NumChannels attribute as it is
                 try:
-                    max_pe = node_inst.get_nodeattr("NumChannels")
+                    max_pe = cast("int", node_inst.get_nodeattr("NumChannels"))
                 # Note: Some of the recent additions do not define the
                 # NumChannels attribute
                 except AttributeError:
                     # We can extract the channels from the normal, i.e., not
                     # folded, shape of the output in these cases
                     max_pe = node_inst.get_normal_output_shape()[-1]
-                self.optimize_attribute_val(node_inst, max_pe, "PE")
+                self.optimize_attribute_val(node_inst, int(max_pe), "PE")
             elif op_type == "LabelSelect_hls":
-                max_pe = node_inst.get_nodeattr("Labels")
+                max_pe = cast("int", node_inst.get_nodeattr("Labels"))
                 self.optimize_attribute_val(node_inst, max_pe, "PE")
             elif op_type == "Reshape_rtl":
                 max_inp: int = node_inst.get_normal_input_shape()[-1]
@@ -214,7 +229,7 @@ class SetFolding(Transformation):
                 # init/reset SIMD of VVAU
                 if op_type in ["VVAU_hls", "VVAU_rtl"]:
                     node_inst.set_nodeattr("SIMD", 1)
-                max_pe = node_inst.get_nodeattr("Channels")
+                max_pe = cast("int", node_inst.get_nodeattr("Channels"))
                 self.optimize_attribute_val(node_inst, max_pe, "PE")
                 # increase SIMD for VVAU once PE is exhausted
                 pe = node_inst.get_nodeattr("PE")
@@ -224,34 +239,38 @@ class SetFolding(Transformation):
                     and pe == max_pe
                     and cyc > self.target_cycles_per_frame
                 ):
-                    max_simd = np.prod(node_inst.get_nodeattr("Kernel"))
-                    self.optimize_attribute_val(node_inst, max_simd, "SIMD")
+                    max_simd = np.prod(cast("NDArray", node_inst.get_nodeattr("Kernel")))
+                    self.optimize_attribute_val(node_inst, int(max_simd), "SIMD")
                 # also set the folding of the upsteam DW SWU
                 # which must be identical to this node
                 swu_node = model.find_producer(node.input[0])
+                assert swu_node is not None, "Expected producer node for VVAU/Pool input"
                 if swu_node.op_type.startswith("ConvolutionInputGenerator"):
                     swu_node_inst = getCustomOp(swu_node)
                     swu_node_inst.set_nodeattr("SIMD", pe)
                     # enable parallel_window mode of RTL SWG if needed
                     if swu_node.op_type == "ConvolutionInputGenerator_rtl":
-                        if op_type.startswith("VVAU") and node_inst.get_nodeattr("SIMD") > 1:
+                        if (
+                            op_type.startswith("VVAU")
+                            and cast("int", node_inst.get_nodeattr("SIMD")) > 1
+                        ):
                             swu_node_inst.set_nodeattr("parallel_window", 1)
                         else:
                             swu_node_inst.set_nodeattr("parallel_window", 0)
                 else:
                     if op_type in ["VVAU_hls", "VVAU_rtl"]:
-                        ksize = np.prod(node_inst.get_nodeattr("Kernel"))
+                        ksize = np.prod(cast("NDArray", node_inst.get_nodeattr("Kernel")))
                     elif op_type == "Pool_hls":
                         ksize = node_inst.get_nodeattr("KernelSize")
                     else:
-                        raise Exception("Undefined edge case for %s" % op_type)
+                        raise Exception(f"Undefined edge case for {op_type}")
                     if ksize != 1:  # pointwise vvau/pool lack a SWU
                         raise Exception("Expected SWU on DW op input, found " + swu_node.op_type)
             elif op_type in simd_ops:
                 if op_type.startswith("ConvolutionInputGenerator"):
                     depthwise = node_inst.get_nodeattr("depthwise")
                     if depthwise == 0:
-                        max_simd = node_inst.get_nodeattr("IFMChannels")
+                        max_simd = cast("int", node_inst.get_nodeattr("IFMChannels"))
                         # init/reset parallel_window mode of RTL SWG
                         if op_type == "ConvolutionInputGenerator_rtl":
                             node_inst.set_nodeattr("parallel_window", 0)
@@ -270,24 +289,37 @@ class SetFolding(Transformation):
                         continue
                 elif op_type == "StreamingConcat_hls" or op_type == "StreamingSplit_hls":
                     node_inst.set_nodeattr("SIMD", 1)
-                    channels_per_stream = node_inst.get_nodeattr("ChannelsPerStream")
+                    channels_per_stream = cast(
+                        "list[int]", node_inst.get_nodeattr("ChannelsPerStream")
+                    )
                     for simd_val in common_divisors(channels_per_stream):
-                        node_inst.set_nodeattr("SIMD", simd_val)
+                        node_inst.set_nodeattr("SIMD", int(simd_val))
                         cyc = node_inst.get_exp_cycles()
                         if cyc < self.target_cycles_per_frame:
+                            break
+                elif op_type == "LayerNorm_rtl":
+                    node_inst.set_nodeattr("SIMD", 1)
+                    dim = int(node_inst.get_normal_input_shape()[-1])
+                    for simd_val in divisors(dim):
+                        if dim // simd_val > 12:
+                            node_inst.set_nodeattr("SIMD", int(simd_val))
+                            cyc = node_inst.get_exp_cycles()
+                            if cyc < self.target_cycles_per_frame:
+                                break
+                        else:
                             break
                 else:
                     # Note: Keep original behavior for all custom-ops defining
                     # the NumChannels attribute as it is
                     try:
-                        max_simd = node_inst.get_nodeattr("NumChannels")
+                        max_simd = cast("int", node_inst.get_nodeattr("NumChannels"))
                     # Note: Some of the recent additions do not define the
                     # NumChannels attribute
                     except AttributeError:
                         # We can extract the channels from the normal, i.e., not
                         # folded, shape of the input in these cases
                         max_simd = node_inst.get_normal_input_shape()[-1]
-                    self.optimize_attribute_val(node_inst, max_simd, "SIMD")
+                    self.optimize_attribute_val(node_inst, int(max_simd), "SIMD")
             else:
                 log.warning(f"SetFolding doesn't know how to handle op_type {op_type}")
 
@@ -295,7 +327,7 @@ class SetFolding(Transformation):
         model = model.transform(AnnotateCycles())
         if self.two_pass_relaxation:
             perf_dict = model.analysis(dataflow_performance)
-            if perf_dict["max_cycles"] > self.target_cycles_per_frame:
+            if cast("int", perf_dict["max_cycles"]) > self.target_cycles_per_frame:
                 # run again, but with lower target (that we managed) -- this
                 # may be coming from a single node's constraints, but we want
                 # to balance the entire dataflow pipeline instead
@@ -309,7 +341,7 @@ class SetFolding(Transformation):
                 )
                 model = model.transform(
                     SetFolding(
-                        target_cycles_per_frame=perf_dict["max_cycles"],
+                        target_cycles_per_frame=cast("int", perf_dict["max_cycles"]),
                         mvau_wwidth_max=self.mvau_wwidth_max,
                         two_pass_relaxation=False,
                     )

@@ -82,8 +82,8 @@ from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.collapse_repeated import CollapseRepeatedMul
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.util.pytorch import NormalizePreProc
-from finn.util.test import (
+from tests.testing_util.pytorch import NormalizePreProc
+from tests.testing_util.test import (
     crop_center,
     get_test_model_trained,
     load_test_checkpoint_or_skip,
@@ -115,7 +115,7 @@ class Test_end2end_mobilenet:
         preproc_model = ModelWrapper(preproc_onnx)
         preproc_model = preproc_model.transform(ConvertQONNXtoFINN())
         # set input finn datatype to UINT8
-        preproc_model.set_tensor_datatype(preproc_model.graph.input[0].name, DataType["UINT8"])
+        preproc_model.set_tensor_datatype(preproc_model.get_first_global_in(), DataType["UINT8"])
         preproc_model = preproc_model.transform(InferShapes())
         preproc_model = preproc_model.transform(FoldConstants())
         preproc_model = preproc_model.transform(GiveUniqueNodeNames())
@@ -227,7 +227,7 @@ class Test_end2end_mobilenet:
         model = model.transform(to_hw.InferThresholdingLayer())
         model = model.transform(to_hw.InferVectorVectorActivation())
         model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-        model = model.transform(to_hw.InferChannelwiseLinearLayer())
+        model = model.transform(to_hw.InferElementwiseBinaryOperation())
         model = model.transform(to_hw.InferLabelSelectLayer())
         model = model.transform(InferShapes())
         model = model.transform(GiveUniqueNodeNames())
@@ -352,8 +352,8 @@ class Test_end2end_mobilenet:
         )
         x = np.load(get_bld_dir() + "/end2end_mobilenet_input.npy")
         x = x.transpose(0, 2, 3, 1)  # Convert NCHW to NHWC
-        inp_name = model.graph.input[0].name
-        out_name = model.graph.output[0].name
+        inp_name = model.get_first_global_in()
+        out_name = model.get_first_global_out()
         inp_dict = {inp_name: x}
         start = time.time()
         # cppsim
@@ -403,8 +403,8 @@ class Test_end2end_mobilenet:
         )
         x = np.load(get_bld_dir() + "/end2end_mobilenet_input.npy")
         x = x.transpose(0, 2, 3, 1)  # Convert NCHW to NHWC
-        inp_name = model.graph.input[0].name
-        out_name = model.graph.output[0].name
+        inp_name = model.get_first_global_in()
+        out_name = model.get_first_global_out()
         inp_dict = {inp_name: x}
         # rtlsim
         model = model.transform(SetExecMode("rtlsim"))
@@ -478,8 +478,8 @@ class Test_end2end_mobilenet:
         # Prepare input
         x = np.load(get_bld_dir() + "/end2end_mobilenet_input.npy")
         x = x.transpose(0, 2, 3, 1)  # Convert NCHW to NHWC
-        inp_name = model.graph.input[0].name
-        out_name = model.graph.output[0].name
+        inp_name = model.get_first_global_in()
+        out_name = model.get_first_global_out()
         inp_dict = {inp_name: x}
 
         # set top-level prop for stitched-ip rtlsim and launch

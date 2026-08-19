@@ -1,0 +1,68 @@
+Metrics:
+  report_experiment_instrumentation.json:
+    - error:
+      - fn : anytrue
+    - chechksum
+    - min_latency_cycles
+    - latency_cycles
+    - interval_cycles
+    - frequency_mhz:
+        - fn : max
+    - min_latency_ms
+    - latency_ms:
+        - fn : min
+    - throughput_fps:
+        - fn : max
+    - min_pipeline_depth
+    - pipeline_depth
+
+  report_dma_validate.json:
+    - top-1_accuracy
+
+  report_experiment_fifosizing.json:
+    - error
+    - fifo_size_total_kB:
+        - fn : min
+
+Compare:
+  compare_tag: ci_known_good
+  allowed_uncertainty: 0.01
+
+  Metrics:
+
+    measurement/report_dma_validate/top-1_accuracy:
+      required: true
+      plot: true
+      allowed_uncertainty: 0.00
+
+    measurement/report_experiment_instrumentation/throughput_fps:
+      required: true
+      plot: true
+
+    measurement/report_experiment_instrumentation/interval_cycles:
+      required: true
+      plot: true
+
+    measurement/report_experiment_instrumentation/min_latency_cycles:
+      required: true
+      plot: true
+
+    synth/resources/LUT:
+      required: true
+      plot: true
+
+    synth/resources/DSP:
+      required: true
+      plot: true
+
+    synth/resources/BRAM_18K:
+      required: true
+      plot: true
+
+    synth/resources/BRAM_36K:
+      required: true
+      plot: true
+
+    synth/resources/URAM:
+      required: true
+      plot: true

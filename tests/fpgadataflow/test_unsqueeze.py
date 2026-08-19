@@ -35,7 +35,6 @@ from qonnx.custom_op.registry import getCustomOp
 
 # Cleanup transformations required after QONNX model import
 from qonnx.transformation.general import (
-    ApplyConfig,
     GiveReadableTensorNames,
     GiveUniqueNodeNames,
     GiveUniqueParameterTensors,
@@ -70,6 +69,7 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from finn.transformation.general import ApplyConfig
 
 # Converts between QONNX and FINN dialect of ONNX representation
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN

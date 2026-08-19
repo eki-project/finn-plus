@@ -30,12 +30,14 @@ import numpy as np
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.deprecated import deprecated
 from finn.util.logging import log
 
 
 class DuplicateStreams(HWCustomOp):
     """Abstraction layer for HW implementation of DuplicateStreams"""
 
+    @deprecated
     def __init__(self, onnx_node, **kwargs):
         super().__init__(onnx_node, **kwargs)
 

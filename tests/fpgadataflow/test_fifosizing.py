@@ -47,7 +47,7 @@ import finn.builder.build_dataflow_config as build_cfg
 from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir
-from finn.util.test import get_trained_network_and_ishape
+from tests.testing_util.test import get_trained_network_and_ishape
 
 
 def fetch_test_model(topology, wbits=2, abits=2):
@@ -137,14 +137,20 @@ def make_multi_io_modelwrapper(ch, pe, idt):
     out1 = helper.make_tensor_value_info("out1", TensorProto.FLOAT, [1, ch])
 
     addstreams_node = helper.make_node(
-        "AddStreams",
+        "ElementwiseAdd",
         ["in0", "in1"],
         ["mid"],
         domain="finn.custom_op.fpgadataflow",
         backend="fpgadataflow",
-        NumChannels=ch,
+        lhs_shape=[1, ch],
+        rhs_shape=[1, ch],
+        out_shape=[1, ch],
+        lhs_dtype=idt.name,
+        rhs_dtype=idt.name,
+        out_dtype=idt.name,
+        lhs_style="input",
+        rhs_style="input",
         PE=pe,
-        inputDataTypes=[idt.name, idt.name],
         inFIFODepths=[2, 2],
     )
     duplicate_node = helper.make_node(

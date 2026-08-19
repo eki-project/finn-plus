@@ -53,7 +53,7 @@ def _codegen_single_node(node, model, fpgapart, clk):
             # ensure that there is generated code inside the dir
             inst.code_generation_ipgen(model, fpgapart, clk)
         else:
-            log.info(f"Using pre-existing code for {node.name}")
+            log.debug(f"Using pre-existing code for {node.name}")
     except KeyError:
         # exception if op_type is not supported
         raise Exception(f"Custom op_type {op_type} is currently not supported.")

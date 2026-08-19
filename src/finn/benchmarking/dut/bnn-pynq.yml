@@ -29,4 +29,4 @@ steps:
   - step_deployment_package
 
 # Workaround for auto FIFO-sizing from finn-examples
-default_swg_exceptions: True
+default_swg_exception: True

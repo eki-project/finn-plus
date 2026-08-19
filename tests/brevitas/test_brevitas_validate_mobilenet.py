@@ -53,11 +53,11 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
 import finn.transformation.streamline.absorb as absorb
-import finn.util.imagenet as imagenet_util
+import tests.testing_util.imagenet as imagenet_util
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.util.basic import make_build_dir
-from finn.util.pytorch import NormalizePreProc
-from finn.util.test import get_test_model_trained
+from tests.testing_util.pytorch import NormalizePreProc
+from tests.testing_util.test import get_test_model_trained
 
 # normalization (preprocessing) settings for MobileNet-v1 w4a4
 mean = [0.485, 0.456, 0.406]
@@ -178,9 +178,9 @@ def test_brevitas_compare_exported_mobilenet():
             expected_top5_prob = []
             for index in expected_top5:
                 expected_top5_prob.append(expected_topk[index])
-            idict = {model.graph.input[0].name: img_np}
+            idict = {model.get_first_global_in(): img_np}
             odict = oxe.execute_onnx(model, idict, return_full_exec_context=True)
-            produced = odict[model.graph.output[0].name]
+            produced = odict[model.get_first_global_out()]
             produced_prob = odict["TopK_0_out0"] * a0
             inds_ok = (produced.flatten() == expected_top5).all()
             probs_ok = np.isclose(produced_prob.flatten(), expected_top5_prob).all()

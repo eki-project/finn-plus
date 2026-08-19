@@ -72,6 +72,7 @@ NUMPY_REFERENCES = {
     "ElementwiseBitwiseAnd": np.bitwise_and,
     "ElementwiseBitwiseOr": np.bitwise_or,
     "ElementwiseBitwiseXor": np.bitwise_xor,
+    "ElementwiseMax": np.maximum,
     # TODO: "ElementwiseBitShift": np.left_shift / np.right_shift
     # TODO: "ElementwisePow": np.power
 }
@@ -91,9 +92,18 @@ def create_elementwise_binary_operation_onnx(
         inputs=["in_x", "in_y"],
         outputs=["out"],
     )
-    lhs = oh.make_tensor_value_info("in_x", TensorProto.FLOAT, lhs_shape)
-    rhs = oh.make_tensor_value_info("in_y", TensorProto.FLOAT, rhs_shape)
-    out = oh.make_tensor_value_info("out", TensorProto.FLOAT, out_shape)
+    if lhs_dtype == "FLOAT16":
+        lhs = oh.make_tensor_value_info("in_x", TensorProto.FLOAT16, lhs_shape)
+    else:
+        lhs = oh.make_tensor_value_info("in_x", TensorProto.FLOAT, lhs_shape)
+    if rhs_dtype == "FLOAT16":
+        rhs = oh.make_tensor_value_info("in_y", TensorProto.FLOAT16, rhs_shape)
+    else:
+        rhs = oh.make_tensor_value_info("in_y", TensorProto.FLOAT, rhs_shape)
+    if out_dtype == "FLOAT16":
+        out = oh.make_tensor_value_info("out", TensorProto.FLOAT16, out_shape)
+    else:
+        out = oh.make_tensor_value_info("out", TensorProto.FLOAT, out_shape)
     # Create a graph connecting the node to the inputs and outputs
     graph = oh.make_graph([node], inputs=[lhs, rhs], outputs=[out], name="elementwise-binary")
     model = ModelWrapper(qonnx_make_model(graph, producer_name="elementwise-binary"))
@@ -116,7 +126,14 @@ def create_elementwise_binary_operation_onnx(
 )
 # Data type of the left-hand-side and right-hand-side input elements
 @pytest.mark.parametrize(
-    "lhs_dtype_rhs_dtype", [("INT8", "INT8"), ("INT8", "FLOAT32"), ("FLOAT32", "FLOAT32")]
+    "lhs_dtype_rhs_dtype",
+    [
+        ("INT8", "INT8"),
+        ("INT8", "FLOAT32"),
+        ("FLOAT32", "FLOAT32"),
+        ("FLOAT16", "FLOAT16"),
+        ("FIXED<8,4>", "FIXED<10,5>"),
+    ],
 )
 # Shape of the left-hand-side input
 @pytest.mark.parametrize("lhs_shape", [[3, 1, 7, 1], [1]])
@@ -140,9 +157,17 @@ def test_elementwise_binary_operation(
     op_type, lhs_dtype_rhs_dtype, lhs_shape, rhs_shape, pe, initializers, exec_mode
 ):
     lhs_dtype, rhs_dtype = lhs_dtype_rhs_dtype
-    if "Bitwise" in op_type and (lhs_dtype == "FLOAT32" or rhs_dtype == "FLOAT32"):
-        pytest.skip("Float datatypes are not meaningful for bitwise ops, skipping those tests.")
-    out_dtype = "FLOAT32"
+    if "Bitwise" in op_type and not ("INT" in lhs_dtype and "INT" in rhs_dtype):
+        pytest.skip(
+            "Non-integer datatypes are not meaningful for bitwise ops, skipping those tests."
+        )
+    if op_type in ["ElementwiseAnd", "ElementwiseOr", "ElementwiseXor"] and not (
+        "INT" in lhs_dtype and "INT" in rhs_dtype
+    ):
+        pytest.skip(
+            "Non-integer datatypes are not meaningful for logical ops, skipping those tests."
+        )
+    out_dtype = "FLOAT16" if lhs_dtype == "FLOAT16" and rhs_dtype == "FLOAT16" else "FLOAT32"
     # Make dummy model for testing
     model = create_elementwise_binary_operation_onnx(
         op_type, lhs_dtype, rhs_dtype, out_dtype, lhs_shape, rhs_shape
@@ -208,8 +233,16 @@ def test_elementwise_binary_operation(
     # Execute the onnx model to collect the result
     o_produced = execute_onnx(model, context)["out"]
 
-    # Compare the expected to the produced for exact equality
-    assert np.all(o_produced == o_expected)
+    if out_dtype == "FLOAT16":
+        if op_type in ["ElementwiseAdd", "ElementwiseSub", "ElementwiseMul"]:
+            # Equivalence checking is more relaxed for arithmetic operations
+            # numpy casts fp16 to fp32, computes in fp32, casts result to fp16
+            assert np.allclose(o_expected, o_produced, rtol=1e-3, atol=2**-13)
+        else:
+            assert np.all(o_expected == o_produced)
+    else:
+        # Compare the expected to the produced for exact equality
+        assert np.all(o_produced == o_expected)
 
 
 # Operator type to be tested
@@ -219,7 +252,14 @@ def test_elementwise_binary_operation(
 )
 # Data type of the left-hand-side and right-hand-side input elements
 @pytest.mark.parametrize(
-    "lhs_dtype_rhs_dtype", [("INT8", "INT8"), ("INT8", "FLOAT32"), ("FLOAT32", "FLOAT32")]
+    "lhs_dtype_rhs_dtype",
+    [
+        ("INT8", "INT8"),
+        ("INT8", "FLOAT32"),
+        ("FLOAT32", "FLOAT32"),
+        ("FLOAT16", "FLOAT16"),
+        ("FIXED<8,4>", "FIXED<10,5>"),
+    ],
 )
 # Shape of the left-hand-side input
 @pytest.mark.parametrize("lhs_shape", [[3, 1, 7, 1]])
@@ -238,7 +278,7 @@ def test_elementwise_binary_operation_stitched_ip(
     op_type, lhs_dtype_rhs_dtype, lhs_shape, rhs_shape, pe, initializers, mem_mode
 ):
     lhs_dtype, rhs_dtype = lhs_dtype_rhs_dtype
-    out_dtype = "FLOAT32"
+    out_dtype = "FLOAT16" if lhs_dtype == "FLOAT16" and rhs_dtype == "FLOAT16" else "FLOAT32"
     # Make dummy model for testing
     model = create_elementwise_binary_operation_onnx(
         op_type, lhs_dtype, rhs_dtype, out_dtype, lhs_shape, rhs_shape
@@ -297,8 +337,15 @@ def test_elementwise_binary_operation_stitched_ip(
     o_expected = numpy_reference(lhs, rhs)
 
     # node-by-node rtlsim
-    o_produced = execute_onnx(model, context)[model.graph.output[0].name]
-    assert np.all(o_produced == o_expected)
+    o_produced = execute_onnx(model, context)[model.get_first_global_out()]
+
+    if out_dtype == "FLOAT16":
+        # Equivalence checking is more relaxed for arithmetic operations in fp16
+        # numpy casts fp16 to fp32, computes in fp32, casts result to fp16
+        assert np.allclose(o_expected, o_produced, rtol=1e-3, atol=2**-14)
+    else:
+        # Compare the expected to the produced for exact equality
+        assert np.all(o_produced == o_expected)
 
     # prepare for stitched ip rtlsim
     model = model.transform(InsertAndSetFIFODepths("xczu7ev-ffvc1156-2-e", 10))
@@ -315,15 +362,21 @@ def test_elementwise_binary_operation_stitched_ip(
     # Tensor names might have changed during the test, so assembling an updated context dict
     io_dict = {}
     if not initializers:
-        io_dict[model.graph.input[0].name] = lhs
+        io_dict[model.get_first_global_in()] = lhs
         io_dict[model.graph.input[1].name] = rhs
     elif len(initializers) == 1:
         if initializers[0] == "in_x":
-            io_dict[model.graph.input[0].name] = rhs
+            io_dict[model.get_first_global_in()] = rhs
         elif initializers[0] == "in_y":
-            io_dict[model.graph.input[0].name] = lhs
+            io_dict[model.get_first_global_in()] = lhs
     # stitched-ip rtlsim
     model.set_metadata_prop("exec_mode", "rtlsim")
-    o_produced = execute_onnx(model, io_dict)[model.graph.output[0].name]
+    o_produced = execute_onnx(model, io_dict)[model.get_first_global_out()]
 
-    assert np.all(o_produced == o_expected)
+    if out_dtype == "FLOAT16":
+        # Equivalence checking is more relaxed for arithmetic operations in fp16
+        # numpy casts fp16 to fp32, computes in fp32, casts result to fp16
+        assert np.allclose(o_expected, o_produced, rtol=1e-3, atol=2**-14)
+    else:
+        # Compare the expected to the produced for exact equality
+        assert np.all(o_produced == o_expected)

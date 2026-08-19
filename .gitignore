@@ -42,6 +42,8 @@ __pycache__/*
 *.ipynb_checkpoints*
 *.sif
 .DS_Store
+*.idx
+**/build/*
 
 # Project files
 .vscode
@@ -54,6 +56,8 @@ tags
 poetry.lock
 *.code-workspace
 .env
+settings.yaml
+*/.cache/*
 
 # Package files
 *.egg
@@ -73,6 +77,9 @@ coverage.xml
 build/*
 dist/*
 sdist/*
+*/build/*
+*/dist/*
+*/sdist/*
 docs/api/*
 docs/_rst/*
 docs/_build/*
@@ -101,6 +108,7 @@ MANIFEST
 
 # downloaded dep repos
 /deps/
+/finn_deps/
 
 # local test directories for benchmarking infrastructure
 bench_input

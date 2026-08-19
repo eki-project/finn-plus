@@ -2,50 +2,54 @@
 
 # Transformation bases from ONNX Passes to simplify setup and configuration of
 # transformation passes
-from onnx_passes.passes.base import Transformation, RewriteRulePass
-
-# Collects named passes from the ONNX Passes registry
-from onnx_passes.passes import collect
-
-# Utility testing IR values for being constant (or initializers) tensors
-from onnx_passes.passes.util import is_constant
-
-# ONNX Passes provides onnxruntime-executable reference implementations of
-# custom operators which we need to transplant back into the QONNX domain
-from onnx_passes.ops import DOMAIN as CUSTOM_DOMAIN, link_ops
-from onnx_passes.ops.qonnx import DOMAIN as QONNX_DOMAIN
-from onnx_passes.passes.imports import qonnx
-from onnx_passes.passes.inline import qonnx
-
-# QONNX representation wrapper of ONNX models is used on the interface side to
-# bridge between the FINN and the new ONNX IR representation
-from qonnx.core.modelwrapper import ModelWrapper
-# QONNX datatype annotations for quantized tensors
-from qonnx.core.datatype import DataType
-
-# FINN steps are configured via a global configuration object passed into each
-# step
-from finn.builder.build_dataflow_config import (
-    DataflowBuildConfig, VerificationStepType
-)
+# Constant value and shapes are always expressed in numpy compatible format, so
+# we use numpy to operate on those
+import numpy as np
 
 # ONNX Passes and ONNX Script infrastructure is based on ONNX IR to interact
 # with the model, graph, nodes and values
 import onnx_ir as ir
 
-# Constant value and shapes are always expressed in numpy compatible format, so
-# we use numpy to operate on those
-import numpy as np
-
 # YAML for loading layout assumption/conversion configuration from file
 import yaml
+
+# ONNX Passes provides onnxruntime-executable reference implementations of
+# custom operators which we need to transplant back into the QONNX domain
+from onnx_passes.ops import DOMAIN as CUSTOM_DOMAIN
+from onnx_passes.ops import link_ops
+from onnx_passes.ops.qonnx import DOMAIN as QONNX_DOMAIN
+
+# Collects named passes from the ONNX Passes registry
+from onnx_passes.passes import collect
+from onnx_passes.passes.base import RewriteRulePass, Transformation
+
+# Utility testing IR values for being constant (or initializers) tensors
+from onnx_passes.passes.util import is_constant
+
+# QONNX datatype annotations for quantized tensors
+from qonnx.core.datatype import DataType
+
+# QONNX representation wrapper of ONNX models is used on the interface side to
+# bridge between the FINN and the new ONNX IR representation
+from qonnx.core.modelwrapper import ModelWrapper
+
+# FINN steps are configured via a global configuration object passed into each
+# step
+from finn.builder.build_dataflow_config import DataflowBuildConfig, \
+    VerificationStepType
+
+# Makes custom QONNX import and inlining passes available
+import \
+    onnx_passes.passes.imports.qonnx  # isort:skip # noqa: Used indirectly via registry
+import \
+    onnx_passes.passes.inline.qonnx  # isort:skip # noqa: Used indirectly via registry
 
 
 def _make_pass_config(cfg: DataflowBuildConfig):
     """Creates ONNX Passes configuration from FINN build configuration."""
     # If specified, load data layout annotations from file
     if cfg.layouts_config_file is not None:
-        with open(cfg.layouts_config_file, "r") as file:
+        with cfg.layouts_config_file.open("r") as file:
             layouts = yaml.safe_load(file)
     # Otherwise assume emtpy layout annotations
     else:
@@ -65,11 +69,9 @@ def _make_pass_config(cfg: DataflowBuildConfig):
         # documentation for details
         "onnxruntime": {
             # Execution providers for accelerated inference
-            "providers": [
-                ["CPUExecutionProvider", {}]
-            ],
+            "providers": [["CPUExecutionProvider", {}]],
             # Produce a full execution context dump
-            "full_context_dump": cfg.verify_save_full_context
+            "full_context_dump": cfg.verify_save_full_context,
         },
         # Configuration of model verification methods
         "verify": {
@@ -83,9 +85,7 @@ def _make_pass_config(cfg: DataflowBuildConfig):
              cfg._resolve_verification_steps() else {},  # noqa: protected
         # Configuration of the model checker pass: Options according to the ONNX
         # IR reference: https://onnx.ai/ir-py/api/ir_passes_common.html
-        "model_checker": {
-            "full_check": True
-        },
+        "model_checker": {"full_check": True},
         # Configuration of logging and verbosity
         "logging": {
             # Enable all passes to print a message when entering/leaving
@@ -151,7 +151,7 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
         # Adds shape annotations
         "shape-inference",
         # Make sure the model is still valid
-        "checker"
+        "checker",
     ]
 
     # Apply passes and serialize the resulting ONNX IR format back to ONNX proto
@@ -256,11 +256,14 @@ class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
 
         return op.Im2Col(
             # Proper input and auxiliary index input holding the access pattern
-            x, indices,
+            x,
+            indices,
             # Attributes from which the access pattern ca be re-derived
-            dilations=dilations, kernel_shape=kernel_shape, strides=strides,
+            dilations=dilations,
+            kernel_shape=kernel_shape,
+            strides=strides,
             # Part of the ONNX Passes custom domain
-            _domain=CUSTOM_DOMAIN
+            _domain=CUSTOM_DOMAIN,
         )
 
     def check(self, op, x, indices, dilations, kernel_shape, strides):
@@ -345,6 +348,11 @@ def _infer_qonnx_datatypes(model: ModelWrapper):
     return model.transform(InferDataTypes())
 
 
+from finn.transformation.fpgadataflow.convert_to_hw_layers import (
+    InferPowerQuantMatMul
+)
+
+
 def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Converts the model back to the FINN compatible format."""
 
@@ -366,7 +374,7 @@ def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
         "eliminate",
         "cleanup",
         "checker",
-        "verify"
+        "verify",
     ]
 
     # Apply passes sequence with configuration and global state, stay within
@@ -384,7 +392,9 @@ def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
     # Serialize the resulting ONNX IR format back to ONNX proto wrapped by QONNX
     # and add quantization datatype annotations
-    return _infer_qonnx_datatypes(ModelWrapper(ir.to_proto(model)))
+    return _infer_qonnx_datatypes(
+        ModelWrapper(ir.to_proto(model)).transform(InferPowerQuantMatMul())
+    )
 
 
 def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):

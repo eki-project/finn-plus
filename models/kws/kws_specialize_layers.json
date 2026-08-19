@@ -1,5 +1,8 @@
 {
   "Defaults": {},
+  "Thresholding_0": {
+    "preferred_impl_style": "rtl"
+  },
   "MVAU_0": {
     "preferred_impl_style": "hls"
   },

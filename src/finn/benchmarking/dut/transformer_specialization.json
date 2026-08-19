@@ -1,0 +1,8 @@
+{
+  "Defaults": {
+    "preferred_impl_style": ["rtl", ["MVAU", "Thresholding"]]
+  },
+  "": {
+    "preferred_impl_style": ""
+  }
+}

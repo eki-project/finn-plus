@@ -28,13 +28,13 @@
 
 import pytest
 
-import importlib_resources as importlib
 import numpy as np
 import onnx
 import onnx.numpy_helper as nph
 import os
 import torch
 from brevitas.export import export_qonnx
+from pathlib import Path
 from pkgutil import get_data
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.batchnorm_to_affine import BatchNormToAffine
@@ -44,7 +44,7 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
-from finn.util.test import get_test_model_trained
+from tests.testing_util.test import get_test_model_trained
 
 export_onnx_path = "test_output_bn2affine.onnx"
 
@@ -58,9 +58,10 @@ def test_batchnorm_to_affine_cnv_w1a1():
     model = model.transform(ConvertQONNXtoFINN())
     model = model.transform(InferShapes())
     model = model.transform(FoldConstants())
-    ref = importlib.files("finn.qnn-data") / "cifar10/cifar10-test-data-class3.npz"
-    with importlib.as_file(ref) as fn:
-        input_tensor = np.load(fn)["arr_0"].astype(np.float32)
+    cifar_path = (
+        Path(__file__).parent.parent / "example_data" / "cifar10" / "cifar10-test-data-class3.npz"
+    )
+    input_tensor = np.load(cifar_path)["arr_0"].astype(np.float32)
     input_tensor = input_tensor / 255
     assert input_tensor.shape == (1, 3, 32, 32)
     input_dict = {"0": input_tensor}

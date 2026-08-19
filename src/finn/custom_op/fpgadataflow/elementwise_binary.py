@@ -28,6 +28,7 @@
 
 import numpy as np
 
+
 # Helper for creating ONNX nodes
 from onnx import helper as oh
 from qonnx.core.datatype import DataType
@@ -291,13 +292,23 @@ class ElementwiseBinaryOperation(HWCustomOp):
 
     # Widths of the input data stream of the input at index ind
     def get_instream_width(self, ind=0):
+        mem_mode = self.get_nodeattr("mem_mode")
+        mlo_enabled = self.get_nodeattr("mlo_max_iter")
+        lhs_const = self.get_nodeattr("lhs_style") == "const"
+        rhs_const = self.get_nodeattr("rhs_style") == "const"
+        # Constant inputs are not exposed as streams
+        if ind == 0 and lhs_const and mem_mode == "internal_embedded" and not mlo_enabled:
+            return 0
+        if ind == 1 and rhs_const and mem_mode == "internal_embedded" and not mlo_enabled:
+            return 0
+
         # Get the number of bits used to represent the input
         i_bits = self.get_input_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
         # folded input
         *_, elems = self.get_folded_input_shape(ind)
         # apply parallelism if broadcast
-        if self.broadcast_last_axis:
+        if self.broadcast_last_axis and elems == 1:
             elems = elems * self.pe
         # Width of a stream receiving input elements in parallel
         return elems * i_bits
@@ -355,19 +366,37 @@ class ElementwiseBinaryOperation(HWCustomOp):
             # Remember the "style" of receiving the input for further code
             # generation
             self.set_nodeattr("lhs_style", "const")
-            # Minimum and maximum "weight" on the left hand side, determining
-            # the range of values which needs to be represented
-            _min = lhs.min()
-            _max = lhs.max()
-            # Determine whether signed or unsigned type is required for
-            # representing the weights and select the largest "signed magnitude"
-            _mag = _max if _min > 0 else _min if (abs(_min) > _max) else (-_max - 1)
-            # Smallest data type large enough to represent this range of values
-            dtype = DataType.get_smallest_possible(_mag)
+            lhs_dtype = self.get_input_datatype(0)
+            # Check if values are integer-valued (even if stored as FLOAT)
+            lhs_is_integer = lhs_dtype.is_integer() or (lhs.astype(np.int32) == lhs).all()
+            # ignore minimization for floats (unless they contain integer values)
+            if not lhs_dtype.get_canonical_name().startswith("FLOAT") or lhs_is_integer:
+                if lhs_is_integer:
+                    # Minimum and maximum "weight" on the left hand side, determining
+                    # the range of values which needs to be represented
+                    _min = lhs.min()
+                    _max = lhs.max()
+                    # Determine whether signed or unsigned type is required for
+                    # representing the weights and select the largest "signed magnitude"
+                    _mag = _max if _min > 0 else _min if (abs(_min) > _max) else (-_max - 1)
+                    # Smallest data type large enough to represent this range of values
+                    lhs_dtype = DataType.get_smallest_possible(_mag)
+                elif lhs_dtype.is_fixed_point():
+                    # Convert the fixed-point array to corresponding integers and get
+                    # smallest integer representation
+                    lhs = lhs / lhs_dtype.scale_factor()
+                    _min = lhs.min()
+                    _max = lhs.max()
+                    _mag = _max if _min > 0 else _min if (abs(_min) > _max) else (-_max - 1)
+                    dtype = DataType.get_smallest_possible(_mag)
+                    _total_bits = dtype.bitwidth() if dtype.signed() else dtype.bitwidth() + 1
+                    _integer_bits = _total_bits - lhs_dtype.frac_bits()
+                    lhs_dtype = DataType[f"FIXED<{_total_bits},{_integer_bits}>"]
+
             # Update the corresponding data type attribute of the node
-            self.set_nodeattr("lhs_dtype", dtype.name)
+            self.set_nodeattr("lhs_dtype", lhs_dtype.name)
             # Annotate the tensor with the new data type
-            model.set_tensor_datatype(self.onnx_node.input[0], dtype)
+            model.set_tensor_datatype(self.onnx_node.input[0], lhs_dtype)
 
         # Check for an initializer providing the right hand side input
         rhs = model.get_initializer(self.onnx_node.input[1])
@@ -377,19 +406,37 @@ class ElementwiseBinaryOperation(HWCustomOp):
             # Remember the "style" of receiving the input for further code
             # generation
             self.set_nodeattr("rhs_style", "const")
-            # Minimum and maximum "weight" on the right hand side, determining
-            # the range of values which needs to be represented
-            _min = rhs.min()
-            _max = rhs.max()
-            # Determine whether signed or unsigned type is required for
-            # representing the weights and select the largest "signed magnitude"
-            _mag = _max if _min > 0 else _min if (abs(_min) > _max) else (-_max - 1)
-            # Smallest data type large enough to represent this range of values
-            dtype = DataType.get_smallest_possible(_mag)
+            rhs_dtype = self.get_input_datatype(1)
+            # Check if values are integer-valued (even if stored as FLOAT)
+            rhs_is_integer = rhs_dtype.is_integer() or (rhs.astype(np.int32) == rhs).all()
+            # ignore minimization for floats (unless they contain integer values)
+            if not rhs_dtype.get_canonical_name().startswith("FLOAT") or rhs_is_integer:
+                if rhs_is_integer:
+                    # Minimum and maximum "weight" on the left hand side, determining
+                    # the range of values which needs to be represented
+                    _min = rhs.min()
+                    _max = rhs.max()
+                    # Determine whether signed or unsigned type is required for
+                    # representing the weights and select the largest "signed magnitude"
+                    _mag = _max if _min > 0 else _min if (abs(_min) > _max) else (-_max - 1)
+                    # Smallest data type large enough to represent this range of values
+                    rhs_dtype = DataType.get_smallest_possible(_mag)
+                elif rhs_dtype.is_fixed_point():
+                    # Convert the fixed-point array to corresponding integers and get
+                    # smallest integer representation
+                    rhs = rhs / rhs_dtype.scale_factor()
+                    _min = rhs.min()
+                    _max = rhs.max()
+                    _mag = _max if _min > 0 else _min if (abs(_min) > _max) else (-_max - 1)
+                    dtype = DataType.get_smallest_possible(_mag)
+                    _total_bits = dtype.bitwidth() if dtype.signed() else dtype.bitwidth() + 1
+                    _integer_bits = _total_bits - rhs_dtype.frac_bits()
+                    rhs_dtype = DataType[f"FIXED<{_total_bits},{_integer_bits}>"]
+
             # Update the corresponding data type attribute of the node
-            self.set_nodeattr("rhs_dtype", dtype.name)
+            self.set_nodeattr("rhs_dtype", rhs_dtype.name)
             # Annotate the tensor with the new data type
-            model.set_tensor_datatype(self.onnx_node.input[1], dtype)
+            model.set_tensor_datatype(self.onnx_node.input[1], rhs_dtype)
 
         # TODO: MVAU returns the data type here, which does not make sense for
         #  potentially two data types changing and apparently, the
@@ -478,6 +525,44 @@ class ElementwiseSub(ElementwiseBinaryOperation):
                 out_width = max_width + 2
         # For subtraction, the output data type is always signed
         return DataType[f"INT{out_width}"]
+
+
+# Derive a specialization to implement elementwise absolute difference of two inputs
+@register_custom_op
+class ElementwiseAbsDiff(ElementwiseBinaryOperation):
+    # Specialize to implement the absolute difference operation of left hand side
+    # and right hand side input
+    @property
+    def npy_op(self):
+        # NumPy doesn't have a built-in absdiff, so we use a lambda
+        return lambda a, b: np.abs(a - b)
+
+    # C++ operation template available as property
+    @property
+    def cpp_op(self) -> str:
+        return "({0} > {1} ? {0} - {1} : {1} - {0})"
+
+    # RTL operation template available as property
+    @property
+    def rtl_op(self) -> str:
+        return None
+
+    # Derives the output data type - AbsDiff result is always unsigned for integers
+    def _derive_out_dtype(self, model: ModelWrapper):
+        # If either input is floating-point, output is the same float type
+        if self.lhs_dtype in [DataType["FLOAT32"], DataType["FLOAT16"]]:
+            return self.lhs_dtype
+        if self.rhs_dtype in [DataType["FLOAT32"], DataType["FLOAT16"]]:
+            return self.rhs_dtype
+        # For integers: get the width of the data types of the inputs
+        lhs_width = self.lhs_dtype.bitwidth()
+        rhs_width = self.rhs_dtype.bitwidth()
+        max_width = max(lhs_width, rhs_width)
+        # The absolute difference needs one extra bit to hold the difference
+        # before taking the absolute value, but the result is always unsigned
+        out_width = max_width + 1
+        # AbsDiff result is always unsigned for integer types
+        return DataType[f"UINT{out_width}"]
 
 
 # Derive a specialization to implement elementwise multiplication of two inputs
@@ -751,3 +836,76 @@ class ElementwiseBitShift(ElementwiseBinaryOperation):
 #     # Specialize to implement the power operation of left hand side and
 #     # right hand side input
 #     _operation = "Pow", np.power, "(std::pow({0}, {1}))", None
+
+
+# Derive a specialization to implement elementwise maximum of two inputs
+@register_custom_op
+class ElementwiseMax(ElementwiseBinaryOperation):
+    @property
+    def npy_op(self) -> np.ufunc:
+        return np.maximum
+
+    # C++ operation template available as property
+    @property
+    def cpp_op(self) -> str:
+        odt_hls_name = self.out_dtype.get_hls_datatype_str()
+        return "({0} >= {1} ? (%s){0} : (%s){1})" % (odt_hls_name, odt_hls_name)
+
+    # RTL operation template available as property
+    @property
+    def rtl_op(self) -> str:
+        return None
+
+    # Override minimize_weight_bit_width to prevent type incompatibility
+    def minimize_weight_bit_width(self, model: ModelWrapper):
+        # For comparison operations like max/min, both operands must have
+        # compatible types. Don't minimize if one side is float and the
+        # minimized constant would become integer.
+        lhs_dtype = self.get_input_datatype(0)
+        rhs_dtype = self.get_input_datatype(1)
+
+        # If either side is float16/float32, keep both sides as-is
+        # to avoid comparison incompatibility (half vs ap_int)
+        if lhs_dtype.get_canonical_name() in [
+            "FLOAT16",
+            "FLOAT32",
+        ] or rhs_dtype.get_canonical_name() in ["FLOAT16", "FLOAT32"]:
+            # Skip minimization, keep datatypes as set by InferReLUAsElementwiseMax
+            return
+        # Otherwise, use the parent class minimization
+        super().minimize_weight_bit_width(model)
+
+    def _derive_out_dtype(self, model: ModelWrapper):
+        if self.lhs_dtype.get_canonical_name().startswith(
+            "FLOAT"
+        ) or self.rhs_dtype.get_canonical_name().startswith("FLOAT"):
+            # if any of the inputs are float, make the output float as well
+            max_bitwidth = max(self.lhs_dtype.bitwidth(), self.rhs_dtype.bitwidth())
+            return DataType[f"FLOAT{max_bitwidth}"]
+        else:
+            all_ints = all([self.lhs_dtype.is_integer(), self.rhs_dtype.is_integer()])
+            # Get the width of the data types of the inputs  # noqa: Duplicate
+            lhs_width = self.lhs_dtype.bitwidth()
+            rhs_width = self.rhs_dtype.bitwidth()
+            if all_ints:
+                # output will be signed if both inputs are signed
+                signed = all([self.lhs_dtype.signed(), self.rhs_dtype.signed()])
+                # use the greater of the two input bitwidths for the output
+                out_width = max(lhs_width, rhs_width)
+                return DataType[f"INT{out_width}" if signed else f"UINT{out_width}"]
+            else:
+                # use fixed point with max of intbits and fracbits from both sides
+                # to make sure an output coming from either input is representable
+                lhs_fracbits = self.lhs_dtype.frac_bits() if self.lhs_dtype.is_fixed_point() else 0
+                rhs_fracbits = self.rhs_dtype.frac_bits() if self.rhs_dtype.is_fixed_point() else 0
+                out_fracbits = max(lhs_fracbits, rhs_fracbits)
+                if self.lhs_dtype.is_fixed_point():
+                    lhs_intbits = self.lhs_dtype.int_bits()
+                else:
+                    lhs_intbits = self.lhs_dtype.bitwidth()
+                if self.rhs_dtype.is_fixed_point():
+                    rhs_intbits = self.rhs_dtype.int_bits()
+                else:
+                    rhs_intbits = self.rhs_dtype.bitwidth()
+                out_intbits = max(lhs_intbits, rhs_intbits)
+                return DataType[f"FIXED<{out_fracbits+out_intbits},{out_intbits}>"]

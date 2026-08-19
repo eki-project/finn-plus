@@ -26,6 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""RTL implementation of ConvolutionInputGenerator (Sliding Window Generator).
+
+This module provides an RTL-based implementation of the ConvolutionInputGenerator,
+generating sliding windows for convolution operations on FPGA. Supports non-square,
+1D, strided, dilated, and depthwise convolutions with configurable buffer implementations.
+"""
+
 import math
 import numpy as np
 import os
@@ -37,6 +44,7 @@ from qonnx.util.basic import roundup_to_integer_multiple
 
 from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.util.settings import get_settings
 
 # RTL Convolution Input Generator / Sliding Window Generator (SWG)
 # Matches and extends the functionality of all ConvolutionInputGenerator_* functions
@@ -54,12 +62,29 @@ from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
     """Class that corresponds to finn-rtllib swg module.
     Generates an RTL ConvolutionInputGenerator implementation
-    based on (System-)Verilog templates, defined in finn-rtllib/swg."""
+    based on (System-)Verilog templates, defined in finn-rtllib/swg.
+    """
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the RTL ConvolutionInputGenerator.
+
+        Parameters
+        ----------
+        onnx_node : NodeProto
+            ONNX node to wrap
+        **kwargs : dict
+            Additional arguments passed to parent class
+        """
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Get dictionary of attribute names and their types for this node.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping attribute names to type specifications
+        """
         my_attrs = {
             # additional parallelization parameter - not yet implemented
             "M": ("i", False, 1),
@@ -75,11 +100,19 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         return num_input_elems
 
     def use_parallel_window_output(self):
+        """Check if parallel window output mode is enabled.
+
+        Returns
+        -------
+        bool
+            True if parallel window output is enabled, False otherwise
+        """
         return self.get_nodeattr("parallel_window")
 
     def get_buffer_depth(self):
-        """Returns total depth of the internal buffer, depending on
-        implementation style."""
+        """Return total depth of the internal buffer, depending on
+        implementation style.
+        """
         ifm_ch = self.get_nodeattr("IFMChannels")
         k = self.get_nodeattr("ConvKernelDim")
         ifm_dim = self.get_nodeattr("IFMDim")
@@ -120,6 +153,13 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         return buffer_depth
 
     def get_exp_cycles(self):
+        """Get expected number of clock cycles for one inference.
+
+        Returns
+        -------
+        int
+            Number of clock cycles required for processing
+        """
         impl_style = self.select_impl_style()
 
         if impl_style == "parallel":
@@ -177,6 +217,13 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         return int(exp_cycles)
 
     def bram_estimation(self):
+        """Estimate Block RAM (BRAM) resource usage.
+
+        Returns
+        -------
+        int
+            Estimated number of BRAMs needed
+        """
         simd = self.get_nodeattr("SIMD")
         ram_style = self.get_nodeattr("ram_style")
         impl_style = self.select_impl_style()
@@ -237,6 +284,13 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             return 0
 
     def lut_estimation(self):
+        """Estimate LUT resource usage.
+
+        Returns
+        -------
+        int
+            Estimated number of LUTs needed
+        """
         simd = self.get_nodeattr("SIMD")
         ram_style = self.get_nodeattr("ram_style")
         buffer_width = simd * self.get_input_datatype().bitwidth()
@@ -248,6 +302,13 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         return 300 + ram_luts
 
     def uram_estimation(self):
+        """Estimate UltraRAM (URAM) resource usage.
+
+        Returns
+        -------
+        int
+            Estimated number of URAMs needed
+        """
         simd = self.get_nodeattr("SIMD")
         ram_style = self.get_nodeattr("ram_style")
         impl_style = self.select_impl_style()
@@ -276,6 +337,17 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             return 0
 
     def execute_node(self, context, graph):
+        """Execute this ConvolutionInputGenerator node.
+
+        Performs sliding window generation for convolution operations.
+
+        Parameters
+        ----------
+        context : dict
+            Dictionary mapping tensor names to numpy arrays
+        graph : GraphProto
+            ONNX graph containing this node
+        """
         mode = self.get_nodeattr("exec_mode")
 
         if mode == "cppsim":
@@ -299,13 +371,14 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             RTLBackend.execute_node(self, context, graph)
 
     def prepare_codegen_default(self):
-        """Fills code generation dict for the default implementation style by computing
-        the incremental addressing scheme for the circular buffer."""
+        """Fill code generation dict for the default implementation style by computing
+        the incremental addressing scheme for the circular buffer.
+        """
         if self.get_nodeattr("dynamic_mode"):
             template_select = "swg/swg_template_default_dynamic.sv"
         else:
             template_select = "swg/swg_template_default.sv"
-        template_path = os.path.join(os.environ["FINN_RTLLIB"], template_select)
+        template_path = os.path.join(get_settings().finn_rtllib, template_select)
         code_gen_dict = {}
 
         ifm_ch = self.get_nodeattr("IFMChannels")
@@ -480,11 +553,12 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         return template_path, code_gen_dict
 
     def prepare_codegen_parallel(self):
-        """Fills code generation dict for the parallel implementation style by computing
+        """Fill code generation dict for the parallel implementation style by computing
         the loop controller configuration and partitioning the fixed buffer into
         shift-registers (for parallel read access) and line buffers (for efficient
-        LUTRAM/BRAM/URAM implementation)."""
-        template_path = os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_template_parallel.sv")
+        LUTRAM/BRAM/URAM implementation).
+        """
+        template_path = os.path.join(get_settings().finn_rtllib, "swg/swg_template_parallel.sv")
         code_gen_dict = {}
 
         ifm_ch = self.get_nodeattr("IFMChannels")
@@ -739,7 +813,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         return template_path, code_gen_dict
 
     def select_impl_style(self):
-        """Selects implementation style based on folding configuration."""
+        """Select implementation style based on folding configuration."""
         simd = self.get_nodeattr("SIMD")
         M = self.get_nodeattr("M")
         depthwise = self.get_nodeattr("depthwise")
@@ -787,8 +861,9 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         return impl_style
 
     def generate_hdl(self, model, fpgapart, clk):
-        """Generates HDL code and wrapper for the IP, depending on required
-        implementation style."""
+        """Generate HDL code and wrapper for the IP, depending on required
+        implementation style.
+        """
         impl_style = self.select_impl_style()
 
         # prepare code generation by filling out dictionaries
@@ -824,9 +899,9 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             template_select = "swg/swg_template_wrapper_dynamic.v"
         else:
             template_select = "swg/swg_template_wrapper.v"
-        with open(os.path.join(os.environ["FINN_RTLLIB"], template_select), "r") as f:
+        with open(os.path.join(get_settings().finn_rtllib, template_select), "r") as f:
             template_wrapper = f.read()
-        with open(os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_template_axilite.v"), "r") as f:
+        with open(os.path.join(get_settings().finn_rtllib, "swg/swg_template_axilite.v"), "r") as f:
             template_axilite = f.read()
         for key in code_gen_dict:
             # transform list into long string separated by '\n'
@@ -854,8 +929,8 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
                 f.write(template_axilite)
 
         # Copy static source file for common core components
-        shutil.copy2(os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_common.sv"), code_gen_dir)
-        shutil.copy2(os.path.join(os.environ["FINN_RTLLIB"], "swg/swg_pkg.sv"), code_gen_dir)
+        shutil.copy2(os.path.join(get_settings().finn_rtllib, "swg/swg_common.sv"), code_gen_dir)
+        shutil.copy2(os.path.join(get_settings().finn_rtllib, "swg/swg_pkg.sv"), code_gen_dir)
 
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
@@ -863,9 +938,21 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Get list of RTL files required for this node.
+
+        Parameters
+        ----------
+        abspath : bool
+            If True, return absolute file paths; otherwise return relative paths
+
+        Returns
+        -------
+        list of str
+            List of RTL file paths
+        """
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "swg/")
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "swg/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
@@ -914,7 +1001,8 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         'axis' tuples correspond to the list of node inputs in order,
         each tuple is (interface_name, interface_width_bits).
         axilite always assumed to be 32 bits and is not tuple (name only).
-        Each block must have at most one aximm and one axilite."""
+        Each block must have at most one aximm and one axilite.
+        """
         intf_names = super().get_verilog_top_module_intf_names()
         if self.get_nodeattr("dynamic_mode"):
             intf_names["axilite"] = ["s_axilite"]
@@ -947,7 +1035,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
 
         # update attributes and perform sanity check
         original_buffer_depth = self.get_buffer_depth()
-        self.set_nodeattr("IFMDim", ifm_dim)
+        self.set_nodeattr("IFMDim", list(ifm_dim))
         self.set_nodeattr("OFMDim", ofm_dim)
         self.set_nodeattr("Stride", stride)
         self.set_nodeattr("Dilation", dilation)

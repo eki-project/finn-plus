@@ -22,6 +22,7 @@ class RemoveCNVtoFCFlatten(Transformation):
                 if len(oshape) == 2 and ishape[0] == oshape[0]:
                     producer = model.find_producer(n.input[0])
                     if producer is None:
+                        # Do not try to remove a Flatten/Reshape if it is the first node
                         continue
                     if is_fpgadataflow_node(producer):
                         # standalone flatten, remove

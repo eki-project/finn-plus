@@ -26,24 +26,43 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""RTL implementation of streaming data width converter.
+
+This module provides an RTL-based implementation for converting between
+different stream data widths while maintaining throughput.
+"""
+
 import os
 import shutil
 
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
+from finn.util.settings import get_settings
 
 
 class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
     """Class that corresponds to finn-rtllib datawidth converter
-    module."""
+    module.
+    """
 
     def get_nodeattr_types(self):
+        """Get the attribute types for this node."""
         my_attrs = {}
         my_attrs.update(StreamingDataWidthConverter.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
     def check_divisible_iowidths(self):
+        """Check that input and output widths are divisible.
+
+        Ensures that the stream width conversion has an integer ratio,
+        which is required for proper operation.
+
+        Returns
+        -------
+        bool
+            True if widths are properly divisible, False otherwise
+        """
         iwidth = self.get_nodeattr("inWidth")
         owidth = self.get_nodeattr("outWidth")
         # the rtl module only supports
@@ -62,6 +81,7 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         )
 
     def execute_node(self, context, graph):
+        """Execute the node in the given context and graph for simulation."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             StreamingDataWidthConverter.execute_node(self, context, graph)
@@ -69,6 +89,7 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
             RTLBackend.execute_node(self, context, graph)
 
     def get_template_values(self):
+        """Get the code generation template values for this node."""
         topname = self.get_verilog_top_module_name()
         ibits = self.get_instream_width()
         obits = self.get_outstream_width()
@@ -80,7 +101,8 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         return code_gen_dict
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "dwc/hdl")
+        """Generate the HDL code for this node."""
+        rtlsrc = os.path.join(get_settings().finn_rtllib, "dwc/hdl")
         template_path = rtlsrc + "/dwc_template.v"
         code_gen_dict = self.get_template_values()
         # save top module name so we can refer to it after this node has been renamed
@@ -110,9 +132,21 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Get list of RTL files required for this node.
+
+        Parameters
+        ----------
+        abspath : bool
+            If True, return absolute file paths; otherwise return relative paths
+
+        Returns
+        -------
+        list of str
+            List of RTL file paths
+        """
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "dwc/hdl/")
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "dwc/hdl/")
         else:
             code_gen_dir = ""
             rtllib_dir = ""

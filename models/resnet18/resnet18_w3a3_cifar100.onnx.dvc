@@ -1,0 +1,5 @@
+outs:
+- md5: 9f4ab56941e845e9c2f60046bb37166e
+  size: 45004292
+  hash: md5
+  path: resnet18_w3a3_cifar100.onnx

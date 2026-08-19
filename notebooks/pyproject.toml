@@ -1,0 +1,44 @@
+[project]
+name = "finn-plus-notebooks"
+dynamic = ["version"]
+description = "Notebooks and tutorials for finn-plus"
+requires-python = ">=3.10,<3.12"
+maintainers = [
+    { name = "Felix Jentzsch", email = "felix.jentzsch@upb.de" },
+    { name = "Christoph Berganski", email = "christoph.berganski@upb.de" },
+    { name = "Linus Jungemann", email = "linus.jungemann@upb.de" },
+    { name = "Bjarne Wintermann", email = "bjarne.wintermann@upb.de" },
+]
+
+[tool.poetry.requires-plugins]
+poetry-dynamic-versioning = { version = ">=1.0.0,<2.0.0", extras = ["plugin"] }
+
+[tool.poetry-dynamic-versioning]
+enable = true
+
+[project.urls]
+"GitHub" = "https://github.com/eki-project/finn-plus"
+"EKI Project" = "https://www.eki-project.tech/"
+
+[tool.poetry]
+name = "finn-plus-notebooks"
+version = "0.0.0"
+description = "Notebooks and tutorials for finn-plus"
+packages = [{ include = "notebooks", from = ".." }]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.12"
+ipython = "~8.37.0"            # ipython>=9.0.0 requires python>=3.11
+ipykernel = "~6.29.5"
+jupyter = "~1.1.1"
+matplotlib = "~3.10.3"
+netron = ">5.0.0,<=8.5.0"
+pandas = "~2.3.1"
+scikit-learn = "~1.7.0"
+tqdm = "~4.67.1"
+torch = "~2.7.1"
+torchvision = "~0.22.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
