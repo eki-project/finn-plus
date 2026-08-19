@@ -1,3 +1,5 @@
+"""Custom build steps for MobileNet model processing."""
+
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.change_datalayout import ChangeDataLayoutQuantAvgPool2d
 from qonnx.transformation.double_to_single_float import DoubleToSingleFloat
@@ -36,6 +38,7 @@ from finn.transformation.streamline.round_thresholds import RoundAndClipThreshol
 
 
 def step_mobilenet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Streamline a MobileNet model, optionally verifying the result afterward."""
     model = model.transform(Streamline())
     additional_streamline_transformations = [
         DoubleToSingleFloat(),
@@ -65,6 +68,7 @@ def step_mobilenet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_mobilenet_lower_convs(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Lower convolutions to matrix multiplications for a MobileNet model."""
     model = model.transform(LowerConvsToMatMul())
     model = model.transform(absorb.AbsorbTransposeIntoMultiThreshold())
     model = model.transform(absorb.AbsorbConsecutiveTransposes())
@@ -77,6 +81,7 @@ def step_mobilenet_lower_convs(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_mobilenet_convert_to_hw_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Convert MobileNet model layers to hardware-specific operations."""
     model = model.transform(InferPool())
     model = model.transform(InferConvInpGen())
     model = model.transform(InferVectorVectorActivation())
@@ -90,6 +95,7 @@ def step_mobilenet_convert_to_hw_layers(model: ModelWrapper, cfg: DataflowBuildC
 
 
 def step_mobilenet_slr_floorplan(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Apply SLR floorplanning to a MobileNet model when targeting Vitis Alveo."""
     if cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
         try:
             from finnexperimental.analysis.partitioning import partition
@@ -114,6 +120,7 @@ def step_mobilenet_slr_floorplan(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_mobilenet_convert_to_hw_layers_separate_th(model: ModelWrapper, cfg: DataflowBuildConfig):
+    """Convert MobileNet model layers to hardware operations, keeping thresholding separate."""
     model = model.transform(InferPool())
     model = model.transform(InferConvInpGen())
     model = model.transform(InferThresholdingLayer())
