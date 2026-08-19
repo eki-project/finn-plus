@@ -99,7 +99,6 @@ class FINNDMAOverlay(Overlay):
         is specified as the class member ``runtime_weight_dir``. External (DRAM)
         weights are one .npy file per layer.
         """
-
         self.external_weights = []
         w_filenames = []
         if not os.path.isdir(self.runtime_weight_dir):
@@ -139,8 +138,8 @@ class FINNDMAOverlay(Overlay):
             hw_ext_weights = self.io_shape_dict["number_of_external_weights"]
             assert len(self.external_weights) == hw_ext_weights, (
                 "Number of hardware external weights and number of external "
-                + "weight tensors available do not match. \n"
-                + "Is runtime_weight_dir pointing to the correct folder?"
+                "weight tensors available do not match. \n"
+                "Is runtime_weight_dir pointing to the correct folder?"
             )
 
     def load_runtime_weights(self, flush_accel=True, verify=True):
@@ -166,7 +165,7 @@ class FINNDMAOverlay(Overlay):
         rt_weight_dict = {}
         for w_filename in w_filenames:
             if w_filename.endswith(".dat"):
-                with open(self.runtime_weight_dir + "/" + w_filename, "r") as f:
+                with open(self.runtime_weight_dir + "/" + w_filename) as f:
                     dat = f.read()
             else:
                 continue
@@ -411,7 +410,7 @@ class FINNDMAOverlay(Overlay):
             self.wait_until_finished()
 
     def wait_until_finished(self):
-        "Block until all output DMAs have finished writing."
+        """Block until all output DMAs have finished writing."""
         if self.platform == "zynq-iodma":
             # check if output IODMA is finished via register reads
             for o in range(self.num_outputs):
@@ -431,7 +430,7 @@ class FINNDMAOverlay(Overlay):
         packing and copying to device buffers, execute on accelerator, then unpack
         output and return output numpy array from accelerator."""
         # if single input, convert to list to normalize how we process the input
-        if not type(input_npy) is list:
+        if type(input_npy) is not list:
             input_npy = [input_npy]
         assert self.num_inputs == len(input_npy), "Not all accelerator inputs are specified."
         for i in range(self.num_inputs):
@@ -447,8 +446,7 @@ class FINNDMAOverlay(Overlay):
             outputs.append(obuf_normal)
         if self.num_outputs == 1:
             return outputs[0]
-        else:
-            return outputs
+        return outputs
 
     def throughput_test(self, **kwargs):
         """Run accelerator with empty inputs to measure throughput and other metrics.
@@ -601,14 +599,17 @@ class FINNInstrumentationOverlay(Overlay):
             offset=self.ip_dict["axi_gpio_0"]["registers"]["GPIO_DATA"]["address_offset"], value=0
         )
 
-    def start_accelerator(self, throttle_interval=0):
-        """
-        Start the accelerator. Input is throttled to the specified interval (in cycles)
+    def start_accelerator(self, throttle_interval=0, avg_window_size=64):
+        """Start the accelerator. Input is throttled to the specified interval (in cycles)
         by pausing after each FM transmission. A throttle_interval of 0 means no throttling.
         """
         # Set seed
         lfsr_seed = (self.seed << 16) & 0xFFFF0000  # upper 16 bits
         self.instrumentation_write("seed", lfsr_seed)
+
+        # Set average measurement window size (in frames),
+        # maximum is configured in build config, default value = 64
+        self.instrumentation_write("avg_n", avg_window_size)
 
         # Start operation
         self.instrumentation_write("cfg", (throttle_interval << 1) | 1)  # bit 0 = start
@@ -624,6 +625,8 @@ class FINNInstrumentationOverlay(Overlay):
         min_latency = self.instrumentation_read("min_latency")
         latency = self.instrumentation_read("latency")
         interval = self.instrumentation_read("interval")
+        avg_latency = self.instrumentation_read("avg_latency")
+        avg_interval = self.instrumentation_read("avg_interval")
 
         frame = (chksum_reg >> 24) & 0x000000FF
         checksum = chksum_reg & 0x00FFFFFF
@@ -643,9 +646,21 @@ class FINNInstrumentationOverlay(Overlay):
             print("Min Latency (cycles): %d" % min_latency)
             print("Latency (cycles): %d" % latency)
             print("Interval (cycles): %d" % interval)
+            print("Average Latency (cycles): %d" % avg_latency)
+            print("Average Interval (cycles): %d" % avg_interval)
             print("----------------------------")
 
-        return (overflow_err, underflow_err, frame, checksum, min_latency, latency, interval)
+        return (
+            overflow_err,
+            underflow_err,
+            frame,
+            checksum,
+            min_latency,
+            latency,
+            interval,
+            avg_latency,
+            avg_interval,
+        )
 
     def experiment_instrumentation(self, *args, **kwargs):
         """Run instrumentation experiment and save report."""
@@ -668,6 +683,8 @@ class FINNInstrumentationOverlay(Overlay):
             min_latency,
             latency,
             interval,
+            avg_latency,
+            avg_interval,
         ) = self.observe_instrumentation()
 
         # write report to file
@@ -677,11 +694,19 @@ class FINNInstrumentationOverlay(Overlay):
             "min_latency_cycles": min_latency,
             "latency_cycles": latency,
             "interval_cycles": interval,
+            "avg_latency_cycles": avg_latency,
+            "avg_interval_cycles": avg_interval,
             "frequency_mhz": round(self.fclk_mhz_actual),
             "min_latency_ms": round(min_latency * (1 / (self.fclk_mhz_actual * 1e6)) * 1e3, 6),
             "latency_ms": round(latency * (1 / (self.fclk_mhz_actual * 1e6)) * 1e3, 6),
+            "avg_latency_ms": round(avg_latency * (1 / (self.fclk_mhz_actual * 1e6)) * 1e3, 6),
             "throughput_fps": (
                 round(1 / (interval * (1 / (self.fclk_mhz_actual * 1e6)))) if interval != 0 else 0
+            ),
+            "avg_throughput_fps": (
+                round(1 / (avg_interval * (1 / (self.fclk_mhz_actual * 1e6))))
+                if avg_interval != 0
+                else 0
             ),
             "min_pipeline_depth": round(min_latency / interval, 2) if interval != 0 else 0,
             "pipeline_depth": round(latency / interval, 2) if interval != 0 else 0,
@@ -779,8 +804,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.ctrl_read(check_success=True)
 
     def configure_fifos_bounded(self, depths):
-        """
-        Configure all FIFOs with bounded depths.
+        """Configure all FIFOs with bounded depths.
         Caller can supply a list of depths or a single depth for all FIFOs.
         """
         if isinstance(depths, list):
@@ -789,7 +813,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             fifo_depths = [depths] * self.num_fifos
 
         # Set depth for each FIFO
-        for i in range(0, self.num_fifos):
+        for i in range(self.num_fifos):
             self.ctrl_set_depth(i, fifo_depths[i])
 
         # Issue RUN_BOUNDED instruction once all depths have been set
@@ -838,7 +862,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         # Collect maximum occupancy of all FIFOs by issuing READ_FILL instructions
         max_occupancy = []
-        for i in range(0, self.num_fifos):
+        for i in range(self.num_fifos):
             max_occupancy.append(self.ctrl_read(opcode=0x0C, fifo_id=i))
 
         return max_occupancy, latency
@@ -1471,7 +1495,7 @@ def parse_kv(ctx, self, value):
     multiple=True,
     callback=parse_kv,
     nargs=2,
-    help=("Keyword argument for the class instance: " "... -ck key1=val1 TYPE -ck key2=val2 TYPE"),
+    help=("Keyword argument for the class instance: ... -ck key1=val1 TYPE -ck key2=val2 TYPE"),
 )
 @click.option(
     "--fkwarg",
@@ -1479,11 +1503,10 @@ def parse_kv(ctx, self, value):
     multiple=True,
     callback=parse_kv,
     nargs=2,
-    help=("Keyword argument for the called function: " "... -fk key1=val1 TYPE -fk key2=val2 TYPE"),
+    help=("Keyword argument for the called function: ... -fk key1=val1 TYPE -fk key2=val2 TYPE"),
 )
 def driver_cli(bitfile_name, settings, function, ckwarg, fkwarg):
-    """
-    CLI tool to instantiate driver and execute functions.
+    """CLI tool to instantiate driver and execute functions.
 
     Instantiates a driver class and executes a member function.
     The instantiation implicitly loads a bitstream to the FPGA.
@@ -1494,8 +1517,7 @@ def driver_cli(bitfile_name, settings, function, ckwarg, fkwarg):
     via --ckwarg or --fkwarg options respectively.
     Class Kwargs take precedence over settings.json Kwargs.
     """
-
-    with open(settings, "r", encoding="utf-8") as f:
+    with open(settings, encoding="utf-8") as f:
         driver_settings = json.load(f)["driver_information"]
 
     if ckwarg is None:

@@ -43,12 +43,14 @@ class GenerateInstrumentationIP(Transformation):
         self,
         fpga_part,
         clk_period_ns,
+        avg_n=64,
         format="ip",  # "ip" for Vivado (Zynq) or "xo" for Vitis (Alveo/Versal)
     ):
         """Initialize instrumentation IP generation with FPGA part and clock settings."""
         super().__init__()
         self.fpga_part = fpga_part
         self.clk_period_ns = clk_period_ns
+        self.avg_n = avg_n
         self.format = format
 
     def apply(self, model):
@@ -82,10 +84,11 @@ class GenerateInstrumentationIP(Transformation):
         ko = out_shape_folded[-1]
         # fill out instrumentation wrapper template
         with open(
-            os.path.join(get_settings().finn_custom_hls, "instrumentation.template.cpp"), "r"
+            os.path.join(get_settings().finn_custom_hls, "instrumentation.template.cpp")
         ) as f:
             instrwrp_cpp = f.read()
         instrwrp_cpp = instrwrp_cpp.replace("@PENDING@", str(pending))
+        instrwrp_cpp = instrwrp_cpp.replace("@AVG_N@", str(self.avg_n))
         instrwrp_cpp = instrwrp_cpp.replace("@ILEN@", str(ilen))
         instrwrp_cpp = instrwrp_cpp.replace("@OLEN@", str(olen))
         instrwrp_cpp = instrwrp_cpp.replace("@TI@", str(ti))
@@ -172,7 +175,6 @@ class PrepareInstrumentationSim(Transformation):
         # fill in testbench template
         with open(
             os.path.join(get_settings().finn_custom_hls, "instrumentation_tb.template.sv"),
-            "r",
         ) as f:
             testbench_sv = f.read()
         with open(sim_output_dir + "/instrwrap_testbench.sv", "w") as f:
@@ -180,7 +182,6 @@ class PrepareInstrumentationSim(Transformation):
         # fill in testbench project creator template
         with open(
             os.path.join(get_settings().finn_custom_hls, "instrumentation_sim.template.tcl"),
-            "r",
         ) as f:
             testbench_tcl = f.read()
 

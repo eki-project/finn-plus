@@ -1,3 +1,5 @@
+"""Infer pixel-padding lowering for ConvTranspose nodes."""
+
 import numpy as np
 from onnx import TensorProto, helper
 from qonnx.transformation.base import Transformation
@@ -7,8 +9,7 @@ from finn.util.logging import log
 
 
 class InferPixelPaddingDeconv(Transformation):
-    """
-    Lowering and conversion of ConvTranspose (NCHW) nodes to
+    """Lowering and conversion of ConvTranspose (NCHW) nodes to
     FMPadding_Pixel + Im2Col + MatMul (NHWC) surrounded by Transpose nodes
     note: this transformation produces a mix of hw layers and non hw layers
     to implement this on an FPGA the Im2Col and MatMul nodes need to be converted to hw layers
@@ -17,6 +18,7 @@ class InferPixelPaddingDeconv(Transformation):
     """
 
     def apply(self, model):
+        """Apply ConvTranspose lowering into pixel padding and matmul."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -177,7 +179,7 @@ class InferPixelPaddingDeconv(Transformation):
                         stride=[1, 1],
                         kernel_size=[k_h, k_w],
                         pad_amount=conv_padding,
-                        input_shape="(1,{},{},{})".format(padded_odim_h, padded_odim_w, ifm_ch),
+                        input_shape=f"(1,{padded_odim_h},{padded_odim_w},{ifm_ch})",
                         depthwise=False,
                         dilations=dilation,
                     )

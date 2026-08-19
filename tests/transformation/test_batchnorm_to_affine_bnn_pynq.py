@@ -31,7 +31,6 @@ import pytest
 import numpy as np
 import onnx
 import onnx.numpy_helper as nph
-import os
 import torch
 from brevitas.export import export_qonnx
 from pathlib import Path
@@ -46,11 +45,13 @@ import finn.core.onnx_exec as oxe
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from tests.testing_util.test import get_test_model_trained
 
-export_onnx_path = "test_output_bn2affine.onnx"
-
 
 @pytest.mark.transform
-def test_batchnorm_to_affine_cnv_w1a1():
+def test_batchnorm_to_affine_cnv_w1a1() -> None:
+    """Test that BatchNormToAffine transformation produces the same output as the original model,
+    and that there are no BN nodes left in the transformed model.
+    Also check that the predicted class is the same before and after transformation."""
+    export_onnx_path = "test_output_bn2affine_cnv_w1a1.onnx"
     lfc = get_test_model_trained("CNV", 1, 1)
     export_qonnx(lfc, torch.randn(1, 3, 32, 32), export_onnx_path)
     qonnx_cleanup(export_onnx_path, out_file=export_onnx_path)
@@ -66,20 +67,23 @@ def test_batchnorm_to_affine_cnv_w1a1():
     assert input_tensor.shape == (1, 3, 32, 32)
     input_dict = {"0": input_tensor}
     output_dict = oxe.execute_onnx(model, input_dict)
-    expected = output_dict[list(output_dict.keys())[0]]
+    expected = output_dict[next(iter(output_dict.keys()))]
     new_model = model.transform(BatchNormToAffine())
     # check that there are no BN nodes left
-    op_types = list(map(lambda x: x.op_type, new_model.graph.node))
+    op_types = [x.op_type for x in new_model.graph.node]
     assert "BatchNormalization" not in op_types
     output_dict_p = oxe.execute_onnx(new_model, input_dict)
-    produced = output_dict_p[list(output_dict_p.keys())[0]]
+    produced = output_dict_p[next(iter(output_dict_p.keys()))]
     assert np.isclose(expected, produced).all()
     assert np.argmax(produced) == 3
-    os.remove(export_onnx_path)
+    Path(export_onnx_path).unlink()
 
 
 @pytest.mark.transform
-def test_batchnorm_to_affine_lfc_w1a1():
+def test_batchnorm_to_affine_lfc_w1a1() -> None:
+    """Test that BatchNormToAffine transformation produces the same output as the original model,
+    and that there are no BN nodes left in the transformed model."""
+    export_onnx_path = "test_output_bn2affine_lfc_w1a1.onnx"
     lfc = get_test_model_trained("LFC", 1, 1)
     export_qonnx(lfc, torch.randn(1, 1, 28, 28), export_onnx_path)
     qonnx_cleanup(export_onnx_path, out_file=export_onnx_path)
@@ -90,7 +94,8 @@ def test_batchnorm_to_affine_lfc_w1a1():
     new_model = model.transform(BatchNormToAffine())
     # load one of the test vectors
     raw_i = get_data("qonnx.data", "onnx/mnist-conv/test_data_set_0/input_0.pb")
+    assert raw_i is not None
     input_tensor = onnx.load_tensor_from_string(raw_i)
     input_dict = {"0": nph.to_array(input_tensor)}
     assert oxe.compare_execution(model, new_model, input_dict)
-    os.remove(export_onnx_path)
+    Path(export_onnx_path).unlink()

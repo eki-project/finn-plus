@@ -143,8 +143,7 @@ def is_transpose_reshape(node: NodeProto, model: ModelWrapper):  # noqa
 
 
 def group_inputs_by_category(node: NodeProto, model: ModelWrapper):  # noqa
-    """
-    Group inputs by categories, i.e., groups dynamic inputs first, followed by
+    """Group inputs by categories, i.e., groups dynamic inputs first, followed by
     initializers. Keep order of inputs in each category.
     """
     # First select all dynamic inputs, which are those without initializer

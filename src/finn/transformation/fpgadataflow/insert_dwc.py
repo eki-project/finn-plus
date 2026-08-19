@@ -26,6 +26,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Insert StreamingDataWidthConverter nodes between mismatched layers."""
+
 from onnx import helper as oh
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -34,33 +36,34 @@ from finn.util.fpgadataflow import is_fpgadataflow_node
 
 
 def _is_dwc_node(node):
+    """Return True if the node is a data width converter."""
     return node.op_type.startswith("StreamingDataWidthConverter")
 
 
 def _suitable_node(node):
+    """Return True if the node can participate in DWC insertion."""
     if node is not None:
         if is_fpgadataflow_node(node):
             if _is_dwc_node(node):
                 # no DWC for DWCs
                 return False
-            elif node.op_type == "IODMA_hls":
+            if node.op_type == "IODMA_hls":
                 # IODMA data shapes/widths need special handling
                 return False
-            else:
-                return True
-        else:
-            return False
-    else:
+            return True
         return False
+    return False
 
 
 class InsertDWC(Transformation):
     """Add data width converters between layers where necessary."""
 
     def __init__(self):
+        """Initialize the transformation."""
         super().__init__()
 
     def apply(self, model):
+        """Insert DWC nodes where stream widths do not match."""
         graph = model.graph
         node_ind = -1
         graph_modified = False

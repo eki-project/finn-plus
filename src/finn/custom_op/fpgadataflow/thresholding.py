@@ -156,7 +156,6 @@ class Thresholding(HWCustomOp):
         """Minimize threshold datatype bitwidth based on actual threshold values.
         This function should not round or clip the threshold values,
         that is done in RoundAndClipThresholds."""
-
         thresholds = model.get_initializer(self.onnx_node.input[1])
         if self.get_nodeattr("runtime_writeable_weights") or self.get_nodeattr("mlo_max_iter"):
             return DataType[self.get_nodeattr("weightDataType")]
@@ -398,6 +397,7 @@ class Thresholding(HWCustomOp):
         return num_channels // pe
 
     def get_verilog_top_module_intf_names(self):
+        """Return the signal names for the Verilog top module."""
         intf_names = {}
         intf_names["clk"] = ["ap_clk"]
         intf_names["rst"] = ["ap_rst_n"]

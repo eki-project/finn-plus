@@ -10,6 +10,7 @@
 #
 ############################################################################
 
+"""Module for layernorm rtl."""
 import math
 import numpy as np
 import os
@@ -26,15 +27,18 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
     """
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         my_attrs.update(LayerNorm.get_nodeattr_types(self))
         return my_attrs
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Generate hdl."""
         rtllib_dir = os.path.join(get_settings().finn_rtllib, "layernorm")
         template_path = os.path.join(rtllib_dir, "layernorm_wrapper_template.v")
         simd = self.get_nodeattr("SIMD")
@@ -56,7 +60,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
 
         # apply code generation to templates
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template = f.read()
         for key in code_gen_dict:
             template = template.replace(key, str(code_gen_dict[key]))
@@ -76,6 +80,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Return rtl file list."""
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
             rtllib_dir = os.path.join(get_settings().finn_rtllib, "layernorm")
@@ -94,6 +99,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
         return verilog_files
 
     def code_generation_ipi(self):
+        """Return code generation ipi."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
         sourcefiles = [
@@ -118,6 +124,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
         return cmd
 
     def execute_node(self, context, graph):
+        """Execute node."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             LayerNorm.execute_node(self, context, graph)
@@ -125,6 +132,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
             RTLBackend.execute_node(self, context, graph)
 
     def get_exp_cycles(self):
+        """Return exp cycles."""
         simd = self.get_nodeattr("SIMD")
         idim = self.get_normal_input_shape()
         n = idim[-1]

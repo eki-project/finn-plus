@@ -1,3 +1,5 @@
+"""Resource estimation analysis for dataflow models."""
+
 # Copyright (c) 2020, Xilinx
 # All rights reserved.
 #
@@ -26,29 +28,34 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import qonnx.custom_op.registry as registry
+from typing import TYPE_CHECKING
 
+from finn.util.basic import getHWCustomOp
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
-def res_estimation(model, fpgapart):
+
+def res_estimation(model: "ModelWrapper", fpgapart: str) -> dict[str, dict[str, int | float]]:
     """Estimates the resources needed for the given model.
     Ensure that all nodes have unique names (by calling the GiveUniqueNodeNames
     transformation) prior to calling this analysis pass to ensure all nodes are
     visible in the results.
 
     Returns {node name : resource estimation}."""
-
-    res_dict = {}
+    res_dict: dict[str, dict[str, int | float]] = {}
     for node in model.graph.node:
         if is_hls_node(node) or is_rtl_node(node):
-            inst = registry.getCustomOp(node)
+            inst = getHWCustomOp(node)
             res_dict[node.name] = inst.node_res_estimation(fpgapart)
 
     return res_dict
 
 
-def res_estimation_complete(model, fpgapart):
+def res_estimation_complete(
+    model: "ModelWrapper", fpgapart: str
+) -> dict[str, list[dict[str, int | float]]]:
     """Estimates the resources needed for the given model and all values for
     resource-related switches.
     Ensure that all nodes have unique names (by calling the GiveUniqueNodeNames
@@ -56,13 +63,12 @@ def res_estimation_complete(model, fpgapart):
     visible in the results.
 
     Returns {node name : [resource estimation(s)]}."""
-
-    res_dict = {}
+    res_dict: dict[str, list[dict[str, int | float]]] = {}
     for node in model.graph.node:
         if is_hls_node(node) or is_rtl_node(node):
-            inst = registry.getCustomOp(node)
+            inst = getHWCustomOp(node)
             op_type = node.op_type
-            if op_type.startswith("MVAU") or op_type.startswith("VVAU"):
+            if op_type.startswith(("MVAU", "VVAU")):
                 orig_restype = inst.get_nodeattr("resType")
                 res_dict[node.name] = []
                 inst.set_nodeattr("resType", "dsp")

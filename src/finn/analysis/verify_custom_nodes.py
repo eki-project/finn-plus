@@ -1,3 +1,4 @@
+"""Runs verify nodes on all custom nodes in the model and checks that they pass."""
 # Copyright (c) 2020, Xilinx
 # All rights reserved.
 #
@@ -27,17 +28,20 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import qonnx.custom_op.registry as registry
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
 
-def verify_nodes(model):
-    """Checks if custom ops in graph are correctly built, with all attributes
+def verify_nodes(model: "ModelWrapper") -> dict[str, list[str]]:
+    """Check if custom ops in graph are correctly built, with all attributes
     and inputs. Please note that many FINN CustomOps don't yet implement the
     verify_node function required for this analysis pass to work correctly.
 
     Returns {node op_type : info_messages}
 
     * info_messages: is list of strings about the result of the verification."""
-
     verification_dict = {}
     for node in model.graph.node:
         if registry.is_custom_op(node.domain):

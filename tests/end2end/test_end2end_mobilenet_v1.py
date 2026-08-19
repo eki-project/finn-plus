@@ -59,8 +59,8 @@ import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 import finn.transformation.streamline.reorder as reorder
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.core.onnx_exec import execute_onnx
-from finn.core.throughput_test import throughput_test_rtlsim
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
@@ -72,11 +72,9 @@ from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.set_fifo_depths import (
-    InsertAndSetFIFODepths,
-    RemoveShallowFIFOs,
-    SplitLargeFIFOs,
-)
+from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOSizes
+from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
+from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.streamline import Streamline
@@ -89,11 +87,30 @@ from tests.testing_util.test import (
     load_test_checkpoint_or_skip,
     resize_smaller_side,
 )
+from tests.testing_util.throughput_test import throughput_test_rtlsim
 
 # Select Versal device such that RTL VVU (i.e. DSP58) can be enabled
 fpga_part = "xcvm1802-vsvd1760-2MP-e-S"
 target_clk_ns = 3
 extra_fold = 1
+
+
+def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    """Run FIFO sizing for testing."""
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = fpga_part
+    cfg.synth_clk_period_ns = clk_ns
+    model = model.transform(
+        BuildSimulation(
+            fpga_part,
+            clk_ns,
+            True,
+            performance_sim=False,
+        )
+    )
+    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
+    model = model.transform(ApplySimulatedFIFOSizes(cfg))
+    return model
 
 
 def get_bld_dir():
@@ -429,23 +446,7 @@ class Test_end2end_mobilenet:
     @pytest.mark.vivado
     def test_end2end_mobilenet_set_fifo_depths(self):
         model = load_test_checkpoint_or_skip(get_bld_dir() + "/end2end_mobilenet_hw_ipgen.onnx")
-        model = model.transform(
-            InsertAndSetFIFODepths(
-                fpga_part,
-                target_clk_ns,
-                swg_exception=False,
-                vivado_ram_style="auto",
-            )
-        )
-        # perform FIFO splitting and shallow FIFO removal only after the final config
-        # json file has been written. otherwise, since these transforms may add/remove
-        # FIFOs, we get name mismatch problems when trying to reuse the final config.
-        model = model.transform(SplitLargeFIFOs())
-        model = model.transform(RemoveShallowFIFOs())
-        # after FIFOs are ready to go, call PrepareIP and HLSSynthIP again
-        # this will only run for the new nodes (e.g. FIFOs and DWCs)
-        model = model.transform(PrepareIP(fpga_part, target_clk_ns))
-        model = model.transform(HLSSynthIP())
+        model = insert_and_set_fifo_depths(model, fpga_part, target_clk_ns)
         model.save(get_bld_dir() + "/end2end_mobilenet_set_fifo_depths.onnx")
 
     @pytest.mark.slow

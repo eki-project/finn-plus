@@ -27,6 +27,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Graph-reordering transformations used by FINN streamline passes."""
+
 import numpy as np
 import onnxruntime
 import qonnx.core.data_layout as DataLayout
@@ -60,6 +62,7 @@ class MoveAddPastMul(Transformation):
     a single add."""
 
     def apply(self, model: ModelWrapper):
+        """Apply Add/Mul reordering where safe."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -124,6 +127,7 @@ class MoveScalarMulPastMatMul(Transformation):
 
     # Applies the transform to a whole model graph
     def apply(self, model):
+        """Apply scalar Mul/MatMul reordering where possible."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -181,6 +185,7 @@ class MoveScalarAddPastMatMul(Transformation):
     next to each other such that they can be collapsed into a single add."""
 
     def apply(self, model):
+        """Apply scalar Add/MatMul reordering where possible."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -238,6 +243,7 @@ class MoveAddPastConv(Transformation):
     next to each other such that they can be collapsed into a single add."""
 
     def apply(self, model):
+        """Apply Add/Conv reordering when padding permits."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -318,6 +324,7 @@ class MoveScalarMulPastConv(Transformation):
     next to each other such that they can be collapsed into a single mul."""
 
     def apply(self, model):
+        """Apply scalar Mul/Conv reordering where possible."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -367,6 +374,7 @@ class MoveScalarMulPastConvTranspose(Transformation):
     next to each other such that they can be collapsed into a single mul."""
 
     def apply(self, model):
+        """Apply scalar Mul/ConvTranspose reordering where possible."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -416,6 +424,7 @@ class MoveMulPastDWConv(Transformation):
     next to each other such that they can be collapsed into a single mul."""
 
     def apply(self, model):
+        """Apply channelwise Mul/depthwise Conv reordering."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -478,6 +487,7 @@ class MoveMulPastMaxPool(Transformation):
     single mul."""
 
     def apply(self, model):
+        """Apply nonnegative Mul/MaxPool reordering when possible."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -549,6 +559,7 @@ class MoveLinearPastEltwiseAdd(Transformation):
     """
 
     def move_node(self, graph, n, prod0, prod1, node_ind):
+        """Rewire the matched linear/eltwise add pattern in-place."""
         # found! move one of the muls to output, remove the other one
         lin0_in0 = prod0.input[0]
         lin1_in0 = prod1.input[0]
@@ -569,6 +580,7 @@ class MoveLinearPastEltwiseAdd(Transformation):
         graph.node.insert(node_ind - 2, prod0)
 
     def apply(self, model):
+        """Apply linear operation reordering past elementwise Add."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -658,6 +670,7 @@ class MoveScalarLinearPastInvariants(Transformation):
     }
 
     def apply(self, model):
+        """Apply scalar linear reordering past invariant ops."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -737,6 +750,7 @@ class MakeMaxPoolNHWC(Transformation):
     and (NCHWTranspose, MaxPool) into (MaxPoolNHWC, NCHWTranspose)."""
 
     def apply(self, model):
+        """Apply MaxPool/NHWC transpose reordering patterns."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -805,12 +819,12 @@ class MakeMaxPoolNHWC(Transformation):
 
 
 class MakeScaleResizeNHWC(Transformation):
-    """
-    Converts the inputs and outputs for all scales Resize and Upsample nodes
+    """Converts the inputs and outputs for all scales Resize and Upsample nodes
     from NCHW to NHWC.
     """
 
     def apply(self, model):
+        """Apply NHWC conversions for Resize/Upsample scale inputs."""
         graph = model.graph
         node_ind = 0
         for n in graph.node:
@@ -912,10 +926,12 @@ class MoveOpPastFork(Transformation):
     """
 
     def __init__(self, op_name_list):
+        """Configure which op types should be moved past forks."""
         super().__init__()
         self.ops_to_move = op_name_list
 
     def apply(self, model):
+        """Apply operation replication past fork nodes."""
         graph = model.graph
         graph_modified = False
         nodes = [n for n in graph.node]
@@ -980,26 +996,39 @@ class MoveOpPastFork(Transformation):
 
 
 class MoveAddPastFork(MoveOpPastFork):
+    """Move Add operations past fork nodes."""
+
     def __init__(self):
+        """Configure the Add-only fork transformation."""
         super().__init__(["Add"])
 
 
 class MoveMulPastFork(MoveOpPastFork):
+    """Move Mul operations past fork nodes."""
+
     def __init__(self):
+        """Configure the Mul-only fork transformation."""
         super().__init__(["Mul"])
 
 
 class MoveLinearPastFork(MoveOpPastFork):
+    """Move Add/Mul operations past fork nodes."""
+
     def __init__(self):
+        """Configure the Add/Mul fork transformation."""
         super().__init__(["Add", "Mul"])
 
 
 class MoveTransposePastFork(MoveOpPastFork):
+    """Move Transpose operations past fork nodes."""
+
     def __init__(self):
+        """Configure the Transpose fork transformation."""
         super().__init__(["Transpose"])
 
 
 def permute_shape(shape, perm):
+    """Return shape permuted by the given index order."""
     new_shape = np.zeros(len(shape))
     for i, p in enumerate(perm):
         new_shape[i] = shape[p]
@@ -1007,16 +1036,16 @@ def permute_shape(shape, perm):
 
 
 class MoveScalarLinearPastSplit(Transformation):
-    """
-    Move scalar Mul and Add nodes past channel split operation.
-    """
+    """Move scalar Mul and Add nodes past channel split operation."""
 
     def __init__(self):
+        """Configure scalar linear ops to move past Split."""
         super().__init__()
         self.ops_to_move = ["Mul", "Add"]
         self.fork_ops = ["Split"]
 
     def apply(self, model):
+        """Apply scalar linear reordering past Split nodes."""
         graph = model.graph
         graph_modified = False
         node_ind = 0
@@ -1063,12 +1092,16 @@ class MoveScalarLinearPastSplit(Transformation):
 
 
 class MoveTransposePastSplit(Transformation):
+    """Move Transpose operations past Split nodes."""
+
     def __init__(self):
+        """Configure transpose moves past Split."""
         super().__init__()
         self.ops_to_move = ["Transpose"]
         self.fork_ops = ["Split"]
 
     def apply(self, model):
+        """Apply Transpose/Split reordering where safe."""
         graph = model.graph
         graph_modified = False
         node_ind = 0
@@ -1116,6 +1149,7 @@ class MoveMaxPoolPastMultiThreshold(Transformation):
     """Move MaxPool nodes past MultiThreshold nodes on linear segments of the graph."""
 
     def apply(self, model):
+        """Apply MaxPool/MultiThreshold reordering on linear segments."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1141,7 +1175,7 @@ class MoveMaxPoolPastMultiThreshold(Transformation):
                     T = model.get_initializer(consumer.input[1])
                     T_sorted = np.sort(T, axis=1)
                     assert (
-                        T == T_sorted
+                        T_sorted == T
                     ).all(), "MultiThreshold must have non-decreasing thresholds"
                     mt_inst = getCustomOp(consumer)
                     if mt_inst.get_nodeattr("out_scale") < 0:
@@ -1179,6 +1213,7 @@ class MoveFlattenPastTopK(Transformation):
     is set to -1 and the data layout before the flatten is NHWC with H=W=1"""
 
     def apply(self, model):
+        """Apply Flatten/TopK reordering for NHWC H=W=1 cases."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1239,6 +1274,7 @@ class MoveFlattenPastAffine(Transformation):
     """Moves a node that implements a (1, -1) reshape past a MatMul, Mul or Add node."""
 
     def apply(self, model):
+        """Apply Flatten reordering past MatMul/Mul/Add ops."""
         graph = model.graph
         graph_modified = False
         node_ind = 0
@@ -1325,6 +1361,7 @@ class MoveTransposePastScalarMul(Transformation):
     """Moves a Transpose node past a scalar Mul node"""
 
     def apply(self, model):
+        """Apply Transpose/scalar Mul reordering where possible."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -1381,19 +1418,18 @@ class MoveTransposePastScalarMul(Transformation):
 
 
 class MoveIdenticalOpPastJoinOp(Transformation):
-    """
-    Move multiple identical operations on different branches past the common join node.
+    """Move multiple identical operations on different branches past the common join node.
     It assumes the shape to be preserved by the join op in the default move_node() method
     """
 
     def __init__(self, identical_op_list, join_node_list):
+        """Configure identical ops and join op types to target."""
         super().__init__()
         self.ops_to_move = identical_op_list
         self.join_node_op = join_node_list
 
     def move_node(self, model, n, producers):
-        """
-        Should be overwritten for some operations
+        """Should be overwritten for some operations
 
         Returns:
             bool: whether moving the node was successful
@@ -1420,8 +1456,7 @@ class MoveIdenticalOpPastJoinOp(Transformation):
         return True
 
     def are_producers_identical(self, model, producers):
-        """
-        Checks only op_types
+        """Checks only op_types
         Should be overwritten for additional checks
         """
         op_types = [prod.op_type for prod in producers]
@@ -1431,6 +1466,7 @@ class MoveIdenticalOpPastJoinOp(Transformation):
         return True
 
     def apply(self, model):
+        """Apply identical-op movement past join nodes."""
         graph = model.graph
         graph_modified = False
         for n in graph.node:
@@ -1466,10 +1502,14 @@ class MoveIdenticalOpPastJoinOp(Transformation):
 
 
 class MoveTransposePastJoinAdd(MoveIdenticalOpPastJoinOp):
+    """Move identical Transpose ops past Add joins."""
+
     def __init__(self):
+        """Configure Transpose/Add join reordering."""
         super().__init__(["Transpose"], ["Add"])
 
     def are_producers_identical(self, model, producers):
+        """Return True when all producer permutations match."""
         if not super().are_producers_identical(model, producers):
             return False
         first_perm = get_by_name(producers[0].attribute, "perm").ints
@@ -1480,10 +1520,14 @@ class MoveTransposePastJoinAdd(MoveIdenticalOpPastJoinOp):
 
 
 class MoveTransposePastJoinMul(MoveIdenticalOpPastJoinOp):
+    """Move identical Transpose ops past Mul joins."""
+
     def __init__(self):
+        """Configure Transpose/Mul join reordering."""
         super().__init__(["Transpose"], ["Mul"])
 
     def are_producers_identical(self, model, producers):
+        """Return True when all producer permutations match."""
         if not super().are_producers_identical(model, producers):
             return False
         first_perm = get_by_name(producers[0].attribute, "perm").ints
@@ -1494,10 +1538,14 @@ class MoveTransposePastJoinMul(MoveIdenticalOpPastJoinOp):
 
 
 class MoveMulPastJoinAdd(MoveIdenticalOpPastJoinOp):
+    """Move identical Mul ops past Add joins."""
+
     def __init__(self):
+        """Configure Mul/Add join reordering."""
         super().__init__(["Mul"], ["Add"])
 
     def are_producers_identical(self, model, producers):
+        """Return True when all producer constants match."""
         if not super().are_producers_identical(model, producers):
             return False
         first_mul = model.get_initializer(producers[0].input[1])
@@ -1510,10 +1558,14 @@ class MoveMulPastJoinAdd(MoveIdenticalOpPastJoinOp):
 
 
 class MoveAddPastJoinAdd(MoveIdenticalOpPastJoinOp):
+    """Move Add ops past Add joins when constants exist."""
+
     def __init__(self):
+        """Configure Add/Add join reordering."""
         super().__init__(["Add"], ["Add"])
 
     def are_producers_identical(self, model, producers):
+        """Return True when all producers have constant addends."""
         if not super().are_producers_identical(model, producers):
             return False
         for producer in producers:
@@ -1522,8 +1574,7 @@ class MoveAddPastJoinAdd(MoveIdenticalOpPastJoinOp):
         return True
 
     def move_node(self, model, n, producers):
-        """
-        We use the base move_node method to move the first producer
+        """We use the base move_node method to move the first producer
         past the join node (and delete the rest)
         """
         add_inits = [model.get_initializer(producer.input[1]) for producer in producers]
@@ -1535,10 +1586,14 @@ class MoveAddPastJoinAdd(MoveIdenticalOpPastJoinOp):
 
 
 class MoveTransposePastJoinConcat(MoveIdenticalOpPastJoinOp):
+    """Move identical Transpose ops past Concat joins."""
+
     def __init__(self):
+        """Configure Transpose/Concat join reordering."""
         super().__init__(["Transpose"], ["Concat"])
 
     def are_producers_identical(self, model, producers):
+        """Return True when all producer permutations match."""
         if not super().are_producers_identical(model, producers):
             return False
         first_perm = get_by_name(producers[0].attribute, "perm").ints
@@ -1548,6 +1603,7 @@ class MoveTransposePastJoinConcat(MoveIdenticalOpPastJoinOp):
         return True
 
     def move_node(self, model, n, producers):
+        """Rewire Concat and Transpose nodes for the matched pattern."""
         trans_inputs = [prod.input[0] for prod in producers]
         concat_out = n.output[0]
         # Rewire concat inputs
@@ -1580,14 +1636,14 @@ class MoveTransposePastJoinConcat(MoveIdenticalOpPastJoinOp):
 
 
 class MoveAffinePastJoinConcat(MoveIdenticalOpPastJoinOp):
-    """
-    Applies to scalar linear or channelwise affine ops with the same parameter value
-    """
+    """Applies to scalar linear or channelwise affine ops with the same parameter value"""
 
     def __init__(self, linear_ops=["Mul", "Add"]):
+        """Configure affine ops that can be moved past Concat joins."""
         super().__init__(linear_ops, ["Concat"])
 
     def are_producers_identical_scalar_ops(self, model, producers):
+        """Return True when all scalar op parameters match."""
         first_param = model.get_initializer(producers[0].input[1])
         for producer in producers:
             producer_param = model.get_initializer(producer.input[1])
@@ -1597,6 +1653,7 @@ class MoveAffinePastJoinConcat(MoveIdenticalOpPastJoinOp):
         return True
 
     def are_producers_channelwise_ops(self, channel_dim, model, producers):
+        """Return True when all producer params are channelwise compatible."""
         for producer in producers:
             producer_input = producer.input[0]
             num_channels = model.get_tensor_shape(producer_input)[channel_dim]
@@ -1610,6 +1667,7 @@ class MoveAffinePastJoinConcat(MoveIdenticalOpPastJoinOp):
         return True
 
     def move_node(self, model, n, producers):
+        """Rewire Concat and affine ops for the matched pattern."""
         # check if single input
         for producer in producers:
             producer_init = model.get_initializer(producer.input[1])
@@ -1660,20 +1718,27 @@ class MoveAffinePastJoinConcat(MoveIdenticalOpPastJoinOp):
 
 
 class MoveMulPastJoinConcat(MoveAffinePastJoinConcat):
+    """Move Mul ops past Concat joins when compatible."""
+
     def __init__(self):
+        """Configure Mul/Concat join reordering."""
         super().__init__(["Mul"])
 
 
 class MoveAddPastJoinConcat(MoveAffinePastJoinConcat):
+    """Move Add ops past Concat joins when compatible."""
+
     def __init__(self):
+        """Configure Add/Concat join reordering."""
         super().__init__(["Add"])
 
 
-# Moves a Squeeze operation past MultiThresholds
-# TODO: extend to all operations invariant to or compatible with squeezing
 class MoveSqueezePastMultiThreshold(Transformation):
+    """Move Squeeze past MultiThreshold nodes on linear segments."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply Squeeze/MultiThreshold reordering."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -1731,11 +1796,12 @@ class MoveSqueezePastMultiThreshold(Transformation):
         return model, graph_modified
 
 
-# Moves a Squeeze operation past MatMul
-# TODO: extend to all operations invariant to or compatible with squeezing
 class MoveSqueezePastMatMul(Transformation):
+    """Move Squeeze past MatMul nodes on linear segments."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply Squeeze/MatMul reordering."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -1796,10 +1862,12 @@ class MoveSqueezePastMatMul(Transformation):
         return model, graph_modified
 
 
-# Moves a transpose operator past elementwise addition or multiplication
 class MoveTransposePastEltwise(Transformation):
+    """Move Transpose past elementwise Add/Mul when possible."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply Transpose/elementwise reordering."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -1900,11 +1968,12 @@ class MoveTransposePastEltwise(Transformation):
         return model, graph_modified
 
 
-# Moves elementwise additions past MatMul operations: Applicable if each
-# operation has one initializer input
 class MoveAddPastMatMul(Transformation):
+    """Move elementwise Add past MatMul when inputs are constant."""
+
     # Applies the transform to a whole model graph  # noqa: Duplicate
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply Add/MatMul reordering for constant addends."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -2003,10 +2072,12 @@ class MoveAddPastMatMul(Transformation):
         return model, graph_modified
 
 
-# Moves constant elementwise multiplication past another joining multiplication
 class MoveConstMulPastJoinMul(Transformation):
+    """Move constant Mul past a joining Mul when possible."""
+
     # Applies the transform to a whole model graph  # noqa: Duplicate
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply constant Mul/JoinMul reordering."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -2078,12 +2149,12 @@ class MoveConstMulPastJoinMul(Transformation):
         return model, graph_modified
 
 
-# Moves elementwise multiplication past elementwise addition if one input to
-# each of the operators is a known constant
-# Note: Reverse of MoveAddPastMul
 class MoveMulPastAdd(Transformation):
+    """Move elementwise Mul past Add when constants allow."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply Mul/Add reordering for constant inputs."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -2162,11 +2233,12 @@ class MoveMulPastAdd(Transformation):
         return model, graph_modified
 
 
-# Moves scalar linear elementwise operations past fork nodes, applies to Add,
-# Mul, Sub, Div, etc.
 class MoveScalarLinearPastFork(Transformation):
+    """Move scalar linear ops past fork nodes."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply scalar linear replication across forks."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -2216,11 +2288,12 @@ class MoveScalarLinearPastFork(Transformation):
         return model, graph_modified
 
 
-# Moves scalar linear channel-wise operations past fork nodes, applies to Add,
-# Mul, Sub, Div, etc.
 class MoveChannelwiseLinearPastFork(Transformation):
+    """Move channelwise linear ops past fork nodes."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply channelwise linear replication across forks."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -2270,6 +2343,7 @@ class MoveChannelwiseLinearPastFork(Transformation):
                 # Tests whether two shapes can be broadcast according to NumPy
                 # semantics
                 def can_broadcast_to(lhs, rhs):
+                    """Return True if lhs can broadcast to rhs."""
                     # Broadcasting might raise an exception
                     try:
                         # Try broadcasting the shapes
@@ -2321,12 +2395,12 @@ class MoveChannelwiseLinearPastFork(Transformation):
         return model, graph_modified
 
 
-# Moves scale factor, i.e., scalar Mul and Div, past Im2Col (and Col2Im): These
-# cannot be handled by MoveScalarLinearPastInvariants as potential padding makes
-# Add-Im2Col not commute to Im2Col-Add
 class MoveScalesPastIm2Col(Transformation):
+    """Move scalar scales past Im2Col/Col2Im/Pad when safe."""
+
     # Applies the transform to a whole model graph
     def apply(self, model: ModelWrapper):  # noqa
+        """Apply scalar scale reordering past Im2Col/Col2Im/Pad."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified

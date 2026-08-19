@@ -3,6 +3,7 @@
 # fmt: off
 
 # Exhaustive composition of ONNX graph transformation
+"""Module for streamline plus."""
 from qonnx.transformation.batchnorm_to_affine import BatchNormToAffine
 from qonnx.transformation.composed import ComposedTransformation
 
@@ -27,6 +28,7 @@ from finn.transformation.streamline.sign_to_thres import ConvertSignToThres
 # transformations once again)
 def StreamlinePlus():  # noqa: Uppercase
     # Return a set of exhaustively applied transformations
+    """Return ComposedTransformation."""
     return ComposedTransformation([
         # On skip-connections: prefer pushing scalar multiplication forward
         # before MoveAddPastMul

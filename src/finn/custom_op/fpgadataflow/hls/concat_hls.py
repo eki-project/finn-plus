@@ -27,6 +27,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for concat hls."""
 from finn.custom_op.fpgadataflow.concat import StreamingConcat
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 
@@ -36,9 +37,11 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
     Only supports concatenating along the last axis."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(StreamingConcat.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
@@ -46,15 +49,19 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
         return my_attrs
 
     def execute_node(self, context, graph):
+        """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
     def global_includes(self):
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "concat.hpp"']
 
     def defines(self, var):
+        """Return defines."""
         self.code_gen_dict["$DEFINES$"] = ["#define SIMD {}".format(self.get_nodeattr("SIMD"))]
 
     def docompute(self):
+        """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = []
         n_inputs = self.get_n_inputs()
         input_folds = [str(self.get_folded_input_shape(i)[-2]) for i in range(n_inputs)]
@@ -63,10 +70,11 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
             in_streams.append("in%d_V" % i)
         in_stream_names = ", ".join(in_streams)
         in_stream_folds = ", ".join(input_folds)
-        comp_call = "StreamingConcat<{}>(out0_V, {});".format(in_stream_folds, in_stream_names)
+        comp_call = f"StreamingConcat<{in_stream_folds}>(out0_V, {in_stream_names});"
         self.code_gen_dict["$DOCOMPUTE$"] = [comp_call]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         n_inputs = self.get_n_inputs()
         in_streams = []
         for i in range(n_inputs):
@@ -82,6 +90,7 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [blackbox_hls]
 
     def pragmas(self):
+        """Return pragmas."""
         n_inputs = self.get_n_inputs()
         pragmas = []
         for i in range(n_inputs):

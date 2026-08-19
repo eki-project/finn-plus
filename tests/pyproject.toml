@@ -32,7 +32,6 @@ pytest = "~9.1.1"
 pytest-metadata = "~3.1.1"
 pytest-html = "~4.2.0"
 pytest-html-merger = "~0.1.0"
-pytest-cov = "~7.1.0"
 pytest-forked = "~1.7.5"
 pytest-rerunfailures = "~16.6"
 pytest-dependency = "~0.6.1"
@@ -41,6 +40,7 @@ pytest-xdist = { version = "~3.8.0", extras = ["setproctitle"] }
 torch = "~2.12.1"
 torchvision = "~0.27.0"
 wget = "~3.2"
+junitparser = "~5.0.1"
 
 [tool.pytest.ini_options]
 markers = [
@@ -62,6 +62,7 @@ markers = [
     "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
     "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
     "analysis: mark tests that run analysis tests",
+    "only: mark",
 ]
 
 [build-system]

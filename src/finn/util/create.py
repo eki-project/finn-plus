@@ -1,3 +1,4 @@
+"""Utility functions for creating ONNX models, including random MLPs and adjacency lists."""
 # Copyright (c) 2020 Xilinx, Inc.
 # Copyright (C) 2025, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -29,16 +30,19 @@
 
 import numpy as np
 from collections import defaultdict, deque
+from collections.abc import Callable
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import calculate_signed_dot_prod_range, gen_finn_dt_tensor, qonnx_make_model
+from typing import Any
 
 
-def hls_random_mlp_maker(layer_spec):
+def hls_random_mlp_maker(layer_spec: list[dict[str, Any]]) -> ModelWrapper:
     """Create an MLP of given specification using HLSCustomOp instances.
     Generate random weights/thresholds of appropriate size."""
     ret = []
+    rng = np.random.default_rng()
     for lyr in layer_spec:
         idt = lyr["idt"]
         wdt = lyr["wdt"]
@@ -48,56 +52,58 @@ def hls_random_mlp_maker(layer_spec):
         lyr["W"] = gen_finn_dt_tensor(wdt, (mw, mh))
         if act is None:
             # no activation, produce accumulators
-            T = None
-            tdt = None
+            thresholds = None
+            threshold_dtype = None
             if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
-                odt = DataType["UINT32"]
+                output_dtype = DataType["UINT32"]
             else:
-                odt = DataType["INT32"]
+                output_dtype = DataType["INT32"]
         else:
-            odt = act
-            (min, max) = calculate_signed_dot_prod_range(idt, wdt, mw)
+            output_dtype = act
+            (min_val, max_val) = calculate_signed_dot_prod_range(idt, wdt, mw)
+            min_val_int = int(min_val)
+            max_val_int = int(max_val)
             n_steps = act.get_num_possible_values() - 1
-            T = np.random.randint(min, max - 1, (mh, n_steps)).astype(np.float32)
+            thresholds = rng.integers(min_val_int, max_val_int - 1, size=(mh, n_steps)).astype(
+                np.float32
+            )
             # provide non-decreasing thresholds
-            T = np.sort(T, axis=1)
+            thresholds = np.sort(thresholds, axis=1)
             # generate thresholds for activation
             if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
-                tdt = DataType["UINT32"]
+                threshold_dtype = DataType["UINT32"]
                 # bias thresholds to be positive
-                T = np.ceil((T + mw) / 2)
-                assert (T >= 0).all()
+                thresholds = np.ceil((thresholds + mw) / 2)
+                assert (thresholds >= 0).all()
             else:
-                tdt = DataType["INT32"]
-        lyr["T"] = T
-        lyr["tdt"] = tdt
-        lyr["odt"] = odt
+                threshold_dtype = DataType["INT32"]
+        lyr["T"] = thresholds
+        lyr["tdt"] = threshold_dtype
+        lyr["odt"] = output_dtype
         ret.append(lyr)
 
     return hls_mlp_maker(ret)
 
 
-def hls_mlp_maker(layer_spec):
+def hls_mlp_maker(layer_spec: list[dict[str, Any]]) -> ModelWrapper:
     """Create an MLP of given specification using HLSCustomOp instances."""
-
     current_in_name = ""
     current_out_name = ""
-    i = 0
 
     graph = helper.make_graph(nodes=[], name="mlp", inputs=[], outputs=[])
 
     model = qonnx_make_model(graph, producer_name="finn")
     model = ModelWrapper(model)
 
-    for lyr in layer_spec:
-        current_W_name = "W_%d" % i
-        current_T_name = "T_%d" % i
-        current_in_name = "act_%d" % i
-        current_out_name = "act_%d" % (i + 1)
+    for i, lyr in enumerate(layer_spec):
+        current_w_name = f"W_{i}"
+        current_t_name = f"T_{i}"
+        current_in_name = f"act_{i}"
+        current_out_name = f"act_{i + 1}"
 
-        W = lyr["W"]
-        (mw, mh) = W.shape
-        T = lyr["T"]
+        weights = lyr["W"]
+        (mw, mh) = weights.shape
+        thresholds = lyr["T"]
         pe = lyr["pe"]
         simd = lyr["simd"]
         wdt = lyr["wdt"]
@@ -128,19 +134,16 @@ def hls_mlp_maker(layer_spec):
             export_idt = idt
             binary_xnor_mode = 0
 
-        if T is not None:
+        if thresholds is not None:
             no_act = 0
-            node_inp_list = [current_in_name, current_W_name, current_T_name]
-            if odt == DataType["BIPOLAR"]:
-                actval = 0
-            else:
-                actval = odt.min()
+            node_inp_list = [current_in_name, current_w_name, current_t_name]
+            actval = 0 if odt == DataType["BIPOLAR"] else odt.min()
         else:
             # no thresholds
-            node_inp_list = [current_in_name, current_W_name]
+            node_inp_list = [current_in_name, current_w_name]
             actval = 0
             no_act = 1
-        FCLayer_node = helper.make_node(
+        fc_layer_node = helper.make_node(
             "MVAU",
             node_inp_list,
             [current_out_name],
@@ -158,25 +161,26 @@ def hls_mlp_maker(layer_spec):
             noActivation=no_act,
         )
 
-        model.graph.node.append(FCLayer_node)
+        model.graph.node.append(fc_layer_node)
         model.set_tensor_datatype(current_in_name, idt)
         model.set_tensor_datatype(current_out_name, odt)
-        model.set_tensor_datatype(current_W_name, wdt)
+        model.set_tensor_datatype(current_w_name, wdt)
         if binary_xnor_mode:
             # convert bipolar to binary
-            model.set_initializer(current_W_name, (W + 1) / 2)
+            model.set_initializer(current_w_name, (weights + 1) / 2)
         else:
-            model.set_initializer(current_W_name, W)
-        if T is not None:
-            model.set_tensor_datatype(current_T_name, tdt)
-            model.set_initializer(current_T_name, T)
-        i += 1
+            model.set_initializer(current_w_name, weights)
+        if thresholds is not None:
+            model.set_tensor_datatype(current_t_name, tdt)
+            model.set_initializer(current_t_name, thresholds)
 
     return model
 
 
-def adjacency_list(model, filter_function):
-    """Returns adjacency list of nodes based on filter function."""
+def adjacency_list(
+    model: ModelWrapper, filter_function: Callable[[Any], bool]
+) -> dict[str, list[str]]:
+    """Return adjacency list of nodes based on filter function."""
     graph = model.graph
 
     full_graph = defaultdict(list)
@@ -189,7 +193,7 @@ def adjacency_list(model, filter_function):
             elif (
                 hasattr(graph, "input")
                 and graph.input
-                and input_tensor in [input.name for input in graph.input]
+                and input_tensor in [inp.name for inp in graph.input]
             ):
                 full_graph[input_tensor].append(node.name)
         for output_tensor in node.output:
@@ -207,7 +211,7 @@ def adjacency_list(model, filter_function):
         raise ValueError("filter_function must be callable")
     filter_nodes = [node.name for node in graph.node if filter_function(node)]
     graph_inputs = (
-        [input.name for input in graph.input] if hasattr(graph, "input") and graph.input else []
+        [inp.name for inp in graph.input] if hasattr(graph, "input") and graph.input else []
     )
     graph_outputs = (
         [output.name for output in graph.output]
