@@ -78,6 +78,7 @@ _LAZY_NAMES = frozenset(
 
 
 def _xsi_path() -> Any:
+    """Return the current finn_xsi installation directory from FINN settings."""
     return get_settings().finn_xsi
 
 
