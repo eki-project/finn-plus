@@ -130,6 +130,8 @@ class SetFolding(Transformation):
         self.mvau_wwidth_max = mvau_wwidth_max
         self.two_pass_relaxation = two_pass_relaxation
 
+        # REMINDER: The fact that this technically only applies to HLS components should
+        # be remembered and considered for an eventual rework.
         if self.mvau_wwidth_max > MAX_ALLOWED_AP_INT_W:
             log.error(
                 f"mvau_wwidth_max is larger than {MAX_ALLOWED_AP_INT_W} "
@@ -238,18 +240,24 @@ class SetFolding(Transformation):
                         node_inst.set_nodeattr("PE", val)
                         cyc = node_inst.get_exp_cycles()
                         if node_inst.get_instream_width(1) > MAX_ALLOWED_AP_INT_W:
-                            # revert PE back to last value
-                            node_inst.set_nodeattr("PE", prev_pe_val)
-                            self.any_throughput_target_missed = True
-                            mvau_internal_decoupled_weightstream_max_width_too_large = True
+                            if is_hls_node(node):
+                                # revert PE back to last value
+                                node_inst.set_nodeattr("PE", prev_pe_val)
+                                self.any_throughput_target_missed = True
+                                mvau_internal_decoupled_weightstream_max_width_too_large = True
+                                log.warning(
+                                    f"{node.name}: Weight stream per PE became wider than max "
+                                    f"ap_(u)int width {MAX_ALLOWED_AP_INT_W}. Reverting PE value "
+                                    f"{val} -> {prev_pe_val}. "
+                                    f"Estimated: {node_inst.get_exp_cycles()} (cyc/frame), "
+                                    f"Target: {self.target_cycles_per_frame} (cyc/frame). "
+                                )
+                                break
                             log.warning(
-                                f"{node.name}: Weight stream per PE became wider than max "
-                                f"ap_(u)int width {MAX_ALLOWED_AP_INT_W}. Reverting PE value "
-                                f"{val} -> {prev_pe_val}. "
-                                f"Estimated: {node_inst.get_exp_cycles()} (cyc/frame), "
-                                f"Target: {self.target_cycles_per_frame} (cyc/frame). "
+                                f"{node.name}: Weight stream per "
+                                f"PE is wider than {MAX_ALLOWED_AP_INT_W}. "
+                                f"While allowed, this may cause routing issues."
                             )
-                            break
                         if cyc <= self.target_cycles_per_frame:
                             # finish if target met
                             break
