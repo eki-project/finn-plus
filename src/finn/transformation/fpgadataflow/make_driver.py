@@ -35,6 +35,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from json import JSONDecodeError
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -343,7 +344,14 @@ class MakeCPPDriver(Transformation):
                 "bitfile_output field is missing. "
                 "Was synthesis run before calling this step?"
             )
-        xclbin_paths: dict[int, str] = json.loads(bitfile_json)
+        try:
+            xclbin_paths: dict[int, str] = json.loads(bitfile_json)
+        except JSONDecodeError as e:
+            raise FINNInternalError(
+                "Expected metadata property of the model to be a "
+                "valid JSON mapping between devices and paths to bitfiles "
+                "(e.g.: {0: A/a.xlbin, ...}) but there was an error decoding the JSON."
+            ) from e
 
         # Define paths for configuration files
         json_path = cpp_driver_dir / "acceleratorconfig.json"

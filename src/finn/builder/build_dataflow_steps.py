@@ -39,6 +39,7 @@ import os
 import shutil
 from copy import deepcopy
 from functools import partial
+from json import JSONDecodeError
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -1299,10 +1300,7 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig):
         log.info(f"Vivado stitched IP written into {stitched_ip_dir}")
 
         if cfg.stitched_ip_gen_dcp:
-            copy(
-                model.get_metadata_prop("vivado_synth_rpt"),
-                report_dir + "/post_synth_resources_dcp.xml",
-            )
+            copy_synthesis_reports(model, Path(report_dir), name_prefix="post_synth_resources_dcp")
             post_synth_resources = model.analysis(post_synth_res)
             with open(report_dir + "/post_synth_resources_dcp.json", "w") as f:
                 json.dump(post_synth_resources, f, indent=2)
@@ -1523,7 +1521,9 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
         )
     # Commonly used config variables
     part = cfg._resolve_fpga_part()
-    platform = cfg._resolve_vitis_platform()
+    platform = (
+        cfg._resolve_vitis_platform() if cfg.shell_flow_type is ShellFlowType.VITIS_ALVEO else None
+    )
     clk_ns = cfg.synth_clk_period_ns
 
     # Differentiate preparation by flow type
@@ -1610,9 +1610,139 @@ def step_vivado_power_estimation(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
+def copy_synthesis_reports(
+    model: ModelWrapper, report_dir: Path, name_prefix: str = "post_synth_report"
+) -> None:
+    """Look up all Vivado synth reports from the 'vivado_synth_rpt' metadata prop and copy them
+    into the specified report directory.
+    """
+    reports = get_metadata_prop_safe(model, "vivado_synth_rpt")
+    try:
+        rpt_json = json.loads(reports)
+    except JSONDecodeError:
+        rpt_json = {0: reports}
+    if len(list(rpt_json.keys())) == 1:
+        res_report = Path(rpt_json[0])
+        if res_report.exists():
+            target = report_dir / f"{name_prefix}.xml"
+            copy(res_report, target)
+            log.info(f"Synthesis resource report stored at: {target}")
+        else:
+            log.warning(f"Resource report XML not found: {res_report}")
+    else:
+        for device, path in rpt_json.items():
+            if path.exists():
+                target = report_dir / f"{name_prefix}_{device}.xml"
+                copy(path, target)
+                log.info(f"Synthesis resource report stored at: {target}")
+            else:
+                log.warning(f"Resource report XML not found: {path}")
+
+
+def copy_and_rename_bitfiles(
+    model: ModelWrapper, cfg: DataflowBuildConfig, bitfile_dir: Path
+) -> None:
+    """Copy and rename all bitstreams. Tries to read them from the 'bitfile' metadata property.
+    Target directory is the output directory, "bitfile".
+
+    The paths to the devices are placed in the metadata prop
+    "bitfile_output". For Vitis, this is a dict with device indices as keys;
+    for Zynq, it is the path of the bitfile.
+    """
+    bitfiles = get_metadata_prop_safe(model, "bitfile")
+
+    # Handle both zynq (string) and alveo (dict) cases
+    try:
+        bitfile_json = json.loads(bitfiles)
+    except JSONDecodeError:
+        bitfile_json = {0: bitfiles}
+
+    # Determine file suffix
+    suffix = ""
+    single_device_suffix = ""
+    if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+        suffix = ".bit"
+    elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
+        suffix = ".xclbin"
+        single_device_suffix = "-0"
+    else:
+        raise FINNUserError(f"Unknown shell flow type: {cfg.shell_flow_type}")
+
+    # Copy and rename the files
+    if len(list(bitfile_json.keys())) == 1:
+        bitfile_path = bitfile_dir / f"finn-accel{single_device_suffix}{suffix}"
+        copy(bitfile_json[0], bitfile_path)
+        log.info("Stored bitfile at: " + str(bitfile_path))
+        if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+            model.set_metadata_prop("bitfile_output", str(bitfile_path.absolute()))
+        elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
+            model.set_metadata_prop("bitfile_output", str({0: str(bitfile_path.absolute())}))
+    else:
+        paths = {}
+        for device, path in bitfile_json.items():
+            bitfile_path = bitfile_dir / f"finn-accel-{device}{suffix}"
+            copy(path, bitfile_path)
+            log.info("Stored bitfile at: " + str(bitfile_path))
+            paths.update({device: str(bitfile_path.absolute())})
+        model.set_metadata_prop("bitfile_output", str(paths))
+
+    # For Zynq, copy the hwh file too
+    if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+        # Store synthesis artifacts
+        hw_handoff = get_metadata_prop_path(model, "hw_handoff", must_exist=True)
+        copy(hw_handoff, bitfile_dir / "finn-accel.hwh")
+
+
+def generate_resource_report(
+    model: ModelWrapper, cfg: DataflowBuildConfig, report_dir: Path
+) -> None:
+    """Generate the resource report JSON in the specified directory."""
+    post_synth_resources = model.analysis(post_synth_res)
+    if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+        # TODO: Currently pynq is only single-fpga, thus we remove the device id information
+        post_synth_resources = post_synth_resources[0]
+        target = report_dir / "post_synth_resources.json"
+        target.write_text(json.dumps(post_synth_resources, indent=2))
+        log.info(f"Stored resource report at: {target}")
+    elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
+        for device, rpt in post_synth_resources.items():
+            target = report_dir / f"post_synth_resources_{device}.json"
+            target.write_text(json.dumps(rpt, indent=2))
+            log.info(f"Stored resource report at: {target}")
+
+
+def copy_timing_report(model: ModelWrapper, report_dir: Path) -> None:
+    """Copy the timing report from the Pynq project into the report directory."""
+    # Store the post-route timing report
+    timing_report = (
+        get_metadata_prop_path(model, "vivado_pynq_proj", must_exist=True)
+        / "finn_zynq_link.runs"
+        / "impl_1"
+        / "top_wrapper_timing_summary_routed.rpt"
+    )
+    target = report_dir / "post_route_timing.rpt"
+    copy(timing_report, target)
+    log.info(f"Stored timing report at: {target}")
+
+
 def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Synthesize a bitfile for the using the specified shell flow, using either
-    Vivado or Vitis, to target the specified board."""
+    Vivado or Vitis, to target the specified board.
+
+    The results currently differ depending on the build flow used. The files generated are:
+
+    VITIS:
+    - <output_dir>/bitfile/finn-accel-<device>.xclbin
+    - <output_dir>/report/post_synth_report_<device>.rpt
+    - <output_dir>/report/post_synth_resources_<device>.json
+
+    PYNQ:
+    - <output_dir>/bitfile/finn-accel.bit
+    - <output_dir>/bitfile/finn-accel.hwh
+    - <output_dir>/report/post_synth_report.rpt
+    - <output_dir>/report/post_synth_resources.json
+    - <output_dir>/report/post_route_timing.rpt
+    """
     if DataflowOutputType.BITFILE not in cfg.generate_outputs:
         log.warning(
             "DataflowOutputType.BITFILE not in requested outputs, skipping step_synthesize_bitfile."
@@ -1643,65 +1773,26 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig):
         model = model.transform(VitisBuild(cfg))
     else:
         raise Exception("Unrecognized shell_flow_type: " + str(cfg.shell_flow_type))
+    log.info("Synthesis done. Post-processing reports and generated files...")
 
-    # Store bitstreams into the output directory. This is the same regardless of flow.
-    bitfile_json = json.loads(get_metadata_prop_safe(model, "bitfile"))
-    suffix = ""
+    # SYNTHESIS POST-PROCESSING
+    # Expect set metadata properties:
+    # bitfile (dict for alveo, string for zynq)
+    # vivado_synth_rpt (dict for alveo, string for zynq)
+
+    # Copy bitfiles to <output_dir>/bitfile/
+    # Paths are afterwards stored in "bitfile_output"
+    copy_and_rename_bitfiles(model, cfg, bitfile_dir)
+
+    # Store synth reports from "vivado_synth_rpt" in <output_dir>/report/
+    copy_synthesis_reports(model, report_dir)
+
+    # Store processed resource reports in <output_dir>/report/
+    generate_resource_report(model, cfg, report_dir)
+
+    # Copy timing reports to <output_dir>/report/
     if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
-        suffix = ".bit"
-    elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
-        suffix = ".xclbin"
-
-    # If only one device, omit the device suffix
-    if len(list(bitfile_json.keys())) == 1:
-        bitfile_path = bitfile_dir / f"finn-accel{suffix}"
-        copy(bitfile_json[0], bitfile_path)
-        # For the single-fpga case, store in bitfile_output
-        # TODO: Also adapt this for Multi-FGPA
-        model.set_metadata_prop("bitfile_output", str(bitfile_path.absolute()))
-    else:
-        for device, path in bitfile_json.items():
-            copy(path, bitfile_dir / f"finn-accel-{device}{suffix}")
-
-    # Store synth reports
-    rpt_json = json.loads(get_metadata_prop_safe(model, "vivado_synth_rpt"))
-    if len(list(rpt_json.keys())) == 1:
-        res_report = Path(rpt_json[0])
-        if res_report.exists():
-            copy(res_report, report_dir / "post_synth_resources.xml")
-        else:
-            log.warning(f"Resource report XML not found: {res_report}")
-    else:
-        for device, path in rpt_json.items():
-            if path.exists():
-                copy(path, report_dir / f"post_synth_resources_{device}.xml")
-            else:
-                log.warning(f"Resource report XML not found: {path}")
-
-    # Store artifacts, depending on flow
-    if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
-        # Store synthesis artifacts
-        hw_handoff = get_metadata_prop_path(model, "hw_handoff", must_exist=True)
-        copy(hw_handoff, bitfile_dir / "finn-accel.hwh")
-
-        # Log post synthesis resource as a JSON file
-        post_synth_resources = model.analysis(post_synth_res)
-        (report_dir / "post_synth_resources.json").write_text(
-            json.dumps(post_synth_resources, indent=2)
-        )
-
-        # Store the post-route timing report
-        timing_report = (
-            get_metadata_prop_path(model, "vivado_pynq_proj", must_exist=True)
-            / "finn_zynq_link.runs"
-            / "impl_1"
-            / "top_wrapper_timing_summary_routed.rpt"
-        )
-        copy(timing_report, report_dir / "post_route_timing.rpt")
-
-    elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
-        pass
-
+        copy_timing_report(model, report_dir)
     return model
 
 

@@ -40,6 +40,7 @@ from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, ShellFlowType
+from finn.builder.build_dataflow_steps import step_prepare_synthesis, step_synthesize_bitfile
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.build_xo import BuildAllXOs
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
@@ -302,13 +303,13 @@ def test_fpgadataflow_ipstitch_vitis_end2end(board, period_ns, extw):
         assert os.path.isfile(sdp_node.get_nodeattr("model"))
         model = load_test_checkpoint_or_skip(sdp_node.get_nodeattr("model"))
     cfg = DataflowBuildConfig(
-        board=board, synth_clk_period_ns=period_ns, shell_flow_type=ShellFlowType.VITIS_ALVEO
+        board=board,
+        synth_clk_period_ns=period_ns,
+        shell_flow_type=ShellFlowType.VITIS_ALVEO,
+        fpga_part=fpga_part,
     )
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareIP(fpga_part, period_ns))
-    model = model.transform(HLSSynthIP())
-    model = model.transform(BuildAllXOs(fpga_part, period_ns))
-    model = model.transform(VitisBuild(cfg))
+    model = step_prepare_synthesis(model, cfg)
+    model = step_synthesize_bitfile(model, cfg)
     assert model.get_metadata_prop("platform") == "alveo"
     assert model.get_metadata_prop("vitis_link_configs") is not None
     assert os.path.isfile(model.get_metadata_prop("bitfile_output"))

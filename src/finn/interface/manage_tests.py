@@ -13,7 +13,6 @@ from finn.util.settings import get_settings
 
 def run_doctests(num_workers: int) -> bool:
     """Run all doctests in FINN and report if any failed."""
-    returncodes = []
     tests = []
     for submodule in [
         "analysis",
@@ -36,8 +35,8 @@ def run_doctests(num_workers: int) -> bool:
             )
         )
         tests[-1].communicate()
-    returncodes = [test.returncode for test in tests]
-    return any(returncodes)
+    returncodes_failed = [test.returncode not in [0, 5] for test in tests]
+    return any(returncodes_failed)
 
 
 def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: bool = False) -> None:

@@ -30,7 +30,7 @@ from finn.util.fpgadataflow import get_submodel, set_device_id
 from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
 
 
-def testing_model_from_nx(g: nx.DiGraph) -> ModelWrapper:
+def make_testing_model_from_nx(g: nx.DiGraph) -> ModelWrapper:
     """Create a testing node only model from a DiGraph. Sets all data attributes
     of the DiGraph as node attributes on the ONNX node.
     """
@@ -231,7 +231,7 @@ def test_sdp_creation(
     # yield the same indexes as the original node names/ids, we store them as a node attribute.
     # This way we can in the modelwrapper still identify which node "6" originally was.
     g: nx.DiGraph = digraph_from_graph_definition(graph)
-    model = testing_model_from_nx(g)
+    model = make_testing_model_from_nx(g)
 
     # Test clustering and SDP creation separately. First, clustering:
     pmodel = model.transform(
@@ -274,7 +274,7 @@ def test_iodma_separation(
     """Test that IODMAs receive their own partition ID if requested."""
     name = request.node.callspec.id
     g = digraph_from_graph_definition(graph)
-    model = testing_model_from_nx(g)
+    model = make_testing_model_from_nx(g)
     model = model.transform(InsertIODMA())
     model = model.transform(
         CreateMultiFPGAStreamingDataflowPartition(
@@ -298,7 +298,7 @@ def test_iodma_separation(
             assert "IODMA" in submodel.graph.node[0].op_type
 
     # Only cluster, dont merge into SDPs
-    model = testing_model_from_nx(g)
+    model = make_testing_model_from_nx(g)
     model = model.transform(InsertIODMA())
     model = model.transform(
         ClusterByNodeattribute(

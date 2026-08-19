@@ -41,7 +41,7 @@ from pkgutil import get_data
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 
-from finn.builder.build_dataflow_config import VitisOptStrategy
+from finn.builder.build_dataflow_config import DataflowBuildConfig, VitisOptStrategy
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
@@ -119,12 +119,14 @@ def get_build_env(board, target_clk_ns):
     elif board in alveo_part_map:
         ret["kind"] = "alveo"
         ret["part"] = alveo_part_map[board]
-        ret["build_fxn"] = VitisBuild(
-            ret["part"],
-            target_clk_ns,
-            alveo_default_platform[board],
-            strategy=VitisOptStrategy.BUILD_SPEED,
+        cfg = DataflowBuildConfig(
+            fpga_part=alveo_part_map[board],
+            board=board,
+            synth_clk_period_ns=target_clk_ns,
+            vitis_platform=alveo_default_platform[board],
+            vitis_opt_strategy=VitisOptStrategy.BUILD_SPEED,
         )
+        ret["build_fxn"] = VitisBuild(cfg)
     else:
         raise Exception("Unknown board specified")
     return ret

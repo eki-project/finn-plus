@@ -29,11 +29,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 from __future__ import annotations
-import json
 
+import json
 import shlex
 import subprocess
 from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 from qonnx.transformation.base import Transformation
 from typing import TYPE_CHECKING, cast
 
@@ -45,18 +46,19 @@ from finn.transformation.fpgadataflow.vitis_linking_configuration import (
     BuildBasicVitisLinkConfig,
     VitisLinkConfiguration,
 )
-from finn.util.exception import FINNInternalError, FINNSynthesisError
+from finn.util.exception import FINNInternalError, FINNSynthesisError, FINNUserError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from qonnx.core.modelwrapper import ModelWrapper
 
 
 class ParallelVitisSynthesis(Transformation):
     """Execute a (parallel) synthesis on the model. Requires that the model has
     a link config. Afterwards the bitstreams are available.
-    Stores the paths of all XCLBINs in as JSON in the metadata prop "bitfile_output".
+    Stores the paths of all XCLBINs in as JSON, indexed by device
+    id in the metadata prop "bitfile". Also stores the paths to the synthesis reports
+    in vivado_synth_rpt, also as a JSON.
     """
 
     def __init__(self, cfg: DataflowBuildConfig) -> None:  # noqa
@@ -115,14 +117,21 @@ class ParallelVitisSynthesis(Transformation):
 
         # Check results and exceptions
         results = {}
+        any_failed = False
         for i, future in futures.items():
             result = cast("Path", future.result())
             results[i] = str(result.absolute())
             if not result.exists():
+                any_failed = True
                 log.critical(
                     f"XCLBIN for device {i} not found. Check "
                     f"synthesis logs at {configs[i].run_script_path.parent}"
                 )
+        if any_failed:
+            raise FINNUserError(
+                "Generation of one or more bitstreams failed. Check "
+                "the synthesis directory and vivado logs for more details."
+            )
 
         # Store paths for usage in driver generation, etc.
         model.set_metadata_prop("bitfile", json.dumps(results))
