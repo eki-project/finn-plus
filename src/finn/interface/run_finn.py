@@ -434,6 +434,14 @@ def prepare_finn(
     status(f"{'[DEPENDENCY DEFINITIONS PATH]':<32} {settings.finn_deps_definitions!s:<50}")
     status(f"{'[NUM WORKERS]':<32} {settings.num_default_workers!s:<50}")
     finn.util.settings._SETTINGS = settings  # noqa
+
+    # Verify (and if needed, build/rebuild) XSI for the currently loaded Vivado
+    # version now, once, before any parallel work (multiprocessing.Pool /
+    # pytest-xdist workers) gets a chance to import finn.xsi transitively.
+    import finn.xsi
+
+    finn.xsi.ensure_available()
+
     if "PYTHONPATH" not in os.environ:
         os.environ["PYTHONPATH"] = ""
 

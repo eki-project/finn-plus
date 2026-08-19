@@ -40,10 +40,10 @@ from qonnx.custom_op.registry import getCustomOp
 from typing import TYPE_CHECKING, cast
 
 from finn.util.exception import FINNInternalError
-from finn.xsi import SimEngine
 
 if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
+    from finn.xsi import SimEngine
 
 
 def is_mlo(model: ModelWrapper) -> bool:
@@ -68,7 +68,7 @@ def dat_file_to_numpy_array(file_path: Path) -> NDArray[np.uint8]:
     return byte_array
 
 
-def mlo_prehook_func_factory(node: NodeProto) -> Callable[[SimEngine], None]:
+def mlo_prehook_func_factory(node: NodeProto) -> Callable[["SimEngine"], None]:
     """Construct a prehook function to
     setup the axi memory mapped interfaces for MLO validation using a function factory.
     """
@@ -96,7 +96,7 @@ def mlo_prehook_func_factory(node: NodeProto) -> Callable[[SimEngine], None]:
             mvau_hbm_weights[idx]["extern_name"] = f"m_axi_MVAU_id_{idx}"
             extern_idx += 1
 
-    def mlo_rtlsim_prehook(sim: SimEngine) -> None:
+    def mlo_rtlsim_prehook(sim: "SimEngine") -> None:
         """Prehook that queues and populates AXI memory for MLO sims."""
         sim.aximm_queue("m_axi_hbm")
         for intf in mvau_hbm_weights.values():

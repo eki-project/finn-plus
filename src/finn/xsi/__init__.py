@@ -11,22 +11,50 @@
 This module provides utilities for RTL simulation support via finn_xsi.
 The finn_xsi extension must be built separately using the setup command.
 
+Importing this module is always safe: it never touches FINN settings or the
+filesystem, so it can be imported from any process (including
+multiprocessing.Pool workers spawned with the "forkserver"/"spawn" start
+methods) without FINN having been booted there.
+
+The actual availability check (and Vivado-version-triggered rebuild) only
+happens when ensure_available() is called explicitly. FINN's boot sequence
+does this once, early: run_finn.py's prepare_finn() for the CLI, and
+tests/conftest.py's pytest_configure() for pytest runs. Both happen before
+any parallel work (multiprocessing.Pool / pytest-xdist workers) is
+dispatched, so the build is never raced.
+
 Usage:
-    # Check if XSI support is available
     from finn import xsi
+    xsi.ensure_available()
     if xsi.is_available():
-        import finn_xsi.adapter
+        ...
 """
+
+from __future__ import annotations
 
 import contextlib
 import os
 import re
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from finn.util.exception import FINNUserError
 from finn.util.logging import log
 from finn.util.settings import get_settings
+
+if TYPE_CHECKING:
+    # Real imports for type checkers/IDEs only - never executed at runtime.
+    # The actual runtime bindings are created lazily by _load_modules().
+    from finn_xsi.adapter import (  # noqa
+        close_rtlsim,
+        compile_sim_obj,
+        get_simkernel_so,
+        load_sim_obj,
+        locate_glbl,
+        reset_rtlsim,
+        rtlsim_multi_io,
+    )
+    from finn_xsi.sim_engine import SimEngine  # noqa
 
 # Track if auto-install has been attempted
 _auto_install_attempted = False
@@ -35,7 +63,22 @@ _auto_install_attempted = False
 _adapter_module: Any | None = None
 _sim_engine_module: Any | None = None
 
-xsi_path = get_settings().finn_xsi
+_LAZY_NAMES = frozenset(
+    {
+        "SimEngine",
+        "locate_glbl",
+        "compile_sim_obj",
+        "get_simkernel_so",
+        "load_sim_obj",
+        "reset_rtlsim",
+        "close_rtlsim",
+        "rtlsim_multi_io",
+    }
+)
+
+
+def _xsi_path() -> Any:
+    return get_settings().finn_xsi
 
 
 def is_available() -> bool:
@@ -44,6 +87,8 @@ def is_available() -> bool:
     Returns:
         bool: True if finn_xsi can be imported, False otherwise
     """
+    xsi_path = _xsi_path()
+
     # Check if xsi.so exists
     xsi_so = xsi_path / "xsi.so"
     vivado_path = os.environ.get("XILINX_VIVADO")
@@ -75,6 +120,25 @@ def is_available() -> bool:
 
     # Try loading the modules (this will cache them if successful)
     return _load_modules()
+
+
+def ensure_available() -> bool:
+    """Verify (and if needed, build/rebuild) XSI for the currently loaded Vivado version.
+
+    This is the intended entry point for FINN's boot sequence: call this once,
+    early, before any parallel work (multiprocessing.Pool / pytest-xdist workers)
+    is dispatched. Merely importing this module never triggers this implicitly -
+    see the module docstring.
+
+    Returns:
+        bool: True if XSI is available.
+
+    Raises:
+        FINNUserError: if XSI could not be made available.
+    """
+    if not is_available():
+        raise FINNUserError("XSI not available. Please run 'finn deps update' to install XSI.")
+    return True
 
 
 def _attempt_auto_install() -> bool:
@@ -118,12 +182,13 @@ def _attempt_auto_install() -> bool:
 
 
 def _load_modules() -> bool:
-    """Load finn_xsi modules if available."""
+    """Load finn_xsi modules if available and bind the public names on this module."""
     global _adapter_module, _sim_engine_module
 
     if _adapter_module is not None:
         return True
 
+    xsi_path = _xsi_path()
     xsi_so = xsi_path / "xsi.so"
 
     if not xsi_so.exists():
@@ -141,6 +206,19 @@ def _load_modules() -> bool:
 
         _adapter_module = finn_xsi.adapter
         _sim_engine_module = finn_xsi.sim_engine
+
+        # Bind the public names as real attributes on this module, so that
+        # subsequent access (including via __getattr__ below) is a plain,
+        # fast attribute lookup - exactly like a normal eager import.
+        module = sys.modules[__name__]
+        module.SimEngine = finn_xsi.sim_engine.SimEngine
+        module.locate_glbl = finn_xsi.adapter.locate_glbl
+        module.compile_sim_obj = finn_xsi.adapter.compile_sim_obj
+        module.get_simkernel_so = finn_xsi.adapter.get_simkernel_so
+        module.load_sim_obj = finn_xsi.adapter.load_sim_obj
+        module.reset_rtlsim = finn_xsi.adapter.reset_rtlsim
+        module.close_rtlsim = finn_xsi.adapter.close_rtlsim
+        module.rtlsim_multi_io = finn_xsi.adapter.rtlsim_multi_io
 
         return True
     except ImportError as e:
@@ -160,19 +238,16 @@ def _load_modules() -> bool:
                 sys.path.remove(str(xsi_path))
 
 
-# Trigger auto-install at import time
-xsi_avail = is_available()
+def __getattr__(name: str) -> Any:
+    """Lazy safety net for the names normally bound by ensure_available()/_load_modules().
 
-if xsi_avail is False:
-    raise FINNUserError("XSI not available. Please run 'finn deps update' to install XSI.")
-
-from finn_xsi.sim_engine import SimEngine  # noqa
-from finn_xsi.adapter import (  # noqa
-    locate_glbl,
-    compile_sim_obj,
-    get_simkernel_so,
-    load_sim_obj,
-    reset_rtlsim,
-    close_rtlsim,
-    rtlsim_multi_io,
-)
+    Normal FINN flows call ensure_available() once at boot (see run_finn.py's
+    prepare_finn() and tests/conftest.py's pytest_configure()), at which point
+    these names become plain module attributes and this hook is never consulted
+    again. It exists for ad hoc scripts/REPL usage that import finn.xsi without
+    going through FINN's usual startup path.
+    """
+    if name not in _LAZY_NAMES:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    ensure_available()
+    return getattr(sys.modules[__name__], name)
