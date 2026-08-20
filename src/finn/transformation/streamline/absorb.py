@@ -160,7 +160,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
 
                     # Set new bias and datatype attributes into the threshold
                     # operator
-                    threshold_op.set_nodeattr("out_bias", out_bias)
+                    threshold_op.set_nodeattr("out_bias", float(out_bias))
                     threshold_op.set_nodeattr("out_dtype", odt.name)
                     # Remove the bias operator and rewire the graph to skip the
                     # now-missing node

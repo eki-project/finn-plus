@@ -630,7 +630,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
 
     # Quantization layers (Quant nodes with scale=1, zeropt=0 or uniform MultiThreshold)
     model = apply_if_relevant(
-        model, ["Quant", "MultiThreshold"], to_hw.InferRequantLayer(), "quantization as requant"
+        model, ["Quant"], to_hw.InferRequantLayer(), "quantization as requant"
     )
 
     # Graph topology transformations (always check - not based on op_type)
