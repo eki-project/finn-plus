@@ -212,14 +212,14 @@ def _load_modules() -> bool:
         # subsequent access (including via __getattr__ below) is a plain,
         # fast attribute lookup - exactly like a normal eager import.
         module = sys.modules[__name__]
-        module.SimEngine = finn_xsi.sim_engine.SimEngine
-        module.locate_glbl = finn_xsi.adapter.locate_glbl
-        module.compile_sim_obj = finn_xsi.adapter.compile_sim_obj
-        module.get_simkernel_so = finn_xsi.adapter.get_simkernel_so
-        module.load_sim_obj = finn_xsi.adapter.load_sim_obj
-        module.reset_rtlsim = finn_xsi.adapter.reset_rtlsim
-        module.close_rtlsim = finn_xsi.adapter.close_rtlsim
-        module.rtlsim_multi_io = finn_xsi.adapter.rtlsim_multi_io
+        module.SimEngine = finn_xsi.sim_engine.SimEngine  # type: ignore
+        module.locate_glbl = finn_xsi.adapter.locate_glbl  # type: ignore
+        module.compile_sim_obj = finn_xsi.adapter.compile_sim_obj  # type: ignore
+        module.get_simkernel_so = finn_xsi.adapter.get_simkernel_so  # type: ignore
+        module.load_sim_obj = finn_xsi.adapter.load_sim_obj  # type: ignore
+        module.reset_rtlsim = finn_xsi.adapter.reset_rtlsim  # type: ignore
+        module.close_rtlsim = finn_xsi.adapter.close_rtlsim  # type: ignore
+        module.rtlsim_multi_io = finn_xsi.adapter.rtlsim_multi_io  # type: ignore
 
         return True
     except ImportError as e:

@@ -20,6 +20,7 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from typing import TYPE_CHECKING, Any, cast
 
 import finn.util.settings
+import finn.xsi
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import (
     NullablePath,
@@ -438,8 +439,6 @@ def prepare_finn(
     # Verify (and if needed, build/rebuild) XSI for the currently loaded Vivado
     # version now, once, before any parallel work (multiprocessing.Pool /
     # pytest-xdist workers) gets a chance to import finn.xsi transitively.
-    import finn.xsi
-
     finn.xsi.ensure_available()
 
     if "PYTHONPATH" not in os.environ:
