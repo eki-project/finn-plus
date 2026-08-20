@@ -7,7 +7,6 @@ import onnx
 import os
 import psutil
 import random
-import re
 import shlex
 import string
 import subprocess
@@ -45,6 +44,7 @@ from finn.util.basic import (
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 from finn.util.settings import get_settings
+from finn.util.slurmutil import get_slurm_cpus, get_slurm_mem_workers, parse_hosts_with_slots
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,50 +68,6 @@ class SimulationCommMode(str, Enum):
 
     # Hybrid mode: intra-node streams use SHM, border streams may use MPI.
     HYBRID_MPI = "hybrid_mpi"
-
-
-def _get_local_cores() -> int:
-    """Return the number of CPU cores available to this process."""
-    if hasattr(os, "sched_getaffinity"):
-        try:
-            return max(1, len(os.sched_getaffinity(0)))
-        except OSError:
-            pass
-    cpu_count = os.cpu_count()
-    return max(1, int(cpu_count) if cpu_count is not None else 1)
-
-
-def _parse_hosts_with_slots(raw: str | None) -> list[tuple[str, int]]:
-    """Parse a "host[:slots],host[:slots],..." string into (host, slots) pairs.
-
-    Hosts without an explicit slot count default to the local core count.
-    """
-    if raw is None or raw.strip() == "":
-        return [("localhost", _get_local_cores())]
-
-    hosts_with_slots: list[tuple[str, int]] = []
-    default_slots = _get_local_cores()
-    for entry in raw.split(","):
-        token = entry.strip()
-        if token == "":
-            continue
-        host = token
-        slots = default_slots
-        if ":" in token:
-            host_part, slot_part = token.split(":", 1)
-            host = host_part.strip()
-            try:
-                parsed_slots = int(slot_part.strip())
-                if parsed_slots > 0:
-                    slots = parsed_slots
-            except ValueError:
-                pass
-        if host != "":
-            hosts_with_slots.append((host, slots))
-
-    if len(hosts_with_slots) == 0:
-        return [("localhost", default_slots)]
-    return hosts_with_slots
 
 
 def distribute_mpi_ranks(
@@ -165,7 +121,7 @@ def distribute_mpi_ranks(
     if not need_recompute:
         return rank_map, worker_map, host_map
 
-    hosts_with_slots = _parse_hosts_with_slots(model.get_metadata_prop("sim_mpi_hosts"))
+    hosts_with_slots = parse_hosts_with_slots(model.get_metadata_prop("sim_mpi_hosts"))
     rank_map = {}
     worker_map = {}
     host_map = {}
@@ -1255,61 +1211,14 @@ class SimulationBuilder:
             return _f
 
         # Build sims in parallel
-        def _try_int(value: str | None) -> int | None:
-            """Cast value to int, return None if it fails or if value is None."""
-            if value is None:
-                return None
-            try:
-                parsed = int(value)
-            except ValueError:
-                return None
-            return parsed if parsed > 0 else None
-
-        def _parse_slurm_job_cpus_per_node(value: str | None) -> int | None:
-            """Return parse slurm job cpus per node."""
-            if value is None:
-                return None
-            # Example values: "16", "16(x2)", "16(x2),8"
-            first_chunk = value.split(",")[0].strip()
-            match = re.match(r"^(\d+)", first_chunk)
-            if match is None:
-                return None
-            parsed = int(match.group(1))
-            return parsed if parsed > 0 else None
-
-        def _get_slurm_cpus() -> int | None:
-            """Return slurm workers while considering cpu allocation."""
-            cpus_per_task = _try_int(os.environ.get("SLURM_CPUS_PER_TASK"))
-            if cpus_per_task is not None:
-                return cpus_per_task
-
-            cpus_on_node = _try_int(os.environ.get("SLURM_CPUS_ON_NODE"))
-            if cpus_on_node is not None:
-                return cpus_on_node
-
-            return _parse_slurm_job_cpus_per_node(os.environ.get("SLURM_JOB_CPUS_PER_NODE"))
-
-        def _get_slurm_mem_workers(cpus_alloc: int | None) -> int | None:
-            # SLURM memory env vars are in MB.
-            """Return number of slurm workers while considering memory allocation."""
-            mem_per_node_mb = _try_int(os.environ.get("SLURM_MEM_PER_NODE"))
-            if mem_per_node_mb is not None:
-                return max(1, mem_per_node_mb // (10 * 1024))  # 10GB per synthesis
-
-            mem_per_cpu_mb = _try_int(os.environ.get("SLURM_MEM_PER_CPU"))
-            if mem_per_cpu_mb is not None and cpus_alloc is not None:
-                return max(1, (mem_per_cpu_mb * cpus_alloc) // (10 * 1024))
-
-            return None
-
         slurm_detected = os.environ.get("SLURM_JOB_ID") is not None
         if slurm_detected:
-            cpus_alloc = _get_slurm_cpus()
+            cpus_alloc = get_slurm_cpus()
             if cpus_alloc is None:
                 cpus_alloc = 1
 
             if functional_sim:
-                mem_workers = _get_slurm_mem_workers(cpus_alloc)
+                mem_workers = get_slurm_mem_workers(cpus_alloc)
                 if mem_workers is not None:
                     synth_workers = max(1, min(cpus_alloc, mem_workers))
                 else:
