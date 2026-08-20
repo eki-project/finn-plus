@@ -37,7 +37,6 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
 from typing import TYPE_CHECKING, cast
 
-from finn.util.basic import getHWCustomOp
 from finn.util.exception import FINNInternalError, FINNUserError
 
 if TYPE_CHECKING:
@@ -172,16 +171,23 @@ class InferPool(Transformation):
                     odt = idt
                     pad_value = idt.min()
                 elif node.op_type == "QuantAvgPool2d":
-                    assert odt.is_integer(), """Output data type for QuantAvgPool2d
-                    needs to be integer"""
-                    assert all(x == 0 for x in pad), "Padding is not supported for QuantAvgPool2d"
-                    inst = cast("QuantAvgPool2d", getHWCustomOp(node))
+                    if not odt.is_integer():
+                        raise FINNUserError(
+                            f"{node.name}: Output data type for QuantAvgPool2d needs to be integer."
+                        )
+                    if any(x != 0 for x in pad):
+                        raise FINNUserError(
+                            f"{node.name}: Padding is not supported for QuantAvgPool2d."
+                        )
+                    inst = cast("QuantAvgPool2d", getCustomOp(node))
                     pool_fxn = "QuantAvgPool"
                     pool_size_param = inst.get_shifts()
                     accum_bits = inst.get_accum_size()
 
                 else:
-                    raise Exception(f"pad_value and pool_fxn not configured for {node.op_type}")
+                    raise FINNInternalError(
+                        f"{node.name}: pad_value and pool_fxn not configured for {node.op_type}"
+                    )
 
                 # format input tensor
                 im2col_node = helper.make_node(

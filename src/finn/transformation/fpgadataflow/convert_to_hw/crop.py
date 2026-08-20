@@ -105,8 +105,8 @@ class InferCrop(Transformation):
                     )
 
                 # assume that the indices input is an int64 scalar or array
-                indices = model.get_initializer(n.input[1])
-                if indices is None or indices == (None, None):
+                indices = cast("np.ndarray | None", model.get_initializer(n.input[1]))
+                if indices is None:
                     raise FINNUserError(f"{n.name}: Initializer for node not set on input 1.")
                 indices = cast("np.ndarray", indices)
                 if indices.dtype != np.int64:

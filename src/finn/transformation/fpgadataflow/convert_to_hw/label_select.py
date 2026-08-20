@@ -33,8 +33,12 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
+from typing import TYPE_CHECKING, cast
 
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNInternalError, FINNUserError
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 class InferLabelSelectLayer(Transformation):
@@ -74,9 +78,9 @@ class InferLabelSelectLayer(Transformation):
                 # create node with no parallelization first
                 pe = 1
 
-                if (k_in_shape := model.get_tensor_shape(k_input)) is None:
-                    raise FINNInternalError("Expected shape information to exit.")
-                k = k_in_shape[0]
+                if (k_init := cast("np.ndarray | None", model.get_initializer(k_input))) is None:
+                    raise FINNUserError(f"{node.name}: TopK k input must be a static initializer.")
+                k = int(k_init[0])
 
                 # create and insert new LabelSelect node
                 new_node = helper.make_node(

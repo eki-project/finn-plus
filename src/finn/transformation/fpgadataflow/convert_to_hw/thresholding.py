@@ -152,21 +152,21 @@ class InferThresholdingLayer(Transformation):
 
                 odt = model.get_tensor_datatype(thl_output)
                 scale = getCustomOp(node).get_nodeattr("out_scale")
-                assert scale == 1.0, (
-                    node.name + ": MultiThreshold out_scale must be 1 for HLS conversion."
-                )
+                if scale != 1.0:
+                    raise FINNUserError(
+                        f"{node.name}: MultiThreshold out_scale must be 1 for HLS conversion."
+                    )
                 actval = cast("float", getCustomOp(node).get_nodeattr("out_bias"))
-                assert int(actval) == actval, (
-                    node.name + ": MultiThreshold out_bias must be integer for HLS conversion."
-                )
+                if int(actval) != actval:
+                    raise FINNUserError(
+                        f"{node.name}: MultiThreshold out_bias must be integer for HLS conversion."
+                    )
                 actval = int(actval)
 
                 # a signed activation should always have a negative bias,
-                # but BIPOLAR uses the -1 as 0 encoding so the assert does not apply
-                if odt != DataType["BIPOLAR"]:
-                    assert (not odt.signed()) or (actval < 0), (
-                        node.name + ": Signed output requires actval < 0"
-                    )
+                # but BIPOLAR uses the -1 as 0 encoding so the check does not apply
+                if odt != DataType["BIPOLAR"] and odt.signed() and actval >= 0:
+                    raise FINNUserError(f"{node.name}: Signed output requires actval < 0")
 
                 new_node = helper.make_node(
                     "Thresholding",

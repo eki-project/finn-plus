@@ -93,7 +93,8 @@ class InferUnsqueeze(Transformation):
                         model.set_initializer(node.input[1], axes)
                         model.set_tensor_shape(node.input[1], axes.shape)
                     # Set axes attribute (used by older opsets) even if axes is provided as input
-                    inst.set_nodeattr("axes", list(axes))
+                    axes = [int(x) for x in axes]
+                    inst.set_nodeattr("axes", axes)
                 # Consider the graph to be modified, triggering exhaustive
                 # re-application of this transformation
                 graph_modified = True

@@ -38,7 +38,7 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.onnx import nchw_to_nhwc
 from typing import Literal, cast
 
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
 
@@ -102,7 +102,10 @@ class InferLayerNorm(Transformation):
 
                 # create node with no parallelization first
                 simd = 1
-                assert ch % simd == 0, "Requirement IFC divisable by PE is violated."
+                if ch % simd != 0:
+                    raise FINNInternalError(
+                        f"{node.name}: Requirement IFC divisible by PE is violated."
+                    )
                 # create and insert nodes
                 new_node = helper.make_node(
                     "LayerNorm",
