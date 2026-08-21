@@ -44,6 +44,7 @@ from qonnx.util.basic import qonnx_make_model
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
+from finn.builder.build_dataflow_config import ShellFlowType
 from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import make_build_dir
@@ -69,6 +70,7 @@ def test_fifosizing_linear(method, topology):
         output_dir=tmp_output_dir,
         auto_fifo_depths=True,
         auto_fifo_strategy=method,
+        shell_flow_type=ShellFlowType.VIVADO_ZYNQ,
         target_fps=10000 if topology == "tfc" else 1000,
         synth_clk_period_ns=10.0,
         board="Pynq-Z1",

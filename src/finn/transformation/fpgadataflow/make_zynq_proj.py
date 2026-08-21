@@ -589,9 +589,11 @@ class MakeZYNQProject(Transformation):
         deploy_bitfile_name = vivado_pynq_proj_dir + "/resizer.bit"
         copy(bitfile_name, deploy_bitfile_name)
 
-        # set bitfile attribute (device - path mapping to be in sync with the alveo flow,
-        # which needs to support multiple bitstream output files due to Multi-FPGA
         model.set_metadata_prop("bitfile", deploy_bitfile_name)
+
+        # Store in bitfile_output as well, for compatability reasons
+        model.set_metadata_prop("bitfile_output", deploy_bitfile_name)
+
         hwh_name_alts = [
             vivado_pynq_proj_dir + "/finn_zynq_link.srcs/sources_1/bd/top/hw_handoff/top.hwh",
             vivado_pynq_proj_dir + "/finn_zynq_link.gen/sources_1/bd/top/hw_handoff/top.hwh",
@@ -629,7 +631,7 @@ class ZynqBuild(Transformation):
         instrumentation_no_dma=False,
         instrumentation_avg_n=64,
         live_fifo_sizing=False,
-        partition_model_dir=None,
+        partition_model_dir: Path | str | None = None,
     ):
         """Initialize ZynqBuild with platform and build settings."""
         super().__init__()
@@ -642,7 +644,9 @@ class ZynqBuild(Transformation):
         self.instrumentation_no_dma = instrumentation_no_dma
         self.instrumentation_avg_n = instrumentation_avg_n
         self.live_fifo_sizing = live_fifo_sizing
-        self.partition_model_dir = partition_model_dir
+        self.partition_model_dir = (
+            str(partition_model_dir) if partition_model_dir is not None else None
+        )
 
     def apply(self, model):
         """Apply the ZynqBuild transformation to create a complete Zynq accelerator."""

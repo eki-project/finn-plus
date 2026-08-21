@@ -561,7 +561,7 @@ class BuildBasicVitisLinkConfig(Transformation):
                 f"Stopping."
             )
 
-        # Multi-FPGA
+        # Create a config for every device
         for node in model.graph.node:
             device = get_device_id(node)
             assert device is not None
@@ -641,6 +641,10 @@ class BuildBasicVitisLinkConfig(Transformation):
             else:
                 configs[current_device].add_cu(node.name, node.name)
                 cu_names[node.name] = node.name
+
+            # Initialize IO count for every node
+            cu_inputs[node.name] = 0
+            cu_outputs[node.name] = 0
 
         if total_idmas > 1 or total_odmas > 1:
             log.warning("Multiple IODMAs were detected. Support for this is experimental.")
