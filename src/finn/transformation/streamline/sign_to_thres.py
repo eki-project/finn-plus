@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for sign to thres."""
 import numpy as np
 from onnx import helper as oh
 from qonnx.core.datatype import DataType
@@ -36,6 +37,7 @@ class ConvertSignToThres(Transformation):
     """Convert Sign node instances to MultiThreshold with threshold at 0."""
 
     def apply(self, model):
+        """Apply transformation."""
         graph = model.graph
         graph_modified = False
         node_ind = 0

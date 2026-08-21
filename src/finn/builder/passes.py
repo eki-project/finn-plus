@@ -19,7 +19,7 @@ from onnx_passes.ops import DOMAIN as CUSTOM_DOMAIN
 from onnx_passes.ops import inject_custom_ops
 
 # Make custom Im2Col operator available for convolution lowering
-from onnx_passes.ops.im2col import Im2Col  # noqa: Used indirectly via registry
+from onnx_passes.ops.im2col import Im2Col  # noqa # noqa: Used indirectly via registry
 from onnx_passes.ops.qonnx import DOMAIN as QONNX_DOMAIN
 
 # Collects named passes from the ONNX Passes registry
@@ -41,8 +41,6 @@ from qonnx.core.modelwrapper import ModelWrapper
 from finn.builder.build_dataflow_config import DataflowBuildConfig, VerificationStepType
 
 # Makes custom QONNX import and inlining passes available
-import onnx_passes.passes.imports.qonnx  # isort:skip # noqa: Used indirectly via registry
-import onnx_passes.passes.inline.qonnx  # isort:skip # noqa: Used indirectly via registry
 
 
 def _make_pass_config(cfg: DataflowBuildConfig):
@@ -94,7 +92,6 @@ def _make_pass_config(cfg: DataflowBuildConfig):
 
 def _apply_passes(model: ir.Model, passes: list[str], cfg: dict, state: dict):
     """Resolves and applies the list of passes to the ONNX model."""
-
     # Collect and instantiate all ONNX IR passes from the sequence by name and
     # connect each pass to the shared configuration and state dictionary
     passes = [cls(cfg, state) for cls in collect(passes)]
@@ -109,7 +106,6 @@ def _apply_passes(model: ir.Model, passes: list[str], cfg: dict, state: dict):
 
 def prepare(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Prepares a model to be processed by ONNX Passes."""
-
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
@@ -126,7 +122,6 @@ def prepare(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
 def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Applies ONNX Passes inlining transformations."""
-
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
@@ -157,7 +152,6 @@ def inline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
 def streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Applies ONNX Passes streamlining transformations."""
-
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
@@ -176,12 +170,10 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
 
     def pattern(self, op, x, thresholds, weights):
         """Target pattern to match."""
-
         return op.MultiThreshold(x, thresholds, weights, _domain=CUSTOM_DOMAIN)
 
     def check(self, op, x, thresholds, weights):
         """Match condition."""
-
         # Threshold parameter tensors must be constant, otherwise compatibility
         # with FINN cannot be checked...
         # TODO: Extend this to support non-constant thresholds to support
@@ -204,7 +196,6 @@ class _ExportThresholdsToFINN(Transformation, RewriteRulePass):
 
     def rewrite(self, op, x, thresholds, weights):
         """Replacement pattern."""
-
         # Remove leading dimensions from the thresholds parameter tensor as
         # expected by QONNX
         thresholds = ir.convenience.get_const_tensor(thresholds).numpy()
@@ -247,7 +238,6 @@ class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
 
     def pattern(self, op, x, indices, dilations, kernel_shape, strides):
         """Target pattern to match."""
-
         return op.Im2Col(
             # Proper input and auxiliary index input holding the access pattern
             x,
@@ -262,14 +252,12 @@ class _ExportIm2ColToFINN(Transformation, RewriteRulePass):
 
     def check(self, op, x, indices, dilations, kernel_shape, strides):
         """Match condition."""
-
         # QONNX needs statically annotated input shape as this will be turned
         # into an attribute of the node
         return x.shape is not None and x.shape.is_static()
 
     def rewrite(self, op, x, indices, dilations, kernel_shape, strides):
         """Replacement pattern."""
-
         # Convert attributes to format required by QONNX
         attributes = {
             # TODO: Apparently QONNX needs the shape as a string...
@@ -297,7 +285,6 @@ def _export_im2col_to_finn(model: ir.Model):
 
 def _infer_qonnx_datatypes(model: ModelWrapper):
     """Adds QONNX datatypes to a model by inferring types from values."""
-
     # Try inferring new datatype annotations for all tensors in the model
     for name in model.get_all_tensor_names():
         # Only apply datatype inference on initializer tensors, for all other
@@ -318,7 +305,6 @@ def _infer_qonnx_datatypes(model: ModelWrapper):
 
 def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Converts the model back to the FINN compatible format."""
-
     # Deserialize ONNX proto representation wrapped by QONNX to ONNX IR format
     model = ir.from_proto(model.model)
 
@@ -359,7 +345,6 @@ def export(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
 
 def step_passes_frontend(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Meta build step calling the ONNX Passes steps in the expected order."""
-
     model = prepare(model, cfg)
     model = inline(model, cfg)
     model = streamline(model, cfg)

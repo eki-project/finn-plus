@@ -57,13 +57,13 @@ def edit_file(p: Path) -> None:
 
 def output(f: Callable) -> Callable[..., Any]:
     """Add a click parameter named --output (-o) that defaults to
-    None if the param is empty, and a path otherwise."""  # noqa
+    None if the param is empty, and a path otherwise."""
     return click.option("--output", "-o", "output", default="", type=NullablePath())(f)
 
 
 def finn_deps(f: Callable) -> Callable[..., Any]:
     """Add a click parameter named --dependency-path (-d) (finn_deps) that defaults to
-    None if the param is empty, and a path otherwise."""  # noqa
+    None if the param is empty, and a path otherwise."""
     return click.option("--dependency-path", "-d", "finn_deps", default="", type=NullablePath())(f)
 
 
@@ -77,7 +77,7 @@ def finn_deps_definitions(f: Callable) -> Callable[..., Any]:
 
 def finn_build_dir(f: Callable) -> Callable[..., Any]:
     """Add a click parameter named --build-path (-b) (finn_build_dir) that defaults to
-    None if the param is empty, and a path otherwise."""  # noqa
+    None if the param is empty, and a path otherwise."""
     return click.option(
         "--build-path",
         "-b",
@@ -465,17 +465,6 @@ def prepare_finn(
         error(f"FINN ERROR: {e}")
         sys.exit(1)
 
-    # Even if we dont update deps, we still need to make xsi available
-    finn_xsi = Path(resolve_module_path("finn_xsi"))
-    os.environ["FINN_XSI"] = str(finn_xsi)
-    finn_xsi_so = finn_xsi / "xsi.so"
-    if not finn_xsi_so.exists():
-        error(f"finn_xsi was not found at {finn_xsi}")
-        sys.exit(1)
-    status(f"Loading finn_xsi from {finn_xsi}")
-    os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finn_xsi.absolute()}"
-    sys.path.append(str(finn_xsi))
-
     # Check synthesis tools
     set_synthesis_tools_paths()
 
@@ -603,9 +592,7 @@ def _build(
             sys.exit(1)
         else:
             model = mp
-    status(
-        f"Starting FINN build with config {flow_config.name} and model " f"{model.name}!"
-    )  # type: ignore
+    status(f"Starting FINN build with config {flow_config.name} and model {model.name}!")
     if finn_build_dir is not None:
         finn_build_dir = finn_build_dir.expanduser().absolute()
         finn_build_dir.mkdir(parents=True, exist_ok=True)
@@ -644,7 +631,7 @@ def _build(
         )
         sys.exit(1)
     except FileNotFoundError:
-        error(f"The flow configuration file could not be found at " f"{flow_config}.")
+        error(f"The flow configuration file could not be found at {flow_config}.")
         sys.exit(1)
 
     if dfbc is None:
@@ -941,7 +928,7 @@ def bench(
     # Late import because we need prepare_finn to setup remaining dependencies first
     from finn.benchmarking.bench import start_bench_run
 
-    exit_code = start_bench_run(bench_config)
+    exit_code = start_bench_run(str(bench_config))
     sys.exit(exit_code)
 
 
@@ -1046,13 +1033,8 @@ def update(
         flow_config=Path(),
         **get_function_args(),
     )
-    if force:
-        if settings.finn_deps.exists():
-            shutil.rmtree(settings.finn_deps)
-        finnxsi = resolve_module_path("finn_xsi")
-        so = Path(finnxsi) / "xsi.so"
-        if so.exists():
-            so.unlink()
+    if force and settings.finn_deps.exists():
+        shutil.rmtree(settings.finn_deps)
     prepare_finn(settings, accept_defaults or batch, batch, create_build_dir=False)
 
 

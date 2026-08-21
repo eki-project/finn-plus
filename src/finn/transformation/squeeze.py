@@ -36,8 +36,7 @@ from .util import is_attention, is_threshold
 
 
 class Squeeze(Transformation):
-    """
-    Squeezes, i.e., removes, dimensions of size 1
+    """Squeezes, i.e., removes, dimensions of size 1
     Note: Use this transformation with great care, it currently serves only the
     purpose of turning the not well-supported 3d data layouts encountered in
     transformer models with batch dimension of size 1 into 2d data layouts where
@@ -149,7 +148,7 @@ class Squeeze(Transformation):
             # Need to squeeze the number of inputs to multi-head splitting
             if node.op_type == "SplitMultiHeads":
                 # Get number of input feature maps to the merging operation
-                num_inputs = get_by_name(node.attribute, "num_inputs")  # noqa
+                num_inputs = get_by_name(node.attribute, "num_inputs")
                 # Squeeze all dimensions of size 1
                 new_num_inputs = [size for size in num_inputs.ints if size != 1]
                 # Update the attribute by removing and reinserting
@@ -191,7 +190,7 @@ class Squeeze(Transformation):
                 # Set squeezed mode attribute
                 node.attribute.append(oh.make_attribute("squeezed", True))
                 # Get number of input feature maps to the merging operation
-                num_inputs = get_by_name(node.attribute, "num_inputs")  # noqa
+                num_inputs = get_by_name(node.attribute, "num_inputs")
                 # Squeeze all dimensions of size 1
                 new_num_inputs = [size for size in num_inputs.ints if size != 1]
                 # Update the attribute by removing and reinserting
@@ -438,7 +437,7 @@ class Squeeze(Transformation):
         # model graph
         model = model.transform(InferShapes())
         model = model.transform(InferDataTypes())
-        model = model.transform((InferDataLayouts()))
+        model = model.transform(InferDataLayouts())
         # Return the transformed model and indicate whether this transformation
         # needs to be repeated
         # Note: Never repeat this transformation as it might break when

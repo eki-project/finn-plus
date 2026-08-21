@@ -1030,7 +1030,7 @@ if __name__ == "__main__":
                     # wrap in list
                     configuration[key] = [metadata_bench["params"][key]]
                 # overwrite FIFO-related params
-                configuration["live_fifo_sizing"] = [False]
+                # configuration["live_fifo_sizing"] = [False]
                 configuration["auto_fifo_depths"] = [False]
                 configuration["target_fps"] = ["None"]
                 configuration["folding_config_file"] = [folding_config_lfs_path]

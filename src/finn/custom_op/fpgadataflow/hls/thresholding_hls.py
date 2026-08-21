@@ -774,36 +774,6 @@ class Thresholding_hls(Thresholding, HLSBackend):
         """
         return ["config_compile -pipeline_style frp"]
 
-    def derive_characteristic_fxns(
-        self, period: int, override_rtlsim_dict: dict | None = None  # noqa: ARG002
-    ) -> None:
-        """Derive characteristic functions for performance estimation.
-
-        Parameters
-        ----------
-        period : int
-            Clock period in nanoseconds
-        override_rtlsim_dict : dict | None
-            Optional dictionary to override RTL simulation parameters.
-
-        Returns
-        -------
-        None
-        """
-        n_inps = np.prod(self.get_folded_input_shape()[:-1])
-        io_dict = {
-            "inputs": {
-                "in0": [0 for i in range(n_inps)],
-            },
-            "outputs": {"out0": []},
-        }
-        mem_mode = self.get_nodeattr("mem_mode")
-        if mem_mode in ["internal_decoupled", "external"]:
-            n_weight_inps = self.calc_tmem()
-            num_w_reps = np.prod(self.get_nodeattr("numInputVectors"))
-            io_dict["inputs"]["in1"] = [0 for i in range(num_w_reps * n_weight_inps)]
-        super().derive_characteristic_fxns(period, override_rtlsim_dict=io_dict)
-
     def minimize_weight_bit_width(self, model):
         """Minimize threshold datatype, with HLS-specific adjustments.
 

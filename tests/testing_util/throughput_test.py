@@ -35,7 +35,6 @@ from finn.core.rtlsim_exec import rtlsim_exec
 def throughput_test_rtlsim(model, clk_ns, batchsize=100):
     """Runs a throughput test for the given IP-stitched model. When combined
     with tracing, useful to determine bottlenecks and required FIFO sizes."""
-
     assert (
         model.get_metadata_prop("exec_mode") == "rtlsim"
     ), """Top-level exec_mode

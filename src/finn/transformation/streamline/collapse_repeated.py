@@ -27,6 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # Helper for creating ONNX nodes
+"""Module for collapsing repeated operations."""
 from onnx import helper as oh
 
 # QONNX arbitrary precision data types
@@ -51,11 +52,13 @@ class CollapseRepeatedOp(Transformation):
     return a tensor which gives the equivalent result using a single op."""
 
     def __init__(self, op_name, make_collapsed_param_fxn):
+        """Initialize instance."""
         super().__init__()
         self.op_name = op_name
         self.make_collapsed_param_fxn = make_collapsed_param_fxn
 
     def apply(self, model):
+        """Apply transformation."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -111,6 +114,7 @@ class CollapseRepeatedAdd(CollapseRepeatedOp):
     """Collapse repeated adder node into a single operation."""
 
     def __init__(self):
+        """Initialize instance."""
         super().__init__("Add", lambda x, y: y + x)
 
 
@@ -118,6 +122,7 @@ class CollapseRepeatedMul(CollapseRepeatedOp):
     """Collapse repeated multiplier node into a single operation."""
 
     def __init__(self):
+        """Initialize instance."""
         super().__init__("Mul", lambda x, y: y * x)
 
 
@@ -125,8 +130,11 @@ class CollapseRepeatedMul(CollapseRepeatedOp):
 # having the same effect
 class CollapseRepeatedTranspose(Transformation):
     # Applies the transform to a whole model graph
+    """Transformation for collapsing repeated Transpose operations."""
+
     def apply(self, model: ModelWrapper):  # noqa
         # Get the model graph out of the model wrapper object
+        """Apply transformation."""
         graph = model.graph
         # Keep track of whether the graph has been modified
         graph_modified = False

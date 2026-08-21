@@ -41,6 +41,7 @@ from qonnx.custom_op.general import im2col
 from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
+from typing import Literal
 
 from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
@@ -280,8 +281,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
                 cascade_savings = ram_cascade_width - remainder_cascade_width
 
             return int((ram_cascade_depth * ram_cascade_width - cascade_savings) * buffer_count)
-        else:
-            return 0
+        return 0
 
     def lut_estimation(self):
         """Estimate LUT resource usage.
@@ -333,8 +333,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             ram_cascade_depth = math.ceil(buffer_depth / ram_depth)
             ram_cascade_width = math.ceil(buffer_width / ram_width)
             return int(ram_cascade_depth * ram_cascade_width * buffer_count)
-        else:
-            return 0
+        return 0
 
     def execute_node(self, context, graph):
         """Execute this ConvolutionInputGenerator node.
@@ -766,18 +765,14 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         code_gen_dict["$GENERATE_OUTPUT_MAPPING$"] = []
         out_idx = mmv_out - 1
         for fifo_id, reg_fifo in enumerate(reg_fifos):
-            for fifo_idx, access_idx in enumerate(reg_fifo):
+            for _fifo_idx, access_idx in enumerate(reg_fifo):
                 if access_idx != -1:
                     code_gen_dict["$GENERATE_OUTPUT_MAPPING$"].append(
-                        """assign data_out[OUT_ELEM_WIDTH*{out_idx}+:OUT_ELEM_WIDTH]
-                        = reg_fifo_{fifo_id}[{access_idx}*{mmv}*OUT_ELEM_WIDTH+
-                        OUT_ELEM_WIDTH*{mmv_idx}+:OUT_ELEM_WIDTH];""".format(
-                            out_idx=out_idx,
-                            fifo_id=fifo_id,
-                            access_idx=len(reg_fifo) - 1 - int((max(reg_fifo) - access_idx) / M),
-                            mmv_idx=(max(reg_fifo) - access_idx) % M,
-                            mmv=M,
-                        )
+                        f"""assign data_out[OUT_ELEM_WIDTH*{out_idx}+:OUT_ELEM_WIDTH]
+                        = reg_fifo_{fifo_id}[
+                        {len(reg_fifo) - 1 - int((max(reg_fifo) - access_idx) / M)}
+                        *{M}*OUT_ELEM_WIDTH+
+                        OUT_ELEM_WIDTH*{(max(reg_fifo) - access_idx) % M}+:OUT_ELEM_WIDTH];"""
                     )
                     # reversal: out_idx=0 -> oldest buffer element -> highest access_idx
                     out_idx = out_idx - 1
@@ -788,31 +783,25 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             if i == 0:
                 # first FIFO containing newest elements -> input comes from input reg
                 code_gen_dict["$GENERATE_BUFFER_CONNECTION$"].append(
-                    """assign reg_fifo_{fifo_id}_in = data_in;""".format(
-                        fifo_id=i,
-                    )
+                    f"""assign reg_fifo_{i}_in = data_in;"""
                 )
             else:
                 # other REG FIFOs -> input comes from connected BRAM FIFO (line buffer)
                 input_fifo_id = i - 1
                 code_gen_dict["$GENERATE_BUFFER_CONNECTION$"].append(
-                    """assign reg_fifo_{fifo_id}_in = bram_fifo_{input_fifo_id}_out;
-                    """.format(
-                        fifo_id=i, input_fifo_id=input_fifo_id
-                    )
+                    f"""assign reg_fifo_{i}_in = bram_fifo_{input_fifo_id}_out;
+                    """
                 )
         for i in range(len(bram_fifos_depth)):
             input_fifo_id = i
             code_gen_dict["$GENERATE_BUFFER_CONNECTION$"].append(
-                """assign bram_fifo_{fifo_id}_in = reg_fifo_{input_fifo_id}_out;
-                """.format(
-                    fifo_id=i, input_fifo_id=input_fifo_id
-                )
+                f"""assign bram_fifo_{i}_in = reg_fifo_{input_fifo_id}_out;
+                """
             )
 
         return template_path, code_gen_dict
 
-    def select_impl_style(self):
+    def select_impl_style(self) -> Literal["parallel", "default"]:
         """Select implementation style based on folding configuration."""
         simd = self.get_nodeattr("SIMD")
         M = self.get_nodeattr("M")
@@ -889,19 +878,19 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             str(roundup_to_integer_multiple(self.get_outstream_width(), 8))
         ]
         ram_style = self.get_nodeattr("ram_style")
-        code_gen_dict["$RAM_STYLE$"] = ['"{}"'.format(ram_style)]
+        code_gen_dict["$RAM_STYLE$"] = [f'"{ram_style}"']
 
         # apply code generation to templates
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template = f.read()
         if self.get_nodeattr("dynamic_mode"):
             template_select = "swg/swg_template_wrapper_dynamic.v"
         else:
             template_select = "swg/swg_template_wrapper.v"
-        with open(os.path.join(get_settings().finn_rtllib, template_select), "r") as f:
+        with open(os.path.join(get_settings().finn_rtllib, template_select)) as f:
             template_wrapper = f.read()
-        with open(os.path.join(get_settings().finn_rtllib, "swg/swg_template_axilite.v"), "r") as f:
+        with open(os.path.join(get_settings().finn_rtllib, "swg/swg_template_axilite.v")) as f:
             template_axilite = f.read()
         for key in code_gen_dict:
             # transform list into long string separated by '\n'

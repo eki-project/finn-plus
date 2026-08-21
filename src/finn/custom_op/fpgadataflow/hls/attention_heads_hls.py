@@ -2,18 +2,19 @@
 # Disable formatter. This is deliberately formatted to stay within 80 characters
 # per line. Black, however, formats some lines going beyond this.
 
+"""HLS backend specializations for attention head split/merge ops."""
+
 # Numpy math and arrays
 import numpy as np
 
 # Operating system stuff, e.g. paths
 import os
 
+# The generic HW custom operator version of the operator as a base class
+from finn.custom_op.fpgadataflow.attention_heads import MergeMultiHeads, SplitMultiHeads
+
 # Base class for specializing HW operators as implemented via HLS
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-# The generic HW custom operator version of the operator as a base class
-from finn.custom_op.fpgadataflow.attention_heads import (  # noqa
-    MergeMultiHeads, SplitMultiHeads
-)
 
 
 # HLS Backend specialization of the multi-head attention splitting operator
@@ -21,8 +22,11 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
     # CapWords convention
     SplitMultiHeads, HLSBackend
 ):
+    """HLS backend implementation for splitting attention heads."""
+
     # Node attributes matching the HLS operator
     def get_nodeattr_types(self):
+        """Return attribute definitions including HLS backend settings."""
         # Start from parent operator class attributes
         attrs = SplitMultiHeads.get_nodeattr_types(self)
         # Add the HLSBackend default attributes on top
@@ -33,8 +37,9 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
 
     # Executes multi-head splitting in C++ simulation
     def _execute_node_cppsim(self, context, graph):  # noqa: graph unused
-        # Get the node wrapped by this custom op  # noqa Duplicate
-        node = self.onnx_node   # noqa Duplicate
+        """Execute the operator using the precompiled C++ simulation."""
+        # Get the node wrapped by this custom op
+        node = self.onnx_node
         # Input data is stored in numpy files in the code generation dictionary
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         # Get the input out of the execution context
@@ -60,13 +65,14 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
 
     # Maximum width of any ap_int used in this operator
     def get_ap_int_max_w(self):
+        """Return the maximum ap_int width used by this operator."""
         # Find the widths of the widest input
         # Note: There is just one input.
         i_bits_max = self.get_instream_width(ind=0)
         # Find the widths of the widest output
         # Note: there is one output per head
         o_bits_max = max(
-            (self.get_outstream_width(ind) for ind in range(self.heads))
+            self.get_outstream_width(ind) for ind in range(self.heads)
         )
         # Find the biggest of the inputs/outputs
         return max([i_bits_max, o_bits_max])
@@ -76,11 +82,13 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
     # Generates list of C++ includes to be placed at the top of the generated
     # code
     def global_includes(self):
+        """Populate global C++ includes for code generation."""
         # Currently nothing to include
         self.code_gen_dict["$GLOBALS$"] = []
 
     # Generates C++ code of type alias, global constant and macro definitions
     def defines(self, var):
+        """Emit C++ type aliases and constant definitions."""
         # Insert constants and type aliases into the dictionary
         self.code_gen_dict["$DEFINES$"] = [
             # Input and output element datatypes
@@ -102,6 +110,7 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
     # Generates C++ code for reading data from .npy (numpy format) for testing
     # in C++ simulation
     def read_npy_data(self):
+        """Emit C++ code to read numpy input data for cppsim."""
         # Input data is stored in numpy files in the code generation dictionary
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         # Generate function calls for reading the input files into the input
@@ -117,6 +126,7 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
     # Generates C++ code for declaring all streams involved in C++ simulation
     # for testing
     def strm_decl(self):
+        """Emit C++ stream declarations for cppsim."""
         # Declare input and output streams
         # Note: Assumes stream type aliases to be set in defines
         self.code_gen_dict["$STREAMDECLARATIONS$"] = [
@@ -128,14 +138,17 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
 
     # Generates C++ code for calling the computation part of the operator
     def docompute(self):
+        """Emit C++ compute loop for head splitting."""
         # Generates the bit-slicing indices string for the ith split of the
         # input
         def split(i):
+            """Return the C++ bit-slice for the i-th head."""
             # Assemble a C++ indexing/bit-slicing string
             return f"({i + 1} * OPacked::width - 1, {i} * OPacked::width)"
 
         # Generates the name of the ith output stream
         def out(i):
+            """Return the name of the i-th output stream."""
             return f"out{i}_{self.hls_sname()}"
 
         # Write the body of the head-splitting top-level function
@@ -151,13 +164,14 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
             # output elements per head and write into the corresponding stream
             *(f"{out(i)}.write(x{split(i)});" for i in range(self.heads)),
             # End of for-loop over repetitions body
-            f"}}"  # noqa: f-string symmetry
+            "}"  # noqa: f-string symmetry
         ]
 
     # Generates C++ code for reading the output stream and converting back to
     # numpy format for testing in C++ simulation
     def dataoutstrm(self):
-        # Output data will be stored in numpy files in the  # noqa Duplicate
+        """Emit C++ code to write output streams to numpy files."""
+        # Output data will be stored in numpy files in the
         # code generation dictionary
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         # Get the expected shape of the folded output array formatted as a C++
@@ -165,12 +179,13 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
         # Note: Valid formatting relies on correct placement of curly braces
         # and line breaks: Open/close all three braces on the same line of code
         # to avoid '\n' to be inserted into the string
-        shape = f"""{{{','.join((str(i) for i in self.get_folded_output_shape()))}}}"""
+        shape = f"""{{{','.join(str(i) for i in self.get_folded_output_shape())}}}"""
         # Start collecting function calls to write the output data stream
         self.code_gen_dict["$DATAOUTSTREAM$"] = []
 
         # Generates the name of the ith output stream
         def out(i):
+            """Return the name of the i-th output stream."""
             return f"out{i}_{self.hls_sname()}"
 
         # Generate code for each output stream
@@ -188,6 +203,7 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
     # Generates C++ code for saving the output of C++ simulation to a file in
     # numpy format
     def save_as_npy(self):
+        """Emit C++ code for saving outputs as numpy (unused)."""
         # Note: This seems to be empty in ALL HLSCustomOps. Probably it was used
         # for something before, which is now integrated into dataoutstrm()?
         self.code_gen_dict["$SAVEASCNPY$"] = []
@@ -195,6 +211,7 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
     # Generates essentially the head of the C++ function from which the IP block
     # will be generated during ipgen, i.e. actual synthesis
     def blackboxfunction(self):
+        """Emit the top-level HLS function signature."""
         # Insert function head describing the top level interface of the head
         # splitting operator
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
@@ -214,6 +231,7 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
     # Generates C++ pragmas to be inserted into the main function of the C++
     # simulation and the ipgen-blackboxfunction as well
     def pragmas(self):
+        """Emit HLS pragmas for interface synthesis."""
         # Add HLS interface directives specifying how to create RTL ports for
         # the top-level function arguments
         self.code_gen_dict["$PRAGMAS$"] = [
@@ -233,9 +251,10 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
 
     # Returns the names of input and output interfaces grouped by protocol
     def get_verilog_top_module_intf_names(self):
-        # Start collecting interface names in a dictionary  # noqa Duplicate
+        """Return interface names grouped by protocol."""
+        # Start collecting interface names in a dictionary
         # starting with clock and reset
-        intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}  # noqa
+        intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}
         # AXI stream input interfaces
         intf_names["s_axis"] = [
             # Just one input stream
@@ -260,8 +279,11 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
     # CapWords convention
     MergeMultiHeads, HLSBackend
 ):
+    """HLS backend implementation for merging attention heads."""
+
     # Node attributes matching the HLS operator
     def get_nodeattr_types(self):
+        """Return attribute definitions including HLS backend settings."""
         # Start from parent operator class attributes
         attrs = MergeMultiHeads.get_nodeattr_types(self)
         # Add the HLSBackend default attributes on top
@@ -272,6 +294,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
 
     # Executes multi-head slicing in C++ simulation
     def _execute_node_cppsim(self, context, graph):  # noqa: graph unused
+        """Execute the operator using the precompiled C++ simulation."""
         # Get the node wrapped by this custom op
         node = self.onnx_node
         # Input data is stored in numpy files in the code generation dictionary
@@ -302,13 +325,14 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
 
     # Maximum width of any ap_int used in this operator
     def get_ap_int_max_w(self):
+        """Return the maximum ap_int width used by this operator."""
         # Find the widths of the widest input
         # Note: There is just one input.
         i_bits_max = self.get_instream_width(ind=0)
         # Find the widths of the widest output
         # Note: there is one output per head
         o_bits_max = max(
-            (self.get_outstream_width(ind) for ind in range(self.heads))
+            self.get_outstream_width(ind) for ind in range(self.heads)
         )
         # Find the biggest of the inputs/outputs
         return max([i_bits_max, o_bits_max])
@@ -318,11 +342,13 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
     # Generates list of C++ includes to be placed at the top of the generated
     # code
     def global_includes(self):
+        """Populate global C++ includes for code generation."""
         # Currently nothing to include
         self.code_gen_dict["$GLOBALS$"] = []
 
     # Generates C++ code of type alias, global constant and macro definitions
     def defines(self, var):
+        """Emit C++ type aliases and constant definitions."""
         # Insert constants and type aliases into the dictionary
         self.code_gen_dict["$DEFINES$"] = [
             # Input and output element datatypes
@@ -344,6 +370,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
     # Generates C++ code for reading data from .npy (numpy format) for testing
     # in C++ simulation
     def read_npy_data(self):
+        """Emit C++ code to read numpy input data for cppsim."""
         # Input data is stored in numpy files in the code generation dictionary
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         # Generate function calls for reading the input files into the input
@@ -363,6 +390,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
     # Generates C++ code for declaring all streams involved in C++ simulation
     # for testing
     def strm_decl(self):
+        """Emit C++ stream declarations for cppsim."""
         # Declare input and output streams
         # Note: Assumes stream type aliases to be set in defines
         self.code_gen_dict["$STREAMDECLARATIONS$"] = [
@@ -374,6 +402,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
 
     # Generates C++ code for calling the computation part of the operator
     def docompute(self):
+        """Emit C++ compute loop for head merging."""
         reversed_reads = ", ".join([
             f"in{i}_{self.hls_sname()}.read()"
             for i in reversed(range(self.heads))
@@ -397,6 +426,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
     # Generates C++ code for reading the output stream and converting back to
     # numpy format for testing in C** simulation
     def dataoutstrm(self):
+        """Emit C++ code to write output streams to numpy files."""
         # Output data will be stored in numpy files in the code generation
         # dictionary
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
@@ -405,7 +435,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
         # Note: Valid formatting relies on correct placement of curly braces
         # and line breaks: Open/close all three braces on the same line of code
         # to avoid '\n' to be inserted into the string
-        shape = f"""{{{','.join((str(i) for i in self.get_folded_output_shape()))}}}"""
+        shape = f"""{{{','.join(str(i) for i in self.get_folded_output_shape())}}}"""
         # Generate function call for reading from the output stream into the
         # output file
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
@@ -419,6 +449,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
     # Generates C++ code for saving the output of C++ simulation to a file in
     # numpy format
     def save_as_npy(self):
+        """Emit C++ code for saving outputs as numpy (unused)."""
         # Note: This seems to be empty in ALL HLSCustomOps. Probably it was used
         # for something before, which is now integrated into dataoutstrm()?
         self.code_gen_dict["$SAVEASCNPY$"] = []
@@ -426,6 +457,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
     # Generates essentially the head of the C++ function from which the IP block
     # will be generated during ipgen, i.e. actual synthesis
     def blackboxfunction(self):
+        """Emit the top-level HLS function signature."""
         # Insert function head describing the top level interface of the head
         # splitting operator
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
@@ -445,6 +477,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
     # Generates C++ pragmas to be inserted into the main function of the C++
     # simulation and the ipgen-blackboxfunction as well
     def pragmas(self):
+        """Emit HLS pragmas for interface synthesis."""
         # Add HLS interface directives specifying how to create RTL ports for
         # the top-level function arguments
         self.code_gen_dict["$PRAGMAS$"] = [
@@ -464,9 +497,10 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
 
     # Returns the names of input and output interfaces grouped by protocol
     def get_verilog_top_module_intf_names(self):
+        """Return interface names grouped by protocol."""
         # Start collecting interface names in a dictionary starting with clock
         # and reset
-        intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}  # noqa
+        intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}
         # AXI stream input interfaces
         intf_names["s_axis"] = [
             # One input stream per head

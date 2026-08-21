@@ -27,36 +27,45 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for prepare cppsim."""
 import copy
 import multiprocessing as mp
-import os
-import qonnx.custom_op.registry as registry
+from onnx import NodeProto
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_num_default_workers
+from typing import TYPE_CHECKING, Literal, cast
 
-from finn.util.basic import make_build_dir
+from finn.util.basic import getHWCustomOp, make_build_dir
+from finn.util.exception import FINNUserError
 from finn.util.fpgadataflow import is_hls_node
 
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 
-def _codegen_single_node(node, model):
-    """Calls C++ code generation for one node. Resulting code can be used
+
+def _codegen_single_node(node: NodeProto, model: ModelWrapper) -> None:
+    """Call C++ code generation for one node. Resulting code can be used
     to simulate node using cppsim."""
-
     op_type = node.op_type
     try:
         # lookup op_type in registry of CustomOps
-        inst = registry.getCustomOp(node)
+        inst = cast("HLSBackend", getHWCustomOp(node))
         # get the path of the code generation directory
-        code_gen_dir = inst.get_nodeattr("code_gen_dir_cppsim")
+        code_gen_dir = cast("str", inst.get_nodeattr("code_gen_dir_cppsim"))
         # ensure that there is a directory
-        if code_gen_dir == "" or not os.path.isdir(code_gen_dir):
+        if code_gen_dir == "" or not Path(code_gen_dir).is_dir():
             code_gen_dir = make_build_dir(prefix="code_gen_cppsim_" + str(node.name) + "_")
-            inst.set_nodeattr("code_gen_dir_cppsim", code_gen_dir)
+            inst.set_nodeattr("code_gen_dir_cppsim", str(code_gen_dir))
         # ensure that there is generated code inside the dir
         inst.code_generation_cppsim(model)
     except KeyError:
         # exception if op_type is not supported
-        raise Exception("Custom op_type %s is currently not supported." % op_type)
+        raise FINNUserError(
+            f"Custom op_type {op_type} is currently not supported. "
+            f"Could this be a streamlining error?"
+        ) from None
 
 
 class PrepareCppSim(Transformation):
@@ -68,7 +77,8 @@ class PrepareCppSim(Transformation):
     that contains generated C++ code that can be used to simulate node using cppsim.
     The subsequent transformation is CompileCppSim"""
 
-    def __init__(self, num_workers=None):
+    def __init__(self, num_workers: int | None = None) -> None:
+        """Initialize instance."""
         super().__init__()
         if num_workers is None:
             self._num_workers = get_num_default_workers()
@@ -78,21 +88,23 @@ class PrepareCppSim(Transformation):
         if self._num_workers == 0:
             self._num_workers = mp.cpu_count()
 
-    def prepareCppSim_node(self, node):
+    def prepare_cpp_sim_node(self, node: NodeProto) -> tuple[NodeProto, Literal[False]]:
+        """Prepare CppSim node."""
         if is_hls_node(node):
             _codegen_single_node(node, self.model)
         return (node, False)
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # Remove old nodes from the current model
+        """Apply transformation."""
         self.model = copy.deepcopy(model)
         old_nodes = []
-        for i in range(len(model.graph.node)):
+        for _i in range(len(model.graph.node)):
             old_nodes.append(model.graph.node.pop())
 
         # Execute transformation in parallel
         with mp.Pool(self._num_workers) as p:
-            new_nodes_and_bool = p.map(self.prepareCppSim_node, old_nodes, chunksize=1)
+            new_nodes_and_bool = p.map(self.prepare_cpp_sim_node, old_nodes, chunksize=1)
 
         # extract nodes and check if the transformation needs to run again
         # Note: .pop() had initially reversed the node order

@@ -7,21 +7,26 @@ section in the dataflow graph.
 
 from collections import deque
 from qonnx.core.modelwrapper import ModelWrapper
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from onnx import NodeProto
 
 
-def unsupported_layers(model: ModelWrapper):
-    """
-    Check if all sink nodes are only reachable by paths with at most one
+def unsupported_layers(
+    model: ModelWrapper,
+) -> tuple[Literal[False], "NodeProto"] | tuple[Literal[True], None]:
+    """Check if all sink nodes are only reachable by paths with at most one
     connected section of nodes which are supported by the FPGA.
     """
 
-    def is_supported_node(node):
+    def is_supported_node(node: "NodeProto") -> bool:
         """Check if a node is supported by (= mapped to) the FPGA backend."""
         return node.domain.startswith("finn.custom_op.fpgadataflow")
 
     # Find source and sink nodes in the model
-    source_nodes = []
-    sink_nodes = []
+    source_nodes: list[NodeProto] = []
+    sink_nodes: list[NodeProto | None] = []
 
     inputs = model.graph.input
     for inp in inputs:
@@ -37,7 +42,7 @@ def unsupported_layers(model: ModelWrapper):
             sink_nodes.append(n)
 
     # BFS to check paths
-    queue = deque()
+    queue: deque[tuple[NodeProto, bool, bool]] = deque()
     # Track (node_id, in_green_section, has_seen_complete_green_section)
     visited = []
 

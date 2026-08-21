@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
-import os
 import shlex
 import shutil
 import subprocess as sp
@@ -25,7 +24,7 @@ from threading import RLock
 from typing import cast
 
 from finn.interface import IS_POSIX
-from finn.interface.interface_utils import debug, error, resolve_module_path
+from finn.interface.interface_utils import debug, error
 from finn.util.exception import (
     FINNConfigurationError,
     FINNDependencyInstallationError,
@@ -91,25 +90,12 @@ class DirectDownloadDependency(BaseModel, Dependency):
     target_directory: Path = Field(strict=False)
 
 
-class CustomDependency(BaseModel, Dependency):
-    """Data model for a custom dependency.
-
-    installation_function: Name of the function that should be implemented in the DependencyUpdater
-                            to install this dependency.
-    outdated_function: Name of function that returns whether this dependency is outdated.
-    """
-
-    installation_function: str
-    outdated_function: str
-
-
 class DependencyData(BaseModel):
     """Data model that stores all dependencies."""
 
     git_deps: dict[str, GitDependency]
     boardfile_deps: dict[str, BoardfileDependency]
     direct_download_deps: dict[str, DirectDownloadDependency]
-    custom_deps: dict[str, CustomDependency]
 
     def get_all_dependencies(self) -> list[str]:
         """Return a list of all packages, across dependency types."""
@@ -121,7 +107,6 @@ class DependencyData(BaseModel):
                         self.git_deps,
                         self.boardfile_deps,
                         self.direct_download_deps,
-                        self.custom_deps,
                     ]
                 ]
             )
@@ -149,8 +134,6 @@ class DependencyData(BaseModel):
             return "Boardfiles"
         if package_name in self.direct_download_deps:
             return "Data"
-        if package_name in self.custom_deps:
-            return "Custom"
         return "Misc"
 
     def get_dependency_data(self, package_name: str) -> Dependency | None:
@@ -161,7 +144,6 @@ class DependencyData(BaseModel):
             self.git_deps,
             self.boardfile_deps,
             self.direct_download_deps,
-            self.custom_deps,
         ]:
             if package_name in depdict:
                 return depdict[package_name]
@@ -169,7 +151,7 @@ class DependencyData(BaseModel):
 
     def get_fields(self, package_name: str, *field_names: str) -> tuple:
         """Return a tuple with all required fields from the data. If one of the fields does not
-        exist, raise an exception."""  # noqa
+        exist, raise an exception."""
         self.assert_unique_dependency_names()
         dep_data = self.get_dependency_data(package_name)
         if dep_data is None:
@@ -218,7 +200,7 @@ class _StatusTracker:
     def _generate_renderable(self) -> Table:
         """Generate a renderable for rich to display in a live context."""
         if self.non_interactive:
-            return
+            return None
         with self.datalock:
             table = Table(
                 title="Dependency Updates",
@@ -313,10 +295,6 @@ class DependencyUpdater:
         except ValidationError as e:
             raise FINNUserError(f"Validation error: {e}") from e
 
-        # Try to find FINN_XSI. If it cannot be found, it is ignored in the
-        # list of all dependencies (since this is neither a failed nor a successful install)
-        self.finn_xsi_str = resolve_module_path("finn_xsi")
-
     def _run_silent(self, cmd: str, cwd: Path | None = None, timeout: float | None = None) -> int:
         """Run a given command silently. Return its returncode."""
         debug(f"[DependencyUpdater] Running command: {cmd}", False)
@@ -331,7 +309,7 @@ class DependencyUpdater:
 
     def _git_clone(self, url: str, commit: str, target: Path) -> bool:
         """Try to clone and checkout the git url to the given target directory. If something
-        went wrong return False, True otherwise."""  # noqa
+        went wrong return False, True otherwise."""
         clone_result = sp.run(
             shlex.split(f"git clone {url} {target.absolute()}"),
             timeout=self.git_timeout,
@@ -354,7 +332,7 @@ class DependencyUpdater:
 
     def _get_git_hash(self, package_name: str) -> str | None:
         """Return the hash of the given package_name dependency.
-        If there is no such package return None."""  # noqa
+        If there is no such package return None."""
         if package_name in self.deps.git_deps:
             target = self.dep_location / package_name
         elif package_name in self.deps.boardfile_deps:
@@ -471,46 +449,6 @@ class DependencyUpdater:
                 return False
         return unzipped.exists()
 
-    def _install_custom(self, package_name: str) -> bool:
-        """Install the custom dependency. The function name provided by the definition file
-        must exist as a method of this class. If so, it is executed and it's return value
-        used to check for success.
-        """
-        data = self.deps.get_dependency_data(package_name)
-        assert data is not None
-        function_name = cast("CustomDependency", data).installation_function
-        try:
-            return self.__getattribute__(function_name)()
-        except AttributeError as e:
-            raise FINNUserError(
-                f"Implementation for custom installation function for "
-                f"{package_name} not found in DependencyUpdater!"
-            ) from e
-
-    def _is_outdated_finn_xsi(self) -> bool:
-        """Return whether FINN XSI is outdated."""
-        # If finn xsi was found its outdated, if it wasnt found, its never outdated
-        return self.finn_xsi_str != ""
-
-    def _install_finn_xsi(self) -> bool:
-        """Install FINN XSI bindings and return if installation was successful."""
-        # Hacky workaround
-        os.environ["FINN_XSI"] = self.finn_xsi_str
-        from finn.xsi import is_available
-
-        result = sp.run(
-            shlex.split(f"{sys.executable} -m finn.xsi.setup"),
-            capture_output=True,
-            text=True,
-            env=os.environ.copy(),
-        )
-        if result.returncode != 0:
-            raise FINNDependencyInstallationError(
-                "Installation of FINN XSI failed!:\n" + result.stdout
-            )
-        sys.path.append(self.finn_xsi_str)
-        return is_available()
-
     def install_dependency(self, package_name: str) -> bool:
         """Install the dependency in the dependency location. If no definition for this dependency
         exists or the installation failed, return False.
@@ -524,8 +462,6 @@ class DependencyUpdater:
             return self._install_boardfile_dependency(package_name)
         if t is DirectDownloadDependency:
             return self._install_direct_download_dependency(package_name)
-        if t is CustomDependency:
-            return self._install_custom(package_name)
         return False
 
     def is_outdated(self, package_name: str, installed: bool = False) -> bool:
@@ -536,15 +472,6 @@ class DependencyUpdater:
             raise FINNUserError(
                 f"Cannot check if non-existing dependency {package_name} is outdated."
             )
-        if package_name in self.deps.custom_deps:
-            function_name = cast("CustomDependency", data).outdated_function
-            try:
-                return self.__getattribute__(function_name)()
-            except AttributeError as e:
-                raise FINNUserError(
-                    f"Custom package {package_name} is missing the implementation"
-                    f"of the outdated check function in DependencyUpdater!"
-                ) from e
         if package_name in self.deps.direct_download_deps:
             # TODO: Improve (e.g. by checking directly instead of by using wget).
             # Check by letting wget compare timestamps. To avoid large wait times
@@ -605,7 +532,7 @@ class DependencyUpdater:
 
     def get_outdated_dependencies(self) -> list[str]:
         """Return a list of the names of all outdated packages. For Git dependencies this means
-        an outdated commit hash, for the others a different URL or target directory."""  # noqa
+        an outdated commit hash, for the others a different URL or target directory."""
         return list(
             map(
                 str,

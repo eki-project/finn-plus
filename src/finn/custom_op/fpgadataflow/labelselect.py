@@ -25,6 +25,7 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""Module for labelselect."""
 import numpy as np
 import onnxruntime as rt
 from onnx import TensorProto, helper
@@ -38,6 +39,7 @@ class LabelSelect(HWCustomOp):
     """Abstraction layer for HW implementation of LabelSelect"""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
         odt_name = self.get_nodeattr("outputDataType")
         if odt_name == "":
@@ -52,6 +54,7 @@ class LabelSelect(HWCustomOp):
             self.set_nodeattr("outputDataType", odt_name)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             "Labels": ("i", True, 0),
             "PE": ("i", True, 0),
@@ -69,12 +72,14 @@ class LabelSelect(HWCustomOp):
         return my_attrs
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         nlabels = self.get_nodeattr("Labels")
         vecs = list(self.get_nodeattr("numInputVectors"))
         ishape = tuple(vecs + [nlabels])
         return ishape
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         nlabels = self.get_nodeattr("Labels")
         pe = self.get_nodeattr("PE")
         vecs = list(self.get_nodeattr("numInputVectors"))
@@ -84,18 +89,21 @@ class LabelSelect(HWCustomOp):
         return folded_ishape
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         k = self.get_nodeattr("K")
         vecs = list(self.get_nodeattr("numInputVectors"))
         oshape = tuple(vecs + [k])
         return oshape
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         k = self.get_nodeattr("K")
         vecs = list(self.get_nodeattr("numInputVectors"))
         oshape = tuple(vecs + [k, 1])
         return oshape
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         # check input datatype against property
         idt = model.get_tensor_datatype(node.input[0])
@@ -126,10 +134,12 @@ class LabelSelect(HWCustomOp):
         return self.get_output_datatype().bitwidth()
 
     def get_number_output_values(self):
+        """Return number output values."""
         return self.get_nodeattr("K")
 
     def execute_node(self, context, graph):
         # create a standard add node to help calculate the result
+        """Execute node."""
         node = self.onnx_node
         k = self.get_nodeattr("K")
 
@@ -159,6 +169,7 @@ class LabelSelect(HWCustomOp):
         context[node.output[0]] = np.asarray(result[1], dtype=np.float32).reshape(oshape)
 
     def get_exp_cycles(self):
+        """Return exp cycles."""
         nlabels = self.get_nodeattr("Labels")
         pe = self.get_nodeattr("PE")
         exp_cycles = nlabels / pe

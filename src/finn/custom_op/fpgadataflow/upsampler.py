@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for upsampler."""
 import numpy as np
 import onnxruntime as rt
 from onnx import TensorProto, helper
@@ -40,9 +41,11 @@ class UpsampleNearestNeighbour(HWCustomOp):
     """Abstraction layer for HW implementation of UpsampleNearestNeighbour."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             "SIMD": ("i", True, 0),
             # Height, width of the output feature map
@@ -62,9 +65,11 @@ class UpsampleNearestNeighbour(HWCustomOp):
         return my_attrs
 
     def get_exp_cycles(self):
+        """Return exp cycles."""
         return np.prod(self.get_folded_output_shape()[:-1])
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         batch = self.get_nodeattr("batchSize")
         HI = self.get_nodeattr("HI")
         WI = self.get_nodeattr("WI")
@@ -73,6 +78,7 @@ class UpsampleNearestNeighbour(HWCustomOp):
         return ishape
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         batch = self.get_nodeattr("batchSize")
         HO = self.get_nodeattr("HO")
         WO = self.get_nodeattr("WO")
@@ -81,18 +87,21 @@ class UpsampleNearestNeighbour(HWCustomOp):
         return oshape
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         spatial_shape = list(self.get_normal_input_shape())[:-1]
         simd = self.get_nodeattr("SIMD")
         folds = self.get_nodeattr("NumChannels") // simd
         return tuple(spatial_shape + [folds, simd])
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         spatial_shape = list(self.get_normal_output_shape())[:-1]
         simd = self.get_nodeattr("SIMD")
         folds = self.get_nodeattr("NumChannels") // simd
         return tuple(spatial_shape + [folds, simd])
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         # data type stays the same
         idt = model.get_tensor_datatype(node.input[0])
@@ -116,17 +125,20 @@ class UpsampleNearestNeighbour(HWCustomOp):
         return self.get_input_datatype()
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         ibits = self.get_input_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return ibits * simd
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         obits = self.get_output_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return obits * simd
 
     def execute_node(self, context, graph):
         # create a standard resize node to help calculate the result
+        """Execute node."""
         node = self.onnx_node
         inp_values = context[node.input[0]]
         ishape = inp_values.shape

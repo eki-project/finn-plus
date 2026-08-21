@@ -1,3 +1,4 @@
+"""Utility functions for working with fpgadataflow nodes in ONNX graphs."""
 # Copyright (c) 2020 Xilinx, Inc.
 # All rights reserved.
 #
@@ -26,47 +27,45 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from onnx import NodeProto
 from qonnx.custom_op.registry import is_custom_op
 from qonnx.util.basic import get_by_name
 
 
-def is_fpgadataflow_node(node):
-    """Returns True if given node is fpgadataflow node. Otherwise False."""
+def is_fpgadataflow_node(node: NodeProto | None) -> bool:
+    """Return True if given node is fpgadataflow node. Otherwise False."""
     is_node = False
-    if node is not None:
-        if is_custom_op(node.domain):
-            n_backend = get_by_name(node.attribute, "backend")
-            if n_backend is not None:
-                backend_value = n_backend.s.decode("UTF-8")
-                if backend_value == "fpgadataflow":
-                    is_node = True
+    if node is not None and is_custom_op(node.domain):
+        n_backend = get_by_name(node.attribute, "backend")
+        if n_backend is not None:
+            backend_value = n_backend.s.decode("UTF-8")
+            if backend_value == "fpgadataflow":
+                is_node = True
 
     return is_node
 
 
-def is_hls_node(node):
-    """Returns True if given node is hls node. Otherwise False."""
+def is_hls_node(node: NodeProto | None) -> bool:
+    """Return True if given node is hls node. Otherwise False."""
     is_node = False
-    if node is not None:
-        if node.domain == "finn.custom_op.fpgadataflow.hls":
-            n_backend = get_by_name(node.attribute, "backend")
-            if n_backend is not None:
-                backend_value = n_backend.s.decode("UTF-8")
-                if backend_value == "fpgadataflow":
-                    is_node = True
+    if node is not None and node.domain == "finn.custom_op.fpgadataflow.hls":
+        n_backend = get_by_name(node.attribute, "backend")
+        if n_backend is not None:
+            backend_value = n_backend.s.decode("UTF-8")
+            if backend_value == "fpgadataflow":
+                is_node = True
 
     return is_node
 
 
-def is_rtl_node(node):
-    """Returns True if given node is rtl node. Otherwise False."""
+def is_rtl_node(node: NodeProto | None) -> bool:
+    """Return True if given node is rtl node. Otherwise False."""
     is_node = False
-    if node is not None:
-        if node.domain == "finn.custom_op.fpgadataflow.rtl":
-            n_backend = get_by_name(node.attribute, "backend")
-            if n_backend is not None:
-                backend_value = n_backend.s.decode("UTF-8")
-                if backend_value == "fpgadataflow":
-                    is_node = True
+    if node is not None and node.domain == "finn.custom_op.fpgadataflow.rtl":
+        n_backend = get_by_name(node.attribute, "backend")
+        if n_backend is not None:
+            backend_value = n_backend.s.decode("UTF-8")
+            if backend_value == "fpgadataflow":
+                is_node = True
 
     return is_node
