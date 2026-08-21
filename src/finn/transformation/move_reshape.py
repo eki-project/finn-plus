@@ -52,18 +52,18 @@ class RemoveCNVtoFCFlatten(Transformation):
                         # check if transpose converts NHWC to NCHW
                         ret = get_by_name(transp_node.attribute, "perm")
                         if ret is None:
-                            raise FINNInternalError(
-                                f"Could not find 'perm' attribute for node: {transp_node.name}"
+                            log.warning(
+                                f"Could not find 'perm' attribute for node: {transp_node.name}, "
+                                "skipping move."
                             )
+                            continue
                         perms = list(ret.ints)
                         if perms == [0, 3, 1, 2]:
                             producer = model.find_producer(transp_node.input[0])
                             if is_fpgadataflow_node(producer):
                                 consumer = model.find_consumer(n.output[0])
                                 if consumer is None:
-                                    raise FINNInternalError(
-                                        f"Could not find consumer for node: {n.name}"
-                                    )
+                                    continue
                                 if consumer.op_type.startswith("MVAU"):
                                     fc_inst = getCustomOp(consumer)
                                     mw = cast("int", fc_inst.get_nodeattr("MW"))
@@ -81,9 +81,11 @@ class RemoveCNVtoFCFlatten(Transformation):
                                         "np.ndarray", model.get_initializer(consumer.input[1])
                                     )
                                     if w_arr is None:
-                                        raise FINNInternalError(
-                                            "Initializer for matmul weights is not set."
+                                        log.warning(
+                                            "Initializer for matmul weights is not set. "
+                                            "Assuming dynamic matmul."
                                         )
+                                        continue
                                     w_new = w_arr.reshape(c, h, w, mh)
                                     w_new = w_new.transpose((1, 2, 0, 3))
                                     w_new = w_new.reshape(mw, mh)
@@ -95,8 +97,7 @@ class RemoveCNVtoFCFlatten(Transformation):
                                     graph_modified = True
                                 else:
                                     log.warning(
-                                        "Could not absorb transpose->flatten \
-                                        into subsequent node"
+                                        "Could not absorb transpose->flatten into subsequent node"
                                     )
                         else:
                             log.warning("Unsupported transpose node before flatten layer")

@@ -37,7 +37,6 @@ import math
 import numpy as np
 import os
 import shutil
-import subprocess
 from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
@@ -170,17 +169,13 @@ from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.util.basic import (
-    get_liveness_threshold_cycles,
-    get_rtlsim_trace_depth,
-    getHWCustomOp,
-    launch_process_helper,
-)
+from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth, getHWCustomOp
 from finn.util.config import extract_model_config_to_json
 from finn.util.exception import FINNUserError
 from finn.util.execution import execute_parent
 from finn.util.logging import log
 from finn.util.mlo_sim import is_mlo, mlo_prehook_func_factory
+from finn.util.slurmutil import detect_slurm_hosts, get_local_cores, parse_hosts
 from finn.xsi import SimEngine
 
 if TYPE_CHECKING:
@@ -470,47 +465,6 @@ def step_hw_ipgen(
     return model
 
 
-def _detect_slurm_hosts() -> str | None:
-    """Return a comma-separated hostname list for the current SLURM allocation, or None
-    if not running under SLURM (or the node list could not be expanded).
-
-    Uses the standard SLURM_JOB_NODELIST/SLURM_NODELIST environment variables (always
-    set by SLURM for a job, no FINN-specific configuration needed) and expands SLURM's
-    hostlist range syntax (e.g. "cn[0101,0103,0106]") via `scontrol show hostnames`.
-    """
-    nodelist = os.environ.get("SLURM_JOB_NODELIST") or os.environ.get("SLURM_NODELIST")
-    if not nodelist:
-        return None
-
-    scontrol_path = shutil.which("scontrol")
-    if scontrol_path is None:
-        log.warning(
-            "SLURM allocation detected (SLURM_JOB_NODELIST/SLURM_NODELIST is set) but "
-            "'scontrol' was not found in PATH, so the node list could not be expanded. "
-            "Falling back to localhost for the distributed simulation. Set "
-            "fifosim_mpi_hosts explicitly to override."
-        )
-        return None
-
-    try:
-        cmd_out, _cmd_err = launch_process_helper(
-            [scontrol_path, "show", "hostnames", nodelist],
-            print_stdout=False,
-            print_stderr=False,
-        )
-    except (subprocess.CalledProcessError, OSError) as e:
-        log.warning(
-            f"Failed to expand SLURM node list {nodelist!r} via scontrol: {e}. "
-            "Falling back to localhost for the distributed simulation."
-        )
-        return None
-
-    hostnames = [h.strip() for h in cmd_out.splitlines() if h.strip()]
-    if not hostnames:
-        return None
-    return ",".join(hostnames)
-
-
 @register_build_dataflow_step()
 def step_set_fifo_depths(
     model: ModelWrapper, cfg: DataflowBuildConfig, parent_node: str | None = None
@@ -538,36 +492,11 @@ def step_set_fifo_depths(
                 # simulation_build can generate per-node channel types/peer ranks.
                 # Without this, all channels default to SHM and cross-node links can
                 # deadlock/time out in multi-node runs.
-                def _get_local_cores() -> int:
-                    """Return the number of CPU cores available to this process."""
-                    if hasattr(os, "sched_getaffinity"):
-                        try:
-                            return max(1, len(os.sched_getaffinity(0)))
-                        except OSError:
-                            pass
-                    cpu_count = os.cpu_count()
-                    return max(1, int(cpu_count) if cpu_count is not None else 1)
-
-                def _parse_hosts(raw: str | None) -> list[str]:
-                    """Parse a "host[:slots],host[:slots],..." string into a plain host list."""
-                    if raw is None or raw.strip() == "":
-                        return ["localhost"]
-                    hosts: list[str] = []
-                    for entry in raw.split(","):
-                        host = entry.strip()
-                        if host == "":
-                            continue
-                        # Accept both "host" and "host:slots" input forms.
-                        if ":" in host:
-                            host = host.split(":", 1)[0]
-                        hosts.append(host)
-                    return hosts if hosts else ["localhost"]
-
-                local_cores = _get_local_cores()
-                hosts = _parse_hosts(
+                local_cores = get_local_cores()
+                hosts = parse_hosts(
                     model.get_metadata_prop("sim_mpi_hosts")
                     or cfg.fifosim_mpi_hosts
-                    or _detect_slurm_hosts()
+                    or detect_slurm_hosts()
                 )
                 sim_nodes = list(model.graph.node)
 
