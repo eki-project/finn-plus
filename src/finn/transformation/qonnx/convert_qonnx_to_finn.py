@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for convert qonnx to finn onnx."""
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.extract_conv_bias import ExtractBiasFromConv
 from qonnx.transformation.gemm_to_matmul import GemmToMatMul
@@ -67,11 +68,13 @@ class ConvertQONNXtoFINN(Transformation):
         self,
         filter_function=default_filter_function_generator(max_multithreshold_bit_width=8),
     ):
+        """Initialize instance."""
         super().__init__()
         self._filter_function = filter_function
 
     def apply(self, model):
         # Extract the bias from Conv node
+        """Apply transformation."""
         model = model.transform(ExtractBiasFromConv())
         # Gemm operations are not supported by FINN, so we convert them to MatMul
         model = model.transform(GemmToMatMul())

@@ -3,6 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Module for requant."""
 import numpy as np
 import warnings
 from qonnx.core.datatype import DataType
@@ -27,9 +28,11 @@ class Requant(HWCustomOp):
     """
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             # parallelization; channels processed per cycle
             "PE": ("i", False, 1),
@@ -75,6 +78,7 @@ class Requant(HWCustomOp):
         return scale.size > 1 or bias.size > 1
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -90,47 +94,46 @@ class Requant(HWCustomOp):
         model.set_tensor_datatype(node.output[0], odt)
 
     def verify_node(self):
+        """Verify node."""
         pass
 
     def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
+        """Return FINN DataType of input."""
         if ind == 0:
             return DataType[self.get_nodeattr("inputDataType")]
-        else:
-            # Scale and bias are float
-            return DataType["FLOAT32"]
+        # Scale and bias are float
+        return DataType["FLOAT32"]
 
     def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output."""
+        """Return FINN DataType of output."""
         return DataType[self.get_nodeattr("outputDataType")]
 
     def get_normal_input_shape(self, ind=0):
-        """Returns input shape in format [N, H, W, C] or [N, C]."""
+        """Return input shape in format [N, H, W, C] or [N, C]."""
         num_input_vecs = self.get_nodeattr("numInputVectors")
         num_channels = self.get_nodeattr("NumChannels")
         return tuple(num_input_vecs + [num_channels])
 
     def get_normal_output_shape(self, ind=0):
-        """Returns output shape."""
+        """Return output shape."""
         return self.get_normal_input_shape(0)
 
     def get_folded_input_shape(self, ind=0):
-        """Returns folded input shape."""
+        """Return folded input shape."""
         if ind == 0:
             normal_shape = self.get_normal_input_shape(0)
             pe = self.get_nodeattr("PE")
             num_channels = self.get_nodeattr("NumChannels")
             fold = num_channels // pe
             return tuple(list(normal_shape[:-1]) + [fold, pe])
-        else:
-            return self.get_normal_input_shape(ind)
+        return self.get_normal_input_shape(ind)
 
     def get_folded_output_shape(self, ind=0):
-        """Returns folded output shape."""
+        """Return folded output shape."""
         return self.get_folded_input_shape(0)
 
     def get_exp_cycles(self):
-        """Returns expected number of cycles for execution."""
+        """Return expected number of cycles for execution."""
         return self.get_number_output_values()
 
     def execute_node(self, context, graph):
@@ -167,17 +170,16 @@ class Requant(HWCustomOp):
         context[node.output[0]] = x_clipped.astype(np.float32)
 
     def get_instream_width(self, ind=0):
-        """Returns input stream width."""
+        """Return input stream width."""
         if ind == 0:
             pe = self.get_nodeattr("PE")
             idt = self.get_input_datatype(0)
             return pe * idt.bitwidth()
-        else:
-            # Scale and bias (inputs 1, 2) are embedded, not streamed
-            return 0
+        # Scale and bias (inputs 1, 2) are embedded, not streamed
+        return 0
 
     def get_outstream_width(self, ind=0):
-        """Returns output stream width."""
+        """Return output stream width."""
         pe = self.get_nodeattr("PE")
         odt = self.get_output_datatype()
         return pe * odt.bitwidth()

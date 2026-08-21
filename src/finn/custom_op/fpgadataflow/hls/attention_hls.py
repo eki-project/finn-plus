@@ -52,9 +52,9 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         type needed for HLS synthesis.
         """
         # Find the widths of the widest input
-        i_bits_max = max((self.get_instream_width(ind) for ind in range(3)))
+        i_bits_max = max(self.get_instream_width(ind) for ind in range(3))
         # Find the widths of the widest output
-        o_bits_max = max((self.get_outstream_width(ind) for ind in range(1)))
+        o_bits_max = max(self.get_outstream_width(ind) for ind in range(1))
         # Assume no bits to represent the mask, if there is no mask
         m_bits = 0
         # A mask received as input has a bit-width as well
@@ -153,7 +153,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             """
             # Number of thresholds is given as the last dimension of the
             # threshold tensor, first dimension is covering all output elements
-            num = ts.shape[-1]  # noqa
+            num = ts.shape[-1]
             # Explicitly broadcast thresholds from per-tensor to per-channel
             ts = np.broadcast_to(ts, (length, num))
             # Partition the thresholds along the length into folds of parallel
@@ -653,7 +653,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         """
         # Start collecting interface names in a dictionary starting with clock
         # and reset
-        intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}  # noqa
+        intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}
         # AXI stream input interfaces
         # TODO: support mask input?
         intf_names["s_axis"] = [

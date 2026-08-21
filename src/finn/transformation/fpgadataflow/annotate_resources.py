@@ -26,11 +26,14 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""Module for annotate resources."""
 import qonnx.custom_op.registry as registry
+from ast import literal_eval
 from functools import partial
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from typing import Any, Literal, cast
 
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.post_synth_res import post_synth_res
@@ -43,19 +46,23 @@ class AnnotateResources(Transformation):
     node as an attribute on the node, depending on the mode parameter:
     * 'estimate' -- use the analytical estimation model
     * 'hls' -- use results from the HLS synthesis report
-    * 'synth' -- use post-synthesis (Vivado or Vitis) report
+    * 'synth' -- use post-synthesis (Vivado or Vitis) report.
 
     No annotations can be provided unless the relevant transformation for the
     chosen mode (e.g. HLSSynthIP for hls) was previously run.
     """
 
-    def __init__(self, mode, fpgapart, override_res_dict=None):
+    def __init__(
+        self, mode: str, fpgapart: str, override_res_dict: dict[str, Any] | None = None
+    ) -> None:
+        """Initialize instance."""
         super().__init__()
         self.mode = mode
         self.fpgapart = fpgapart
         self.res_dict = override_res_dict
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Apply transformation."""
         graph = model.graph
         if self.mode == "estimate":
             res_fxn = partial(res_estimation, fpgapart=self.fpgapart)
@@ -76,13 +83,13 @@ class AnnotateResources(Transformation):
                 children_dict[node.name] = self.res_dict[node.name]
             elif node.op_type == "StreamingDataflowPartition":
                 # recurse into model to manually annotate per-layer resources
-                sdp_model_filename = getCustomOp(node).get_nodeattr("model")
+                sdp_model_filename = cast("str", getCustomOp(node).get_nodeattr("model"))
                 sdp_model = ModelWrapper(sdp_model_filename)
                 sdp_model = sdp_model.transform(
                     AnnotateResources(self.mode, self.fpgapart, self.res_dict)
                 )
-                sdp_dict = sdp_model.get_metadata_prop("res_total_" + self.mode)
-                sdp_dict = eval(sdp_dict)
+                sdp_dict = cast("str", sdp_model.get_metadata_prop("res_total_" + self.mode))
+                sdp_dict = literal_eval(sdp_dict)
                 # save transformed model
                 sdp_model.save(sdp_model_filename)
                 # set res attribute for sdp node

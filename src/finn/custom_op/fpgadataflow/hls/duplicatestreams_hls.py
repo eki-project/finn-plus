@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for duplicatestreams hls."""
 from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 
@@ -34,15 +35,18 @@ class DuplicateStreams_hls(DuplicateStreams, HLSBackend):
     """Class that corresponds to finn-hlslib function of the same name."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(DuplicateStreams.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
     def verify_node(self):
+        """Verify node."""
         info_messages = []
         # verify that "backend" is set to "fpgadataflow"
         backend_value = self.get_nodeattr("backend")
@@ -66,15 +70,19 @@ class DuplicateStreams_hls(DuplicateStreams, HLSBackend):
         return info_messages
 
     def execute_node(self, context, graph):
+        """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
     def global_includes(self):
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "dup.hpp"']
 
     def defines(self, var):
+        """Return defines."""
         self.code_gen_dict["$DEFINES$"] = []
 
     def docompute(self):
+        """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = []
         n_outputs = self.get_nodeattr("NumOutputStreams")
         out_streams = []
@@ -85,6 +93,7 @@ class DuplicateStreams_hls(DuplicateStreams, HLSBackend):
         self.code_gen_dict["$DOCOMPUTE$"] = [comp_call]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         input_elem_hls_type = self.get_input_datatype().get_hls_datatype_str()
         pe = self.get_nodeattr("PE")
         in_stream = "hls::stream<hls::vector<%s, %d>> &in0_V" % (input_elem_hls_type, pe)
@@ -99,6 +108,7 @@ class DuplicateStreams_hls(DuplicateStreams, HLSBackend):
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [blackbox_hls]
 
     def pragmas(self):
+        """Return pragmas."""
         pragmas = []
         pragmas.append("#pragma HLS dataflow disable_start_propagation")
         pragmas.append("#pragma HLS INTERFACE axis port=in0_V")
@@ -112,14 +122,16 @@ class DuplicateStreams_hls(DuplicateStreams, HLSBackend):
         self.code_gen_dict["$PRAGMAS$"] = pragmas
 
     def timeout_condition(self):
+        """Return timeout condition."""
         condition = []
         n_outputs = self.get_nodeattr("NumOutputStreams")
         for i in range(n_outputs):
-            condition.append("out{}_V.empty()".format(i))
+            condition.append(f"out{i}_V.empty()")
         condition = " && ".join(condition)
         self.code_gen_dict["$TIMEOUT_CONDITION$"] = [condition]
 
     def timeout_read_stream(self):
+        """Return timeout read stream."""
         read_stream_command = []
         n_outputs = self.get_nodeattr("NumOutputStreams")
         for i in range(n_outputs):

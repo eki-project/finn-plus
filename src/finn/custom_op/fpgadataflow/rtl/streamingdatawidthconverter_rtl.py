@@ -111,7 +111,7 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
 
         # apply code generation to templates
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template = f.read()
         for key_name in code_gen_dict:
             key = "$%s$" % key_name

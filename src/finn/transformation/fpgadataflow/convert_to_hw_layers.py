@@ -468,9 +468,11 @@ class InferRequantLayer(Transformation):
     """
 
     def __init__(self):
+        """Initialize instance."""
         super().__init__()
 
     def apply(self, model):
+        """Apply transformation."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -766,8 +768,7 @@ class InferUpsample(Transformation):
 
 
 class InferAddStreamsLayer(Transformation):
-    """
-    DEPRECATED: This transformation is deprecated and now redirects to
+    """DEPRECATED: This transformation is deprecated and now redirects to
     InferElementwiseBinaryOperation.
 
     AddStreams functionality is now covered by ElementwiseAdd operations
@@ -778,12 +779,11 @@ class InferAddStreamsLayer(Transformation):
     """
 
     def apply(self, model):
+        """Apply transformation."""
         log.warning(
             "InferAddStreamsLayer is deprecated. "
             "Use InferElementwiseBinaryOperation instead. "
-            "AddStreams is being replaced by ElementwiseAdd operations.",
-            DeprecationWarning,
-            stacklevel=2,
+            "AddStreams is being replaced by ElementwiseAdd operations."
         )
         # Delegate to the new transformation
         return InferElementwiseBinaryOperation().apply(model)
@@ -937,8 +937,7 @@ class InferDuplicateStreamsLayer(Transformation):
 
 
 class InferChannelwiseLinearLayer(Transformation):
-    """
-    DEPRECATED: This transformation is deprecated and now redirects to
+    """DEPRECATED: This transformation is deprecated and now redirects to
     InferElementwiseBinaryOperation.
 
     ChannelwiseOp functionality is now covered by ElementwiseBinary operations
@@ -949,12 +948,11 @@ class InferChannelwiseLinearLayer(Transformation):
     """
 
     def apply(self, model):
+        """Apply transformation."""
         log.warning(
             "InferChannelwiseLinearLayer is deprecated. "
             "Use InferElementwiseBinaryOperation instead. "
             "ChannelwiseOp is being replaced by ElementwiseBinary operations.",
-            DeprecationWarning,
-            stacklevel=2,
         )
         # Delegate to the new transformation
         return InferElementwiseBinaryOperation().apply(model)
@@ -1236,9 +1234,7 @@ class InferPool(Transformation):
                     accum_bits = inst.get_accum_size()
 
                 else:
-                    raise Exception(
-                        "pad_value and pool_fxn not configured for {}".format(node.op_type)
-                    )
+                    raise Exception(f"pad_value and pool_fxn not configured for {node.op_type}")
 
                 # format input tensor
                 im2col_node = helper.make_node(
@@ -1251,7 +1247,7 @@ class InferPool(Transformation):
                     pad_amount=pad,
                     pad_value=pad_value,
                     depthwise=1,
-                    input_shape="(1,{},{},{})".format(ifm_h, ifm_w, ifm_ch),
+                    input_shape=f"(1,{ifm_h},{ifm_w},{ifm_ch})",
                     name="Im2Col_" + node.name,
                 )
 
@@ -1309,7 +1305,6 @@ class InferPoolFromReduce(Transformation):
 
     def apply(self, model: ModelWrapper):
         """Apply transformation to convert lowered pooling to hardware."""
-
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -1666,8 +1661,7 @@ class InferSplitLayer(Transformation):
 
 
 class InferStreamingEltwise(Transformation):
-    """
-    DEPRECATED: This transformation is deprecated and now redirects to
+    """DEPRECATED: This transformation is deprecated and now redirects to
     InferElementwiseBinaryOperation.
 
     StreamingEltwise functionality is now covered by ElementwiseSub and
@@ -1679,12 +1673,11 @@ class InferStreamingEltwise(Transformation):
     """
 
     def apply(self, model):
+        """Apply transformation."""
         log.warning(
             "InferStreamingEltwise is deprecated. "
             "Use InferElementwiseBinaryOperation instead. "
             "StreamingEltwise is being replaced by ElementwiseSub/ElementwiseAbsDiff.",
-            DeprecationWarning,
-            stacklevel=2,
         )
         # Delegate to the new transformation
         return InferElementwiseBinaryOperation().apply(model)
@@ -2131,14 +2124,12 @@ class InferVectorVectorActivation(Transformation):
 
 
 class InferHWSoftmax(Transformation):
-    """
-    Infers a regular softmax node without merging the multithreshold
+    """Infers a regular softmax node without merging the multithreshold
     and setting the softmax to perform the quantisation.
     """
 
     def __init__(self):
-        """
-        Infers a regular softmax node without merging the multithreshold
+        """Infers a regular softmax node without merging the multithreshold
         and setting the softmax to perform the quantisation.
         """
         super().__init__()
@@ -2181,19 +2172,18 @@ def skip_first_node_transpose(model, node):
 
 
 class InferShuffle(Transformation):
-    """
-    Find transpose layers with (optionally) reshape layers around them
+    """Find transpose layers with (optionally) reshape layers around them
     and convert them into a shuffle operator
     """
 
     def __init__(self, _filter=skip_first_node_transpose):
+        """Initialize instance."""
         super().__init__()
         # Register the filter function as attribute
         self._filter = _filter
 
     def _is_streaming_ptranspose(self, perm, shape):
-        """
-        Check if the permutation represents a streaming InnerShuffle case.
+        """Check if the permutation represents a streaming InnerShuffle case.
         A streaming InnerShuffle works when the last two dimensions are swapped,
         regardless of how many outer dimensions there are.
         """
@@ -2500,8 +2490,7 @@ class InferReLUAsElementwiseMax(Transformation):
                 or dt in [DataType["FLOAT32"], DataType["FLOAT16"]]
             ):
                 return True
-            else:
-                return False
+            return False
 
         return all([dtype_ok(tname) for tname in list(node.input) + list(node.output)])
 
@@ -2659,20 +2648,17 @@ def elements_are_consecutive(indices):
     """Are elements consecutive (max diff. 1 between all adjacent elements)?"""
     if indices.size == 1:
         return True
-    else:
-        indices.sort()
-        return np.all(np.diff(indices) == 1)
+    indices.sort()
+    return np.all(np.diff(indices) == 1)
 
 
 class InferCrop(Transformation):
-    """
-    Find gather layers that can be converted into a Crop layer
+    """Find gather layers that can be converted into a Crop layer
     and replace them with a Crop layer
     """
 
     def __init__(self):
-        """
-        Find gather layers that can be converted into a Crop layer
+        """Find gather layers that can be converted into a Crop layer
         and replace them with a Crop layer
         """
         super().__init__()

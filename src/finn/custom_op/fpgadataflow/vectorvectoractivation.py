@@ -26,8 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""
-Vector-Vector Activation Unit (VVAU) implementation for FPGA dataflow.
+"""Vector-Vector Activation Unit (VVAU) implementation for FPGA dataflow.
 
 This module contains the VVAU class which provides hardware abstraction for
 vector-vector activation layers in FPGA implementations. The VVAU performs
@@ -57,8 +56,7 @@ class VVAU(HWCustomOp):
     """Abstraction layer for HW implementation of VectorVectorActivation layers."""
 
     def __init__(self, onnx_node, **kwargs):
-        """
-        Initialize the VVAU (Vector-Vector Activation Unit) instance.
+        """Initialize the VVAU (Vector-Vector Activation Unit) instance.
 
         Args:
             onnx_node: ONNX node representing the VVAU operation
@@ -67,8 +65,7 @@ class VVAU(HWCustomOp):
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
-        """
-        Get the dictionary of node attribute types for VVAU.
+        """Get the dictionary of node attribute types for VVAU.
 
         Returns:
             dict: Dictionary mapping attribute names to their types and constraints
@@ -129,8 +126,7 @@ class VVAU(HWCustomOp):
         return my_attrs
 
     def _infer_sparse_weight_tensor(self, W_conv, k_h, k_w, channels):
-        """
-        Convert dense convolution weights to sparse weight tensor format.
+        """Convert dense convolution weights to sparse weight tensor format.
 
         Args:
             W_conv: Dense convolution weight tensor
@@ -151,8 +147,7 @@ class VVAU(HWCustomOp):
         return W_matmul
 
     def execute_node(self, context, graph):
-        """
-        Execute the VVAU node operation.
+        """Execute the VVAU node operation.
 
         Performs the vector-vector activation computation including matrix multiplication
         and optional thresholding activation.
@@ -209,8 +204,7 @@ class VVAU(HWCustomOp):
         context[node.output[0]] = result
 
     def infer_node_datatype(self, model):
-        """
-        Infer and set the node's data types based on the model.
+        """Infer and set the node's data types based on the model.
 
         Args:
             model: FINN model containing the node
@@ -235,10 +229,9 @@ class VVAU(HWCustomOp):
         # parameter can be > 0 (referring to the weights) so handle that here
         if ind == 0:
             return DataType[self.get_nodeattr("inputDataType")]
-        elif ind == 1:
+        if ind == 1:
             return DataType[self.get_nodeattr("weightDataType")]
-        else:
-            raise Exception("Undefined input ind for this layer type")
+        raise Exception("Undefined input ind for this layer type")
 
     def get_accumulator_datatype(self):
         """Returns FINN DataType of accumulator"""
@@ -249,8 +242,7 @@ class VVAU(HWCustomOp):
         return DataType[self.get_nodeattr("outputDataType")]
 
     def get_instream_width(self, ind=0):
-        """
-        Get the input stream width for the specified input.
+        """Get the input stream width for the specified input.
 
         Args:
             ind: Input index (0 for activations, 1 for weights, 2 for thresholds)
@@ -292,8 +284,7 @@ class VVAU(HWCustomOp):
         return width
 
     def get_outstream_width(self, ind=0):
-        """
-        Get the output stream width.
+        """Get the output stream width.
 
         Args:
             ind: Output index (default 0)
@@ -306,8 +297,7 @@ class VVAU(HWCustomOp):
         return out_width
 
     def get_folded_input_shape(self, ind=0):
-        """
-        Get the folded input shape for hardware implementation.
+        """Get the folded input shape for hardware implementation.
 
         Args:
             ind: Input index (0 for activations, 1 for weights)
@@ -341,8 +331,7 @@ class VVAU(HWCustomOp):
         return folded_input_shape
 
     def get_folded_output_shape(self, ind=0):
-        """
-        Get the folded output shape for hardware implementation.
+        """Get the folded output shape for hardware implementation.
 
         Args:
             ind: Output index (default 0)
@@ -358,8 +347,7 @@ class VVAU(HWCustomOp):
         return folded_output_shape
 
     def get_normal_input_shape(self, ind=0):
-        """
-        Get the normal (unfolded) input shape.
+        """Get the normal (unfolded) input shape.
 
         Args:
             ind: Input index (default 0)
@@ -374,8 +362,7 @@ class VVAU(HWCustomOp):
         return normal_input_shape
 
     def get_normal_output_shape(self, ind=0):
-        """
-        Get the normal (unfolded) output shape.
+        """Get the normal (unfolded) output shape.
 
         Args:
             ind: Output index (default 0)
@@ -401,14 +388,12 @@ class VVAU(HWCustomOp):
         """Calculates and returns TMEM."""
         if self.get_nodeattr("noActivation") == 1:
             return 0
-        else:
-            ch = self.get_nodeattr("Channels")
-            pe = self.get_nodeattr("PE")
-            return ch // pe
+        ch = self.get_nodeattr("Channels")
+        pe = self.get_nodeattr("PE")
+        return ch // pe
 
     def uram_estimation(self):
-        """
-        Estimate UltraRAM (URAM) usage for this layer.
+        """Estimate UltraRAM (URAM) usage for this layer.
 
         Returns:
             int: Number of URAMs required
@@ -455,20 +440,18 @@ class VVAU(HWCustomOp):
 
         if mem_width == 1:
             return math.ceil(omega / 16384)
-        elif mem_width == 2:
+        if mem_width == 2:
             return math.ceil(omega / 8192)
-        elif mem_width <= 4:
+        if mem_width <= 4:
             return (math.ceil(omega / 4096)) * (math.ceil(mem_width / 4))
-        elif mem_width <= 9:
+        if mem_width <= 9:
             return (math.ceil(omega / 2048)) * (math.ceil(mem_width / 8))
-        elif mem_width <= 18 or omega > 512:
+        if mem_width <= 18 or omega > 512:
             return (math.ceil(omega / 1024)) * (math.ceil(mem_width / 16))
-        else:
-            return (math.ceil(omega / 512)) * (math.ceil(mem_width / 32))
+        return (math.ceil(omega / 512)) * (math.ceil(mem_width / 32))
 
     def bram_efficiency_estimation(self):
-        """
-        Estimate BRAM efficiency (utilization) for this layer.
+        """Estimate BRAM efficiency (utilization) for this layer.
 
         Returns:
             float: BRAM efficiency ratio (actual usage / allocated capacity)
@@ -499,8 +482,7 @@ class VVAU(HWCustomOp):
         return wbits / uram_est_capacity
 
     def get_exp_cycles(self):
-        """
-        Get the expected number of execution cycles for this layer.
+        """Get the expected number of execution cycles for this layer.
 
         Returns:
             int: Expected number of clock cycles for execution
@@ -650,8 +632,7 @@ class VVAU(HWCustomOp):
         return ret.reshape(1, pe, tmem, n_thres_steps)
 
     def get_hw_compatible_weight_tensor(self, orig_weight_matrix):
-        """
-        Convert weight matrix to hardware-compatible format.
+        """Convert weight matrix to hardware-compatible format.
 
         Args:
             orig_weight_matrix: Original weight matrix
@@ -687,7 +668,6 @@ class VVAU(HWCustomOp):
         of weights.
 
         Arguments:
-
         * weights : numpy array with weights to be put into the file
         * weight_file_mode : one of {hls_header, decoupled_verilog_dat,
           decoupled_runtime}
@@ -801,8 +781,7 @@ class VVAU(HWCustomOp):
             raise Exception("Unknown weight_file_mode")
 
     def generate_params(self, model, path):
-        """
-        Generate parameter files for hardware implementation.
+        """Generate parameter files for hardware implementation.
 
         Args:
             model: FINN model containing the node
@@ -814,16 +793,16 @@ class VVAU(HWCustomOp):
         weights = model.get_initializer(self.onnx_node.input[1])
         if mem_mode == "internal_embedded":
             # save hlslib-compatible weights in params.h
-            weight_filename = "{}/params.h".format(code_gen_dir)
+            weight_filename = f"{code_gen_dir}/params.h"
             self.make_weight_file(weights, "hls_header", weight_filename)
         elif mem_mode == "internal_decoupled" or mem_mode == "external":
-            weight_filename_sim = "{}/weights.npy".format(code_gen_dir)
+            weight_filename_sim = f"{code_gen_dir}/weights.npy"
             # save internal_decoupled weights for cppsim
             self.make_weight_file(weights, "decoupled_npy", weight_filename_sim)
             if mem_mode == "internal_decoupled":
                 # also save weights as Verilog .dat file
                 # This file will be ignored when synthesizing UltraScale memory.
-                weight_filename_rtl = "{}/memblock.dat".format(code_gen_dir)
+                weight_filename_rtl = f"{code_gen_dir}/memblock.dat"
                 self.make_weight_file(weights, "decoupled_verilog_dat", weight_filename_rtl)
         else:
             raise Exception(
@@ -858,7 +837,7 @@ class VVAU(HWCustomOp):
                     threshold_tensor, tdt, "thresholds", False, True
                 )
                 # write thresholds into thresh.h
-                f_thresh = open("{}/thresh.h".format(code_gen_dir), "w")
+                f_thresh = open(f"{code_gen_dir}/thresh.h", "w")
                 tdt_hls = tdt.get_hls_datatype_str()
                 # use binary to export bipolar activations
                 export_odt = self.get_output_datatype()
@@ -881,8 +860,7 @@ class VVAU(HWCustomOp):
                 f_thresh.close()
 
     def get_op_and_param_counts(self):
-        """
-        Get operation and parameter counts for this layer.
+        """Get operation and parameter counts for this layer.
 
         Returns:
             dict: Dictionary containing operation and parameter counts by type
@@ -910,30 +888,8 @@ class VVAU(HWCustomOp):
             ret_dict[thres_param_type] = thres_count
         return ret_dict
 
-    def derive_characteristic_fxns(self, period):
-        """
-        Derive characteristic functions for RTL simulation.
-
-        Args:
-            period: Clock period for simulation
-        """
-        n_inps = np.prod(self.get_folded_input_shape()[:-1])
-        io_dict = {
-            "inputs": {
-                "in0": [0 for i in range(n_inps)],
-            },
-            "outputs": {"out0": []},
-        }
-        mem_mode = self.get_nodeattr("mem_mode")
-        if mem_mode in ["internal_decoupled", "external"]:
-            n_weight_inps = self.calc_wmem()
-            num_w_reps = np.prod(self.get_nodeattr("numInputVectors"))
-            io_dict["inputs"]["in1"] = [0 for i in range(num_w_reps * n_weight_inps)]
-        super().derive_characteristic_fxns(period, override_rtlsim_dict=io_dict)
-
     def get_verilog_top_module_intf_names(self):
-        """
-        Get Verilog top module interface names.
+        """Get Verilog top module interface names.
 
         Returns:
             dict: Dictionary mapping interface types to their names
@@ -950,8 +906,7 @@ class VVAU(HWCustomOp):
         return intf_names
 
     def code_generation_ipi(self):
-        """
-        Generate IP integrator (IPI) commands for hardware synthesis.
+        """Generate IP integrator (IPI) commands for hardware synthesis.
 
         Returns:
             list: List of TCL commands for IP integrator

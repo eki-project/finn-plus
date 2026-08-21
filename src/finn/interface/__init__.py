@@ -1,3 +1,4 @@
+"""FINN+ CLI interface package."""
 import os
 
 IS_POSIX = os.name == "posix"

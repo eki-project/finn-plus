@@ -21,7 +21,7 @@ from finn.custom_op.fpgadataflow.unsqueeze import Unsqueeze
 
 # HLS Backend specialization of the unsqueeze operator
 @register_custom_op
-class Unsqueeze_hls(Unsqueeze, HLSBackend):  # noqa: N801
+class Unsqueeze_hls(Unsqueeze, HLSBackend):
     """HLS backend implementation of the Unsqueeze operator.
 
     Inserts single-dimension entries into the shape of a tensor using HLS synthesis.

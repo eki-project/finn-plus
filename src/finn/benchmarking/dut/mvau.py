@@ -1,5 +1,4 @@
-"""
-MVAU (Matrix Vector Activation Unit) benchmarking module for FINN.
+"""MVAU (Matrix Vector Activation Unit) benchmarking module for FINN.
 
 This module provides micro-benchmarking capabilities for FINN's MVAU operator.
 The module supports both HLS and RTL backend implementations with configurable
@@ -38,8 +37,7 @@ from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeW
 
 
 class bench_mvau(bench):
-    """
-    Specialized benchmark class for FINN Matrix Vector Activation Unit (MVAU) operations.
+    """Specialized benchmark class for FINN Matrix Vector Activation Unit (MVAU) operations.
 
     This class extends the base benchmark class to provide MVAU-specific model generation
     and benchmarking capabilities. It supports synthetic model creation with configurable
@@ -76,8 +74,7 @@ class bench_mvau(bench):
         ram_style_thresholds="auto",
         backend="hls",
     ):
-        """
-        Create a single MVAU ONNX model with specified parameters.
+        """Create a single MVAU ONNX model with specified parameters.
 
         This method constructs a complete ONNX model containing a single MVAU node
         with the given weight matrix, data types, and configuration parameters.
@@ -207,8 +204,7 @@ class bench_mvau(bench):
         return model
 
     def _step_export_onnx(self, onnx_export_path):
-        """
-        Generate and export a synthetic MVAU ONNX model for benchmarking.
+        """Generate and export a synthetic MVAU ONNX model for benchmarking.
 
         This method creates a synthetic MVAU model based on the benchmark parameters,
         including matrix dimensions, data types, sparsity patterns, and folding configuration.
@@ -460,10 +456,10 @@ class bench_mvau(bench):
 
         # TODO: also generate golden I/O pair for further verification steps
         model.save(onnx_export_path)
+        return None
 
     def _step_build_setup(self):
-        """
-        Configure the dataflow build pipeline for MVAU microbenchmarks.
+        """Configure the dataflow build pipeline for MVAU microbenchmarks.
 
         This method sets up a comprehensive build configuration specifically optimized
         for MVAU microbenchmark evaluation. The configuration includes all necessary

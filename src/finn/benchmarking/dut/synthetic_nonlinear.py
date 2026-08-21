@@ -1,5 +1,4 @@
-"""
-Synthetic nonlinear CNN benchmarking module for FINN.
+"""Synthetic nonlinear CNN benchmarking module for FINN.
 
 This module provides capabilities for generating and benchmarking synthetic nonlinear
 convolutional neural network models. This is used mostly to test FIFO sizing.
@@ -41,8 +40,7 @@ from finn.util.basic import make_build_dir
 def _generate_random_threshold_values(
     data_type, num_input_channels, num_steps, narrow=False, per_tensor=False
 ):
-    """
-    Generate random threshold values for quantization operations.
+    """Generate random threshold values for quantization operations.
 
     This helper function creates random threshold arrays used in multi-threshold operators.
 
@@ -77,8 +75,7 @@ def _generate_random_threshold_values(
 
 
 def _sort_thresholds_increasing(thresholds):
-    """
-    Sort threshold arrays in ascending order along the last axis.
+    """Sort threshold arrays in ascending order along the last axis.
 
     This helper function ensures that threshold values are in monotonic increasing order,
     which is required for proper activation quantization. Each channel's thresholds
@@ -96,8 +93,7 @@ def _sort_thresholds_increasing(thresholds):
 
 
 def _make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_window=0):
-    """
-    Create a single convolutional building block for synthetic CNN models.
+    """Create a single convolutional building block for synthetic CNN models.
 
     This function generates a complete convolutional processing block consisting of:
     1. Feature map padding to maintain spatial dimensions
@@ -244,8 +240,7 @@ def _make_conv_building_block(ifm_dim, ch, kernel_size, simd, pe, parallel_windo
 
 
 def _combine_blocks(lb, rb, ifm_dim, ch, pe):
-    """
-    Combine two processing branches into a nonlinear topology with split-merge pattern.
+    """Combine two processing branches into a nonlinear topology with split-merge pattern.
 
     This function creates a nonlinear CNN architecture by combining two
     separate processing branches (left and right) into a unified model. The topology
@@ -363,8 +358,7 @@ def _combine_blocks(lb, rb, ifm_dim, ch, pe):
 
 
 class bench_synthetic_nonlinear(bench):
-    """
-    Specialized benchmark class for synthetic nonlinear CNN topologies.
+    """Specialized benchmark class for synthetic nonlinear CNN topologies.
 
     This class extends the base benchmark framework to generate and evaluate
     complex synthetic CNN models with branching topologies.
@@ -376,8 +370,7 @@ class bench_synthetic_nonlinear(bench):
     """
 
     def _step_export_onnx(self, onnx_export_path):
-        """
-        Generate and export a synthetic nonlinear CNN model for benchmarking.
+        """Generate and export a synthetic nonlinear CNN model for benchmarking.
 
         This method creates a synthetic CNN with branching topology by:
         1. Building configurable left and right processing branches
@@ -439,8 +432,7 @@ class bench_synthetic_nonlinear(bench):
         model.save(onnx_export_path)
 
     def _step_build_setup(self):
-        """
-        Configure a minimal dataflow build config for synthetic nonlinear CNN benchmarks.
+        """Configure a minimal dataflow build config for synthetic nonlinear CNN benchmarks.
 
         Returns:
             DataflowBuildConfig: Configured build pipeline for nonlinear CNN benchmarking

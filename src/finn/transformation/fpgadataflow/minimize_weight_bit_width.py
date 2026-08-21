@@ -26,9 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from qonnx.custom_op.registry import getCustomOp
+"""Module for minimize weight bit width."""
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
+from typing import Literal
 
+from finn.util.basic import getHWCustomOp
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
 
@@ -37,13 +40,15 @@ class MinimizeWeightBitWidth(Transformation):
     functions to save on resources. May alter tensor weightDataType
     if the node does not have runtime writeable weights."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize instance."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Apply transformation."""
         for node in model.graph.node:
             if is_fpgadataflow_node(node):
-                inst = getCustomOp(node)
+                inst = getHWCustomOp(node)
                 if hasattr(inst, "minimize_weight_bit_width"):
-                    inst.minimize_weight_bit_width(model)
+                    inst.minimize_weight_bit_width(model)  # type: ignore
         return (model, False)

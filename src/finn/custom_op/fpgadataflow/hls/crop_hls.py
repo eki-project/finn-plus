@@ -10,23 +10,30 @@
 #
 ###################################################################################
 
+"""Module for crop hls."""
 from finn.custom_op.fpgadataflow.crop import Crop
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 
 
 class Crop_hls(Crop, HLSBackend):
+    """Class for Crop hls."""
+
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         return Crop.get_nodeattr_types(self) | HLSBackend.get_nodeattr_types(self)
 
     def global_includes(self):
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = [
             '#include "crop.hpp"',
         ]
 
     def defines(self, var):
+        """Return defines."""
         simd = self.get_nodeattr("SIMD")
         dtype = self.get_input_datatype()
         height, width = self.get_nodeattr("ImgDim")
@@ -49,6 +56,7 @@ class Crop_hls(Crop, HLSBackend):
         ]
 
     def docompute(self):
+        """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = [
             """
             hls::stream<TV>  src0;
@@ -63,6 +71,7 @@ class Crop_hls(Crop, HLSBackend):
         ]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             f"""
             void {self.onnx_node.name} (
@@ -73,6 +82,7 @@ class Crop_hls(Crop, HLSBackend):
         ]
 
     def pragmas(self):
+        """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = [
             """
             #pragma HLS interface AXIS port=in0_V
@@ -86,4 +96,5 @@ class Crop_hls(Crop, HLSBackend):
         ]
 
     def execute_node(self, context, graph):
+        """Execute node."""
         HLSBackend.execute_node(self, context, graph)

@@ -30,10 +30,10 @@ variables:
     value: "1"
   SLURM_TIMEOUT:
     description: "Select SLURM timeout"
-    value: "1-0" # [days-hours]
+    value: "3-0" # [days-hours]
   SLURM_PARTITION:
     description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
-    value: "normal"
+    value: "fpga"
   SLURM_QOS:
     description: "Optional --exclusive or QoS option (include --qos, e.g., --qos express)"
     value: ""
@@ -157,7 +157,7 @@ FINN Test Suite 2022.2:
     paths:
       - deps
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES --exclusive"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclusive"
     PYTEST_PARALLEL: "$CPU_CORES"
   extends: .setup_full_2022_2
   script:
@@ -169,7 +169,7 @@ FINN Test Suite 2022.2:
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
-      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers 1 --num-test-workers $PYTEST_PARALLEL
+      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-test-workers $PYTEST_PARALLEL -n 1
   artifacts:
     name: "test_reports"
     when: always

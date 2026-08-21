@@ -1,3 +1,4 @@
+"""Module for post-synthesis resource analysis of FPGA dataflow models."""
 # Copyright (c) 2020, Xilinx, Inc.
 # Copyright (C) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -27,28 +28,31 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
+from typing import cast
 
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
 
-def post_synth_res(model, override_synth_report_filename=None):
-    """Extracts the FPGA resource results from the Vivado synthesis.
+def post_synth_res(
+    model: ModelWrapper, override_synth_report_filename: str | None = None
+) -> dict[str, dict[str, int]]:
+    """Extract the FPGA resource results from the Vivado synthesis.
     Ensure that all nodes have unique names (by calling the GiveUniqueNodeNames
     transformation) prior to calling this analysis pass to ensure all nodes are
     visible in the results.
 
     Returns {node name : resources_dict}."""
-
     res_dict = {}
     if override_synth_report_filename is not None:
         synth_report_filename = override_synth_report_filename
     else:
-        synth_report_filename = model.get_metadata_prop("vivado_synth_rpt")
-    if os.path.isfile(synth_report_filename):
+        synth_report_filename = cast("str", model.get_metadata_prop("vivado_synth_rpt"))
+    synth_report_filename = Path(synth_report_filename)
+    if synth_report_filename.is_file():
         tree = ET.parse(synth_report_filename)
         root = tree.getroot()
         all_cells = root.findall(".//tablecell")
@@ -104,16 +108,16 @@ def post_synth_res(model, override_synth_report_filename=None):
         else:
             restype_to_ind = restype_to_ind_default
 
-    def get_instance_stats(inst_name):
-        row = root.findall(".//*[@contents='%s']/.." % inst_name)
+    def get_instance_stats(inst_name: str) -> dict[str, int] | None:
+        """Return resource stats for a specific instance name."""
+        row = root.findall(f".//*[@contents='{inst_name}']/..")
         if row != []:
-            node_dict = {}
+            node_dict: dict[str, int] = {}
             row = list(row[0])
             for restype, ind in restype_to_ind.items():
                 node_dict[restype] = int(row[ind].attrib["contents"])
             return node_dict
-        else:
-            return None
+        return None
 
     # global (top-level) stats, including shell etc.
     top_dict = get_instance_stats("(top)")
@@ -122,8 +126,8 @@ def post_synth_res(model, override_synth_report_filename=None):
 
     for node in model.graph.node:
         if node.op_type == "StreamingDataflowPartition":
-            sdp_model = ModelWrapper(getCustomOp(node).get_nodeattr("model"))
-            sdp_res_dict = post_synth_res(sdp_model, synth_report_filename)
+            sdp_model = ModelWrapper(cast("str", getCustomOp(node).get_nodeattr("model")))
+            sdp_res_dict = post_synth_res(sdp_model, str(synth_report_filename))
             res_dict.update(sdp_res_dict)
         elif is_hls_node(node) or is_rtl_node(node):
             node_dict = get_instance_stats(node.name)

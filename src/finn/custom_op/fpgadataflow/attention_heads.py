@@ -116,8 +116,7 @@ class SplitMultiHeads(HWCustomOp):
 
 
     def make_shape_compatible_op(self, model: ModelWrapper):  # noqa
-        """
-        Make an operation compatible with the output shape for shape inference
+        """Make an operation compatible with the output shape for shape inference
         Note: Propagates shape forward, i.e., never asks for the shape of the output,
         even if it seems easier.
         """
@@ -157,7 +156,7 @@ class SplitMultiHeads(HWCustomOp):
 
     def infer_node_datatype(self, model: ModelWrapper):  # noqa
         """Infer the datatype of the node output."""
-        # Get the node wrapped by this custom op  # noqa Duplicate
+        # Get the node wrapped by this custom op
         node = self.onnx_node
         # Test for changing input datatype
         if model.get_tensor_datatype(node.input[0]) != self.dtype:
@@ -217,7 +216,7 @@ class SplitMultiHeads(HWCustomOp):
 
     def _execute_node_rtlsim(self, context, graph):  # noqa: graph unused
         """Execute node in RTL simulation mode."""
-        # Get the node wrapped by this custom op    # noqa Duplicate
+        # Get the node wrapped by this custom op
         node = self.onnx_node
         # Input data is stored in numpy files in the code generation dictionary
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
@@ -358,8 +357,7 @@ class SplitMultiHeads(HWCustomOp):
         num_outputs_per_stream = np.prod(self.get_folded_output_shape()[:-1])
         if self.heads > 1:
             return {f"out{i}": num_outputs_per_stream for i in range(self.heads)}
-        else:
-            return num_outputs_per_stream
+        return num_outputs_per_stream
 
     def get_exp_cycles(self):
         """Derive the expected cycles of the operator given the folding configuration."""
@@ -370,6 +368,7 @@ class SplitMultiHeads(HWCustomOp):
 
 class MergeMultiHeads(HWCustomOp):
     """Merging of attention heads (before output projections) custom operator."""
+
     # Initializes the operator given an onnx graph node
     def __init__(self, onnx_node, **kwargs):
         """Initialize the operator."""
@@ -473,7 +472,7 @@ class MergeMultiHeads(HWCustomOp):
     def infer_node_datatype(self, model: ModelWrapper):  # noqa
         """Infer the datatype of the node output."""
         # Get the node wrapped by this custom op
-        node = self.onnx_node  # noqa Duplicate
+        node = self.onnx_node
         # Test for changing input datatype
         if model.get_tensor_datatype(node.input[0]) != self.dtype:
             # Get the new datatype

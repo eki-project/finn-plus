@@ -26,11 +26,14 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for create dataflow partition."""
+from onnx import NodeProto
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.create_generic_partitions import PartitionFromLambda
 from qonnx.util.basic import get_by_name
+from typing import Literal, cast
 
 from finn.transformation.fpgadataflow.externalize_params import ExternalizeParams
 from finn.util.basic import make_build_dir
@@ -43,43 +46,46 @@ class CreateDataflowPartition(Transformation):
     that indicates the filename for the second graph that only contains
     dataflow nodes. No action is taken if there are no dataflow nodes."""
 
-    def __init__(self, partition_model_dir=None):
+    def __init__(self, partition_model_dir: str | None = None) -> None:
+        """Initialize instance."""
         super().__init__()
         if partition_model_dir is None:
             self.partition_model_dir = make_build_dir("dataflow_partition_")
         else:
             self.partition_model_dir = partition_model_dir
 
-    def apply(self, model):
-        def filter_fc_extw(x):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Apply transformation."""
+
+        def filter_fc_extw(x: NodeProto) -> bool:
+            """Return true if node is an IODMA_hls with burst mode "wrap"."""
             if x.op_type == "IODMA_hls":
                 burst_mode = get_by_name(x.attribute, "burstMode")
                 if burst_mode is not None:
                     burst_mode = burst_mode.s.decode("UTF-8")
                     return burst_mode == "wrap"
+            return False
 
         extw_dma_nodes = list(filter(filter_fc_extw, model.graph.node))
         if len(extw_dma_nodes) > 0:
             model = model.transform(ExternalizeParams())
 
-        def assign_partition_id(node):
+        def assign_partition_id(node: NodeProto) -> int:
+            """Return partition id."""
             if node.op_type in ["GenericPartition", "StreamingDataflowPartition"]:
                 return -1
-            else:
-                backend = get_by_name(node.attribute, "backend")
-                if backend is not None and backend.s.decode("UTF-8") == "fpgadataflow":
-                    assigned_partition = get_by_name(node.attribute, "partition_id")
-                    if assigned_partition is not None:
-                        return assigned_partition.i
-                    else:
-                        return 0
-                else:
-                    return -1
+            backend = get_by_name(node.attribute, "backend")
+            if backend is not None and backend.s.decode("UTF-8") == "fpgadataflow":
+                assigned_partition = get_by_name(node.attribute, "partition_id")
+                if assigned_partition is not None:
+                    return assigned_partition.i
+                return 0
+            return -1
 
         # first, use the generic partitioning functionality to split up the graph
         parent_model = model.transform(
             PartitionFromLambda(
-                partitioning=assign_partition_id, partition_dir=self.partition_model_dir
+                partitioning=assign_partition_id, partition_dir=str(self.partition_model_dir)
             )
         )
         # change node types to StreamingDataflowPartition
@@ -87,7 +93,7 @@ class CreateDataflowPartition(Transformation):
         for partition_ind, p_node in enumerate(p_nodes):
             # go into partition to extract some info
             p_node_inst = getCustomOp(p_node)
-            node_model_filename = p_node_inst.get_nodeattr("model")
+            node_model_filename = cast("str", p_node_inst.get_nodeattr("model"))
             p_model = ModelWrapper(node_model_filename)
             # check floorplan (SLR assignment per node)
             inst = getCustomOp(p_model.graph.node[0])

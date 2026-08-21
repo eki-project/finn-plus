@@ -94,6 +94,7 @@ class FINNSettings(BaseModel):
     finn_custom_hls: str = Field(default=resolve_module_path("custom_hls"))
     finn_notebooks: str = Field(default=resolve_module_path("notebooks"))
     finn_tests: str = Field(default=resolve_module_path("tests"))
+    finn_xsi: Path = Field(default=Path(resolve_module_path("finn_xsi")))
 
     @computed_field
     @property
@@ -293,7 +294,7 @@ class FINNSettings(BaseModel):
         modified_data = self.model_dump()
         for key in data.keys():
             lkey = key.lower()
-            if lkey in modified_data and data[key] is not None:
+            if lkey in modified_data:
                 modified_data[lkey] = data[key]
         try:
             new_model = FINNSettings.model_validate(modified_data)
@@ -339,6 +340,7 @@ class FINNSettings(BaseModel):
             del data["finn_custom_hls"]
             del data["finn_notebooks"]
             del data["finn_tests"]
+            del data["finn_xsi"]
         if self._num_default_workers == -1:
             # Dont save this if its set to automatic detection
             del data["num_default_workers"]

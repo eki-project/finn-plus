@@ -32,6 +32,7 @@ import numpy as np
 import onnx
 import onnx.numpy_helper as nph
 import os
+import torch
 import torchvision.transforms.functional as torchvision_util
 import warnings
 from brevitas_examples import bnn_pynq, imagenet_classification
@@ -62,8 +63,8 @@ example_map = {
 }
 
 
-def get_test_model(netname, wbits, abits, pretrained):
-    """Returns the model specified by input arguments from the Brevitas BNN-PYNQ
+def get_test_model(netname: str, wbits: int, abits: int, pretrained: bool) -> torch.nn.Module:
+    """Return the model specified by input arguments from the Brevitas BNN-PYNQ
     test networks. Pretrained weights loaded if pretrained is True."""
     model_cfg = (netname, wbits, abits)
     model_def_fxn = example_map[model_cfg]
@@ -72,7 +73,7 @@ def get_test_model(netname, wbits, abits, pretrained):
 
 
 def get_test_model_trained(netname, wbits, abits):
-    "get_test_model with pretrained=True"
+    """get_test_model with pretrained=True"""
     return get_test_model(netname, wbits, abits, pretrained=True)
 
 
@@ -148,9 +149,10 @@ def get_example_input(topology):
         raise Exception("Unknown topology, can't return example input")
 
 
-def get_trained_network_and_ishape(topology, wbits, abits):
-    "Return (trained_model, shape) for given BNN-PYNQ test config."
-
+def get_trained_network_and_ishape(
+    topology: str, wbits: int, abits: int
+) -> tuple[torch.nn.Module, tuple[int, int, int, int]]:
+    """Return (trained_model, shape) for given BNN-PYNQ test config."""
     topology_to_ishape = {
         "tfc": (1, 1, 28, 28),
         "lfc": (1, 1, 28, 28),
