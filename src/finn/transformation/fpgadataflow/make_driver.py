@@ -53,30 +53,29 @@ from finn.util.settings import get_settings
 
 
 def update_bitfile_path_after_copy(bitfile_path: Path, json_path: Path) -> None:
-    """
-    Update the xclbinPath in the JSON configuration to point to the new bitfile location.
+    """Update the xclbinPath in the JSON configuration to point to the new bitfile location.
 
     Args:
-        json_path (str): Path to the JSON configuration file
-        bitfile_path (str): New path to the bitfile (.xclbin)
+        json_path (Path): Path to the JSON configuration file
+        bitfile_path (Path): New path to the bitfile (.xclbin)
     """
-    if json_path is None or not os.path.exists(json_path):
+    if json_path is None or not json_path.exists():
         raise FINNInternalError("JSON configuration file does not exist or is not specified.")
-    if bitfile_path is None or not os.path.exists(bitfile_path):
+    if bitfile_path is None or not bitfile_path.exists():
         raise FINNInternalError("Bitfile path does not exist or is not specified.")
-    if not json_path.endswith(".json"):
+    if not json_path.suffix == ".json":
         raise FINNInternalError("Provided path is not a JSON file.")
 
     # Read the current JSON configuration
-    with open(json_path, "r") as f:
+    with json_path.open() as f:
         data = json.load(f)
 
     # Update the xclbinPath for each device in the configuration
     for device_config in data:
-        device_config["xclbinPath"] = os.path.abspath(bitfile_path)
+        device_config["xclbinPath"] = bitfile_path.resolve().as_posix()
 
     # Write the updated configuration back to the file
-    with open(json_path, "w") as f:
+    with json_path.open("w") as f:
         json.dump(data, f, indent=4)
 
 
@@ -108,16 +107,15 @@ class MakeCPPDriver(Transformation):
         s = s.replace("DataType[", "").replace("]", "")
         if s in ["BINARY", "TERNARY", "BIPOLAR"]:
             return "Datatype" + s[0] + s[1:].lower()
-        elif s.startswith("U"):
+        if s.startswith("U"):
             return "DatatypeUInt<" + s.replace("UINT", "") + ">"
-        elif s.startswith("I"):
+        if s.startswith("I"):
             return "DatatypeInt<" + s.replace("INT", "") + ">"
-        elif "FLOAT" in s:
+        if "FLOAT" in s:
             return "DatatypeFloat<" + s.replace("FLOAT", "") + ">"
-        elif "FIXED" in s:
+        if "FIXED" in s:
             return "DatatypeFixed" + s.replace("FIXED", "")
-        else:
-            raise FINNInternalError(f"Unknown datatype for C++ Driver:{s}")
+        raise FINNInternalError(f"Unknown datatype for C++ Driver:{s}")
 
     def __init__(
         self,
@@ -762,7 +760,7 @@ class MakePYNQDriver(Transformation):
         # so that the driver can generate a final cfg with live fifo sizes applied
         folding_path = model.get_metadata_prop("folding_config_before_lfs")
         if folding_path:
-            with open(folding_path, "r") as f:
+            with open(folding_path) as f:
                 folding_cfg = json.load(f)
             settings["folding_config_before_lfs"] = folding_cfg
 
@@ -788,7 +786,7 @@ class MakePYNQDriver(Transformation):
 
         experiment_information = {}
         if self.experiment_info is not None:
-            with open(self.experiment_info, "r") as f:
+            with open(self.experiment_info) as f:
                 experiment_information = json.load(f)
 
         driver_information["driver_type"] = self.driver_type

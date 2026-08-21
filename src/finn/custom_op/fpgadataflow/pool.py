@@ -41,7 +41,6 @@ class Pool(HWCustomOp):
     Output shape (BatchSize,OutImgDim,OutImgDim,Channels)
 
     Notes:
-
     * The input shape was chosen to be compatible with im2col (only true when there
       is not folding).
     * The actual data layout produced by the hlslib kernels is different
@@ -85,9 +84,7 @@ class Pool(HWCustomOp):
             # Same as input
             idt = DataType[self.get_nodeattr("InputDataType")]
             assert odt == idt, "In datatype must be equal to out datatype for Maxpool"
-        elif fxn == "AccPool":
-            pass
-        elif fxn == "AvgPool":
+        elif fxn == "AccPool" or fxn == "AvgPool":
             pass
         elif fxn == "QuantAvgPool":
             idt = DataType[self.get_nodeattr("InputDataType")]
@@ -167,6 +164,10 @@ class Pool(HWCustomOp):
     def infer_node_datatype(self, model):
         """Infers the datatype of the output from the node attribute."""
         node = self.onnx_node
+        # Get the new datatype
+        new_dtype = model.get_tensor_datatype(node.input[0])
+        # Set the new datatype attribute
+        self.set_nodeattr("InputDataType", new_dtype.name)
         # data type stays the same
         dtype = self.get_output_datatype()
         model.set_tensor_datatype(node.output[0], dtype)

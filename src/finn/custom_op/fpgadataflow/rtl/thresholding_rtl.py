@@ -210,7 +210,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
                     "Fixed-point thresholds have more fractional bits than input. "
                     "Run RoundAndClipThresholds to reduce threshold fractional bits."
                 )
-            elif wdt.scale_factor() > idt.scale_factor():
+            if wdt.scale_factor() > idt.scale_factor():
                 raise ValueError(
                     "Fixed-point inputs and with more fractional bits "
                     "than thresholds are not supported."
@@ -310,7 +310,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
         rtlsrc = os.path.join(get_settings().finn_rtllib, "thresholding/hdl")
         template_path = rtlsrc + "/thresholding_template_wrapper.v"
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template_wrapper = f.read()
         for key in code_gen_dict:
             # transform list into long string separated by '\n'
@@ -376,7 +376,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
                     # make copy before saving the array
                     reshaped_input = reshaped_input.copy()
                     np.save(
-                        os.path.join(code_gen_dir, "input_{}.npy".format(in_ind)),
+                        os.path.join(code_gen_dir, f"input_{in_ind}.npy"),
                         reshaped_input,
                     )
                 elif in_ind > 2:
@@ -385,9 +385,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
 
             sim = self.get_rtlsim()
             nbits = self.get_instream_width()
-            rtlsim_inp = npy_to_rtlsim_input(
-                "{}/input_0.npy".format(code_gen_dir), export_idt, nbits
-            )
+            rtlsim_inp = npy_to_rtlsim_input(f"{code_gen_dir}/input_0.npy", export_idt, nbits)
             io_dict = {
                 "inputs": {"in0": rtlsim_inp},
                 "outputs": {"out0": []},
@@ -401,7 +399,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
             odt = self.get_output_datatype()
             target_bits = odt.bitwidth()
             packed_bits = self.get_outstream_width()
-            out_npy_path = "{}/output.npy".format(code_gen_dir)
+            out_npy_path = f"{code_gen_dir}/output.npy"
             out_shape = self.get_folded_output_shape()
 
             rtlsim_output_to_npy(
@@ -415,10 +413,8 @@ class Thresholding_rtl(Thresholding, RTLBackend):
             context[node.output[0]] = output
         else:
             raise Exception(
-                """Invalid value for attribute exec_mode! Is currently set to: {}
-            has to be set to one of the following value ("cppsim", "rtlsim")""".format(
-                    mode
-                )
+                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
+            has to be set to one of the following value ("cppsim", "rtlsim")"""
             )
 
     def code_generation_ipi(self):
@@ -471,7 +467,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         """
         thresholds = model.get_initializer(self.onnx_node.input[1])
         rt_weights = self.get_nodeattr("runtime_writeable_weights")
-        file_name = "{}/memblock.dat".format(path)
+        file_name = f"{path}/memblock.dat"
         if rt_weights:
             self.make_weight_file(thresholds, "decoupled_runtime", file_name)
         self.make_weight_file(thresholds, "internal_embedded", file_name)

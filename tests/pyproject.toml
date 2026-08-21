@@ -32,15 +32,15 @@ pytest = "~8.4.1"
 pytest-metadata = "~3.1.1"
 pytest-html = "~4.1.1"
 pytest-html-merger = "~0.1.0"
-pytest-cov = "~6.2.1"
 pytest-forked = "~1.6.0"
-pytest-rerunfailures = "~15.1"
+pytest-rerunfailures = "~16.1"
 pytest-dependency = "~0.6.0"
 pytest-parallel = "~0.1.1"
 pytest-xdist = { version = "~3.6.1", extras = ["setproctitle"] }
 torch = "~2.7.1"
 torchvision = "~0.22.1"
 wget = "~3.2"
+junitparser = "~5.0.1"
 
 [tool.pytest.ini_options]
 markers = [
@@ -64,6 +64,7 @@ markers = [
     "analysis: mark tests that run analysis tests",
     "multifpga: mark tests that run multifpga tests",
     "auroraflow: mark tests that check AuroraFlow related functionality"
+    "only: mark",
 ]
 
 [build-system]

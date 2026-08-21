@@ -27,6 +27,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for init."""
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # Dictionary of HWCustomOp implementations
@@ -36,8 +37,9 @@ custom_op = dict()
 # Registers a class into the custom_op dictionary
 # Note: This must be defined first, before importing any custom op
 # implementation to avoid "importing partially initialized module" issues.
-def register_custom_op(cls):
+def register_custom_op(cls) -> type[HWCustomOp]:
     # The class must actually implement HWCustomOp
+    """Register a custom operation."""
     assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"
     # Insert the class into the custom_op dictionary by its name
     custom_op[cls.__name__] = cls

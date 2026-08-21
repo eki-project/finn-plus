@@ -44,6 +44,7 @@ class StreamingDataflowPartition(CustomOp):
     """
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         return {
             "model": ("s", True, ""),
             "res_estimate": ("s", False, ""),
@@ -59,12 +60,15 @@ class StreamingDataflowPartition(CustomOp):
         }
 
     def make_shape_compatible_op(self, model):
+        """Create shape compatible op."""
         pass
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         pass
 
     def execute_node(self, context, graph):
+        """Execute node."""
         model = ModelWrapper(self.get_nodeattr("model"))
         return_full_exec_context = self.get_nodeattr("return_full_exec_context") == 1
         node = self.onnx_node
@@ -85,9 +89,9 @@ class StreamingDataflowPartition(CustomOp):
             for tname in ret.keys():
                 if tname not in [x.name for x in model.graph.output]:
                     context[node.name + "_" + tname] = ret[tname]
-        pass
 
     def verify_node(self):
+        """Verify node."""
         info_messages = []
 
         # verify number of attributes
@@ -96,10 +100,8 @@ class StreamingDataflowPartition(CustomOp):
             info_messages.append("The number of attributes is correct")
         else:
             info_messages.append(
-                """The number of attributes is incorrect,
-            {} should have {} attributes""".format(
-                    self.onnx_node.op_type, num_of_attr
-                )
+                f"""The number of attributes is incorrect,
+            {self.onnx_node.op_type} should have {num_of_attr} attributes"""
             )
         # verify that all necessary attributes exist
         try:

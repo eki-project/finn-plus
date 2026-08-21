@@ -1,3 +1,5 @@
+"""Module which contains an analysis pass that extracts the resource estimation results from the
+Vitis HLS synthesis reports for nodes with an HLS backend in the given model."""
 # Copyright (c) 2020, Xilinx
 # All rights reserved.
 #
@@ -25,9 +27,9 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-import os
 import qonnx.custom_op.registry as registry
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.util.fpgadataflow import is_hls_node
@@ -50,7 +52,7 @@ def hls_synth_res_estimation(model: ModelWrapper) -> dict[str, dict[str, int | f
     for node in model.graph.node:
         if is_hls_node(node):
             # init values to zero
-            res_dict[node.name] = dict()
+            res_dict[node.name] = {}
             res_dict[node.name]["BRAM_18K"] = 0
             res_dict[node.name]["FF"] = 0
             res_dict[node.name]["LUT"] = 0
@@ -65,11 +67,11 @@ def hls_synth_res_estimation(model: ModelWrapper) -> dict[str, dict[str, int | f
                     "HLSSynthIP" first to generate the report files"""
                 )
             else:
-                xmlfile = "{}/project_{}/sol1/syn/report/{}_csynth.xml".format(
-                    code_gen_dir, node.name, node.name
+                xmlfile = (
+                    f"{code_gen_dir}/project_{node.name}/sol1/syn/report/{node.name}_csynth.xml"
                 )
 
-                if os.path.isfile(xmlfile):
+                if Path(xmlfile).is_file():
                     tree = ET.parse(xmlfile)
                     root = tree.getroot()
                     for item in root.findall("AreaEstimates/Resources"):

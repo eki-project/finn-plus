@@ -3,6 +3,7 @@
 # per line. Black, however, formats some lines going beyond this.
 
 # Numpy math and arrays
+"""Module for replicate stream."""
 import numpy as np
 
 # Helper for creating ONNX nodes
@@ -26,8 +27,10 @@ from finn.util.logging import log
 #   See DuplicateStreams_Batch for feeding exactly two streams
 class ReplicateStream(HWCustomOp):
     # Initializes the operator given an onnx graph node
+    """Class for Replicate Stream."""
     def __init__(self, onnx_node, **kwargs):
         # Just forward all arguments to the init method of the CustomOp base
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
         # Need to override the default depths of outputs FIFOs here as these
@@ -39,6 +42,7 @@ class ReplicateStream(HWCustomOp):
     # Defines attributes which must be present on this node
     def get_nodeattr_types(self):
         # Start from parent operator class attributes
+        """Return nodeattr types."""
         attrs = HWCustomOp.get_nodeattr_types(self)
         # Update attributes dictionary for new custom operator
         attrs.update({
@@ -68,27 +72,32 @@ class ReplicateStream(HWCustomOp):
     # Number of replicas attribute as property for convenience
     @property
     def num(self):
+        """Return num."""
         return self.get_nodeattr("num")
 
     # Datatype attribute as property for convenience
     @property
     def dtype(self):
         # Note: Converts from string to QONNX data type
+        """Return dtype."""
         return DataType[self.get_nodeattr("dtype")]
 
     # Number of elements attribute as property for convenience
     @property
     def num_elems(self):
+        """Return num elems."""
         return self.get_nodeattr("num_elems")
 
     # Number of parallel processed elements as property for convenience
     @property
     def pe(self):
+        """Return pe."""
         return self.get_nodeattr("PE")
 
     # Number of inputs attribute as property for convenience
     @property
     def num_inputs(self):
+        """Return num inputs."""
         return self.get_nodeattr("num_inputs")
 
     # Makes an operation compatible with the output shape for shape inference
@@ -96,6 +105,7 @@ class ReplicateStream(HWCustomOp):
     #   output, even if it seems easier.
     def make_shape_compatible_op(self, model: ModelWrapper):  # noqa
         # Get the node wrapped by this custom op
+        """Create shape compatible op."""
         node = self.onnx_node
         # Prepare a dummy input to simulate a large input that can be split into
         # the desired number and shapes of outputs
@@ -111,7 +121,8 @@ class ReplicateStream(HWCustomOp):
 
     # Infers the datatype of the node output
     def infer_node_datatype(self, model: ModelWrapper):  # noqa
-        # Get the node wrapped by this custom op  # noqa Duplicate
+        # Get the node wrapped by this custom op
+        """Infer node datatype."""
         node = self.onnx_node
         # Test for changing input datatype
         if model.get_tensor_datatype(node.input[0]) != self.dtype:
@@ -131,6 +142,7 @@ class ReplicateStream(HWCustomOp):
     # Executes replicating inputs in python
     def _execute_node_python(self, context, graph):  # noqa: graph unused
         # Get the node wrapped by this custom op
+        """Execute node."""
         node = self.onnx_node
         # Get the input out of the execution context
         inp = context[node.input[0]]
@@ -142,6 +154,7 @@ class ReplicateStream(HWCustomOp):
     # Executes replicating inputs in C++ simulation
     def _execute_node_cppsim(self, context, graph):  # noqa: graph unused
         # C++ Simulation needs to be implemented in HLS backend specialization
+        """Execute node."""
         raise NotImplementedError(
             f"exec_mode cppsim of {self.__class__.__name__} is not implemented!"
         )
@@ -149,6 +162,7 @@ class ReplicateStream(HWCustomOp):
     # Executes replicating inputs in simulation (either python c++ or rtl sim)
     def execute_node(self, context, graph):
         # Get the configured execution mode
+        """Execute node."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "python":
             self._execute_node_python(context, graph)
@@ -159,6 +173,7 @@ class ReplicateStream(HWCustomOp):
     # Verifies the node attributes, inputs and outputs
     def verify_node(self):
         # TODO: Implement
+        """Verify node."""
         return []
 
     # Note: End of QONNX CustomOp region, below is FINN HWCustomOp stuff
@@ -166,28 +181,33 @@ class ReplicateStream(HWCustomOp):
     # Gets the datatype of input at index ind
     def get_input_datatype(self, ind=0):
         # All inputs (there should only be one) have the same type
+        """Return input datatype."""
         return self.dtype
 
     # Gets the datatype of the output at index ind
     def get_output_datatype(self, ind=0):
         # All outputs will hae the same type, which is the same as the input
+        """Return output datatype."""
         return self.dtype
 
     # Gets the shape of the input at index ind without folding
     def get_normal_input_shape(self, ind=0):
         # There is only one input with shape configured as attributes
         #   Unpack multi-axis inputs list to yield a flat tuple as shape
+        """Return normal input shape."""
         return *self.num_inputs, self.num_elems
 
     # Gets the shape of the output at index ind without folding
     def get_normal_output_shape(self, ind=0):
         # All outputs have the same shape, which is the same as the input
         #   Unpack multi-axis inputs list to yield a flat tuple as shape
+        """Return normal output shape."""
         return *self.num_inputs, self.num_elems
 
     # Gets the shape of the input at index ind with folding
     def get_folded_input_shape(self, ind=0):
         # Valid folding requires the PE to divides the number of elements
+        """Return folded input shape."""
         assert self.num_elems % self.pe == 0, "PE must divide num_elems"
         # Folding along the last dimension
         return *self.num_inputs, self.num_elems // self.pe, self.pe
@@ -195,6 +215,7 @@ class ReplicateStream(HWCustomOp):
     # Gets the shape of the output at index ind with folding
     def get_folded_output_shape(self, ind=0):
         # Valid folding requires the PE to divides the number of elements
+        """Return folded output shape."""
         assert self.num_elems % self.pe == 0, "PE must divide num_elems"
         # Folding along the last dimension
         return *self.num_inputs, self.num_elems // self.pe, self.pe
@@ -202,6 +223,7 @@ class ReplicateStream(HWCustomOp):
     # Widths of the input data stream of the input at index ind
     def get_instream_width(self, ind=0):
         # Get the number of bits used to represent the input
+        """Return instream width."""
         i_bits = self.get_input_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
         # folded input
@@ -212,6 +234,7 @@ class ReplicateStream(HWCustomOp):
     # Widths of the output data stream of the output at index ind
     def get_outstream_width(self, ind=0):
         # Get the number of bits used to represent the output
+        """Return outstream width."""
         o_bits = self.get_output_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
         # folded output
@@ -226,15 +249,16 @@ class ReplicateStream(HWCustomOp):
         # the embedding dimension.
         # In case of multiple outputs, the new FINN XSI simulation back-end requires
         # this to be specified on a per-output basis, in the form of a dict.
+        """Return number output values."""
         num_outputs_per_stream = np.prod(self.get_folded_output_shape()[:-1])
         if self.num > 1:
             return {f"out{i}": num_outputs_per_stream for i in range(self.num)}
-        else:
-            return num_outputs_per_stream
+        return num_outputs_per_stream
 
     # Derives the expected cycles for the stream replication operation given the
     # folding configuration
     def get_exp_cycles(self):
         # Number of iterations required to process the whole folded input stream
         #   Note: This is all but the PE (last, parallelized) dimension
+        """Return exp cycles."""
         return np.prod(self.get_folded_output_shape()[:-1])

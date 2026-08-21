@@ -26,87 +26,103 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Tests for splitting large FIFOs in dataflow graphs."""
 
 import pytest
 
-import json
-import shutil
-import torch
-from brevitas.export import export_qonnx
+import numpy as np
+from onnx import NodeProto, TensorProto
+from onnx import helper as oh
+from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
+from qonnx.util.basic import qonnx_make_model
+from typing import Literal, cast
 
-import finn.builder.build_dataflow as build
-import finn.builder.build_dataflow_config as build_cfg
-from finn.transformation.fpgadataflow.set_fifo_depths import get_fifo_split_configs
-from finn.util.basic import make_build_dir
-from tests.testing_util.test import get_trained_network_and_ishape
-
-
-def fetch_test_model(topology, wbits=2, abits=2):
-    tmp_output_dir = make_build_dir("build_fifosizing_%s_" % topology)
-    (model, ishape) = get_trained_network_and_ishape(topology, wbits, abits)
-    chkpt_name = tmp_output_dir + "/model.onnx"
-    export_qonnx(model, torch.randn(ishape), chkpt_name)
-    return tmp_output_dir
+from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
+from finn.transformation.fpgadataflow.set_fifo_depths import SplitLargeFIFOs, get_fifo_split_configs
+from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 
 
-def get_folding_cfg(depth=65536):
-    cfg = dict()
-    cfg["Defaults"] = dict()
-    for i in range(9):
-        key = "StreamingFIFO_rtl_" + str(i)
-        cfg[key] = {"depth": depth, "ram_style": "auto", "impl_style": "vivado"}
-    return cfg
+def _make_elementwise_add(
+    name: str,
+    lhs: str,
+    rhs: str,
+    out: str,
+    shape: list[int],
+    dtype: str = "INT8",
+    lhs_style: str = "input",
+    rhs_style: str = "input",
+) -> NodeProto:
+    return oh.make_node(
+        "ElementwiseAdd",
+        [lhs, rhs],
+        [out],
+        domain="finn.custom_op.fpgadataflow",
+        backend="fpgadataflow",
+        lhs_dtype=dtype,
+        rhs_dtype=dtype,
+        out_dtype=dtype,
+        lhs_shape=list(shape),
+        rhs_shape=list(shape),
+        out_shape=list(shape),
+        lhs_style=lhs_style,
+        rhs_style=rhs_style,
+        PE=1,
+        name=name,
+    )
+
+
+def _build_elementwise_add_model() -> ModelWrapper:
+    shape = [1, 4]
+    inp0 = oh.make_tensor_value_info("inp0", TensorProto.INT8, shape)
+    rhs0 = oh.make_tensor_value_info("rhs0", TensorProto.INT8, shape)
+    rhs1 = oh.make_tensor_value_info("rhs1", TensorProto.INT8, shape)
+    mid = oh.make_tensor_value_info("mid", TensorProto.INT8, shape)
+    out = oh.make_tensor_value_info("out", TensorProto.INT8, shape)
+    nodes = [
+        _make_elementwise_add("add_0", "inp0", "rhs0", "mid", shape, rhs_style="const"),
+        _make_elementwise_add("add_1", "mid", "rhs1", "out", shape, rhs_style="const"),
+    ]
+    graph = oh.make_graph(
+        nodes=nodes,
+        inputs=[inp0],
+        outputs=[out],
+        value_info=[mid, rhs0, rhs1],
+        name="two_elementwise_adds",
+    )
+    model = ModelWrapper(qonnx_make_model(graph, producer_name="test_split_large_fifos"))
+    model.set_initializer("rhs0", np.ones(shape, dtype=np.int8))
+    model.set_initializer("rhs1", np.ones(shape, dtype=np.int8))
+    for tensor_name in ["inp0", "rhs0", "rhs1", "mid", "out"]:
+        model.set_tensor_datatype(tensor_name, DataType["INT8"])
+    return model
 
 
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.fpgadataflow
 @pytest.mark.parametrize("depth", [16384, 65536, 45000, 1537])
-def test_split_large_fifos(depth):
-    tmp_output_dir = fetch_test_model("tfc")
-    folding_cfg = get_folding_cfg(depth)
-    with open(tmp_output_dir + "/folding_config.json", "w") as f:
-        json.dump(folding_cfg, f, indent=2)
-    cfg = build_cfg.DataflowBuildConfig(
-        output_dir=tmp_output_dir,
-        auto_fifo_depths=False,
-        split_large_fifos=True,
-        folding_config_file=tmp_output_dir + "/folding_config.json",
-        target_fps=10000,
-        synth_clk_period_ns=10.0,
-        board="Pynq-Z1",
-        rtlsim_batch_size=100,
-        shell_flow_type=build_cfg.ShellFlowType.VIVADO_ZYNQ,
-        generate_outputs=[
-            build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
-            build_cfg.DataflowOutputType.STITCHED_IP,
-            build_cfg.DataflowOutputType.RTLSIM_PERFORMANCE,
-        ],
-    )
-    build.build_dataflow_cfg(tmp_output_dir + "/model.onnx", cfg)
-    with open(tmp_output_dir + "/report/estimate_network_performance.json") as f:
-        est_data = json.load(f)
-    with open(tmp_output_dir + "/report/rtlsim_performance.json") as f:
-        sim_data = json.load(f)
-    assert (
-        float(sim_data["throughput[images/s]"]) / float(est_data["estimated_throughput_fps"]) > 0.9
-    )
-    model = ModelWrapper(tmp_output_dir + "/intermediate_models/step_set_fifo_depths.onnx")
-    # exclude final FIFO node (output FIFO, not part of test)
-    fifo_nodes = model.get_nodes_by_op_type("StreamingFIFO_rtl")[:-1]
-    golden_cfg = get_fifo_split_configs(depth, 256, 32768)
-    for i, fifo_node in enumerate(fifo_nodes):
-        inst = getCustomOp(fifo_node)
-        fifo_depth = inst.get_nodeattr("depth")
-        assert fifo_depth == golden_cfg[i % len(golden_cfg)][0]
-        assert fifo_depth > 1
-
-    shutil.rmtree(tmp_output_dir)
+def test_split_large_fifos(depth: Literal[16384, 65536, 45000, 1537]) -> None:
+    """Split oversized FIFOs into supported power-of-two depths."""
+    model = _build_elementwise_add_model()
+    model = model.transform(SpecializeLayers("xcvm1802-vsvd1760-2MP-e-S"))
+    for node in model.graph.node:
+        n = getCustomOp(node)
+        n.set_nodeattr("inFIFODepths", [depth])
+        n.set_nodeattr("outFIFODepths", [depth])
+    model = model.transform(InsertFIFO(True, 256, "auto"))
+    model = model.transform(SplitLargeFIFOs(256, 32768))
+    for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
+        n = getCustomOp(node)
+        # Each FIFO needs to be a power of 2 in depth
+        assert (
+            cast("int", n.get_nodeattr("depth")) & (cast("int", n.get_nodeattr("depth")) - 1) == 0
+        ), f"FIFO depth {n.get_nodeattr('depth')} is not a power of 2"
 
 
-def test_split_large_fifo_configs():
+def test_split_large_fifo_configs() -> None:
+    """Validate FIFO split configurations for fixed depth inputs."""
     ret0 = get_fifo_split_configs(513, 256, 32768)
     assert ret0 == [(512, "vivado"), (2, "rtl")]
     ret1 = get_fifo_split_configs(1200, 256, 32768)

@@ -3,6 +3,7 @@
 # per line. Black, however, formats some lines going beyond this.
 
 # Utility for handling ONNX nodes and tensors
+"""Module for replicate stream."""
 from onnx import TensorProto
 from onnx import helper as oh
 
@@ -23,8 +24,10 @@ from qonnx.transformation.infer_shapes import InferShapes
 # consumers
 class InferReplicateStream(Transformation):
     # Applies the transform to a whole model graph
+    """Transformation for Infer Replicate Stream."""
     def apply(self, model: ModelWrapper):  # noqa
         # Get the model graph out of the model wrapper object
+        """Apply transformation."""
         graph = model.graph
         # Keep track of whether the graph has been modified
         graph_modified = False

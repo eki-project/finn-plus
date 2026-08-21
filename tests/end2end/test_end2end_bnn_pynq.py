@@ -33,6 +33,9 @@ import pytest
 import itertools
 import numpy as np
 
+from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
+from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.util.exception import FINNSynthesisError
 from finn.util.logging import log
 
@@ -69,7 +72,6 @@ import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.core.onnx_exec import execute_onnx
-from finn.core.throughput_test import throughput_test_rtlsim
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.transformation.fpgadataflow.annotate_resources import AnnotateResources
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
@@ -83,7 +85,7 @@ from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeW
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
+from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOSizes
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
@@ -100,10 +102,29 @@ from tests.testing_util.test import (
     get_trained_network_and_ishape,
     load_test_checkpoint_or_skip,
 )
+from tests.testing_util.throughput_test import throughput_test_rtlsim
 
 target_clk_ns = 20
 mem_mode = "internal_decoupled"
 rtlsim_trace = False
+
+
+def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    """Run FIFO sizing for testing."""
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = fpga_part
+    cfg.synth_clk_period_ns = clk_ns
+    model = model.transform(
+        BuildSimulation(
+            fpga_part,
+            clk_ns,
+            True,
+            performance_sim=False,
+        )
+    )
+    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
+    model = model.transform(ApplySimulatedFIFOSizes(cfg))
+    return model
 
 
 def get_checkpoint_name(board, topology, wbits, abits, step):
@@ -747,15 +768,7 @@ class TestEnd2End:
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "ipgen")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         test_fpga_part = get_build_env(board, target_clk_ns)["part"]
-        if topology == "cnv" and abits == 2 and board == "Pynq-Z1":
-            # Enabling swg_exception for these test cases. Disabling the exception results in
-            # a design that exceeds the resources of the Pynq-Z1 board. In future this should be
-            # revisited and handled correctly as the swg_exception is poorly justified.
-            model = model.transform(
-                InsertAndSetFIFODepths(test_fpga_part, target_clk_ns, swg_exception=True)
-            )
-        else:
-            model = model.transform(InsertAndSetFIFODepths(test_fpga_part, target_clk_ns))
+        model = insert_and_set_fifo_depths(model, test_fpga_part, target_clk_ns)
 
         fifo_layers = model.get_nodes_by_op_type("StreamingFIFO_rtl")
         assert len(fifo_layers) > 0

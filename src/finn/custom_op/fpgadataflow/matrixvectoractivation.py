@@ -35,6 +35,7 @@ Supports various memory modes, parallelization strategies, and quantized datatyp
 
 import math
 import numpy as np
+import numpy.typing as npt
 import os
 import qonnx.custom_op.general.xnorpopcount as xp
 import textwrap
@@ -45,11 +46,15 @@ from qonnx.util.basic import (
     interleave_matrix_outer_dim_from_partitions,
     roundup_to_integer_multiple,
 )
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.logging import log
 from finn.util.settings import get_settings
+
+if TYPE_CHECKING:
+    from onnx import NodeProto
 
 # ONNX i/o tensor shape assumptions for MatrixVectorActivation:
 # input 0 is the input tensor, shape (.., i_size) = (..., MW)
@@ -62,7 +67,7 @@ from finn.util.settings import get_settings
 class MVAU(HWCustomOp):
     """Abstraction layer for HW implementation of MatrixVectorActivation layers."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
         """Initialize the MVAU custom operation.
 
         Parameters
@@ -74,7 +79,13 @@ class MVAU(HWCustomOp):
         """
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(
+        self,
+    ) -> dict[
+        str,
+        tuple[str, bool, int | float | str | bool | npt.NDArray | list]
+        | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+    ]:
         """Get dictionary of attribute names and their types for this node.
 
         Returns
@@ -82,7 +93,11 @@ class MVAU(HWCustomOp):
         dict
             Dictionary mapping attribute names to type specifications
         """
-        my_attrs = {
+        my_attrs: dict[
+            str,
+            tuple[str, bool, int | float | str | bool | npt.NDArray | list]
+            | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+        ] = {
             "PE": ("i", True, 0),
             "SIMD": ("i", True, 0),
             "MW": ("i", True, 0),
@@ -255,10 +270,8 @@ class MVAU(HWCustomOp):
                 )
         else:
             info_messages.append(
-                """noActivation attribute contains {} should
-                be 0 or 1""".format(
-                    no_act
-                )
+                f"""noActivation attribute contains {no_act} should
+                be 0 or 1"""
             )
         return info_messages
 
@@ -290,10 +303,9 @@ class MVAU(HWCustomOp):
         # parameter can be > 0 (referring to the weights) so handle that here
         if ind == 0:
             return DataType[self.get_nodeattr("inputDataType")]
-        elif ind == 1:
+        if ind == 1:
             return DataType[self.get_nodeattr("weightDataType")]
-        else:
-            raise Exception("Undefined input ind for this layer type")
+        raise Exception("Undefined input ind for this layer type")
 
     def get_accumulator_datatype(self):
         """Returns FINN DataType of accumulator"""
@@ -479,10 +491,9 @@ class MVAU(HWCustomOp):
         """Calculates and returns TMEM."""
         if self.get_nodeattr("noActivation") == 1:
             return 0
-        else:
-            mh = self.get_nodeattr("MH")
-            pe = self.get_nodeattr("PE")
-            return mh // pe
+        mh = self.get_nodeattr("MH")
+        pe = self.get_nodeattr("PE")
+        return mh // pe
 
     def uram_estimation(self):
         """Estimate UltraRAM (URAM) resource usage.
@@ -513,23 +524,23 @@ class MVAU(HWCustomOp):
         depth_multiplier = math.ceil(omega / 4096)
         return width_multiplier * depth_multiplier
 
-    def bram_estimation(self):
-        """Calculates resource estimation for BRAM based on:
+    def bram_estimation(self) -> int:
+        """Calculate resource estimation for BRAM based on:
         - FINN-R: An End-to-End Deep-Learning Framework for Fast
         Exploration of Quantized Neural Networks
         - M. Blott, T. B. Preusser, N. J. Fraser, G. Gambardella, K. O'Brien,
         Y. Umuroglu, M. Leeser and K. Vissers
-        - 12. Sep 2018
+        - 12. Sep 2018.
         """
         # TODO add in/out FIFO contributions
-        P = self.get_nodeattr("PE")
-        Q = self.get_nodeattr("SIMD")
+        p = cast("int", self.get_nodeattr("PE"))
+        q = cast("int", self.get_nodeattr("SIMD"))
         wdt = self.get_input_datatype(1)
-        W = wdt.bitwidth()
-        D_in = self.get_nodeattr("MW")
-        D_out = self.get_nodeattr("MH")
-        omega = (D_in * D_out) / (Q * P)
-        mem_width = Q * W * P
+        w = wdt.bitwidth()
+        d_in = cast("int", self.get_nodeattr("MW"))
+        d_out = cast("int", self.get_nodeattr("MH"))
+        omega = (d_in * d_out) / (q * p)
+        mem_width = q * w * p
         mmode = self.get_nodeattr("mem_mode")
         mstyle = self.get_nodeattr("ram_style")
         if (
@@ -544,16 +555,15 @@ class MVAU(HWCustomOp):
         # which is more efficient than internal_embedded (HLS)
         if mem_width == 1:
             return math.ceil(omega / 16384)
-        elif mem_width == 2:
+        if mem_width == 2:
             return math.ceil(omega / 8192)
-        elif mem_width <= 4:
+        if mem_width <= 4:
             return (math.ceil(omega / 4096)) * (math.ceil(mem_width / 4))
-        elif mem_width <= 9:
+        if mem_width <= 9:
             return (math.ceil(omega / 2048)) * (math.ceil(mem_width / 9))
-        elif mem_width <= 18 or omega > 512:
+        if mem_width <= 18 or omega > 512:
             return (math.ceil(omega / 1024)) * (math.ceil(mem_width / 18))
-        else:
-            return (math.ceil(omega / 512)) * (math.ceil(mem_width / 36))
+        return (math.ceil(omega / 512)) * (math.ceil(mem_width / 36))
 
     def bram_efficiency_estimation(self):
         """Estimate BRAM utilization efficiency.
@@ -782,7 +792,6 @@ class MVAU(HWCustomOp):
         of weights.
 
         Arguments:
-
         * weights : numpy array with weights to be put into the file
         * weight_file_mode : one of {hls_header, decoupled_verilog_dat,
           decoupled_runtime}
@@ -916,16 +925,16 @@ class MVAU(HWCustomOp):
         if weights is not None:
             if mem_mode == "internal_embedded":
                 # save hlslib-compatible weights in params.h
-                weight_filename = "{}/params.h".format(code_gen_dir)
+                weight_filename = f"{code_gen_dir}/params.h"
                 self.make_weight_file(weights, "hls_header", weight_filename)
             elif mem_mode == "internal_decoupled" or mem_mode == "external":
-                weight_filename_sim = "{}/input_1.npy".format(code_gen_dir)
+                weight_filename_sim = f"{code_gen_dir}/input_1.npy"
                 # save internal_decoupled weights for cppsim
                 self.make_weight_file(weights, "decoupled_npy", weight_filename_sim)
                 if mem_mode == "internal_decoupled":
                     # also save weights as Verilog .dat file
                     # This file will be ignored when synthesizing UltraScale memory.
-                    weight_filename_rtl = "{}/memblock.dat".format(code_gen_dir)
+                    weight_filename_rtl = f"{code_gen_dir}/memblock.dat"
                     self.make_weight_file(weights, "decoupled_verilog_dat", weight_filename_rtl)
         else:
             if not (
@@ -964,7 +973,7 @@ class MVAU(HWCustomOp):
                     threshold_tensor, tdt, "thresholds", False, True
                 )
                 # write thresholds into thresh.h
-                f_thresh = open("{}/thresh.h".format(code_gen_dir), "w")
+                f_thresh = open(f"{code_gen_dir}/thresh.h", "w")
                 tdt_hls = tdt.get_hls_datatype_str()
                 # use binary to export bipolar activations
                 export_odt = self.get_output_datatype()
@@ -1016,28 +1025,6 @@ class MVAU(HWCustomOp):
             thres_count = out_features
             ret_dict[thres_param_type] = thres_count
         return ret_dict
-
-    def derive_characteristic_fxns(self, period):
-        """Derive characteristic performance functions for this node.
-
-        Parameters
-        ----------
-        period : float
-            Clock period in nanoseconds
-        """
-        n_inps = np.prod(self.get_folded_input_shape()[:-1])
-        io_dict = {
-            "inputs": {
-                "in0": [0 for i in range(n_inps)],
-            },
-            "outputs": {"out0": []},
-        }
-        mem_mode = self.get_nodeattr("mem_mode")
-        if mem_mode in ["internal_decoupled", "external"]:
-            n_weight_inps = self.calc_wmem()
-            num_w_reps = np.prod(self.get_nodeattr("numInputVectors"))
-            io_dict["inputs"]["in1"] = [0 for i in range(num_w_reps * n_weight_inps)]
-        super().derive_characteristic_fxns(period, override_rtlsim_dict=io_dict)
 
     def get_verilog_top_module_intf_names(self):
         """Get Verilog top module interface names for this node.

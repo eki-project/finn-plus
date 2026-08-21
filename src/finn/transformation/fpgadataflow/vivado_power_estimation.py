@@ -1,3 +1,4 @@
+"""Module for vivado power estimation."""
 import json
 import os
 from qonnx.custom_op.registry import getCustomOp
@@ -22,10 +23,11 @@ class VivadoPowerEstimation(Transformation):
     def __init__(
         self,
         report_dir,
-        clk_period_ns=10,
+        clk_period_ns=10.0,
         simulate_switching_activity=True,
         vivado_power_simulation_type="functional",
     ):
+        """Initialize instance."""
         super().__init__()
         self.report_dir = report_dir
         self.clk_period_ns = clk_period_ns
@@ -33,6 +35,7 @@ class VivadoPowerEstimation(Transformation):
         self.vivado_power_simulation_type = vivado_power_simulation_type
 
     def apply(self, model):
+        """Apply transformation."""
         ooc_res_dict = eval(model.get_metadata_prop("res_total_ooc_synth"))
         vivado_proj_folder = ooc_res_dict["vivado_proj_folder"]
         project_path = os.path.join(vivado_proj_folder, "vivadocompile", "vivadocompile.xpr")
@@ -75,7 +78,7 @@ class VivadoPowerEstimation(Transformation):
             testbench = testbench.replace("$OUTSTREAM_WIDTH$", str(out_width))
             testbench = testbench.replace("$DTYPE_WIDTH$", str(dtype_width))
             testbench = testbench.replace(
-                "$RANDOM_FUNCTION$", "$urandom_range(0, {max})".format(max=2**dtype_width - 1)
+                "$RANDOM_FUNCTION$", f"$urandom_range(0, {2**dtype_width - 1})"
             )
             with open(tmp_dir + "/switching_simulation_tb.v", "w") as tb_file:
                 tb_file.write(testbench)

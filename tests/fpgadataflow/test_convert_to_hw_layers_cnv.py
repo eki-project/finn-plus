@@ -64,14 +64,15 @@ from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from tests.testing_util.test import get_test_model_trained
 
-export_onnx_path_cnv = "test_convert_to_hw_layers_cnv.onnx"
-
 
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 # Standalone or fused thresholding-based activation
 @pytest.mark.parametrize("fused_activation", [True, False])
-def test_convert_to_hw_layers_cnv_w1a1(fused_activation):
+def test_convert_to_hw_layers_cnv_w1a1(fused_activation: bool) -> None:
+    export_onnx_path_cnv = (
+        "test_convert_to_hw_layers_cnv_" + ("fused" if fused_activation else "standalone") + ".onnx"
+    )
     cnv = get_test_model_trained("CNV", 1, 1)
     export_qonnx(cnv, torch.randn(1, 3, 32, 32), export_onnx_path_cnv)
     qonnx_cleanup(export_onnx_path_cnv, out_file=export_onnx_path_cnv)

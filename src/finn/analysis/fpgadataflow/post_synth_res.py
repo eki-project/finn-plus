@@ -1,3 +1,4 @@
+"""Module for post-synthesis resource analysis of FPGA dataflow models."""
 # Copyright (c) 2020, Xilinx, Inc.
 # Copyright (C) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -148,10 +149,11 @@ def _post_synth_res_single_file(  # noqa
         # fall back to default indices
         restype_to_ind = restype_to_ind_vitis if is_vitis_flow else restype_to_ind_default
 
-    def get_instance_stats(inst_name: str) -> dict | None:
+    def get_instance_stats(inst_name: str) -> dict[str, int] | None:
+        """Return resource stats for a specific instance name."""
         row = root.findall(f".//*[@contents='{inst_name}']/..")
         if row != []:
-            node_dict = {}
+            node_dict: dict[str, int] = {}
             row = list(row[0])
             for restype, ind in restype_to_ind.items():
                 node_dict[restype] = int(row[ind].attrib["contents"])

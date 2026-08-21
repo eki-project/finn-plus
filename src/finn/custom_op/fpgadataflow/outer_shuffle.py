@@ -7,6 +7,8 @@
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
 
+"""OuterShuffle custom op and simulation helpers."""
+
 import math
 import numpy as np
 import os
@@ -25,6 +27,7 @@ class _NestSim:
     """
 
     def __init__(self, R, W, *rest):
+        """Initialize the nested loop simulation state."""
         self.R = R
         self.W = W
         self.is_terminal = len(rest) == 0
@@ -44,6 +47,7 @@ class _NestSim:
             self.max_rp_retract = max(-self.terminal_rp_inc, self.inner.max_rp_retract)
 
     def tick(self):
+        """Advance the simulation by one step and return increments."""
         if self.is_terminal:
             return self.W, (self.W if self.R else 0), True
         rp_inc, fp_inc, term = self.inner.tick()
@@ -54,9 +58,8 @@ class _NestSim:
                     fp_inc = self.W - self._fp_rewind
                 self.cnt = self.N - 2
                 return rp_inc, fp_inc, True
-            else:
-                self.cnt -= 1
-                return rp_inc, fp_inc, False
+            self.cnt -= 1
+            return rp_inc, fp_inc, False
         return rp_inc, fp_inc, False
 
 
@@ -65,9 +68,11 @@ class OuterShuffle(HWCustomOp):
     Only permutations that do not effect the inner most dimensions are feasible"""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize the OuterShuffle custom op wrapper."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return the node attribute schema for OuterShuffle."""
         my_attrs = {
             "data_type": ("s", True, ""),
             "transpose_in_shape": ("ints", True, []),
@@ -85,12 +90,15 @@ class OuterShuffle(HWCustomOp):
         return my_attrs
 
     def get_normal_input_shape(self, ind=0):
+        """Return the non-folded input shape."""
         return self.get_nodeattr("in_shape")
 
     def get_normal_output_shape(self, ind=0):
+        """Return the non-folded output shape."""
         return self.get_nodeattr("out_shape")
 
     def execute_node(self, context, graph):
+        """Execute the outer shuffle using numpy reshape/transpose."""
         node = self.onnx_node
         input_data = context[node.input[0]]
         input_reshaped = input_data.reshape(self.get_nodeattr("transpose_in_shape"))
@@ -99,38 +107,45 @@ class OuterShuffle(HWCustomOp):
         context[node.output[0]] = output_reshaped
 
     def get_input_datatype(self, ind=0):
+        """Return the input datatype."""
         data_type = DataType[self.get_nodeattr("data_type")]
         return data_type
 
     def infer_node_datatype(self, model):
+        """Infer and propagate the node datatype."""
         node = self.onnx_node
         dt = model.get_tensor_datatype(node.input[0])
         if dt != self.get_input_datatype():
             warn_str = (
-                f"data_type changing for {node.name}: {str(self.get_input_datatype())} -> {str(dt)}"
+                f"data_type changing for {node.name}: {self.get_input_datatype()!s} -> {dt!s}"
             )
             log.warning(warn_str)
         self.set_nodeattr("data_type", dt.name)
         model.set_tensor_datatype(node.output[0], dt)
 
     def verify_node(self):
+        """Validate node attributes and shapes (not implemented)."""
         raise NotImplementedError("This function is not yet immplemented.")
 
     def get_instream_width(self, ind=0):
+        """Return the input stream width in bits."""
         ibits = self.get_input_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return ibits * simd
 
     def get_outstream_width(self, ind=0):
+        """Return the output stream width in bits."""
         obits = self.get_output_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return obits * simd
 
     def get_output_datatype(self, ind=0):
+        """Return the output datatype."""
         data_type = DataType[self.get_nodeattr("data_type")]
         return data_type
 
     def get_folded_output_shape(self, ind=0):
+        """Return the folded output shape for SIMD streaming."""
         normal_oshape = list(self.get_normal_output_shape())
         simd = self.get_nodeattr("SIMD")
         assert normal_oshape[-1] % simd == 0, "SIMD must divide into the innermost output dimension"
@@ -139,6 +154,7 @@ class OuterShuffle(HWCustomOp):
         return tuple(folded_oshape)
 
     def get_folded_input_shape(self, ind=0):
+        """Return the folded input shape for SIMD streaming."""
         normal_ishape = list(self.get_normal_input_shape())
         simd = self.get_nodeattr("SIMD")
         assert normal_ishape[-1] % simd == 0, "SIMD must divide into the innermost input dimension"

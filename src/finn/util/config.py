@@ -1,3 +1,4 @@
+"""Utility functions for extracting model configuration."""
 ############################################################################
 # Copyright (C) 2020-2022, Xilinx, Inc.
 # Copyright (C) 2025, Advanced Micro Devices, Inc.
@@ -12,20 +13,25 @@
 # https://github.com/fastmachinelearning/qonnx/blob/
 # abb9eb12e0248014a805f505aacfaeb14d42409a/src/qonnx/util/config.py
 
-
+import contextlib
 import json
 import onnx
+from numpy import typing as npt
 from pathlib import Path
-from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp, is_custom_op
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 from finn.util.exception import FINNInternalError
+
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
 
 # update this code to handle export configs from subgraphs
 # where the subgraph is found in a node's attribute as a graph type
-def extract_model_config(model, subgraph_hier, attr_names_to_extract):
+def extract_model_config(
+    model: "ModelWrapper", subgraph_hier: str | None, attr_names_to_extract: Sequence[str]
+) -> dict[str, dict[str, int | float | str | bool | npt.NDArray | list[str | int | float] | None]]:
     """Create a dictionary with layer name -> attribute mappings extracted from the
     model. The created dictionary can be later applied on a model with
     finn.transform.general.ApplyConfig.
@@ -33,22 +39,20 @@ def extract_model_config(model, subgraph_hier, attr_names_to_extract):
     Nodes in subgraphs are prefixed with their parent hierarchy using '_' as separator.
     For example, a node 'Conv_0' inside a subgraph of node 'IfNode_0' will be exported
     as 'IfNode_0_Conv_0' in the config."""
-
-    cfg = dict()
-    cfg["Defaults"] = dict()
+    cfg = {}
+    cfg["Defaults"] = {}
     for n in model.graph.node:
         new_hier = n.name if subgraph_hier is None else str(subgraph_hier) + "_" + n.name
 
         # Check if this is a custom op and prepare to extract attributes
+        layer_dict = {}
         is_custom = is_custom_op(n.domain, n.op_type)
         if is_custom:
             oi = getCustomOp(n)
-            layer_dict = dict()
+            layer_dict = {}
             for attr in attr_names_to_extract:
-                try:
+                with contextlib.suppress(AttributeError):
                     layer_dict[attr] = oi.get_nodeattr(attr)
-                except AttributeError:
-                    pass
 
         # Process node attributes - handle both subgraphs and extractable attributes
         for attr in n.attribute:
@@ -96,11 +100,13 @@ def extract_model_config_to_json(
         )
 
 
-def extract_model_config_consolidate_shuffles(model, output_file, hw_attrs):
-    """Export flow that takes into consideration how Shuffle operations have been decomposed"""
+def extract_model_config_consolidate_shuffles(
+    model: "ModelWrapper", output_file: Path, hw_attrs: list[str]
+) -> None:
+    """Export flow that takes into consideration how Shuffle operations have been decomposed."""
     extract_model_config_to_json(model, output_file, hw_attrs)
 
-    with open(output_file, "r") as f:
+    with output_file.open() as f:
         config = json.load(f)
 
     shuffle_configs = {}
@@ -125,5 +131,5 @@ def extract_model_config_consolidate_shuffles(model, output_file, hw_attrs):
 
     config.update(shuffle_configs)
 
-    with open(output_file, "w") as f:
+    with output_file.open("w") as f:
         json.dump(config, f, indent=2)

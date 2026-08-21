@@ -126,9 +126,9 @@ def merge_logs(log_a, log_b, log_out):
     """Merge log files."""
     # merges json log (list of nested dicts) b into a, not vice versa (TODO)
 
-    with open(log_a, "r") as f:
+    with open(log_a) as f:
         a = json.load(f)
-    with open(log_b, "r") as f:
+    with open(log_b) as f:
         b = json.load(f)
 
     for idx, run_a in enumerate(a):

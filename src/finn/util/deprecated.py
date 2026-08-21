@@ -1,13 +1,11 @@
 """Implements a decorator to mark functions as deprecated."""
-
 import functools
 from collections.abc import Callable
 from typing import ParamSpec, TypeVar
-
 from finn.util.logging import log
 
 rT = TypeVar("rT")  # return type  # noqa: N816
-pT = ParamSpec("pT")  # parameters type # noqa: N816
+pT = ParamSpec("pT")  # parameters type  # noqa: N816
 
 
 def deprecated(func: Callable[pT, rT]) -> Callable[pT, rT]:
@@ -18,6 +16,7 @@ def deprecated(func: Callable[pT, rT]) -> Callable[pT, rT]:
 
     @functools.wraps(func)
     def new_func(*args: pT.args, **kwargs: pT.kwargs) -> rT:
+        """Emit a deprecation warning and call the original function."""
         log.warning(
             f"Using {func.__qualname__} is deprecated and will be removed in the next release.",
             stacklevel=2,

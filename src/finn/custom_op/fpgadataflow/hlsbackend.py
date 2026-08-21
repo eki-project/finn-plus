@@ -29,13 +29,17 @@
 """HLS backend implementation for FINN custom operations."""
 
 import numpy as np
+import numpy.typing as npt
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import TYPE_CHECKING, Literal, cast
 
-from finn import xsi
+from finn import xsi as finnxsi
 from finn.custom_op.fpgadataflow import templates
+from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.templates import get_templates_folder
 from finn.util.basic import MAX_ALLOWED_AP_INT_W, CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
@@ -44,80 +48,87 @@ from finn.util.hls import CallHLS
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
-finnxsi = xsi if xsi.is_available() else None
+if TYPE_CHECKING:
+    from onnx import GraphProto
 
 
-class HLSBackend(ABC):
+class HLSBackend(HWCustomOp, ABC):
     """HLSBackend class all custom ops that correspond to a finn-hlslib
     function are using functionality of. Contains different functions every HLS
     custom node should have. Some as abstract methods, these have to be filled
     when writing a new HLS custom op node."""
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(
+        self,
+    ) -> dict[
+        str,
+        tuple[str, bool, int | float | str | bool | npt.NDArray | list]
+        | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+    ]:
         """Return dictionary of node attribute types and properties."""
-        return {
-            "code_gen_dir_cppsim": ("s", False, ""),
-            "executable_path": ("s", False, ""),
-            "res_hls": ("s", False, ""),
-            # temporary node attribute to keep track of interface style of hls ops
-            "cpp_interface": ("s", False, "packed", {"packed", "hls_vector"}),
-            # temporary node attribute to keep track of execution style of hls ops
-            "hls_style": ("s", False, "ifm_aware", {"ifm_aware", "freerunning"}),
-        }
-
-    def get_all_verilog_paths(self):
-        """Return list of all folders containing Verilog code for this node."""
-
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        assert (
-            code_gen_dir != ""
-        ), """Node attribute "code_gen_dir_ipgen" is
-        not set. Please run HLSSynthIP first."""
-        verilog_path = "{}/project_{}/sol1/impl/verilog/".format(code_gen_dir, self.onnx_node.name)
-        subcore_verilog_path = "{}/project_{}/sol1/impl/ip/hdl/ip/".format(
-            code_gen_dir, self.onnx_node.name
+        super_types = super().get_nodeattr_types()
+        super_types.update(
+            {
+                "code_gen_dir_cppsim": ("s", False, ""),
+                "executable_path": ("s", False, ""),
+                "res_hls": ("s", False, ""),
+                # temporary node attribute to keep track of interface style of hls ops
+                "cpp_interface": ("s", False, "packed", {"packed", "hls_vector"}),
+                # temporary node attribute to keep track of execution style of hls ops
+                "hls_style": ("s", False, "ifm_aware", {"ifm_aware", "freerunning"}),
+            }
         )
+        return super_types
+
+    def get_all_verilog_paths(self) -> list[str]:
+        """Return list of all folders containing Verilog code for this node."""
+        code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
+        if code_gen_dir == "":
+            raise FINNUserError(
+                f"""Node attribute "code_gen_dir_ipgen" is
+        not set for node {self.onnx_node.name}. Please run HLSSynthIP first."""
+            )
+        verilog_path = f"{code_gen_dir}/project_{self.onnx_node.name}/sol1/impl/verilog/"
+        subcore_verilog_path = f"{code_gen_dir}/project_{self.onnx_node.name}/sol1/impl/ip/hdl/ip/"
         # default impl only returns the HLS verilog codegen dir and subcore (impl/ip/hdl/ip) dir
         # if it exists
         ret = [verilog_path]
-        if os.path.isdir(subcore_verilog_path):
+        if Path(subcore_verilog_path).is_dir():
             ret += [subcore_verilog_path]
         return ret
 
-    def get_all_verilog_filenames(self, abspath=False):
+    def get_all_verilog_filenames(self, abspath: bool = False) -> list[str]:
         """Return list of all Verilog files used for this node."""
-
-        verilog_files = []
+        verilog_files: list[str] = []
         verilog_paths = self.get_all_verilog_paths()
         for verilog_path in verilog_paths:
-            for f in os.listdir(verilog_path):
-                if f.endswith(".v"):
+            for f in Path(verilog_path).iterdir():
+                if f.is_file() and f.suffix == ".v":
                     if abspath:
-                        verilog_files += [verilog_path + "/" + f]
+                        verilog_files += [f.absolute().as_posix()]
                     else:
-                        verilog_files += [f]
+                        verilog_files += [f.relative_to(verilog_path).as_posix()]
         return verilog_files
 
-    def prepare_rtlsim(self, behav=False):
-        """Creates a xsi emulation library for the RTL code generated
+    def prepare_rtlsim(self, behav: bool = False) -> None:
+        """Create a xsi emulation library for the RTL code generated
         for this node, sets the rtlsim_so attribute to its path."""
-
         verilog_files = self.get_all_verilog_filenames(abspath=True)
-        single_src_dir = make_build_dir("rtlsim_" + self.onnx_node.name + "_")
+        single_src_dir = Path(make_build_dir("rtlsim_" + self.onnx_node.name + "_"))
         trace_file = self.get_nodeattr("rtlsim_trace")
         debug = not (trace_file is None or trace_file == "")
         ret = finnxsi.compile_sim_obj(
             self.get_verilog_top_module_name(), verilog_files, single_src_dir, debug, behav
         )
         # save generated lib filename in attribute
-        self.set_nodeattr("rtlsim_so", ret[0] + "/" + ret[1])
+        self.set_nodeattr("rtlsim_so", str(ret[0] / ret[1]))
 
-    def code_generation_ipgen(self, model, fpgapart, clk):
+    def code_generation_ipgen(self, model: "ModelWrapper", fpgapart: str, clk: float) -> None:
         """Generate C++ code and TCL script for IP generation."""
         node = self.onnx_node
 
         # generate top cpp file for ip generation
-        path = self.get_nodeattr("code_gen_dir_ipgen")
+        path = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
         self.code_gen_dict["$AP_INT_MAX_W$"] = [str(self.get_ap_int_max_w())]
         self.generate_params(model, path)
         self.global_includes()
@@ -132,10 +143,9 @@ class HLSBackend(ABC):
             # transform list into long string separated by '\n'
             code_gen_line = "\n".join(self.code_gen_dict[key])
             template = template.replace(key, code_gen_line)
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        f = open(os.path.join(code_gen_dir, "top_{}.cpp".format(node.name)), "w")
-        f.write(template)
-        f.close()
+        code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
+        f = Path(code_gen_dir) / f"top_{node.name}.cpp"
+        f.open("w").write(template)
         self.code_gen_dict.clear()
 
         if node.name in ["", None]:
@@ -146,7 +156,7 @@ class HLSBackend(ABC):
             )
 
         # generate tcl script for ip generation
-        self.code_gen_dict["$PROJECTNAME$"] = ["project_{}".format(node.name)]
+        self.code_gen_dict["$PROJECTNAME$"] = [f"project_{node.name}"]
         self.code_gen_dict["$HWSRCDIR$"] = [code_gen_dir]
         self.code_gen_dict["$FPGAPART$"] = [fpgapart]
         self.code_gen_dict["$TOPFXN$"] = [node.name]
@@ -170,15 +180,13 @@ class HLSBackend(ABC):
                     f"code_gen_dict is: {self.code_gen_dict}"
                 ) from e
             template = template.replace(key, code_gen_line)
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        f = open(os.path.join(code_gen_dir, "hls_syn_{}.tcl".format(node.name)), "w")
-        f.write(template)
-        f.close()
+        code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
+        f = Path(code_gen_dir) / f"hls_syn_{node.name}.tcl"
+        f.open("w").write(template)
         self.code_gen_dict.clear()
 
-    def ipgen_default_directives(self):
+    def ipgen_default_directives(self) -> list[str]:
         """Return list of default HLS synthesis directives."""
-
         default_directives = [
             "set_param hls.enable_hidden_option_error false",
             "config_compile -disable_unroll_code_size_check -pipeline_style flp",
@@ -188,20 +196,21 @@ class HLSBackend(ABC):
         ]
         return default_directives
 
-    def ipgen_extra_directives(self):
+    def ipgen_extra_directives(self) -> list[str]:
         """Return a list of extra TCL directives for HLS synthesis."""
         return []
 
-    def ipgen_singlenode_code(self, fpgapart=None):
+    def ipgen_singlenode_code(self, fpgapart: str | None = None) -> None:  # noqa: ARG002
         """Build the bash script for IP generation using the CallHLS utility."""
         node = self.onnx_node
-        code_gen_dir = Path(self.get_nodeattr("code_gen_dir_ipgen"))
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
         builder = CallHLS(
             tcl_script=code_gen_dir / f"hls_syn_{node.name}.tcl",
             code_gen_dir=code_gen_dir,
             ipgen_path=code_gen_dir / f"project_{node.name}",
         )
         success = False
+        ip_path = None
         while not success:
             builder.build()
             if not builder.ipgen_path.is_dir():
@@ -211,13 +220,13 @@ class HLSBackend(ABC):
                 )
             ipgen_path = str(builder.ipgen_path)
             self.set_nodeattr("ipgen_path", ipgen_path)
-            ip_path = ipgen_path + "/sol1/impl/ip"
-            if not os.path.isdir(ip_path):
+            ip_path = builder.ipgen_path / "sol1" / "impl" / "ip"
+            if not ip_path.is_dir():
                 # Workaround for possible race condition between Vitis HLS instances
                 is_port_conflict = False
-                xcd_log_path = os.path.join(ipgen_path, "sol1", ".autopilot", "xcd.log")
-                if os.path.isfile(xcd_log_path):
-                    with open(xcd_log_path, "r") as xcd_log:
+                xcd_log_path = builder.ipgen_path / "sol1" / ".autopilot" / "xcd.log"
+                if xcd_log_path.is_file():
+                    with xcd_log_path.open() as xcd_log:
                         for line in xcd_log:
                             if "Address already in use" in line:
                                 is_port_conflict = True
@@ -227,20 +236,20 @@ class HLSBackend(ABC):
                         "(XCD server port conflict). Retrying..."
                     )
                 else:
-                    raise FINNError(
+                    raise FINNInternalError(
                         f"IPGen failed: {ip_path} not found. Check log under {code_gen_dir}"
                     )
             else:
                 success = True
 
-        self.set_nodeattr("ip_path", ip_path)
-        vlnv = "xilinx.com:hls:%s:1.0" % node.name
+        self.set_nodeattr("ip_path", str(ip_path))
+        vlnv = f"xilinx.com:hls:{node.name}:1.0"
         self.set_nodeattr("ip_vlnv", vlnv)
 
-    def code_generation_cppsim(self, model):
+    def code_generation_cppsim(self, model: ModelWrapper) -> None:
         """Generate C++ code for simulation (cppsim)."""
         node = self.onnx_node
-        path = self.get_nodeattr("code_gen_dir_cppsim")
+        path = cast("str", self.get_nodeattr("code_gen_dir_cppsim"))
         self.code_gen_dict["$AP_INT_MAX_W$"] = [str(self.get_ap_int_max_w())]
         self.generate_params(model, path)
         self.global_includes()
@@ -264,21 +273,20 @@ class HLSBackend(ABC):
             # transform list into long string separated by '\n'
             code_gen_line = "\n".join(self.code_gen_dict[key])
             template = template.replace(key, code_gen_line)
-        code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
-        f = open(os.path.join(code_gen_dir, "execute_{}.cpp".format(node.op_type)), "w")
-        f.write(template)
-        f.close()
+        code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_cppsim"))
+        f = Path(code_gen_dir) / f"execute_{node.op_type}.cpp"
+        f.open("w").write(template)
         self.code_gen_dict.clear()
 
-    def code_generation_ipi(self):
+    def code_generation_ipi(self) -> list[str]:
         """Construct and return the TCL for node instantiation in Vivado IPI."""
         vlnv = self.get_nodeattr("ip_vlnv")
-        cmd = ["create_bd_cell -type ip -vlnv %s %s" % (vlnv, self.onnx_node.name)]
+        cmd = [f"create_bd_cell -type ip -vlnv {vlnv} {self.onnx_node.name}"]
         return cmd
 
-    def compile_singlenode_code(self):
+    def compile_singlenode_code(self) -> None:
         """Build bash script for compilation using CppBuilder and execute to produce executable."""
-        code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
+        code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_cppsim"))
         hls_path = os.environ.get("XILINX_HLS")
         builder = CppBuilder()
         # to enable additional debug features please uncommand the next line
@@ -306,52 +314,52 @@ class HLSBackend(ABC):
         builder.build(code_gen_dir)
         self.set_nodeattr("executable_path", builder.executable_path)
 
-    def npy_to_dynamic_output(self, context):
+    def npy_to_dynamic_output(self, context: dict[str, np.ndarray]) -> None:
         """Read output.npy file generated from cppsim and place into context dictionary."""
         node = self.onnx_node
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         for o, outp in enumerate(node.output):
-            output = np.load("{}/output_{}.npy".format(code_gen_dir, o))
+            output = np.load(f"{code_gen_dir}/output_{o}.npy")
             exp_shape = self.get_normal_output_shape(o)
             context[outp] = output.reshape(exp_shape)
 
-    def exec_precompiled_singlenode_model(self):
+    def exec_precompiled_singlenode_model(self) -> None:
         """Execute precompiled executable."""
-        executable_path = self.get_nodeattr("executable_path")
+        executable_path = cast("str", self.get_nodeattr("executable_path"))
         if executable_path == "":
-            raise Exception(
+            raise FINNUserError(
                 """
 Found no executable for this node, did you run the codegen and
 compilation transformations?
             """
             )
-        launch_process_helper(executable_path, print_stdout=False)
+        launch_process_helper([executable_path], print_stdout=False)
 
     # TODO: Should have been removed by refactoring (PR #1318)
     # However, it is still used by some CustomOps, namely:
     # SplitMultiHeads, MergeMultiHeads, ScaledDotProductAttention,
     # ReplicateStream, StreamingConcat
-    def hls_sname(self):
+    def hls_sname(self) -> Literal["V"]:
         """Get the naming convention used by Vitis HLS for stream signals
         Example: the TDATA for a stream called "out" would be out_V_TDATA.
         """
         return "V"
 
-    def execute_node(self, context, graph):
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         """Execute node in specified mode (cppsim or rtlsim)."""
         mode = self.get_nodeattr("exec_mode")
         node = self.onnx_node
 
         if mode == "cppsim":
-            code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_cppsim"))
         elif mode == "rtlsim":
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
         else:
-            raise Exception(
-                """Invalid value for attribute exec_mode! Is currently set to: {}
-            has to be set to one of the following value ("cppsim", "rtlsim")""".format(
-                    mode
-                )
+            raise FINNInternalError(
+                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
+            has to be set to one of the following value ("cppsim", "rtlsim")"""
             )
         inputs = {}
         for i, inp in enumerate(node.input):
@@ -385,12 +393,10 @@ compilation transformations?
             reshaped_input = inp_val.reshape(folded_ishape)
             reshaped_input = reshaped_input.copy()
             # This npy file will be read by the cppsim executable
-            np.save(os.path.join(code_gen_dir, "input_%s.npy" % i), reshaped_input)
+            np.save(Path(code_gen_dir) / f"input_{i}.npy", reshaped_input)
             # The rtlsim will instead operate on a flattened int sequence from an "io_dict"
-            rtlsim_inp = npy_to_rtlsim_input(
-                "{}/input_{}.npy".format(code_gen_dir, i), export_idt, nbits
-            )
-            inputs["in%s" % i] = rtlsim_inp
+            rtlsim_inp = npy_to_rtlsim_input(f"{code_gen_dir}/input_{i}.npy", export_idt, nbits)
+            inputs[f"in{i}"] = rtlsim_inp
 
         if mode == "cppsim":
             # execute the precompiled model
@@ -409,8 +415,8 @@ compilation transformations?
                     context[outp] = out
         elif mode == "rtlsim":
             outputs = {}
-            for o, outp in enumerate(node.output):
-                outputs["out%s" % o] = []
+            for o, _outp in enumerate(node.output):
+                outputs[f"out{o}"] = []
             # assembled execution context
             io_dict = {"inputs": inputs, "outputs": outputs}
 
@@ -419,11 +425,11 @@ compilation transformations?
             self.rtlsim_multi_io(sim, io_dict)
             self.close_rtlsim(sim)
             for o, outp in enumerate(node.output):
-                rtlsim_output = io_dict["outputs"]["out%s" % o]
+                rtlsim_output = io_dict["outputs"][f"out{o}"]
                 odt = self.get_output_datatype(o)
                 target_bits = odt.bitwidth()
                 packed_bits = self.get_outstream_width(o)
-                out_npy_path = "{}/output_{}.npy".format(code_gen_dir, o)
+                out_npy_path = f"{code_gen_dir}/output_{o}.npy"
                 out_shape = self.get_folded_output_shape(o)
                 rtlsim_output_to_npy(
                     rtlsim_output, out_npy_path, odt, out_shape, packed_bits, target_bits
@@ -440,45 +446,41 @@ compilation transformations?
 
         else:
             raise Exception(
-                """Invalid value for attribute exec_mode! Is currently set to: {}
-            has to be set to one of the following value ("cppsim", "rtlsim")""".format(
-                    mode
-                )
+                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
+            has to be set to one of the following value ("cppsim", "rtlsim")"""
             )
 
     @abstractmethod
-    def global_includes(self):
-        """Function to set the global includes for c++ code that has to be generated
+    def global_includes(self) -> None:
+        """Set the global includes for c++ code that has to be generated
         for cppsim or rtlsim, is member function of HLSBackend class but has to
         be filled by every node."""
-        pass
 
     @abstractmethod
-    def defines(self, var):
-        """Function to set the define commands for c++ code that has to be generated
+    def defines(self, var: str) -> None:
+        """Set the define commands for c++ code that has to be generated
         for cppsim or rtlsim, is member function of HLSBackend class but has to
         be filled by every node.
 
         var: makes it possible to reuse the function for different c++ code generation.
         I.e. if set to "ipgen" in MatrixVectorActivation additional PRAGMA defines are
         added."""
-        pass
 
-    def read_npy_data(self):
+    def read_npy_data(self) -> None:
         """Generate commands for reading data from .npy file in C++.
         Might need to be overwritten depending on CustomOp."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         self.code_gen_dict["$READNPYDATA$"] = []
         cpp_interface = self.get_nodeattr("cpp_interface")
 
-        for i, inp in enumerate(self.onnx_node.input):
+        for i, _inp in enumerate(self.onnx_node.input):
             dtype = self.get_input_datatype(i)
             if dtype == DataType["BIPOLAR"]:
                 # use binary for bipolar storage
                 dtype = DataType["BINARY"]
             elem_hls_type = dtype.get_hls_datatype_str()
             npy_type = "half" if elem_hls_type == "half" else "float"
-            npy_in = "%s/input_%s.npy" % (code_gen_dir, i)
+            npy_in = f"{code_gen_dir}/input_{i}.npy"
 
             iwidth = self.get_instream_width(i)
             # if the stream is not exposed, it has 0 width and no npy file will be created
@@ -487,54 +489,38 @@ compilation transformations?
             if cpp_interface == "packed":
                 elem_bits = dtype.bitwidth()
                 packed_bits = iwidth
-                packed_hls_type = "ap_uint<%d>" % packed_bits
+                packed_hls_type = f"ap_uint<{packed_bits}>"
                 self.code_gen_dict["$READNPYDATA$"].append(
-                    'npy2apintstream<%s, %s, %d, %s>("%s", in%s_V);'
-                    % (
-                        packed_hls_type,
-                        elem_hls_type,
-                        elem_bits,
-                        npy_type,
-                        npy_in,
-                        i,
-                    )
+                    f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>"
+                    f'("{npy_in}", in{i}_V);'
                 )
             else:
                 folded_shape = self.get_folded_input_shape()
                 self.code_gen_dict["$READNPYDATA$"].append(
-                    'npy2vectorstream<%s, %s, %d>("%s", in%s_V, false);'
-                    % (
-                        elem_hls_type,
-                        npy_type,
-                        folded_shape[-1],
-                        npy_in,
-                        i,
-                    )
+                    f"npy2vectorstream<{elem_hls_type}, {npy_type}, {folded_shape[-1]}>"
+                    f'("{npy_in}", in{i}_V, false);'
                 )
 
-    def strm_decl(self):
+    def strm_decl(self) -> None:
         """Generate commands for stream declaration in C++.
         Might need to be overwritten depending on CustomOp."""
         node = self.onnx_node
         cpp_interface = self.get_nodeattr("cpp_interface")
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         if cpp_interface == "packed":
-            for i, inp in enumerate(node.input):
+            for i, _inp in enumerate(node.input):
                 if self.get_instream_width(i):
                     self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                        'hls::stream<ap_uint<{}>> in{}_V ("in{}_V");'.format(
-                            self.get_instream_width(i), i, i
-                        )
+                        f'hls::stream<ap_uint<{self.get_instream_width(i)}>> in{i}_V ("in{i}_V");'
                     )
-            for o, outp in enumerate(node.output):
+            for o, _outp in enumerate(node.output):
                 if self.get_outstream_width(o):
                     self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                        'hls::stream<ap_uint<{}>> out{}_V ("out{}_V");'.format(
-                            self.get_outstream_width(o), o, o
-                        )
+                        f"hls::stream<ap_uint<{self.get_outstream_width(o)}>> "
+                        f'out{o}_V ("out{o}_V");'
                     )
         else:
-            for i, inp in enumerate(node.input):
+            for i, _inp in enumerate(node.input):
                 if self.get_instream_width(i):
                     dtype = self.get_input_datatype(i)
                     if dtype == DataType["BIPOLAR"]:
@@ -543,12 +529,12 @@ compilation transformations?
                     elem_input_hls_type = dtype.get_hls_datatype_str()
 
                     self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                        'hls::stream<hls::vector<{},{}>> in{}_V ("in{}_V");'.format(
-                            elem_input_hls_type, self.get_folded_input_shape(i)[-1], i, i
-                        )
+                        f"hls::stream<hls::vector<{elem_input_hls_type},"
+                        f'{self.get_folded_input_shape(i)[-1]}>> in{i}_V ("in{i}_V");'
                     )
 
-            for o, outp in enumerate(node.output):
+            elem_output_hls_type = None
+            for o, _outp in enumerate(node.output):
                 if self.get_outstream_width(o):
                     dtype = self.get_output_datatype(o)
                     if dtype == DataType["BIPOLAR"]:
@@ -557,41 +543,38 @@ compilation transformations?
                     elem_output_hls_type = dtype.get_hls_datatype_str()
 
                     self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                        'hls::stream<hls::vector<{},{}>> out{}_V ("out{}_V");'.format(
-                            elem_output_hls_type, self.get_folded_output_shape(o)[-1], o, o
-                        )
+                        f"hls::stream<hls::vector<{elem_output_hls_type},"
+                        f'{self.get_folded_output_shape(o)[-1]}>> out{o}_V ("out{o}_V");'
                     )
 
             if self.get_nodeattr("hls_style") == "freerunning":
-                for o, outp in enumerate(node.output):
+                for o, _outp in enumerate(node.output):
                     if self.get_outstream_width(o):
                         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-                            'hls::stream<hls::vector<{},{}>> strm{} ("strm{}");'.format(
-                                elem_output_hls_type, self.get_folded_output_shape(o)[-1], o, o
-                            )
+                            f"hls::stream<hls::vector<{elem_output_hls_type},"
+                            f'{self.get_folded_output_shape(o)[-1]}>> strm{o} ("strm{o}");'
                         )
 
     @abstractmethod
-    def docompute(self):
-        """Function to generate the commands for the computational part of the
+    def docompute(self) -> None:
+        """Generate the commands for the computational part of the
         c++ code, is member function of HLSBackend class but has to be filled
         by every node."""
-        pass
 
-    def dataoutstrm(self):
+    def dataoutstrm(self) -> None:
         """Generate commands for reading out data from C++ and converting to npy format.
         Might need to be overwritten depending on CustomOp."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         self.code_gen_dict["$DATAOUTSTREAM$"] = []
 
-        for o, outp in enumerate(self.onnx_node.output):
+        for o, _outp in enumerate(self.onnx_node.output):
             dtype = self.get_output_datatype(o)
             if dtype == DataType["BIPOLAR"]:
                 # use binary for bipolar storage
                 dtype = DataType["BINARY"]
             elem_hls_type = dtype.get_hls_datatype_str()
             npy_type = "half" if elem_hls_type == "half" else "float"
-            npy_out = "%s/output_%s.npy" % (code_gen_dir, o)
+            npy_out = f"{code_gen_dir}/output_{o}.npy"
             oshape = self.get_folded_output_shape(o)
             oshape_cpp_str = str(oshape).replace("(", "{").replace(")", "}")
 
@@ -600,19 +583,11 @@ compilation transformations?
             if cpp_interface == "packed":
                 elem_bits = dtype.bitwidth()
                 packed_bits = self.get_outstream_width(o)
-                packed_hls_type = "ap_uint<%d>" % packed_bits
+                packed_hls_type = f"ap_uint<{packed_bits}>"
 
                 self.code_gen_dict["$DATAOUTSTREAM$"].append(
-                    'apintstream2npy<%s, %s, %d, %s>(out%s_V, %s, "%s");'
-                    % (
-                        packed_hls_type,
-                        elem_hls_type,
-                        elem_bits,
-                        npy_type,
-                        o,
-                        oshape_cpp_str,
-                        npy_out,
-                    )
+                    f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>"
+                    f'(out{o}_V, {oshape_cpp_str}, "{npy_out}");'
                 )
             else:
                 folded_shape = self.get_folded_output_shape(o)
@@ -620,29 +595,21 @@ compilation transformations?
                     f"strm{o}" if self.get_nodeattr("hls_style") == "freerunning" else f"out{o}_V"
                 )
                 self.code_gen_dict["$DATAOUTSTREAM$"].append(
-                    'vectorstream2npy<%s, %s, %d>(%s, %s, "%s");'
-                    % (
-                        elem_hls_type,
-                        npy_type,
-                        folded_shape[-1],
-                        out_vector,
-                        oshape_cpp_str,
-                        npy_out,
-                    )
+                    f"vectorstream2npy<{elem_hls_type}, {npy_type}, {folded_shape[-1]}>"
+                    f'({out_vector}, {oshape_cpp_str}, "{npy_out}");'
                 )
 
-    def save_as_npy(self):
+    def save_as_npy(self) -> None:
         """Generate commands for saving data in .npy file in C++."""
         self.code_gen_dict["$SAVEASCNPY$"] = []
 
     @abstractmethod
-    def blackboxfunction(self):
-        """Function to generate a blackbock function in c++ from which an IP block
+    def blackboxfunction(self) -> None:
+        """Generate a blackbock function in c++ from which an IP block
         will be generated, is member function of HLSBackend class but has to be filled
         by every node."""
-        pass
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Generate pragma commands in C++.
         Might need to be overwritten depending on CustomOp."""
         # TODO: make this loop over all inputs/outputs so we don't need as much
@@ -651,7 +618,7 @@ compilation transformations?
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
-    def get_ap_int_max_w(self):
+    def get_ap_int_max_w(self) -> int:
         """Return the maximum width of any ap_int used in this module. Used to set the
         AP_INT_MAX_W definition for HLS."""
         instream = self.get_instream_width()
@@ -666,14 +633,14 @@ compilation transformations?
             )
         return ret
 
-    def timeout_value(self):
+    def timeout_value(self) -> None:
         """Set timeout value for HLS functions defined for one clock cycle."""
         self.code_gen_dict["$TIMEOUT_VALUE$"] = ["1000"]
 
-    def timeout_condition(self):
+    def timeout_condition(self) -> None:
         """Set timeout condition for HLS functions defined for one clock cycle."""
         self.code_gen_dict["$TIMEOUT_CONDITION$"] = ["out0_V.empty()"]
 
-    def timeout_read_stream(self):
+    def timeout_read_stream(self) -> None:
         """Set reading output stream procedure for HLS functions defined for one clock cycle."""
         self.code_gen_dict["$TIMEOUT_READ_STREAM$"] = ["strm0 << out0_V.read();"]

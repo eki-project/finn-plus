@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for lookup."""
 import numpy as np
 import onnxruntime as rt
 from math import ceil
@@ -42,9 +43,11 @@ class Lookup(HWCustomOp):
     mapping indices to values."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             # Number of embeddings ("memory depth")
             "NumEmbeddings": ("i", True, 0),
@@ -68,25 +71,28 @@ class Lookup(HWCustomOp):
         return my_attrs
 
     def get_exp_cycles(self):
+        """Return exp cycles."""
         n_inputs = np.prod(self.get_nodeattr("InputShape"))
         exp_cycles = int(n_inputs)
         return exp_cycles
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         if ind == 0:
             return self.get_nodeattr("InputShape")
-        elif ind == 1:
+        if ind == 1:
             return tuple([self.get_nodeattr("NumEmbeddings"), self.get_nodeattr("EmbeddingDim")])
-        else:
-            raise Exception("Undefined input ind for this layer type")
+        raise Exception("Undefined input ind for this layer type")
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         ishape = self.get_normal_input_shape()
         emb_dim = self.get_nodeattr("EmbeddingDim")
         oshape = list(ishape) + [emb_dim]
         return tuple(oshape)
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         if ind == 0:
             ishape = self.get_normal_input_shape()
             folded_ishape = list(ishape) + [1]
@@ -95,6 +101,7 @@ class Lookup(HWCustomOp):
         return tuple(folded_ishape)
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         ishape = self.get_normal_input_shape()
         mem_mode = self.get_nodeattr("mem_mode")
         emb_dim = self.get_nodeattr("EmbeddingDim")
@@ -114,6 +121,7 @@ class Lookup(HWCustomOp):
         return tuple(oshape)
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -128,6 +136,7 @@ class Lookup(HWCustomOp):
         model.set_tensor_datatype(node.output[0], odt)
 
     def get_input_datatype(self, ind=0):
+        """Return input datatype."""
         if ind == 0:
             ret = DataType[self.get_nodeattr("InputType")]
         elif ind == 1:
@@ -137,10 +146,12 @@ class Lookup(HWCustomOp):
         return ret
 
     def get_output_datatype(self, ind=0):
+        """Return output datatype."""
         ret = DataType[self.get_nodeattr("EmbeddingType")]
         return ret
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         if ind == 0:
             bits = self.get_input_datatype().bitwidth()
         elif ind == 1:
@@ -153,12 +164,14 @@ class Lookup(HWCustomOp):
         return bits
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         folded_oshape = self.get_folded_output_shape()
         obits = self.get_output_datatype().bitwidth()
         return obits * folded_oshape[-1]
 
     def execute_node(self, context, graph):
         # create a standard add node to help calculate the result
+        """Execute node."""
         node = self.onnx_node
         inp_values = context[node.input[0]]
         ishape = inp_values.shape
@@ -189,6 +202,7 @@ class Lookup(HWCustomOp):
         context[node.output[0]] = np.asarray(result, dtype=np.float32).reshape(oshape)
 
     def bram_estimation(self):
+        """Return bram estimation."""
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_embedded":
             # current calculation assumes embeddings always stored in BRAM_18Ks
@@ -196,11 +210,11 @@ class Lookup(HWCustomOp):
             width_factor = ceil(self.get_outstream_width() / 16)
             depth_factor = ceil(self.get_nodeattr("NumEmbeddings") / 1024)
             return width_factor * depth_factor
-        else:
-            # TODO can we estimate BRAMs for the DMA engine?
-            return 0
+        # TODO can we estimate BRAMs for the DMA engine?
+        return 0
 
     def bram_efficiency_estimation(self):
+        """Return bram efficiency estimation."""
         bram16_est = self.bram_estimation()
         if bram16_est == 0:
             return 1
@@ -209,6 +223,7 @@ class Lookup(HWCustomOp):
         return ebits / bram16_est_capacity
 
     def get_verilog_top_module_intf_names(self):
+        """Return the names of the interface signals for the verilog top module."""
         intf_names = super().get_verilog_top_module_intf_names()
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "external":
