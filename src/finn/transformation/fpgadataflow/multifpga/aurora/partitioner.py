@@ -1,3 +1,5 @@
+"""AuroraFlow partitioner for MultiFPGA."""
+
 import mip
 from math import ceil
 from mip import xsum
@@ -18,7 +20,9 @@ from finn.util.platforms import platforms
 from finn.util.resources import available_resources_on_platform, get_estimated_model_resources
 
 
-class AuroraPartitioner(Partitioner):  # noqa
+class AuroraPartitioner(Partitioner):
+    """Concrete partitioner implementation for usage with AuroraFlow cores."""
+
     def get_successors(self, node: NodeProto) -> list[NodeProto]:
         """Return the list of direct successors."""
         s = self.modelwrapper.find_direct_successors(node)
@@ -146,7 +150,8 @@ class AuroraPartitioner(Partitioner):  # noqa
                                 "The node cannot fit on a device of this type."
                             )
 
-    def __init__(self, cfg: DataflowBuildConfig, modelwrapper: ModelWrapper) -> None:  # noqa
+    def __init__(self, cfg: DataflowBuildConfig, modelwrapper: ModelWrapper) -> None:
+        """Create the solver model and run some checks to ensure partitioning is possible."""
         super().__init__(cfg)
         self.modelwrapper = modelwrapper  # (model = MIP Model, modelwrapper = ONNX Model)
         self.model.verbose = 0
@@ -535,6 +540,7 @@ class AuroraPartitioner(Partitioner):  # noqa
         }
 
     def _get_resource_use_relative(self) -> dict[int, dict[str, Any]]:
+        """Get relative resource usage per device and resource type."""
         if self.status is None:
             raise FINNMultiFPGAError(
                 "Resource utilization per device was requested "

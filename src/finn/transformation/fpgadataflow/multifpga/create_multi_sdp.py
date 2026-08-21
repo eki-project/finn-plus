@@ -109,7 +109,8 @@ class ResolveCircularPartitionIDs(Transformation):
         \ --- /
     """  # noqa
 
-    def __init__(self, partition_attribute: str = "partition_id") -> None:  # noqa
+    def __init__(self, partition_attribute: str = "partition_id") -> None:
+        """Resolve circular partition IDs (or another attribute with the given name)."""
         self.part = partition_attribute
 
     def get_id(self, node: NodeProto) -> int:
@@ -244,7 +245,8 @@ class CreateMultiFPGAStreamingDataflowPartition(Transformation):
         self.separate_iodmas = separate_iodmas
         self.cdfp_dir = dataflow_partition_directory
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Create a MultiFPGA SDP."""
         # See "create_dataflow_partition.py". Should not modify the model if
         # not necessary
         model = model.transform(ExternalizeParams())

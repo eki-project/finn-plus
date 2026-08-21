@@ -1,3 +1,5 @@
+"""Resource utility functions."""
+
 from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation

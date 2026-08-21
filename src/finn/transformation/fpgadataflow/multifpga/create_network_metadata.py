@@ -1,3 +1,5 @@
+"""Creation of network metadata from the model. Implementation details are
+managed by the NetworkMetadata objects."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,11 +36,12 @@ class CreateNetworkMetadata(Transformation):
         MFCommunicationKernel.AURORA: AuroraNetworkMetadata
     }
 
-    def __init__(  # noqa
+    def __init__(
         self,
         communication_kernel: MFCommunicationKernel,
         verbosity: MFVerbosity,
     ) -> None:
+        """Create a metadata object for the given communication kernel."""
         super().__init__()
         self.verbosity = verbosity
         try:
@@ -100,7 +103,8 @@ class CreateNetworkMetadata(Transformation):
                         log.info(f"Adding connection:  {node.name} [{d1}] ----> {s.name} [{d2}]")
                     self.metadata.add_connection(d1, node.name, d2, s.name)
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Create and save the metadata from the given modelwrapper."""
         self.create_metadata(model)
         self.save_metadata(model)
         return model, False

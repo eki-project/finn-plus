@@ -1,3 +1,5 @@
+"""Prepare and package AuroraFlow kernels."""
+
 import re
 import shlex
 import shutil

@@ -59,7 +59,8 @@ class VitisLinkConfiguration(DataClassYAMLMixin):
     vivado_section: str = ""
     connectivity_section: str = ""
 
-    def __post_init__(self) -> None:  # noqa
+    def __post_init__(self) -> None:
+        """Make sure all paths exist after initializing the config object."""
         self.config_path.parent.mkdir(exist_ok=True, parents=True)
         self.run_script_path = self.config_path.parent / "run_link.sh"
         self.run_script_path.parent.mkdir(exist_ok=True, parents=True)
@@ -515,7 +516,7 @@ class BuildBasicVitisLinkConfig(Transformation):
     then check the `config_path` and `run_script_path` fields of the `VitisLinkConfiguration`.
     """
 
-    def __init__(  # noqa
+    def __init__(
         self,
         platform: str,
         board: str,
@@ -524,6 +525,8 @@ class BuildBasicVitisLinkConfig(Transformation):
         optimization_level: str,
         f_mhz: int,
     ) -> None:
+        """Build a basic linking configuration and store it. Afterwards, the
+        model can be linked, or the config can be modified further."""
         super().__init__()
         self.platform = platform
         self.board = board
@@ -532,7 +535,8 @@ class BuildBasicVitisLinkConfig(Transformation):
         self.vitis_opt_strategy = vitis_opt_strategy
         self.f_mhz = f_mhz
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Build the configuration."""
         configs: dict[int, VitisLinkConfiguration] = {}
 
         # Check that we are the first to edit link configs

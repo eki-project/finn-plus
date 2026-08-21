@@ -189,7 +189,8 @@ class BuildAllXOs(Transformation):
         self.fpga_part = fpga_part
         self.synth_clk_period_ns = synth_clk_period_ns
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Build all XOs."""
         check_vitis_envvars()
 
         # Confirm that the graph is only a line with (multiple) input and output nodes.

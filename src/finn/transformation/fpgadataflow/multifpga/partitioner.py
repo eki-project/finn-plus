@@ -56,7 +56,8 @@ class Partitioner(ABC):
                     f"Cannot create mip solver of type {solver.value}. Original error: {e}"
                 ) from e
 
-    def __init__(self, cfg: DataflowBuildConfig) -> None:  # noqa
+    def __init__(self, cfg: DataflowBuildConfig) -> None:
+        """Initialize a new partitioner. This involves creating the mip model."""
         assert cfg.partitioning_configuration is not None
         self.cfg = cfg
         self.pcfg = cfg.partitioning_configuration

@@ -1,3 +1,4 @@
+"""Transformation to modify an existing link config to use AuroraFlow cores."""
 import subprocess
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
@@ -19,7 +20,10 @@ class AddAuroraToLinkConfig(Transformation):
     connecting them to the existing SDP kernels.
     """
 
-    def __init__(self, platform_name: str) -> None:  # noqa
+    def __init__(self, platform_name: str) -> None:
+        """Iterate over an existing prepared linking configuration, adding AuroraFlow kernels and
+        connecting them to the existing SDP kernels.
+        """
         super().__init__()
         self.platform: Platform = platforms[platform_name]()
 
@@ -36,7 +40,8 @@ class AddAuroraToLinkConfig(Transformation):
             subprocess.run(["make"], cwd=dummy_kernel_dir, stdout=subprocess.DEVNULL)
         return rx_dummy, tx_dummy
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Modify the link config."""
         metadata = AuroraNetworkMetadata.from_model(model)
         configs = VitisLinkConfiguration.load_from_model(model)
 

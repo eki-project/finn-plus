@@ -1,3 +1,4 @@
+"""MultiFPGA partitioning related functionality."""
 import mip
 import rich.box
 import time
@@ -259,7 +260,8 @@ class PartitionForMultiFPGA(Transformation):
 
         return s
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Partition the model."""
         if self.cfg.partitioning_configuration is None or self.cfg.board is None:
             raise FINNMultiFPGAConfigError("No Multi-FPGA partitioning config or board given.")
 

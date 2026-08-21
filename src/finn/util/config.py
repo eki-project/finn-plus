@@ -18,13 +18,11 @@ import json
 import onnx
 from numpy import typing as npt
 from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp, is_custom_op
-from typing import TYPE_CHECKING, Sequence
+from typing import Sequence
 
 from finn.util.exception import FINNInternalError
-
-if TYPE_CHECKING:
-    from qonnx.core.modelwrapper import ModelWrapper
 
 
 # update this code to handle export configs from subgraphs

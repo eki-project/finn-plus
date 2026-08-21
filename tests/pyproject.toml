@@ -63,7 +63,7 @@ markers = [
     "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
     "analysis: mark tests that run analysis tests",
     "multifpga: mark tests that run multifpga tests",
-    "auroraflow: mark tests that check AuroraFlow related functionality"
+    "auroraflow: mark tests that check AuroraFlow related functionality",
     "only: mark",
 ]
 

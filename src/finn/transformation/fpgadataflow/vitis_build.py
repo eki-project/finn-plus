@@ -61,7 +61,8 @@ class ParallelVitisSynthesis(Transformation):
     in vivado_synth_rpt, also as a JSON.
     """
 
-    def __init__(self, cfg: DataflowBuildConfig) -> None:  # noqa
+    def __init__(self, cfg: DataflowBuildConfig) -> None:
+        """Execute multiple Vitis link/synthesis runs in parallel."""
         self.cfg = cfg
 
     def link(self, config: VitisLinkConfiguration) -> Path:
@@ -93,7 +94,8 @@ class ParallelVitisSynthesis(Transformation):
             )
         return config.run_script_path.parent / "a.xclbin"
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Run synthesis."""
         # Load all configs
         configs = VitisLinkConfiguration.load_from_model(model)
 
@@ -148,10 +150,12 @@ class VitisBuild(Transformation):
     synthesis.
     """
 
-    def __init__(self, cfg: DataflowBuildConfig) -> None:  # noqa
+    def __init__(self, cfg: DataflowBuildConfig) -> None:
+        """Run a Vitis build on the entire graph by creating a linking config and executing it."""
         self.cfg = cfg
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Run the build."""
         log.info("Building Vitis linking configuration...")
         assert self.cfg.board is not None
         model = model.transform(

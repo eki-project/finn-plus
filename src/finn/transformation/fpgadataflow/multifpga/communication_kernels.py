@@ -13,15 +13,15 @@ class PrepareCommunicationKernels(Transformation):
     prevents the user from having to differentiate it by themselves.
     """
 
-    def __init__(  # noqa
-        self, platform: str, fpga_part: str, pcfg: PartitioningConfiguration
-    ) -> None:
+    def __init__(self, platform: str, fpga_part: str, pcfg: PartitioningConfiguration) -> None:
+        """Prepare all communication kernels."""
         super().__init__()
         self.platform = platform
         self.fpga_part = fpga_part
         self.pcfg = pcfg
 
-    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Prepare all communication kernels."""
         match self.pcfg.communication_kernel:
             case MFCommunicationKernel.AURORA:
                 model = model.transform(PrepareAuroraFlow(self.platform, self.fpga_part, self.pcfg))
