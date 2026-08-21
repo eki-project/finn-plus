@@ -168,7 +168,7 @@ class bench:
         self.output_dict = {}
 
         # Inputs (e.g., ONNX model, golden I/O pair, folding config, etc.)
-        self._build_inputs = {}
+        self._build_inputs: dict[str, Path] = {}
 
         # Collect tuples of (name, source path, archive?) to save as pipeline artifacts
         self._artifacts_collection = []
@@ -455,5 +455,5 @@ class bench:
         build.build_dataflow_cfg(self._build_inputs["onnx_path"], cfg)
 
         # ANALYSIS
-        self._step_parse_builder_output(self._build_inputs["build_dir"])
+        self._step_parse_builder_output(str(self._build_inputs["build_dir"]))
         return None
