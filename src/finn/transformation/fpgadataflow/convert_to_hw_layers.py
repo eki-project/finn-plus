@@ -783,7 +783,7 @@ class InferAddStreamsLayer(Transformation):
         log.warning(
             "InferAddStreamsLayer is deprecated. "
             "Use InferElementwiseBinaryOperation instead. "
-            "AddStreams is being replaced by ElementwiseAdd operations."
+            "AddStreams is being replaced by ElementwiseAdd operations.",
         )
         # Delegate to the new transformation
         return InferElementwiseBinaryOperation().apply(model)
