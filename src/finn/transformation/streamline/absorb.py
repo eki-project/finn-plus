@@ -76,7 +76,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # Warn and skip if there is no constant bias present
                     if bias is None:
                         log.warning(
-                            f"{self.__class__.__name__}: Bias not constant for"
+                            f"{self.__class__.__name__} ({node.name}): Bias not constant for"
                             f" {consumer.name}, skipping."
                         )
                         # Skip to next node, nothing changed so far, no need to
@@ -91,8 +91,8 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # Warn and skip if there is no constant bias present
                     if thresholds is None:
                         log.warning(
-                            f"{self.__class__.__name__}: Thresholds not"
-                            f" constant for {node.name}, skipping."
+                            f"{self.__class__.__name__} ({node.name}): Thresholds not"
+                            f" constant, skipping."
                         )
                         # Skip to next node, nothing changed so far, no need to
                         # break here
@@ -102,7 +102,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # full tensors into node attributes
                     if not (bias.ndim == 0 or all(x == 1 for x in bias.shape)):
                         log.warning(
-                            f"{self.__class__.__name__}: Bias not scalar"
+                            f"{self.__class__.__name__} ({node.name}): Bias not scalar"
                             f" for {consumer.name}, skipping."
                         )
                         # Skip to next node, nothing changed so far, no need to
@@ -143,7 +143,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     if not (odt.allowed(new_max) and odt.allowed(new_min)):
                         # Cannot be represented, warn and skip transforming
                         log.warning(
-                            f"{self.__class__.__name__}: Cannot absorb bias"
+                            f"{self.__class__.__name__} ({node.name}): Cannot absorb bias"
                             f" from {consumer.name} into {node.name}: {bias}"
                         )
                         # Skip to the next candidate node
@@ -153,8 +153,8 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # the "user" should be aware of
                     if odt.name != old_odt:
                         log.warning(
-                            f"{self.__class__.__name__}: Output datatype for"
-                            f" {node.name} changing from {old_odt} to {odt}"
+                            f"{self.__class__.__name__} ({node.name}): Changing output datatype "
+                            f"from {old_odt} to {odt}"
                         )
 
                     # Up until now we did not modify the nodes/grap, just did
@@ -239,7 +239,8 @@ class AbsorbAddIntoMultiThreshold(Transformation):
                         cdim = 1
                         # Issue a warning to the user, so they are aware of this
                         log.warning(
-                            f"No layout annotations for {add_weight_name}:"
+                            f"{self.__class__.__name__} ({n.name}): No "
+                            f"layout annotations for {add_weight_name}:"
                             f" Assuming channel dimension at index {cdim}"
                         )
 
@@ -513,9 +514,10 @@ class AbsorbTransposeIntoFlatten(Transformation):
                     # check for the data layout to interpret input shape correctly
                     if data_layout is None:
                         log.warning(
-                            """Data layout for input tensor of Transpose node is not set.
-                                To use AbsorbTransposeIntoFlatten transformation
-                                please set tensor data layout."""
+                            f"{self.__class__.__name__} ({n.name}): Data "
+                            f"layout for input tensor of Transpose node is "
+                            f"not set. To use AbsorbTransposeIntoFlatten "
+                            f"transformation please set tensor data layout."
                         )
                         continue
                     if data_layout == DataLayout.NCHW:
@@ -567,7 +569,10 @@ class AbsorbScalarMulAddIntoTopK(Transformation):
                     param_name = prod.input[1]
                     A = model.get_initializer(param_name)
                     if A is None:
-                        log.warning("Param is not constant, skipping")
+                        log.warning(
+                            f"{self.__class__.__name__} ({n.name}): Param {param_name} "
+                            f"is not constant, skipping"
+                        )
                         continue
                     is_scalar = all(x == 1 for x in A.shape)
                     is_scalar_pos_mul = is_scalar and (prod.op_type == "Mul") and A > 0
