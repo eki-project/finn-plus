@@ -46,10 +46,13 @@ from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 from typing import Any, Literal, cast
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
+    InferVectorVectorActivation,
+)
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -470,8 +473,8 @@ def test_fpgadataflow_vvau_rtl(
 
     # Convert to HLS custom-op first
     model = model.transform(LowerConvsToMatMul())
-    model = model.transform(to_hw.InferConvInpGen())
-    model = model.transform(to_hw.InferVectorVectorActivation())
+    model = model.transform(InferConvInpGen())
+    model = model.transform(InferVectorVectorActivation())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
 

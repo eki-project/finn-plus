@@ -58,7 +58,7 @@ from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 # Mapping to hardware operators of the two operations relevant for the
 # integration test
 # Note: The integration test serves as the test-case for InferUnsqueeze
-from finn.transformation.fpgadataflow.convert_to_hw_layers import InferUnsqueeze
+from finn.transformation.fpgadataflow.convert_to_hw.unsqueeze import InferUnsqueeze
 
 # Synthesizes HLS code generated from an operator to IP block
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP

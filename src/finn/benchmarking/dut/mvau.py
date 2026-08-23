@@ -451,7 +451,7 @@ class bench_mvau(bench):
         # inst = getCustomOp(node)
 
         # log additional info about the generated model (e.g. SIMD/PE or sparsity)
-        with open(self._build_inputs["build_dir"] + "/report/dut_info.json", "w") as f:
+        with open(self._build_inputs["build_dir"] / "report/dut_info.json", "w") as f:
             json.dump(output_dict, f, indent=2)
 
         # TODO: also generate golden I/O pair for further verification steps

@@ -12,7 +12,7 @@
 .n2_setup_xilinx_2022_2:
   before_script:
     - module load fpga
-    - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    - ml xilinx/xrt/2.14_static_boost_1.75 # includes Vitis/Vivado 2022.2
     - ml fpga/xilinx/vitis_hls_xcd_fix
     - export PLATFORM_PATH=$FINN_CUSTOM_PLATFORM_PATH # override with custom platform path
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
