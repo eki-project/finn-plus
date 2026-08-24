@@ -516,8 +516,3 @@ def test_multi_sdp_creation_linear(
         assert (
             node_a_device != node_b_device
         ), f"Consecutive SDPs with the same device: {[get_device_id(x) for x in model.graph.node]}"
-
-
-@pytest.mark.multifpga
-def test_fail_on_split_branch_nodes() -> None:
-    raise AssertionError()

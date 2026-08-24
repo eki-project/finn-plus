@@ -25,7 +25,6 @@ from qonnx.custom_op.registry import getCustomOp
 from test_multifpga_sdp_creation import create_sdp_ready_model_no_branches
 from typing import Final, cast
 
-import finn
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
     MFCommunicationKernel,
@@ -249,18 +248,6 @@ class TestAuroraFlowPartitioning:
                 return True
         return False
 
-    @pytest.mark.parametrize("network_ports", [2])
-    @pytest.mark.parametrize("ideal_max_util", [(0.8, 0.9), (0.9, 1.0), (0.2, 0.8), (0.2, 1.0)])
-    def test_enforce_utilization_limit(
-        self,
-        board: str,
-        topology: MFTopology,
-        network_ports: int,
-        ideal_max_util: tuple[float, float],
-    ) -> None:
-        """Test that the partitioner upholds the resource utilization limit."""
-        raise NotImplementedError()
-
     @pytest.mark.parametrize(
         "model_type",
         [
@@ -410,6 +397,7 @@ class TestAuroraFlowPartitioning:
                 assert any(usage[device][restype] > 0 for restype in usage[device].keys())
 
             # max_utilization not overstepped
+            # This was formerly its own test "enforce_utilization_limit"
             for device in usage.keys():
                 for restype, res in usage[device].items():
                     assert res <= max_util * res_per_device[restype]
@@ -536,7 +524,7 @@ class TestAuroraFlowPartitioning:
         # Write/read to/from file
         file_identifier = (
             f"aurora_partitioner_objective_function_{typename}_w{wbits}a{abits}_"
-            f"{pretrained}_{topology}_{strategy}_{board}"
+            f"{pretrained}_{topology.value}_{strategy.value}_{board}"
         )
         filepath = Path(__file__).parent / "regression_data" / (file_identifier + ".yaml")
         assert (

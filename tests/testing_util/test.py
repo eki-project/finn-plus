@@ -127,6 +127,7 @@ def get_build_env(board, target_clk_ns):
             vitis_platform=alveo_default_platform[board],
             vitis_opt_strategy=VitisOptStrategy.BUILD_SPEED,
         )
+        ret["cfg"] = cfg
         ret["build_fxn"] = VitisBuild(cfg)
     else:
         raise Exception("Unknown board specified")

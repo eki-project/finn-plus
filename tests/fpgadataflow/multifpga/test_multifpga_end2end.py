@@ -76,7 +76,7 @@ def test_end2end_multifpga_mobilenet(pytestconfig: pytest.Config) -> None:
         board="U55C",
         shell_flow_type=ShellFlowType.VITIS_ALVEO,
         auto_fifo_depths=True,
-        auto_fifo_strategy=AutoFIFOSizingMethod.LARGEFIFO_RTLSIM,
+        auto_fifo_strategy=AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION,
         large_fifo_mem_style=LargeFIFOMemStyle.AUTO,
         vitis_opt_strategy=VitisOptStrategy.PERFORMANCE_BEST,
         vitis_iodma_intf_max_width=512,

@@ -53,7 +53,7 @@ def test_apply_partitioning(
     cfg = DataflowBuildConfig(
         output_dir=str(output_dir),
         synth_clk_period_ns=5.0,
-        board="U280",
+        board="U55C",
         steps=[],
         target_fps=3000,
         shell_flow_type=ShellFlowType.VITIS_ALVEO,

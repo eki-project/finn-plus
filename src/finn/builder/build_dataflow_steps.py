@@ -1769,118 +1769,8 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
     - <output_dir>/report/post_synth_resources.json
     - <output_dir>/report/post_route_timing.rpt
     """
-    if DataflowOutputType.BITFILE in cfg.generate_outputs:
-        bitfile_dir = Path(cfg.output_dir) / "bitfile"
-        bitfile_dir.mkdir(parents=True, exist_ok=True)
-        report_dir = Path(cfg.output_dir) / "report"
-        report_dir.mkdir(parents=True, exist_ok=True)
-        partition_model_dir = Path(cfg.output_dir) / "intermediate_models" / "kernel_partitions"
-        if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
-            if cfg.instrumentation_no_dma is None:
-                raise FINNUserError(
-                    "instrumentation_no_dma must be set in the config for Vivado Zynq flow"
-                )
-            if cfg.board is None:
-                raise FINNUserError("board must be set in the config for Vivado Zynq flow")
-            model = model.transform(
-                ZynqBuild(
-                    cfg.board,
-                    cfg.synth_clk_period_ns,
-                    cfg.enable_hw_debug,
-                    cfg.enable_instrumentation,
-                    cfg.instrumentation_no_dma,
-                    cfg.instrumentation_avg_n,
-                    cfg.auto_fifo_depths
-                    and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.LIVE_FIFO,
-                    partition_model_dir=str(partition_model_dir),
-                )
-            )
-
-            bitfile_path = bitfile_dir / "finn-accel.bit"
-            bitfile_src = model.get_metadata_prop("bitfile")
-            if bitfile_src is None:
-                raise FINNUserError(
-                    "Bitfile path not found in model metadata. "
-                    "Did the Vivado synthesis step fail? Check the logs."
-                )
-            hwh_src = model.get_metadata_prop("hw_handoff")
-            if hwh_src is None:
-                raise FINNUserError(
-                    "HWH path not found in model metadata. "
-                    "Did the Vivado synthesis step fail? Check the logs."
-                )
-            rpt_dir = model.get_metadata_prop("vivado_synth_rpt")
-            if rpt_dir is None:
-                raise FINNUserError(
-                    "Vivado synthesis report path not found in model metadata. "
-                    "Did the Vivado synthesis step fail? Check the logs."
-                )
-            copy(Path(bitfile_src), bitfile_path)
-            copy(Path(hwh_src), bitfile_dir / "finn-accel.hwh")
-            copy(
-                Path(rpt_dir),
-                report_dir / "post_synth_resources.xml",
-            )
-
-            model.set_metadata_prop("bitfile_output", str(bitfile_path.absolute()))
-
-            post_synth_resources = model.analysis(post_synth_res)
-            with (report_dir / "post_synth_resources.json").open("w") as f:
-                json.dump(post_synth_resources, f, indent=2)
-
-            vivado_pynq_proj_dir = model.get_metadata_prop("vivado_pynq_proj")
-            timing_rpt = (
-                Path(f"{vivado_pynq_proj_dir}")
-                / "finn_zynq_link.runs"
-                / "impl_1"
-                / "top_wrapper_timing_summary_routed.rpt"
-            )
-            copy(timing_rpt, report_dir / "post_route_timing.rpt")
-
-        elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
-            model = model.transform(
-                VitisBuild(
-                    cfg._resolve_fpga_part(),
-                    cfg.synth_clk_period_ns,
-                    cfg._resolve_vitis_platform(),
-                    strategy=cfg.vitis_opt_strategy,
-                    enable_debug=cfg.enable_hw_debug,
-                    floorplan_file=cfg.vitis_floorplan_file,
-                    partition_model_dir=partition_model_dir,
-                    fpga_memory_type=cfg.fpga_memory,
-                )
-            )
-
-            bitfile_path = bitfile_dir / "finn-accel.xclbin"
-            bitfile_src = model.get_metadata_prop("bitfile")
-            if bitfile_src is None:
-                raise FINNUserError(
-                    "Bitfile path not found in model metadata. "
-                    "Did the Vitis synthesis step fail? Check the logs."
-                )
-            rpt_dir = model.get_metadata_prop("vivado_synth_rpt")
-            if rpt_dir is None:
-                raise FINNUserError(
-                    "Vivado synthesis report path not found in model metadata. "
-                    "Did the Vitis synthesis step fail? Check the logs."
-                )
-            copy(Path(bitfile_src), bitfile_path)
-            copy(
-                Path(rpt_dir),
-                report_dir / "post_synth_resources.xml",
-            )
-
-            model.set_metadata_prop("bitfile_output", str(bitfile_path.absolute()))
-
-            post_synth_resources = model.analysis(post_synth_res)
-            with (report_dir / "post_synth_resources.json").open("w") as f:
-                json.dump(post_synth_resources, f, indent=2)
-        else:
-            raise Exception("Unrecognized shell_flow_type: " + str(cfg.shell_flow_type))
-        log.info(f"Bitfile written into {bitfile_dir}")
-
-    else:
-        log.info(
+    if DataflowOutputType.BITFILE not in cfg.generate_outputs:
+        log.warning(
             "DataflowOutputType.BITFILE not in requested outputs, skipping step_synthesize_bitfile."
         )
         return model
@@ -1894,6 +1784,13 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
 
     # The actual synthesis step!
     if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
+        if cfg.board is None:
+            raise FINNUserError("Please specify the 'board' parameter for Zynq builds.")
+        if cfg.instrumentation_no_dma is None:
+            raise FINNUserError(
+                "Please specify the " "'instrumentation_no_dma' parameter for Zynq builds."
+            )
+
         model = model.transform(
             ZynqBuild(
                 cfg.board,
@@ -1901,8 +1798,9 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
                 cfg.enable_hw_debug,
                 cfg.enable_instrumentation,
                 cfg.instrumentation_no_dma,
-                cfg.live_fifo_sizing,
-                partition_model_dir=partition_model_dir,
+                cfg.instrumentation_avg_n,
+                cfg.auto_fifo_depths and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.LIVE_FIFO,
+                partition_model_dir=str(partition_model_dir),
             )
         )
     elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:

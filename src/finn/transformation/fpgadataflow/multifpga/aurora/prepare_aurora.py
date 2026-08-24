@@ -131,7 +131,9 @@ class PrepareAuroraFlow(Transformation):
             )
         result = subprocess.run(
             shlex.split(
-                f"make aurora_hw AURORA_VERSION={self.aurora_version} " f"{args} {self.make_args}"
+                f"make aurora_hw AURORA_VERSION={self.aurora_version} "
+                f"PART={self.part} PLATFORM={self.platform} "
+                f"{args} {self.make_args}"
             ),
             cwd=build_dir,
             capture_output=True,
@@ -168,7 +170,7 @@ class PrepareAuroraFlow(Transformation):
                 futures.append(
                     tpe.submit(
                         self.package_single,
-                        f"PART={self.part} PLATFORM={self.platform}",
+                        "",
                         device,
                         index,
                     )

@@ -524,6 +524,18 @@ class TestingNode(CustomOp):
             "network_connections": ("strings", False, []),
         }
 
+    def get_folded_input_shape(self, i: int) -> list:
+        return [32]
+
+    def get_folded_output_shape(self, i: int) -> list:
+        return [32]
+
+    def get_normal_input_shape(self, i: int) -> list:
+        return [32]
+
+    def get_normal_output_shape(self, i: int) -> list:
+        return [32]
+
     def make_shape_compatible_op(self, model):  # noqa
         pass
 
