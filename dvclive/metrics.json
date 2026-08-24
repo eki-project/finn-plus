@@ -1,0 +1,83 @@
+{
+    "status": "ok",
+    "estimate": {
+        "resources": {
+            "LUT": 59689.0,
+            "DSP": 684.0,
+            "BRAM_18K": 1070.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 15803927,
+            "max_cycles": 394272,
+            "max_cycles_node_name": "Thresholding_rtl_0",
+            "estimated_throughput_fps": 253.63201038876716,
+            "estimated_latency_ns": 158039270.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 8738.0,
+            "FF": 2786.0,
+            "DSP": 0.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 1.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 154804,
+            "FF": 137879,
+            "SRL": 20861,
+            "DSP": 696,
+            "BRAM_18K": 24,
+            "BRAM_36K": 513,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 3933.2099183333326,
+            "avg_3V3_power": 906.3047766666739,
+            "avg_total_power": 4839.514695,
+            "min_0V85_power": 3933.2099183333326,
+            "min_3V3_power": 906.3047766666739,
+            "min_total_power": 4839.514695,
+            "max_0V85_power": 3933.2099183333326,
+            "max_3V3_power": 906.3047766666739,
+            "max_total_power": 4839.514695
+        },
+        "report_experiment_instrumentation": {
+            "throughput_fps": 254,
+            "error": false,
+            "min_latency_cycles": 710577,
+            "pipeline_depth": 1.81,
+            "latency_ms": 7.138891,
+            "min_latency_ms": 7.105841,
+            "min_pipeline_depth": 1.8,
+            "latency_cycles": 713882,
+            "interval_cycles": 394272,
+            "frequency_mhz": 100
+        },
+        "report_dma_validate": {
+            "top-1_accuracy": 70.406
+        }
+    },
+    "time": {
+        "step_mobilenet_streamline": 14,
+        "step_mobilenet_lower_convs": 0,
+        "step_mobilenet_convert_to_hw_layers_separate_th": 1,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 2,
+        "step_generate_estimate_reports": 0,
+        "step_generate_hardware": 6370,
+        "step_create_stitched_ip": 41,
+        "step_synthesize_bitfile": 5420,
+        "step_make_driver": 2,
+        "step_deployment_package": 0,
+        "total_build_time": 11850
+    }
+}
