@@ -341,8 +341,7 @@ class PartitionForMultiFPGA(Transformation):
         # Display / save report
         if self.verbosity.value == self.verbosity.EXTRA_HIGH.value:
             log.info("\n" + report, extra={"highlighter": None, "markup": False})
-        report_path = Path(self.cfg.output_dir) / "report" / "partitioning_report.txt"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path = self.cfg.get_report_directory() / "partitioning_report.txt"
         report_path.write_text(report)
 
         # If partitioning failed, return now
@@ -360,5 +359,5 @@ class PartitionForMultiFPGA(Transformation):
 
         # Write results to build dir and log dir
         self.partitioner.write_results(logdir / "partitioning.yaml")
-        self.partitioner.write_results(Path(self.cfg.output_dir) / "report" / "partitioning.yaml")
+        self.partitioner.write_results(self.cfg.get_report_directory() / "partitioning.yaml")
         return model, False

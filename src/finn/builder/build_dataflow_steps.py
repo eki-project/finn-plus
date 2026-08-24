@@ -212,14 +212,12 @@ def verify_step(
         rtlsim_pre_hook: Optional pre-hook function for RTL simulation
     """
     log.info(f"Running verification for {step_name}")
-    output_dir = Path(cfg.output_dir)
-    verify_out_dir = output_dir / "verification_output"
-    intermediate_models_dir = output_dir / "intermediate_models"
+    verify_out_dir = cfg.get_verification_output_directory()
+    intermediate_models_dir = cfg.get_intermediate_models_directory()
     # Ensure tensor names are sorted and readable for easier debugging
     model = model.transform(SortGraph())
     model = model.transform(GiveUniqueNodeNamesRecursive())
     model = model.transform(GiveReadableTensorNames())
-    verify_out_dir.mkdir(parents=True, exist_ok=True)
     if cfg.verify_steps is None:
         raise FINNUserError("verify_steps is not set in config, but verification step was called")
     (in_npy_all, exp_out_npy_all) = cast(
@@ -421,8 +419,7 @@ def step_hw_ipgen(
     model = model.transform(ReplaceVerilogRelPaths())
 
     # Emit resource consumption reports
-    report_dir = Path(cfg.output_dir) / "report"
-    report_dir.mkdir(parents=True, exist_ok=True)
+    report_dir = cfg.get_report_directory()
     estimate_layer_resources_hls = model.analysis(hls_synth_res_estimation)
     estimate_layer_resources_hls["total"] = aggregate_dict_keys(estimate_layer_resources_hls)
     filename = (
@@ -440,7 +437,7 @@ def step_hw_ipgen(
         and parent_node is None
     ):
         if cfg.verify_save_rtlsim_waveforms:
-            verify_out_dir = Path(cfg.output_dir) / "verification_output"
+            verify_out_dir = cfg.get_verification_output_directory()
             waveform_dir = verify_out_dir / "node_by_node_rtlsim_waveforms"
             waveform_dir.mkdir(parents=True, exist_ok=True)
             abspath = waveform_dir.absolute()
@@ -469,8 +466,7 @@ def step_set_fifo_depths(
     """
     if cfg.auto_fifo_depths:
         if cfg.fifosim_save_waveform:
-            report_dir = Path(cfg.output_dir) / "report"
-            report_dir.mkdir(parents=True, exist_ok=True)
+            report_dir = cfg.get_report_directory()
             model.set_metadata_prop("rtlsim_trace", str(report_dir.resolve() / "fifosim_trace.wdb"))
         if cfg.auto_fifo_strategy == AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION:
             requested_sim_comm_mode = cfg.fifosim_comm_mode.lower()
@@ -514,8 +510,7 @@ def step_set_fifo_depths(
                 )
 
             if cfg.fifosim_save_waveform:
-                report_dir = Path(cfg.output_dir) / "report"
-                report_dir.mkdir(parents=True, exist_ok=True)
+                report_dir = cfg.get_report_directory()
                 tracefile = (
                     f"{parent_node}_fifosim_trace.wdb"
                     if parent_node is not None
@@ -570,7 +565,7 @@ def step_set_fifo_depths(
             model = model.transform(GiveReadableTensorNames())
 
             # save original folding config before potentially modifying it
-            cfg_path = Path(cfg.output_dir) / "report" / "folding_config_before_lfs.json"
+            cfg_path = cfg.get_report_directory() / "folding_config_before_lfs.json"
             extract_model_config_to_json(model, cfg_path, hw_attrs)
             model.set_metadata_prop("folding_config_before_lfs", str(cfg_path))
 
@@ -641,7 +636,7 @@ def step_set_fifo_depths(
             total_fifo_size += fifo_info["fifo_sizes"][node.name]
         fifo_info["total_fifo_size_kiB"] = total_fifo_size / 8.0 / 1024.0
 
-        with (Path(cfg.output_dir) / "report" / "fifo_sizing.json").open("w") as f:
+        with (cfg.get_report_directory() / "fifo_sizing.json").open("w") as f:
             json.dump(fifo_info, f, indent=2)
 
         if cfg.split_large_fifos:
@@ -998,7 +993,9 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
 
     parent_model = model.transform(
         CreateDataflowPartition(
-            partition_model_dir=str(cfg.output_dir) + "/intermediate_models/supported_op_partitions"
+            partition_model_dir=str(
+                cfg.get_intermediate_models_directory() / "supported_op_partitions"
+            )
         )
     )
     sdp_nodes = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")
@@ -1007,7 +1004,7 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
     sdp_node = getCustomOp(sdp_node)
     dataflow_model_filename = cast("str", sdp_node.get_nodeattr("model"))
     if cfg.save_intermediate_models:
-        parent_model.save(str(cfg.output_dir) + "/intermediate_models/dataflow_parent.onnx")
+        parent_model.save(str(cfg.get_intermediate_models_directory() / "dataflow_parent.onnx"))
     model = ModelWrapper(dataflow_model_filename)
 
     # create a configuration json file that can be used to set the specialize layer config
@@ -1107,7 +1104,7 @@ def step_target_fps_parallelization(model: ModelWrapper, cfg: DataflowBuildConfi
             "depth_trigger_bram",
         ]
         extract_model_config_to_json(
-            model, Path(cfg.output_dir) / "report" / "auto_folding_config.json", hw_attrs
+            model, cfg.get_report_directory() / "auto_folding_config.json", hw_attrs
         )
 
     else:
@@ -1123,6 +1120,29 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
     model = model.transform(GiveUniqueNodeNamesRecursive())
     if cfg.folding_config_file is not None:
         model = model.transform(ApplyConfig(cfg.folding_config_file), apply_to_subgraphs=True)
+
+        # Write the changed configuration back as confirmation for the user
+        hw_attrs = [
+            "PE",
+            "SIMD",
+            "EmbFold",
+            "SeqFold",
+            "parallel_window",
+            "ram_style",
+            "ram_style_thresholds",
+            "ram_style_mask",
+            "depth",
+            "impl_style",
+            "resType",
+            "mac_resource",
+            "mem_mode",
+            "runtime_writeable_weights",
+            "depth_trigger_uram",
+            "depth_trigger_bram",
+        ]
+        extract_model_config_to_json(
+            model, cfg.get_report_directory() / "applied_folding_config.json", hw_attrs
+        )
     else:
         log.info("No folding config json provided, skipping step_apply_folding_config.")
 
@@ -1133,8 +1153,7 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
 def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Generate per-layer resource and cycle estimates using analytical models."""
     if DataflowOutputType.ESTIMATE_REPORTS in cfg.generate_outputs:
-        report_dir = Path(cfg.output_dir) / "report"
-        report_dir.mkdir(parents=True, exist_ok=True)
+        report_dir = cfg.get_report_directory()
         ops_and_params = model.analysis(op_and_param_counts)
         with (report_dir / "op_and_param_counts.json").open("w") as f:
             json.dump(ops_and_params, f, indent=2)
@@ -1234,8 +1253,7 @@ def step_minimize_bit_width(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
         model = model.transform(SetExecMode("cppsim"), apply_to_subgraphs=True)
         # Set iteration context path on FINNLoop nodes if verify_save_full_context is enabled
         if cfg.verify_save_full_context:
-            verify_out_dir = Path(cfg.output_dir) / "verification_output"
-            verify_out_dir.mkdir(parents=True, exist_ok=True)
+            verify_out_dir = cfg.get_verification_output_directory()
             for loop_node in model.get_nodes_by_op_type("FINNLoop"):
                 loop_inst = getCustomOp(loop_node)
                 ctx_path = (
@@ -1287,8 +1305,7 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
         model = model.transform(HLSSynthIP())
 
     if DataflowOutputType.STITCHED_IP in cast("list[DataflowOutputType]", cfg.generate_outputs):
-        report_dir = Path(cfg.output_dir) / "report"
-        report_dir.mkdir(parents=True, exist_ok=True)
+        report_dir = cfg.get_report_directory()
         stitched_ip_dir = Path(cfg.output_dir) / "stitched_ip"
         model = model.transform(
             CreateStitchedIP(
@@ -1335,7 +1352,7 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
         os.environ["LIVENESS_THRESHOLD"] = str(max_iters)
 
         if cfg.verify_save_rtlsim_waveforms:
-            verify_out_dir = Path(cfg.output_dir) / "verification_output"
+            verify_out_dir = cfg.get_verification_output_directory()
             waveform_dir = verify_out_dir / "stitched_ip_rtlsim_waveforms"
             waveform_dir.mkdir(parents=True, exist_ok=True)
             abspath = waveform_dir.absolute()
@@ -1351,8 +1368,7 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
 @register_build_dataflow_step()
 def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Measure performance + latency of stitched-IP model in rtlsim (xsi)."""
-    report_dir = Path(cfg.output_dir) / "report"
-    report_dir.mkdir(parents=True, exist_ok=True)
+    report_dir = cfg.get_report_directory()
 
     orig_rtlsim_trace_depth = get_rtlsim_trace_depth()
 
@@ -1436,7 +1452,6 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
     """Create a driver that can be used to interface the generated accelerator.
     Use DataflowBuildConfig to select PYNQ Python or C++ driver."""
 
-    driver_dir = os.path.join(cfg.output_dir, "driver_cpp")
     if DataflowOutputType.CPP_DRIVER in cfg.generate_outputs:
         # generate C++ Driver
         model = model.transform(
@@ -1448,18 +1463,17 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
         )
         shutil.copytree(
             model.get_metadata_prop("cpp_driver_dir"),
-            driver_dir,
+            str(cfg.get_driver_directory() / "cpp"),
             dirs_exist_ok=True,
             copy_function=shutil.copyfile,
         )
 
-        log.info("C++ driver written into " + driver_dir)
+        log.info("C++ driver written into " + str(cfg.get_driver_directory() / "cpp"))
     else:
         log.warning(
             """Neither DataflowOutputType.PYNQ_DRIVER nor DataflowOutputType.CPP_DRIVER
             in requested outputs, skipping step_make_driver."""
         )
-    driver_dir = os.path.join(cfg.output_dir, "driver")
     if DataflowOutputType.PYNQ_DRIVER in cfg.generate_outputs:
         # determine drivertype
         if cfg.enable_instrumentation:
@@ -1484,8 +1498,12 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
             )
         )
 
-        shutil.copytree(model.get_metadata_prop("pynq_driver_dir"), driver_dir, dirs_exist_ok=True)
-        log.info("PYNQ Python driver written into " + driver_dir)
+        shutil.copytree(
+            model.get_metadata_prop("pynq_driver_dir"),
+            cfg.get_driver_directory() / "py",
+            dirs_exist_ok=True,
+        )
+        log.info("PYNQ Python driver written into " + str(cfg.get_driver_directory() / "py"))
     return model
 
 
@@ -1498,8 +1516,7 @@ def step_out_of_context_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig)
         model = model.transform(
             SynthOutOfContext(part=cfg._resolve_fpga_part(), clk_period_ns=cfg.synth_clk_period_ns)
         )
-        report_dir = Path(cfg.output_dir) / "report"
-        report_dir.mkdir(parents=True, exist_ok=True)
+        report_dir = cfg.get_report_directory()
         ooc_res_dict = model.get_metadata_prop("res_total_ooc_synth")
         if ooc_res_dict is None:
             raise FINNUserError(
@@ -1569,7 +1586,7 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
             model = model.transform(GiveReadableTensorNames())
 
             # Partitioning / Floorplan
-            sdp_partition_dir = Path(cfg.output_dir) / "intermediate_models" / "kernel_partitions"
+            sdp_partition_dir = cfg.get_intermediate_models_directory() / "kernel_partitions"
             if cfg.partitioning_configuration is None:
                 # Single FPGA
                 model = model.transform(Floorplan(cfg.vitis_floorplan_file))
@@ -1623,7 +1640,7 @@ def step_vivado_power_estimation(model: ModelWrapper, cfg: DataflowBuildConfig) 
     if DataflowOutputType.OOC_SYNTH not in cfg.generate_outputs:
         raise FINNUserError("Vivado power estimation needs OOC synth")
 
-    report_dir = Path(cfg.output_dir) / "report"
+    report_dir = cfg.get_report_directory()
     model.transform(
         VivadoPowerEstimation(
             str(report_dir),
@@ -1776,11 +1793,9 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
         return model
 
     # Create some directories for later
-    bitfile_dir = Path(cfg.output_dir) / "bitfile"
-    bitfile_dir.mkdir(exist_ok=True)
-    report_dir = Path(cfg.output_dir) / "report"
-    report_dir.mkdir(exist_ok=True)
-    partition_model_dir = Path(cfg.output_dir) / "intermediate_models/kernel_partitions"
+    bitfile_dir = cfg.get_bitfile_directory()
+    report_dir = cfg.get_report_directory()
+    partition_model_dir = cfg.get_intermediate_models_directory() / "kernel_partitions"
 
     # The actual synthesis step!
     if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
@@ -1834,10 +1849,9 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
 def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Create a deployment package including the driver and bitfile."""
     if DataflowOutputType.DEPLOYMENT_PACKAGE in cfg.generate_outputs:
-        deploy_dir = Path(cfg.output_dir) / "deploy"
-        bitfile_dir = Path(cfg.output_dir) / "bitfile"
-        driver_dir = Path(cfg.output_dir) / "driver"
-        deploy_dir.mkdir(parents=True, exist_ok=True)
+        deploy_dir = cfg.get_deploy_directory()
+        bitfile_dir = cfg.get_bitfile_directory()
+        driver_dir = cfg.get_driver_directory()
         shutil.copytree(bitfile_dir, deploy_dir / "bitfile", dirs_exist_ok=True)
         shutil.copytree(
             driver_dir, deploy_dir / "driver", dirs_exist_ok=True, copy_function=shutil.copyfile
@@ -1853,22 +1867,6 @@ def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
             """DataflowOutputType.DEPLOYMENT_PACKAGE not in requested outputs,
             skipping step_deployment_package."""
         )
-        return model
-
-    # Copy bitstream and driver into the deployment directory
-    deploy_dir = Path(cfg.output_dir) / "deploy"
-    bitfile_dir = Path(cfg.output_dir) / "bitfile"
-    driver_dir = Path(cfg.output_dir) / "driver"
-    deploy_dir.mkdir(exist_ok=True)
-    shutil.copytree(bitfile_dir, deploy_dir / "bitfile", dirs_exist_ok=True)
-    shutil.copytree(
-        driver_dir, deploy_dir / "driver", dirs_exist_ok=True, copy_function=shutil.copyfile
-    )
-    if DataflowOutputType.CPP_DRIVER in cfg.generate_outputs:
-        for new_bitfile in (deploy_dir / "bitfile").absolute().iterdir():
-            update_bitfile_path_after_copy(
-                new_bitfile, deploy_dir / "driver" / "acceleratorconfig.json"
-            )
     return model
 
 
