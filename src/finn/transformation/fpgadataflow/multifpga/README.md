@@ -17,7 +17,7 @@ A specific partitioner should check whether a partitioning is feasible, implemen
 
 Utilizing the partitioners is done using `ApplyPartitioning` and `PartitionForMultiFPGA`, both of which are found in `partition_model.py`. The former recieves either a mapping of layer names to device IDs or a path to a YAML file containing such mappings. These mappings are then applied and the `device_id` attribute of all nodes is set.
 
-`PartitionForMultiFPGA´ calls on the partitioners to solve the model. If no specific device-count was given, it will automatically try to find a good estimate until a valid partitioning configuration is found. It will then write the result into the reports directory and call `ApplyPartitioning` to apply the solution to the graph.
+`PartitionForMultiFPGA` calls on the partitioners to solve the model. If no specific device-count was given, it will automatically try to find a good estimate until a valid partitioning configuration is found. It will then write the result into the reports directory and call `ApplyPartitioning` to apply the solution to the graph.
 
 
 ### 2. Multi-FPGA StreamingDataflowPartitions
