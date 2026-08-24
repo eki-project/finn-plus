@@ -5,6 +5,21 @@ Multi-FPGA usage in FINN+ is implemented purely in the second half of the FINN-f
 In your configuration file, simply provide a value in the `partitioning_configuration` field. Most fields have sensible defaults, but at least `num_fpgas` and `parallel_synthesis_workers` should be set manually.
 The flow will automatically switch to MultiFPGA. The difference should not be noticeable - only some more logging output. If everything worked correctly, instead of one `finn-accel.xclbin`, you should see `finn-accel-0.xclbin, finn-accel-1.xclbin` and so on.
 
+An example configuration could look like this:
+```YAML
+partitioning_configuration:
+  num_fpgas: 2
+  partition_strategy: resource_utilization
+  topology: chain
+  communication_kernel: aurora
+  max_utilization: 0.8
+  parallel_synthesis_workers: 2
+```
+
+Such a configuration would try to partition the design onto 2 devices. To let the partitioner decide itself (based on estimate reports), select `-1`. The used partition strategy is `resource_utilization`, meaning that a balanced resource utilization is used as the metric to judge a good solution. The `chain` topology constrains the solver to a certain assignment of device IDs. `aurora` specifies which communication technology to use. `max_utilization` is used by the solver to make sure that the FPGAs resources are not overutilized. Finally, `parallel_synthesis_workers` specifies how many synthesis processes can run in parallel. 
+
+Now simply run FINN+ as usual: `finn build cfg.yaml`.
+
 ## Multi-FPGA specific steps
 There are 3-4 Multi-FPGA specific steps that need to be executed before synthesis. Almost all of them are done in the `step_prepare_synthesis` dataflow step, which should be run after FIFO sizing and IPGen but before the actual synthesis.
 
