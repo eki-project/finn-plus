@@ -21,8 +21,14 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
@@ -180,9 +186,9 @@ def test_ooc_synthesis() -> None:
     y_ref = y_dict[model.get_first_global_out()]
 
     # infer and specialize layers
-    model = model.transform(to_hw.InferThresholdingLayer())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferThresholdingLayer())
+    model = model.transform(InferElementwiseBinaryOperation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
     model = model.transform(SpecializeLayers(fpga_part))
 
     # node-by-node rtlsim

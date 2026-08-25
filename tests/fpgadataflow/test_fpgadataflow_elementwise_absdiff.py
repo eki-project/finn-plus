@@ -45,10 +45,12 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
@@ -119,7 +121,7 @@ def test_fpgadataflow_elementwise_absdiff(dt0, dt1, ch, fold, exec_mode):
     y_expected = execute_onnx(model, idict)["out0"]
 
     # Apply transformation - should fuse Sub -> Abs into ElementwiseAbsDiff
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
+    model = model.transform(InferElementwiseBinaryOperation())
     assert len(model.graph.node) == 1
     assert model.graph.node[0].op_type == "ElementwiseAbsDiff"
 

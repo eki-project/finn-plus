@@ -399,7 +399,7 @@ class bench_synthetic_nonlinear(bench):
                                       -> [Right: M conv blocks] ->
         """
         np.random.seed(0)
-        tmp_output_dir = make_build_dir("test_fifosizing")
+        tmp_output_dir = str(make_build_dir("test_fifosizing"))
 
         # TODO: allow manual folding/fifo config as input
         # TODO: how to determine rtlsim_n automatically?

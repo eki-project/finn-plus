@@ -33,11 +33,13 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 from typing import Literal
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import InferRequantLayer
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.requant import InferRequantLayer
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
@@ -221,7 +223,7 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, exec_mode):
             and part == "xczu7ev-ffvc1156-2-e"
         ):
             # Convert any remaining Mul nodes to HW for stitched IP
-            model = model.transform(to_hw.InferElementwiseBinaryOperation())
+            model = model.transform(InferElementwiseBinaryOperation())
             model = model.transform(SpecializeLayers(part))
             model = model.transform(GiveUniqueNodeNames())
             model = insert_and_set_fifo_depths(model, part, target_clk_ns)
@@ -346,7 +348,7 @@ def test_requant_hls(
             and input_dtype == "FLOAT32"
         ):
             # Convert any remaining Mul nodes to HW for stitched IP
-            model = model.transform(to_hw.InferElementwiseBinaryOperation())
+            model = model.transform(InferElementwiseBinaryOperation())
             model = model.transform(SpecializeLayers(test_fpga_part))
             model = model.transform(GiveUniqueNodeNames())
             model = insert_and_set_fifo_depths(model, test_fpga_part, target_clk_ns)
@@ -458,7 +460,7 @@ def test_infer_requant_from_quant(channelwise, pe):
 
     # Convert Quant to Requant HW node
     model = model.transform(InferRequantLayer())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
+    model = model.transform(InferElementwiseBinaryOperation())
 
     # Verify conversion
     assert len(model.get_nodes_by_op_type("Quant")) == 0, "Quant should be converted"

@@ -24,10 +24,13 @@ from qonnx.transformation.merge_onnx_models import MergeONNXModels
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.layer_norm import InferLayerNorm
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
@@ -135,8 +138,8 @@ def test_fpgadataflow_rtl_layernorm(idt, ishape, simd, sim_style):
 
     model = model.transform(ExtractNormScaleBias())
 
-    model = model.transform(to_hw.InferLayerNorm())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
+    model = model.transform(InferLayerNorm())
+    model = model.transform(InferElementwiseBinaryOperation())
     input_t = {model.graph.input[0].name: input}
 
     y_hw = oxe.execute_onnx(model, input_t)[model.graph.output[0].name]
@@ -213,8 +216,8 @@ def test_fpgadataflow_rtl_layernorm_low_simd_ratio(idt, ishape, simd):
 
     model = model.transform(ExtractNormScaleBias())
 
-    model = model.transform(to_hw.InferLayerNorm())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
+    model = model.transform(InferLayerNorm())
+    model = model.transform(InferElementwiseBinaryOperation())
     input_t = {model.graph.input[0].name: input}
 
     y_hw = oxe.execute_onnx(model, input_t)[model.graph.output[0].name]
@@ -266,8 +269,8 @@ def test_fpgadataflow_hls_layernorm(idt, ishape, simd, sim_style):
 
     model = model.transform(ExtractNormScaleBias())
 
-    model = model.transform(to_hw.InferLayerNorm())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
+    model = model.transform(InferLayerNorm())
+    model = model.transform(InferElementwiseBinaryOperation())
     input_t = {model.graph.input[0].name: input}
 
     y_hw = oxe.execute_onnx(model, input_t)[model.graph.output[0].name]

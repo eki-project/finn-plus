@@ -65,7 +65,6 @@ from qonnx.util.cleanup import cleanup_model
 from shutil import copy, move
 from typing import TYPE_CHECKING, cast
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
@@ -86,6 +85,41 @@ from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.transformation.fpgadataflow.build_xo import BuildAllXOs
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.binary_matrix_vector_activation import (
+    InferBinaryMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.concat import InferConcatLayer
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.crop import InferCrop
+from finn.transformation.fpgadataflow.convert_to_hw.duplicate_streams import (
+    InferDuplicateStreamsLayer,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.fm_padding import InferFMPadding
+from finn.transformation.fpgadataflow.convert_to_hw.global_acc_pool import InferGlobalAccPoolLayer
+from finn.transformation.fpgadataflow.convert_to_hw.hw_softmax import InferHWSoftmax
+from finn.transformation.fpgadataflow.convert_to_hw.label_select import InferLabelSelectLayer
+from finn.transformation.fpgadataflow.convert_to_hw.layer_norm import InferLayerNorm
+from finn.transformation.fpgadataflow.convert_to_hw.lookup import InferLookupLayer
+from finn.transformation.fpgadataflow.convert_to_hw.pool import InferPool
+from finn.transformation.fpgadataflow.convert_to_hw.pool_from_reduce import InferPoolFromReduce
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.relu_as_elementwise_max import (
+    InferReLUAsElementwiseMax,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.requant import InferRequantLayer
+from finn.transformation.fpgadataflow.convert_to_hw.reshape import InferReshape
+from finn.transformation.fpgadataflow.convert_to_hw.shuffle import InferShuffle
+from finn.transformation.fpgadataflow.convert_to_hw.split import InferSplitLayer
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
+from finn.transformation.fpgadataflow.convert_to_hw.upsample import InferUpsample
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
+    InferVectorVectorActivation,
+)
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
@@ -823,7 +857,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
         model = apply_if_relevant(
             model,
             ["MultiThreshold"],
-            to_hw.InferThresholdingLayer(),
+            InferThresholdingLayer(),
             "threshold layers (standalone)",
         )
     else:
@@ -839,47 +873,47 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
     model = apply_if_relevant(
         model,
         ["XnorPopcountMatMul"],
-        to_hw.InferBinaryMatrixVectorActivation(),
+        InferBinaryMatrixVectorActivation(),
         "binary matmul layers",
     )
     model = apply_if_relevant(
-        model, ["MatMul"], to_hw.InferQuantizedMatrixVectorActivation(), "quantized matmul layers"
+        model, ["MatMul"], InferQuantizedMatrixVectorActivation(), "quantized matmul layers"
     )
     model = apply_if_relevant(
-        model, ["MatMul"], to_hw.InferVectorVectorActivation(), "vector-vector activation"
+        model, ["MatMul"], InferVectorVectorActivation(), "vector-vector activation"
     )
 
     # Classification/output layers
-    model = apply_if_relevant(model, ["TopK"], to_hw.InferLabelSelectLayer(), "label select layers")
+    model = apply_if_relevant(model, ["TopK"], InferLabelSelectLayer(), "label select layers")
 
     # Input quantization (if any) as standalone threshold
     model = apply_if_relevant(
-        model, ["MultiThreshold"], to_hw.InferThresholdingLayer(), "threshold layers"
+        model, ["MultiThreshold"], InferThresholdingLayer(), "threshold layers"
     )
-    model = apply_if_relevant(model, ["Pad"], to_hw.InferFMPadding(), "padding layers")
+    model = apply_if_relevant(model, ["Pad"], InferFMPadding(), "padding layers")
 
     # Convolution-related transformations
     model = apply_if_relevant(
         model,
         ["MaxPool", "AveragePool", "MaxPoolNHWC", "QuantAvgPool2d"],
-        to_hw.InferPool(),
+        InferPool(),
         "pooling layers",
     )
     model = apply_if_relevant(
         model,
         ["ReduceMax", "ReduceSum", "ReduceMean"],
-        to_hw.InferPoolFromReduce(),
+        InferPoolFromReduce(),
         "reduce layers",
     )
-    model = apply_if_relevant(model, ["Im2Col"], to_hw.InferConvInpGen(), "conv input generator")
+    model = apply_if_relevant(model, ["Im2Col"], InferConvInpGen(), "conv input generator")
     # If ConvInpGen derived, run remove cnv to fc flatten transform
     model = apply_if_relevant(
         model, ["ConvolutionInputGenerator"], RemoveCNVtoFCFlatten(), "Flatten"
     )
 
     # Streaming operations
-    model = apply_if_relevant(model, ["Concat"], to_hw.InferConcatLayer(), "concat layers")
-    model = apply_if_relevant(model, ["Split"], to_hw.InferSplitLayer(), "split layers")
+    model = apply_if_relevant(model, ["Concat"], InferConcatLayer(), "concat layers")
+    model = apply_if_relevant(model, ["Split"], InferSplitLayer(), "split layers")
 
     # Elementwise operations
     model = apply_if_relevant(
@@ -898,44 +932,44 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
             "Greater",
             "GreaterOrEqual",
         ],
-        to_hw.InferElementwiseBinaryOperation(),
+        InferElementwiseBinaryOperation(),
         "elementwise binary operations",
     )
     model = apply_if_relevant(
-        model, ["Relu"], to_hw.InferReLUAsElementwiseMax(), "ReLU as elementwise max"
+        model, ["Relu"], InferReLUAsElementwiseMax(), "ReLU as elementwise max"
     )
 
     # Upsampling and resizing
-    model = apply_if_relevant(model, ["Upsample"], to_hw.InferUpsample(), "upsample layers")
+    model = apply_if_relevant(model, ["Upsample"], InferUpsample(), "upsample layers")
 
     # Global pooling
     model = apply_if_relevant(
-        model, ["GlobalAveragePool"], to_hw.InferGlobalAccPoolLayer(), "global pooling"
+        model, ["GlobalAveragePool"], InferGlobalAccPoolLayer(), "global pooling"
     )
 
     # Lookup layers
-    model = apply_if_relevant(model, ["Gather"], to_hw.InferLookupLayer(), "lookup layers")
+    model = apply_if_relevant(model, ["Gather"], InferLookupLayer(), "lookup layers")
 
     # Activation functions
-    model = apply_if_relevant(model, ["Softmax"], to_hw.InferHWSoftmax(), "softmax layers")
+    model = apply_if_relevant(model, ["Softmax"], InferHWSoftmax(), "softmax layers")
 
     # Normalization layers
     model = apply_if_relevant(
-        model, ["LayerNormalization"], to_hw.InferLayerNorm(), "layer normalization"
+        model, ["LayerNormalization"], InferLayerNorm(), "layer normalization"
     )
 
     # Cropping layers
-    model = apply_if_relevant(model, ["Crop"], to_hw.InferCrop(), "crop layers")
+    model = apply_if_relevant(model, ["Crop"], InferCrop(), "crop layers")
 
     # Quantization layers (Quant nodes with scale=1, zeropt=0 or uniform MultiThreshold)
     model = apply_if_relevant(
-        model, ["Quant", "MultiThreshold"], to_hw.InferRequantLayer(), "quantization as requant"
+        model, ["Quant", "MultiThreshold"], InferRequantLayer(), "quantization as requant"
     )
 
     # Graph topology transformations (always check - not based on op_type)
     # DuplicateStreams: detects forks where tensors have multiple consumers
     print("Checking for graph forks (duplicate streams)...")
-    model = model.transform(to_hw.InferDuplicateStreamsLayer())
+    model = model.transform(InferDuplicateStreamsLayer())
 
     # Cleanup and post-processing transformations
     # Get rid of Transpose -> Transpose identity sequences
@@ -945,19 +979,17 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
     model = model.transform(InferDataLayouts())
     model = model.transform(InferDataTypes())
     model = model.transform(InferShapes())
-    model = model.transform(to_hw.InferReshape())
+    model = model.transform(InferReshape())
 
     # Shuffle inference (should come after InferDataLayouts and handles Transpose+Reshape patterns)
     # InferShuffle skips first Transpose by default; override to convert all if disabled
     if cfg.infer_shuffle_skip_first:
-        model = apply_if_relevant(
-            model, ["Transpose"], to_hw.InferShuffle(), "shuffle/transpose layers"
-        )
+        model = apply_if_relevant(model, ["Transpose"], InferShuffle(), "shuffle/transpose layers")
     else:
         model = apply_if_relevant(
             model,
             ["Transpose"],
-            to_hw.InferShuffle(_filter=lambda *_: True),
+            InferShuffle(_filter=lambda *_: True),
             "shuffle/transpose layers",
         )
     return model

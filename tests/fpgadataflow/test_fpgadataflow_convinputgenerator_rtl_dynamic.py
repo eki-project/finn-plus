@@ -50,11 +50,17 @@ from qonnx.util.basic import (
 )
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 import finn.xsi as finnxsi
 from finn.core.onnx_exec import execute_onnx
 from finn.core.rtlsim_exec import rtlsim_exec
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
+    InferVectorVectorActivation,
+)
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -260,9 +266,9 @@ def test_fpgadataflow_conv_dynamic(cfg):
 
     # convert to hardware and prepare simulation
     model = largest_model.transform(LowerConvsToMatMul())
-    model = model.transform(to_hw.InferConvInpGen())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    model = model.transform(to_hw.InferVectorVectorActivation())
+    model = model.transform(InferConvInpGen())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferVectorVectorActivation())
     model = model.transform(absorb.AbsorbConsecutiveTransposes())
     model = model.transform(SpecializeLayers("xc7z020clg400-1"))
     parent_model = model.transform(CreateDataflowPartition())

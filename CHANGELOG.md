@@ -32,9 +32,17 @@ We merge the Multi-FPGA from its own branch into dev.
 - Added a `CHANGELOG.md` file
 - Error lines from Vivado logs are printed to console in case of failing synthesis runs
 - Added `CITATION.cff` file
+- Added distributed simulation based FIFO sizing and a new performance simulation (#187)
 
 ### Changed
 - Vivado Stitch Projects have names specifying the nodes they contain if there are 3 or fewer nodes in the project
+- Split the monolithic `convert_to_hw_layers.py` into a `convert_to_hw` package with one file per operator for better maintainability
+
+#### Removed
+- Removed old simulation based FIFO sizing, superseded by the new distributed simulation based sizing (#187)
+
+#### Fixes
+- Fixed warnings raised during streamlining and added more descriptive details to reorder and absorb warnings (#207)
 
 
 ## 1.4.0 - 03.03.2026

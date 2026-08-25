@@ -55,7 +55,6 @@ from qonnx.transformation.merge_onnx_models import MergeONNXModels
 from qonnx.transformation.remove import RemoveIdentityOps
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 import finn.transformation.streamline.reorder as reorder
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
@@ -63,6 +62,19 @@ from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.label_select import InferLabelSelectLayer
+from finn.transformation.fpgadataflow.convert_to_hw.pool import InferPool
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
+    InferVectorVectorActivation,
+)
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -239,13 +251,13 @@ class Test_end2end_mobilenet:
 
     def test_end2end_mobilenet_convert_to_hw_layers(self):
         model = load_test_checkpoint_or_skip(get_bld_dir() + "/end2end_mobilenet_lowered.onnx")
-        model = model.transform(to_hw.InferPool())
-        model = model.transform(to_hw.InferConvInpGen())
-        model = model.transform(to_hw.InferThresholdingLayer())
-        model = model.transform(to_hw.InferVectorVectorActivation())
-        model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-        model = model.transform(to_hw.InferElementwiseBinaryOperation())
-        model = model.transform(to_hw.InferLabelSelectLayer())
+        model = model.transform(InferPool())
+        model = model.transform(InferConvInpGen())
+        model = model.transform(InferThresholdingLayer())
+        model = model.transform(InferVectorVectorActivation())
+        model = model.transform(InferQuantizedMatrixVectorActivation())
+        model = model.transform(InferElementwiseBinaryOperation())
+        model = model.transform(InferLabelSelectLayer())
         model = model.transform(InferShapes())
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(GiveReadableTensorNames())
