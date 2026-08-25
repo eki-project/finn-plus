@@ -496,14 +496,14 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     def get_verification_output_directory(self, create: bool = True) -> Path:
         """Return the path that verification outputs should be stored at."""
-        d = Path(self.output_dir) / "bitfile"
+        d = Path(self.output_dir) / "verification_output"
         if create:
             d.mkdir(exist_ok=True)
         return d
 
     def get_intermediate_models_directory(self, create: bool = True) -> Path:
         """Return the path that intermediate models should be stored at."""
-        d = Path(self.output_dir) / "bitfile"
+        d = Path(self.output_dir) / "intermediate_models"
         if create:
             d.mkdir(exist_ok=True)
         return d
