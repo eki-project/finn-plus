@@ -9,34 +9,25 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 Planned release: 1.5.0.
 
-### Feature: Multi-FPGA
-We merge the Multi-FPGA from its own branch into dev.
-
-#### Added
-- Enabling MultiFPGA by providing a `PartitioningConfiguration` object in the `DataflowBuildConfig`
-    - If not provided, the flow is on SingleFPGA. If it is given, the flow automatically adjusts to MultiFPGA
-- Initial support for AuroraFlow as the communication backend
-    - MultiFPGA was written in a modular way and can be extended to other backends in the future
-- Parallel synthesis of multiple bitstreams
-
-#### Changed
-- Modular creation of linker files (New class: `VitisLinkConfig`)
-    - Linking configs (Vitis Alveo) are not fixed anymore. Transformations can be used to read and store the current linker config in the model itself, and modify it gradually
-    - The runner script and linker config are now provided as Jinja2 templates
-- New FINN+ Build/Link Path: After `hw_step_ipgen`, the only necessary steps are now: `step_prepare_synthesis` and `step_synthesize_bitfile`
-    - (Vitis Alveo) These add IODMAs, create StreamingDataflowPartitions, stitch IPs, generate XOs and finally link
--
-
-
 ### Added
-- Added a `CHANGELOG.md` file
-- Error lines from Vivado logs are printed to console in case of failing synthesis runs
-- Added `CITATION.cff` file
+- Multi-FPGA inference support (#23)
+    - Initial communication backend: [AuroraFlow](https://github.com/pc2/AuroraFlow) (new dependency)
+    - See [MultiFPGA README](src/finn/transformation/fpgadataflow/multifpga/README.md) for usage and development information
 - Added distributed simulation based FIFO sizing and a new performance simulation (#187)
+- Error lines from Vivado logs are printed to console in case of failing synthesis runs (#190)
+- Added a `CHANGELOG.md` file
+- Added `CITATION.cff` file
 
 ### Changed
-- Vivado Stitch Projects have names specifying the nodes they contain if there are 3 or fewer nodes in the project
-- Split the monolithic `convert_to_hw_layers.py` into a `convert_to_hw` package with one file per operator for better maintainability
+- Modular creation of linker files (New class: `VitisLinkConfig`) (formerly #27, now #23)
+    - Linker config files are now changed using `Transformation`s as well
+    - Linker config and runner scripts are now provided as Jinja2 templates
+- New step: `step_prepare_synthesis` (#23)
+    - (Vitis Alveo) Adds IODMAs, creates StreamingDataflowPartitions, stitches IPs, generates XOs.
+    - (Zynq) Nothing changed.
+    - New build path: `... -> step_prepare_synthesis -> step_synthesize_bitfile -> ...`
+- Vivado Stitch Projects have names specifying the nodes they contain if there are 3 or fewer nodes in the project (#190)
+- Split the monolithic `convert_to_hw_layers.py` into a `convert_to_hw` package with one file per operator for better maintainability (#220)
 
 #### Removed
 - Removed old simulation based FIFO sizing, superseded by the new distributed simulation based sizing (#187)

@@ -1,5 +1,5 @@
 # Multi-FPGA in FINN+
-Multi-FPGA usage in FINN+ is implemented purely in the second half of the FINN-flow. This means you can use FINN as normal, and even use the same steps - Multi-FPGA is implicitly switched on by providing a partitioning configuration in your flow config file. As soon as these settings are detected, FINN+ in the background switches the second half of the flow to the Multi-FPGA specific steps and transformations.
+The modules in this directory provide MultiFPGA capabilities for FINN+. Introducing MultiFPGA into FINN was already done before, notably in the [Elastic-DF Paper](https://dl.acm.org/doi/10.1145/3470567). This extention utilizes a similar (M)ILP based approach to partitioning, but uses a different communication backend and implements infrastructure to integrate MultiFPGA flows tightly into the normal FINN+ flow.
 
 ## How to use
 In your configuration file, simply provide a value in the `partitioning_configuration` field. Most fields have sensible defaults, but at least `num_fpgas` and `parallel_synthesis_workers` should be set manually.
@@ -16,7 +16,7 @@ partitioning_configuration:
   parallel_synthesis_workers: 2
 ```
 
-Such a configuration would try to partition the design onto 2 devices. To let the partitioner decide itself (based on estimate reports), select `-1`. The used partition strategy is `resource_utilization`, meaning that a balanced resource utilization is used as the metric to judge a good solution. The `chain` topology constrains the solver to a certain assignment of device IDs. `aurora` specifies which communication technology to use. `max_utilization` is used by the solver to make sure that the FPGAs resources are not overutilized. Finally, `parallel_synthesis_workers` specifies how many synthesis processes can run in parallel. 
+Such a configuration would try to partition the design onto 2 devices. To let the partitioner decide itself (based on estimate reports), select `-1`. The used partition strategy is `resource_utilization`, meaning that a balanced resource utilization is used as the metric to judge a good solution. The `chain` topology constrains the solver to a certain assignment of device IDs. `aurora` specifies which communication technology to use. `max_utilization` is used by the solver to make sure that the FPGAs resources are not overutilized. Finally, `parallel_synthesis_workers` specifies how many synthesis processes can run in parallel.
 
 Now simply run FINN+ as usual: `finn build cfg.yaml`.
 

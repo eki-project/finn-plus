@@ -1532,10 +1532,10 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
 
         shutil.copytree(
             model.get_metadata_prop("pynq_driver_dir"),
-            cfg.get_driver_directory() / "py",
+            cfg.get_driver_directory(),
             dirs_exist_ok=True,
         )
-        log.info("PYNQ Python driver written into " + str(cfg.get_driver_directory() / "py"))
+        log.info("PYNQ Python driver written into " + str(cfg.get_driver_directory()))
     return model
 
 
