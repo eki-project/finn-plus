@@ -423,11 +423,7 @@ def prepare_finn(
         run_setup_wizard(settings)
         sys.exit(0)
     if not settings.finn_deps_definitions.exists():
-        error(
-            f"FINN dependency definition file does not exist: {settings.finn_deps_definitions}"
-            f"(tried to resolve from {settings._finn_deps_definitions}, settings were: "
-            f"{settings.get_path()}, settings file found: {settings.settingsfile_exists()})"
-        )
+        error(f"FINN dependency definition file does not exist: {settings.finn_deps_definitions}")
         sys.exit(1)
     status(
         f"{'[SETTINGS FILE]':<32} {settings.get_path()!s:<50} "

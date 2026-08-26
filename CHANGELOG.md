@@ -27,6 +27,7 @@ Planned release: 1.5.0.
     - (Zynq) Nothing changed.
     - New build path: `... -> step_prepare_synthesis -> step_synthesize_bitfile -> ...`
 - Vivado Stitch Projects have names specifying the nodes they contain if there are 3 or fewer nodes in the project (#190)
+- The dependency definition file can now be found at `src/finn/interface/external_dependencies.yaml` instead of the repository root (#23, #216)
 - Split the monolithic `convert_to_hw_layers.py` into a `convert_to_hw` package with one file per operator for better maintainability (#220)
 
 #### Removed
@@ -34,6 +35,7 @@ Planned release: 1.5.0.
 
 #### Fixes
 - Fixed warnings raised during streamlining and added more descriptive details to reorder and absorb warnings (#207)
+- Fixed that `wget` timeouts would crash FINN+, even if dependencies were only checked, not updated (#23, #208)
 
 
 ## 1.4.0 - 03.03.2026
