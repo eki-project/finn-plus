@@ -190,6 +190,18 @@ def build_xsi(force: bool = False, verbose: bool = True) -> bool:
     # Link libraries
     cmd.extend(["-ldl", "-lrt"])
 
+    # Embed an RPATH (old-style, transitively inherited by xsi.so's own
+    # dependencies such as librdi_simulator_kernel.so -> libxv_wavedata.so)
+    # pointing at the Vivado/Vitis lib dirs, so RTL simulation doesn't rely on
+    # LD_LIBRARY_PATH being set in the running process. --disable-new-dtags is
+    # required: the default DT_RUNPATH tag is only consulted for an object's
+    # own direct dependencies, not the whole transitive chain.
+    rpath_dirs = [f"{vivado_path}/lib/lnx64.o"]
+    vitis_path = os.environ.get("XILINX_VITIS")
+    if vitis_path is not None:
+        rpath_dirs.append(f"{vitis_path}/lib/lnx64.o")
+    cmd.extend(["-Wl,--disable-new-dtags,-rpath," + ":".join(rpath_dirs)])
+
     if verbose:
         print(f"Build command: {' '.join(cmd)}")
 

@@ -469,14 +469,18 @@ def prepare_finn(
     set_synthesis_tools_paths()
 
     # Set LD_LIBRARY_PATH
-    # Set LD_LIBRARY_PATH
     vivado_path = os.environ["XILINX_VIVADO"]
+    ld_library_paths = ["/lib/x86_64-linux-gnu/", f"{vivado_path}/lib/lnx64.o"]
+    # XILINX_HLS resolves to the right fpo_v7_1-containing directory on both
+    # pre-2024.2 (separate Vitis_HLS/VERSION tree) and 2024.2+ (merged into
+    # Vitis/VERSION) installs, unlike XILINX_VITIS which only does so post-2024.2
+    hls_path = os.environ.get("XILINX_HLS")
+    if hls_path is not None:
+        ld_library_paths.append(f"{hls_path}/lnx64/tools/fpo_v7_1")
     if "LD_LIBRARY_PATH" not in os.environ.keys():
-        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
+        os.environ["LD_LIBRARY_PATH"] = ":".join(ld_library_paths)
     else:
-        os.environ[
-            "LD_LIBRARY_PATH"
-        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
+        os.environ["LD_LIBRARY_PATH"] = ":".join([*ld_library_paths, os.environ["LD_LIBRARY_PATH"]])
 
     # Automatically set XILINX_LOCAL_USER_DATA to avoid issues later on
     if "XILINX_LOCAL_USER_DATA" in os.environ and os.environ["XILINX_LOCAL_USER_DATA"] != "no":
