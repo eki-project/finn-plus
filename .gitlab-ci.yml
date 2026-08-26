@@ -24,10 +24,10 @@ variables:
     value: "32"
   MEM_BENCH:
     description: "Select memory for each benchmark job"
-    value: "128G"
+    value: "256G"
   PARALLEL_JOBS:
     description: "Number of parallel Slurm array jobs per Benchmark job"
-    value: "1"
+    value: "4"
   SLURM_TIMEOUT:
     description: "Select SLURM timeout"
     value: "3-0" # [days-hours]
