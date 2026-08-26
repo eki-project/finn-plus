@@ -126,8 +126,8 @@ def test_convert_to_hw_layers_cnv_w1a1(fused_activation: bool) -> None:
         if node.op_type == "MVAU_hls":
             inst = getCustomOp(node)
             inst.set_nodeattr("mem_mode", "internal_decoupled")
-            inst.set_nodeattr("PE", 4)
-            inst.set_nodeattr("SIMD", 16)
+            inst.set_nodeattr("PE", 1)
+            inst.set_nodeattr("SIMD", 1)
     # check topology status
     finn_nodes = model.get_finn_nodes()
     if fused_activation:
