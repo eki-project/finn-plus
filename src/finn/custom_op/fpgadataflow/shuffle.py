@@ -7,6 +7,7 @@
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
 
+"""Module for shuffle."""
 import numpy as np
 from onnx import helper
 from operator import itemgetter
@@ -22,11 +23,11 @@ class Shuffle(HWCustomOp):
     This operator is later transformed into InnerShuffle and OuterShuffle operations."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
-        """
-        The attributes for the Shuffle node capture the
+        """The attributes for the Shuffle node capture the
         optional reshapes either side of the transpose.
         Below is a diagram indicating what tensors the
         attribute names are referring to.
@@ -55,7 +56,7 @@ class Shuffle(HWCustomOp):
               │
               │  out_shape
               ▼
-        """
+        """  # noqa: D401
         my_attrs = {
             "data_type": ("s", True, ""),
             "transpose_in_shape": ("ints", True, []),
@@ -72,12 +73,15 @@ class Shuffle(HWCustomOp):
         return my_attrs
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         return self.get_nodeattr("in_shape")
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         return self.get_nodeattr("out_shape")
 
     def execute_node(self, context, graph):
+        """Execute node."""
         node = self.onnx_node
         input_data = context[node.input[0]]
         input_reshaped = input_data.reshape(self.get_nodeattr("transpose_in_shape"))
@@ -86,38 +90,45 @@ class Shuffle(HWCustomOp):
         context[node.output[0]] = output_reshaped
 
     def get_input_datatype(self, ind=0):
+        """Return input datatype."""
         data_type = DataType[self.get_nodeattr("data_type")]
         return data_type
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         dt = model.get_tensor_datatype(node.input[0])
         if dt != self.get_input_datatype():
             warn_str = (
-                f"data_type changing for {node.name}: {str(self.get_input_datatype())} -> {str(dt)}"
+                f"data_type changing for {node.name}: {self.get_input_datatype()!s} -> {dt!s}"
             )
             log.warning(warn_str)
         self.set_nodeattr("data_type", dt.name)
         model.set_tensor_datatype(node.output[0], dt)
 
     def verify_node(self):
+        """Verify node."""
         raise NotImplementedError("This function is not yet immplemented.")
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         ibits = self.get_input_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return ibits * simd
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         obits = self.get_output_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return obits * simd
 
     def get_output_datatype(self, ind=0):
+        """Return output datatype."""
         data_type = DataType[self.get_nodeattr("data_type")]
         return data_type
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         normal_oshape = list(self.get_normal_output_shape())
         simd = self.get_nodeattr("SIMD")
         assert normal_oshape[-1] % simd == 0, "SIMD must divide into the innermost output dimension"
@@ -126,6 +137,7 @@ class Shuffle(HWCustomOp):
         return tuple(folded_oshape)
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         normal_ishape = list(self.get_normal_input_shape())
         simd = self.get_nodeattr("SIMD")
         assert normal_ishape[-1] % simd == 0, "SIMD must divide into the innermost input dimension"

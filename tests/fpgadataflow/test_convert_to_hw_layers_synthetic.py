@@ -42,8 +42,15 @@ from qonnx.transformation.insert_topk import InsertTopK
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.duplicate_streams import (
+    InferDuplicateStreamsLayer,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.global_acc_pool import InferGlobalAccPoolLayer
+from finn.transformation.fpgadataflow.convert_to_hw.label_select import InferLabelSelectLayer
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
@@ -174,19 +181,19 @@ def test_convert_to_hw_layers_synthetic(ch, ifmdim, idt):
     model = model.transform(InferDataLayouts())
     model = model.transform(InferDataTypes())
 
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
+    model = model.transform(InferElementwiseBinaryOperation())
     model = model.transform(MinimizeWeightBitWidth())
     model = model.transform(MinimizeAccumulatorWidth())
     model = model.transform(InferDataTypes())
-    model = model.transform(to_hw.InferGlobalAccPoolLayer())
+    model = model.transform(InferGlobalAccPoolLayer())
     model = model.transform(MoveScalarLinearPastInvariants())
     model = model.transform(InsertTopK())
     model = model.transform(AbsorbScalarMulAddIntoTopK())
     model = model.transform(InferDataTypes())
-    model = model.transform(to_hw.InferLabelSelectLayer())
+    model = model.transform(InferLabelSelectLayer())
     model = model.transform(AbsorbConsecutiveTransposes())
     model = model.transform(InferDataTypes())
-    model = model.transform(to_hw.InferDuplicateStreamsLayer())
+    model = model.transform(InferDuplicateStreamsLayer())
 
     model = model.transform(SortGraph())
 

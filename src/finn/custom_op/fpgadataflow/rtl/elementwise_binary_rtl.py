@@ -6,6 +6,7 @@
 #
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
+"""Module for elementwise binary rtl."""
 import numpy as np
 import os
 import shutil
@@ -26,9 +27,11 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
     """Base CustomOp wrapper for the finn-rtllib eltwisef component."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(ElementwiseBinaryOperation.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
@@ -47,8 +50,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         return my_attrs
 
     def adapt_for_loop_body(self, input_types):
-        """
-        Adapt elementwise binary operator for loop body execution.
+        """Adapt elementwise binary operator for loop body execution.
 
         When an elementwise operator is placed inside a loop, parameters that
         are indexed per iteration (PARAMETER type) need to be received as
@@ -69,6 +71,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
                 self.set_nodeattr("lhs_style", "input")
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Generate hdl."""
         rhs_style = self.get_nodeattr("rhs_style")
         mlo = self.get_nodeattr("mlo_max_iter")
 
@@ -104,7 +107,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
             "STREAM_BITS": pe * 32,
         }
 
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template = f.read()
         for key_name in code_gen_dict:
             template = template.replace(f"${key_name}$", str(code_gen_dict[key_name]))
@@ -122,6 +125,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Return rtl file list."""
         if abspath:
             code_gen_dir = f"{self.get_nodeattr('code_gen_dir_ipgen')}/"
             rtllib_dir = os.path.join(get_settings().finn_rtllib, "eltwisef/")
@@ -138,8 +142,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         ]
 
     def get_verilog_top_module_intf_names(self):
-        """
-        Return the interface names for the Verilog top module.
+        """Return the interface names for the Verilog top module.
 
         For RTL elementwise operations, this includes handling for MLO mode
         where the rhs parameter may be streamed as an input.
@@ -294,6 +297,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         return cmd
 
     def instantiate_ip(self, cmd):
+        """Return instantiate ip."""
         node_name = self.onnx_node.name
         top_module = self.get_nodeattr("gen_top_module")
         source_target = "./ip/verilog/rtl_ops/%s" % node_name
@@ -308,18 +312,8 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
             "create_bd_cell -type hier -reference %s /%s/%s" % (top_module, node_name, node_name)
         )
 
-    def derive_characteristic_fxns(self, period, override_rtlsim_dict=None, pre_hook=None):
-        n_inps = np.prod(self.get_folded_input_shape(0)[:-1])
-        io_dict = {
-            "inputs": {
-                "in0": [i for i in range(n_inps)],
-                "in1": [i for i in range(n_inps)],
-            },
-            "outputs": {"out0": []},
-        }
-        super().derive_characteristic_fxns(period, override_rtlsim_dict=io_dict, pre_hook=pre_hook)
-
     def execute_node(self, context, graph):
+        """Execute node."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "rtlsim":
             node = self.onnx_node
@@ -392,12 +386,14 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
             ElementwiseBinaryOperation.execute_node(self, context, graph)
 
     def generate_params(self, model, code_gen_dir):
+        """Generate params."""
         weights = model.get_initializer(self.onnx_node.input[1])
         if weights is not None:
             self.make_weight_file(weights, "decoupled_npy", f"{code_gen_dir}/input_1.npy")
             self.make_weight_file(weights, "decoupled_verilog_dat", f"{code_gen_dir}/memblock.dat")
 
     def make_weight_file(self, weights, weight_file_mode, weight_file_name):
+        """Create weight file."""
         folded_weight_shape = self.get_folded_input_shape(1)
         weight_tensor = weights.reshape(folded_weight_shape).copy()
 
@@ -451,6 +447,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
                 f.write(val + "\n")
 
     def calc_wmem(self):
+        """Compute wmem."""
         base_wmem = super().calc_wmem()
         num_w_reps = np.prod(self.calc_numInputVectors())
         mlo = self.get_nodeattr("mlo_max_iter")
@@ -459,12 +456,14 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         return int(base_wmem * num_w_reps)
 
     def calc_numInputVectors(self):
+        """Compute numInputVectors."""
         folded_lhs = self.get_folded_input_shape(0)
         if len(folded_lhs) >= 2:
             return list(folded_lhs[:-1])
         return [1]
 
     def minimize_weight_bit_width(self, model):
+        """Return minimize weight bit width."""
         super().minimize_weight_bit_width(model)
 
     def _get_rtl_op_name(self):
@@ -478,6 +477,7 @@ class ElementwiseAdd_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseAd
     _operation = "Add", np.add, "({0} + {1})", '"ADD"'
 
     def _get_rtl_op_name(self):
+        """Return rtl op name."""
         return '"ADD"'
 
 
@@ -487,6 +487,7 @@ class ElementwiseSub_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseSu
     _operation = "Sub", np.subtract, "({0} - {1})", '"SUB"'
 
     def _get_rtl_op_name(self):
+        """Return rtl op name."""
         return '"SUB"'
 
 
@@ -496,4 +497,5 @@ class ElementwiseMul_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseMu
     _operation = "Mul", np.multiply, "({0} * {1})", '"MUL"'
 
     def _get_rtl_op_name(self):
+        """Return rtl op name."""
         return '"MUL"'

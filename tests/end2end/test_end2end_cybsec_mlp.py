@@ -167,19 +167,21 @@ class Test_end2end_cybsec_mlp:
         )
         build.build_dataflow_cfg(model_file, cfg)
         # check the generated files
-        assert os.path.isfile(output_dir + "/report/time_per_step.json")
-        assert os.path.isfile(output_dir + "/report/final_hw_config.json")
-        assert os.path.isfile(output_dir + "/template_specialize_layers_config.json")
-        assert os.path.isfile(output_dir + "/driver/driver.py")
-        est_cycles_report = output_dir + "/report/estimate_layer_cycles.json"
+        output_dir = Path(output_dir)
+        assert os.path.isfile(output_dir / "report/time_per_step.json")
+        assert os.path.isfile(output_dir / "report/auto_folding_config.json")
+        assert os.path.isfile(output_dir / "report/fifo_sizing.json")
+        assert os.path.isfile(output_dir / "template_specialize_layers_config.json")
+        assert os.path.isfile(output_dir / "driver/driver.py")
+        est_cycles_report = output_dir / "report/estimate_layer_cycles.json"
         assert os.path.isfile(est_cycles_report)
-        est_res_report = output_dir + "/report/estimate_layer_resources.json"
+        est_res_report = output_dir / "report/estimate_layer_resources.json"
         assert os.path.isfile(est_res_report)
-        assert os.path.isfile(output_dir + "/report/estimate_network_performance.json")
-        assert os.path.isfile(output_dir + "/bitfile/finn-accel.bit")
-        assert os.path.isfile(output_dir + "/bitfile/finn-accel.hwh")
-        assert os.path.isfile(output_dir + "/report/post_synth_resources.xml")
-        assert os.path.isfile(output_dir + "/report/post_route_timing.rpt")
+        assert os.path.isfile(output_dir / "report/estimate_network_performance.json")
+        assert os.path.isfile(output_dir / "bitfile/finn-accel.bit")
+        assert os.path.isfile(output_dir / "bitfile/finn-accel.hwh")
+        assert os.path.isfile(output_dir / "report/post_synth_resources.xml")
+        assert os.path.isfile(output_dir / "report/post_route_timing.rpt")
         # examine the report contents
         with open(est_cycles_report, "r") as f:
             est_cycles_dict = json.load(f)
@@ -189,5 +191,5 @@ class Test_end2end_cybsec_mlp:
             est_res_dict = json.load(f)
             assert est_res_dict["total"]["LUT"] == 7899.0
             assert est_res_dict["total"]["BRAM_18K"] == 36.0
-        shutil.copytree(output_dir + "/deploy", get_checkpoint_name("build"))
+        shutil.copytree(output_dir / "deploy", get_checkpoint_name("build"))
         shutil.rmtree(get_checkpoint_name("build"))

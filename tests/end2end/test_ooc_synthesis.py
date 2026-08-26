@@ -6,11 +6,14 @@
 #
 # ##########################################################################
 
+"""End-to-end test for out-of-context synthesis."""
+
 import pytest
 
 import numpy as np
+import numpy.typing as npt
 from onnx import TensorProto, helper
-from qonnx.core.datatype import DataType
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
@@ -18,13 +21,22 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
+from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
+from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOSizes
+from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
+from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 
@@ -32,22 +44,46 @@ fpga_part = "xczu7ev-ffvc1156-2-e"
 clk_ns = 10
 
 
-def generate_random_threshold_values(data_type, num_input_channels, num_steps):
-    if data_type.is_integer():
-        return np.random.randint(
-            data_type.min(),
-            data_type.max() + 1,
-            (num_input_channels, num_steps),
-        ).astype(np.float32)
-    else:
-        return (np.random.randn(num_input_channels, num_steps) * 1000).astype(
-            data_type.to_numpy_dt()
+def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    """Run FIFO sizing for testing."""
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = fpga_part
+    cfg.synth_clk_period_ns = clk_ns
+    model = model.transform(
+        BuildSimulation(
+            fpga_part,
+            clk_ns,
+            True,
+            performance_sim=False,
         )
+    )
+    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
+    model = model.transform(ApplySimulatedFIFOSizes(cfg))
+    return model
 
 
-def create_test_model():
-    W = gen_finn_dt_tensor(DataType["INT4"], (16, 32))
-    T = np.sort(
+def generate_random_threshold_values(
+    data_type: BaseDataType, num_input_channels: int, num_steps: int
+) -> npt.NDArray[np.floating]:
+    """Generate random threshold values for a given datatype."""
+    rng = np.random.default_rng()
+    if data_type.is_integer():
+        low = int(data_type.min())
+        high = int(data_type.max()) + 1
+        return rng.integers(
+            low,
+            high,
+            size=(num_input_channels, num_steps),
+        ).astype(np.float32)
+    return (rng.standard_normal(size=(num_input_channels, num_steps)) * 1000).astype(
+        data_type.to_numpy_dt()
+    )
+
+
+def create_test_model() -> ModelWrapper:
+    """Create a small model used for OOC synthesis testing."""
+    weights = gen_finn_dt_tensor(DataType["INT4"], (16, 32))
+    thresholds = np.sort(
         generate_random_threshold_values(
             DataType["FLOAT32"],
             1,
@@ -55,8 +91,8 @@ def create_test_model():
         ),
         axis=1,
     )
-    MulParam = gen_finn_dt_tensor(DataType["FLOAT32"], [1])
-    AddParam = gen_finn_dt_tensor(DataType["FLOAT32"], [1, 4, 32])
+    mul_param = gen_finn_dt_tensor(DataType["FLOAT32"], [1])
+    add_param = gen_finn_dt_tensor(DataType["FLOAT32"], [1, 4, 32])
 
     # Initialize a new graph
     nodes = []
@@ -121,10 +157,10 @@ def create_test_model():
     model = ModelWrapper(model)
 
     # Set initializers and datatypes
-    model.set_initializer("matmul_weight", W)
-    model.set_initializer("thresh", T)
-    model.set_initializer("scalar_input", MulParam)
-    model.set_initializer("channelwise_bias", AddParam)
+    model.set_initializer("matmul_weight", weights)
+    model.set_initializer("thresh", thresholds)
+    model.set_initializer("scalar_input", mul_param)
+    model.set_initializer("channelwise_bias", add_param)
 
     model.set_tensor_datatype("inp", DataType["FLOAT32"])
     model.set_tensor_datatype("matmul_weight", DataType["INT4"])
@@ -138,7 +174,8 @@ def create_test_model():
 @pytest.mark.end2end
 @pytest.mark.vivado
 @pytest.mark.slow
-def test_ooc_synthesis():
+def test_ooc_synthesis() -> None:
+    """Run OOC synthesis flow and validate expected outputs and reports."""
     model = create_test_model()
     model = model.transform(InferShapes())
     model = model.transform(InferDataTypes())
@@ -149,9 +186,9 @@ def test_ooc_synthesis():
     y_ref = y_dict[model.get_first_global_out()]
 
     # infer and specialize layers
-    model = model.transform(to_hw.InferThresholdingLayer())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferThresholdingLayer())
+    model = model.transform(InferElementwiseBinaryOperation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
     model = model.transform(SpecializeLayers(fpga_part))
 
     # node-by-node rtlsim
@@ -166,7 +203,7 @@ def test_ooc_synthesis():
     assert (y_prod == y_ref).all()
 
     # FIFO sizing
-    model = model.transform(InsertAndSetFIFODepths(fpga_part, clk_ns))
+    model = insert_and_set_fifo_depths(model, fpga_part, clk_ns)
 
     # stitched IP rtlsim
     model = model.transform(PrepareIP(fpga_part, clk_ns))

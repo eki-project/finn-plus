@@ -3,8 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""
-Test cases for InferRequantLayer transformation which converts MultiThreshold
+"""Test cases for InferRequantLayer transformation which converts MultiThreshold
 or Quant nodes to Requant nodes.
 
 The requant operation computes output as:
@@ -31,19 +30,25 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
+from typing import Literal
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import InferRequantLayer
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.requant import InferRequantLayer
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
+from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOSizes
+from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
+from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
@@ -52,6 +57,24 @@ from finn.util.basic import make_build_dir, pynq_part_map
 test_pynq_board = "ZCU104"
 test_fpga_part = pynq_part_map[test_pynq_board]
 target_clk_ns = 10
+
+
+def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    """Run FIFO sizing for testing."""
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = fpga_part
+    cfg.synth_clk_period_ns = clk_ns
+    model = model.transform(
+        BuildSimulation(
+            fpga_part,
+            clk_ns,
+            True,
+            performance_sim=False,
+        )
+    )
+    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
+    model = model.transform(ApplySimulatedFIFOSizes(cfg))
+    return model
 
 
 def create_requant_model(abits, max_val, ishape, per_channel):
@@ -200,10 +223,10 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, exec_mode):
             and part == "xczu7ev-ffvc1156-2-e"
         ):
             # Convert any remaining Mul nodes to HW for stitched IP
-            model = model.transform(to_hw.InferElementwiseBinaryOperation())
+            model = model.transform(InferElementwiseBinaryOperation())
             model = model.transform(SpecializeLayers(part))
             model = model.transform(GiveUniqueNodeNames())
-            model = model.transform(InsertAndSetFIFODepths(part, target_clk_ns))
+            model = insert_and_set_fifo_depths(model, part, target_clk_ns)
             model = model.transform(PrepareIP(part, target_clk_ns))
             model = model.transform(HLSSynthIP())
             model = model.transform(CreateStitchedIP(part, target_clk_ns))
@@ -229,7 +252,14 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, exec_mode):
 @pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
-def test_requant_hls(abits, ishape, per_channel, input_dtype, pe, exec_mode):
+def test_requant_hls(
+    abits: Literal[8, 16],
+    ishape: tuple,
+    per_channel: bool,
+    input_dtype: Literal["FLOAT32", "INT8"],
+    pe: Literal[1, 16],
+    exec_mode: Literal["cppsim", "rtlsim"],
+) -> None:
     """Test Requant HLS backend.
 
     Tests float input (naturally uses HLS) and integer input with forced HLS.
@@ -318,10 +348,10 @@ def test_requant_hls(abits, ishape, per_channel, input_dtype, pe, exec_mode):
             and input_dtype == "FLOAT32"
         ):
             # Convert any remaining Mul nodes to HW for stitched IP
-            model = model.transform(to_hw.InferElementwiseBinaryOperation())
+            model = model.transform(InferElementwiseBinaryOperation())
             model = model.transform(SpecializeLayers(test_fpga_part))
             model = model.transform(GiveUniqueNodeNames())
-            model = model.transform(InsertAndSetFIFODepths(test_fpga_part, target_clk_ns))
+            model = insert_and_set_fifo_depths(model, test_fpga_part, target_clk_ns)
             model = model.transform(PrepareIP(test_fpga_part, target_clk_ns))
             model = model.transform(HLSSynthIP())
             model = model.transform(CreateStitchedIP(test_fpga_part, target_clk_ns))
@@ -340,7 +370,7 @@ def test_requant_hls(abits, ishape, per_channel, input_dtype, pe, exec_mode):
 
 def make_quant_test_model(
     ishp, channelwise, bitwidth, need_extraction_scale, need_extraction_zeropt
-):
+) -> ModelWrapper:
     """Create a test model with a Quant node."""
     ishp_str = str(list(ishp))
     if channelwise:
@@ -430,7 +460,7 @@ def test_infer_requant_from_quant(channelwise, pe):
 
     # Convert Quant to Requant HW node
     model = model.transform(InferRequantLayer())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
+    model = model.transform(InferElementwiseBinaryOperation())
 
     # Verify conversion
     assert len(model.get_nodes_by_op_type("Quant")) == 0, "Quant should be converted"

@@ -1,5 +1,4 @@
-"""
-Base class for FINN benchmarking framework.
+"""Base class for FINN benchmarking framework.
 
 This module provides the foundational `bench` class for running automated benchmarks
 of FINN dataflow builds. It wraps the existing FINN builder and handles configuration
@@ -13,21 +12,22 @@ import glob
 import os
 import shutil
 import yaml
+from pathlib import Path
 from shutil import copy as shcopy
 from shutil import copytree
+from typing import Literal, cast
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.util import delete_dir_contents
-from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.builder.build_dataflow_config import AutoFIFOSizingMethod, DataflowBuildConfig
 from finn.util.basic import alveo_default_platform, alveo_part_map, part_map
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
 
 class bench:
-    """
-    Base class for FINN benchmarking operations.
+    """Base class for FINN benchmarking operations.
 
     This class provides the foundational framework for running automated benchmarks
     of FINN dataflow builds. It manages the complete lifecycle from configuration
@@ -40,9 +40,17 @@ class bench:
         output_dict (dict): Collection of additional metrics produced by this infrastructure
     """
 
-    def __init__(self, params, task_id, run_id, work_dir, artifacts_dir, save_dir, debug=True):
-        """
-        Initialize a new benchmark instance that manages a single FINN build.
+    def __init__(
+        self,
+        params: dict,
+        task_id: int,
+        run_id: int,
+        work_dir: str,
+        artifacts_dir: str,
+        save_dir: str,
+        debug: bool | None = True,
+    ) -> None:
+        """Initialize a new benchmark instance that manages a single FINN build.
 
         Args:
             params (dict): Parameters for the FINN builder and the bench instance itself
@@ -62,7 +70,7 @@ class bench:
         - Prepares build directories and clears previous build artifacts
         """
         super().__init__()
-        self._params = params
+        self._params: dict[str, str | int] = params
         self._task_id = task_id
         self._run_id = run_id
         self._work_dir = work_dir
@@ -90,7 +98,7 @@ class bench:
         elif self._board in part_map:
             self._part = part_map[self._board]
         else:
-            raise Exception("No part specified for board %s" % self._board)
+            raise Exception(f"No part specified for board {self._board}")
 
         if self._board in alveo_part_map:
             self._params["shell_flow_type"] = build_cfg.ShellFlowType.VITIS_ALVEO
@@ -128,23 +136,23 @@ class bench:
         ]
 
         if "experiments_config" in params:
-            self.experiments_config = params["experiments_config"]
+            self.experiments_config = Path(cast("str", params["experiments_config"]))
         else:
             # Set default experiment config if not explicitly defined as absolute or relative path
             # TODO: this assumes we are running from the repo root, where ci/ is available
-            if "live_fifo_sizing" in params and params["live_fifo_sizing"] is True:
+            if ("auto_fifo_depths" in params and params["auto_fifo_depths"] is True) and (
+                "auto_fifo_strategy" in params and params["auto_fifo_strategy"] == "live_fifo"
+            ):
                 # Default experiment config for FIFO-Sizing
-                self.experiments_config = os.path.join(
-                    "ci", "experiments", "fifosizing_default.json"
-                )
+                self.experiments_config = Path("ci") / "experiments" / "fifosizing_default.json"
             else:
                 # Default experiment config for normal builds
-                self.experiments_config = os.path.join("ci", "experiments", "default.json")
+                self.experiments_config = Path("ci") / "experiments" / "default.json"
 
-        dut_yaml_name = self._params["dut"] + ".yml"
-        dut_path = os.path.join(os.path.dirname(__file__), "dut", dut_yaml_name)
-        if os.path.isfile(dut_path):
-            with open(dut_path, "r") as f:
+        dut_yaml_name = cast("str", self._params["dut"]) + ".yml"
+        dut_path = Path(__file__).parent / "dut" / dut_yaml_name
+        if dut_path.is_file():
+            with dut_path.open() as f:
                 dut_cfg = yaml.load(f, Loader=yaml.SafeLoader)
             for key in dut_cfg:
                 if key in custom_params:
@@ -160,7 +168,7 @@ class bench:
         self.output_dict = {}
 
         # Inputs (e.g., ONNX model, golden I/O pair, folding config, etc.)
-        self._build_inputs = {}
+        self._build_inputs: dict[str, Path] = {}
 
         # Collect tuples of (name, source path, archive?) to save as pipeline artifacts
         self._artifacts_collection = []
@@ -177,28 +185,28 @@ class bench:
         # SETUP
         # Use a temporary dir for buildflow-related files (next to FINN_BUILD_DIR)
         # Ensure it exists but is empty (clear potential artifacts from previous runs)
-        tmp_buildflow_dir = os.path.join(self._work_dir, "buildflow")
-        os.makedirs(tmp_buildflow_dir, exist_ok=True)
+        tmp_buildflow_dir = Path(self._work_dir) / "buildflow"
+        tmp_buildflow_dir.mkdir(exist_ok=True, parents=True)
         delete_dir_contents(tmp_buildflow_dir)
-        self._build_inputs["build_dir"] = os.path.join(
-            tmp_buildflow_dir, "build_output"
-        )  # TODO remove in favor of self.build_dir
-        self._build_dir = os.path.join(tmp_buildflow_dir, "build_output")
-        self.report_dir = os.path.join(self._build_dir, "report")
-        os.makedirs(self.report_dir, exist_ok=True)
+        self._build_inputs["build_dir"] = tmp_buildflow_dir / "build_output"
+        # TODO remove in favor of self.build_dir
+        self._build_dir = tmp_buildflow_dir / "build_output"
+        self.report_dir = self._build_dir / "report"
+        self.report_dir.mkdir(exist_ok=True, parents=True)
 
         # Save full build dir as local artifact
         self._local_artifacts_collection.append(("build_output", self._build_dir, False))
         # Save reports and deployment package as pipeline artifacts
         self._artifacts_collection.append(("reports", self.report_dir, False))
         self._artifacts_collection.append(
-            ("reports", os.path.join(self._build_dir, "build_dataflow.log"), False)
+            ("reports", self._build_dir / "build_dataflow.log", False)
         )
-        self._artifacts_collection.append(("deploy", os.path.join(self._build_dir, "deploy"), True))
+        self._artifacts_collection.append(("deploy", self._build_dir / "deploy", True))
 
-    def _save_artifact(self, target_path, source_path, archive=False):
-        """
-        Save a single artifact from source to target location.
+    def _save_artifact(
+        self, target_path: str, source_path: str, archive: bool | None = False
+    ) -> None:
+        """Save a single artifact from source to target location.
 
         Args:
             target_path (str): Destination path where artifact will be saved
@@ -211,20 +219,19 @@ class bench:
         - For files: copies to target directory
         - Automatically creates parent directories as needed
         """
-        if os.path.isdir(source_path):
+        if Path(source_path).is_dir():
             if archive:
-                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                Path(target_path).parent.mkdir(parents=True, exist_ok=True)
                 shutil.make_archive(target_path, "zip", source_path)
             else:
-                os.makedirs(target_path, exist_ok=True)
+                Path(target_path).mkdir(parents=True, exist_ok=True)
                 copytree(source_path, target_path, dirs_exist_ok=True)
-        elif os.path.isfile(source_path):
-            os.makedirs(target_path, exist_ok=True)
+        elif Path(source_path).is_file():
+            Path(target_path).parent.mkdir(parents=True, exist_ok=True)
             shcopy(source_path, target_path)
 
-    def save_artifacts_collection(self):
-        """
-        Save all collected pipeline artifacts.
+    def save_artifacts_collection(self) -> None:
+        """Save all collected pipeline artifacts.
 
         This method should be called upon successful or failed completion of a run.
         It processes all artifacts in the artifacts_collection list and saves them
@@ -235,14 +242,11 @@ class bench:
         - Deployment packages
         """
         for name, source_path, archive in self._artifacts_collection:
-            target_path = os.path.join(
-                self._artifacts_dir, "runs_output", "run_%d" % (self._run_id), name
-            )
-            self._save_artifact(target_path, source_path, archive)
+            target_path = Path(self._artifacts_dir) / "runs_output" / f"run_{self._run_id}" / name
+            self._save_artifact(str(target_path), str(source_path), archive)
 
-    def save_local_artifacts_collection(self):
-        """
-        Save all collected local artifacts for debugging.
+    def save_local_artifacts_collection(self) -> None:
+        """Save all collected local artifacts for debugging.
 
         This method should be called upon successful or failed completion of a run.
         It processes all artifacts in the local_artifacts_collection list and saves
@@ -253,12 +257,11 @@ class bench:
         - FINN build directory contents (when debug=True)
         """
         for name, source_path, archive in self._local_artifacts_collection:
-            target_path = os.path.join(self._save_dir, name, "run_%d" % (self._run_id))
-            self._save_artifact(target_path, source_path, archive)
+            target_path = Path(self._save_dir) / name / f"run_{self._run_id}"
+            self._save_artifact(str(target_path), str(source_path), archive)
 
-    def _step_export_onnx(self):
-        """
-        Export or generate ONNX model for benchmarking.
+    def _step_export_onnx(self, onnx_export_path: str) -> None:
+        """Export or generate ONNX model for benchmarking.
 
         This method must be implemented by subclasses to provide the ONNX model
         that will be processed by the FINN build flow.
@@ -272,11 +275,9 @@ class bench:
             This is an abstract method that must be overridden by concrete
             benchmark implementations.
         """
-        pass
 
-    def _step_build_setup(self):
-        """
-        Initialize the DataflowBuildConfig for this benchmark.
+    def _step_build_setup(self) -> DataflowBuildConfig:
+        """Initialize the DataflowBuildConfig for this benchmark.
 
         This method can be overridden by subclasses if the setup is too complex
         for YAML definition. The default implementation loads configuration from
@@ -291,17 +292,16 @@ class bench:
         The YAML file should be located at: benchmarking/dut/{dut_name}.yml
         where {dut_name} is the value of params["dut"].
         """
-        dut_yaml_name = self._params["dut"] + ".yml"
-        dut_path = os.path.join(os.path.dirname(__file__), "dut", dut_yaml_name)
-        if os.path.isfile(dut_path):
-            with open(dut_path, "r") as f:
+        dut_yaml_name = cast("str", self._params["dut"]) + ".yml"
+        dut_path = Path(__file__).parent / "dut" / dut_yaml_name
+        if dut_path.is_file():
+            with dut_path.open() as f:
                 return DataflowBuildConfig.from_yaml(f)
         else:
             raise Exception("No DUT-specific YAML build definition found")
 
-    def run(self):
-        """
-        Execute the benchmark run.
+    def run(self) -> None | Literal["skipped"]:
+        """Execute the benchmark run.
 
         This method defaults to running the complete FINN build flow but may be
         overridden by subclasses to implement custom benchmark sequences.
@@ -312,9 +312,8 @@ class bench:
         """
         return self._steps_full_build_flow()
 
-    def _step_parse_builder_output(self, build_dir):
-        """
-        Parse and analyze the output from the FINN builder.
+    def _step_parse_builder_output(self, build_dir: str) -> None:
+        """Parse and analyze the output from the FINN builder.
 
         Args:
             build_dir (str): Path to the build output directory
@@ -327,12 +326,14 @@ class bench:
 
         TODO: Output results as .json or integrate as a new build step
         """
-        if os.path.exists(os.path.join(build_dir, "verification_output")):
+        if (Path(build_dir) / "verification_output").is_dir():
             # Collect all verification output filenames
-            outputs = glob.glob(os.path.join(build_dir, "verification_output/*.npy"))
+            outputs = glob.glob(  # noqa: PTH207
+                str(Path(build_dir) / "verification_output" / "*.npy")
+            )
             # Extract the verification status for each verification output by matching
             # to the SUCCESS string contained in the filename
-            status = all([out.split("_")[-1].split(".")[0] == "SUCCESS" for out in outputs])
+            status = all(out.split("_")[-1].split(".")[0] == "SUCCESS" for out in outputs)
 
             # Construct a dictionary reporting the verification status as string
             self.output_dict["builder_verification"] = {
@@ -340,9 +341,8 @@ class bench:
             }
             # TODO: mark job as failed if verification fails?
 
-    def _steps_full_build_flow(self):
-        """
-        Execute the complete FINN dataflow build sequence.
+    def _steps_full_build_flow(self) -> None | Literal["skipped"]:
+        """Execute the complete FINN dataflow build sequence.
 
         This method implements the default step sequence for benchmarking a full
         FINN builder flow, including:
@@ -368,18 +368,18 @@ class bench:
         """
         if "model_dir" in self._params:
             # input ONNX model and verification input/output pairs are provided
-            model_dir = self._params["model_dir"]
-            self._build_inputs["onnx_path"] = os.path.join(model_dir, "model.onnx")
-            self._build_inputs["input_npy_path"] = os.path.join(model_dir, "inp.npy")
-            self._build_inputs["output_npy_path"] = os.path.join(model_dir, "out.npy")
+            model_dir = Path(cast("str", self._params["model_dir"]))
+            self._build_inputs["onnx_path"] = model_dir / "model.onnx"
+            self._build_inputs["input_npy_path"] = model_dir / "inp.npy"
+            self._build_inputs["output_npy_path"] = model_dir / "out.npy"
         elif "model_path" in self._params:
-            self._build_inputs["onnx_path"] = self._params["model_path"]
+            self._build_inputs["onnx_path"] = Path(cast("str", self._params["model_path"]))
         else:
             # input ONNX model (+ optional I/O pair for verification) will be generated
-            self._build_inputs["onnx_path"] = os.path.join(
-                self._build_inputs["build_dir"], "model_export.onnx"
+            self._build_inputs["onnx_path"] = (
+                Path(self._build_inputs["build_dir"]) / "model_export.onnx"
             )
-            if self._step_export_onnx(self._build_inputs["onnx_path"]) == "skipped":
+            if self._step_export_onnx(str(self._build_inputs["onnx_path"])) == "skipped":
                 # microbenchmarks might skip because no model can be generated for given params
                 return "skipped"
 
@@ -405,7 +405,7 @@ class bench:
         # cfg.default_swg_exception
         # cfg.large_fifo_mem_style
 
-        cfg.experiments_config_path = self.experiments_config
+        cfg.experiments_config_path = str(self.experiments_config)
 
         # Set verification i/o paths if available
         if "input_npy_path" in self._build_inputs and "output_npy_path" in self._build_inputs:
@@ -444,7 +444,7 @@ class bench:
             setattr(cfg, param_key, param_value)
 
         # disable verification if live FIFO-sizing is on
-        if cfg.live_fifo_sizing:
+        if cfg.auto_fifo_depths and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.LIVE_FIFO:
             cfg.verify_steps = None
 
         # Default of 1M cycles is insufficient for MetaFi (6M) and RN-50 (2.5M)
@@ -455,4 +455,5 @@ class bench:
         build.build_dataflow_cfg(self._build_inputs["onnx_path"], cfg)
 
         # ANALYSIS
-        self._step_parse_builder_output(self._build_inputs["build_dir"])
+        self._step_parse_builder_output(str(self._build_inputs["build_dir"]))
+        return None

@@ -7,6 +7,7 @@
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
 
+"""Module for hwsoftmax."""
 from qonnx.core.datatype import DataType
 from scipy.special import softmax
 
@@ -18,9 +19,11 @@ class HWSoftmax(HWCustomOp):
     """Abstraction layer for HW implementation of SoftMax layers."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             "ifm_dim": ("ints", True, []),
             "SIMD": ("i", False, 1),
@@ -32,12 +35,15 @@ class HWSoftmax(HWCustomOp):
         return my_attrs
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         return self.get_nodeattr("ifm_dim")
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         return self.get_normal_input_shape()
 
     def execute_node(self, context, graph):
+        """Execute node."""
         node = self.onnx_node
         input_data = context[node.input[0]]
         output_data = softmax(input_data, axis=-1)
@@ -52,6 +58,7 @@ class HWSoftmax(HWCustomOp):
         return data_type
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -68,11 +75,13 @@ class HWSoftmax(HWCustomOp):
         model.set_tensor_datatype(node.output[0], odt)
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         ibits = self.get_input_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return ibits * simd
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         obits = self.get_output_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return obits * simd
@@ -82,9 +91,11 @@ class HWSoftmax(HWCustomOp):
         return DataType["FLOAT32"]
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         return self.get_folded_input_shape()
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         normal_ishape = list(self.get_normal_input_shape())
         simd = self.get_nodeattr("SIMD")
         assert normal_ishape[-1] % simd == 0, "SIMD must divide into input dimension"

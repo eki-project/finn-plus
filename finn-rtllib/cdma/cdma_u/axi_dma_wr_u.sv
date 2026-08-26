@@ -579,6 +579,12 @@ always_ff @(posedge aclk) begin
         m_axi_wvalid_reg <= 1'b0;
         m_axi_wready_int_reg <= 1'b0;
         temp_m_axi_wvalid_reg <= 1'b0;
+        m_axi_wdata_reg <= {AXI_DATA_WIDTH{1'b0}};
+        m_axi_wstrb_reg <= {AXI_STRB_WIDTH{1'b0}};
+        m_axi_wlast_reg <= 1'b0;
+        temp_m_axi_wdata_reg <= {AXI_DATA_WIDTH{1'b0}};
+        temp_m_axi_wstrb_reg <= {AXI_STRB_WIDTH{1'b0}};
+        temp_m_axi_wlast_reg <= 1'b0;
     end else begin
         m_axi_wvalid_reg <= m_axi_wvalid_next;
         m_axi_wready_int_reg <= m_axi_wready_int_early;

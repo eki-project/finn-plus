@@ -1,3 +1,5 @@
+"""Tests for model config extraction and application utilities."""
+
 ############################################################################
 # Copyright (C) 2025, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -14,9 +16,10 @@ from onnxscript import BOOL, FLOAT
 from onnxscript import opset13 as op
 from onnxscript import script
 from onnxscript.values import Opset
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
-from typing import Any, Dict
+from typing import Any
 
 from finn.transformation.general import ApplyConfig
 from finn.util.config import extract_model_config, extract_model_config_to_json
@@ -30,7 +33,7 @@ qops = Opset("qonnx.custom_op.general", 1)
 def main_graph_fn(
     main_inp: FLOAT[1, 28, 28, 1], condition: BOOL, nested_condition: BOOL
 ) -> FLOAT[1, 4, 4, 144]:
-    """Main graph with nested if statement in else branch."""
+    """Build a main graph with a nested if statement in the else branch."""
     im2col_0 = qops.Im2Col(
         main_inp,
         stride=[1, 1],
@@ -80,7 +83,7 @@ def main_graph_fn(
     return main_out
 
 
-def build_expected_config_from_node(node: onnx.NodeProto, prefix="") -> Dict[str, Any]:
+def build_expected_config_from_node(node: onnx.NodeProto, prefix: str = "") -> dict[str, Any]:
     """Build expected config dictionary from a given ONNX node."""
     custom_op = getCustomOp(node)
     attrs = {}
@@ -89,9 +92,8 @@ def build_expected_config_from_node(node: onnx.NodeProto, prefix="") -> Dict[str
     return {prefix + node.name: attrs}
 
 
-def make_im2col_test_model():
+def make_im2col_test_model() -> tuple[ModelWrapper, dict[Any, Any]]:
     """Create a simple ONNX model with a single Im2Col node."""
-
     model_proto = main_graph_fn.to_model_proto()
 
     im2col_node = model_proto.graph.node[0]
@@ -136,9 +138,8 @@ def make_im2col_test_model():
 
 
 @pytest.mark.util
-def test_extract_model_config():
+def test_extract_model_config() -> None:
     """Test extraction of model config from models with and without subgraphs."""
-
     model, expected_config = make_im2col_test_model()
 
     attrs_to_extract = ["kernel_size", "stride", "pad_amount", "input_shape"]
@@ -150,9 +151,9 @@ def test_extract_model_config():
 
 
 @pytest.mark.util
-def test_roundtrip_export_import():
+def test_roundtrip_export_import() -> None:
     """Test config extraction and re-application preserves node attributes."""
-    model, expected_config = make_im2col_test_model()
+    model, _ = make_im2col_test_model()
     attrs_to_extract = ["kernel_size", "stride", "pad_amount", "input_shape"]
 
     # Extract config from model
@@ -160,11 +161,11 @@ def test_roundtrip_export_import():
         model, subgraph_hier=None, attr_names_to_extract=attrs_to_extract
     )
     # Save in json
-    config_json_file = os.environ["FINN_BUILD_DIR"] + "/original_config.json"
+    config_json_file = Path(os.environ["FINN_BUILD_DIR"]) / "original_config.json"
     extract_model_config_to_json(model, config_json_file, attrs_to_extract)
 
     # Modify all Im2Col nodes to different values (recursively through subgraphs)
-    def modify_all_im2col_nodes(graph_proto):
+    def modify_all_im2col_nodes(graph_proto: onnx.GraphProto) -> None:
         for node in graph_proto.node:
             if node.op_type == "Im2Col":
                 inst = getCustomOp(node)
@@ -191,5 +192,5 @@ def test_roundtrip_export_import():
     )
     assert restored_config == original_config, "Config not properly restored after roundtrip"
 
-    if os.path.exists(config_json_file):
-        os.remove(config_json_file)
+    if config_json_file.exists():
+        config_json_file.unlink()

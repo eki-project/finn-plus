@@ -49,9 +49,14 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.binary_matrix_vector_activation import (
+    InferBinaryMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
@@ -60,12 +65,11 @@ from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from tests.testing_util.test import get_test_model_trained
 
-export_onnx_path = "test_convert_to_hw_layers_fc.onnx"
-
 
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 def test_convert_to_hw_layers_tfc_w1a1():
+    export_onnx_path = "test_convert_to_hw_layers_tfc_w1a1.onnx"
     tfc = get_test_model_trained("TFC", 1, 1)
     export_qonnx(tfc, torch.randn(1, 1, 28, 28), export_onnx_path)
     qonnx_cleanup(export_onnx_path, out_file=export_onnx_path)
@@ -81,7 +85,7 @@ def test_convert_to_hw_layers_tfc_w1a1():
     model = model.transform(absorb.AbsorbAddIntoMultiThreshold())
     model = model.transform(absorb.AbsorbMulIntoMultiThreshold())
     model = model.transform(RoundAndClipThresholds())
-    model = model.transform(to_hw.InferBinaryMatrixVectorActivation())
+    model = model.transform(InferBinaryMatrixVectorActivation())
     model = model.transform(SpecializeLayers("xc7z020clg400-1"))
     fc0 = model.graph.node[2]
     assert fc0.op_type.startswith("MVAU")
@@ -142,6 +146,7 @@ def test_convert_to_hw_layers_tfc_w1a1():
 @pytest.mark.vivado
 def test_convert_to_hw_layers_tfc_w1a2():
     tfc = get_test_model_trained("TFC", 1, 2)
+    export_onnx_path = "test_convert_to_hw_layers_tfc_w1a2.onnx"
     export_qonnx(tfc, torch.randn(1, 1, 28, 28), export_onnx_path)
     qonnx_cleanup(export_onnx_path, out_file=export_onnx_path)
     model = ModelWrapper(export_onnx_path)
@@ -153,7 +158,7 @@ def test_convert_to_hw_layers_tfc_w1a2():
     model = model.transform(GiveUniqueParameterTensors())
     model = model.transform(GiveReadableTensorNames())
     model = model.transform(Streamline())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
     model = model.transform(SpecializeLayers("xc7z020clg400-1"))
 
     fc0 = model.graph.node[2]

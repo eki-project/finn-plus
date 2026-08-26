@@ -30,11 +30,32 @@ from typing import TYPE_CHECKING, cast
 # Configuration for FINN dataflow builds passed through the build steps by the
 # FINN frontend
 from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.transformation.fpgadataflow.attention import InferScaledDotProductAttention
 
 # ONNX operator to FINN HWCustomOp conversion steps, also inferring custom-ops
 # from patterns of operators
-from finn.transformation.fpgadataflow import convert_to_hw_layers as hardware
-from finn.transformation.fpgadataflow.attention import InferScaledDotProductAttention
+from finn.transformation.fpgadataflow.convert_to_hw.binary_matrix_vector_activation import (
+    InferBinaryMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.concat import InferConcatLayer
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.fm_padding import InferFMPadding
+from finn.transformation.fpgadataflow.convert_to_hw.label_select import InferLabelSelectLayer
+from finn.transformation.fpgadataflow.convert_to_hw.lookup import InferLookupLayer
+from finn.transformation.fpgadataflow.convert_to_hw.pool import InferPool
+from finn.transformation.fpgadataflow.convert_to_hw.pool_from_reduce import InferPoolFromReduce
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.reshape import InferReshape
+from finn.transformation.fpgadataflow.convert_to_hw.split import InferSplitLayer
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
+    InferVectorVectorActivation,
+)
 from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
 
 # Reuse FINN auto-folding functionality to build folding of attention operators
@@ -76,15 +97,15 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
     """
     # Start with inferring splitting and concatenating infrastructure operators
     # as these also address QONNX type inference defects.
-    model = model.transform(hardware.InferSplitLayer())
-    model = model.transform(hardware.InferConcatLayer())
+    model = model.transform(InferSplitLayer())
+    model = model.transform(InferConcatLayer())
 
     # Convert pooling and convolution-related operators next as these might
     # affect type and shape inference for subsequent transformations.
-    model = model.transform(hardware.InferPool())
-    model = model.transform(hardware.InferPoolFromReduce())
-    model = model.transform(hardware.InferConvInpGen())
-    model = model.transform(hardware.InferFMPadding())
+    model = model.transform(InferPool())
+    model = model.transform(InferPoolFromReduce())
+    model = model.transform(InferConvInpGen())
+    model = model.transform(InferFMPadding())
 
     # Infer fused scaled dot-product attention before inferring standalone
     # thresholds and MVUs
@@ -94,14 +115,14 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
     # thresholds to avoid fusing these into MVAUs, from there on the order does
     # not really matter.
     if cfg.standalone_thresholds:
-        model = model.transform(hardware.InferThresholdingLayer())
+        model = model.transform(InferThresholdingLayer())
 
-    model = model.transform(hardware.InferBinaryMatrixVectorActivation())
-    model = model.transform(hardware.InferQuantizedMatrixVectorActivation())
-    model = model.transform(hardware.InferVectorVectorActivation())
-    model = model.transform(hardware.InferThresholdingLayer())
-    model = model.transform(hardware.InferLabelSelectLayer())
-    model = model.transform(hardware.InferLabelSelectLayer())
+    model = model.transform(InferBinaryMatrixVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferVectorVectorActivation())
+    model = model.transform(InferThresholdingLayer())
+    model = model.transform(InferLabelSelectLayer())
+    model = model.transform(InferLabelSelectLayer())
 
     # Inferring Gather as Lookup layers needs some special treatment: The ONNX
     # standard requires signed-integer index inputs whereas FINN assumes float
@@ -123,7 +144,7 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
             value_info.type.tensor_type.elem_type = 1
 
     # Now Gather operators should be inferred as Lookup layers
-    model = model.transform(hardware.InferLookupLayer())
+    model = model.transform(InferLookupLayer())
 
     # TODO: Theses two should actually be considered as streamlining of already
     #  lowered operator representations, but pooling conversion above might
@@ -134,13 +155,11 @@ def step_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWr
     # Implement remaining elementwise binary operators as hardware operators,
     # including floating-point operators, excluding the final dequantizer scale.
     model = model.transform(
-        hardware.InferElementwiseBinaryOperation(
-            hardware.InferElementwiseBinaryOperation.reject_output_dequant
-        )
+        InferElementwiseBinaryOperation(InferElementwiseBinaryOperation.reject_output_dequant)
     )
     # Any remaining reshape operator must be implemented to keep the graph valid
     # while also not breaking the chain of FINN operators.
-    model = model.transform(hardware.InferReshape())
+    model = model.transform(InferReshape())
     # Explicitly replicate stream connections between layers as hardware does
     # not allow multiple consumer of a single AXI stream.
     model = model.transform(InferReplicateStream())

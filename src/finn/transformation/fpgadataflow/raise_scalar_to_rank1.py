@@ -27,13 +27,16 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for raise scalar to rank1."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
-from typing import Iterable
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    lift_to_rank1,
+)
 
 
 class RaiseScalarToRank1(Transformation):
@@ -47,9 +50,11 @@ class RaiseScalarToRank1(Transformation):
     """
 
     def __init__(self):
+        """Initialize instance."""
         super().__init__()
 
     def _tensor_names(self, model: ModelWrapper) -> Iterable[str]:
+        """Return tensor names."""
         graph = model.graph
         tensors = [vi.name for vi in graph.value_info]
         tensors += [inp.name for inp in graph.input]
@@ -62,12 +67,13 @@ class RaiseScalarToRank1(Transformation):
                 yield name
 
     def apply(self, model: ModelWrapper):
+        """Apply transformation."""
         graph_modified = False
         for tensor_name in self._tensor_names(model):
             tensor_shape = model.get_tensor_shape(tensor_name)
             if tensor_shape is None:
                 continue
             if len(tensor_shape) == 0:
-                to_hw.lift_to_rank1(tensor_name, model)
+                lift_to_rank1(tensor_name, model)
                 graph_modified = True
         return (model, graph_modified)

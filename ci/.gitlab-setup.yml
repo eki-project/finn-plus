@@ -2,16 +2,17 @@
 
 .n2_setup_general:
   before_script:
-    - ml lang/Python/3.10.4-GCCcore-11.3.0
+    - ml lang/Python/3.11.5-GCCcore-13.2.0
+    - ml devel/Boost/1.83.0-GCC-13.2.0
     - ml tools/git-lfs/3.6.1
-    - ml tools/UnZip/6.0-GCCcore-11.3.0
+    - ml tools/UnZip/6.0-GCCcore-13.2.0
     - ml devel/ncurses/5.9
     - ulimit -s unlimited # Increase stack size limit
 
 .n2_setup_xilinx_2022_2:
   before_script:
     - module load fpga
-    - module load xilinx/xrt/2.14 # includes Vitis/Vivado 2022.2
+    - ml xilinx/xrt/2.14_static_boost_1.75 # includes Vitis/Vivado 2022.2
     - ml fpga/xilinx/vitis_hls_xcd_fix
     - export PLATFORM_PATH=$FINN_CUSTOM_PLATFORM_PATH # override with custom platform path
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH

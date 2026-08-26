@@ -27,39 +27,25 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import numpy as np
-from onnx import helper as oh
-from qonnx.custom_op.registry import getCustomOp
-from qonnx.transformation.base import Transformation
+"""Insert FIFO nodes into fpgadataflow graphs.
 
+This transformation derives FIFO depths from adjacent node attributes and
+inserts StreamingFIFO nodes where appropriate.
+"""
+
+import numpy as np
+import numpy.typing as npt
+from collections.abc import Sequence
+from onnx import NodeProto
+from onnx import helper as oh
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.base import Transformation
+from typing import cast
+
+from finn.util.basic import getHWCustomOp
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import is_fpgadataflow_node
 from finn.util.logging import log
-
-
-def _is_fifo_node(node):
-    if node.op_type.startswith("StreamingFIFO"):
-        return True
-    else:
-        return False
-
-
-def _suitable_node(node):
-    if node is not None:
-        if is_fpgadataflow_node(node):
-            if not _is_fifo_node(node):
-                return True
-            else:
-                return False
-        else:
-            return False
-    else:
-        return False
-
-
-def _suitable_folded_shapes(ishape, oshape):
-    matching_stream_width = ishape[-1] == oshape[-1]
-    matching_size = np.prod(ishape) == np.prod(oshape)
-    return matching_stream_width and matching_size
 
 
 class InsertFIFO(Transformation):
@@ -85,19 +71,52 @@ class InsertFIFO(Transformation):
     The other node attributes necessary to create a FIFO node are taken from the
     node the FIFO node is inserted after: 'folded_shape' and 'dtype'"""
 
-    def __init__(self, create_shallow_fifos=False, max_qsrl_depth=None, vivado_ram_style="auto"):
+    def __init__(
+        self,
+        create_shallow_fifos: bool = False,
+        max_qsrl_depth: int | None = None,
+        vivado_ram_style: str = "auto",
+    ) -> None:
+        """Initialize InsertFIFO transformation."""
         super().__init__()
         self.create_shallow_fifos = create_shallow_fifos
         self.max_qsrl_depth = max_qsrl_depth
         self.vivado_ram_style = vivado_ram_style
 
-    def apply(self, model):
+    def _is_fifo_node(self, node: NodeProto) -> bool:
+        """Return whether node is a FIFO node."""
+        return bool(node.op_type.startswith("StreamingFIFO"))
+
+    def _suitable_node(self, node: NodeProto) -> bool:
+        """Return whether node is suitable for FIFO insertion."""
+        if node is not None:
+            if is_fpgadataflow_node(node):
+                return bool(not self._is_fifo_node(node))
+            return False
+        return False
+
+    def _suitable_folded_shapes(
+        self,
+        ishape: Sequence[int] | npt.NDArray[np.int_],
+        oshape: Sequence[int] | npt.NDArray[np.int_],
+    ) -> bool:
+        """Return suitable folded shapes."""
+        matching_stream_width = ishape[-1] == oshape[-1]
+        matching_size = np.prod(ishape) == np.prod(oshape)
+        return matching_stream_width and matching_size
+
+    def _shape_to_onnx(self, shape: Sequence[int] | npt.NDArray[np.int_]) -> list[int]:
+        """Return shape as a list of integers."""
+        return [int(dim) for dim in shape]
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Apply the transformation to insert FIFOs in the model."""
         graph = model.graph
         node_ind = -1
         graph_modified = False
         for first_node in graph.node:
             node_ind += 1
-            if _suitable_node(first_node):
+            if self._suitable_node(first_node):
                 for idx_out, output_name in enumerate(first_node.output):
                     consumers = model.find_consumers(output_name)
                     if consumers == []:
@@ -108,33 +127,50 @@ class InsertFIFO(Transformation):
                                 than 1 cannot be stitched"
                         )
                     consumer = consumers[0]
-                    if _suitable_node(consumer) is True:
-                        n0 = getCustomOp(first_node)
+                    if self._suitable_node(consumer) is True:
+                        n0 = getHWCustomOp(first_node)
                         # determine fifo node attributes
                         fld_shape = n0.get_folded_output_shape()
                         dtype = n0.get_output_datatype()
                         n0_otensor = model.get_tensor_valueinfo(output_name)
+                        if n0_otensor is None:
+                            raise FINNInternalError(
+                                f"Output tensor {output_name} not found in "
+                                f"model for node {first_node.name} when inserting FIFO."
+                            )
                         n0_tensor_dtype = n0_otensor.type.tensor_type.elem_type
 
                         # check if folded_shape of output of first node and
                         # input of the second node is equal
-                        n1 = getCustomOp(consumer)
+                        n1 = getHWCustomOp(consumer)
+                        fld_shape_2 = None
+                        idx_inp = None
                         for idx, inp in enumerate(consumer.input):
                             if inp == output_name:
                                 fld_shape_2 = n1.get_folded_input_shape(ind=idx)
                                 idx_inp = idx
-                        assert _suitable_folded_shapes(
-                            fld_shape, fld_shape_2
-                        ), """The
-                        folded output shape of the first node is not the same as the
-                        folded output shape of the second node. A streaming fifo can't
-                        be implemented in between these nodes."""
+                        if (
+                            fld_shape_2 is None
+                            or not self._suitable_folded_shapes(fld_shape, fld_shape_2)
+                            or idx_inp is None
+                        ):
+                            raise FINNInternalError(
+                                f"Folded output shape of node {first_node.name} is not the same as "
+                                f"the folded input shape of node {consumer.name}. "
+                                f"A streaming FIFO can't be implemented in between these nodes."
+                            )
                         n_shape = n0.get_normal_output_shape()
 
                         # check if outFIFOdepths attribute of first node
                         # and inFIFOdepths attribute of consumer node is equal
-                        n0_depth = n0.get_nodeattr("outFIFODepths")[idx_out]
-                        n1_depth = n1.get_nodeattr("inFIFODepths")[idx_inp]
+                        idx_out = min(
+                            idx_out, len(cast("list", n0.get_nodeattr("outFIFODepths"))) - 1
+                        )
+                        idx_inp = min(
+                            idx_inp, len(cast("list", n1.get_nodeattr("inFIFODepths"))) - 1
+                        )
+                        n0_depth = cast("list[int]", n0.get_nodeattr("outFIFODepths"))[idx_out]
+                        n1_depth = cast("list[int]", n1.get_nodeattr("inFIFODepths"))[idx_inp]
 
                         fifo_depth = max(n0_depth, n1_depth)
 
@@ -147,7 +183,7 @@ class InsertFIFO(Transformation):
                             fifo_output_tensor = oh.make_tensor_value_info(
                                 model.make_new_valueinfo_name(),
                                 n0_tensor_dtype,
-                                n0.get_normal_output_shape(),
+                                self._shape_to_onnx(n0.get_normal_output_shape()),
                             )
                             graph.value_info.append(fifo_output_tensor)
                             model.set_tensor_datatype(fifo_output_tensor.name, dtype)
@@ -185,6 +221,10 @@ class InsertFIFO(Transformation):
             graph_in_names = [x.name for x in model.graph.input]
             for graph_in_name in graph_in_names:
                 first_node = model.find_consumer(graph_in_name)
+                if first_node is None:
+                    raise FINNInternalError(
+                        f"Input tensor {graph_in_name} not found in model when inserting FIFO."
+                    )
                 # insert FIFO as first node, except when first node is DMA
                 if (
                     not first_node.op_type.startswith("StreamingFIFO")
@@ -192,7 +232,7 @@ class InsertFIFO(Transformation):
                 ):
                     inp_ind = list(first_node.input).index(graph_in_name)
                     n_input = first_node.input[inp_ind]
-                    n0 = getCustomOp(first_node)
+                    n0 = getHWCustomOp(first_node)
                     if n0.get_nodeattr("mlo_max_iter") and inp_ind > 0:
                         continue
                     # determine fifo node attributes
@@ -200,8 +240,13 @@ class InsertFIFO(Transformation):
                     n_shape = n0.get_normal_input_shape(inp_ind)
                     dtype = n0.get_input_datatype(inp_ind)
                     n0_itensor = model.get_tensor_valueinfo(graph_in_name)
+                    if n0_itensor is None:
+                        raise FINNInternalError(
+                            f"Input tensor {graph_in_name} not found in model for "
+                            f"node {first_node.name} when inserting FIFO."
+                        )
                     n0_tensor_dtype = n0_itensor.type.tensor_type.elem_type
-                    fifo_depth = n0.get_nodeattr("inFIFODepths")[inp_ind]
+                    fifo_depth = cast("list[int]", n0.get_nodeattr("inFIFODepths"))[inp_ind]
 
                     if fifo_depth > 2 or self.create_shallow_fifos:
                         # Ensure that create shallow fifo condition doesn't create depth=1 fifos
@@ -210,7 +255,7 @@ class InsertFIFO(Transformation):
                         fifo_output_tensor = oh.make_tensor_value_info(
                             model.make_new_valueinfo_name(),
                             n0_tensor_dtype,
-                            n0.get_normal_input_shape(inp_ind),
+                            self._shape_to_onnx(n0.get_normal_input_shape(inp_ind)),
                         )
                         graph.value_info.append(fifo_output_tensor)
                         model.set_tensor_datatype(fifo_output_tensor.name, dtype)
@@ -247,23 +292,32 @@ class InsertFIFO(Transformation):
             graph_out_names = [x.name for x in model.graph.output]
             for graph_out_name in graph_out_names:
                 final_node = model.find_producer(graph_out_name)
+                if final_node is None:
+                    raise FINNInternalError(
+                        f"Output tensor {graph_out_name} not found in model when inserting FIFO."
+                    )
                 if (
                     not final_node.op_type.startswith("StreamingFIFO")
                     and final_node.op_type != "IODMA_hls"
                 ):
-                    assert (
-                        final_node.op_type != "TLastMarker_hls"
-                    ), """Insert tlast marker should be done
-                        after inserting the FIFOs"""
-                    n0 = getCustomOp(final_node)
+                    if final_node.op_type == "TLastMarker_hls":
+                        raise FINNUserError(
+                            "Inserting tlast marker should be done after inserting the FIFOs"
+                        )
+                    n0 = getHWCustomOp(final_node)
                     out_ind = list(final_node.output).index(graph_out_name)
                     # determine fifo node attributes
                     fld_shape = n0.get_folded_output_shape(out_ind)
                     n_shape = n0.get_normal_output_shape(out_ind)
                     dtype = n0.get_output_datatype(out_ind)
                     n0_otensor = model.get_tensor_valueinfo(graph_out_name)
+                    if n0_otensor is None:
+                        raise FINNInternalError(
+                            f"Output tensor {graph_out_name} not found in model for "
+                            f"node {final_node.name} when inserting FIFO."
+                        )
                     n0_tensor_dtype = n0_otensor.type.tensor_type.elem_type
-                    fifo_depth = n0.get_nodeattr("outFIFODepths")[out_ind]
+                    fifo_depth = cast("list[int]", n0.get_nodeattr("outFIFODepths"))[out_ind]
 
                     if fifo_depth > 2 or self.create_shallow_fifos:
                         # Ensure that create shallow fifo condition doesn't create depth=1 fifos
@@ -272,7 +326,7 @@ class InsertFIFO(Transformation):
                         fifo_input_tensor = oh.make_tensor_value_info(
                             model.make_new_valueinfo_name(),
                             n0_tensor_dtype,
-                            n0.get_normal_output_shape(out_ind),
+                            self._shape_to_onnx(n0.get_normal_output_shape(out_ind)),
                         )
                         graph.value_info.append(fifo_input_tensor)
                         model.set_tensor_datatype(fifo_input_tensor.name, dtype)

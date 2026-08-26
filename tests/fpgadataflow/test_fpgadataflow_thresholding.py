@@ -41,8 +41,9 @@ from qonnx.util.basic import gen_finn_dt_tensor
 import finn.core.onnx_exec as oxe
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import InferThresholdingLayer
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
@@ -50,12 +51,31 @@ from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
+from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOSizes
+from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
+from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 
 test_fpga_part = "xczu3eg-sbva484-1-e"
 target_clk_ns = 5
+
+
+def InsertAndSetFIFODepths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = fpga_part
+    cfg.synth_clk_period_ns = clk_ns
+    model = model.transform(
+        BuildSimulation(
+            fpga_part,
+            clk_ns,
+            True,
+            performance_sim=False,
+        )
+    )
+    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
+    model = model.transform(ApplySimulatedFIFOSizes(cfg))
+    return model
 
 
 def generate_edge_threshold_values(
@@ -427,7 +447,7 @@ def test_fpgadataflow_thresholding_stitched_ip(
     model = model.transform(MinimizeWeightBitWidth())
     model = model.transform(GiveUniqueNodeNames())
     # Run stitched-ip RTLsim to have memstream in the test loop
-    model = model.transform(InsertAndSetFIFODepths(part, target_clk_ns))
+    model = InsertAndSetFIFODepths(model, part, target_clk_ns)
     model = model.transform(PrepareIP(part, target_clk_ns))
     model = model.transform(HLSSynthIP())
     model = model.transform(CreateStitchedIP(part, target_clk_ns))

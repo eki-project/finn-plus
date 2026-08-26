@@ -6,32 +6,45 @@
 #
 ############################################################################
 
+"""Module for set loop boundary."""
+
 import onnx
+from ast import literal_eval
+from onnx import NodeProto
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
+from typing import Literal
+
+from finn.util.exception import FINNInternalError
 
 
 class SetLoopBoundary(Transformation):
-    """
-    Sets metadata attributes to nodes between defined node or tensor ranges in an ONNX model.
+    """Sets metadata attributes to nodes between defined node or tensor ranges in an ONNX model.
 
     :param node_metadata: Dictionary containing metadata attributes to set on the nodes.
     :param node_range: Tuple containing start and end node names (start_node, end_node).
     :param tensor_range: Tuple containing start and end tensor names (start_tensor, end_tensor).
     """
 
-    def __init__(self, node_metadata, node_range=None, tensor_range=None):
+    def __init__(
+        self,
+        node_metadata: dict[str, str],
+        node_range: tuple[NodeProto, NodeProto] | None = None,
+        tensor_range: tuple[str, str] | None = None,
+    ) -> None:
+        """Initialize instance."""
         super().__init__()
         if (node_range is None and tensor_range is None) or (
             node_range is not None and tensor_range is not None
         ):
-            raise ValueError(
+            raise FINNInternalError(
                 "You must provide either a node_range or a tensor_range, but not both or none."
             )
 
-        self.start_node = None
-        self.end_node = None
-        self.start_tensor = None
-        self.end_tensor = None
+        self.start_node: NodeProto | None = None
+        self.end_node: NodeProto | None = None
+        self.start_tensor: str | None = None
+        self.end_tensor: str | None = None
 
         if node_range:
             self.start_node, self.end_node = node_range
@@ -40,7 +53,8 @@ class SetLoopBoundary(Transformation):
 
         self.node_metadata = node_metadata
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Apply transformation."""
         graph = model.graph
 
         # Transformation can only be applied to cleaned up (const-folded) FINN-ONNX model
@@ -75,7 +89,7 @@ class SetLoopBoundary(Transformation):
             # that the set metadata in the beginning applies to all nodes
             else:
                 for key, value in self.node_metadata.items():
-                    values = eval(value)
+                    values = literal_eval(value)
                     node.metadata_props.append(
                         onnx.StringStringEntryProto(
                             key=key, value=f"['{values[0]}', '{values[1]}1']"

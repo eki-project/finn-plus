@@ -16,7 +16,13 @@ from qonnx.util.basic import gen_finn_dt_tensor
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
 from finn.transformation.fpgadataflow.loop_rolling import LoopExtraction, LoopRolling
 from finn.transformation.fpgadataflow.raise_scalar_to_rank1 import RaiseScalarToRank1
 from finn.transformation.fpgadataflow.set_loop_boundary import SetLoopBoundary
@@ -141,9 +147,9 @@ def test_finn_loop(input_size, num_layers):
     model_wrapper = model_wrapper.transform(MoveAddPastMul())
     model_wrapper = model_wrapper.transform(CollapseRepeatedAdd())
     model_wrapper = model_wrapper.transform(CollapseRepeatedMul())
-    model_wrapper = model_wrapper.transform(to_hw.InferThresholdingLayer())
-    model_wrapper = model_wrapper.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    model_wrapper = model_wrapper.transform(to_hw.InferElementwiseBinaryOperation())
+    model_wrapper = model_wrapper.transform(InferThresholdingLayer())
+    model_wrapper = model_wrapper.transform(InferQuantizedMatrixVectorActivation())
+    model_wrapper = model_wrapper.transform(InferElementwiseBinaryOperation())
 
     m_input_dt = model_wrapper.get_tensor_datatype(model_wrapper.model.graph.input[0].name)
     m_output_dt = model_wrapper.get_tensor_datatype(model_wrapper.model.graph.output[0].name)

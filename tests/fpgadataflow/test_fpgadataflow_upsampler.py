@@ -49,7 +49,7 @@ from torch import nn
 import finn.core.onnx_exec as oxe
 import finn.transformation.streamline.absorb as absorb
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import InferUpsample
+from finn.transformation.fpgadataflow.convert_to_hw.upsample import InferUpsample
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP

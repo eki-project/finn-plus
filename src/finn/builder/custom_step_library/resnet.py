@@ -57,8 +57,24 @@ from qonnx.transformation.insert_topk import InsertTopK
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.transformation.remove import RemoveIdentityOps
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.transformation.fpgadataflow.convert_to_hw.add_streams import InferAddStreamsLayer
+from finn.transformation.fpgadataflow.convert_to_hw.channelwise_linear import (
+    InferChannelwiseLinearLayer,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.duplicate_streams import (
+    InferDuplicateStreamsLayer,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.label_select import InferLabelSelectLayer
+from finn.transformation.fpgadataflow.convert_to_hw.pool import InferPool
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
 from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.streamline.absorb import (
@@ -128,9 +144,7 @@ def step_resnet_tidy(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
     return model
 
 
-def step_resnet_streamline(
-    model: ModelWrapper, cfg: DataflowBuildConfig
-) -> ModelWrapper:  # noqa: ARG001
+def step_resnet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Streamline ResNet models."""
     transform = ComposedTransformation(
         [
@@ -151,9 +165,7 @@ def step_resnet_streamline(
     return model
 
 
-def step_resnet_convert_to_hw(
-    model: ModelWrapper, cfg: DataflowBuildConfig
-) -> ModelWrapper:  # noqa: ARG001
+def step_resnet_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Convert ResNet models to hardware-specific operations."""
     # Convert Squeeze and Unsqueeze operators to hardware operations
     model = model.transform(InferDataLayouts())
@@ -162,10 +174,10 @@ def step_resnet_convert_to_hw(
     model = model.transform(SortGraph())
 
     to_hw_transformations = [
-        to_hw.InferChannelwiseLinearLayer,
+        InferChannelwiseLinearLayer,
         InferReplicateStream,
-        to_hw.InferLabelSelectLayer,
-        to_hw.InferElementwiseBinaryOperation,
+        InferLabelSelectLayer,
+        InferElementwiseBinaryOperation,
     ]
     for trn in to_hw_transformations:
         model = model.transform(trn())
@@ -307,16 +319,16 @@ def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(SortGraph())
 
     to_hw_transformations = [
-        to_hw.InferChannelwiseLinearLayer,
-        to_hw.InferPool,
+        InferChannelwiseLinearLayer,
+        InferPool,
         AbsorbConsecutiveTransposes,
         RoundAndClipThresholds,
-        to_hw.InferQuantizedMatrixVectorActivation,
-        to_hw.InferThresholdingLayer,
-        to_hw.InferConvInpGen,
-        to_hw.InferDuplicateStreamsLayer,
-        to_hw.InferAddStreamsLayer,
-        to_hw.InferLabelSelectLayer,
+        InferQuantizedMatrixVectorActivation,
+        InferThresholdingLayer,
+        InferConvInpGen,
+        InferDuplicateStreamsLayer,
+        InferAddStreamsLayer,
+        InferLabelSelectLayer,
     ]
     for trn in to_hw_transformations:
         model = model.transform(trn())
