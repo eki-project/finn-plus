@@ -26,7 +26,6 @@ from qonnx.util.cleanup import cleanup as qonnx_cleanup
 from testing_util.test import get_test_model
 from typing import Any, cast
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 from finn.builder.build_dataflow import resolve_build_steps
 from finn.builder.build_dataflow_config import DataflowBuildConfig
@@ -35,6 +34,16 @@ from finn.builder.custom_step_library.resnet import (
     step_resnet_streamline,
     step_resnet_tidy,
 )
+from finn.transformation.fpgadataflow.convert_to_hw.binary_matrix_vector_activation import (
+    InferBinaryMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.label_select import InferLabelSelectLayer
+from finn.transformation.fpgadataflow.convert_to_hw.pool import InferPool
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
@@ -201,19 +210,19 @@ def bnn_make_step_convert_to_hw(
     def convert(model: ModelWrapper, _: DataflowBuildConfig) -> ModelWrapper:
         if topology == "tfc" and wbits == 1 and abits == 1:
             # use standalone thresholds for tfc-w1a1 to also exercise that option
-            model = model.transform(to_hw.InferThresholdingLayer())
+            model = model.transform(InferThresholdingLayer())
         # needed for bipolar MatMul layers
-        model = model.transform(to_hw.InferBinaryMatrixVectorActivation())
+        model = model.transform(InferBinaryMatrixVectorActivation())
         # needed for non-bipolar MatMul layers
-        model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
+        model = model.transform(InferQuantizedMatrixVectorActivation())
         # TopK to LabelSelect
-        model = model.transform(to_hw.InferLabelSelectLayer())
+        model = model.transform(InferLabelSelectLayer())
         # input quantization (if any) to standalone thresholding
-        model = model.transform(to_hw.InferThresholdingLayer())
+        model = model.transform(InferThresholdingLayer())
         # needed for convolutions
         if "fc" not in topology:
-            model = model.transform(to_hw.InferPool())
-            model = model.transform(to_hw.InferConvInpGen())
+            model = model.transform(InferPool())
+            model = model.transform(InferConvInpGen())
             model = model.transform(RemoveCNVtoFCFlatten())
         # get rid of Tranpose -> Tranpose identity seq
         model = model.transform(absorb.AbsorbConsecutiveTransposes())

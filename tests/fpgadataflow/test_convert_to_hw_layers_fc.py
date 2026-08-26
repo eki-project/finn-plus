@@ -108,20 +108,20 @@ def test_convert_to_hw_layers_tfc_w1a1():
     assert model.get_tensor_shape(fc3.input[1]) == [64, 10]
 
     fc0w = getCustomOp(fc0)
-    fc0w.set_nodeattr("SIMD", 784)
-    fc0w.set_nodeattr("PE", 16)
+    fc0w.set_nodeattr("SIMD", 1)
+    fc0w.set_nodeattr("PE", 1)
 
     fc1w = getCustomOp(fc1)
-    fc1w.set_nodeattr("SIMD", 16)
-    fc1w.set_nodeattr("PE", 16)
+    fc1w.set_nodeattr("SIMD", 1)
+    fc1w.set_nodeattr("PE", 1)
 
     fc2w = getCustomOp(fc2)
-    fc2w.set_nodeattr("SIMD", 16)
-    fc2w.set_nodeattr("PE", 16)
+    fc2w.set_nodeattr("SIMD", 1)
+    fc2w.set_nodeattr("PE", 1)
 
     fc3w = getCustomOp(fc3)
-    fc3w.set_nodeattr("SIMD", 16)
-    fc3w.set_nodeattr("PE", 10)
+    fc3w.set_nodeattr("SIMD", 1)
+    fc3w.set_nodeattr("PE", 1)
 
     model = model.transform(PrepareCppSim())
     model = model.transform(CompileCppSim())

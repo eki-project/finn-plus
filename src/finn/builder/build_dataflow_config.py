@@ -470,49 +470,49 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         """Return the path that reports should be stored at."""
         d = Path(self.output_dir) / "report"
         if create:
-            d.mkdir(exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True)
         return d
 
     def get_deploy_directory(self, create: bool = True) -> Path:
         """Return the path that deployment files should be stored at."""
         d = Path(self.output_dir) / "deploy"
         if create:
-            d.mkdir(exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True)
         return d
 
     def get_driver_directory(self, create: bool = True) -> Path:
         """Return the path that driver files should be stored at."""
         d = Path(self.output_dir) / "driver"
         if create:
-            d.mkdir(exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True)
         return d
 
     def get_bitfile_directory(self, create: bool = True) -> Path:
         """Return the path that bitfiles should be stored at."""
         d = Path(self.output_dir) / "bitfile"
         if create:
-            d.mkdir(exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True)
         return d
 
     def get_verification_output_directory(self, create: bool = True) -> Path:
         """Return the path that verification outputs should be stored at."""
         d = Path(self.output_dir) / "verification_output"
         if create:
-            d.mkdir(exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True)
         return d
 
     def get_intermediate_models_directory(self, create: bool = True) -> Path:
         """Return the path that intermediate models should be stored at."""
         d = Path(self.output_dir) / "intermediate_models"
         if create:
-            d.mkdir(exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True)
         return d
 
     def get_crash_reports_directory(self, create: bool = True) -> Path:
         """Return the path that crash reports should be stored at."""
         d = Path(self.output_dir) / "crash_reports"
         if create:
-            d.mkdir(exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True)
         return d
 
     #: Path to the config from which this object was created. Can be left on None
