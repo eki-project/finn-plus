@@ -225,10 +225,9 @@ Bench (Basic):
       pipeline_variables: true
   variables:
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
-    PARALLEL_JOBS: "14"
   parallel:
     matrix:
-      - BENCH_CFG: [multi_dnn, multi_dnn_mvau]
+      - BENCH_CFG: [regression_basic]
 
 Bench (Extended):
   stage: test

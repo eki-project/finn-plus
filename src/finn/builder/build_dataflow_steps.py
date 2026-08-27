@@ -182,7 +182,7 @@ from finn.transformation.fpgadataflow.vitis_build import VitisBuild
 from finn.transformation.fpgadataflow.vivado_power_estimation import VivadoPowerEstimation
 from finn.transformation.general import ApplyConfig
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
-from finn.transformation.multi_dnn.mutli_dnn_steps import (
+from finn.transformation.multi_dnn.multi_dnn_steps import (
     step_apply_multi_dnn,
     step_collapse_multi_dnn,
 )

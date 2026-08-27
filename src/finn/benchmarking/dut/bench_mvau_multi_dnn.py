@@ -269,7 +269,7 @@ class bench_mvau_multi_dnn(bench):
             # step (e.g. estimate reports, codegen) uses their cycle counts.
             collapse_idx = next(i for i, s in enumerate(steps) if "step_collapse_multi_dnn" in s)
             maximize_simd_step = (
-                "finn.transformation.multi_dnn.mutli_dnn_steps" ".step_maximize_concat_split_simd"
+                "finn.transformation.multi_dnn.multi_dnn_steps.step_maximize_concat_split_simd"
             )
             steps.insert(collapse_idx + 1, {maximize_simd_step: "Collapsed_Model"})
         elif scenario == 3:

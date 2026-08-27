@@ -57,7 +57,7 @@ Measurement:
       aud: https://git.uni-paderborn.de
   stage: measure
   tags:
-    - rfsoc4x2
+    - board
   rules:
     # Also run on failure of previous tasks to measure partial results
     - when: always
@@ -161,7 +161,7 @@ Measurement (Follow-up):
   needs:
     - job: FINN Build (Follow-up)
   tags:
-    - rfsoc4x2
+    - board
   script:
     # Check if follow-up build artifacts exist, exit gracefully if not
     - |
