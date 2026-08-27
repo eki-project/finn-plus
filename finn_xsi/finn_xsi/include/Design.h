@@ -28,14 +28,21 @@ namespace xsi {
         //-----------------------------------------------------------------------
         // Forwarded Access to Open Simulation
 
+        // Explicit, idempotent teardown. Closing releases the simulator kernel's design
+        // handle and unloads the design library without waiting for this object to be
+        // destroyed. Any subsequent access to the design or one of its ports throws.
+         public:
+        void close() noexcept;
+        bool is_open() const noexcept;
+
         // Simulation Control & Status
          public:
         void trace_all();
         void run(const XSI_INT64 step);
         void restart();
 
-        int get_status() const noexcept;
-        const char* get_error_info() const noexcept;
+        int get_status() const;
+        const char* get_error_info() const;
 
         // Port Access
          public:

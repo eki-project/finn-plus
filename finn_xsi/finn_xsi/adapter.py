@@ -14,12 +14,14 @@ import errno
 import numpy as np
 import os
 import re
+import weakref
 from finn_xsi.sim_engine import SimEngine
 from pathlib import Path
 from typing import Literal
 
 from finn.util.basic import launch_process_helper, wait_for_file
 from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.logging import log
 
 
 def locate_glbl() -> Path | None:
@@ -174,6 +176,35 @@ def get_simkernel_so() -> Literal["libxv_simulator_kernel.so", "librdi_simulator
     return simkernel_so
 
 
+# The XSI simulator kernel keeps process-global state, and every design library produced
+# by xelab exports the same symbols. Only a single design can therefore be open per
+# process. Track the most recently loaded engine so that a simulation whose owner failed
+# to close it (e.g. because an exception unwound past close_rtlsim) can be shut down
+# before the next design is loaded, instead of corrupting the simulator.
+_active_sim: "weakref.ReferenceType[SimEngine] | None" = None
+
+
+def _register_sim(sim: SimEngine) -> None:
+    """Remember sim as the simulation currently owning the XSI simulator kernel."""
+    global _active_sim
+    _active_sim = weakref.ref(sim)
+
+
+def _close_stale_sim() -> None:
+    """Close a previously loaded simulation that was never closed by its owner."""
+    global _active_sim
+    ref, _active_sim = _active_sim, None
+    stale = None if ref is None else ref()
+    if stale is not None and stale.is_open():
+        log.warning(
+            "An RTL simulation was still open when the next one was loaded and has been "
+            "closed implicitly. Only one XSI design can be open per process. This "
+            "usually means an exception unwound past the close_rtlsim() call of the "
+            "previous simulation."
+        )
+        stale.close()
+
+
 def load_sim_obj(
     sim_out_dir: Path,
     out_so_relative_path: Path,
@@ -186,11 +217,15 @@ def load_sim_obj(
     oldcwd = Path.cwd()
     if not sim_out_dir.is_dir() or not wait_for_file(sim_out_dir / out_so_relative_path):
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), sim_out_dir)
+    _close_stale_sim()
     os.chdir(sim_out_dir)
-    sim = SimEngine(simkernel_so, str(out_so_relative_path), "finnxsi_rtlsim.log", tracefile)
-    if tracefile:
-        sim.top.trace_all()
-    os.chdir(oldcwd)
+    try:
+        sim = SimEngine(simkernel_so, str(out_so_relative_path), "finnxsi_rtlsim.log", tracefile)
+        if tracefile:
+            sim.top.trace_all()
+    finally:
+        os.chdir(oldcwd)
+    _register_sim(sim)
     return sim
 
 
@@ -209,7 +244,7 @@ def reset_rtlsim(
 
 def close_rtlsim(sim: SimEngine) -> None:
     """Close the RTL simulation, ensuring that any pending traces are flushed."""
-    del sim
+    sim.close()
 
 
 def rtlsim_multi_io(
