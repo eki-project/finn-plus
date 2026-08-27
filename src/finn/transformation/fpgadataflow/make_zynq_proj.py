@@ -1048,6 +1048,11 @@ class MakeZYNQProject(Transformation):
         # all wrapper modules use the same TUSER_WIDTH and tUSER bits propagate
         # without truncation end-to-end.
         def _tuser_width_for_pr(pr_sdp):
+            """Determine the tUSER width required by a partial reconfiguration SDP.
+
+            Uses the NodeContainer's explicit tuser_width attribute if set, otherwise
+            derives the width from the number of bodies that have to be distinguished.
+            """
             inst = getCustomOp(pr_sdp)
             km = ModelWrapper(inst.get_nodeattr("model"))
             nc = [
@@ -1062,6 +1067,11 @@ class MakeZYNQProject(Transformation):
             return attr if attr > 0 else max(math.ceil(math.log2(max(nb, 2))), 1)
 
         def _tuser_width_for_sw(sw_sdp):
+            """Determine the tUSER width required by a selectable weights SDP.
+
+            The width is derived from the number of weight sets that have to be
+            distinguished by the tUSER signal.
+            """
             inst = getCustomOp(sw_sdp)
             km = ModelWrapper(inst.get_nodeattr("model"))
             nc = [
