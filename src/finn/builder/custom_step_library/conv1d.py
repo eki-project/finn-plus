@@ -6,8 +6,8 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 
 import finn.transformation.streamline.absorb as absorb
 from finn.builder.build_dataflow_config import DataflowBuildConfig
-from finn.transformation.fpgadataflow.convert_to_hw.channelwise_linear import (
-    InferChannelwiseLinearLayer,
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
 )
 from finn.transformation.fpgadataflow.convert_to_hw.label_select import InferLabelSelectLayer
 
@@ -24,7 +24,7 @@ def step_pre_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 def step_convert_final_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Convert the final channelwise-linear and label-select layers to hardware operations."""
-    model = model.transform(InferChannelwiseLinearLayer())
+    model = model.transform(InferElementwiseBinaryOperation())
     model = model.transform(InferLabelSelectLayer())
     model = model.transform(GiveUniqueNodeNames())
     return model
