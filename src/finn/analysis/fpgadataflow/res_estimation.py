@@ -28,15 +28,10 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import qonnx.custom_op.registry as registry
 from qonnx.core.modelwrapper import ModelWrapper
-from typing import TYPE_CHECKING, cast
 
 from finn.util.basic import getHWCustomOp
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
-
-if TYPE_CHECKING:
-    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 
 def res_estimation(model: ModelWrapper, fpgapart: str) -> dict[str, dict[str, int | float]]:
@@ -53,8 +48,7 @@ def res_estimation(model: ModelWrapper, fpgapart: str) -> dict[str, dict[str, in
     res_dict = {}
     for node in model.graph.node:
         if is_hls_node(node) or is_rtl_node(node):
-            inst = registry.getCustomOp(node)
-            res_dict[node.name] = cast("HWCustomOp", inst).node_res_estimation(fpgapart)
+            res_dict[node.name] = getHWCustomOp(node).node_res_estimation(fpgapart)
 
     return res_dict
 

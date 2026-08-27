@@ -43,7 +43,7 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.templates import get_templates_folder
 from finn.util.basic import MAX_ALLOWED_AP_INT_W, CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.exception import FINNError, FINNInternalError, FINNUserError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.hls import CallHLS
 from finn.util.logging import log
 from finn.util.settings import get_settings
@@ -175,7 +175,7 @@ class HLSBackend(HWCustomOp, ABC):
             try:
                 code_gen_line = "\n".join(self.code_gen_dict[key])
             except TypeError as e:
-                raise FINNError(
+                raise FINNInternalError(
                     f"Could not get code_gen_dict value for key {key}. "
                     f"code_gen_dict is: {self.code_gen_dict}"
                 ) from e

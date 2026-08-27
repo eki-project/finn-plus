@@ -1,4 +1,7 @@
 """Transformation to modify an existing link config to use AuroraFlow cores."""
+import jinja2
+import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
@@ -8,11 +11,11 @@ from typing import cast
 from finn.transformation.fpgadataflow.multifpga.aurora.metadata import AuroraNetworkMetadata
 from finn.transformation.fpgadataflow.multifpga.metadata import DataDirection
 from finn.transformation.fpgadataflow.vitis_linking_configuration import VitisLinkConfiguration
+from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import get_device_id
 from finn.util.logging import log
 from finn.util.platforms import Platform, platforms
-from finn.util.settings import get_settings
 
 
 class AddAuroraToLinkConfig(Transformation):
@@ -20,25 +23,81 @@ class AddAuroraToLinkConfig(Transformation):
     connecting them to the existing SDP kernels.
     """
 
-    def __init__(self, platform_name: str) -> None:
+    def __init__(self, platform_name: str, fpga_part: str) -> None:
         """Iterate over an existing prepared linking configuration, adding AuroraFlow kernels and
         connecting them to the existing SDP kernels.
         """
         super().__init__()
         self.platform: Platform = platforms[platform_name]()
+        self.part = fpga_part
+        self.rx_dummy = None
+        self.tx_dummy = None
 
     def package_dummy_kernels(self) -> tuple[Path, Path]:
         """Prepare dummy kernels that might be needed when a kernel is in duplex mode
         but only needs one connected port. Returns a tuple containing the path to
         the RX kernel .xo and the TX kernel .xo.
         """
+        width = 64
         # TODO: Replace with unidirectional aurora
-        dummy_kernel_dir = get_settings().finn_deps / "vitis_dummy_kernel"
-        rx_dummy = dummy_kernel_dir / "rx_dummy_kernel.xo"
-        tx_dummy = dummy_kernel_dir / "tx_dummy_kernel.xo"
-        if not rx_dummy.exists() or not tx_dummy.exists():
-            subprocess.run(["make"], cwd=dummy_kernel_dir, stdout=subprocess.DEVNULL)
-        return rx_dummy, tx_dummy
+        if self.rx_dummy is not None and self.tx_dummy is not None:
+            return self.rx_dummy, self.tx_dummy
+
+        # Only build once per flow
+        source_dir = Path(__file__).parent / "dummy_kernel"
+        dummy_dir = Path(make_build_dir("vitis_dummy_kernel_"))
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(source_dir))
+        dummy_templated = dummy_dir / "main.cpp"
+
+        # Writing the templated dummy. If the WIDTH does not match, a DWC will be inserted.
+        # Also copy over the tcl script
+        dummy_templated.write_text(
+            env.get_template("dummy_kernel_template.cpp.jinja2").render(WIDTH=width)
+        )
+        shutil.copy(source_dir / "create_dummy_kernel.tcl", dummy_dir)
+
+        # Package the kernels
+        rx_dummy = dummy_dir / "rx_dummy_kernel.xo"
+        tx_dummy = dummy_dir / "tx_dummy_kernel.xo"
+        rx_result = subprocess.run(
+            shlex.split(
+                f"vitis_hls -f run.tcl {self.part} 2.5 "
+                f"rx_dummy_kernel . {width} {dummy_templated}"
+            ),
+            capture_output=True,
+            text=True,
+            cwd=dummy_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if rx_result.returncode != 0:
+            raise FINNInternalError(
+                f"There was an error building the RX vitis dummy kernel for "
+                f"Aurora: \n{rx_result.stdout}\n{rx_result.stderr}"
+            )
+        tx_result = subprocess.run(
+            shlex.split(
+                f"vitis_hls -f run.tcl {self.part} 2.5 "
+                f"tx_dummy_kernel . {width} {dummy_templated}"
+            ),
+            capture_output=True,
+            text=True,
+            cwd=dummy_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if tx_result.returncode != 0:
+            raise FINNInternalError(
+                f"There was an error building the TX vitis dummy kernel for "
+                f"Aurora: \n{tx_result.stdout}\n{tx_result.stderr}"
+            )
+        if not rx_dummy.exists():
+            raise FINNInternalError(f"RX vitis dummy kernel not found at: {rx_dummy}")
+        if not tx_dummy.exists():
+            raise FINNInternalError(f"TX vitis dummy kernel not found at: {tx_dummy}")
+        self.rx_dummy = rx_dummy
+        self.tx_dummy = tx_dummy
+        return self.rx_dummy, self.tx_dummy
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Modify the link config."""

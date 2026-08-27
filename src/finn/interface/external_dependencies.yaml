@@ -24,11 +24,6 @@ git_deps:
         commit: "6438de8eb91ffa3fbbbaabe8fe75e419871d4a25"
         pip_install: False
         install_editable: False
-    vitis_dummy_kernel:
-        url: "https://github.com/bwintermann/vitis_dummy_kernel.git"
-        commit: "afe583868dfa2205b2e89e5c6ead5506d8a2ad64"
-        pip_install: False
-        install_editable: False
 
 boardfile_deps:
     avnet-bdf:

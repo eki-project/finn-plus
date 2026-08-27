@@ -41,16 +41,16 @@ class Partitioner(ABC):
                     "(LD_LIBRARY_PATH only modified at runtime to point to "
                     "libgurobi instead of before). Falling back to CBC."
                 )  # See finn-plus issue #67
-                return Model(solver_name=mip.CBC)
+                return Model(name="finn_partition", solver_name=mip.CBC)
             except mip.exceptions.InterfacingError as e:
                 log.warning(
                     f"Could not create a default-initialized mip.Model. "
                     f"The error encountered was: {e}. Trying to fallback to a CBC based model."
                 )
-                return Model(solver_name=mip.CBC)
+                return Model(name="finn_partition", solver_name=mip.CBC)
         else:
             try:
-                return Model(solver_name=solver.value)
+                return Model(name="finn_partition", solver_name=solver.value)
             except mip.exceptions.InterfacingError as e:
                 raise FINNMultiFPGAUserError(
                     f"Cannot create mip solver of type {solver.value}. Original error: {e}"

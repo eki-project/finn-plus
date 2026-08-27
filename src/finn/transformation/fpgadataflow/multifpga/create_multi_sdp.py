@@ -106,7 +106,7 @@ class ResolveCircularPartitionIDs(Transformation):
     This might be necessary after ClusterByNodeattribute, since this might create a circular
     dependency. For example when given this graph with partition IDs A and B:
     -> A - B - A ->
-        \ --- /
+       | --- /
     """  # noqa
 
     def __init__(self, partition_attribute: str = "partition_id") -> None:

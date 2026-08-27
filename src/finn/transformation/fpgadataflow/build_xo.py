@@ -33,11 +33,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from qonnx.transformation.base import Transformation
-from qonnx.transformation.general import (
-    GiveReadableTensorNames,
-    GiveUniqueNodeNames,
-    RemoveUnusedTensors,
-)
+from qonnx.transformation.general import GiveReadableTensorNames, RemoveUnusedTensors
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING
 
@@ -47,8 +43,9 @@ from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from finn.transformation.qonnx.give_unique_node_names_recursive import GiveUniqueNodeNamesRecursive
 from finn.util.basic import launch_process_helper
-from finn.util.exception import FINNError, FINNInternalError, FINNUserError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import check_all_sdp_nodes, get_submodel
 from finn.util.logging import log
 from finn.util.vivado import check_vitis_envvars
@@ -174,7 +171,7 @@ class CreateVitisXO(Transformation):
                 f"details."
             ) from e
         if not xo_path.exists():
-            raise FINNError(f"Vitis .xo file not created, check logs under {vivado_proj_dir}")
+            raise FINNUserError(f"Vitis .xo file not created, check logs under {vivado_proj_dir}")
         return (model, False)
 
 
@@ -203,15 +200,15 @@ class BuildAllXOs(Transformation):
             log.info(f"Creating XO for SDP: {sdp_node.name} ({i}/{len(model.graph.node)})")
             submodel_transforms = [
                 InsertDWC(),
-                GiveUniqueNodeNames(),
+                GiveUniqueNodeNamesRecursive(),
                 GiveReadableTensorNames(),
                 SpecializeLayers(self.fpga_part),
-                GiveUniqueNodeNames(),
+                GiveUniqueNodeNamesRecursive(),
                 GiveReadableTensorNames(),
                 InsertFIFO(),
                 SpecializeLayers(self.fpga_part),
                 RemoveUnusedTensors(),
-                GiveUniqueNodeNames(prefix=sdp_node.name + "_"),
+                GiveUniqueNodeNamesRecursive(prefix=sdp_node.name + "_"),
                 PrepareIP(self.fpga_part, self.synth_clk_period_ns),
                 HLSSynthIP(),
                 CreateStitchedIP(
