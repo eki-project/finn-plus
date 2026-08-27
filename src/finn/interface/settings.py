@@ -30,7 +30,7 @@ def _get_finn_root() -> Path:
     """Get FINN_ROOT for both editable and normal installations.
 
     For editable installs, this returns the repository root.
-    For normal installs, this returns the site-packages installation location.
+    For normal installs, this returns the site-packages installation location (site-packages/finn).
     """
     try:
         dist = distribution("finn-plus")
@@ -51,7 +51,7 @@ def _get_finn_root() -> Path:
         # In a normal install, we're in site-packages/finn/interface/settings.py
         # so go up to site-packages
         this_file = Path(__file__).resolve()
-        return this_file.parent.parent.parent
+        return this_file.parent.parent
     except Exception:
         pass
 
@@ -156,7 +156,10 @@ class FINNSettings(BaseModel):
     @property
     def finn_deps_definitions(self) -> Path:
         """Absolute path to the FINN_DEPS_DEFINITIONS."""
-        return resolve_relative(self._finn_deps_definitions, FINN_ROOT)
+        # By placing the relative path next to this file, we always find it, regardless
+        # of whether we are in site-packages or an editable repo.
+        # (We don't depend on where FINN_ROOT points to.)
+        return resolve_relative(self._finn_deps_definitions, Path(__file__).parent)
 
     @finn_deps_definitions.setter
     def finn_deps_definitions(self, new_path: str | Path) -> None:
@@ -293,6 +296,9 @@ class FINNSettings(BaseModel):
         # Make everything lower case
         modified_data = self.model_dump()
         for key in data.keys():
+            # Ignore key if no data is passed (can happen when reading the CLI arguments)
+            if data[key] is None:
+                continue
             lkey = key.lower()
             if lkey in modified_data:
                 modified_data[lkey] = data[key]

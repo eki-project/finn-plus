@@ -87,3 +87,13 @@ def out_of_context_synth(
     else:
         ret["fmax_mhz"] = 1000.0 / (clk_period_ns - ret["WNS"])
     return ret
+
+
+def check_vitis_envvars() -> None:
+    """Check environment variables for Vitis installation."""
+    if "XILINX_VITIS" not in os.environ:
+        raise FINNUserError("XILINX_VITIS must be set to use Vitis.")
+    if "PLATFORM_REPO_PATHS" not in os.environ:
+        raise FINNUserError("PLATFORM_REPO_PATHS must be set to use Vitis.")
+    if "XILINX_XRT" not in os.environ:
+        raise FINNUserError("XILINX_XRT must be set to use Vitis.")

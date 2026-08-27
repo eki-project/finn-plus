@@ -46,6 +46,7 @@ from typing import Literal
 
 import finn.builder.build_dataflow as build
 import finn.builder.build_dataflow_config as build_cfg
+from finn.builder.build_dataflow_config import ShellFlowType
 from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOSizes
 from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
 from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation

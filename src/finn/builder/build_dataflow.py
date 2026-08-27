@@ -251,7 +251,7 @@ def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: 
         )
 
     # Return if it exists
-    filename = Path(cfg.output_dir) / "intermediate_models" / f"{step_names[step_no]}.onnx"
+    filename = cfg.get_intermediate_models_directory() / f"{step_names[step_no]}.onnx"
     if not filename.exists():
         raise FINNConfigurationError(
             f"Expected model file at {filename} to start from step "
@@ -335,11 +335,11 @@ def exit_buildflow(
         "status": "failed" if exit_code else "ok",
         "tool_version": Path(get_vivado_root()).name,
     }
-    metadata_builder = Path(cfg.output_dir) / "report" / "metadata_builder.json"
+    metadata_builder = cfg.get_report_directory() / "metadata_builder.json"
     metadata_builder.write_text(json.dumps(metadata, indent=2))
 
     # Generate time_per_step.json
-    time_per_step_json = Path(cfg.output_dir) / "report" / "time_per_step.json"
+    time_per_step_json = cfg.get_report_directory() / "time_per_step.json"
     if time_per_step is not None:
         time_per_step["total_build_time"] = sum(time_per_step.values())
         time_per_step_json.write_text(json.dumps(time_per_step, indent=2))
@@ -382,12 +382,11 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
     Returns:
         Exit code (0=success, non-zero=failure)
     """
+    # First create the build directory
+    Path(cfg.output_dir).mkdir(exist_ok=True, parents=True)
+
     # Create the output directories
-    output_dir = Path(cfg.output_dir)
-    intermediate_model_dir = output_dir / "intermediate_models"
-    intermediate_model_dir.mkdir(parents=True, exist_ok=True)
-    report_dir = output_dir / "report"
-    report_dir.mkdir(parents=True, exist_ok=True)
+    intermediate_model_dir = cfg.get_intermediate_models_directory()
 
     # Initialize logger
     log = setup_logging(cfg)

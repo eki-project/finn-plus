@@ -41,9 +41,9 @@ from finn import xsi as finnxsi
 from finn.custom_op.fpgadataflow import templates
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.templates import get_templates_folder
-from finn.util.basic import CppBuilder, launch_process_helper, make_build_dir
+from finn.util.basic import MAX_ALLOWED_AP_INT_W, CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.exception import FINNError, FINNInternalError, FINNUserError
 from finn.util.hls import CallHLS
 from finn.util.logging import log
 from finn.util.settings import get_settings
@@ -172,7 +172,13 @@ class HLSBackend(HWCustomOp, ABC):
 
         for key in self.code_gen_dict:
             # transform list into long string separated by '\n'
-            code_gen_line = "\n".join(self.code_gen_dict[key])
+            try:
+                code_gen_line = "\n".join(self.code_gen_dict[key])
+            except TypeError as e:
+                raise FINNError(
+                    f"Could not get code_gen_dict value for key {key}. "
+                    f"code_gen_dict is: {self.code_gen_dict}"
+                ) from e
             template = template.replace(key, code_gen_line)
         code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
         f = Path(code_gen_dir) / f"hls_syn_{node.name}.tcl"
@@ -618,8 +624,13 @@ compilation transformations?
         instream = self.get_instream_width()
         outstream = self.get_outstream_width()
         ret = max([instream, outstream])
-        if ret > 8191:
-            raise FINNInternalError(f"AP_INT_MAX_W={ret} is larger than allowed maximum of 8191")
+        if ret > MAX_ALLOWED_AP_INT_W:
+            raise FINNInternalError(
+                f"The HLS top module of node "
+                f"{self.onnx_node.name} "
+                f"requires AP_INT_MAX_W to be set "
+                f"to {ret}, but the maximum allowed is {MAX_ALLOWED_AP_INT_W}."
+            )
         return ret
 
     def timeout_value(self) -> None:

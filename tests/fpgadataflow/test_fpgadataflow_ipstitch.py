@@ -39,7 +39,10 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
+from finn.builder.build_dataflow_config import DataflowBuildConfig, ShellFlowType
+from finn.builder.build_dataflow_steps import step_prepare_synthesis, step_synthesize_bitfile
 from finn.core.onnx_exec import execute_onnx
+from finn.transformation.fpgadataflow.build_xo import BuildAllXOs
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.floorplan import Floorplan
@@ -292,7 +295,6 @@ def test_fpgadataflow_ipstitch_iodma_floorplan():
 def test_fpgadataflow_ipstitch_vitis_end2end(board, period_ns, extw):
     if "XILINX_VITIS" not in os.environ:
         pytest.skip("XILINX_VITIS not set")
-    platform = alveo_default_platform[board]
     fpga_part = alveo_part_map[board]
     model = create_two_fc_model("external" if extw else "internal_decoupled")
     if model.graph.node[0].op_type == "StreamingDataflowPartition":
@@ -300,13 +302,17 @@ def test_fpgadataflow_ipstitch_vitis_end2end(board, period_ns, extw):
         assert sdp_node.__class__.__name__ == "StreamingDataflowPartition"
         assert os.path.isfile(sdp_node.get_nodeattr("model"))
         model = load_test_checkpoint_or_skip(sdp_node.get_nodeattr("model"))
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareIP(fpga_part, period_ns))
-    model = model.transform(HLSSynthIP())
-    model = model.transform(VitisBuild(fpga_part, period_ns, platform))
+    cfg = DataflowBuildConfig(
+        board=board,
+        synth_clk_period_ns=period_ns,
+        shell_flow_type=ShellFlowType.VITIS_ALVEO,
+        fpga_part=fpga_part,
+    )
+    model = step_prepare_synthesis(model, cfg)
+    model = step_synthesize_bitfile(model, cfg)
     assert model.get_metadata_prop("platform") == "alveo"
-    assert os.path.isdir(model.get_metadata_prop("vitis_link_proj"))
-    assert os.path.isfile(model.get_metadata_prop("bitfile"))
+    assert model.get_metadata_prop("vitis_link_configs") is not None
+    assert os.path.isfile(model.get_metadata_prop("bitfile_output"))
 
 
 # board
@@ -324,6 +330,6 @@ def test_fpgadataflow_ipstitch_zynqbuild_end2end(board):
     # bitfile using ZynqBuild
     model = model.transform(ZynqBuild(board, 10))
 
-    bitfile_name = model.get_metadata_prop("bitfile")
+    bitfile_name = model.get_metadata_prop("bitfile_output")
     assert bitfile_name is not None
     assert os.path.isfile(bitfile_name)

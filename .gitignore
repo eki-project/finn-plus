@@ -124,6 +124,8 @@ finn_xsi/finn_xsi/rtlsim_config.hpp
 /notebooks/end2end_example/**/*.onnx
 
 # downloaded dep repos
+deps/
+/finn_deps/
 /deps/
 finn_deps/
 

@@ -27,7 +27,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """Automatically sets folding, i.e., parallelism attributes for all FINN operators."""
-
 import functools
 
 # Inspect information on Python objects like modules
@@ -43,6 +42,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import finn.custom_op.fpgadataflow.hls.elementwise_binary_hls as elementwise_binary_hls
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
+from finn.util.basic import MAX_ALLOWED_AP_INT_W
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
@@ -130,6 +130,15 @@ class SetFolding(Transformation):
         self.mvau_wwidth_max = mvau_wwidth_max
         self.two_pass_relaxation = two_pass_relaxation
 
+        # REMINDER: The fact that this technically only applies to HLS components should
+        # be remembered and considered for an eventual rework.
+        if self.mvau_wwidth_max > MAX_ALLOWED_AP_INT_W:
+            log.error(
+                f"mvau_wwidth_max is larger than {MAX_ALLOWED_AP_INT_W} "
+                f"(max. allowed AP_INT_MAX_W). "
+                f"This will likely cause issues for HLS components!"
+            )
+
     def optimize_attribute_val(self, node_inst: HWCustomOp, max_val: int, attr_name: str) -> None:
         """Optimize the folding attribute until the target cycles are met."""
         node_inst.set_nodeattr(attr_name, 1)
@@ -138,7 +147,15 @@ class SetFolding(Transformation):
             cyc = node_inst.get_exp_cycles()
             if cyc <= self.target_cycles_per_frame:
                 # finish if target met
-                break
+                return
+        # We visited every divisor, so no value that matches the expected cycles was found
+        self.any_throughput_target_missed = True
+        log.warning(
+            f"Node {node_inst.onnx_node.name} did not meet the target cycles. {attr_name} "
+            f"was finalized to {node_inst.get_nodeattr(attr_name)}. Estimated: "
+            f"{node_inst.get_exp_cycles()} (cyc/frame), Target: "
+            f"{self.target_cycles_per_frame} (cyc/frame)."
+        )
 
     def apply(self, model: "ModelWrapper") -> tuple[ModelWrapper, Literal[False]]:
         """Apply SetFolding to all supported nodes in the model."""
@@ -169,6 +186,11 @@ class SetFolding(Transformation):
             "LayerNorm_rtl",
             "Shuffle",
         ]
+
+        # Store whether any node does not meet the target throughput and emit a warning at the end.
+        self.any_throughput_target_missed = False
+        mvau_internal_decoupled_weightstream_max_width_too_large = False
+
         # these ops are preceded by depthwise SWG and have special behavior,
         # as explained in the SetFolding docstring
         depthwise_op_exceptions = ["VVAU_hls", "VVAU_rtl", "Pool_hls"]
@@ -198,10 +220,53 @@ class SetFolding(Transformation):
                         > self.mvau_wwidth_max
                     ):
                         # revert if we've gone above width threshold
+                        self.any_throughput_target_missed = True
+                        mvau_internal_decoupled_weightstream_max_width_too_large = True
                         node_inst.set_nodeattr("SIMD", prev_simd_val)
+                        log.warning(
+                            f"{node.name}: Width of weights per PE grew wider than max "
+                            f"width {self.mvau_wwidth_max}. Reverting SIMD "
+                            f"value {simd_val} -> {prev_simd_val}. "
+                            f"Estimated: {node_inst.get_exp_cycles()} (cyc/frame), "
+                            f"Target: {self.target_cycles_per_frame} (cyc/frame). "
+                        )
                         break
-                # increase PE until target met or reached max_pe
-                self.optimize_attribute_val(node_inst, max_pe, "PE")
+
+                # Limit PE to not go wider than the weight stream allows for internal_decoupled
+                if node_inst.get_nodeattr("mem_mode") == "internal_decoupled":
+                    node_inst.set_nodeattr("PE", 1)
+                    prev_pe_val = 1
+                    for val in divisors(max_pe):
+                        node_inst.set_nodeattr("PE", val)
+                        cyc = node_inst.get_exp_cycles()
+                        if node_inst.get_instream_width(1) > MAX_ALLOWED_AP_INT_W:
+                            if is_hls_node(node):
+                                # revert PE back to last value
+                                node_inst.set_nodeattr("PE", prev_pe_val)
+                                self.any_throughput_target_missed = True
+                                mvau_internal_decoupled_weightstream_max_width_too_large = True
+                                log.warning(
+                                    f"{node.name}: Weight stream per PE became wider than max "
+                                    f"ap_(u)int width {MAX_ALLOWED_AP_INT_W}. Reverting PE value "
+                                    f"{val} -> {prev_pe_val}. "
+                                    f"Estimated: {node_inst.get_exp_cycles()} (cyc/frame), "
+                                    f"Target: {self.target_cycles_per_frame} (cyc/frame). "
+                                )
+                                break
+                            log.warning(
+                                f"{node.name}: Weight stream per "
+                                f"PE is wider than {MAX_ALLOWED_AP_INT_W}. "
+                                f"While allowed, this may cause routing issues."
+                            )
+                        if cyc <= self.target_cycles_per_frame:
+                            # finish if target met
+                            break
+                        prev_pe_val = val
+
+                else:
+                    # increase PE until target met or reached max_pe
+                    self.optimize_attribute_val(node_inst, max_pe, "PE")
+
             elif op_type in pe_ops:
                 # Note: Keep original behavior for all custom-ops defining the
                 # NumChannels attribute as it is
@@ -284,12 +349,23 @@ class SetFolding(Transformation):
                     channels_per_stream = cast(
                         "list[int]", node_inst.get_nodeattr("ChannelsPerStream")
                     )
+                    found = False
                     for simd_val in common_divisors(channels_per_stream):
                         node_inst.set_nodeattr("SIMD", int(simd_val))
                         cyc = node_inst.get_exp_cycles()
                         if cyc < self.target_cycles_per_frame:
+                            found = True
                             break
+                    if not found:
+                        log.warning(
+                            f"Node {node_inst.onnx_node.name} did not meet "
+                            f"the target cycles. SIMD "
+                            f"was set to {node_inst.get_nodeattr('SIMD')}. Estimated: "
+                            f"{node_inst.get_exp_cycles()} (cyc/frame), Target: "
+                            f"{self.target_cycles_per_frame} (cyc/frame)."
+                        )
                 elif op_type == "LayerNorm_rtl":
+                    found = False
                     node_inst.set_nodeattr("SIMD", 1)
                     dim = int(node_inst.get_normal_input_shape()[-1])
                     for simd_val in divisors(dim):
@@ -297,9 +373,19 @@ class SetFolding(Transformation):
                             node_inst.set_nodeattr("SIMD", int(simd_val))
                             cyc = node_inst.get_exp_cycles()
                             if cyc < self.target_cycles_per_frame:
+                                found = True
                                 break
                         else:
+                            found = True
                             break
+                    if not found:
+                        log.warning(
+                            f"Node {node_inst.onnx_node.name} did not meet "
+                            f"the target cycles. SIMD "
+                            f"was set to {node_inst.get_nodeattr('SIMD')}. Estimated: "
+                            f"{node_inst.get_exp_cycles()} (cyc/frame), Target: "
+                            f"{self.target_cycles_per_frame} (cyc/frame)."
+                        )
                 else:
                     # Note: Keep original behavior for all custom-ops defining
                     # the NumChannels attribute as it is
@@ -314,6 +400,17 @@ class SetFolding(Transformation):
                     self.optimize_attribute_val(node_inst, int(max_simd), "SIMD")
             else:
                 log.warning(f"SetFolding doesn't know how to handle op_type {op_type}")
+
+        # Give a warning if a throughput goal was missed
+        if self.any_throughput_target_missed:
+            log.warning("One or more nodes did not reach the target throughput. ")
+            if mvau_internal_decoupled_weightstream_max_width_too_large:
+                log.warning(
+                    "SIMD parallelization for at least one node was limited by "
+                    "mvau_wwidth_max >= bitwidth * SIMD. Try increasing "
+                    "mvau_wwidth_max, decreasing the weight bitwidth or, "
+                    "if possible, decreasing the throughput target."
+                )
 
         model = model.transform(GiveUniqueNodeNames())
         model = model.transform(AnnotateCycles())

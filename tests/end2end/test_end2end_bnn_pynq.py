@@ -34,6 +34,7 @@ import itertools
 import numpy as np
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
+from finn.builder.build_dataflow_steps import step_prepare_synthesis
 from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
 from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.util.exception import FINNSynthesisError
@@ -863,6 +864,8 @@ class TestEnd2End:
         prev_chkpt_name = get_checkpoint_name(board, topology, wbits, abits, "fifodepth")
         model = load_test_checkpoint_or_skip(prev_chkpt_name)
         try:
+            if build_data["kind"] == "alveo":
+                model = step_prepare_synthesis(model, build_data["cfg"])
             model = model.transform(build_data["build_fxn"])
             model = model.transform(AnnotateResources("synth", build_data["part"]))
         except FINNSynthesisError as e:

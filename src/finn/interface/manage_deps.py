@@ -429,9 +429,14 @@ class DependencyUpdater:
         # Automatically skips if not modified
         unzipped = (target / Path(url).name).with_suffix("")
         debug(f"[{package_name}] Running: wget -N {url}", False)
-        wget_download = sp.run(
-            shlex.split(f"wget -N {url}"), cwd=target, capture_output=True, text=True
-        )
+        try:
+            wget_download = sp.run(
+                shlex.split(f"wget -N {url}"), cwd=target, capture_output=True, text=True
+            )
+        except sp.TimeoutExpired as e:
+            raise FINNDependencyInstallationError(
+                f"[{package_name}] wget failed with a timeout!"
+            ) from e
         if wget_download.returncode != 0:
             debug(f"[{package_name}] wget failed!", False)
             return False
@@ -480,13 +485,17 @@ class DependencyUpdater:
             target = self.dep_location / data.target_directory / Path(str(data.url)).name
             if not target.parent.exists():
                 target.parent.mkdir(parents=True)
-            wget_result = sp.run(
-                shlex.split(f"wget -N {data.url}"),
-                cwd=target.parent,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+            try:
+                wget_result = sp.run(
+                    shlex.split(f"wget -N {data.url}"),
+                    cwd=target.parent,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+            except sp.TimeoutExpired:
+                debug(f"[{package_name}] wget experienced a timeout!")
+                return False
             if "304 Not Modified" in wget_result.stderr.strip():
                 return False
             debug(wget_result.stderr.strip(), False)

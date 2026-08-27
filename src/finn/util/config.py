@@ -18,17 +18,17 @@ import json
 import onnx
 from numpy import typing as npt
 from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp, is_custom_op
-from typing import TYPE_CHECKING
+from typing import Sequence
 
-if TYPE_CHECKING:
-    from qonnx.core.modelwrapper import ModelWrapper
+from finn.util.exception import FINNInternalError
 
 
 # update this code to handle export configs from subgraphs
 # where the subgraph is found in a node's attribute as a graph type
 def extract_model_config(
-    model: "ModelWrapper", subgraph_hier: str | None, attr_names_to_extract: list[str]
+    model: "ModelWrapper", subgraph_hier: str | None, attr_names_to_extract: Sequence[str]
 ) -> dict[str, dict[str, int | float | str | bool | npt.NDArray | list[str | int | float] | None]]:
     """Create a dictionary with layer name -> attribute mappings extracted from the
     model. The created dictionary can be later applied on a model with
@@ -74,12 +74,21 @@ def extract_model_config(
 
 
 def extract_model_config_to_json(
-    model: "ModelWrapper", json_filename: Path, attr_names_to_extract: list[str]
+    model: ModelWrapper, json_filename: str | Path, attr_names_to_extract: Sequence[str]
 ) -> None:
     """Create a json file with layer name -> attribute mappings extracted from the
     model. The created json file can be later applied on a model with
-    finn.transform.general.ApplyConfig."""
-    with json_filename.open("w") as f:
+    finn.transform.general.ApplyConfig.
+    """
+    target_json = Path(json_filename)
+    if not target_json.suffix == ".json":
+        raise FINNInternalError(f"Cannot extract model config to non-json path: {target_json}")
+
+    parent_dir = Path(json_filename).parent
+    if not parent_dir.exists():
+        parent_dir.mkdir(parents=True)
+
+    with target_json.open("w") as f:
         json.dump(
             extract_model_config(
                 model, subgraph_hier=None, attr_names_to_extract=attr_names_to_extract

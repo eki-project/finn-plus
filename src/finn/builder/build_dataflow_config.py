@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import logging
 import mashumaro.config
+import mip
 import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum
@@ -182,6 +183,151 @@ class VerificationStepType(str, Enum):
     PASSES_FRONTEND = "passes_frontend"
 
 
+class MIPSolver(str, Enum):
+    """Solver type enum. Used for type hinting,
+    since `Literal[mip.CBC]` is currently not allowed.
+    """
+
+    CBC = mip.CBC
+    GUROBI = mip.GUROBI
+    HIGHS = mip.HIGHS
+
+
+class MFVerbosity(Enum):
+    """Verbosity levels for Multi-FPGA."""
+
+    NONE = 0
+    LOW = 1
+    MEDIUM = 2
+    HIGH = 3
+    EXTRA_HIGH = 4
+
+
+class PartitioningStrategy(str, Enum):
+    """Multi-FPGA Partitioning strategy for the solver to use."""
+
+    # Strategy to partition based on the estimated resource
+    # utilization of the layers
+    RESOURCE_UTILIZATION = "resource_utilization"
+
+    # Partition based on the number of layers per device
+    # Much simpler but usable in case no estimates
+    # are available
+    LAYER_COUNT = "layer_count"
+
+
+class MFCommunicationKernel(str, Enum):
+    """Communication kernels for Multi-FPGA usage."""
+
+    AURORA = "aurora"
+
+
+class MFTopology(str, Enum):
+    """Topology for Multi-FPGA use."""
+
+    CHAIN = "chain"
+    RETURNCHAIN = "returnchain"
+    CIRCLE = "circle"
+
+
+@dataclass
+class PartitioningConfiguration:
+    """Configuration dataclass for Multi-FPGA. As soon as such a configuration is
+    set in the BuildDataflowConfig, FINN+ automatically switches to Multi-FPGA.
+    """
+
+    # Existing partitionings can either be loaded from a file or
+    # passed directly. If set to None, partitioning is done and the results are
+    # saved in the output dir instead.
+    partitioning: dict[str, int] | Path | None = None
+
+    # Custom partition constraints. This can be used to, for example,
+    # assign a specific layer to a specific device. Maps node names to device IDs.
+    # If `partitioning` is given, this is ignored.
+    # Keep in mind that if the custom constraints contradict implicit other
+    # model constraints, the model may become infeasible.
+    custom_partitioning_constraints: dict[str, int] = field(default_factory=dict)
+
+    # The number of FPGAs to use for Multi-FPGA
+    # 0 or -1 or smaller activates an automatic search in an attempt to find a good
+    # device count
+    num_fpgas: int = 0
+
+    # The number of ports per device - this might change in meaning,
+    # depending on the communication kernel used
+    # TODO: Should be moved into platforms.py
+    ports_per_device: int = 2
+
+    # What strategy to use to partition the dataflow graph
+    partition_strategy: PartitioningStrategy = PartitioningStrategy.RESOURCE_UTILIZATION
+
+    # Tells the flow what topology to use. This determines the transformation
+    # that creates the network metadata necessary for kernel packing
+    topology: MFTopology = MFTopology.CHAIN
+
+    # What kind of kernel is used to communicate in the network
+    communication_kernel: MFCommunicationKernel = MFCommunicationKernel.AURORA
+
+    # Arguments to pass along to the communication kernel. This can for example
+    # be used to configure specific details, such as a receiver FIFO depth or
+    # data encoding, etc.
+    # It is up to the kernel preparation transformation to interprete this data.
+    communication_kernel_arguments: dict[str, str] = field(default_factory=dict)
+
+    # If set to true, the partitioner considers only cuts in the model where a single concurrent
+    # stream is active. This results in a model that can be distributed across multiple devices,
+    # regardless of the number of network ports available. If set to False, the partitioner can
+    # cut anyhwere - this is more flexible and results in potentially more balanced designs, but
+    # requires that multiple data streams can be
+    # networked (either multiplexed/routed or over multiple ports).
+    single_stream_network: bool = True
+
+    # How much a FPGA can be utilized at max. The solver will fail if it
+    # cannot comply with this limitation. Since platforms.py seems to contain
+    # the numbers for the total resources without shell, the default value is kept
+    # on the lower side on purpose.
+    max_utilization: float = 0.80
+
+    # How much resources of a single FPGA should be used ideally. Used in some objective
+    # functions.
+    ideal_utilization: float = 0.70
+
+    # The list of resource types that the partitioner should consider.
+    # Only relevant if RESOURCE_UTILIZATION is chosen as a strategy
+    # TODO: Add HBM / DDR
+    considered_resources: list[str] = field(
+        default_factory=lambda: ["LUT", "FF", "DSP", "BRAM_18K"]
+    )
+
+    # Number of seconds before the solver doing the partitioning
+    # times out.
+    partition_solver_timeout: int = 100
+
+    # The solver to apply to the partitioning model. If left to None,
+    # the default `mip` solver is used, with CBC as a fallback.
+    partition_solver: Literal[MIPSolver.CBC, MIPSolver.GUROBI, MIPSolver.HIGHS] | None = None
+
+    # Search emphasis. Can be set to default for balanced results, or to OPTIMAL
+    # for optimal solutions or to FEASIBLE for quickly finding feasible solutions.
+    # Details can be found here: https://docs.python-mip.com/en/latest/classes.html
+    partition_solver_emphasis: mip.SearchEmphasis = mip.SearchEmphasis.DEFAULT
+
+    # Determines how many synthesis processes can run in parallel. Keep in mind
+    # that very roughly estimated, one synthesis should be able to use up to 100 GB RAM,
+    # (sometimes more) depending on the model and version of Vivado. For example on a
+    # 512 GB node, you can run roughly 4 Synthesis in parallel.
+    # Defaults to 1, in order not to crash local computers with OOM errors
+    parallel_synthesis_workers: int = 1
+
+    # Whether the IODMA kernels should be separate or part of the compute kernel SDP.
+    # Currently only for Multi-FPGFA!
+    separate_iodmas: bool = True
+
+    # Since the Multi-FPGA flow contains a large number of extra steps (+ information), it benefits
+    # from a verbosity setting that is independent of the general FINN one.
+    verbosity: MFVerbosity = MFVerbosity.MEDIUM
+
+
 #: List of steps that will be run as part of the standard dataflow build, in the
 #: specified order. Use the `steps` as part of build config to restrict which
 #: steps will be run.
@@ -201,6 +347,7 @@ default_build_dataflow_steps = [
     "step_create_stitched_ip",
     "step_measure_rtlsim_performance",
     "step_out_of_context_synthesis",
+    "step_prepare_synthesis",
     "step_synthesize_bitfile",
     "step_make_driver",
     "step_deployment_package",
@@ -318,6 +465,55 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         self.specialize_layers_config_file = _fix_path(self.specialize_layers_config_file)
         self.folding_config_file = _fix_path(self.folding_config_file)
         self.layouts_config_file = _fix_path(self.layouts_config_file)
+
+    def get_report_directory(self, create: bool = True) -> Path:
+        """Return the path that reports should be stored at."""
+        d = Path(self.output_dir) / "report"
+        if create:
+            d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def get_deploy_directory(self, create: bool = True) -> Path:
+        """Return the path that deployment files should be stored at."""
+        d = Path(self.output_dir) / "deploy"
+        if create:
+            d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def get_driver_directory(self, create: bool = True) -> Path:
+        """Return the path that driver files should be stored at."""
+        d = Path(self.output_dir) / "driver"
+        if create:
+            d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def get_bitfile_directory(self, create: bool = True) -> Path:
+        """Return the path that bitfiles should be stored at."""
+        d = Path(self.output_dir) / "bitfile"
+        if create:
+            d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def get_verification_output_directory(self, create: bool = True) -> Path:
+        """Return the path that verification outputs should be stored at."""
+        d = Path(self.output_dir) / "verification_output"
+        if create:
+            d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def get_intermediate_models_directory(self, create: bool = True) -> Path:
+        """Return the path that intermediate models should be stored at."""
+        d = Path(self.output_dir) / "intermediate_models"
+        if create:
+            d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def get_crash_reports_directory(self, create: bool = True) -> Path:
+        """Return the path that crash reports should be stored at."""
+        d = Path(self.output_dir) / "crash_reports"
+        if create:
+            d.mkdir(parents=True, exist_ok=True)
+        return d
 
     #: Path to the config from which this object was created. Can be left on None
     #: for cases in which "finn run" is used, but should otherwise be set to correctly
@@ -552,6 +748,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Can be used to use host memory for input/output data instead of DDR or HBM memory
     fpga_memory: FpgaMemoryType = FpgaMemoryType.DEFAULT
 
+    #: Max interface width of the IODMAs for vitis builds.
+    vitis_iodma_intf_max_width: int = 512
+
     #: Whether intermediate ONNX files will be saved during the build process.
     #: These can be useful for debugging if the build fails.
     save_intermediate_models: bool = True
@@ -611,6 +810,10 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: bit width larger than `max_multithreshold_bit_width` are not converted to
     #: MultiThreshold nodes and a warning is raised instead.
     max_multithreshold_bit_width: int = 8
+
+    #: Configuration that provides parameters for Multi-FPGA partitioning.
+    #: If set to something other than None, we assume the Multi-FPGA case
+    partitioning_configuration: Optional[PartitioningConfiguration] = None
 
     #: If set to True, the FINN compiler tries to create an MLO design based on
     #: loop_body_hierarchy and loop_body_range
@@ -705,6 +908,11 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
                 fpga_part = part_map[self.board]
                 return fpga_part
             except KeyError:
+                if self.board is None:
+                    raise FINNConfigurationError(
+                        "Board / FPGA-Part unspecified. Set "
+                        "either 'board' or 'fpga_part' to continue."
+                    ) from None
                 raise FINNConfigurationError(
                     "Couldn't resolve fpga_part for " + self.board
                 ) from None

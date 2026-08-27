@@ -18,7 +18,6 @@ from finn.util.settings import get_settings
 
 def run_doctests(num_workers: int) -> bool:
     """Run all doctests in FINN and report if any failed."""
-    returncodes = []
     tests = []
     for submodule in [
         "analysis",
@@ -46,9 +45,10 @@ def run_doctests(num_workers: int) -> bool:
     return any(rc not in (0, 5) for rc in returncodes)
 
 
-def run_test(variant: str, num_workers: str, name: str = "") -> None:
+def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: bool = False) -> None:
     """Run a given test variant with the given number of workers."""
     original_dir = Path.cwd()
+    cache_clear_flag = "--cache-clear" if not no_cache_clear else ""
 
     # TODO: Make this optional
     if "CI_PROJECT_DIR" in os.environ.keys():
@@ -60,23 +60,24 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
     os.chdir(os.environ["FINN_TESTS"])
     match variant:
         case "custom":
-            if name == "":
+            if args == "":
                 raise FINNUserError(
                     "--variant custom was specified, but no test was "
-                    "given (please additionally pass --name "
+                    "given (please additionally pass --args "
                     "<test-name> in pytest syntax)"
                 )
+            workers_arg = f"-n {num_workers}" if num_workers not in ["1", ""] else ""
             subprocess.run(
-                shlex.split(f"{sys.executable} -m pytest -n {num_workers} {name}", posix=IS_POSIX)
+                shlex.split(f"{sys.executable} -m  pytest {workers_arg} {args}", posix=IS_POSIX)
             )
         case "doctest":
-            if name == "":
+            if args == "":
                 status(
                     "No test name was specified, running doctests on all relevant FINN submodules."
                 )
                 run_doctests(int(num_workers))
                 return
-            if name.endswith(".py"):
+            if args.endswith(".py"):
                 raise FINNUserError(
                     "To run doctests, specify the name as a python module path. "
                     "Instead of src/finn/interface/manage_tests.py do "
@@ -84,16 +85,16 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
                 )
             subprocess.run(
                 shlex.split(
-                    f"{sys.executable} -m pytest --doctest-modules "
+                    f"{sys.executable} -m pytest {cache_clear_flag} --doctest-modules "
                     f"--doctest-continue-on-failure -n {num_workers} "
-                    f"--pyargs {name}",
+                    f"--pyargs {args}",
                     posix=IS_POSIX,
                 )
             )
         case "quick":
             subprocess.run(
                 shlex.split(
-                    f"{sys.executable} -m pytest -v -m 'not "
+                    f"{sys.executable} -m pytest {cache_clear_flag} -v -m 'not "
                     f"(vivado or slow or vitis or board or notebooks or bnn_pynq or end2end)' "
                     f"--dist=loadfile -n {num_workers}",
                     posix=IS_POSIX,
@@ -102,7 +103,7 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
         case "quicktest_ci":
             subprocess.run(
                 shlex.split(
-                    f"{sys.executable} -m pytest -v -m 'not "
+                    f"{sys.executable} -m pytest  {cache_clear_flag} -v -m 'not "
                     f"(vivado or slow or vitis or board or notebooks or bnn_pynq or end2end)' "
                     f"--junitxml={ci_project_dir}/reports/quick.xml "
                     f"--html={ci_project_dir}/reports/quick.html "
@@ -197,7 +198,7 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
             test_1_process = subprocess.Popen(
                 shlex.split(
                     (
-                        f"{sys.executable} -m pytest -v -m 'not "
+                        f"{sys.executable} -m pytest {cache_clear_flag} -v -m 'not "
                         f"(end2end or sanity_bnn or notebooks)' "
                         f"--junitxml={main_xml} "
                         f"--html={main_html} "
@@ -307,6 +308,8 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
 
         case _:
             subprocess.run(
-                shlex.split(f"{sys.executable} -m pytest -k '{variant}'", posix=IS_POSIX)
+                shlex.split(
+                    f"{sys.executable} -m pytest {cache_clear_flag} -k '{variant}'", posix=IS_POSIX
+                )
             )
     os.chdir(original_dir)

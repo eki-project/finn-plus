@@ -32,7 +32,6 @@ This module implements the MVAU operation for FPGA deployment, which performs
 matrix-vector multiplication optionally followed by activation/thresholding.
 Supports various memory modes, parallelization strategies, and quantized datatypes.
 """
-
 import math
 import numpy as np
 import numpy.typing as npt
@@ -50,6 +49,7 @@ from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
+from finn.util.exception import FINNUserError
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
@@ -478,12 +478,19 @@ class MVAU(HWCustomOp):
 
     def calc_wmem(self):
         """Calculates and returns WMEM."""
-        mw = self.get_nodeattr("MW")
-        mh = self.get_nodeattr("MH")
-        pe = self.get_nodeattr("PE")
-        simd = self.get_nodeattr("SIMD")
-        assert mh % pe == 0, "Requirement MH divisable by PE is violated."
-        assert mw % simd == 0, "Requirement MW divisable by SIMD is violated."
+        mw = cast("int", self.get_nodeattr("MW"))
+        mh = cast("int", self.get_nodeattr("MH"))
+        pe = cast("int", self.get_nodeattr("PE"))
+        simd = cast("int", self.get_nodeattr("SIMD"))
+        if mh % pe != 0:
+            raise FINNUserError(
+                f"{self.onnx_node.name}: MH ({mh}) must " f"be divisable by PE (currently {pe})."
+            )
+        if mw % simd != 0:
+            raise FINNUserError(
+                f"{self.onnx_node.name}: MW ({mw}) must "
+                f"be divisable by SIMD (currently {simd})."
+            )
         wmem = mw * mh // (pe * simd)
         return wmem
 
