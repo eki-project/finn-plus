@@ -208,7 +208,7 @@ class BuildAllXOs(Transformation):
                 InsertFIFO(),
                 SpecializeLayers(self.fpga_part),
                 RemoveUnusedTensors(),
-                GiveUniqueNodeNamesRecursive(prefix=sdp_node.name + "_"),
+                GiveUniqueNodeNamesRecursive(prefix=sdp_node.name),
                 PrepareIP(self.fpga_part, self.synth_clk_period_ns),
                 HLSSynthIP(),
                 CreateStitchedIP(
