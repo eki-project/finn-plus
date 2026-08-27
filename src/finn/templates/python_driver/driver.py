@@ -1719,6 +1719,9 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         instr_runtime = kwargs.get("instr_runtime", 1)
         avg_window_size = kwargs.get("avg_window_size", 64)
         num_measurements = kwargs.get("num_measurements", 10)
+        # Optional: also measure full vs. partial reconfiguration times.
+        # Enable via the driver CLI with: -fk measure_reconfiguration_time=True Bool
+        measure_reconfiguration_time = kwargs.get("measure_reconfiguration_time", False)
 
         self.set_current_mode("instr")
 
@@ -1897,8 +1900,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         report["test"] = test_results
         del dfx
 
-        do_extra_pr_experiments = False  # TODO
-        if do_extra_pr_experiments:
+        if measure_reconfiguration_time:
             # PCAP test - dry run to buffer bitstreams in RAM
             self.enable_pcap()
 
@@ -1915,7 +1917,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 pb.download()
 
             full_configuration_time = []
-            for _ in range(10):
+            for _ in range(num_measurements):
                 for p in full_bs:
                     pb = Bitstream(p, None, False)
                     start = time.time()
@@ -1956,7 +1958,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
 
             # Measure reconfiguration time for one full id (all sockets for a given RM id)
             partial_configuration_time = []
-            for _ in range(10):
+            for _ in range(num_measurements):
                 for rm_id, sockets in sorted(partial_bs_by_rm.items()):
                     start = time.time()
                     for _, path in sockets:
