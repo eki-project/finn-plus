@@ -33,10 +33,10 @@ variables:
     value: "256G"
   PARALLEL_JOBS:
     description: "Number of parallel Slurm array jobs per Benchmark job"
-    value: "4"
+    value: "8"
   SLURM_TIMEOUT:
     description: "Select SLURM timeout"
-    value: "3-0" # [days-hours]
+    value: "1-0" # [days-hours]
   PYTEST_SLURM_PARTITION:
     description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
     value: "fpga"
