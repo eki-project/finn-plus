@@ -18,7 +18,7 @@ variables:
       - "full_ci"
   PYTEST_WORKERS:
     description: "Select number PyTest workers"
-    value: "32"
+    value: "64"
   PYTEST_FINN_WORKERS:
     description: "Select number of FINN workers per PyTest worker"
     value: "16"
