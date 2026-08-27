@@ -16,14 +16,17 @@ variables:
       - "none"
       - "quicktest_ci"
       - "full_ci"
-  CPU_CORES:
-    description: "Select number of CPU cores and test workers"
+  PYTEST_WORKERS:
+    description: "Select number PyTest workers"
     value: "32"
+  PYTEST_FINN_WORKERS:
+    description: "Select number of FINN workers per PyTest worker"
+    value: "16"
   CPU_CORES_BENCH:
-    description: "Select number of CPU cores for benchmark runs"
+    description: "Select number of CPU cores for each regression/benchmark run"
     value: "32"
   MEM_BENCH:
-    description: "Select memory for each benchmark job"
+    description: "Select memory for each regression/benchmark run"
     value: "256G"
   PARALLEL_JOBS:
     description: "Number of parallel Slurm array jobs per Benchmark job"
@@ -158,7 +161,7 @@ FINN Test Suite 2024.2:
       - deps
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclusive --exclude $SLURM_EXCLUDE_NODES"
-    PYTEST_PARALLEL: "$CPU_CORES"
+    PYTEST_PARALLEL: "$PYTEST_WORKERS"
   extends: .setup_full_2024_2
   script:
     # Launch additional monitoring
@@ -169,7 +172,7 @@ FINN Test Suite 2024.2:
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
-      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-test-workers $PYTEST_PARALLEL -n 1
+      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-test-workers $PYTEST_WORKERS -n $PYTEST_FINN_WORKERS
   artifacts:
     name: "test_reports"
     when: always
