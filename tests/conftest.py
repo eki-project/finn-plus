@@ -36,6 +36,7 @@ https://pytest.org/latest/plugins.html
 
 import pytest
 
+import multiprocessing as mp
 import onnxruntime as ort
 import os
 import shutil
@@ -65,6 +66,10 @@ def pytest_collect_file(file_path: Path, parent) -> None:  # noqa: ARG001
 
 def pytest_configure(config) -> None:  # noqa: ARG001
     """Initialize FINN settings once per pytest run."""
+    mp_start_method = os.environ.get("FINN_TESTS_MP_START_METHOD")
+    if mp_start_method is not None and mp.get_start_method(allow_none=True) != mp_start_method:
+        mp.set_start_method(mp_start_method, force=True)
+
     import finn.util.settings
 
     finn.util.settings.initialize_dummy_settings()
