@@ -22,8 +22,11 @@ variables:
   PYTEST_FINN_WORKERS:
     description: "Select number of FINN workers per PyTest worker"
     value: "16"
-  CPU_CORES_BENCH:
+  BENCH_CPU_CORES:
     description: "Select number of CPU cores for each regression/benchmark run"
+    value: "32"
+  BENCH_FINN_WORKERS:
+    description: "Select number of FINN workers for each regression/benchmark run"
     value: "32"
   MEM_BENCH:
     description: "Select memory for each regression/benchmark run"
@@ -34,9 +37,12 @@ variables:
   SLURM_TIMEOUT:
     description: "Select SLURM timeout"
     value: "3-0" # [days-hours]
-  SLURM_PARTITION:
+  PYTEST_SLURM_PARTITION:
     description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
     value: "fpga"
+  BENCH_SLURM_PARTITION:
+    description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
+    value: "normal"
   SLURM_EXCLUDE_NODES:
     description: "Slurm nodes, which should not be used by the CI"
     value: "fpga[1607-1614]"
@@ -160,7 +166,7 @@ FINN Test Suite 2024.2:
     paths:
       - deps
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclusive --exclude $SLURM_EXCLUDE_NODES"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $PYTEST_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclusive --exclude $SLURM_EXCLUDE_NODES"
     PYTEST_PARALLEL: "$PYTEST_WORKERS"
   extends: .setup_full_2024_2
   script:
