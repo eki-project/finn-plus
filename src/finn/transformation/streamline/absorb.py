@@ -26,6 +26,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Streamline transformations that absorb or reorder simple ops."""
+
 import numpy as np
 import qonnx.core.data_layout as DataLayout
 from onnx import helper as oh
@@ -48,6 +50,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
     MultiThreshold and re-evaluate the output datatype."""
 
     def apply(self, model: ModelWrapper):
+        """Absorb scalar bias into MultiThreshold when possible."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
@@ -73,7 +76,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # Warn and skip if there is no constant bias present
                     if bias is None:
                         log.warning(
-                            f"{self.__class__.__name__}: Bias not constant for"
+                            f"{self.__class__.__name__} ({node.name}): Bias not constant for"
                             f" {consumer.name}, skipping."
                         )
                         # Skip to next node, nothing changed so far, no need to
@@ -88,8 +91,8 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # Warn and skip if there is no constant bias present
                     if thresholds is None:
                         log.warning(
-                            f"{self.__class__.__name__}: Thresholds not"
-                            f" constant for {node.name}, skipping."
+                            f"{self.__class__.__name__} ({node.name}): Thresholds not"
+                            f" constant, skipping."
                         )
                         # Skip to next node, nothing changed so far, no need to
                         # break here
@@ -99,7 +102,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # full tensors into node attributes
                     if not (bias.ndim == 0 or all(x == 1 for x in bias.shape)):
                         log.warning(
-                            f"{self.__class__.__name__}: Bias not scalar"
+                            f"{self.__class__.__name__} ({node.name}): Bias not scalar"
                             f" for {consumer.name}, skipping."
                         )
                         # Skip to next node, nothing changed so far, no need to
@@ -140,7 +143,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     if not (odt.allowed(new_max) and odt.allowed(new_min)):
                         # Cannot be represented, warn and skip transforming
                         log.warning(
-                            f"{self.__class__.__name__}: Cannot absorb bias"
+                            f"{self.__class__.__name__} ({node.name}): Cannot absorb bias"
                             f" from {consumer.name} into {node.name}: {bias}"
                         )
                         # Skip to the next candidate node
@@ -150,8 +153,8 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
                     # the "user" should be aware of
                     if odt.name != old_odt:
                         log.warning(
-                            f"{self.__class__.__name__}: Output datatype for"
-                            f" {node.name} changing from {old_odt} to {odt}"
+                            f"{self.__class__.__name__} ({node.name}): Changing output datatype "
+                            f"from {old_odt} to {odt}"
                         )
 
                     # Up until now we did not modify the nodes/grap, just did
@@ -160,7 +163,7 @@ class AbsorbSignBiasIntoMultiThreshold(Transformation):
 
                     # Set new bias and datatype attributes into the threshold
                     # operator
-                    threshold_op.set_nodeattr("out_bias", out_bias)
+                    threshold_op.set_nodeattr("out_bias", float(out_bias))
                     threshold_op.set_nodeattr("out_dtype", odt.name)
                     # Remove the bias operator and rewire the graph to skip the
                     # now-missing node
@@ -189,6 +192,7 @@ class AbsorbAddIntoMultiThreshold(Transformation):
     values. Only scalar/1D add vectors can be absorbed."""
 
     def apply(self, model):
+        """Absorb Add nodes into MultiThreshold thresholds."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -235,7 +239,8 @@ class AbsorbAddIntoMultiThreshold(Transformation):
                         cdim = 1
                         # Issue a warning to the user, so they are aware of this
                         log.warning(
-                            f"No layout annotations for {add_weight_name}:"
+                            f"{self.__class__.__name__} ({n.name}): No "
+                            f"layout annotations for {add_weight_name}:"
                             f" Assuming channel dimension at index {cdim}"
                         )
 
@@ -260,6 +265,7 @@ class AbsorbMulIntoMultiThreshold(Transformation):
     values. Only *positive* scalar/1D mul vectors can be absorbed."""
 
     def apply(self, model):
+        """Absorb Mul nodes into MultiThreshold thresholds when allowed."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -299,6 +305,7 @@ class FactorOutMulSignMagnitude(Transformation):
     vector of magnitudes."""
 
     def apply(self, model):
+        """Factor signed muls into sign and magnitude stages."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -337,6 +344,7 @@ class Absorb1BitMulIntoMatMul(Transformation):
     multiply."""
 
     def apply(self, model):
+        """Absorb 1-bit muls into MatMul weights where valid."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -379,6 +387,7 @@ class Absorb1BitMulIntoConv(Transformation):
     """Absorb bipolar or binary multiplications into the preceding convolution."""
 
     def apply(self, model):
+        """Absorb 1-bit muls into Conv weights where valid."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -425,6 +434,7 @@ class AbsorbTransposeIntoMultiThreshold(Transformation):
     and set its data_layout mode to NHWC."""
 
     def apply(self, model):
+        """Absorb Transpose into MultiThreshold when applicable."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -483,6 +493,7 @@ class AbsorbTransposeIntoFlatten(Transformation):
     by a reshape node with shape [1, -1] and the first input dimension is 1"""
 
     def apply(self, model):
+        """Absorb Transpose into Flatten or equivalent Reshape."""
         graph = model.graph
         graph_modified = False
         node_ind = 0
@@ -503,12 +514,13 @@ class AbsorbTransposeIntoFlatten(Transformation):
                     # check for the data layout to interpret input shape correctly
                     if data_layout is None:
                         log.warning(
-                            """Data layout for input tensor of Transpose node is not set.
-                                To use AbsorbTransposeIntoFlatten transformation
-                                please set tensor data layout."""
+                            f"{self.__class__.__name__} ({n.name}): Data "
+                            f"layout for input tensor of Transpose node is "
+                            f"not set. To use AbsorbTransposeIntoFlatten "
+                            f"transformation please set tensor data layout."
                         )
                         continue
-                    elif data_layout == DataLayout.NCHW:
+                    if data_layout == DataLayout.NCHW:
                         (b, c, h, w) = model.get_tensor_shape(prod.input[0])
                         # if h=w=1 the transposition can be absorbed, otherwise
                         # the absorption would lead to an error in the behavior
@@ -544,6 +556,7 @@ class AbsorbScalarMulAddIntoTopK(Transformation):
     the TopK output probabilities will change, but the indices won't."""
 
     def apply(self, model):
+        """Remove scalar mul/add nodes before TopK when safe."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -556,7 +569,10 @@ class AbsorbScalarMulAddIntoTopK(Transformation):
                     param_name = prod.input[1]
                     A = model.get_initializer(param_name)
                     if A is None:
-                        log.warning("Param is not constant, skipping")
+                        log.warning(
+                            f"{self.__class__.__name__} ({n.name}): Param {param_name} "
+                            f"is not constant, skipping"
+                        )
                         continue
                     is_scalar = all(x == 1 for x in A.shape)
                     is_scalar_pos_mul = is_scalar and (prod.op_type == "Mul") and A > 0
@@ -583,6 +599,7 @@ class AbsorbConsecutiveTransposes(Transformation):
     of the pattern have the same layout."""
 
     def are_opposite_permutations(self, perms1, perms2):
+        """Return True if two permutations are inverses."""
         if len(perms1) != len(perms2):
             return False
         assert 0 <= max(perms2) < len(perms2), "invalid permutation"
@@ -595,6 +612,7 @@ class AbsorbConsecutiveTransposes(Transformation):
         return True
 
     def apply(self, model):
+        """Remove consecutive Transpose pairs that cancel."""
         graph = model.graph
         graph_modified = False
         for node in graph.node:
@@ -643,6 +661,7 @@ class AbsorbTransposeIntoResize(Transformation):
     change the Resize node's attributes accordingly."""
 
     def apply(self, model):
+        """Move Transpose past Resize and adjust scales if needed."""
         graph = model.graph
         node_ind = 0
         graph_modified = False

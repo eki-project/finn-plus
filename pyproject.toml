@@ -183,5 +183,6 @@ ignore = [
     "ANN401",   # Don't use the "Any" type
     "D413",     # Blank lines at docstring end
     "D205",     # Blank line after summary (enables multiline summaries)
-    "N801",     # Class names should use CapWords convention
+    "N801",     # Class name should use CapWords convention
+    "D209",     # Multi-line docstring closing quotes should be on a separate line
 ]

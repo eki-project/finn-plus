@@ -6,6 +6,7 @@
 #
 ############################################################################
 
+"""Module for layernorm hls."""
 import numpy as np
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
@@ -13,10 +14,14 @@ from finn.custom_op.fpgadataflow.layernorm import LayerNorm
 
 
 class LayerNorm_hls(LayerNorm, HLSBackend):
+    """Class for Layer Norm hls."""
+
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(LayerNorm.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
@@ -29,12 +34,14 @@ class LayerNorm_hls(LayerNorm, HLSBackend):
         return my_attrs
 
     def global_includes(self):
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = [
             "#include <hls_vector.h>",
             '#include "layernorm.hpp"',
         ]
 
     def defines(self, var):
+        """Return defines."""
         simd = self.get_nodeattr("SIMD")
         idtype = self.get_input_datatype()
         n = self.get_nodeattr("ifm_dim")[-1]
@@ -48,9 +55,11 @@ class LayerNorm_hls(LayerNorm, HLSBackend):
         ]
 
     def docompute(self):
+        """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = ["layernorm<N>(in0_V, out0_V);"]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             f"""
             void {self.onnx_node.name}(
@@ -61,6 +70,7 @@ class LayerNorm_hls(LayerNorm, HLSBackend):
         ]
 
     def pragmas(self):
+        """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = [
             """
             #pragma HLS interface AXIS port=in0_V
@@ -74,6 +84,7 @@ class LayerNorm_hls(LayerNorm, HLSBackend):
         ]
 
     def execute_node(self, context, graph):
+        """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
     def timeout_value(self):

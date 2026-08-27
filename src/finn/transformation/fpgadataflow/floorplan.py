@@ -26,7 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Floorplanning transformation for assigning FPGA SLR regions to dataflow nodes."""
+"""Floorplanning transformation for dataflow graphs."""
 
 import json
 from qonnx.custom_op.registry import getCustomOp
@@ -54,12 +54,12 @@ class Floorplan(Transformation):
     """
 
     def __init__(self, floorplan=None):
-        """Initialize with an optional path to a JSON floorplan file."""
+        """Initialize the transform with an optional floorplan file."""
         super().__init__()
         self.user_floorplan = floorplan
 
     def apply(self, model):
-        """Apply SLR assignments from the floorplan to all nodes in the model."""
+        """Apply floorplanning and partition assignment to the model."""
         # read in a user-specified floorplan or generate a default one
         if self.user_floorplan is None:
             self.user_floorplan = model.analysis(floorplan_params)
@@ -171,7 +171,7 @@ class Floorplan(Transformation):
                 node_inst.set_nodeattr("partition_id", partition_cnt)
                 partition_cnt += 1
                 continue
-            elif not (
+            if not (
                 node.op_type.startswith("MVAU")
                 and node_inst.get_nodeattr("mem_mode") is not None
                 and node_inst.get_nodeattr("mem_mode") == "external"
@@ -207,9 +207,8 @@ class Floorplan(Transformation):
                     partition_id = pre_inst.get_nodeattr("partition_id")
                     node_inst.set_nodeattr("partition_id", partition_id)
                     break
-                else:
-                    # SLR mismatch with predecessor, can't assign same partition
-                    slr_mismatch_count += 1
+                # SLR mismatch with predecessor, can't assign same partition
+                slr_mismatch_count += 1
 
             if slr_mismatch_count == len(pre_nodes):
                 # SLR mismatch with ALL predecessors -> start new partition

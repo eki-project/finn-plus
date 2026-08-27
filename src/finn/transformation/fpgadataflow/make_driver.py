@@ -36,11 +36,11 @@ import shlex
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from string import Template
-from typing import Dict, List, Optional, Tuple
 
 import finn.util
 from finn.builder.build_dataflow_config import FpgaMemoryType
@@ -51,31 +51,30 @@ from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
 
-def update_bitfile_path_after_copy(bitfile_path: str, json_path: str) -> None:
-    """
-    Update the xclbinPath in the JSON configuration to point to the new bitfile location.
+def update_bitfile_path_after_copy(bitfile_path: Path, json_path: Path) -> None:
+    """Update the xclbinPath in the JSON configuration to point to the new bitfile location.
 
     Args:
-        json_path (str): Path to the JSON configuration file
-        bitfile_path (str): New path to the bitfile (.xclbin)
+        json_path (Path): Path to the JSON configuration file
+        bitfile_path (Path): New path to the bitfile (.xclbin)
     """
-    if json_path is None or not os.path.exists(json_path):
+    if json_path is None or not json_path.exists():
         raise FINNInternalError("JSON configuration file does not exist or is not specified.")
-    if bitfile_path is None or not os.path.exists(bitfile_path):
+    if bitfile_path is None or not bitfile_path.exists():
         raise FINNInternalError("Bitfile path does not exist or is not specified.")
-    if not json_path.endswith(".json"):
+    if not json_path.suffix == ".json":
         raise FINNInternalError("Provided path is not a JSON file.")
 
     # Read the current JSON configuration
-    with open(json_path, "r") as f:
+    with json_path.open() as f:
         data = json.load(f)
 
     # Update the xclbinPath for each device in the configuration
     for device_config in data:
-        device_config["xclbinPath"] = os.path.abspath(bitfile_path)
+        device_config["xclbinPath"] = bitfile_path.resolve().as_posix()
 
     # Write the updated configuration back to the file
-    with open(json_path, "w") as f:
+    with json_path.open("w") as f:
         json.dump(data, f, indent=4)
 
 
@@ -107,16 +106,15 @@ class MakeCPPDriver(Transformation):
         s = s.replace("DataType[", "").replace("]", "")
         if s in ["BINARY", "TERNARY", "BIPOLAR"]:
             return "Datatype" + s[0] + s[1:].lower()
-        elif s.startswith("U"):
-            return "DatatypeUint<" + s.replace("UINT", "") + ">"
-        elif s.startswith("I"):
+        if s.startswith("U"):
+            return "DatatypeUInt<" + s.replace("UINT", "") + ">"
+        if s.startswith("I"):
             return "DatatypeInt<" + s.replace("INT", "") + ">"
-        elif "FLOAT" in s:
+        if "FLOAT" in s:
             return "DatatypeFloat<" + s.replace("FLOAT", "") + ">"
-        elif "FIXED" in s:
+        if "FIXED" in s:
             return "DatatypeFixed" + s.replace("FIXED", "")
-        else:
-            raise FINNInternalError(f"Unknown datatype for C++ Driver:{s}")
+        raise FINNInternalError(f"Unknown datatype for C++ Driver:{s}")
 
     def __init__(
         self,
@@ -155,7 +153,7 @@ class MakeCPPDriver(Transformation):
         else:
             self.host_memory = False
 
-    def apply(self, model: ModelWrapper) -> Tuple[ModelWrapper, bool]:
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply the MakeCPPDriver transformation to generate C++ driver code.
 
         Args:
@@ -164,7 +162,7 @@ class MakeCPPDriver(Transformation):
         Returns:
             Tuple of (modified model, transformation success flag)
         """
-        driver_shapes: Dict = get_driver_shapes(model)
+        driver_shapes: dict = get_driver_shapes(model)
         ext_weight_dma_cnt: int  # noqa
         weights_dir: str  # noqa
         # TODO: Enable weight file generation
@@ -232,7 +230,6 @@ class MakeCPPDriver(Transformation):
             os.path.join(
                 cpp_driver_dir, "src", "FINNCppDriver", "config", "FinnDriverUsedDatatypes.h.in"
             ),
-            "r",
         ) as f_in:
             header = f_in.read()
             template_handler = Template(header)
@@ -343,7 +340,7 @@ class MakeCPPDriver(Transformation):
             source_dir: str,  # Directory containing CMakeLists.txt
             build_dir: str,  # Directory where build files will be generated
             # Additional CMake arguments as string
-            cmake_args: Optional[str] = None,
+            cmake_args: str | None = None,
             # Command to invoke CMake
             cmake_executable: str = f"{sys.executable} -m cmake",
         ):
@@ -381,9 +378,9 @@ class MakeCPPDriver(Transformation):
             # Build tool to use (default: make)
             cmake_executable: str = "make",
             # Specific target to build (if any)
-            build_target: Optional[str] = None,
+            build_target: str | None = None,
             # Additional build arguments
-            build_args: Optional[List[str]] = None,
+            build_args: list[str] | None = None,
         ):
             """Build the configured CMake project.
 
@@ -452,7 +449,7 @@ class MakeCPPDriver(Transformation):
             """
             # Run the built finnhpc executable with the --check flag to output datatype information
             result = subprocess.run(
-                "./finnhpc --check".split(), cwd=bin_dir, capture_output=True, text=True
+                ["./finnhpc", "--check"], cwd=bin_dir, capture_output=True, text=True
             )
             if result.returncode != 0:
                 log.critical(f"Running datatype check failed with error:\n{result.stderr}")
@@ -716,7 +713,7 @@ class MakePYNQDriver(Transformation):
         # so that the driver can generate a final cfg with live fifo sizes applied
         folding_path = model.get_metadata_prop("folding_config_before_lfs")
         if folding_path:
-            with open(folding_path, "r") as f:
+            with open(folding_path) as f:
                 folding_cfg = json.load(f)
             settings["folding_config_before_lfs"] = folding_cfg
 
@@ -742,13 +739,13 @@ class MakePYNQDriver(Transformation):
 
         experiment_information = {}
         if self.experiment_info is not None:
-            with open(self.experiment_info, "r") as f:
+            with open(self.experiment_info) as f:
                 experiment_information = json.load(f)
 
         driver_information["driver_type"] = self.driver_type
         if self.driver_type in ["FINNDMAOverlay", "FINNDMAInstrumentationOverlay"]:
             external_weights_dict, runtime_weights = self._generate_weight_files(model)
-            driver_shapes: Dict = get_driver_shapes(model)
+            driver_shapes: dict = get_driver_shapes(model)
             driver_information["io_shape_dict"] = driver_shapes
             driver_information["io_shape_dict"]["num_inputs"] = len(driver_shapes["idma_names"])
             driver_information["io_shape_dict"]["num_outputs"] = len(driver_shapes["odma_names"])

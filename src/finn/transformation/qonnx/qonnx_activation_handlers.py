@@ -25,6 +25,8 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+"""Handlers for converting QONNX activations into FINN graph patterns."""
 import numpy as np
 from abc import ABC, abstractmethod
 from onnx import TensorProto, helper
@@ -113,7 +115,6 @@ class QuantActBaseHandler(ABC):
 
     def replace_quant_node(self):
         """Replace the given QONNX style activation with a FINN style one."""
-
         # Check that we actually support what the user is trying to do
         self._check_compatibility()
 
@@ -181,7 +182,7 @@ class QuantActBaseHandler(ABC):
             # which is the other way around in Brevitas,
             # we thus need to adjust the bias in the MultiThreshold node
             finn_bias = adder_bias[0].item() * mul_scale[0].item()
-            mt_inst.set_nodeattr("out_bias", finn_bias)
+            mt_inst.set_nodeattr("out_bias", float(finn_bias))
 
             # Set the output data type
             mt_inst.set_nodeattr("out_dtype", out_dtype)
@@ -292,12 +293,14 @@ class QuantReluHandler(QuantActBaseHandler):
 
     @classmethod
     def valid_predecessor_op_types(self):
+        """Return supported predecessor op types for quantized ReLU."""
         return [
             "Relu",
             "Selu",
         ]
 
     def _check_compatibility(self):
+        """Validate that the quantized activation is FINN-compatible."""
         if self._q_node.op_type == "Quant":
             q_inst = getCustomOp(self._q_node)
             narrow = q_inst.get_nodeattr("narrow")
@@ -321,6 +324,7 @@ class QuantReluHandler(QuantActBaseHandler):
             raise RuntimeError("Got an unexpected quantizer node type")
 
     def _calculate_act_bias(self):
+        """Calculate activation bias for the replacement pattern."""
         # No bias allowed for Relu activations, see: https://github.com/Xilinx/
         # brevitas/blob/a5bfd6dc5e030f0047ac1ee47932b60e8e873e17/src/brevitas/
         # export/onnx/finn/handler/act.py#L48
@@ -352,6 +356,7 @@ class QuantReluHandler(QuantActBaseHandler):
         return bias
 
     def _calculate_thresholds(self):
+        """Calculate MultiThreshold thresholds for the activation."""
         # Gather parameters
         if self._q_node.op_type == "Quant":
             bit_width = self._model.get_initializer(self._q_node.input[3])
@@ -406,7 +411,7 @@ class QuantReluHandler(QuantActBaseHandler):
         # Get the shape of the input (should also be the output) tensor
         # Note: Querying the input is more safe as we do not want to
         # propagate shapes backwards by accident.
-        shape = self._model.get_tensor_shape(self._q_node.input[0])  # noqa
+        shape = self._model.get_tensor_shape(self._q_node.input[0])
         # First try to consider the tensor layout of the input for
         # determining the number of output channels
         layout = self._model.get_tensor_layout(self._q_node.input[0])
@@ -445,6 +450,7 @@ class QuantReluHandler(QuantActBaseHandler):
         return thresholds
 
     def _calculate_act_scale(self):
+        """Calculate activation scale for the replacement pattern."""
         # Gather parameters
         quant_scale = self._model.get_initializer(self._q_node.input[1])
         # Calculate scale, see: https://github.com/Xilinx/brevitas/blob/
@@ -454,11 +460,12 @@ class QuantReluHandler(QuantActBaseHandler):
         return scale
 
     def _remove_activation_node(self, multi_threshold_node):
+        """Remove the activation node preceding the Quant node."""
         # Find the activation node
         act_node = self._model.find_direct_predecessors(self._q_node)
         if act_node is None:
             raise RuntimeError(
-                "For handling of Relu activations a predecessor to " "the Quant node must exist."
+                "For handling of Relu activations a predecessor to the Quant node must exist."
             )
         act_node = act_node[0]
         if act_node.op_type not in self.valid_predecessor_op_types():
@@ -483,6 +490,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
 
     @classmethod
     def valid_predecessor_op_types(self):
+        """Return supported predecessor op types for quantized identity."""
         return [
             "BatchNormalization",
             "Sub",
@@ -494,6 +502,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
         ]
 
     def _check_compatibility(self):
+        """Validate that the quantized identity is FINN-compatible."""
         # Gather parameters to check
         if self._q_node.op_type == "Quant":
             q_inst = getCustomOp(self._q_node)
@@ -516,6 +525,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
             raise RuntimeError("Got an unexpected quantizer node type")
 
     def _calculate_act_bias(self):
+        """Calculate activation bias for identity activations."""
         # Gather parameters
         q_inst = getCustomOp(self._q_node)
         if self._q_node.op_type == "Quant":
@@ -539,6 +549,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
         return bias
 
     def _calculate_thresholds(self):
+        """Calculate MultiThreshold thresholds for identity activations."""
         # Gather parameters
         quant_scale = self._model.get_initializer(self._q_node.input[1])
         q_inst = getCustomOp(self._q_node)
@@ -557,69 +568,69 @@ class QuantIdentityHandler(QuantActBaseHandler):
             thresholds = np.empty([1, 1], dtype=np_default_dtype)
             thresholds[0] = 0
             return thresholds
+        if narrow:
+            num_distinct_values = 2**bit_width - 1
         else:
-            if narrow:
-                num_distinct_values = 2**bit_width - 1
-            else:
-                num_distinct_values = 2**bit_width
+            num_distinct_values = 2**bit_width
 
-            num_thresholds = int(num_distinct_values - 1)
-            flat_scale = quant_scale.flatten()
-            num_scale_channels = flat_scale.shape[0]
-            step = np.abs(flat_scale)
-            half_step = step / 2.0
-            thresholds = np.empty((num_scale_channels, num_thresholds), dtype=np_default_dtype)
-            # compute the value of the smallest threshold, we'll neg-bias all
-            # generated thresholds by this much
-            min_threshold = -half_step - step * ((num_thresholds // 2) - 1)
-            if not narrow:
-                min_threshold -= step
-            for c in range(num_scale_channels):
-                for t in range(num_thresholds):
-                    thresholds[c][t] = min_threshold[c] + step[c] * t
+        num_thresholds = int(num_distinct_values - 1)
+        flat_scale = quant_scale.flatten()
+        num_scale_channels = flat_scale.shape[0]
+        step = np.abs(flat_scale)
+        half_step = step / 2.0
+        thresholds = np.empty((num_scale_channels, num_thresholds), dtype=np_default_dtype)
+        # compute the value of the smallest threshold, we'll neg-bias all
+        # generated thresholds by this much
+        min_threshold = -half_step - step * ((num_thresholds // 2) - 1)
+        if not narrow:
+            min_threshold -= step
+        for c in range(num_scale_channels):
+            for t in range(num_thresholds):
+                thresholds[c][t] = min_threshold[c] + step[c] * t
 
-            # Get the shape of the input (should also be the output) tensor
-            # Note: Querying the input is more safe as we do not want to
-            # propagate shapes backwards by accident.
-            shape = self._model.get_tensor_shape(self._q_node.input[0])
-            # First try to consider the tensor layout of the input for
-            # determining the number of output channels
-            layout = self._model.get_tensor_layout(self._q_node.input[0])  # noqa
-            # If there is no layout annotation, guess based on rank of the
-            # tensor
-            # TODO: No support for Rank >= 5
-            if layout is None and len(shape) < 5:
-                # Maps tensor rank to layout annotation
-                rank_to_layout = {0: None, 1: "C", 2: "NC", 3: "NWC", 4: "NCHW"}
-                # Lookup the layout required by this input shape
-                layout = rank_to_layout[len(shape)]
-            # If there is a layout annotation, use this to determine the index
-            # of the channel dimension
-            if layout is not None and "C" in layout:  # noqa: Duplicate
-                # Lookup the index in list
-                cdim = layout.index("C")
-            # If no layout has been annotated or there is no channel dimension,
-            # fall back to the previous default assumption
-            else:
-                # Assume the channels to be in axis 1
-                cdim = 1
-                # Issue a warning to the user, so they are aware of this
-                log.warning(
-                    f"No layout annotations for {self._q_node.input[0]}:"
-                    f" Assuming channel dimension at index {cdim}"
-                )
+        # Get the shape of the input (should also be the output) tensor
+        # Note: Querying the input is more safe as we do not want to
+        # propagate shapes backwards by accident.
+        shape = self._model.get_tensor_shape(self._q_node.input[0])
+        # First try to consider the tensor layout of the input for
+        # determining the number of output channels
+        layout = self._model.get_tensor_layout(self._q_node.input[0])
+        # If there is no layout annotation, guess based on rank of the
+        # tensor
+        # TODO: No support for Rank >= 5
+        if layout is None and len(shape) < 5:
+            # Maps tensor rank to layout annotation
+            rank_to_layout = {0: None, 1: "C", 2: "NC", 3: "NWC", 4: "NCHW"}
+            # Lookup the layout required by this input shape
+            layout = rank_to_layout[len(shape)]
+        # If there is a layout annotation, use this to determine the index
+        # of the channel dimension
+        if layout is not None and "C" in layout:  # noqa: Duplicate
+            # Lookup the index in list
+            cdim = layout.index("C")
+        # If no layout has been annotated or there is no channel dimension,
+        # fall back to the previous default assumption
+        else:
+            # Assume the channels to be in axis 1
+            cdim = 1
+            # Issue a warning to the user, so they are aware of this
+            log.warning(
+                f"No layout annotations for {self._q_node.input[0]}:"
+                f" Assuming channel dimension at index {cdim}"
+            )
 
-            # ToDo: The index 1 needs to be changed to -1 for the channels last format
-            num_output_channels = self._model.get_tensor_shape(self._q_node.output[0])[cdim]
+        # ToDo: The index 1 needs to be changed to -1 for the channels last format
+        num_output_channels = self._model.get_tensor_shape(self._q_node.output[0])[cdim]
 
-            assert (
-                thresholds.shape[0] == 1 or thresholds.shape[0] == num_output_channels
-            ), """Quant node cannot be converted to MultiThreshold because only
+        assert (
+            thresholds.shape[0] == 1 or thresholds.shape[0] == num_output_channels
+        ), """Quant node cannot be converted to MultiThreshold because only
                 per tensor or per channel quantization supported."""
 
-            return thresholds
+        return thresholds
 
     def _calculate_act_scale(self):
+        """Calculate activation scale for identity activations."""
         # Gather parameters
         if self._q_node.op_type == "Quant":
             bit_width = self._model.get_initializer(self._q_node.input[3])
@@ -640,5 +651,6 @@ class QuantIdentityHandler(QuantActBaseHandler):
         return scale
 
     def _remove_activation_node(self, multi_threshold_node):
+        """Remove the activation node if one exists (no-op)."""
         # The Quant identity activation has per definition no explicit activation node
         return

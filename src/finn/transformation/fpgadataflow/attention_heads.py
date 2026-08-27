@@ -272,7 +272,7 @@ class InferMultiHeads(Transformation):
 
                 # The output of the reshape must be the same as specified as the
                 # second input to the reshape operation
-                assert (out_shape  # noqa
+                assert (out_shape
                         == model.get_initializer(reshape.input[1])).all()
 
                 # The final output shape must match the expectation of
@@ -499,7 +499,7 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                     continue
                 # Now we know there is only one consumer operation following the
                 # slice node
-                thresholds_node = model.find_direct_successors(node)[0]  # noqa
+                thresholds_node = model.find_direct_successors(node)[0]
                 # Successor must actually be a MultiThresholds for this
                 # transform to apply
                 if thresholds_node.op_type != "MultiThreshold":

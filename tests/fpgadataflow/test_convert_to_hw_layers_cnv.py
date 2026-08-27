@@ -50,9 +50,17 @@ from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.binary_matrix_vector_activation import (
+    InferBinaryMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.pool import InferPool
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
@@ -64,14 +72,15 @@ from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from tests.testing_util.test import get_test_model_trained
 
-export_onnx_path_cnv = "test_convert_to_hw_layers_cnv.onnx"
-
 
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 # Standalone or fused thresholding-based activation
 @pytest.mark.parametrize("fused_activation", [True, False])
-def test_convert_to_hw_layers_cnv_w1a1(fused_activation):
+def test_convert_to_hw_layers_cnv_w1a1(fused_activation: bool) -> None:
+    export_onnx_path_cnv = (
+        "test_convert_to_hw_layers_cnv_" + ("fused" if fused_activation else "standalone") + ".onnx"
+    )
     cnv = get_test_model_trained("CNV", 1, 1)
     export_qonnx(cnv, torch.randn(1, 3, 32, 32), export_onnx_path_cnv)
     qonnx_cleanup(export_onnx_path_cnv, out_file=export_onnx_path_cnv)
@@ -105,13 +114,13 @@ def test_convert_to_hw_layers_cnv_w1a1(fused_activation):
     # if we infer thresholding first, all MultiThresholds get converted to HW
     # subsequently, the FC inference will generate passthrough MVAUs
     if not fused_activation:
-        model = model.transform(to_hw.InferThresholdingLayer())
+        model = model.transform(InferThresholdingLayer())
         model = model.transform(absorb.AbsorbConsecutiveTransposes())
 
-    model = model.transform(to_hw.InferBinaryMatrixVectorActivation())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    model = model.transform(to_hw.InferPool())
-    model = model.transform(to_hw.InferConvInpGen())
+    model = model.transform(InferBinaryMatrixVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferPool())
+    model = model.transform(InferConvInpGen())
     model = model.transform(SpecializeLayers("xc7z020clg400-1"))
     for node in model.graph.node:
         if node.op_type == "MVAU_hls":

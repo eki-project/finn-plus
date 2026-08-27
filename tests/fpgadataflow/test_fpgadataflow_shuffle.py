@@ -16,6 +16,7 @@ import tempfile
 import torch
 import torch.onnx
 from brevitas.export import export_qonnx
+from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -30,7 +31,7 @@ from torch import nn
 import finn.core.onnx_exec as oxe
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import InferShuffle
+from finn.transformation.fpgadataflow.convert_to_hw.shuffle import InferShuffle
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
@@ -610,7 +611,7 @@ def test_shuffle_config_consolidation():
     assert len(decomposed_nodes) > 0
 
     consolidated_file = os.environ["FINN_BUILD_DIR"] + "/consolidated.json"
-    extract_model_config_consolidate_shuffles(model, consolidated_file, ["SIMD"])
+    extract_model_config_consolidate_shuffles(model, Path(consolidated_file), ["SIMD"])
 
     with open(consolidated_file, "r") as f:
         consolidated_config = json.load(f)

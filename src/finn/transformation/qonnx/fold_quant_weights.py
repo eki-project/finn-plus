@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for fold quant weights."""
 import numpy as np
 import qonnx.core.onnx_exec as oxe
 from onnx import TensorProto, helper
@@ -43,6 +44,7 @@ class FoldQuantWeights(Transformation):
     """
 
     def apply(self, model):
+        """Apply transformation."""
         graph = model.graph
         node_ind = 0
         graph_modified = False
@@ -61,7 +63,7 @@ class FoldQuantWeights(Transformation):
                     # Check node validity
                     if n.op_type == "Quant" and not model.get_initializer(n.input[2]) == 0:
                         raise ValueError(
-                            "Only Quant nodes with zero-point == 0 " "are currently supported."
+                            "Only Quant nodes with zero-point == 0 are currently supported."
                         )
                     if model.is_fork_node(n):
                         raise ValueError(
@@ -71,10 +73,9 @@ class FoldQuantWeights(Transformation):
                     target_node = model.find_direct_successors(n)
                     if target_node is None:
                         raise RuntimeError(
-                            "Weights quantized with the Quant node must have " "a successor node."
+                            "Weights quantized with the Quant node must have a successor node."
                         )
-                    else:
-                        target_node = target_node[0]
+                    target_node = target_node[0]
                     # If there is a DebugMarker in the weight path,
                     # then the DebugMarker needs to be removed before any further
                     # action is taken. Because this node interferes

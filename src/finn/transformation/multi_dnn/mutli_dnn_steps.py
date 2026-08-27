@@ -3,9 +3,9 @@ import json
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.general import GiveUniqueNodeNames
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.attention_heads import InferSplitIntoSplitMultiHeads
+from finn.transformation.fpgadataflow.convert_to_hw.concat import InferConcatLayer
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.multi_dnn.multi_dnn_pr import ApplyPartialReconfiguration
 from finn.transformation.multi_dnn.multi_dnn_selectable import ExtractSelectableWeights
@@ -54,7 +54,7 @@ def step_collapse_multi_dnn(model: ModelWrapper, cfg: DataflowBuildConfig):
     """Collapse all DNNContainer subgraphs and specialize the resulting concat/split nodes."""
     model = model.transform(CollapseModels())
     model = model.transform(InferSplitIntoSplitMultiHeads())
-    model = model.transform(to_hw.InferConcatLayer())
+    model = model.transform(InferConcatLayer())
     model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))  # For Concat and Split
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(NameNodeContainerNodes())

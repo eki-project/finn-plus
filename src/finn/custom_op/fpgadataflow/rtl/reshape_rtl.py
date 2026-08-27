@@ -44,7 +44,6 @@ class Reshape_rtl(Reshape, RTLBackend):
 
     def generate_hdl(self, model, fpgapart, clk):
         """Generate HLD code by filling in the verilog template."""
-
         # Path to RTL sources implementing the AXI pass-through operator
         # Note: Implements AXI pass-through via the data width converter, which,
         # for identical input and output width, reduces to a no-op.
@@ -70,7 +69,7 @@ class Reshape_rtl(Reshape, RTLBackend):
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
         # Load the code template and fill in the parameter values from the dict
-        with open(template, "r") as f:
+        with open(template) as f:
             template = f.read()
             for placeholder, value in code_gen_dict.items():
                 template = template.replace(f"${placeholder}$", str(value))

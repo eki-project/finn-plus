@@ -27,6 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
+"""Module for infer quant avg pool 2d."""
 import math
 import numpy as np
 from onnx import TensorProto, helper
@@ -39,8 +40,7 @@ from qonnx.util.basic import get_by_name
 
 
 def _get_signed_from_upstream(model, trunc_node):
-    """
-    Find out what the sign of the input to the trunc node is,
+    """Find out what the sign of the input to the trunc node is,
     by looking at the upstream nodes.
     """
     node = trunc_node
@@ -112,13 +112,13 @@ def _get_signed_from_upstream(model, trunc_node):
 
 
 class AvgPoolAndTruncToQuantAvgPool(Transformation):
-    """
-    Convert a section of nodes of the pattern:
+    """Convert a section of nodes of the pattern:
     AveragePool -> Mul (scalar) -> Trunc
-    To the FINN op: QuantAvgPool2d
+    To the FINN op: QuantAvgPool2d.
     """
 
     def apply(self, model):
+        """Apply transformation."""
         opset_imports = model.get_opset_imports()
         if "qonnx.custom_op.general" in opset_imports:
             trunc_opset = opset_imports["qonnx.custom_op.general"]
@@ -129,24 +129,23 @@ class AvgPoolAndTruncToQuantAvgPool(Transformation):
         if trunc_opset == 1:
             model = model.transform(AvgPoolAndTruncv1ToQuantAvgPool())
             return model, False
-        elif trunc_opset == 2:
+        if trunc_opset == 2:
             model = model.transform(AvgPoolAndTruncv2ToQuantAvgPool())
             return model, False
-        else:
-            raise NotImplementedError(
-                f"AvgPoolAndTruncToQuantAvgPool not implemented for "
-                f"Trunc opset version {trunc_opset}."
-            )
+        raise NotImplementedError(
+            f"AvgPoolAndTruncToQuantAvgPool not implemented for "
+            f"Trunc opset version {trunc_opset}."
+        )
 
 
 class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
-    """
-    Convert a section of nodes of the pattern:
+    """Convert a section of nodes of the pattern:
     AveragePool -> Mul (scalar) -> Trunc (v1)
     To the FINN op: Div -> QuantAvgPool2d -> Mul
     """
 
     def apply(self, model):
+        """Apply transformation."""
         graph = model.graph
         node_ind = 0
         for n in graph.node:
@@ -164,7 +163,7 @@ class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
                         k_s = get_by_name(n.attribute, "kernel_shape")
                         if k_s is None or len(k_s.ints) != 2 or len(set(k_s.ints)) != 1:
                             raise ValueError(
-                                "FINN only supports average pooling with " "2D square kernels."
+                                "FINN only supports average pooling with 2D square kernels."
                             )
                         k_s = k_s.ints[0]
 
@@ -197,7 +196,7 @@ class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
                         normalized_mode_string = rounding_mode.s.upper()
                         if rounding_mode is None or normalized_mode_string != b"FLOOR":
                             raise ValueError(
-                                "The Trunc node must have the rounding_mode " "set to 'FLOOR'."
+                                "The Trunc node must have the rounding_mode set to 'FLOOR'."
                             )
                         for inp in t_node.input[1:]:
                             if model.get_initializer(inp) is None:
@@ -314,13 +313,13 @@ class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
 
 
 class AvgPoolAndTruncv2ToQuantAvgPool(Transformation):
-    """
-    Convert a section of nodes of the pattern:
+    """Convert a section of nodes of the pattern:
     AveragePool -> Trunc (v2)
-    To the FINN op: Div -> QuantAvgPool2d -> Mul
+    To the FINN op: Div -> QuantAvgPool2d -> Mul.
     """
 
     def apply(self, model):
+        """Apply transformation."""
         graph = model.graph
         node_ind = 0
         for node in graph.node:
@@ -335,7 +334,7 @@ class AvgPoolAndTruncv2ToQuantAvgPool(Transformation):
                     k_s = get_by_name(node.attribute, "kernel_shape")
                     if k_s is None or len(k_s.ints) != 2 or len(set(k_s.ints)) != 1:
                         raise ValueError(
-                            "FINN only supports average pooling with " "2D square kernels."
+                            "FINN only supports average pooling with 2D square kernels."
                         )
                     k_s = k_s.ints[0]
 
@@ -346,7 +345,7 @@ class AvgPoolAndTruncv2ToQuantAvgPool(Transformation):
                     stride = get_by_name(node.attribute, "strides")
                     if stride is None or len(stride.ints) != 2 or len(set(stride.ints)) != 1:
                         raise ValueError(
-                            "FINN only supports 2D strides with equal values in " "each direction."
+                            "FINN only supports 2D strides with equal values in each direction."
                         )
                     stride = stride.ints[0]
 
@@ -355,7 +354,7 @@ class AvgPoolAndTruncv2ToQuantAvgPool(Transformation):
                     normalized_mode_string = rounding_mode.s.upper()
                     if rounding_mode is None or normalized_mode_string != b"FLOOR":
                         raise ValueError(
-                            "The Trunc node must have the rounding_mode " "set to 'FLOOR'."
+                            "The Trunc node must have the rounding_mode set to 'FLOOR'."
                         )
                     for inp in t_node.input[1:]:
                         if model.get_initializer(inp) is None:

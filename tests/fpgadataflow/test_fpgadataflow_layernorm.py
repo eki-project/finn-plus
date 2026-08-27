@@ -24,9 +24,13 @@ from qonnx.transformation.merge_onnx_models import MergeONNXModels
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.layer_norm import InferLayerNorm
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
@@ -34,12 +38,32 @@ from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
+from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOSizes
+from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
+from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.streamline.extract_norm_scale_bias import ExtractNormScaleBias
 
 test_fpga_part = "xcvc1902-vsva2197-2MP-e-S"
 target_clk_ns = 5
+
+
+def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    """Run FIFO sizing for testing."""
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = fpga_part
+    cfg.synth_clk_period_ns = clk_ns
+    model = model.transform(
+        BuildSimulation(
+            fpga_part,
+            clk_ns,
+            True,
+            performance_sim=False,
+        )
+    )
+    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
+    model = model.transform(ApplySimulatedFIFOSizes(cfg))
+    return model
 
 
 def create_layernorm_model(idt, ishape, has_scale, has_bias, epsilon):
@@ -114,8 +138,8 @@ def test_fpgadataflow_rtl_layernorm(idt, ishape, simd, sim_style):
 
     model = model.transform(ExtractNormScaleBias())
 
-    model = model.transform(to_hw.InferLayerNorm())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
+    model = model.transform(InferLayerNorm())
+    model = model.transform(InferElementwiseBinaryOperation())
     input_t = {model.graph.input[0].name: input}
 
     y_hw = oxe.execute_onnx(model, input_t)[model.graph.output[0].name]
@@ -138,7 +162,7 @@ def test_fpgadataflow_rtl_layernorm(idt, ishape, simd, sim_style):
 
     elif sim_style == "stitched_ip":
         # Set debug waveform for stitched IP
-        model = model.transform(InsertAndSetFIFODepths(test_fpga_part, target_clk_ns))
+        model = insert_and_set_fifo_depths(model, test_fpga_part, target_clk_ns)
         model = model.transform(PrepareIP(test_fpga_part, target_clk_ns))
         model = model.transform(HLSSynthIP())
         model = model.transform(CreateStitchedIP(test_fpga_part, target_clk_ns))
@@ -192,8 +216,8 @@ def test_fpgadataflow_rtl_layernorm_low_simd_ratio(idt, ishape, simd):
 
     model = model.transform(ExtractNormScaleBias())
 
-    model = model.transform(to_hw.InferLayerNorm())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
+    model = model.transform(InferLayerNorm())
+    model = model.transform(InferElementwiseBinaryOperation())
     input_t = {model.graph.input[0].name: input}
 
     y_hw = oxe.execute_onnx(model, input_t)[model.graph.output[0].name]
@@ -245,8 +269,8 @@ def test_fpgadataflow_hls_layernorm(idt, ishape, simd, sim_style):
 
     model = model.transform(ExtractNormScaleBias())
 
-    model = model.transform(to_hw.InferLayerNorm())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
+    model = model.transform(InferLayerNorm())
+    model = model.transform(InferElementwiseBinaryOperation())
     input_t = {model.graph.input[0].name: input}
 
     y_hw = oxe.execute_onnx(model, input_t)[model.graph.output[0].name]
@@ -272,7 +296,7 @@ def test_fpgadataflow_hls_layernorm(idt, ishape, simd, sim_style):
         model = model.transform(HLSSynthIP())
         model = model.transform(PrepareRTLSim())
     elif sim_style == "stitched_ip":
-        model = model.transform(InsertAndSetFIFODepths(test_fpga_part, target_clk_ns))
+        model = insert_and_set_fifo_depths(model, test_fpga_part, target_clk_ns)
         model = model.transform(PrepareIP(test_fpga_part, target_clk_ns))
         model = model.transform(HLSSynthIP())
         model = model.transform(CreateStitchedIP(test_fpga_part, target_clk_ns))

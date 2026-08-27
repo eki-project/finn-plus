@@ -6,7 +6,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # ##########################################################################
-"""FINN XSI (Xilinx Simulation Interface) support module
+"""FINN XSI (Xilinx Simulation Interface) support module.
 
 This module provides utilities for RTL simulation support via finn_xsi.
 The finn_xsi extension must be built separately using the setup command.
@@ -18,20 +18,24 @@ Usage:
         import finn_xsi.adapter
 """
 
+import contextlib
 import os
+import re
 import sys
-from pathlib import Path
-from typing import Any, Optional
-from finn.util.logging import log
+from typing import Any
 
+from finn.util.exception import FINNUserError
+from finn.util.logging import log
+from finn.util.settings import get_settings
 
 # Track if auto-install has been attempted
 _auto_install_attempted = False
 
 # Cache for loaded modules
-_adapter_module: Optional[Any] = None
-_sim_engine_module: Optional[Any] = None
-_xsi_module: Optional[Any] = None
+_adapter_module: Any | None = None
+_sim_engine_module: Any | None = None
+
+xsi_path = get_settings().finn_xsi
 
 
 def is_available() -> bool:
@@ -41,9 +45,27 @@ def is_available() -> bool:
         bool: True if finn_xsi can be imported, False otherwise
     """
     # Check if xsi.so exists
-    xsi_path = Path(os.environ["FINN_XSI"])
     xsi_so = xsi_path / "xsi.so"
-    if not xsi_so.exists():
+    vivado_path = os.environ.get("XILINX_VIVADO")
+    if vivado_path is None:
+        raise OSError("XILINX_VIVADO environment variable not set. Please source Vivado settings.")
+    match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path)
+    if not match:
+        raise ValueError(f"Could not parse Vivado version from XILINX_VIVADO path: {vivado_path}")
+    year, minor = int(match.group(1)), int(match.group(2))
+
+    version_file = xsi_path / "VERSION"
+
+    if not xsi_so.exists() or not version_file.exists():
+        # Attempt auto-install if not yet tried
+        _attempt_auto_install()
+        # Check again after auto-install attempt
+        if not xsi_so.exists():
+            print("XSI INSTALL: xsi.so does not exist")
+            return False
+    with version_file.open() as f:
+        version_info = f.read().strip()
+    if version_info != f"Vivado {year}.{minor}":
         # Attempt auto-install if not yet tried
         _attempt_auto_install()
         # Check again after auto-install attempt
@@ -85,9 +107,8 @@ def _attempt_auto_install() -> bool:
             if result == 0:
                 print("✓ XSI installation completed successfully!")
                 return True
-            else:
-                print("✗ XSI installation failed. Run 'python -m finn.xsi.setup' for details.")
-                return False
+            print("✗ XSI installation failed. Run 'python -m finn.xsi.setup' for details.")
+            return False
         finally:
             sys.argv = original_argv
 
@@ -98,12 +119,11 @@ def _attempt_auto_install() -> bool:
 
 def _load_modules() -> bool:
     """Load finn_xsi modules if available."""
-    global _adapter_module, _sim_engine_module, _xsi_module
+    global _adapter_module, _sim_engine_module
 
     if _adapter_module is not None:
         return True
 
-    xsi_path = Path(os.environ["FINN_XSI"])
     xsi_so = xsi_path / "xsi.so"
 
     if not xsi_so.exists():
@@ -118,9 +138,7 @@ def _load_modules() -> bool:
     try:
         import finn_xsi.adapter
         import finn_xsi.sim_engine
-        import xsi
 
-        _xsi_module = xsi
         _adapter_module = finn_xsi.adapter
         _sim_engine_module = finn_xsi.sim_engine
 
@@ -138,53 +156,23 @@ def _load_modules() -> bool:
     finally:
         # Remove from path if we added it
         if path_added and str(xsi_path) in sys.path:
-            try:
+            with contextlib.suppress(ValueError):
                 sys.path.remove(str(xsi_path))
-            except ValueError:
-                pass  # Path was already removed somehow
-
-
-# List of functions to wrap from finn_xsi.adapter
-_ADAPTER_FUNCTIONS = [
-    "locate_glbl",
-    "compile_sim_obj",
-    "get_simkernel_so",
-    "load_sim_obj",
-    "reset_rtlsim",
-    "close_rtlsim",
-    "rtlsim_multi_io",
-]
-
-
-def __getattr__(name: str) -> Any:
-    """Dynamically wrap finn_xsi.adapter functions."""
-    if name in _ADAPTER_FUNCTIONS:
-
-        def _wrapper(*args, **kwargs):
-            if not _load_modules():
-                raise ImportError("finn_xsi not available. Run: python -m finn.xsi.setup")
-            return getattr(_adapter_module, name)(*args, **kwargs)
-
-        _wrapper.__name__ = name
-        _wrapper.__doc__ = f"Wrapper for finn_xsi.adapter.{name}"
-        return _wrapper
-    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
-
-
-# SimEngine class wrapper
-class SimEngine:
-    """Wrapper for finn_xsi.sim_engine.SimEngine."""
-
-    def __init__(self, *args, **kwargs):
-        """Create a new SimEngine."""
-        if not _load_modules():
-            raise ImportError("finn_xsi not available. Run: python -m finn.xsi.setup")
-        self._engine = _sim_engine_module.SimEngine(*args, **kwargs)
-
-    def __getattr__(self, name):
-        """Get attribute of the given name."""
-        return getattr(self._engine, name)
 
 
 # Trigger auto-install at import time
-is_available()
+xsi_avail = is_available()
+
+if xsi_avail is False:
+    raise FINNUserError("XSI not available. Please run 'finn deps update' to install XSI.")
+
+from finn_xsi.sim_engine import SimEngine  # noqa
+from finn_xsi.adapter import (  # noqa
+    locate_glbl,
+    compile_sim_obj,
+    get_simkernel_so,
+    load_sim_obj,
+    reset_rtlsim,
+    close_rtlsim,
+    rtlsim_multi_io,
+)

@@ -223,4 +223,22 @@ end else begin
     assign m_axis_tdata = axis_lwb_tdata;
 end
 
+// Tie off outputs that are not used/driven in this module
+assign m_axi_ddr_awaddr  = '0;
+assign m_axi_ddr_awburst = '0;
+assign m_axi_ddr_awcache = '0;
+assign m_axi_ddr_awid    = '0;
+assign m_axi_ddr_awlen   = '0;
+assign m_axi_ddr_awlock  = '0;
+assign m_axi_ddr_awprot  = '0;
+assign m_axi_ddr_awsize  = '0;
+assign m_axi_ddr_awvalid = 1'b0;
+
+assign m_axi_ddr_wdata   = '0;
+assign m_axi_ddr_wlast   = 1'b0;
+assign m_axi_ddr_wstrb   = '0;
+assign m_axi_ddr_wvalid  = 1'b0;
+
+assign m_axi_ddr_bready  = 1'b0;
+
 endmodule

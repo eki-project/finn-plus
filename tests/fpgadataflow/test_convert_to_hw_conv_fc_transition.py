@@ -44,9 +44,17 @@ from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.pool import InferPool
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
+    InferVectorVectorActivation,
+)
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
@@ -193,11 +201,11 @@ def test_convert_to_hw_conv_fc_transition(conv_config, depthwise, use_reshape):
 
     # convert_to_hw
     if depthwise is True:
-        new_model = new_model.transform(to_hw.InferVectorVectorActivation())
-    new_model = new_model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    new_model = new_model.transform(to_hw.InferThresholdingLayer())
-    new_model = new_model.transform(to_hw.InferConvInpGen())
-    new_model = new_model.transform(to_hw.InferPool())
+        new_model = new_model.transform(InferVectorVectorActivation())
+    new_model = new_model.transform(InferQuantizedMatrixVectorActivation())
+    new_model = new_model.transform(InferThresholdingLayer())
+    new_model = new_model.transform(InferConvInpGen())
+    new_model = new_model.transform(InferPool())
     new_model = new_model.transform(RemoveCNVtoFCFlatten())
     new_model = new_model.transform(absorb.AbsorbConsecutiveTransposes())
     for node in new_model.graph.node:

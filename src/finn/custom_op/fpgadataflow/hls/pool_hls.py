@@ -42,7 +42,6 @@ class Pool_hls(Pool, HLSBackend):
     Output shape (BatchSize,OutImgDim,OutImgDim,Channels)
 
     Notes:
-
     * The input shape was chosen to be compatible with im2col (only true when there
       is not folding).
     * The actual data layout produced by the hlslib kernels is different
@@ -70,8 +69,8 @@ class Pool_hls(Pool, HLSBackend):
         cf = int(self.get_nodeattr("Channels") / self.get_nodeattr("PE"))
         osz = np.prod(self.get_nodeattr("OutImgDims"))
         self.code_gen_dict["$DEFINES$"] = [
-            "constexpr unsigned  ISIZE = {};".format(osz * cf * k),
-            "constexpr unsigned  K = {};".format(k),
+            f"constexpr unsigned  ISIZE = {osz * cf * k};",
+            f"constexpr unsigned  K = {k};",
         ]
 
     def docompute(self):
@@ -84,9 +83,9 @@ class Pool_hls(Pool, HLSBackend):
 
         self.code_gen_dict["$DOCOMPUTE$"] = []
         if fxn == "MaxPool":
-            self.code_gen_dict["$DOCOMPUTE$"] += ["MaxPoolFunction<{}> pool_fxn;".format(o_hls_dt)]
+            self.code_gen_dict["$DOCOMPUTE$"] += [f"MaxPoolFunction<{o_hls_dt}> pool_fxn;"]
         elif fxn == "AccPool":
-            self.code_gen_dict["$DOCOMPUTE$"] += ["AccPoolFunction<{}> pool_fxn;".format(o_hls_dt)]
+            self.code_gen_dict["$DOCOMPUTE$"] += [f"AccPoolFunction<{o_hls_dt}> pool_fxn;"]
         elif fxn == "AvgPool":
             n = np.prod(self.get_nodeattr("KernelSize"))
             accum_bits = self.get_nodeattr("AccumBits")
@@ -96,7 +95,7 @@ class Pool_hls(Pool, HLSBackend):
                 pe,
             )
             self.code_gen_dict["$DOCOMPUTE$"] += [
-                "AvgPoolFunction<{},{},{}> pool_fxn;".format(o_hls_dt, act_hls_dt, n)
+                f"AvgPoolFunction<{o_hls_dt},{act_hls_dt},{n}> pool_fxn;"
             ]
         elif fxn == "QuantAvgPool":
             shift = self.get_nodeattr("Size")
@@ -107,7 +106,7 @@ class Pool_hls(Pool, HLSBackend):
                 pe,
             )
             self.code_gen_dict["$DOCOMPUTE$"] += [
-                "QuantAvgPoolFunction<{},{},{}> pool_fxn;".format(o_hls_dt, act_hls_dt, shift)
+                f"QuantAvgPoolFunction<{o_hls_dt},{act_hls_dt},{shift}> pool_fxn;"
             ]
         else:
             raise Exception("Pool_Batch doesn't currently support " + fxn)

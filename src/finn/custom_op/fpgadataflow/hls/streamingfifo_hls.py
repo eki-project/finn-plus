@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for streamingfifo hls."""
 import numpy as np
 import os
 from qonnx.core.datatype import DataType
@@ -39,6 +40,7 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
     """HLS-based FIFO implementation. Currently only used as virtual FIFO for live FIFO-sizing."""
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             # Only purpose of this CustomOp for now: virtual FIFO for live FIFO-sizing
             "impl_style": ("s", False, "virtual", {"virtual"}),
@@ -47,33 +49,35 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def global_includes(self):
+    def global_includes(self) -> None:
+        """Add global include for virtual FIFO implementation."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "virtual_fifo.hpp"']
 
-    def defines(self, var):
+    def defines(self, var) -> None:
+        """Return defines."""
         numReps = 1
         width = self.get_instream_width()
         self.code_gen_dict["$DEFINES$"] = [
-            "#define Width %d " % width,
-            "#define numReps %d" % numReps,
+            f"#define Width {width} ",
+            f"#define numReps {numReps}",
         ]
 
     def strm_decl(self):
+        """Return strm decl."""
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            'hls::stream<ap_uint<{}>> in0_{} ("in0_{}");'.format(
-                self.get_instream_width(), self.hls_sname(), self.hls_sname()
-            )
+            f"hls::stream<ap_uint<{self.get_instream_width()}>> "
+            f'in0_{self.hls_sname()} ("in0_{self.hls_sname()}");'
         )
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            'hls::stream<ap_uint<{}>> out0_{} ("out0_{}");'.format(
-                self.get_outstream_width(), self.hls_sname(), self.hls_sname()
-            )
+            f"hls::stream<ap_uint<{self.get_outstream_width()}>> "
+            f'out0_{self.hls_sname()} ("out0_{self.hls_sname()}");'
         )
 
     def docompute(self):
+        """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            """
+            f"""
             #pragma HLS dataflow disable_start_propagation
 
             static hls::stream<ap_uint<Width>> in_fifo;
@@ -82,24 +86,26 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
             #pragma HLS stream variable=out_fifo depth=2
 
             // AXI-Stream -> FIFO
-            move(in0_%s, in_fifo);
+            move(in0_{self.hls_sname()}, in_fifo);
 
             // Main
             VirtualFIFO<Width>(in_fifo, out_fifo, mode, depth, occupancy, max_occupancy);
 
             // FIFO -> AXI-Stream
-            move(out_fifo, out0_%s);
+            move(out_fifo, out0_{self.hls_sname()});
             """
-            % (self.hls_sname(), self.hls_sname())
         ]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         in_packed_bits = self.get_instream_width()
-        in_packed_hls_type = "ap_uint<%d>" % in_packed_bits
+        in_packed_hls_type = f"ap_uint<{in_packed_bits}>"
         out_packed_bits = self.get_outstream_width()
-        out_packed_hls_type = "ap_uint<%d>" % out_packed_bits
+        out_packed_hls_type = f"ap_uint<{out_packed_bits}>"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            """void %s(hls::stream<%s > &in0_%s, hls::stream<%s > &out0_%s, ap_uint<32> mode,
+            f"""void {self.onnx_node.name}(
+            hls::stream<{in_packed_hls_type} > &in0_{self.hls_sname()},
+            hls::stream<{out_packed_hls_type} > &out0_{self.hls_sname()}, ap_uint<32> mode,
             ap_uint<32> depth, ap_uint<32> &occupancy, ap_uint<32> &max_occupancy)"""
             % (
                 self.onnx_node.name,
@@ -111,6 +117,7 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
         ]
 
     def pragmas(self):
+        """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = [
             "#pragma HLS INTERFACE axis port=in0_" + self.hls_sname()
         ]
@@ -125,11 +132,13 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
 
     def get_verilog_top_module_intf_names(self):
         # Overload default HWCustomOp implementation to add axilite control IF
+        """Return verilog top module intf names."""
         intf_names = super().get_verilog_top_module_intf_names()
         intf_names["axilite"] = ["s_axi_control"]
         return intf_names
 
     def execute_node(self, context, graph):
+        """Execute node."""
         mode = self.get_nodeattr("exec_mode")
         node = self.onnx_node
         exp_shape = self.get_normal_input_shape()
@@ -142,10 +151,8 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         else:
             raise Exception(
-                """Invalid value for attribute exec_mode! Is currently set to: {}
-            has to be set to one of the following value ("cppsim", "rtlsim")""".format(
-                    mode
-                )
+                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
+            has to be set to one of the following value ("cppsim", "rtlsim")"""
             )
 
         inp = context[node.input[0]]
@@ -172,15 +179,13 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
         elif mode == "rtlsim":
             sim = self.get_rtlsim()
             nbits = self.get_instream_width()
-            rtlsim_inp = npy_to_rtlsim_input(
-                "{}/input_0.npy".format(code_gen_dir), export_idt, nbits
-            )
+            rtlsim_inp = npy_to_rtlsim_input(f"{code_gen_dir}/input_0.npy", export_idt, nbits)
             super().reset_rtlsim(sim)
             rtlsim_output = self.rtlsim(sim, rtlsim_inp)
             odt = export_idt
             target_bits = odt.bitwidth()
             packed_bits = self.get_outstream_width()
-            out_npy_path = "{}/output.npy".format(code_gen_dir)
+            out_npy_path = f"{code_gen_dir}/output.npy"
             out_shape = self.get_folded_output_shape()
             rtlsim_output_to_npy(
                 rtlsim_output, out_npy_path, odt, out_shape, packed_bits, target_bits
@@ -191,10 +196,8 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
             context[node.output[0]] = output
         else:
             raise Exception(
-                """Invalid value for attribute exec_mode! Is currently set to: {}
-            has to be set to "rtlsim" """.format(
-                    mode
-                )
+                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
+            has to be set to "rtlsim" """
             )
         # binary -> bipolar if needed
         if self.get_output_datatype() == DataType["BIPOLAR"]:

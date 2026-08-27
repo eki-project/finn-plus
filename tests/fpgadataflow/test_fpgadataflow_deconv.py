@@ -40,8 +40,8 @@ from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 import finn.core.onnx_exec as oxe
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import (
-    InferConvInpGen,
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
     InferQuantizedMatrixVectorActivation,
 )
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP

@@ -1,4 +1,5 @@
-"""Custom build steps for MobileNet models."""
+"""Custom build steps for MobileNet model processing."""
+
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.change_datalayout import ChangeDataLayoutQuantAvgPool2d
 from qonnx.transformation.double_to_single_float import DoubleToSingleFloat
@@ -9,7 +10,6 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.transformation.remove import RemoveIdentityOps
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
 import finn.transformation.streamline.reorder as reorder
 from finn.builder.build_dataflow_config import (
@@ -18,6 +18,22 @@ from finn.builder.build_dataflow_config import (
     VerificationStepType,
 )
 from finn.builder.build_dataflow_steps import verify_step
+from finn.transformation.fpgadataflow.convert_to_hw.channelwise_linear import (
+    InferChannelwiseLinearLayer,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.label_select import InferLabelSelectLayer
+from finn.transformation.fpgadataflow.convert_to_hw.pool import InferPool
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
+    InferVectorVectorActivation,
+)
 from finn.transformation.general import ApplyConfig
 from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.collapse_repeated import CollapseRepeatedMul
@@ -25,7 +41,7 @@ from finn.transformation.streamline.round_thresholds import RoundAndClipThreshol
 
 
 def step_mobilenet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Run streamlining passes specific to MobileNet models."""
+    """Streamline a MobileNet model, optionally verifying the result afterward."""
     model = model.transform(Streamline())
     additional_streamline_transformations = [
         DoubleToSingleFloat(),
@@ -55,7 +71,7 @@ def step_mobilenet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_mobilenet_lower_convs(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Lower MobileNet convolutions to matrix-vector form."""
+    """Lower convolutions to matrix multiplications for a MobileNet model."""
     model = model.transform(LowerConvsToMatMul())
     model = model.transform(absorb.AbsorbTransposeIntoMultiThreshold())
     model = model.transform(absorb.AbsorbConsecutiveTransposes())
@@ -68,13 +84,13 @@ def step_mobilenet_lower_convs(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_mobilenet_convert_to_hw_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Convert MobileNet operators to FINN HW custom ops."""
-    model = model.transform(to_hw.InferPool())
-    model = model.transform(to_hw.InferConvInpGen())
-    model = model.transform(to_hw.InferVectorVectorActivation())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    model = model.transform(to_hw.InferChannelwiseLinearLayer())
-    model = model.transform(to_hw.InferLabelSelectLayer())
+    """Convert MobileNet model layers to hardware-specific operations."""
+    model = model.transform(InferPool())
+    model = model.transform(InferConvInpGen())
+    model = model.transform(InferVectorVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferChannelwiseLinearLayer())
+    model = model.transform(InferLabelSelectLayer())
     model = model.transform(InferShapes())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
@@ -82,7 +98,7 @@ def step_mobilenet_convert_to_hw_layers(model: ModelWrapper, cfg: DataflowBuildC
 
 
 def step_mobilenet_slr_floorplan(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Apply SLR-based floorplanning for Alveo targets if available."""
+    """Apply SLR floorplanning to a MobileNet model when targeting Vitis Alveo."""
     if cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
         try:
             from finnexperimental.analysis.partitioning import partition
@@ -107,14 +123,14 @@ def step_mobilenet_slr_floorplan(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_mobilenet_convert_to_hw_layers_separate_th(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Convert MobileNet operators to HW nodes with standalone thresholding layers."""
-    model = model.transform(to_hw.InferPool())
-    model = model.transform(to_hw.InferConvInpGen())
-    model = model.transform(to_hw.InferThresholdingLayer())
-    model = model.transform(to_hw.InferVectorVectorActivation())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    model = model.transform(to_hw.InferElementwiseBinaryOperation())
-    model = model.transform(to_hw.InferLabelSelectLayer())
+    """Convert MobileNet model layers to hardware operations, keeping thresholding separate."""
+    model = model.transform(InferPool())
+    model = model.transform(InferConvInpGen())
+    model = model.transform(InferThresholdingLayer())
+    model = model.transform(InferVectorVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferElementwiseBinaryOperation())
+    model = model.transform(InferLabelSelectLayer())
     model = model.transform(InferShapes())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())

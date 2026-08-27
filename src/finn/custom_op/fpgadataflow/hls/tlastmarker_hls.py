@@ -27,11 +27,25 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for tlastmarker hls."""
+
+import numpy as np
+import numpy.typing as npt
+from collections.abc import Sequence
+from onnx import NodeProto
+from qonnx.core.datatype import BaseDataType, DataType
+from typing import TYPE_CHECKING, Any, Literal, cast
+
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+    from qonnx.core.modelwrapper import ModelWrapper
 
 
-class TLastMarker_hls(HWCustomOp, HLSBackend):
+class TLastMarker_hls(HLSBackend, HWCustomOp):
     """Node that adds/removes AXI stream TLAST signals where needed. Its behavior
     is transparent in node-by-node execution, only visible in IP-stitched rtlsim or
     actual hardware.
@@ -39,11 +53,27 @@ class TLastMarker_hls(HWCustomOp, HLSBackend):
     (needed by the FINN PYNQ shell) or at the beginning to remove the end-of-burst
     from DMA read."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: "NodeProto", **kwargs: Any) -> None:
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
-        my_attrs = {
+    def get_nodeattr_types(
+        self,
+    ) -> dict[
+        str,
+        tuple[str, bool, int | float | str | bool | npt.NDArray | list]
+        | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+    ]:
+        """Return nodeattr types."""
+        my_attrs: dict[
+            str,
+            tuple[str, bool, int | float | str | bool | npt.NDArray | list]
+            | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+        ] = {
+            # normal shape of input/output
+            "normal_shape": ("ints", True, []),
+            # FINN DataTypes for inputs/outputs
+            "dataType": ("s", True, ""),
             # number of (static) iterations until TLAST=1 is generated for Direction=out
             "NumIters": ("i", True, 0),
             # whether static or dynamic (from AXI lite) number of iterations are used
@@ -62,29 +92,34 @@ class TLastMarker_hls(HWCustomOp, HLSBackend):
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def execute_node(self, context, graph):
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         # TLastMarker's behavior is only visible when doing
         # rtlsim with stitched IP, since it marks the end
         # of the current image/input sample. when executing
         # inside FINN as a single node, this is not visible.
         # so here we simply return the input as output
+        """Execute node."""
         i_name = self.onnx_node.input[0]
         o_name = self.onnx_node.output[0]
         i_tensor = context[i_name]
         context[o_name] = i_tensor
 
-    def make_shape_compatible_op(self, model):
+    def make_shape_compatible_op(self, model: "ModelWrapper") -> NodeProto:
         # not supported for shape inference
-        pass
+        """Create shape compatible op."""
+        return super().make_shape_compatible_op(model)
 
-    def infer_node_datatype(self, model):
-        # not supported for datatype inference
-        pass
+    def infer_node_datatype(self, model: "ModelWrapper") -> None:
+        """Not supported for datatype inference."""
 
-    def global_includes(self):
+    def global_includes(self) -> None:
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "ap_axi_sdata.h"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
+        """Return defines."""
         stream_width = self.get_nodeattr("StreamWidth")
         direction = self.get_nodeattr("Direction")
         protocol = self.get_nodeattr("Protocol")
@@ -92,34 +127,36 @@ class TLastMarker_hls(HWCustomOp, HLSBackend):
         # qdma_axis<stream_data_width,0,0,0 >
         if direction == "out":
             if protocol == "external":
-                out_stream_dtype = "qdma_axis<%d,0,0,0>" % stream_width
+                out_stream_dtype = f"qdma_axis<{stream_width},0,0,0>"
             elif protocol == "internal":
-                out_stream_dtype = "ap_axiu<%d,0,0,0>" % stream_width
+                out_stream_dtype = f"ap_axiu<{stream_width},0,0,0>"
             else:
                 raise Exception("Unrecognized Protocol in TLastMarker")
-            in_stream_dtype = "ap_uint<%d>" % stream_width
+            in_stream_dtype = f"ap_uint<{stream_width}>"
         elif direction == "in":
-            out_stream_dtype = "ap_uint<%d>" % stream_width
+            out_stream_dtype = f"ap_uint<{stream_width}>"
             if protocol == "external":
-                in_stream_dtype = "qdma_axis<%d,0,0,0>" % stream_width
+                in_stream_dtype = f"qdma_axis<{stream_width},0,0,0>"
             elif protocol == "internal":
-                in_stream_dtype = "ap_axiu<%d,0,0,0>" % stream_width
+                in_stream_dtype = f"ap_axiu<{stream_width},0,0,0>"
             else:
                 raise Exception("Unrecognized Protocol in TLastMarker")
         else:
             raise Exception("Unrecognized Direction in TLastMarker")
 
         self.code_gen_dict["$DEFINES$"] = [
-            "#define StreamWidth %d" % stream_width,
-            "#define OutDType %s" % out_stream_dtype,
-            "#define InDType %s" % in_stream_dtype,
-            "#define NumItersPerImg %d" % self.get_nodeattr("NumIters"),
+            f"#define StreamWidth {stream_width}",
+            f"#define OutDType {out_stream_dtype}",
+            f"#define InDType {in_stream_dtype}",
+            f"#define NumItersPerImg {self.get_nodeattr('NumIters')}",
         ]
 
-    def read_npy_data(self):
+    def read_npy_data(self) -> None:
+        """Return read npy data."""
         self.code_gen_dict["$READNPYDATA$"] = []
 
-    def docompute(self):
+    def docompute(self) -> None:
+        """Return docompute."""
         dyn_iters = self.get_nodeattr("DynIters")
         direction = self.get_nodeattr("Direction")
         use_qdma_axis = self.get_nodeattr("Protocol") == "external"
@@ -174,26 +211,27 @@ class TLastMarker_hls(HWCustomOp, HLSBackend):
                 "}",
             ]
 
-    def dataoutstrm(self):
+    def dataoutstrm(self) -> None:
+        """Return dataoutstrm."""
         self.code_gen_dict["$DATAOUTSTREAM$"] = []
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
+        """Return blackboxfunction."""
         dyn_iters = self.get_nodeattr("DynIters")
 
         if dyn_iters == 1:
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-                """void %s(hls::stream<InDType> &in0_V,
+                f"""void {self.onnx_node.name}(hls::stream<InDType> &in0_V,
                     hls::stream<OutDType> &out0_V, unsigned int numIters)"""
-                % self.onnx_node.name
             ]
         else:
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-                """void %s(hls::stream<InDType> &in0_V,
+                f"""void {self.onnx_node.name}(hls::stream<InDType> &in0_V,
                 hls::stream<OutDType> &out0_V)"""
-                % self.onnx_node.name
             ]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
+        """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0_V"]
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
 
@@ -205,53 +243,139 @@ class TLastMarker_hls(HWCustomOp, HLSBackend):
 
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
-    def get_number_output_values(self):
-        return self.get_nodeattr("NumIters")
+    def get_number_output_values(self) -> int:
+        """Return number output values."""
+        return cast("int", self.get_nodeattr("NumIters"))
 
-    def get_input_datatype(self, ind=0):
-        # not supported
-        raise Exception("get_input_datatype not implemented for TlastMarker")
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return the input data type.
 
-    def get_output_datatype(self, ind=0):
-        # not supported
-        raise Exception("get_output_datatype not implemented for TlastMarker")
+        Args:
+            ind: Input index (unused, kept for interface compatibility).
 
-    def get_normal_input_shape(self, ind=0):
-        # not supported
-        raise Exception("get_normal_input_shape not implemented for TlastMarker")
+        Returns:
+            The QONNX data type for the input.
 
-    def get_normal_output_shape(self, ind=0):
-        # not supported
-        raise Exception("get_normal_input_shape not implemented for TlastMarker")
+        Raises:
+            FINNInternalError: If dataType attribute is invalid.
 
-    def get_folded_input_shape(self, ind=0):
-        stream_width = self.get_nodeattr("StreamWidth")
-        elem_width = self.get_nodeattr("ElemWidth")
+        """
+        dtype = self.get_nodeattr("dataType")
+        if type(dtype) is not str:
+            raise FINNInternalError(
+                f"dataType attribute not set correctly in {self.onnx_node.name}, "
+                "cannot get outstream width"
+            )
+        dtype = DataType[dtype]
+        return dtype
+
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return the output data type.
+
+        Args:
+            ind: Output index (unused, kept for interface compatibility).
+
+        Returns:
+            The QONNX data type for the output.
+
+        Raises:
+            FINNInternalError: If dataType attribute is invalid.
+
+        """
+        dtype = self.get_nodeattr("dataType")
+        if type(dtype) is not str:
+            raise FINNInternalError(
+                f"dataType attribute not set correctly in {self.onnx_node.name}, "
+                "cannot get outstream width"
+            )
+        dtype = DataType[dtype]
+        return dtype
+
+    def get_normal_input_shape(
+        self, ind: int = 0  # noqa: ARG002
+    ) -> Sequence[int] | npt.NDArray[np.int_]:
+        """Return the normal (unfolded) input shape.
+
+        Args:
+            ind: Input index (unused, kept for interface compatibility).
+
+        Returns:
+            The normal input shape dimensions.
+
+        Raises:
+            FINNInternalError: If normal_shape attribute is invalid or empty.
+
+        """
+        normal_shape = self.get_nodeattr("normal_shape")
+        if (
+            type(normal_shape) is not list
+            and type(normal_shape) is not tuple
+            and not isinstance(normal_shape, np.ndarray)
+        ):
+            raise FINNInternalError(
+                f"normal_shape attribute not set correctly in {self.onnx_node.name}, "
+                "cannot get normal input shape"
+            )
+        if len(normal_shape) == 0:
+            raise FINNInternalError(
+                f"normal_shape attribute is empty in {self.onnx_node.name}, "
+                "cannot get normal input shape"
+            )
+        if not isinstance(normal_shape[0], int) and not isinstance(normal_shape[0], np.integer):
+            raise FINNInternalError(
+                f"normal_shape attribute not set correctly in {self.onnx_node.name}, "
+                "cannot get normal input shape"
+            )
+        return cast("Sequence[int]|npt.NDArray[np.int_]", normal_shape)
+
+    def get_normal_output_shape(
+        self, ind: int = 0  # noqa: ARG002
+    ) -> Sequence[int] | npt.NDArray[np.int_]:
+        """Return the normal (unfolded) output shape.
+
+        Args:
+            ind: Output index (unused, kept for interface compatibility).
+
+        Returns:
+            Tuple containing the normal output shape dimensions.
+
+        """
+        return self.get_normal_input_shape()
+
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[Literal[1], int, int]:  # noqa: ARG002
+        """Return folded input shape."""
+        stream_width = cast("int", self.get_nodeattr("StreamWidth"))
+        elem_width = cast("int", self.get_nodeattr("ElemWidth"))
         n_packed_elems = stream_width // elem_width
-        n_iters = self.get_nodeattr("NumIters")
+        n_iters = cast("int", self.get_nodeattr("NumIters"))
         return (1, n_iters, n_packed_elems)
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[Literal[1], int, int]:  # noqa: ARG002
+        """Return folded output shape."""
         return self.get_folded_input_shape()
 
-    def get_instream_width(self, ind=0):
-        stream_width = self.get_nodeattr("StreamWidth")
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
+        """Return instream width."""
+        stream_width = cast("int", self.get_nodeattr("StreamWidth"))
         return stream_width
 
-    def get_outstream_width(self, ind=0):
-        stream_width = self.get_nodeattr("StreamWidth")
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
+        """Return outstream width."""
+        stream_width = cast("int", self.get_nodeattr("StreamWidth"))
         return stream_width
 
-    def strm_decl(self):
+    def strm_decl(self) -> None:
+        """Return strm decl."""
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         self.code_gen_dict["$STREAMDECLARATIONS$"].append('hls::stream<InDType> in0_V ("in0_V");')
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
             'hls::stream<OutDType> out0_V ("out0_V");'
         )
 
-    def get_verilog_top_module_intf_names(self):
+    def get_verilog_top_module_intf_names(self) -> dict[str, list[tuple[str, int]] | list[str]]:
+        """Return verilog top module intf names."""
         intf_names = super().get_verilog_top_module_intf_names()
-        stream_width = self.get_nodeattr("StreamWidth")
+        stream_width = cast("int", self.get_nodeattr("StreamWidth"))
         intf_names["s_axis"] = [("in0_V", stream_width)]
         intf_names["m_axis"] = [("out0_V", stream_width)]
         if self.get_nodeattr("DynIters") == 1:

@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for split."""
 import numpy as np
 from onnx import helper
 from qonnx.core.datatype import DataType
@@ -40,9 +41,11 @@ class StreamingSplit(HWCustomOp):
     Only supports splitting along the last (channel) axis."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             "SIMD": ("i", True, 0),
             # number of elements of each output streams
@@ -59,30 +62,36 @@ class StreamingSplit(HWCustomOp):
         return my_attrs
 
     def get_n_outputs(self):
+        """Return n outputs."""
         return len(self.get_nodeattr("ChannelsPerStream"))
 
     def get_total_elems(self):
+        """Return total elems."""
         elems_per_stream = self.get_nodeattr("ChannelsPerStream")
         return int(np.sum(elems_per_stream))
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         total_elems = self.get_total_elems()
         vecs = list(self.get_nodeattr("numInputVectors"))
         ishape = tuple(vecs + [total_elems])
         return ishape
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         simd = self.get_nodeattr("SIMD")
         folds = self.get_total_elems() // simd
         vecs = list(self.get_nodeattr("numInputVectors"))
         return tuple(vecs + [folds, simd])
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         elems = self.get_nodeattr("ChannelsPerStream")[ind]
         vecs = list(self.get_nodeattr("numInputVectors"))
         return tuple(vecs + [elems])
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         elems = self.get_nodeattr("ChannelsPerStream")[ind]
         simd = self.get_nodeattr("SIMD")
         folds = elems // simd
@@ -91,6 +100,7 @@ class StreamingSplit(HWCustomOp):
 
     def make_shape_compatible_op(self, model):
         # check input shape
+        """Create shape compatible op."""
         exp_ishape = self.get_normal_input_shape()
         ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
         assert ishape == exp_ishape, "Unexpected input shape"
@@ -101,6 +111,7 @@ class StreamingSplit(HWCustomOp):
 
     def infer_node_datatype(self, model):
         # check input datatype
+        """Infer node datatype."""
         inp = self.onnx_node.input[0]
         idt = model.get_tensor_datatype(inp)
         if idt != self.get_input_datatype():
@@ -116,34 +127,42 @@ class StreamingSplit(HWCustomOp):
             model.set_tensor_datatype(out, odt)
 
     def verify_node(self):
+        """Verify node."""
         pass
 
     def get_input_datatype(self, ind=0):
+        """Return input datatype."""
         return DataType[self.get_nodeattr("inputDataType")]
 
     def get_output_datatype(self, ind=0):
         # all output datatypes are the same as the input datatype
+        """Return output datatype."""
         return self.get_input_datatype()
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         ibits = self.get_input_datatype().bitwidth()
         return ibits * self.get_nodeattr("SIMD")
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         obits = self.get_output_datatype().bitwidth()
         out_width = obits * self.get_nodeattr("SIMD")
         return out_width
 
     def get_number_output_values(self):
+        """Return number output values."""
         out_val = {}
         for i in range(len(self.onnx_node.output)):
             out_val["out%s" % i] = np.prod(self.get_folded_output_shape(i)[1:-1])
         return out_val
 
     def get_exp_cycles(self):
+        """Return exp cycles."""
         return np.prod(self.get_folded_input_shape()[:-1])
 
     def execute_node(self, context, graph):
+        """Execute node."""
         node = self.onnx_node
         split = self.get_nodeattr("ChannelsPerStream")
         np_split_param = np.cumsum(split[:-1])
@@ -152,5 +171,6 @@ class StreamingSplit(HWCustomOp):
             context[out] = np_result[i]
 
     def get_instream_width_padded(self, ind=0):
+        """Return instream width padded."""
         in_width = self.get_instream_width()
         return roundup_to_integer_multiple(in_width, 8)

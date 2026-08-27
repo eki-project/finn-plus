@@ -1,3 +1,4 @@
+"""Module for gathering floorplanning parameters from nodes in a model."""
 # Copyright (c) 2020, Xilinx
 # Copyright (C) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -28,16 +29,21 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from qonnx.custom_op.registry import getCustomOp
+from typing import TYPE_CHECKING, cast
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
+if TYPE_CHECKING:
+    from qonnx.core.modelwrapper import ModelWrapper
 
-def floorplan_params(model):
+
+def floorplan_params(
+    model: "ModelWrapper",
+) -> dict[str, dict[str, list[int | str | list[str]] | int | str]]:
     """Gathers SLR and partition IDs from nodes.
 
     Returns {node name : {slr, device id, partition id, memory port}}."""
-
-    ret_dict = {
+    ret_dict: dict[str, dict[str, list[int | str | list[str]] | int | str]] = {
         "Defaults": {
             "slr": [-1, ["all"]],
             "partition_id": [0, ["all"]],
@@ -48,9 +54,9 @@ def floorplan_params(model):
     for node in model.graph.node:
         if is_fpgadataflow_node(node):
             node_inst = getCustomOp(node)
-            node_slr = node_inst.get_nodeattr("slr")
-            node_pid = node_inst.get_nodeattr("partition_id")
-            node_mport = node_inst.get_nodeattr("mem_port")
+            node_slr = cast("int", node_inst.get_nodeattr("slr"))
+            node_pid = cast("int", node_inst.get_nodeattr("partition_id"))
+            node_mport = cast("str", node_inst.get_nodeattr("mem_port"))
             ret_dict[node.name] = {
                 "slr": node_slr,
                 "partition_id": node_pid,

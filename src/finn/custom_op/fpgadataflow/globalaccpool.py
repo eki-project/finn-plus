@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for globalaccpool."""
 import numpy as np
 from qonnx.core.datatype import DataType
 
@@ -37,9 +38,11 @@ class GlobalAccPool(HWCustomOp):
     """Abstraction layer for HW implementation of GlobalAccPool"""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             "NumChannels": ("i", True, 0),
             "PE": ("i", True, 0),
@@ -55,12 +58,14 @@ class GlobalAccPool(HWCustomOp):
         return my_attrs
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         ch = self.get_nodeattr("NumChannels")
         vecs = list(self.get_nodeattr("numInputVectors"))
         ishape = tuple(vecs + [ch])
         return ishape
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         ch = self.get_nodeattr("NumChannels")
         pe = self.get_nodeattr("PE")
         vecs = list(self.get_nodeattr("numInputVectors"))
@@ -70,6 +75,7 @@ class GlobalAccPool(HWCustomOp):
         return folded_ishape
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         ch = self.get_nodeattr("NumChannels")
         vecs = list(self.get_nodeattr("numInputVectors"))
         if len(vecs) == 1:
@@ -79,6 +85,7 @@ class GlobalAccPool(HWCustomOp):
         return oshape
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         ch = self.get_nodeattr("NumChannels")
         pe = self.get_nodeattr("PE")
         unfolded_shape = list(self.get_normal_output_shape())
@@ -88,6 +95,7 @@ class GlobalAccPool(HWCustomOp):
         return oshape
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -133,6 +141,7 @@ class GlobalAccPool(HWCustomOp):
 
     def get_exp_cycles(self):
         # Channels/PE * batch size * idim * idim + Channels/PE
+        """Return exp cycles."""
         ch = self.get_nodeattr("NumChannels")
         pe = self.get_nodeattr("PE")
         folds = int(ch / pe)
@@ -140,6 +149,7 @@ class GlobalAccPool(HWCustomOp):
 
     def execute_node(self, context, graph):
         # simulate behavior with Python functionality
+        """Execute node."""
         node = self.onnx_node
         inp_values = context[node.input[0]]
         oshape = context[node.output[0]].shape

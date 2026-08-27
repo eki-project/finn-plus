@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for streamingfifo."""
 import math
 from qonnx.core.datatype import DataType
 
@@ -34,10 +35,14 @@ from finn.util.logging import log
 
 
 class StreamingFIFO(HWCustomOp):
+    """Class for Streaming FIFO."""
+
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = super().get_nodeattr_types()
         my_attrs.update(
             {
@@ -71,6 +76,7 @@ class StreamingFIFO(HWCustomOp):
         return my_attrs
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -85,6 +91,7 @@ class StreamingFIFO(HWCustomOp):
         model.set_tensor_datatype(node.output[0], idt)
 
     def get_verilog_top_module_intf_names(self):
+        """Return verilog top module intf names."""
         ret = super().get_verilog_top_module_intf_names()
         try:
             is_rtl = self.get_nodeattr("impl_style") == "rtl"
@@ -100,6 +107,7 @@ class StreamingFIFO(HWCustomOp):
         return ret
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         try:
             depth = self.get_adjusted_depth()
         except AttributeError:
@@ -114,33 +122,41 @@ class StreamingFIFO(HWCustomOp):
         return self.get_nodeattr("normal_shape")
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         return self.get_normal_input_shape()
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         return self.get_nodeattr("folded_shape")
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         return self.get_nodeattr("folded_shape")
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         dtype = DataType[self.get_nodeattr("dataType")]
         folded_shape = self.get_nodeattr("folded_shape")
         in_width = folded_shape[-1] * dtype.bitwidth()
         return in_width
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         dtype = DataType[self.get_nodeattr("dataType")]
         folded_shape = self.get_nodeattr("folded_shape")
         in_width = folded_shape[-1] * dtype.bitwidth()
         return in_width
 
     def get_input_datatype(self, ind=0):
+        """Return input datatype."""
         return DataType[self.get_nodeattr("dataType")]
 
     def get_output_datatype(self, ind=0):
+        """Return output datatype."""
         return DataType[self.get_nodeattr("dataType")]
 
     def execute_node(self, context, graph):
+        """Execute node."""
         node = self.onnx_node
         context[node.output[0]] = context[node.input[0]]
 
@@ -168,20 +184,18 @@ class StreamingFIFO(HWCustomOp):
 
         if W == 1:
             return math.ceil(depth / 16384)
-        elif W == 2:
+        if W == 2:
             return math.ceil(depth / 8192)
-        elif W <= 4:
+        if W <= 4:
             return (math.ceil(depth / 4096)) * (math.ceil(W / 4))
-        elif W <= 9:
+        if W <= 9:
             return (math.ceil(depth / 2048)) * (math.ceil(W / 9))
-        elif W <= 18 or depth > 512:
+        if W <= 18 or depth > 512:
             return (math.ceil(depth / 1024)) * (math.ceil(W / 18))
-        else:
-            return (math.ceil(depth / 512)) * (math.ceil(W / 36))
+        return (math.ceil(depth / 512)) * (math.ceil(W / 36))
 
     def uram_estimation(self):
         """Calculates resource estimation for URAM"""
-
         try:
             impl = self.get_nodeattr("impl_style") == "rtl"
         except AttributeError:
@@ -200,10 +214,10 @@ class StreamingFIFO(HWCustomOp):
         if impl == "rtl" or (impl == "vivado" and ram_type != "ultra"):
             # Non-BRAM based implementation
             return 0
-        else:
-            return (math.ceil(depth / 4096)) * (math.ceil(W / 72))
+        return (math.ceil(depth / 4096)) * (math.ceil(W / 72))
 
     def bram_efficiency_estimation(self):
+        """Return bram efficiency estimation."""
         try:
             depth = self.get_adjusted_depth()
         except AttributeError:

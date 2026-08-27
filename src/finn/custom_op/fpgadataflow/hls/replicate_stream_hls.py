@@ -3,6 +3,7 @@
 # per line. Black, however, formats some lines going beyond this.
 
 # Numpy math and arrays
+"""Module for replicate stream hls."""
 import numpy as np
 
 # Base class for specializing HW operators as implemented via HLS
@@ -17,8 +18,10 @@ class ReplicateStream_hls(  # noqa: Class name does not follow
     ReplicateStream, HLSBackend
 ):
     # Node attributes matching the HLS operator
+    """Class for Replicate Stream hls."""
     def get_nodeattr_types(self):
         # Start from parent operator class attributes
+        """Return nodeattr types."""
         attrs = ReplicateStream.get_nodeattr_types(self)
         # Add the HLSBackend default attributes on top
         attrs.update(HLSBackend.get_nodeattr_types(self))
@@ -30,11 +33,12 @@ class ReplicateStream_hls(  # noqa: Class name does not follow
     def get_ap_int_max_w(self):
         # Find the widths of the widest input
         # Note: There is just one input.
+        """Return ap int max w."""
         i_bits_max = self.get_instream_width(ind=0)
         # Find the widths of the widest output
         # Note: there is one output per replica
         o_bits_max = max(
-            (self.get_outstream_width(ind) for ind in range(self.num))
+            self.get_outstream_width(ind) for ind in range(self.num)
         )
         # Find the biggest of the inputs/outputs
         return max([i_bits_max, o_bits_max])
@@ -45,11 +49,13 @@ class ReplicateStream_hls(  # noqa: Class name does not follow
     # code
     def global_includes(self):
         # Currently nothing to include
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = []
 
     # Generates C++ code of type alias, global constant and macro definitions
     def defines(self, var):
         # Insert constants and type aliases into the dictionary
+        """Return defines."""
         self.code_gen_dict["$DEFINES$"] = [
             # Input and output element datatypes
             f"using IType = {self.dtype.get_hls_datatype_str()};",
@@ -73,7 +79,9 @@ class ReplicateStream_hls(  # noqa: Class name does not follow
     # Generates C++ code for calling the computation part of the operator
     def docompute(self):
         # Generates the name of the ith output stream
+        """Return docompute."""
         def out(i):
+            """Return out."""
             return f"out{i}_{self.hls_sname()}"
 
         # Number of iterations required to process the whole folded input stream
@@ -92,7 +100,7 @@ class ReplicateStream_hls(  # noqa: Class name does not follow
             # Write the same input element into each output stream
             *(f"{out(i)}.write(x);" for i in range(self.num)),
             # End of for-loop over repetitions body
-            f"}}"  # noqa: f-string symmetry
+            "}"  # noqa: f-string symmetry
         ]
 
     # Generates essentially the head of the C++ function from which the IP block
@@ -100,6 +108,7 @@ class ReplicateStream_hls(  # noqa: Class name does not follow
     def blackboxfunction(self):
         # Insert function head describing the top level interface of the stream
         # replicating operator
+        """Return blackboxfunction."""
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             # @formatter:off Prevent Python formatter from messing with C++
             # formatting
@@ -119,6 +128,7 @@ class ReplicateStream_hls(  # noqa: Class name does not follow
     def pragmas(self):
         # Add HLS interface directives specifying how to create RTL ports for
         # the top-level function arguments
+        """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = [
             # Connect the input stream with an axi stream interface
             f"#pragma HLS INTERFACE axis port=in0_{self.hls_sname()}"
@@ -136,9 +146,10 @@ class ReplicateStream_hls(  # noqa: Class name does not follow
 
     # Returns the names of input and output interfaces grouped by protocol
     def get_verilog_top_module_intf_names(self):
-        # Start collecting interface names in a dictionary  # noqa Duplicate
+        # Start collecting interface names in a dictionary
         # starting with clock and reset
-        intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}  # noqa
+        """Return verilog top module intf names."""
+        intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}
         # AXI stream input interfaces
         intf_names["s_axis"] = [
             # Just one input stream

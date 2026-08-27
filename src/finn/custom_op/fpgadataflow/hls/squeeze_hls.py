@@ -21,7 +21,7 @@ from finn.custom_op.fpgadataflow.squeeze import Squeeze
 
 # HLS Backend specialization of the squeeze operator
 @register_custom_op
-class Squeeze_hls(Squeeze, HLSBackend):  # noqa: N801
+class Squeeze_hls(Squeeze, HLSBackend):
     """HLS backend implementation of the Squeeze operator.
 
     Removes single-dimension entries from the shape of a tensor using HLS synthesis.

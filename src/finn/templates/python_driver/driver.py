@@ -133,7 +133,6 @@ class FINNDMAOverlay(Overlay):
         is specified as the class member ``runtime_weight_dir``. External (DRAM)
         weights are one .npy file per layer.
         """
-
         self.external_weights = []
         w_filenames = []
         if not os.path.isdir(self.runtime_weight_dir):
@@ -173,8 +172,8 @@ class FINNDMAOverlay(Overlay):
             hw_ext_weights = self.io_shape_dict["number_of_external_weights"]
             assert len(self.external_weights) == hw_ext_weights, (
                 "Number of hardware external weights and number of external "
-                + "weight tensors available do not match. \n"
-                + "Is runtime_weight_dir pointing to the correct folder?"
+                "weight tensors available do not match. \n"
+                "Is runtime_weight_dir pointing to the correct folder?"
             )
 
     def load_runtime_weights(self, flush_accel=True, verify=True):
@@ -200,7 +199,7 @@ class FINNDMAOverlay(Overlay):
         rt_weight_dict = {}
         for w_filename in w_filenames:
             if w_filename.endswith(".dat"):
-                with open(self.runtime_weight_dir + "/" + w_filename, "r") as f:
+                with open(self.runtime_weight_dir + "/" + w_filename) as f:
                     dat = f.read()
             else:
                 continue
@@ -445,7 +444,7 @@ class FINNDMAOverlay(Overlay):
             self.wait_until_finished()
 
     def wait_until_finished(self):
-        "Block until all output DMAs have finished writing."
+        """Block until all output DMAs have finished writing."""
         if self.platform == "zynq-iodma":
             # check if output IODMA is finished via register reads
             for o in range(self.num_outputs):
@@ -465,7 +464,7 @@ class FINNDMAOverlay(Overlay):
         packing and copying to device buffers, execute on accelerator, then unpack
         output and return output numpy array from accelerator."""
         # if single input, convert to list to normalize how we process the input
-        if not type(input_npy) is list:
+        if type(input_npy) is not list:
             input_npy = [input_npy]
         assert self.num_inputs == len(input_npy), "Not all accelerator inputs are specified."
         for i in range(self.num_inputs):
@@ -481,8 +480,7 @@ class FINNDMAOverlay(Overlay):
             outputs.append(obuf_normal)
         if self.num_outputs == 1:
             return outputs[0]
-        else:
-            return outputs
+        return outputs
 
     def throughput_test(self, **kwargs):
         """Run accelerator with empty inputs to measure throughput and other metrics.
@@ -641,8 +639,7 @@ class FINNInstrumentationOverlay(Overlay):
         )
 
     def start_accelerator(self, throttle_interval=0, avg_window_size=64, mux_interval=0):
-        """
-        Start the accelerator. Input is throttled to the specified interval (in cycles)
+        """Start the accelerator. Input is throttled to the specified interval (in cycles)
         by pausing after each FM transmission. A throttle_interval of 0 means no throttling.
         mux_interval controls tUSER round-robin scheduling: 0 = fixed tUSER=0,
         N = advance tUSER every N frames.
@@ -871,8 +868,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.ctrl_read(check_success=True)
 
     def configure_fifos_bounded(self, depths):
-        """
-        Configure all FIFOs with bounded depths.
+        """Configure all FIFOs with bounded depths.
         Caller can supply a list of depths or a single depth for all FIFOs.
         """
         if isinstance(depths, list):
@@ -881,7 +877,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             fifo_depths = [depths] * self.num_fifos
 
         # Set depth for each FIFO
-        for i in range(0, self.num_fifos):
+        for i in range(self.num_fifos):
             self.ctrl_set_depth(i, fifo_depths[i])
 
         # Issue RUN_BOUNDED instruction once all depths have been set
@@ -931,7 +927,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
 
         # Collect maximum occupancy of all FIFOs by issuing READ_FILL instructions
         max_occupancy = []
-        for i in range(0, self.num_fifos):
+        for i in range(self.num_fifos):
             max_occupancy.append(self.ctrl_read(opcode=0x0C, fifo_id=i))
 
         return max_occupancy, latency
@@ -2039,7 +2035,7 @@ def parse_kv(ctx, self, value):
     multiple=True,
     callback=parse_kv,
     nargs=2,
-    help=("Keyword argument for the class instance: " "... -ck key1=val1 TYPE -ck key2=val2 TYPE"),
+    help=("Keyword argument for the class instance: ... -ck key1=val1 TYPE -ck key2=val2 TYPE"),
 )
 @click.option(
     "--fkwarg",
@@ -2047,11 +2043,10 @@ def parse_kv(ctx, self, value):
     multiple=True,
     callback=parse_kv,
     nargs=2,
-    help=("Keyword argument for the called function: " "... -fk key1=val1 TYPE -fk key2=val2 TYPE"),
+    help=("Keyword argument for the called function: ... -fk key1=val1 TYPE -fk key2=val2 TYPE"),
 )
 def driver_cli(bitfile_name, settings, function, ckwarg, fkwarg):
-    """
-    CLI tool to instantiate driver and execute functions.
+    """CLI tool to instantiate driver and execute functions.
 
     Instantiates a driver class and executes a member function.
     The instantiation implicitly loads a bitstream to the FPGA.
@@ -2062,8 +2057,7 @@ def driver_cli(bitfile_name, settings, function, ckwarg, fkwarg):
     via --ckwarg or --fkwarg options respectively.
     Class Kwargs take precedence over settings.json Kwargs.
     """
-
-    with open(settings, "r", encoding="utf-8") as f:
+    with open(settings, encoding="utf-8") as f:
         driver_settings = json.load(f)["driver_information"]
 
     if ckwarg is None:

@@ -38,7 +38,7 @@ def validate(cls_inst, *args, **kwargs):
         print("batch %d / %d : total OK %d NOK %d" % (i + 1, n_batches, ok, nok))
 
     acc = 100.0 * ok / (total)
-    print("Final accuracy: {:.2f}%".format(acc))
+    print(f"Final accuracy: {acc:.2f}%")
 
     # write report to file
     report = {

@@ -3,21 +3,11 @@ from onnx import TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.util.basic import qonnx_make_model
 
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
-from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
-from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
-from finn.transformation.fpgadataflow.set_fifo_depths import (
-    InsertAndSetFIFODepths,
-    RemoveShallowFIFOs,
-    SplitLargeFIFOs,
-)
-from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
-from finn.transformation.general import ApplyConfig
 
 
 class GenerateNodeContainerStitched(Transformation):
@@ -65,39 +55,21 @@ class GenerateNodeContainerStitched(Transformation):
                         "code_gen_dir_ipgen", inner_node_inst.get_nodeattr("code_gen_dir_ipgen")
                     )
                 elif node_inst.get_nodeattr("multi_dnn_type") == "partial_reconfiguration":
+                    # Local import to avoid a circular import: build_dataflow_steps
+                    # imports GenerateNodeContainerStitched from this module.
+                    from finn.builder.build_dataflow_steps import step_set_fifo_depths
+
                     node_inst = getCustomOp(node)
                     bodies = node_inst.get_nodeattr("bodies")
                     for id in range(bodies):
                         body_attr = f"body_{id}"
                         node_model = node_inst.get_nodeattr(body_attr)
-                        if self.cfg.auto_fifo_depths:
-                            node_model = node_model.transform(
-                                InsertAndSetFIFODepths(
-                                    self.cfg._resolve_fpga_part(),
-                                    self.cfg._resolve_hls_clk_period(),
-                                    swg_exception=self.cfg.default_swg_exception,
-                                    vivado_ram_style=self.cfg.large_fifo_mem_style,
-                                    fifosim_input_throttle=self.cfg.fifosim_input_throttle,
-                                    cfg_n_inferences=self.cfg.fifosim_n_inferences,
-                                )
-                            )
-                        else:
-                            node_model = node_model.transform(InsertDWC())
-                            node_model = node_model.transform(InsertFIFO(create_shallow_fifos=True))
-                            node_model = node_model.transform(
-                                SpecializeLayers(self.cfg._resolve_fpga_part())
-                            )
-                            node_model = node_model.transform(
-                                GiveUniqueNodeNames(prefix=node.name + "_" + body_attr + "_")
-                            )
-                            node_model = node_model.transform(GiveReadableTensorNames())
-                            if self.cfg.folding_config_file is not None:
-                                node_model = node_model.transform(
-                                    ApplyConfig(self.cfg.folding_config_file)
-                                )
-                        if self.cfg.split_large_fifos:
-                            node_model = node_model.transform(SplitLargeFIFOs())
-                        node_model = node_model.transform(RemoveShallowFIFOs())
+                        # Give each PR body the same FIFO treatment as the top-level flow
+                        node_model = step_set_fifo_depths(
+                            node_model,
+                            self.cfg,
+                            parent_node=node.name + "_" + body_attr + "_",
+                        )
                         node_model = node_model.transform(
                             PrepareIP(
                                 self.cfg._resolve_fpga_part(), self.cfg._resolve_hls_clk_period()
