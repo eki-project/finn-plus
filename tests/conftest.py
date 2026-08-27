@@ -41,6 +41,8 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from rich.console import Console
+from rich.syntax import Syntax
 
 import finn.util.settings
 from finn.interface.settings import FINNSettings
@@ -116,3 +118,40 @@ def setup_onnxruntime(request):
         return _default_session_options
 
     ort.capi._pybind_state.get_default_session_options = get_default_session_options_new
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item):  # noqa
+    """Get the test report and attach it to the test item to make it
+    available to the `print_report_during_testing` fixture.
+    """
+    report = (yield).get_result()
+
+    # Only attach the test report when we are in the call stage
+    if report is not None and report.when == "call":
+        setattr(item, "report", report)  # noqa
+
+
+@pytest.fixture(scope="function", autouse=True)
+def print_report_during_testing(  # noqa
+    request: pytest.FixtureRequest, capsys: pytest.CaptureFixture
+):
+    """If the test failed temporarily disable stdout capture and print the report.
+    Useful if the CI takes long or does not end.
+    """
+    yield
+    with capsys.disabled():
+        if request.node.report.failed:
+            mins = (request.node.report.duration) / 60.0
+            duration = f"{mins:.2f} min"
+            print()
+
+            # Use formatted printing if we are _not_ in the CI console
+            if os.getenv("CI", default=None) in [None, False]:
+                cons = Console()
+                cons.print(f"Failed test took {duration}")
+                source = Syntax(request.node.report.longreprtext, "python")
+                cons.print(source)
+            else:
+                print(f"Failed test took {duration}")
+                print(request.node.report.longreprtext)
