@@ -42,7 +42,7 @@ from copy import deepcopy
 from functools import partial
 from onnx import NodeProto
 from pathlib import Path
-from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.core.modelwrapper import DataType, ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopcount
@@ -1002,6 +1002,28 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
             "The following nodes at the start/end of the graph will not be mapped to the "
             "accelerator, so they will need to be implemented manually (e.g., in software): "
             + ", ".join(unmapped_layers)
+        )
+
+    # Warn if floating point operations are still in the graph
+    float_ops: set[str] = set()
+    for node in model.graph.node:
+        custom_op = getHWCustomOp(node)
+        n_inputs = len(node.input)
+        for i in range(n_inputs):
+            if custom_op.get_input_datatype(i) == DataType["FLOAT32"]:
+                float_ops.add(node.name)
+                break
+        n_outputs = len(node.output)
+        for i in range(n_outputs):
+            if custom_op.get_output_datatype(i) == DataType["FLOAT32"]:
+                float_ops.add(node.name)
+                break
+    if len(float_ops) != 0:
+        log.warning(
+            f"The following nodes use floating point operations in the graph: "
+            f"{', '.join(float_ops)}. Make sure that this is intended behavior."
+            "For input/output node of the graph, this behavior is expected as part"
+            " of the input/output quantisers."
         )
 
     parent_model = model.transform(
