@@ -66,18 +66,22 @@ def pytest_collect_file(file_path: Path, parent) -> None:  # noqa: ARG001
 
 def pytest_configure(config) -> None:  # noqa: ARG001
     """Initialize FINN settings once per pytest run."""
-    mp_start_method = os.environ.get("FINN_TESTS_MP_START_METHOD")
-    if mp_start_method is not None and mp.get_start_method(allow_none=True) != mp_start_method:
-        mp.set_start_method(mp_start_method, force=True)
-
     import finn.util.settings
 
     finn.util.settings.initialize_dummy_settings()
 
-    # Verify (and if needed, build/rebuild) XSI for the currently loaded Vivado
-    # version now, once, before any parallel work (pytest-xdist workers /
-    # multiprocessing.Pool inside tests) gets a chance to import finn.xsi
-    # transitively.
+    # Use a fork-safe multiprocessing start method (default: forkserver) and
+    # pre-start its daemon now, while single-threaded, so a later Pool()/
+    # Process() call from a worker can't race the daemon's own bootstrap fork
+    # against some other library's (e.g. filelock's) fork-safety machinery.
+    # Then verify (and if needed, build/rebuild) XSI for the currently loaded
+    # Vivado version, also now, once, before any parallel work (pytest-xdist
+    # workers / multiprocessing.Pool inside tests) gets a chance to import
+    # finn.xsi transitively.
+    mp_start_method = os.environ.get("FINN_TESTS_MP_START_METHOD", "forkserver")
+    if mp.get_start_method(allow_none=True) != mp_start_method:
+        mp.set_start_method(mp_start_method, force=True)
+
     import finn.xsi
 
     finn.xsi.ensure_available()

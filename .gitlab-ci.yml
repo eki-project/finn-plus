@@ -168,8 +168,8 @@ FINN Test Suite 2024.2:
   variables:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $PYTEST_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclusive --exclude $SLURM_EXCLUDE_NODES"
     PYTEST_PARALLEL: "$PYTEST_WORKERS"
-    # Use spawn-based multiprocessing in tests to avoid fork/filelock races on Python 3.11.
-    FINN_TESTS_MP_START_METHOD: "spawn"
+    # Use modern forkserver-based multiprocessing in tests to avoid fork/filelock races on Python 3.11, similar to what Python 3.14 does.
+    FINN_TESTS_MP_START_METHOD: "forkserver"
   extends: .setup_full_2024_2
   script:
     # Launch additional monitoring
