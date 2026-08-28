@@ -9,12 +9,12 @@ which is set once per process before any pool or worker is created.
 import multiprocessing as mp
 import os
 
-# "spawn" rather than "forkserver": the forkserver daemon is started at the first
-# pool creation and keeps the environment it had at that moment, so later updates
-# (e.g. the per-test FINN_BUILD_DIR set by the isolate_build_dir fixture) would
-# never reach the workers. "spawn" starts each child fresh and always passes the
-# current environment.
-DEFAULT_START_METHOD = "spawn"
+# "forkserver" is being trialled against "spawn" on CI. Note the known caveat: the
+# forkserver daemon is started at the first pool creation and keeps the environment
+# it had at that moment, so later updates (e.g. the per-test FINN_BUILD_DIR set by
+# the isolate_build_dir fixture) do not reach the workers. "spawn" starts each child
+# fresh and always passes the current environment.
+DEFAULT_START_METHOD = "forkserver"
 
 
 def get_configured_start_method() -> str:
