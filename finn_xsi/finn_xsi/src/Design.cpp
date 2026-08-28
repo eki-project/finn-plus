@@ -14,8 +14,21 @@ Design::Design(xsi::Kernel& kernel, const std::string& design_lib, const s_xsi_s
     _kernel.open(design_lib, setup_info);
 }
 
-Design::Design(xsi::Kernel& kernel, const std::string& design_lib, const char* const log_file, const char* const wdb_file)
-    : Design(kernel, design_lib, s_xsi_setup_info{.logFileName = const_cast<char*>(log_file), .wdbFileName = const_cast<char*>(wdb_file), .xsimDir = nullptr}) {}
+namespace {
+    // xsi.h asks for all fields of the setup info to be zeroed before the individual ones
+    // are set, so that the struct stays well defined when a Vivado version adds a new
+    // field. Value-initialization does exactly that and, unlike a designated initializer,
+    // does not need to name fields that only exist in some Vivado versions (e.g. xsimDir,
+    // which was added after 2022.2).
+    s_xsi_setup_info make_setup_info(const char* const log_file, const char* const wdb_file) {
+        s_xsi_setup_info setup_info{};
+        setup_info.logFileName = const_cast<char*>(log_file);
+        setup_info.wdbFileName = const_cast<char*>(wdb_file);
+        return setup_info;
+    }
+}  // namespace
+
+Design::Design(xsi::Kernel& kernel, const std::string& design_lib, const char* const log_file, const char* const wdb_file) : Design(kernel, design_lib, make_setup_info(log_file, wdb_file)) {}
 
 // Destructor
 Design::~Design() { _kernel.close(); }
