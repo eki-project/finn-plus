@@ -26,6 +26,8 @@ Please follow the steps below and be sure that your contribution complies with o
     5. Use *git add*, *git commit*, *git push* to add changes to your fork.
 
     6. If you are introducing new functionality, add at least one unit test under the `tests/` folder and make sure it passes before you submit the pull request.
+       - Tests receive a deterministic per-item `finn_test_seed` fixture from `tests/conftest.py`, and Python/NumPy/Torch RNGs are seeded automatically for each item.
+       - Avoid hard-coding global seed resets like `np.random.seed(0)` in test bodies/helpers unless a test explicitly validates seed-dependent behavior.
 
     7. Submit a pull request by clicking the *pull request* button on your GitHub repo:
         1. The [main branch](https://github.com/eki-project/finn-plus) should always be treated as stable and clean. Only hot fixes are allowed to be pull-requested. The hot fix is supposed to be very important such that without this fix, a lot of things will break.
