@@ -16,24 +16,33 @@ variables:
       - "none"
       - "quicktest_ci"
       - "full_ci"
-  CPU_CORES:
-    description: "Select number of CPU cores and test workers"
+  PYTEST_WORKERS:
+    description: "Select number PyTest workers"
+    value: "64"
+  PYTEST_FINN_WORKERS:
+    description: "Select number of FINN workers per PyTest worker"
+    value: "16"
+  BENCH_CPU_CORES:
+    description: "Select number of CPU cores for each regression/benchmark run"
     value: "32"
-  CPU_CORES_BENCH:
-    description: "Select number of CPU cores for benchmark runs"
+  BENCH_FINN_WORKERS:
+    description: "Select number of FINN workers for each regression/benchmark run"
     value: "32"
   MEM_BENCH:
-    description: "Select memory for each benchmark job"
-    value: "128G"
+    description: "Select memory for each regression/benchmark run"
+    value: "256G"
   PARALLEL_JOBS:
     description: "Number of parallel Slurm array jobs per Benchmark job"
-    value: "1"
+    value: "8"
   SLURM_TIMEOUT:
     description: "Select SLURM timeout"
-    value: "3-0" # [days-hours]
-  SLURM_PARTITION:
+    value: "1-0" # [days-hours]
+  PYTEST_SLURM_PARTITION:
     description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
     value: "fpga"
+  BENCH_SLURM_PARTITION:
+    description: "Slurm partition (e.g., normal, largemem, fpga, gpu)"
+    value: "normal"
   SLURM_EXCLUDE_NODES:
     description: "Slurm nodes, which should not be used by the CI"
     value: "fpga[1607-1614]"
@@ -135,7 +144,7 @@ Build:
     paths:
       - deps
 
-FINN Test Suite 2022.2:
+FINN Test Suite 2024.2:
   id_tokens:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
@@ -149,9 +158,6 @@ FINN Test Suite 2022.2:
     # Do not run if test suite has been deselected
     - if: $TEST_SUITE == "none"
       when: never
-    # Do not run for PRs to dev (run only for pushes)
-    - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "dev"
-      when: never
     # Always run, as long as there was no prior failure
     - when: on_success
   cache:
@@ -160,9 +166,14 @@ FINN Test Suite 2022.2:
     paths:
       - deps
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclusive --exclude $SLURM_EXCLUDE_NODES"
-    PYTEST_PARALLEL: "$CPU_CORES"
-  extends: .setup_full_2022_2
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $PYTEST_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclusive --exclude $SLURM_EXCLUDE_NODES"
+    PYTEST_PARALLEL: "$PYTEST_WORKERS"
+    # Avoid fork-based multiprocessing (unsafe with threaded native libraries and
+    # going away in Python 3.14). Must be spawn, not forkserver: the forkserver
+    # daemon caches the environment from its first use, which would pin workers
+    # to a stale FINN_BUILD_DIR.
+    FINN_MP_START_METHOD: "spawn"
+  extends: .setup_full_2024_2
   script:
     # Launch additional monitoring
     - $JOB_MONITORING_DIR/monitor.sh $JOB_MONITORING_DIR/$CI_PIPELINE_ID/$HOSTNAME.log &
@@ -172,7 +183,7 @@ FINN Test Suite 2022.2:
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
-      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-test-workers $PYTEST_PARALLEL -n 1
+      finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-test-workers $PYTEST_WORKERS -n $PYTEST_FINN_WORKERS
   artifacts:
     name: "test_reports"
     when: always
@@ -180,20 +191,6 @@ FINN Test Suite 2022.2:
       - reports/
     reports:
       junit: reports/*.xml
-
-FINN Test Suite 2024.2:
-  extends:
-    - FINN Test Suite 2022.2
-    - .setup_full_2024_2
-  rules:
-    # Do not run on a schedule
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    # Do not run if test suite has been deselected
-    - if: $TEST_SUITE == "none"
-      when: never
-    # Always run, as long as there was no prior failure
-    - when: on_success
 
 Bench (Manual):
   stage: test
@@ -227,7 +224,7 @@ Bench (Basic):
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
   parallel:
     matrix:
-      - BENCH_CFG: [regression_basic]
+      - BENCH_CFG: [regression_basic, regression_extended, regression_transformer]
 
 Bench (Extended):
   stage: test
@@ -249,4 +246,4 @@ Bench (Extended):
     PARALLEL_JOBS: "8"
   parallel:
     matrix:
-      - BENCH_CFG: [regression_extended, regression_transformer, microbenchmark_basic]
+      - BENCH_CFG: [microbenchmark_basic]

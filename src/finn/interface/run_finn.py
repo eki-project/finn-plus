@@ -20,6 +20,7 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from typing import TYPE_CHECKING, Any, cast
 
 import finn.util.settings
+import finn.xsi
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import (
     NullablePath,
@@ -33,6 +34,7 @@ from finn.interface.manage_deps import DependencyUpdater
 from finn.interface.manage_tests import run_test
 from finn.interface.settings import FINNSettings
 from finn.util.exception import FINNUserError, FINNValidationError
+from finn.util.multiprocessing import configure_start_method
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -434,6 +436,18 @@ def prepare_finn(
     status(f"{'[DEPENDENCY DEFINITIONS PATH]':<32} {settings.finn_deps_definitions!s:<50}")
     status(f"{'[NUM WORKERS]':<32} {settings.num_default_workers!s:<50}")
     finn.util.settings._SETTINGS = settings  # noqa
+
+    # Select the configured multiprocessing start method and pre-start any daemon
+    # now, while single-threaded, so a later Pool()/Process() call can't race
+    # the bootstrap against some other library's (e.g. filelock's) fork-safety
+    # machinery. Then verify (and if needed, build/rebuild) XSI for the currently
+    # loaded Vivado version, also now, once, before any parallel work
+    # (multiprocessing.Pool / pytest-xdist workers) gets a chance to import
+    # finn.xsi transitively.
+    configure_start_method()
+
+    finn.xsi.ensure_available()
+
     if "PYTHONPATH" not in os.environ:
         os.environ["PYTHONPATH"] = ""
 
@@ -1000,10 +1014,18 @@ def test(
 
     prepare_finn(settings, True, batch)
 
-    # Save settings so that the test fixture can reload it
-    if settings.settingsfile_exists():
-        os.environ["FINN_SETTINGS"] = str(settings.get_path())
-        status("Saved settings path in FINN_SETTINGS: " + os.environ["FINN_SETTINGS"])
+    # Save settings so that the test fixture and any child interpreters can reload
+    # them. Non-fork start methods give children a fresh interpreter with no global
+    # settings, so they rebuild from the file that FINN_SETTINGS points at. On CI
+    # there is usually no pre-existing settings file, so write one into the build
+    # directory rather than skipping the export and leaving children without settings.
+    if not settings.settingsfile_exists():
+        settings_path = finn_build_dir / "settings.yaml"
+        settings.save(installation_independent=False, path=settings_path)
+    else:
+        settings_path = settings.get_path()
+    os.environ["FINN_SETTINGS"] = str(settings_path)
+    status("Saved settings path in FINN_SETTINGS: " + os.environ["FINN_SETTINGS"])
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
@@ -1160,6 +1182,8 @@ def finn_check() -> None:
 
 def main() -> None:
     """Clicks entrypoint function."""
+    # Select the multiprocessing start method before anything can create workers.
+    configure_start_method()
     settings.add_command(config_show)
     settings.add_command(config_edit)
     settings.add_command(config_create)

@@ -103,7 +103,7 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
         case "quicktest_ci":
             subprocess.run(
                 shlex.split(
-                    f"{sys.executable} -m pytest  {cache_clear_flag} -v -m 'not "
+                    f"{sys.executable} -m pytest -q -rf --tb=short {cache_clear_flag} -m 'not "
                     f"(vivado or slow or vitis or board or notebooks or bnn_pynq or end2end)' "
                     f"--junitxml={ci_project_dir}/reports/quick.xml "
                     f"--html={ci_project_dir}/reports/quick.html "
@@ -116,9 +116,6 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
             main_html = f"{ci_project_dir}/reports/main.html"
             crash_xml = f"{ci_project_dir}/reports/crash_rerun.xml"
             crash_html = f"{ci_project_dir}/reports/crash_rerun.html"
-            end2end_xml = f"{ci_project_dir}/reports/end2end.xml"
-            end2end_html = f"{ci_project_dir}/reports/end2end.html"
-
             crash_re: Pattern[str] = re.compile(
                 r"(worker.*crash|worker.*terminated|segmentation fault|sigsegv|signal 11|fatal python error)",  # noqa
                 re.IGNORECASE,
@@ -198,8 +195,7 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
             test_1_process = subprocess.Popen(
                 shlex.split(
                     (
-                        f"{sys.executable} -m pytest {cache_clear_flag} -v -m 'not "
-                        f"(end2end or sanity_bnn or notebooks)' "
+                        f"{sys.executable} -m pytest -q -rf --tb=short {cache_clear_flag} "
                         f"--junitxml={main_xml} "
                         f"--html={main_html} "
                         f"--reruns 1 --dist worksteal -n {num_workers}"
@@ -253,27 +249,9 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
             main_returncode = test_1_returncode or test_2_returncode
 
             # --------------------------
-            # 4) Run end2end tests
+            # 4) Run doctests and merge all reports into a single HTML and XML report
             # --------------------------
-
-            test_3_process = subprocess.Popen(
-                shlex.split(
-                    (
-                        f"{sys.executable} -m pytest -v -m 'end2end or sanity_bnn or notebooks' "
-                        f"--junitxml={end2end_xml} "
-                        f"--html={end2end_html} "
-                        f"--reruns 1 --dist loadgroup -n {num_workers}"
-                    ),
-                    posix=IS_POSIX,
-                )
-            )
-            test_3_process.communicate()
-            test_3_returncode = test_3_process.returncode
-
-            # --------------------------
-            # 5) Run doctests and merge all reports into a single HTML and XML report
-            # --------------------------
-            test_4_returncode = run_doctests(int(num_workers))
+            test_3_returncode = run_doctests(int(num_workers))
 
             subprocess.run(
                 shlex.split(
@@ -290,7 +268,7 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
                     (
                         f"{sys.executable} {script_dir} "
                         f"-o {ci_project_dir}/reports/full_test_suite.xml "
-                        f"{main_xml} {crash_xml} {end2end_xml}"
+                        f"{main_xml} {crash_xml}"
                     ),
                     posix=IS_POSIX,
                 )
@@ -299,11 +277,11 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
                 print(f"[WARN] Merging XML reports failed with exit code {success}.")
             else:
                 # Remove individual XML reports to avoid confusion with the merged report
-                for xml_file in [main_xml, crash_xml, end2end_xml]:
+                for xml_file in [main_xml, crash_xml]:
                     if Path(xml_file).exists():
                         Path(xml_file).unlink()
 
-            if main_returncode or test_2_returncode or test_3_returncode or test_4_returncode:
+            if main_returncode or test_2_returncode or test_3_returncode:
                 sys.exit(1)
 
         case _:

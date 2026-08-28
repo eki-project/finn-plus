@@ -36,17 +36,51 @@ https://pytest.org/latest/plugins.html
 
 import pytest
 
+import numpy as np
 import onnxruntime as ort
 import os
+import random
 import shutil
 import tempfile
 from pathlib import Path
 from rich.console import Console
 from rich.syntax import Syntax
 
+try:
+    import torch
+except ImportError:
+    torch = None
+
 import finn.util.settings
 from finn.interface.settings import FINNSettings
+from finn.util.multiprocessing import configure_start_method
 from finn.util.settings import get_settings
+from tests.rng_seed import seed_from_nodeid
+
+
+@pytest.fixture
+def finn_test_seed(request) -> int:
+    return seed_from_nodeid(request.node.nodeid)
+
+
+@pytest.fixture(autouse=True)
+def deterministic_random_state(request, finn_test_seed):
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    torch_state = torch.get_rng_state() if torch is not None else None
+
+    try:
+        random.seed(finn_test_seed)
+        np.random.seed(finn_test_seed)
+        if torch is not None:
+            torch.random.default_generator.manual_seed(finn_test_seed)
+        request.node.user_properties.append(("finn_test_rng_seed", str(finn_test_seed)))
+        yield
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+        if torch_state is not None:
+            torch.set_rng_state(torch_state)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -55,7 +89,7 @@ def load_settings(request) -> None:
     # Load settings. run_finn.py in finn test set these file to use in FINN_SETTINGS
     # which has the highest priority when loading settings
     settings = FINNSettings.init(
-        flow_config=Path("/tmp/FINN_TEST_BUILD_DIR/dummy.yaml"), auto_set_environmenmt_vars=True
+        flow_config=Path("/tmp/FINN_TEST_BUILD_DIR/dummy.yaml"), auto_set_environment_vars=True
     )
     finn.util.settings._SETTINGS = settings  # noqa
 
@@ -70,7 +104,19 @@ def pytest_configure(config) -> None:  # noqa: ARG001
     import finn.util.settings
 
     finn.util.settings.initialize_dummy_settings()
-    import finn.xsi  # noqa
+
+    # Select the fork-safe multiprocessing start method now, while single-threaded,
+    # so it is in effect for every later Pool()/Process() call, including the ones
+    # qonnx makes inside transformations.
+    # Then verify (and if needed, build/rebuild) XSI for the currently loaded
+    # Vivado version, also now, once, before any parallel work (pytest-xdist
+    # workers / multiprocessing.Pool inside tests) gets a chance to import
+    # finn.xsi transitively.
+    configure_start_method()
+
+    import finn.xsi
+
+    finn.xsi.ensure_available()
 
 
 @pytest.fixture(scope="class", autouse=True)
@@ -103,6 +149,23 @@ def isolate_build_dir(request):
         if cleanup:
             shutil.rmtree(test_build_dir)
         get_settings().finn_build_dir = top_build_dir
+
+
+def pytest_runtest_logreport(report) -> None:
+    """Print the traceback of a failing test as soon as it happens.
+
+    The CI suite runs for hours under pytest-xdist. Without this, failure
+    tracebacks are only shown in the terminal summary once the whole run has
+    finished, which is both very late and prone to being cut off by GitLab's
+    job-log size limit. Emitting them here keeps the normal progress output
+    compact (no -v needed) while surfacing errors as they occur.
+    """
+    if not report.failed or report.longrepr is None:
+        return
+    # "call" is a genuine test failure, the other phases are fixture errors.
+    phase = "ERROR" if report.when in ("setup", "teardown") else "FAIL"
+    print(f"\n{'=' * 30} {phase}: {report.nodeid} {'=' * 30}", flush=True)
+    print(report.longreprtext, flush=True)
 
 
 @pytest.fixture(scope="session", autouse=True)
