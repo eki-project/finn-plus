@@ -169,8 +169,10 @@ FINN Test Suite 2024.2:
     SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $PYTEST_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclusive --exclude $SLURM_EXCLUDE_NODES"
     PYTEST_PARALLEL: "$PYTEST_WORKERS"
     # Avoid fork-based multiprocessing (unsafe with threaded native libraries and
-    # going away in Python 3.14). FINN defaults to forkserver; set explicitly here.
-    FINN_MP_START_METHOD: "forkserver"
+    # going away in Python 3.14). Must be spawn, not forkserver: the forkserver
+    # daemon caches the environment from its first use, which would pin workers
+    # to a stale FINN_BUILD_DIR.
+    FINN_MP_START_METHOD: "spawn"
   extends: .setup_full_2024_2
   script:
     # Launch additional monitoring
