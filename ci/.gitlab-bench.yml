@@ -27,8 +27,8 @@ FINN Build:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $CPU_CORES_BENCH --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
-    NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    NUM_DEFAULT_WORKERS: "$BENCH_FINN_WORKERS"
   extends: .setup_full_2024_2
   script:
     # Launch additional monitoring
@@ -39,7 +39,7 @@ FINN Build:
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
-      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $CPU_CORES_BENCH --bench_config $BENCH_CFG
+      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config $BENCH_CFG
   cache:
     key: $CI_COMMIT_SHA
     policy: pull
@@ -120,8 +120,8 @@ FINN Build (Follow-up):
       pipeline: $PARENT_PIPELINE_ID
     - job: Result Collection
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $CPU_CORES_BENCH --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
-    NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    NUM_DEFAULT_WORKERS: "$BENCH_FINN_WORKERS"
   extends: .setup_full_2024_2
   script:
     # Check if follow-up config exists, exit gracefully if not
@@ -138,7 +138,7 @@ FINN Build (Follow-up):
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
-      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $CPU_CORES_BENCH --bench_config followup
+      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config followup
   cache:
     key: $CI_COMMIT_SHA
     policy: pull
