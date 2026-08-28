@@ -45,10 +45,9 @@ def run_doctests(num_workers: int) -> bool:
     return any(rc not in (0, 5) for rc in returncodes)
 
 
-def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: bool = False) -> None:
+def run_test(variant: str, num_workers: str, args: str = "") -> None:
     """Run a given test variant with the given number of workers."""
     original_dir = Path.cwd()
-    cache_clear_flag = "--cache-clear" if not no_cache_clear else ""
 
     # TODO: Make this optional
     if "CI_PROJECT_DIR" in os.environ.keys():
@@ -85,7 +84,7 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
                 )
             subprocess.run(
                 shlex.split(
-                    f"{sys.executable} -m pytest {cache_clear_flag} --doctest-modules "
+                    f"{sys.executable} -m pytest --doctest-modules "
                     f"--doctest-continue-on-failure -n {num_workers} "
                     f"--pyargs {args}",
                     posix=IS_POSIX,
@@ -94,7 +93,7 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
         case "quick":
             subprocess.run(
                 shlex.split(
-                    f"{sys.executable} -m pytest {cache_clear_flag} -v -m 'not "
+                    f"{sys.executable} -m pytest -v -m 'not "
                     f"(vivado or slow or vitis or board or notebooks or bnn_pynq or end2end)' "
                     f"--dist=loadfile -n {num_workers}",
                     posix=IS_POSIX,
@@ -103,7 +102,7 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
         case "quicktest_ci":
             subprocess.run(
                 shlex.split(
-                    f"{sys.executable} -m pytest -q -rf --tb=short {cache_clear_flag} -m 'not "
+                    f"{sys.executable} -m pytest -q -rf --tb=short -m 'not "
                     f"(vivado or slow or vitis or board or notebooks or bnn_pynq or end2end)' "
                     f"--junitxml={ci_project_dir}/reports/quick.xml "
                     f"--html={ci_project_dir}/reports/quick.html "
@@ -195,7 +194,7 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
             test_1_process = subprocess.Popen(
                 shlex.split(
                     (
-                        f"{sys.executable} -m pytest -q -rf --tb=short {cache_clear_flag} "
+                        f"{sys.executable} -m pytest -q -rf --tb=short "
                         f"--junitxml={main_xml} "
                         f"--html={main_html} "
                         f"--reruns 1 --dist worksteal -n {num_workers}"
@@ -286,8 +285,6 @@ def run_test(variant: str, num_workers: str, args: str = "", no_cache_clear: boo
 
         case _:
             subprocess.run(
-                shlex.split(
-                    f"{sys.executable} -m pytest {cache_clear_flag} -k '{variant}'", posix=IS_POSIX
-                )
+                shlex.split(f"{sys.executable} -m pytest -k '{variant}'", posix=IS_POSIX)
             )
     os.chdir(original_dir)

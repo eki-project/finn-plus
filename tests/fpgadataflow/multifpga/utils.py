@@ -18,6 +18,7 @@ from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.base import CustomOp
+from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopcount
 from qonnx.transformation.general import GiveUniqueNodeNames, RemoveUnusedTensors
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
@@ -51,7 +52,6 @@ from finn.transformation.streamline import Streamline
 from finn.transformation.streamline.reorder import MakeMaxPoolNHWC, MoveScalarLinearPastInvariants
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import make_build_dir
-from tests.end2end.test_end2end_bnn_pynq import get_folding_function
 
 # ---- MOCK MODEL CLASSES ----
 
@@ -174,6 +174,135 @@ def generate_mobilenet(
 
 
 # ---- BASIC MODELS ----
+
+
+def fold_tfc(model):
+    """Apply folding configuration for TFC topology."""
+    fc_layers = model.get_nodes_by_op_type("MVAU_hls")
+    # (PE, SIMD, ramstyle) for each layer
+    config = [(16, 49, "block"), (8, 8, "auto"), (8, 8, "auto"), (10, 8, "distributed")]
+    for fcl, (pe, simd, ramstyle) in zip(fc_layers, config):
+        fcl_inst = getCustomOp(fcl)
+        fcl_inst.set_nodeattr("PE", pe)
+        fcl_inst.set_nodeattr("SIMD", simd)
+        fcl_inst.set_nodeattr("ram_style", ramstyle)
+        fcl_inst.set_nodeattr("mem_mode", "internal_decoupled")
+        fcl_inst.set_nodeattr("resType", "lut")
+    # set parallelism for input quantizer to be same as first layer's SIMD
+    inp_qnt_node = model.get_nodes_by_op_type("Thresholding_rtl")[0]
+    inp_qnt = getCustomOp(inp_qnt_node)
+    inp_qnt.set_nodeattr("PE", 49)
+    inp_qnt.set_nodeattr("runtime_writeable_weights", 1)
+    return model
+
+
+def fold_lfc(model):
+    """Apply folding configuration for LFC topology."""
+    fc_layers = model.get_nodes_by_op_type("MVAU_hls")
+    # (PE, SIMD, ramstyle) for each layer
+    config = [
+        (32, 49, "block"),
+        (64, 32, "auto"),
+        (32, 64, "auto"),
+        (10, 8, "distributed"),
+    ]
+    for fcl, (pe, simd, ramstyle) in zip(fc_layers, config):
+        fcl_inst = getCustomOp(fcl)
+        fcl_inst.set_nodeattr("PE", pe)
+        fcl_inst.set_nodeattr("SIMD", simd)
+        fcl_inst.set_nodeattr("ram_style", ramstyle)
+        fcl_inst.set_nodeattr("runtime_writeable_weights", 1)
+        fcl_inst.set_nodeattr("mem_mode", "internal_decoupled")
+        fcl_inst.set_nodeattr("resType", "lut")
+    # set parallelism for input quantizer to be same as first layer's SIMD
+    inp_qnt_node = model.get_nodes_by_op_type("Thresholding_rtl")[0]
+    inp_qnt = getCustomOp(inp_qnt_node)
+    inp_qnt.set_nodeattr("PE", 49)
+    return model
+
+
+def fold_cnv_large(model):
+    """Apply large folding configuration for CNV topology."""
+    fc_layers = model.get_nodes_by_op_type("MVAU_hls")
+    # each tuple is (PE, SIMD) for a layer
+    folding = [
+        (16, 3),
+        (32, 32),
+        (16, 32),
+        (16, 32),
+        (4, 32),
+        (1, 32),
+        (1, 4),
+        (1, 8),
+        (5, 1),
+    ]
+    for fcl, (pe, simd) in zip(fc_layers, folding):
+        fcl_inst = getCustomOp(fcl)
+        fcl_inst.set_nodeattr("PE", pe)
+        fcl_inst.set_nodeattr("SIMD", simd)
+        fcl_inst.set_nodeattr("mem_mode", "internal_decoupled")
+        fcl_inst.set_nodeattr("resType", "lut")
+
+    swg_layers = model.get_nodes_by_op_type("ConvolutionInputGenerator_rtl")
+    for i in range(len(swg_layers)):
+        swg_inst = getCustomOp(swg_layers[i])
+        if not swg_inst.get_nodeattr("depthwise"):
+            simd = folding[i][1]
+            swg_inst.set_nodeattr("SIMD", simd)
+        swg_inst.set_nodeattr("ram_style", "distributed")
+    return model
+
+
+def fold_cnv_small(model):
+    """Apply small folding configuration for CNV topology."""
+    fc_layers = model.get_nodes_by_op_type("MVAU_hls")
+    # each tuple is (PE, SIMD) for a layer
+    folding = [
+        (8, 3, "distributed"),
+        (16, 16, "distributed"),
+        (8, 16, "auto"),
+        (8, 16, "distributed"),
+        (4, 8, "auto"),
+        (1, 8, "auto"),
+        (1, 2, "block"),
+        (2, 2, "auto"),
+        (5, 1, "distributed"),
+    ]
+    for fcl, (pe, simd, ramstyle) in zip(fc_layers, folding):
+        fcl_inst = getCustomOp(fcl)
+        fcl_inst.set_nodeattr("PE", pe)
+        fcl_inst.set_nodeattr("SIMD", simd)
+        fcl_inst.set_nodeattr("ram_style", ramstyle)
+        fcl_inst.set_nodeattr("mem_mode", "internal_decoupled")
+        fcl_inst.set_nodeattr("resType", "lut")
+
+    swg_layers = model.get_nodes_by_op_type("ConvolutionInputGenerator_rtl")
+    for i in range(len(swg_layers)):
+        swg_inst = getCustomOp(swg_layers[i])
+        if not swg_inst.get_nodeattr("depthwise"):
+            simd = folding[i][1]
+            swg_inst.set_nodeattr("SIMD", simd)
+        swg_inst.set_nodeattr("ram_style", "distributed")
+    inp_qnt_node = model.get_nodes_by_op_type("Thresholding_rtl")[0]
+    inp_qnt = getCustomOp(inp_qnt_node)
+    inp_qnt.set_nodeattr("depth_trigger_uram", 32000)
+    inp_qnt.set_nodeattr("depth_trigger_bram", 32000)
+    return model
+
+
+def get_folding_function(topology, wbits, abits):
+    """Get appropriate folding function for topology and quantization."""
+    if "tfc" in topology:
+        return fold_tfc
+    elif "lfc" in topology:
+        return fold_lfc
+    elif "cnv" in topology:
+        if wbits == 1 and abits == 1:
+            return fold_cnv_large
+        else:
+            return fold_cnv_small
+    else:
+        raise Exception("Unknown topology/quantization combo for predefined folding")
 
 
 def bnn_make_step_streamline_bnn_pynq(
@@ -325,15 +454,8 @@ def get_model(  # noqa
     until_step: str | None,
     skip_fifo_sizing: bool,
     cfg: DataflowBuildConfig,
-    pytestconfig: pytest.Config | None,
-    identifier: str | None = None,
-    write_cache: bool = False,
 ) -> tuple[ModelWrapper, DataflowBuildConfig]:
-    """Get a prepared model. The test identifier does not consider
-    partitioning configuration parameters. This means that configs with
-    for example 2 different device counts are considered the same model.
-
-    By default, this does NOT fill the cache.
+    """Get a prepared model.
 
     Arguments:
     ---------
@@ -344,14 +466,7 @@ def get_model(  # noqa
         `until_step`: The last step until which the FINN flow is executed (inclusive).
             If it is None instead, the model will be returned without any modification.
         `cfg`: The config to use for the transformations.
-        `pytestconfig`: If given, this is used to build an identifying string and retrieve
-            cached models matching the requested specification.
-        `identifier`: (Optional) unique identifier for cache requests, which is appended to the
-            internally generated identifier.
         `skip_fifo_sizing`: Whether to skip step_set_fifo_depths.
-        `write_cache`: Can be set to False to skip writing the cache.
-            This can be done to avoid issues
-            during toolchain calls.
 
     Returns:
     -------
@@ -361,26 +476,6 @@ def get_model(  # noqa
     ------
         `FINNError`: If the last step is unknown, no valid model(type) is passed, etc.
     """
-    log = logging.getLogger("Model Request")
-
-    def get_test_identifier(
-        steps: list[str | Callable[[ModelWrapper, DataflowBuildConfig], ModelWrapper]]
-    ) -> str:
-        return (
-            f"{identifier}_{model}_{wbits}_{abits}_{pretrained}_"
-            f"{skip_fifo_sizing}_{cfg.target_fps}_{cfg.mvau_wwidth_max}_"
-            f"{cfg.folding_two_pass_relaxation}_"
-            f"{cfg.shell_flow_type.name if cfg.shell_flow_type is not None else 'SHELL'}_"
-            f"{cfg.board}_{cfg._resolve_fpga_part()}_{cfg.hls_clk_period_ns}_"  # noqa
-            f"{'_'.join([step if type(step) is str else step.__name__ for step in steps])}"
-        )
-
-    def get_cache_key(identifier: str) -> str:
-        """Get the sha256 hash of the identifier, otherwise the cache key is too long (Errno 36)."""
-        h = hashlib.new("sha256")
-        h.update(identifier.encode("utf-8"))
-        return h.hexdigest()
-
     filename = f"{model}_w{wbits}_a{abits}_pretrained-{pretrained}.onnx"
 
     # Create the model and fetch the steps
@@ -426,89 +521,11 @@ def get_model(  # noqa
             until_step = str(cfg.steps[cfg.steps.index(until_step) - 1])
         cfg.steps.remove("step_set_fifo_depths")
 
-    # Had to manually cast here because of the type checker
-    cached_steps = cast(
-        "list[str | Callable[[ModelWrapper, DataflowBuildConfig], ModelWrapper]]",
-        cfg.steps[: cfg.steps.index(until_step) + 1],
-    )
-    leftover_steps = []
-
-    # Test the cache
-    # Remove steps one by one to find the latest model
-    if pytestconfig is not None:
-        while True:
-            log.debug(
-                f"TESTING MODEL CACHE: Trying cached {len(cached_steps)} "
-                f"/ leftover {len(leftover_steps)} "
-                f"({get_cache_key(get_test_identifier(cached_steps))[:5]}...)"
-            )
-            value = pytestconfig.cache.get(
-                get_cache_key(get_test_identifier(cached_steps)), default=None
-            )
-            if value is not None:
-                modelpath = Path(value)
-                if modelpath.exists():
-                    log.debug(
-                        "FOUND CACHED MODEL. Most recent "
-                        + f"step in this model was: {cached_steps[-1]} ("
-                        + get_cache_key(get_test_identifier(cached_steps))[:5]
-                        + "...)"
-                    )
-                    modelwrapper = ModelWrapper(str(modelpath.absolute()))
-                    break
-
-            # If we have checked all steps, break
-            if len(cached_steps) == 0:
-                log.debug("NO CACHED MODEL FOUND")
-                break
-
-            # Add the latest step to the list yet to do
-            leftover_steps.insert(0, cached_steps.pop())
-    else:
-        leftover_steps = cached_steps
-        cached_steps = []
-
-    # Run all steps
-    cache_dir = Path(make_build_dir("model_cache_"))
-    all_steps = deepcopy(cfg.steps)
-    cfg.steps = leftover_steps
+    # Run all steps until the given step
+    cfg.steps = cfg.steps[: cfg.steps.index(until_step) + 1]
     steps = resolve_build_steps(cfg)
-    done = []
-
-    # Build cache.
-    # If A and B were already done, and C, D and E are left over,
-    # we start with cached_steps = [A,B], leftover_steps = [C,D,E] and done = []
-    # We have loaded the model with A and B, and now execute C
-    # Afterwards we store the cache key "identifier_A_B_C"
-    # and have cached_steps = [A,B], leftover_steps = [D,E] and done = [C]
-    # ...
-    # cached_steps = [A,B], leftover_steps = [], done = [C,D,E], last model saved
-    # is then "identifier_A_B_C_D_E"
     for i, step in enumerate(steps):
-        # Execute the new step
-        log.debug("RUNNING: " + str(step.__name__))
         modelwrapper = step(modelwrapper, cfg)
-
-        # From this generate the newest identifier
-        done.append(leftover_steps[i])
-        test_identifier = get_test_identifier(cached_steps + done)
-
-        # Store the model with its identifier in the cache, using a pseudo-random filename
-        if write_cache:
-            fn = cache_dir / (
-                "".join([random.choice("ABCDEF0123456789") for _ in range(30)]) + ".onnx"
-            )
-            modelwrapper.save(str(fn))
-            if pytestconfig is not None:
-                log.debug(
-                    f"STORING model after step: {done[-1]} ("
-                    + get_cache_key(test_identifier)[:5]
-                    + "...)"
-                )
-                pytestconfig.cache.set(get_cache_key(test_identifier), str(fn))
-
-    # Restore steps
-    cfg.steps = all_steps
     return modelwrapper, cfg
 
 
