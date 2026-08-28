@@ -1007,6 +1007,9 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
     # Warn if floating point operations are still in the graph
     float_ops: set[str] = set()
     for node in model.graph.node:
+        # We can only check datatype for custom_ops.
+        if not node.domain.startswith("finn.custom_op.fpgadataflow"):
+            continue
         custom_op = getHWCustomOp(node)
         n_inputs = len(node.input)
         for i in range(n_inputs):
