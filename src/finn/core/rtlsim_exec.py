@@ -35,11 +35,11 @@ from typing import TYPE_CHECKING, cast
 from finn import xsi as finnxsi
 from finn.util.basic import get_liveness_threshold_cycles, getHWCustomOp, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-from finn.xsi import SimEngine
 
 if TYPE_CHECKING:
     from qonnx.core.datatype import BaseDataType
     from qonnx.core.modelwrapper import ModelWrapper
+    from finn.xsi import SimEngine
 
 from ast import literal_eval
 
@@ -160,8 +160,8 @@ def prep_rtlsim_io_dict(
 def rtlsim_exec_finnxsi(
     model: "ModelWrapper",
     execution_context: dict[str, np.ndarray],
-    pre_hook: Callable[[SimEngine], None] | None = None,
-    post_hook: Callable[[SimEngine], None] | None = None,
+    pre_hook: Callable[["SimEngine"], None] | None = None,
+    post_hook: Callable[["SimEngine"], None] | None = None,
 ) -> None:
     """Use finnxsi to execute given model with stitched IP. The execution
     context contains the input values. Hook functions can be optionally
@@ -250,8 +250,8 @@ def rtlsim_exec_finnxsi(
 def rtlsim_exec(
     model: "ModelWrapper",
     execution_context: dict[str, np.ndarray],
-    pre_hook: Callable[[SimEngine], None] | None = None,
-    post_hook: Callable[[SimEngine], None] | None = None,
+    pre_hook: Callable[["SimEngine"], None] | None = None,
+    post_hook: Callable[["SimEngine"], None] | None = None,
 ) -> None:
     """Use XSI to execute given model with stitched IP. The execution
     context contains the input values. Hook functions can be optionally
