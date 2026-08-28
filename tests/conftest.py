@@ -54,7 +54,7 @@ def load_settings(request) -> None:
     # Load settings. run_finn.py in finn test set these file to use in FINN_SETTINGS
     # which has the highest priority when loading settings
     settings = FINNSettings.init(
-        flow_config=Path("/tmp/FINN_TEST_BUILD_DIR/dummy.yaml"), auto_set_environmenmt_vars=True
+        flow_config=Path("/tmp/FINN_TEST_BUILD_DIR/dummy.yaml"), auto_set_environment_vars=True
     )
     finn.util.settings._SETTINGS = settings  # noqa
 
