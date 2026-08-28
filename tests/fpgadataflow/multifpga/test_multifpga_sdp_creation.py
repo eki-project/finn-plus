@@ -25,6 +25,7 @@ from finn.transformation.fpgadataflow.multifpga.create_multi_sdp import (
     ResolveCircularPartitionIDs,
     get_device_id,
 )
+from finn.transformation.qonnx.give_unique_node_names_recursive import GiveUniqueNodeNamesRecursive
 from finn.util.basic import make_build_dir
 from finn.util.fpgadataflow import get_submodel, set_device_id
 from tests.fpgadataflow.test_set_folding import make_multi_fclayer_model
@@ -248,7 +249,7 @@ def test_sdp_creation(
         assert set(group) in graph["expected_partitions"], f"Groups: {groups}"
     assert len(groups) == len(graph["expected_partitions"])
 
-    # Test SDP creation now
+    # Test SDP creation now (on "model", instead of "pmodel")
     model = model.transform(
         CreateMultiFPGAStreamingDataflowPartition(
             separate_iodmas=True,
@@ -264,6 +265,19 @@ def test_sdp_creation(
             assert get_device_id(node) == get_device_id(sdp)
 
 
+def sdp_overview(model: ModelWrapper) -> str:
+    """Give an overview of a modelwrapper consisting of SDP nodes. Used for error messages."""
+    s = "Nodes (not necessarily in order!)\n"
+    for node in model.graph.node:
+        s += f"{node.name}\n"
+        if "StreamingDataflowPartition" not in node.op_type:
+            continue
+        submodel, _ = get_submodel(node)
+        for snode in submodel.graph.node:
+            s += f"\t{snode.name}\n"
+    return s
+
+
 @pytest.mark.parametrize(
     "graph",
     [pytest.param(graph_data, id=graph_name) for graph_name, graph_data in test_graphs.items()],
@@ -276,6 +290,7 @@ def test_iodma_separation(
     g = digraph_from_graph_definition(graph)
     model = make_testing_model_from_nx(g)
     model = model.transform(InsertIODMA())
+    model = model.transform(GiveUniqueNodeNamesRecursive())
     model = model.transform(
         CreateMultiFPGAStreamingDataflowPartition(
             separate_iodmas=True,
@@ -286,9 +301,18 @@ def test_iodma_separation(
 
     # Count input and output nodes, each should now have an IODMA
     io_nodes = sum([1 for n in g.nodes if g.in_degree(n) == 0 or g.out_degree(n) == 0])
-    assert len(model.graph.node) == len(graph["expected_partitions"]) + io_nodes
+    expected_cluster_partitions = len(graph["expected_partitions"])
+    total_nodes = len(model.graph.node)
+    assert total_nodes == expected_cluster_partitions + io_nodes, (
+        f"Expected {expected_cluster_partitions} (expected device ID based clusters)"
+        f" + {io_nodes} (separate partitions for single IODMA nodes), but got "
+        f"{total_nodes} StreamingDataflowPartitions instead of the expected "
+        f"{expected_cluster_partitions + io_nodes}.\n" + sdp_overview(model)
+    )
 
-    # IO SDP nodes should be IODMA
+    # If there is an SDP with only one node, and that node is an IODMA,
+    # consequently this node was the only one with this specific
+    # partition id
     for node in model.graph.node:
         pre = model.find_direct_predecessors(node)
         suc = model.find_direct_successors(node)
@@ -297,37 +321,43 @@ def test_iodma_separation(
             assert len(submodel.graph.node) == 1
             assert "IODMA" in submodel.graph.node[0].op_type
 
-    # Only cluster, dont merge into SDPs
+
+@pytest.mark.parametrize(
+    "graph",
+    [pytest.param(graph_data, id=graph_name) for graph_name, graph_data in test_graphs.items()],
+)
+def test_iodma_same_device(
+    graph: dict[str, list[tuple[int, int]] | list[set[int]]], request: pytest.FixtureRequest
+) -> None:
+    """Test that inserted IODMAs have the same device id as the node
+    that they are the successor/predecessor of.
+
+    This test relies on the fact that some of the example graphs dont
+    start/end on device 0 (which is the default value for device_id)."""
+    name = request.node.callspec.id
+    g = digraph_from_graph_definition(graph)
     model = make_testing_model_from_nx(g)
     model = model.transform(InsertIODMA())
-    model = model.transform(
-        ClusterByNodeattribute(
-            resolve_circular_dependencies=True,
-            compare_attribute="device_id",
-            partition_attribute="partition_id",
-        )
-    )
+    model = model.transform(GiveUniqueNodeNamesRecursive())
+    for node in model.graph.node:
+        if "IODMA" not in node.op_type:
+            continue
 
-    # Check the partitions
-    largest_partition_id = 0
-    for partition in graph["expected_partition"]:
-        for i in partition:
-            if i > largest_partition_id:
-                largest_partition_id = i
+        pre = model.find_direct_predecessors(node)
+        pre = pre if pre is not None else []
+        suc = model.find_direct_successors(node)
+        suc = suc if suc is not None else []
+        all_adjacent = pre + suc
+        iodma_device = get_device_id(node)
 
-    for additional_id in range(largest_partition_id, largest_partition_id + io_nodes):
-        nodes_with_this_id = 0
-        node_found = None
-        for node in model.graph.node:
-            if getCustomOp(node).get_nodeattr("partition_id") == additional_id:
-                nodes_with_this_id += 1
-                node_found = node
-        assert nodes_with_this_id == 1 and "IODMA" in node_found.op_type, (  # type: ignore
-            f"{name}: Expected exactly 1 node (of type IODMA) to have partition "
-            f"ID {additional_id}. The largest expected ID without IODMAs "
-            f"was {largest_partition_id} and there are {io_nodes} nodes "
-            f"that are IO nodes and thus require an IODMA. Op_type was {node.op_type}"
-        )
+        # This assumes that IODMAs only have one output or input, otherwise it
+        # is not clear which device the IODMA should be on.
+        for adjacent_node in all_adjacent:
+            adjacent_device = get_device_id(adjacent_node)
+            assert adjacent_device == iodma_device, (
+                f"Graph {name}: Node {adjacent_node.name} is adjacent to IODMA {node.name}, "
+                f"but their device IDs are different: {adjacent_device} and {iodma_device}."
+            )
 
 
 def equal_device_assignment(devices: int, nodes: int) -> list[int]:

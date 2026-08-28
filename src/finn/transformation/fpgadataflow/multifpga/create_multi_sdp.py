@@ -49,7 +49,6 @@ class ClusterByNodeattribute(Transformation):
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Merge nodes with their neighbors. If atleast one merge happens, return modified=True."""
-        # Check that all compare attributes exist
         for i, node in enumerate(model.graph.node):
             try:
                 _ = getCustomOp(node).get_nodeattr(self.comp)
@@ -86,10 +85,18 @@ class ClusterByNodeattribute(Transformation):
             neighbors = pre + suc
             for neighbor in neighbors:
                 neighbor_op = getCustomOp(neighbor)
-                if node_op.get_nodeattr(self.comp) == neighbor_op.get_nodeattr(
-                    self.comp
-                ) and node_op.get_nodeattr(self.part) != neighbor_op.get_nodeattr(self.part):
-                    neighbor_op.set_nodeattr(self.part, node_op.get_nodeattr(self.part))
+                node_comp = node_op.get_nodeattr(self.comp)
+                neighbor_comp = neighbor_op.get_nodeattr(self.comp)
+                node_part = node_op.get_nodeattr(self.part)
+                neighbor_part = neighbor_op.get_nodeattr(self.part)
+
+                # By changing both attributes to the lower common one,
+                # the transformation avoids an endless loop in which
+                # a nodes attribute would be switched back and forth across
+                # iterations.
+                if node_comp == neighbor_comp and node_part != neighbor_part:
+                    neighbor_op.set_nodeattr(self.part, min((node_part, neighbor_part)))
+                    node_op.set_nodeattr(self.part, min((node_part, neighbor_part)))
                     modified = True
 
         # If we want to also resolve circular dependencies, do so now, when no
