@@ -7,7 +7,6 @@ import click
 import inspect
 import json
 import mashumaro.exceptions
-import multiprocessing as mp
 import os
 import rich
 import shlex
@@ -438,15 +437,14 @@ def prepare_finn(
     status(f"{'[NUM WORKERS]':<32} {settings.num_default_workers!s:<50}")
     finn.util.settings._SETTINGS = settings  # noqa
 
-    # Use a fork-safe multiprocessing start method and pre-start its daemon
+    # Select the configured multiprocessing start method and pre-start any daemon
     # now, while single-threaded, so a later Pool()/Process() call can't race
-    # the daemon's own bootstrap fork against some other library's (e.g.
-    # filelock's) fork-safety machinery. Then verify (and if needed,
-    # build/rebuild) XSI for the currently loaded Vivado version, also now,
-    # once, before any parallel work (multiprocessing.Pool / pytest-xdist
-    # workers) gets a chance to import finn.xsi transitively.
-    if mp.get_start_method(allow_none=True) != "forkserver":
-        mp.set_start_method("forkserver", force=True)
+    # the bootstrap against some other library's (e.g. filelock's) fork-safety
+    # machinery. Then verify (and if needed, build/rebuild) XSI for the currently
+    # loaded Vivado version, also now, once, before any parallel work
+    # (multiprocessing.Pool / pytest-xdist workers) gets a chance to import
+    # finn.xsi transitively.
+    configure_start_method()
 
     finn.xsi.ensure_available()
 

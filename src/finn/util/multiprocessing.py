@@ -18,7 +18,7 @@ DEFAULT_START_METHOD = "spawn"
 
 
 def get_configured_start_method() -> str:
-    """Return the configured start method, defaulting to forkserver."""
+    """Return the configured start method, defaulting to spawn."""
     return os.environ.get("FINN_MP_START_METHOD", DEFAULT_START_METHOD)
 
 
