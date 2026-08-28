@@ -17,7 +17,7 @@ from finn.util.logging import log
 from finn.util.settings import get_settings
 
 
-class NodeContainer(HWCustomOp, RTLBackend):
+class NodeContainer(RTLBackend, HWCustomOp):
     """Some functions are (partially) copied from FINNLoop
     Currently unsupported features:
         - Multiple inputs/outputs
