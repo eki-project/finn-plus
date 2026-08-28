@@ -1013,13 +1013,23 @@ def step_create_dataflow_partition(model: ModelWrapper, cfg: DataflowBuildConfig
         custom_op = getHWCustomOp(node)
         n_inputs = len(node.input)
         for i in range(n_inputs):
-            if custom_op.get_input_datatype(i) == DataType["FLOAT32"]:
-                float_ops.add(node.name)
+            try:
+                if custom_op.get_input_datatype(i) == DataType["FLOAT32"]:
+                    float_ops.add(node.name)
+                    break
+            except Exception:
+                # Some inputs currently do not have types assigned to them
+                # and throw errors when queried
                 break
         n_outputs = len(node.output)
         for i in range(n_outputs):
-            if custom_op.get_output_datatype(i) == DataType["FLOAT32"]:
-                float_ops.add(node.name)
+            try:
+                if custom_op.get_output_datatype(i) == DataType["FLOAT32"]:
+                    float_ops.add(node.name)
+                    break
+            except Exception:
+                # Some inputs currently do not have types assigned to them
+                # and throw errors when queried
                 break
     if len(float_ops) != 0:
         log.warning(
