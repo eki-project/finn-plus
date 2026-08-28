@@ -116,6 +116,23 @@ def isolate_build_dir(request):
         get_settings().finn_build_dir = top_build_dir
 
 
+def pytest_runtest_logreport(report) -> None:
+    """Print the traceback of a failing test as soon as it happens.
+
+    The CI suite runs for hours under pytest-xdist. Without this, failure
+    tracebacks are only shown in the terminal summary once the whole run has
+    finished, which is both very late and prone to being cut off by GitLab's
+    job-log size limit. Emitting them here keeps the normal progress output
+    compact (no -v needed) while surfacing errors as they occur.
+    """
+    if not report.failed or report.longrepr is None:
+        return
+    # "call" is a genuine test failure, the other phases are fixture errors.
+    phase = "ERROR" if report.when in ("setup", "teardown") else "FAIL"
+    print(f"\n{'=' * 30} {phase}: {report.nodeid} {'=' * 30}", flush=True)
+    print(report.longreprtext, flush=True)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_onnxruntime(request):
     # Attempt to work around onnxruntime issue on Slurm-managed clusters:

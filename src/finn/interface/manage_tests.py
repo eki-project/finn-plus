@@ -102,7 +102,7 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
         case "quicktest_ci":
             subprocess.run(
                 shlex.split(
-                    f"{sys.executable} -m pytest -v -m 'not "
+                    f"{sys.executable} -m pytest -q -rf --tb=short -m 'not "
                     f"(vivado or slow or vitis or board or notebooks or bnn_pynq or end2end)' "
                     f"--junitxml={ci_project_dir}/reports/quick.xml "
                     f"--html={ci_project_dir}/reports/quick.html "
@@ -194,7 +194,7 @@ def run_test(variant: str, num_workers: str, name: str = "") -> None:
             test_1_process = subprocess.Popen(
                 shlex.split(
                     (
-                        f"{sys.executable} -m pytest -v "
+                        f"{sys.executable} -m pytest -q -rf --tb=short "
                         f"--junitxml={main_xml} "
                         f"--html={main_html} "
                         f"--reruns 1 --dist worksteal -n {num_workers}"
