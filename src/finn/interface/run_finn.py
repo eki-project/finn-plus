@@ -35,6 +35,7 @@ from finn.interface.manage_deps import DependencyUpdater
 from finn.interface.manage_tests import run_test
 from finn.interface.settings import FINNSettings
 from finn.util.exception import FINNUserError, FINNValidationError
+from finn.util.multiprocessing import configure_start_method
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1163,6 +1164,8 @@ def finn_check() -> None:
 
 def main() -> None:
     """Clicks entrypoint function."""
+    # Select the multiprocessing start method before anything can create workers.
+    configure_start_method()
     settings.add_command(config_show)
     settings.add_command(config_edit)
     settings.add_command(config_create)

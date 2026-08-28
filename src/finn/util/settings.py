@@ -4,12 +4,34 @@ This module provides access to the global FINN settings instance that is
 initialized when FINN is started via run_finn.py.
 """
 
+import os
 from pathlib import Path
 
 from finn.interface.settings import FINNSettings
 from finn.util.exception import FINNUserError
 
 _SETTINGS: FINNSettings | None = None
+
+
+def _initialize_from_environment() -> FINNSettings | None:
+    """Rebuild the settings from the environment, or return None if not possible.
+
+    Only ``fork`` copies the parent's memory into the child, so with ``spawn`` and
+    ``forkserver`` a child process starts a fresh interpreter in which the global
+    settings instance is unset. The environment is inherited in all cases, so
+    ``FINN_SETTINGS`` lets the child reconstruct the same settings the parent used.
+    """
+    settings_path = os.environ.get("FINN_SETTINGS")
+    if settings_path is None or not Path(settings_path).exists():
+        return None
+    # FINN_BUILD_DIR is exported as an absolute path, so it can stand in for the flow
+    # config that would otherwise be needed to resolve a relative build dir.
+    build_dir = os.environ.get("FINN_BUILD_DIR")
+    return FINNSettings.init(
+        override_settings_path=Path(settings_path),
+        flow_config=Path(build_dir) / "dummy.yaml" if build_dir is not None else None,
+        auto_set_environment_vars=False,
+    )
 
 
 def initialize_dummy_settings() -> None:
@@ -36,6 +58,9 @@ def get_settings() -> FINNSettings:
     FINNUserError
         If FINN was not properly started via run_finn.py
     """
+    global _SETTINGS
+    if _SETTINGS is None:
+        _SETTINGS = _initialize_from_environment()
     if _SETTINGS is None:
         raise FINNUserError(
             "Could not find global settings. Was FINN properly started via run_finn.py? "

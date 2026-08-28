@@ -36,7 +36,6 @@ https://pytest.org/latest/plugins.html
 
 import pytest
 
-import multiprocessing as mp
 import onnxruntime as ort
 import os
 import shutil
@@ -45,6 +44,7 @@ from pathlib import Path
 
 import finn.util.settings
 from finn.interface.settings import FINNSettings
+from finn.util.multiprocessing import configure_start_method
 from finn.util.settings import get_settings
 
 
@@ -70,17 +70,14 @@ def pytest_configure(config) -> None:  # noqa: ARG001
 
     finn.util.settings.initialize_dummy_settings()
 
-    # Use a fork-safe multiprocessing start method (default: forkserver) and
-    # pre-start its daemon now, while single-threaded, so a later Pool()/
-    # Process() call from a worker can't race the daemon's own bootstrap fork
-    # against some other library's (e.g. filelock's) fork-safety machinery.
+    # Select the fork-safe multiprocessing start method now, while single-threaded,
+    # so it is in effect for every later Pool()/Process() call, including the ones
+    # qonnx makes inside transformations.
     # Then verify (and if needed, build/rebuild) XSI for the currently loaded
     # Vivado version, also now, once, before any parallel work (pytest-xdist
     # workers / multiprocessing.Pool inside tests) gets a chance to import
     # finn.xsi transitively.
-    mp_start_method = os.environ.get("FINN_TESTS_MP_START_METHOD", "forkserver")
-    if mp.get_start_method(allow_none=True) != mp_start_method:
-        mp.set_start_method(mp_start_method, force=True)
+    configure_start_method()
 
     import finn.xsi
 
