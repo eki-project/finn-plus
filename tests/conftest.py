@@ -36,16 +36,49 @@ https://pytest.org/latest/plugins.html
 
 import pytest
 
+import numpy as np
 import onnxruntime as ort
 import os
+import random
 import shutil
 import tempfile
 from pathlib import Path
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 import finn.util.settings
 from finn.interface.settings import FINNSettings
 from finn.util.multiprocessing import configure_start_method
 from finn.util.settings import get_settings
+from tests.rng_seed import seed_from_nodeid
+
+
+@pytest.fixture
+def finn_test_seed(request) -> int:
+    return seed_from_nodeid(request.node.nodeid)
+
+
+@pytest.fixture(autouse=True)
+def deterministic_random_state(request, finn_test_seed):
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    torch_state = torch.get_rng_state() if torch is not None else None
+
+    try:
+        random.seed(finn_test_seed)
+        np.random.seed(finn_test_seed)
+        if torch is not None:
+            torch.random.default_generator.manual_seed(finn_test_seed)
+        request.node.user_properties.append(("finn_test_rng_seed", str(finn_test_seed)))
+        yield
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+        if torch_state is not None:
+            torch.set_rng_state(torch_state)
 
 
 @pytest.fixture(scope="session", autouse=True)
