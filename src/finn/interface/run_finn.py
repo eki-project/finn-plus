@@ -972,16 +972,6 @@ def bench(
     help="Arguments to pass to pytest. Only usable with '--variant custom'. ",
 )
 @click.option("--num-test-workers", "-t", default="auto", show_default=True)
-@click.option(
-    "--no-cache-clear",
-    "-c",
-    help=(
-        "Advise pytest to not clear caches. Useful for faster testing, "
-        "but may cause false positives/negatives when changes are skipped due "
-        "to cached steps or models"
-    ),
-    is_flag=True,
-)
 @batch
 def test(
     variant: str,
@@ -993,7 +983,6 @@ def test(
     num_test_workers: str,
     finn_build_dir: Path | None,
     batch: bool,
-    no_cache_clear: bool,
 ) -> None:
     """Run a selected subset of the FINN(+) testsuite."""
     if finn_build_dir is None:
@@ -1029,7 +1018,7 @@ def test(
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
-    run_test(variant, num_test_workers, args, no_cache_clear)
+    run_test(variant, num_test_workers, args)
 
 
 @click.group(help="Dependency management")
