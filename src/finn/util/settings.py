@@ -22,16 +22,24 @@ def _initialize_from_environment() -> FINNSettings | None:
     ``FINN_SETTINGS`` lets the child reconstruct the same settings the parent used.
     """
     settings_path = os.environ.get("FINN_SETTINGS")
-    if settings_path is None or not Path(settings_path).exists():
-        return None
-    # FINN_BUILD_DIR is exported as an absolute path, so it can stand in for the flow
-    # config that would otherwise be needed to resolve a relative build dir.
     build_dir = os.environ.get("FINN_BUILD_DIR")
-    return FINNSettings.init(
-        override_settings_path=Path(settings_path),
-        flow_config=Path(build_dir) / "dummy.yaml" if build_dir is not None else None,
-        auto_set_environment_vars=False,
-    )
+    if settings_path is not None and Path(settings_path).exists():
+        # FINN_BUILD_DIR is exported as an absolute path, so it can stand in for the
+        # flow config that would otherwise be needed to resolve a relative build dir.
+        return FINNSettings.init(
+            override_settings_path=Path(settings_path),
+            flow_config=Path(build_dir) / "dummy.yaml" if build_dir is not None else None,
+            auto_set_environment_vars=False,
+        )
+    if build_dir is not None:
+        # No settings file to read, but the build directory alone is enough to rebuild
+        # usable settings, which is all a worker needs to place its generated code.
+        return FINNSettings.init(
+            flow_config=Path(build_dir) / "dummy.yaml",
+            finn_build_dir=build_dir,
+            auto_set_environment_vars=False,
+        )
+    return None
 
 
 def initialize_dummy_settings() -> None:

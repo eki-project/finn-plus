@@ -1004,10 +1004,18 @@ def test(
 
     prepare_finn(settings, True, batch)
 
-    # Save settings so that the test fixture can reload it
-    if settings.settingsfile_exists():
-        os.environ["FINN_SETTINGS"] = str(settings.get_path())
-        status("Saved settings path in FINN_SETTINGS: " + os.environ["FINN_SETTINGS"])
+    # Save settings so that the test fixture and any child interpreters can reload
+    # them. Non-fork start methods give children a fresh interpreter with no global
+    # settings, so they rebuild from the file that FINN_SETTINGS points at. On CI
+    # there is usually no pre-existing settings file, so write one into the build
+    # directory rather than skipping the export and leaving children without settings.
+    if not settings.settingsfile_exists():
+        settings_path = finn_build_dir / "settings.yaml"
+        settings.save(installation_independent=False, path=settings_path)
+    else:
+        settings_path = settings.get_path()
+    os.environ["FINN_SETTINGS"] = str(settings_path)
+    status("Saved settings path in FINN_SETTINGS: " + os.environ["FINN_SETTINGS"])
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
