@@ -1,6 +1,3 @@
-# TODO: Fix and remove all noqa directives below
-# ruff: noqa: RET504, D100, ANN001, ANN201, D209, D202, D205, PTH123, PTH103, UP031, SLF001, D401
-
 # Copyright (C) 2020-2022 Xilinx, Inc.
 # Copyright (C) 2022-2025, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -53,7 +50,6 @@ from qonnx.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopco
 from qonnx.transformation.fold_constants import FoldConstants
 from qonnx.transformation.general import (
     GiveReadableTensorNames,
-    GiveUniqueNodeNames,
     RemoveStaticGraphInputs,
     RemoveUnusedTensors,
     SortGraph,
@@ -1757,17 +1753,17 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
         case ShellFlowType.VITIS_ALVEO:
             # Insert IODMAs
             model = model.transform(InsertIODMA(max_intfwidth=cfg.vitis_iodma_intf_max_width))
-            model = model.transform(GiveUniqueNodeNames())
+            model = model.transform(GiveUniqueNodeNamesRecursive())
             model = model.transform(GiveReadableTensorNames())
             model = model.transform(InsertDWC())
-            model = model.transform(GiveUniqueNodeNames())
+            model = model.transform(GiveUniqueNodeNamesRecursive())
             model = model.transform(GiveReadableTensorNames())
             model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
-            model = model.transform(GiveUniqueNodeNames())
+            model = model.transform(GiveUniqueNodeNamesRecursive())
             model = model.transform(GiveReadableTensorNames())
             model = model.transform(PrepareIP(part, clk_ns))
             model = model.transform(HLSSynthIP())
-            model = model.transform(GiveUniqueNodeNames())
+            model = model.transform(GiveUniqueNodeNamesRecursive())
             model = model.transform(GiveReadableTensorNames())
 
             # Partitioning / Floorplan
@@ -1776,7 +1772,7 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                 # Single FPGA
                 model = model.transform(Floorplan(cfg.vitis_floorplan_file))
                 model = model.transform(CreateDataflowPartition(str(sdp_partition_dir)))
-                model = model.transform(GiveUniqueNodeNames())
+                model = model.transform(GiveUniqueNodeNamesRecursive())
                 model = model.transform(GiveReadableTensorNames())
             else:
                 # Multi FPGA

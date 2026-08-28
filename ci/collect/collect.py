@@ -488,7 +488,7 @@ class ExperimentComparator:
                 remote_exps.update(a for a, b in exps)
 
             if not remote_exps:
-                print("WARNING: No experiments found with tag %s, skipping comparison" % tag)
+                print("ERROR: No experiments found with tag %s" % tag)
                 return {}
 
             exp_data = {}
@@ -544,10 +544,7 @@ class ExperimentComparator:
                     newest_date = exp_date
                     newest_exp = (exp_name, exp_data)
         else:
-            print(
-                "WARNING: No matching experiments found with model_name %s, skipping comparison"
-                % current_model_name
-            )
+            print("ERROR: No matching experiments found with model_name %s" % current_model_name)
             return None
 
         compare = {
@@ -716,6 +713,8 @@ if __name__ == "__main__":
     follow_up_bench_cfg = list()
     microbench_result_data = dict()
     metric_reports = dict()
+    fail = False
+    fail_missing_comparison = False
 
     for id in run_ids:
         print("Processing run %d" % id)
@@ -1054,7 +1053,8 @@ if __name__ == "__main__":
             comp = ExperimentComparator(dvc_logger, collect_cfg_path)
             metrics = comp.aggregate_metrics_across_reports()
             if metrics is None:
-                print("WARNING: Skipping metric comparison for run %d" % id)
+                print("ERROR: Metric comparison failed for run %d" % id)
+                fail_missing_comparison = True
             else:
                 report = comp.compare_metrics_across_reports(metrics)
                 if args.followup:
@@ -1113,7 +1113,6 @@ if __name__ == "__main__":
     generate_metric_plots(metric_reports, plot_name)
 
     # Fail collect if any required metric is not ok
-    fail = False
     for dut, report in metric_reports.items():
         for metric, result in report["metrics"].items():
             if result.get("required") and result.get("status") != "ok":
@@ -1121,7 +1120,10 @@ if __name__ == "__main__":
                 print("Required metric %s for DUT %s is not ok: %s" % (metric, dut, result))
 
     if fail:
-        print("One or more required metrics are not ok, failing collect")
+        print("FAIL: One or more required metrics were compared and are not ok")
+    if fail_missing_comparison:
+        print("FAIL: One or more runs could not be compared due to missing reference experiments")
+    if fail or fail_missing_comparison:
         sys.exit(1)
 
     print("Done")

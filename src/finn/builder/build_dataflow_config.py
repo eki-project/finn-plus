@@ -320,7 +320,7 @@ class PartitioningConfiguration:
     parallel_synthesis_workers: int = 1
 
     # Whether the IODMA kernels should be separate or part of the compute kernel SDP.
-    # Currently only for Multi-FPGFA!
+    # Currently only for Multi-FPGA!
     separate_iodmas: bool = True
 
     # Since the Multi-FPGA flow contains a large number of extra steps (+ information), it benefits

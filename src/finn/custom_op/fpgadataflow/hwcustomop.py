@@ -50,9 +50,9 @@ from finn.util.settings import get_settings
 if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
     from finn.transformation.fpgadataflow.loop_rolling import LoopBodyInputType
+    from finn.xsi import SimEngine
 
 import finn.xsi as finnxsi
-from finn.xsi import SimEngine
 
 
 class HWCustomOp(CustomOp):
@@ -178,7 +178,7 @@ class HWCustomOp(CustomOp):
         intf_names["ap_none"] = []
         return intf_names
 
-    def get_rtlsim(self) -> SimEngine:
+    def get_rtlsim(self) -> "SimEngine":
         """Return a xsi wrapper for the emulation library for this node."""
         rtlsim_so = Path(cast("str", self.get_nodeattr("rtlsim_so")))
         if not rtlsim_so.is_file():
@@ -204,7 +204,7 @@ class HWCustomOp(CustomOp):
 
         return sim
 
-    def close_rtlsim(self, sim: SimEngine) -> None:
+    def close_rtlsim(self, sim: "SimEngine") -> None:
         """Close and free up resources for rtlsim.
 
         Args:
@@ -295,12 +295,12 @@ class HWCustomOp(CustomOp):
         """
         return {}
 
-    def reset_rtlsim(self, sim: SimEngine) -> None:
+    def reset_rtlsim(self, sim: "SimEngine") -> None:
         """Set reset input in finnxsi to zero, toggle the clock and set it back to one."""
         finnxsi.reset_rtlsim(sim)
 
     def rtlsim_multi_io(
-        self, sim: SimEngine, io_dict: dict[str, dict[str, list[int]]], sname: str = "_V"
+        self, sim: "SimEngine", io_dict: dict[str, dict[str, list[int]]], sname: str = "_V"
     ) -> None:
         """Run rtlsim for this node, supports multiple i/o streams."""
         num_out_values = self.get_number_output_values()

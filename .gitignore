@@ -86,6 +86,7 @@ htmlcov/*
 junit.xml
 coverage.xml
 .pytest_cache/
+tests/finn_build_output
 
 # Build and docs folder/files
 build/*

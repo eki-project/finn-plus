@@ -45,12 +45,13 @@ from collections.abc import Callable
 from onnx import NodeProto
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.core.onnx_exec import execute_onnx as execute_onnx_base
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from finn.core.rtlsim_exec import rtlsim_exec
 from finn.util.exception import FINNInternalError
 
-from finn.xsi import SimEngine
+if TYPE_CHECKING:
+    from finn.xsi import SimEngine
 
 
 def execute_onnx(
@@ -59,8 +60,8 @@ def execute_onnx(
     return_full_exec_context: bool = False,
     start_node: NodeProto | None = None,
     end_node: NodeProto | None = None,
-    pre_hook: Callable[[SimEngine], None] | None = None,
-    post_hook: Callable[[SimEngine], None] | None = None,
+    pre_hook: Callable[["SimEngine"], None] | None = None,
+    post_hook: Callable[["SimEngine"], None] | None = None,
 ) -> dict[str, np.ndarray]:
     """Execute given ONNX ModelWrapper with given named inputs.
     If return_full_exec_context is False, a dict of named outputs is returned

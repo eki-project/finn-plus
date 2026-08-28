@@ -186,9 +186,9 @@ class MakeCPPDriver(Transformation):
                 # Print the output for debugging purposes
                 print(result.stdout)
         except subprocess.CalledProcessError as e:
-            print(f"Error running command: {command}")
-            print(f"Output:{e.stdout}; Error:{e.stderr}")
-            raise e
+            raise FINNInternalError(
+                f"Error running command: {command}\n" f"Output:{e.stdout}; Error:{e.stderr}"
+            ) from e
 
     def configure_cmake(
         self,
@@ -271,8 +271,8 @@ class MakeCPPDriver(Transformation):
         # Handle build failures
         if result.returncode != 0:
             log.critical(f"Build failed with error:\n{result.stderr}")
-            raise subprocess.CalledProcessError(
-                result.returncode, args, result.stdout, result.stderr
+            raise FINNInternalError(
+                f"Failed cmake build. Stdout: " f"{result.stdout}; stderr: {result.stderr}"
             )
 
     def check_finn_types(
@@ -294,8 +294,9 @@ class MakeCPPDriver(Transformation):
             ["./finnhpc", "--check"], cwd=bin_dir, capture_output=True, text=True
         )
         if result.returncode != 0:
-            log.critical(f"Running datatype check failed with error:\n{result.stderr}")
-            raise subprocess.CalledProcessError(result.returncode, result.stdout, result.stderr)
+            raise FINNInternalError(
+                f"Failed datatype check. Stdout: " f"{result.stdout}; stderr: {result.stderr}"
+            )
         output = result.stdout
         output_lines = output.splitlines()
 

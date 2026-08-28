@@ -27,7 +27,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Insert IODMA nodes at graph boundaries and external weights."""
-
 import math
 import numpy as np
 from onnx import TensorProto
@@ -36,6 +35,8 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import SortGraph
 from qonnx.util.basic import get_by_name
+
+from finn.util.fpgadataflow import get_device_id
 
 
 class InsertIODMA(Transformation):
@@ -130,6 +131,9 @@ class InsertIODMA(Transformation):
                 )
                 model.graph.value_info.append(first_node_in)
                 model.set_tensor_datatype(first_node_in.name, in_dtype)
+                # Copy device ID of the node we are attaching to
+                other_node_device = get_device_id(first_node)
+                iodma_device = other_node_device if other_node_device is not None else 0
                 # reroute first node input
                 # FIXME: currently always using 8-bit dtypes to work around the
                 # padding problems for i/o DMA
@@ -146,6 +150,7 @@ class InsertIODMA(Transformation):
                     direction="in",
                     domain="finn.custom_op.fpgadataflow.hls",
                     backend="fpgadataflow",
+                    device_id=iodma_device,
                 )
                 model.graph.node.insert(0, dma_node)
                 modified = True
@@ -175,6 +180,9 @@ class InsertIODMA(Transformation):
                 )
                 model.graph.value_info.append(final_node_out)
                 model.set_tensor_datatype(final_node_out.name, out_dtype)
+                # Copy device ID of the node we are attaching to
+                other_node_device = get_device_id(final_node)
+                iodma_device = other_node_device if other_node_device is not None else 0
                 # reroute final node output to final_node_out_name
                 final_node.output[0] = final_node_out.name
                 # FIXME: currently always using 8-bit dtypes to work around the
@@ -191,6 +199,7 @@ class InsertIODMA(Transformation):
                     direction="out",
                     domain="finn.custom_op.fpgadataflow.hls",
                     backend="fpgadataflow",
+                    device_id=iodma_device,
                 )
                 model.graph.node.append(dma_node)
                 modified = True
@@ -229,6 +238,9 @@ class InsertIODMA(Transformation):
                 model.graph.value_info.append(fc_node_in)
                 model.set_tensor_datatype(fc_node_in.name, w_dtype)
                 model.set_initializer(fc_node_in.name, W)
+                # Copy device ID of the node we are attaching to
+                other_node_device = get_device_id(fc_node)
+                iodma_device = other_node_device if other_node_device is not None else 0
                 dma_node = oh.make_node(
                     "IODMA_hls",
                     [fc_w_name],
@@ -242,6 +254,7 @@ class InsertIODMA(Transformation):
                     burstMode="wrap",
                     domain="finn.custom_op.fpgadataflow.hls",
                     backend="fpgadataflow",
+                    device_id=iodma_device,
                 )
                 fc_node.input[1] = fc_node_in.name
                 model.graph.node.insert(0, dma_node)
