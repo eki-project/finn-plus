@@ -29,6 +29,11 @@ jobs:
           poetry build
           cd ..
 
+          # Build driver subpackage
+          cd driver
+          poetry build
+          cd ..
+
           # Update main pyproject.toml with the correct version
           sed -i "s/finn-plus-tests = { version = \"\*\", optional = true }/finn-plus-tests = { version = \"$VERSION\", optional = true }/" pyproject.toml
       - name: Build main package
@@ -38,6 +43,13 @@ jobs:
         run: |
           # Publish tests subpackage
           cd tests
+          poetry publish -r pypi -u __token__ -p ${{ secrets.PYPI_TOKEN }}
+          cd ..
+
+          # Publish driver subpackage
+          # Note: this is the runtime driver installed on PYNQ boards. It is deliberately not
+          # a dependency of the main package, which runs on the build host.
+          cd driver
           poetry publish -r pypi -u __token__ -p ${{ secrets.PYPI_TOKEN }}
           cd ..
 
