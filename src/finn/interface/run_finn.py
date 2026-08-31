@@ -1070,7 +1070,7 @@ def update(
         if settings.finn_deps.exists():
             shutil.rmtree(settings.finn_deps)
         # Also delete xsi.so to force a re-build
-        xsi_so = finn.xsi._xsi_so_path() # noqa
+        xsi_so = finn.xsi._xsi_so_path()  # noqa
         xsi_so.unlink(missing_ok=True)
     prepare_finn(settings, accept_defaults or batch, batch, create_build_dir=False)
 

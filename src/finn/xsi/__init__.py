@@ -31,12 +31,12 @@ Usage:
 """
 
 from __future__ import annotations
-from pathlib import Path
 
 import contextlib
 import os
 import re
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from finn.util.exception import FINNUserError
@@ -82,9 +82,11 @@ def _xsi_path() -> Path:
     """Return the current finn_xsi installation directory from FINN settings."""
     return get_settings().finn_xsi
 
+
 def _xsi_so_path() -> Path:
     """Return the assumed xsi.so path. Does not necessarily point to an existing file."""
     return _xsi_path() / "xsi.so"
+
 
 def is_available() -> bool:
     """Check if XSI (RTL simulation) support is available.
