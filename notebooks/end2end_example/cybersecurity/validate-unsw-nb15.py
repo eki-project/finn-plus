@@ -28,8 +28,9 @@
 
 import argparse
 import numpy as np
-from driver import io_shape_dict
 from driver_base import FINNExampleOverlay
+
+from driver import io_shape_dict
 
 
 def make_unsw_nb15_test_batches(bsize, dataset_root):
