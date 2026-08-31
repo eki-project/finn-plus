@@ -568,6 +568,14 @@ class MakePYNQDriver(Transformation):
         """
         pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
+        # Write a placeholder immediately so the directory is never observed empty on disk.
+        # FINN_BUILD_DIR commonly lives on a tmpfs (/dev/shm) that some environments sweep
+        # empty directories from after a short idle period; leaving this dir empty until
+        # settings.json is written at the end of apply() (which can be a while for larger
+        # models, e.g. runtime weight generation) previously caused the directory to
+        # disappear mid-build. See PR discussion for the FileNotFoundError this fixes.
+        with open(os.path.join(pynq_driver_dir, "settings.json"), "w") as f:
+            json.dump({}, f)
 
     def _generate_weight_files(self, model):
         """Generate weight files for external and runtime-writable weights."""
