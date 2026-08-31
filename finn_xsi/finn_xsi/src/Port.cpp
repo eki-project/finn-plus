@@ -82,17 +82,17 @@ Port& Port::clear() {
     return *this;
 }
 
-const char* Port::name() const noexcept { return _kernel.xsi<Kernel::Xsi::get_str_port>(static_cast<int>(_id), xsiNameTopPort); }
+const char* Port::name() const { return _kernel.xsi<Kernel::Xsi::get_str_port>(static_cast<int>(_id), xsiNameTopPort); }
 
-int Port::dir() const noexcept { return _kernel.xsi<Kernel::Xsi::get_int_port>(static_cast<int>(_id), xsiDirectionTopPort); }
+int Port::dir() const { return _kernel.xsi<Kernel::Xsi::get_int_port>(static_cast<int>(_id), xsiDirectionTopPort); }
 
-unsigned Port::width() const noexcept { return static_cast<unsigned>(_kernel.xsi<Kernel::Xsi::get_int_port>(static_cast<int>(_id), xsiHDLValueSize)); }
+unsigned Port::width() const { return static_cast<unsigned>(_kernel.xsi<Kernel::Xsi::get_int_port>(static_cast<int>(_id), xsiHDLValueSize)); }
 
-bool Port::isInput() const noexcept { return dir() == xsiInputPort; }
+bool Port::isInput() const { return dir() == xsiInputPort; }
 
-bool Port::isOutput() const noexcept { return dir() == xsiOutputPort; }
+bool Port::isOutput() const { return dir() == xsiOutputPort; }
 
-bool Port::isInout() const noexcept { return dir() == xsiInoutPort; }
+bool Port::isInout() const { return dir() == xsiInoutPort; }
 
 Port& Port::read() {
     _kernel.xsi<Kernel::Xsi::get_value>(static_cast<int>(_id), buffer.data());
