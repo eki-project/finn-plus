@@ -236,11 +236,22 @@ connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins ax
 if { $enable_finn_switch == 1 } {
     set_property -dict [list CONFIG.C_ALL_OUTPUTS_2 {1} CONFIG.C_GPIO2_WIDTH {1} CONFIG.C_IS_DUAL {1}] [get_bd_cells axi_gpio_0]
     connect_bd_net [get_bd_pins axi_gpio_0/gpio2_io_o] [get_bd_pins finn_switch/sel]
-    # Compute design clock frequency in Hz directly from FREQ_MHZ.
-    set clk_freq_hz [expr {int($FREQ_MHZ * 1000000)}]
+    # Derive the design clock frequency from the Clocking Wizard's *achieved* output
+    # rather than from FREQ_MHZ: the PLL cannot always realise the requested frequency
+    # exactly (asking for 100 MHz yields 99.999 MHz on some parts). Vivado propagates the
+    # achieved value onto every interface associated with that clock - such as
+    # instrumentation_wrap_0's - and re-applies it during validate_bd_design, so forcing
+    # the requested value here is what produced the BD 41-237 mismatch
+    # (99999000 vs 100000000).
+    set clk_freq_hz [get_property -quiet CONFIG.FREQ_HZ [get_bd_pins -quiet /clk_wiz_0/clk_out1]]
+    if { $clk_freq_hz eq "" || $clk_freq_hz == 0 } {
+        set clk_freq_hz [expr {int($FREQ_MHZ * 1000000)}]
+    }
+    # finn_switch is plain RTL whose AXI-Stream interfaces carry no clock association, so
+    # Vivado cannot infer their frequency and they must be set explicitly.
     set_property CONFIG.FREQ_HZ $clk_freq_hz [get_bd_intf_pins /finn_switch/*]
-    # instrumentation_wrap_0 AXI-Stream ports inherit FREQ_HZ from HLS synthesis and differ
-    # from finn_switch's frequency, triggering BD 41-237.  Normalise them here.
+    # instrumentation_wrap_0 AXI-Stream ports inherit FREQ_HZ from HLS synthesis; align
+    # them with the same value in case propagation does not cover them.
     foreach pin {finnix finnox} {
         set pin_obj [get_bd_intf_pins /instrumentation_wrap_0/$pin -quiet]
         if {$pin_obj ne ""} {
