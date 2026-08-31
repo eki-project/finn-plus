@@ -58,10 +58,6 @@ from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.transformation.remove import RemoveIdentityOps
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig
-from finn.transformation.fpgadataflow.convert_to_hw.add_streams import InferAddStreamsLayer
-from finn.transformation.fpgadataflow.convert_to_hw.channelwise_linear import (
-    InferChannelwiseLinearLayer,
-)
 from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
 from finn.transformation.fpgadataflow.convert_to_hw.duplicate_streams import (
     InferDuplicateStreamsLayer,
@@ -174,7 +170,6 @@ def step_resnet_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
     model = model.transform(SortGraph())
 
     to_hw_transformations = [
-        InferChannelwiseLinearLayer,
         InferReplicateStream,
         InferLabelSelectLayer,
         InferElementwiseBinaryOperation,
@@ -319,7 +314,7 @@ def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
     model = model.transform(SortGraph())
 
     to_hw_transformations = [
-        InferChannelwiseLinearLayer,
+        InferElementwiseBinaryOperation,
         InferPool,
         AbsorbConsecutiveTransposes,
         RoundAndClipThresholds,
@@ -327,7 +322,7 @@ def step_resnet50_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig):
         InferThresholdingLayer,
         InferConvInpGen,
         InferDuplicateStreamsLayer,
-        InferAddStreamsLayer,
+        InferElementwiseBinaryOperation,
         InferLabelSelectLayer,
     ]
     for trn in to_hw_transformations:
