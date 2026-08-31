@@ -243,24 +243,18 @@ if { $enable_finn_switch == 1 } {
     # rather than exactly 100, so requesting 100 MHz yields 99999000 Hz. That mismatch is
     # what validate_bd_design reports as BD 41-237.
     #
-    # The Clocking Wizard does not expose the achieved frequency as a queryable property
-    # while the BD is being assembled (CONFIG.CLKOUT1_ACT_FREQ_HZ is empty and
-    # clk_out1's CONFIG.FREQ_HZ still reads the requested value), so take it from a pin
-    # Vivado has actually propagated to: instrumentation_wrap_0's AXI-Stream ports, which
-    # are clock-associated and therefore carry the real value. Fall back to FREQ_MHZ when
-    # the instrumentation wrapper is absent.
-    set clk_freq_hz ""
-    foreach pin {finnix finnox} {
-        set pin_obj [get_bd_intf_pins -quiet /instrumentation_wrap_0/$pin]
-        if { $pin_obj ne "" } {
-            set probed [get_property -quiet CONFIG.FREQ_HZ $pin_obj]
-            if { $probed ne "" && $probed != 0 } {
-                set clk_freq_hz $probed
-                break
-            }
-        }
-    }
-    if { $clk_freq_hz eq "" } {
+    # The achieved frequency only becomes readable once Vivado has run parameter
+    # propagation over the assembled design, which happens as part of validation. Until
+    # then every pin - including the Clocking Wizard's own clk_out1 - still reports the
+    # requested value. So force a propagation pass first; it is expected to report the
+    # very BD 41-237 mismatch we are about to fix, hence the catch. The message is
+    # suppressed for that pass only, so it cannot be mistaken for a real failure in the
+    # build log, and is re-enabled before the genuine validation below.
+    set_msg_config -id {BD 41-237} -suppress
+    catch {validate_bd_design -force}
+    reset_msg_config -id {BD 41-237} -suppress
+    set clk_freq_hz [get_property -quiet CONFIG.FREQ_HZ [get_bd_pins /clk_wiz_0/clk_out1]]
+    if { $clk_freq_hz eq "" || $clk_freq_hz == 0 } {
         set clk_freq_hz [expr {int($FREQ_MHZ * 1000000)}]
     }
     set_property CONFIG.FREQ_HZ $clk_freq_hz [get_bd_intf_pins /finn_switch/*]
