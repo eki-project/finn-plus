@@ -70,7 +70,6 @@ by all relevant transformations. If the default or max values ever change, this
 should be modified.
 """
 
-
 if TYPE_CHECKING:
     from onnx import NodeProto
 

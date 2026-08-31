@@ -337,8 +337,6 @@ class TestAuroraFlowPartitioning:
             "step_set_fifo_depths",
             True,
             cfg,
-            pytestconfig,
-            identifier="test_partitioning",
         )
 
         # Skip tests for models that simply require too many resources
@@ -518,7 +516,7 @@ class TestAuroraFlowPartitioning:
             ),
         )
         model, cfg = get_model(
-            typename, wbits, abits, pretrained, "step_set_fifo_depths", True, cfg, pytestconfig
+            typename, wbits, abits, pretrained, "step_set_fifo_depths", True, cfg
         )
 
         # Write/read to/from file

@@ -184,8 +184,6 @@ def test_onnx_to_networkx(
         "step_set_fifo_depths",
         True,
         cfg,
-        pytestconfig,
-        "onnx_to_nx",
     )
     g = onnx_to_networkx(model)
 
@@ -262,9 +260,7 @@ def test_resnet18_examples_inseparable_nodes(pytestconfig: pytest.Config) -> Non
         shell_flow_type=ShellFlowType.VITIS_ALVEO,
         target_fps=100,
     )
-    model, _ = get_model(
-        "resnet18", 4, 4, False, "step_set_fifo_depths", True, cfg, pytestconfig, "rn18_insep_nodes"
-    )
+    model, _ = get_model("resnet18", 4, 4, False, "step_set_fifo_depths", True, cfg)
     groups = get_inseparable_nodes(model)
     assert len(groups) == 8
     assert max(len(group) for group in groups) == 10
