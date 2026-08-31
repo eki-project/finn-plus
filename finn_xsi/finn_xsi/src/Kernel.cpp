@@ -81,6 +81,7 @@ Kernel& Kernel::operator=(Kernel&& other) noexcept {
     if (this != &other) {
         // Clean up current state
         close();
+        _ports.clear();
 
         // Move from other
         _kernel_lib = std::move(other._kernel_lib);
@@ -111,6 +112,9 @@ Kernel::~Kernel() {
 }
 
 void Kernel::open(const std::string& design_lib, const s_xsi_setup_info& setup_info) {
+    if (_design_lib)
+        throw std::runtime_error("Kernel already has a design open: " + _design_lib.path());
+    _ports.clear();
     _design_lib.open(design_lib);
     try {
         auto const f = t_fp_xsi_open(resolve_or_throw(_design_lib, "xsi_open"));
@@ -132,18 +136,35 @@ void Kernel::open(const std::string& design_lib, const s_xsi_setup_info& setup_i
     }
 }
 void Kernel::close() noexcept {
-    xsi<Xsi::close>();
-    _xsi.setHandle(nullptr);
+    // Idempotent: only tear down an actually open design.
+    if (_xsi.hasValidHandle()) {
+        // Bypass the checked Kernel::xsi<> funnel, which would throw on a null handle.
+        _xsi.invoke<Xsi::close>();
+        _xsi.setHandle(nullptr);
+    }
+
+    // Clean up Library State: the simulator kernel caches the SystemVerilog type table of
+    // the design that was opened last in a global. It has to be reset so that a design
+    // opened later does not pick up the stale table in case the kernel library stays
+    // loaded. Note that getsymbol() yields the *address* of the global, so the write has
+    // to go through that address.
+    if (_kernel_lib) {
+        std::optional<void*> const vptr = _kernel_lib.getsymbol("svTypeInfo");
+        if (vptr)
+            *static_cast<void**>(*vptr) = nullptr;
+    }
+
     _design_lib.close();
 
-    // Clear ports - unique_ptr will handle destruction automatically
-    _ports.clear();
-
-    // Clean up Library State
-    std::optional<void*> vptr = _kernel_lib.getsymbol("svTypeInfo");
-    if (vptr)
-        *vptr = nullptr;
+    // NOTE: _ports is deliberately *not* cleared here. Python-side Port wrappers are
+    // non-owning views into this vector that stay alive as long as the owning Design
+    // does, so destroying the elements would leave them dangling. The ports are inert
+    // once the design handle is gone, because every access goes through Kernel::xsi<>.
 }
+
+bool Kernel::is_open() const noexcept { return _xsi.hasValidHandle(); }
+
+bool Kernel::is_loaded() const noexcept { return bool(_kernel_lib); }
 
 Port& Kernel::getPort(const char* const name) {
     int const id = xsi<Xsi::get_port_number>(name);

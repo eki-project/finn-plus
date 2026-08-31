@@ -48,7 +48,14 @@ SharedLibrary::handle_type SharedLibrary::load(const std::string& path) {
     if (!lib)
         throw std::runtime_error(translate_error_message(GetLastError()));
 #else
-    handle_type const lib = dlopen(path.c_str(), RTLD_LAZY | RTLD_GLOBAL);
+    // RTLD_LOCAL is essential: every xsimk.so produced by xelab exports the same set of
+    // symbols (funcTab, simulate, relocate, sensitize, xsi_open, ...) and references them
+    // through GOT entries resolved by global-scope lookup. With RTLD_GLOBAL a design
+    // loaded while another one is still open binds to the other design's tables, which
+    // corrupts the simulator kernel. RTLD_GLOBAL would additionally publish the Vivado
+    // runtime pulled in by the simulator kernel (its own libpython, libssl, libcrypto,
+    // libprotobuf, libtcl, ...) into the host process' global symbol namespace.
+    handle_type const lib = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!lib)
         throw std::runtime_error(dlerror());
 #endif

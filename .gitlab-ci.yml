@@ -101,7 +101,7 @@ Build:
     - when: always
   before_script:
     - !reference [.n2_setup_general, before_script]
-    - !reference [.n2_setup_xilinx_2022_2, before_script]
+    - !reference [.n2_setup_xilinx_2024_2, before_script]
     # Install current version of Poetry
     - python3 -m venv poetry-install
     - poetry-install/bin/pip install poetry

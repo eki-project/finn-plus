@@ -18,9 +18,6 @@ from finn.builder.build_dataflow_config import (
     VerificationStepType,
 )
 from finn.builder.build_dataflow_steps import verify_step
-from finn.transformation.fpgadataflow.convert_to_hw.channelwise_linear import (
-    InferChannelwiseLinearLayer,
-)
 from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
 from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
     InferElementwiseBinaryOperation,
@@ -89,7 +86,7 @@ def step_mobilenet_convert_to_hw_layers(model: ModelWrapper, cfg: DataflowBuildC
     model = model.transform(InferConvInpGen())
     model = model.transform(InferVectorVectorActivation())
     model = model.transform(InferQuantizedMatrixVectorActivation())
-    model = model.transform(InferChannelwiseLinearLayer())
+    model = model.transform(InferElementwiseBinaryOperation())
     model = model.transform(InferLabelSelectLayer())
     model = model.transform(InferShapes())
     model = model.transform(GiveUniqueNodeNames())
