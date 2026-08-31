@@ -236,28 +236,34 @@ connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins ax
 if { $enable_finn_switch == 1 } {
     set_property -dict [list CONFIG.C_ALL_OUTPUTS_2 {1} CONFIG.C_GPIO2_WIDTH {1} CONFIG.C_IS_DUAL {1}] [get_bd_cells axi_gpio_0]
     connect_bd_net [get_bd_pins axi_gpio_0/gpio2_io_o] [get_bd_pins finn_switch/sel]
-    # Derive the design clock frequency from the Clocking Wizard's *achieved* output
-    # rather than from FREQ_MHZ: the PLL cannot always realise the requested frequency
-    # exactly (asking for 100 MHz yields 99.999 MHz on some parts). Vivado propagates the
-    # achieved value onto every interface associated with that clock - such as
-    # instrumentation_wrap_0's - and re-applies it during validate_bd_design, so forcing
-    # the requested value here is what produced the BD 41-237 mismatch
-    # (99999000 vs 100000000).
-    set clk_freq_hz [get_property -quiet CONFIG.FREQ_HZ [get_bd_pins -quiet /clk_wiz_0/clk_out1]]
-    if { $clk_freq_hz eq "" || $clk_freq_hz == 0 } {
-        set clk_freq_hz [expr {int($FREQ_MHZ * 1000000)}]
-    }
-    # finn_switch is plain RTL whose AXI-Stream interfaces carry no clock association, so
-    # Vivado cannot infer their frequency and they must be set explicitly.
-    set_property CONFIG.FREQ_HZ $clk_freq_hz [get_bd_intf_pins /finn_switch/*]
-    # instrumentation_wrap_0 AXI-Stream ports inherit FREQ_HZ from HLS synthesis; align
-    # them with the same value in case propagation does not cover them.
+    # finn_switch is plain combinational RTL with no clock port, so Vivado cannot infer a
+    # frequency for its AXI-Stream interfaces and defaults them to 100 MHz. Its neighbours
+    # run at the Clocking Wizard's *achieved* output, which is not necessarily the
+    # requested FREQ_MHZ: the PLL reference comes from the PS, whose FCLK is 99.999 MHz
+    # rather than exactly 100, so requesting 100 MHz yields 99999000 Hz. That mismatch is
+    # what validate_bd_design reports as BD 41-237.
+    #
+    # The Clocking Wizard does not expose the achieved frequency as a queryable property
+    # while the BD is being assembled (CONFIG.CLKOUT1_ACT_FREQ_HZ is empty and
+    # clk_out1's CONFIG.FREQ_HZ still reads the requested value), so take it from a pin
+    # Vivado has actually propagated to: instrumentation_wrap_0's AXI-Stream ports, which
+    # are clock-associated and therefore carry the real value. Fall back to FREQ_MHZ when
+    # the instrumentation wrapper is absent.
+    set clk_freq_hz ""
     foreach pin {finnix finnox} {
-        set pin_obj [get_bd_intf_pins /instrumentation_wrap_0/$pin -quiet]
-        if {$pin_obj ne ""} {
-            set_property CONFIG.FREQ_HZ $clk_freq_hz $pin_obj
+        set pin_obj [get_bd_intf_pins -quiet /instrumentation_wrap_0/$pin]
+        if { $pin_obj ne "" } {
+            set probed [get_property -quiet CONFIG.FREQ_HZ $pin_obj]
+            if { $probed ne "" && $probed != 0 } {
+                set clk_freq_hz $probed
+                break
+            }
         }
     }
+    if { $clk_freq_hz eq "" } {
+        set clk_freq_hz [expr {int($FREQ_MHZ * 1000000)}]
+    }
+    set_property CONFIG.FREQ_HZ $clk_freq_hz [get_bd_intf_pins /finn_switch/*]
 }
 
 save_bd_design
