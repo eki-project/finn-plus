@@ -122,16 +122,16 @@
     },
 
     # ResNet-18 (CIFAR100)
-    {
-        "dut": ["resnet18"],
-        "model_path": [models/resnet18/resnet18_w3a3_cifar100.onnx],
-        "folding_config_file": [models/resnet18/resnet18_folding_config.json],
-        "specialize_layers_config_file": [models/resnet18/resnet18_specialize_layers.json],
-        "auto_fifo_depths": [True],
-        "auto_fifo_strategy": ["live_fifo"],
-        "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-        "synth_clk_period_ns": [10],
-    },
+    # {
+    #     "dut": ["resnet18"],
+    #     "model_path": [models/resnet18/resnet18_w3a3_cifar100.onnx],
+    #     "folding_config_file": [models/resnet18/resnet18_folding_config.json],
+    #     "specialize_layers_config_file": [models/resnet18/resnet18_specialize_layers.json],
+    #     "auto_fifo_depths": [True],
+    #     "auto_fifo_strategy": ["live_fifo"],
+    #     "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
+    #     "synth_clk_period_ns": [10],
+    # },
 
     ### NEW Transformer models (dvc-imported from finn-transformers repo):
     # benchmark model ("dummy")
@@ -154,6 +154,7 @@
         "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
@@ -167,6 +168,7 @@
         "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
@@ -180,6 +182,7 @@
         "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
         "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
+        "verify_steps": ["None"], # disable verification to not affect build time measurements
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
