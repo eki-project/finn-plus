@@ -405,43 +405,23 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
             print("Multi-DNN Mode Active")
 
         # If start_step is specified, override the input model
-        if cfg.start_step is None:
-            if multidnn:
-                mdnn_config = MultiDNNConfig(cfg.multi_dnn_config_path)
-                mdnn = MultiDNNWrapper(
-                    {
-                        name: model
-                        for name, model in zip(
-                            mdnn_config.submodel_names,
-                            [
-                                mdnn_config.get_submodel_model(name)
-                                for name in mdnn_config.submodel_names
-                            ],
-                        )
-                    }
-                )
-            else:
-                print(f"Building dataflow accelerator from {model_filename}")
-                model = ModelWrapper(model_filename)
-                assert type(model) is ModelWrapper
-        else:
-            assert not multidnn, "Multi-DNN Mode currently does not support start_step"
-            if model_filename != "":
-                log.warning(
-                    "When using a start-step, FINN automatically searches "
-                    "for the correct model to use from previous runs, overwriting your "
-                    "passed model file (but still using it's path for the location of the "
-                    "temporary file directory, etc.). This behaviour might change "
-                    "in future versions!"
-                )
-            intermediate_model_filename = resolve_step_filename(cfg.start_step, cfg, -1)
-            out = (
-                f"Building dataflow accelerator from intermediate"
-                f" checkpoint {intermediate_model_filename}"
+        if multidnn:
+            assert cfg.start_step is None, "Multi-DNN Mode currently does not support start_step"
+            mdnn_config = MultiDNNConfig(cfg.multi_dnn_config_path)
+            mdnn = MultiDNNWrapper(
+                {
+                    name: model
+                    for name, model in zip(
+                        mdnn_config.submodel_names,
+                        [
+                            mdnn_config.get_submodel_model(name)
+                            for name in mdnn_config.submodel_names
+                        ],
+                    )
+                }
             )
-            print(out)
-            model = ModelWrapper(intermediate_model_filename)
-            assert type(model) is ModelWrapper
+        else:
+            model = create_model_wrapper(model_filename, cfg)
 
         time_per_step = dict()
         step_num = 1
