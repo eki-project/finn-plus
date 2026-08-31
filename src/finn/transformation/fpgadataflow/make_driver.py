@@ -42,9 +42,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from string import Template
 
-import finn.util
 from finn.builder.build_dataflow_config import FpgaMemoryType
-from finn.templates import get_templates_folder
 from finn.util.basic import get_driver_shapes, make_build_dir
 from finn.util.data_packing import to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -561,42 +559,15 @@ class MakePYNQDriver(Transformation):
         self.board = board
 
     def _generate_driver_files(self, model):
-        """Generate PYNQ driver base files."""
-        # create a temporary folder for the generated driver
+        """Create the deployment directory for the generated accelerator.
+
+        Only accelerator-specific artifacts are written here (``settings.json`` and, if
+        applicable, ``runtime_weights/``). The driver code itself is no longer copied: it is
+        published separately as the ``finn-plus-driver`` package and installed on the target
+        board.
+        """
         pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
-
-        # create the FINN driver
-        driver_base_template = get_templates_folder() / "python_driver/driver.py"
-
-        driver_base_py = pynq_driver_dir + "/driver.py"
-
-        shutil.copy(driver_base_template, driver_base_py)
-
-        # Copy validate scripts
-        validate_base_template = get_templates_folder() / "validate"
-        validate_target_path = pynq_driver_dir + "/validate"
-        shutil.copytree(validate_base_template, validate_target_path)
-
-        # TODO: Can we do this without packaging data_packing.py this way?
-        finn_target_path = pynq_driver_dir + "/finn"
-        os.makedirs(finn_target_path + "/util", exist_ok=True)
-        finn_util_path = finn.util.__path__[0]
-        files_to_copy = []
-        files_to_copy.append(
-            (
-                finn_util_path + "/data_packing.py",
-                finn_target_path + "/util/data_packing.py",
-            )
-        )
-        files_to_copy.append(
-            (
-                finn_util_path + "/__init__.py",
-                finn_target_path + "/util/__init__.py",
-            )
-        )
-        for src_file, target_file in files_to_copy:
-            shutil.copy(src_file, target_file)
 
     def _generate_weight_files(self, model):
         """Generate weight files for external and runtime-writable weights."""
