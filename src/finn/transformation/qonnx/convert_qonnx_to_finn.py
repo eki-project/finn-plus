@@ -27,6 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Module for convert qonnx to finn onnx."""
+import numpy as np
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.extract_conv_bias import ExtractBiasFromConv
 from qonnx.transformation.gemm_to_matmul import GemmToMatMul
@@ -34,6 +35,7 @@ from qonnx.transformation.infer_data_layouts import InferDataLayouts
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.quant_constant_folding import FoldTransposeIntoQuantInit
 from qonnx.transformation.remove import RemoveIdentityOps
+from qonnx.util.basic import get_by_name
 
 from finn.transformation.qonnx.fold_quant_weights import FoldQuantWeights
 from finn.transformation.qonnx.infer_quant_avg_pool_2d import AvgPoolAndTruncToQuantAvgPool
@@ -41,6 +43,37 @@ from finn.transformation.qonnx.quant_act_to_multithreshold import (
     ConvertQuantActToMultiThreshold,
     default_filter_function_generator,
 )
+
+
+class InferMissingGemmBias(Transformation):
+    """Insert an explicit zero-valued bias (C) input for Gemm nodes that were
+    exported without one.
+
+    Newer versions of the ONNX exporter (e.g. torch.onnx dynamo-based export used by
+    newer Brevitas/PyTorch versions) omit the optional C (bias) input of the Gemm
+    operator entirely when no bias is present, whereas QONNX's GemmToMatMul
+    transformation still unconditionally expects three inputs (A, B, C). This
+    transformation restores compatibility by inserting an all-zero C initializer
+    matching the output feature dimension whenever it is missing.
+    """
+
+    def apply(self, model):
+        """Apply transformation."""
+        graph = model.graph
+        graph_modified = False
+        for n in graph.node:
+            if n.op_type == "Gemm" and len(n.input) < 3:
+                transB = get_by_name(n.attribute, "transB")
+                b_shape = model.get_tensor_shape(n.input[1])
+                if b_shape is None:
+                    continue
+                out_features = b_shape[0] if transB is not None and transB.i else b_shape[1]
+                bias_name = model.make_new_valueinfo_name()
+                bias_val = np.zeros(out_features, dtype=np.float32)
+                model.set_initializer(bias_name, bias_val)
+                n.input.append(bias_name)
+                graph_modified = True
+        return (model, graph_modified)
 
 
 class ConvertQONNXtoFINN(Transformation):
@@ -76,6 +109,9 @@ class ConvertQONNXtoFINN(Transformation):
         # Extract the bias from Conv node
         """Apply transformation."""
         model = model.transform(ExtractBiasFromConv())
+        # Newer ONNX exporters may omit the optional Gemm bias input entirely;
+        # restore it explicitly so GemmToMatMul (which assumes 3 inputs) works.
+        model = model.transform(InferMissingGemmBias())
         # Gemm operations are not supported by FINN, so we convert them to MatMul
         model = model.transform(GemmToMatMul())
         model = model.transform(FoldTransposeIntoQuantInit())

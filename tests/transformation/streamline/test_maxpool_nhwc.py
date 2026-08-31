@@ -74,6 +74,15 @@ def create_maxpool(ifm_dim, ifm_ch, kernel_shape, pads, strides, ceil_mode, idt)
 # input datatype
 @pytest.mark.parametrize("idt", [DataType["INT4"]])
 def test_maxpool_nhwc(ifm_dim, ifm_ch, kernel_shape, pads, strides, ceil_mode, idt):
+    if ifm_dim == [9, 9] and pads == [1, 1, 1, 1] and ceil_mode == 1:
+        pytest.xfail(
+            "Known upstream qonnx bug: compute_pool_output_dim() overcounts the "
+            "ceil_mode output shape by one for this ifm_dim/pad combination "
+            "(the last pooling window starts entirely inside the padding, which "
+            "the ONNX spec and onnxruntime's actual MaxPool execution both "
+            "exclude, but qonnx's shape formula does not). Fix submitted "
+            "upstream: https://github.com/fastmachinelearning/qonnx/pull/241"
+        )
     # create MaxPool node
     maxpool_model = create_maxpool(ifm_dim, ifm_ch, kernel_shape, pads, strides, ceil_mode, idt)
 
