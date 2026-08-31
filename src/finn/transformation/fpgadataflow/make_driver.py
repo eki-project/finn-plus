@@ -568,14 +568,6 @@ class MakePYNQDriver(Transformation):
         """
         pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
-        # Write a placeholder immediately so the directory is never observed empty on disk.
-        # FINN_BUILD_DIR commonly lives on a tmpfs (/dev/shm) that some environments sweep
-        # empty directories from after a short idle period; leaving this dir empty until
-        # settings.json is written at the end of apply() (which can be a while for larger
-        # models, e.g. runtime weight generation) previously caused the directory to
-        # disappear mid-build. See PR discussion for the FileNotFoundError this fixes.
-        with open(os.path.join(pynq_driver_dir, "settings.json"), "w") as f:
-            json.dump({}, f)
 
     def _generate_weight_files(self, model):
         """Generate weight files for external and runtime-writable weights."""
@@ -666,7 +658,13 @@ class MakePYNQDriver(Transformation):
                     continue
 
         if (not external_weights) and (not runtime_weights):
-            os.removedirs(weights_dir)
+            # Only remove the "runtime_weights" leaf directory we created above, not any of
+            # its parents. os.removedirs() would also recursively delete pynq_driver_dir
+            # itself once it becomes empty, since it no longer contains copied driver source
+            # files (those are now provided by the separately installed finn-plus-driver
+            # package rather than being written into this directory). Deleting
+            # pynq_driver_dir here would make the later settings.json write in apply() fail.
+            os.rmdir(weights_dir)
 
         return external_weights_dict, runtime_weights
 
