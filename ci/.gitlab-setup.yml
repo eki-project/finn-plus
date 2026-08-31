@@ -17,8 +17,6 @@
     - export PLATFORM_PATH=$FINN_CUSTOM_PLATFORM_PATH # override with custom platform path
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
-    # Workaround for https://github.com/eki-project/finn-plus/issues/112
-    - export LD_LIBRARY_PATH=$XILINX_VIVADO/lib/lnx64.o:$XILINX_VITIS/lnx64/tools/fpo_v7_1:$LD_LIBRARY_PATH
     # Force use of system SSL libraries on Otus
     - export LD_PRELOAD=/lib64/libssl.so.3:/lib64/libcrypto.so.3:$LD_PRELOAD
 
@@ -31,8 +29,6 @@
     - export PLATFORM_PATH=$FINN_CUSTOM_PLATFORM_PATH # override with custom platform path
     # module load will set PLATFORM_REPO_PATHS to one specific platform, revert to top-level PLATFORM_PATH
     - export PLATFORM_REPO_PATHS=$PLATFORM_PATH
-    # Workaround for https://github.com/eki-project/finn-plus/issues/112
-    - export LD_LIBRARY_PATH=$XILINX_VIVADO/lib/lnx64.o:$XILINX_VITIS/lnx64/tools/fpo_v7_1:$LD_LIBRARY_PATH
     # Force use of system SSL libraries on Otus
     - export LD_PRELOAD=/lib64/libssl.so.3:/lib64/libcrypto.so.3:$LD_PRELOAD
 
