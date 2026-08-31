@@ -224,6 +224,20 @@ estimate_only_dataflow_steps = [
 #: without any synthesis.
 hw_codegen_dataflow_steps = [*estimate_only_dataflow_steps, "step_hw_codegen"]
 
+#: Maps each output product to the name of the step that produces it, so that a
+#: custom `steps` list can be checked for completeness against `generate_outputs`.
+#: `RTLSIM_PERFORMANCE` is deliberately absent: `step_measure_rtlsim_performance` does
+#: not gate its work on `generate_outputs`, so there is nothing to check for it.
+_OUTPUT_TYPE_TO_STEP: dict[DataflowOutputType, str] = {
+    DataflowOutputType.ESTIMATE_REPORTS: "step_generate_estimate_reports",
+    DataflowOutputType.STITCHED_IP: "step_create_stitched_ip",
+    DataflowOutputType.OOC_SYNTH: "step_out_of_context_synthesis",
+    DataflowOutputType.BITFILE: "step_synthesize_bitfile",
+    DataflowOutputType.PYNQ_DRIVER: "step_make_driver",
+    DataflowOutputType.CPP_DRIVER: "step_make_driver",
+    DataflowOutputType.DEPLOYMENT_PACKAGE: "step_deployment_package",
+}
+
 
 @dataclass
 class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
@@ -291,7 +305,77 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
                 f"No folding config file could be found at {dfbc.folding_config_file}."
             )
 
+        dfbc.validate_generate_outputs()
+
         return dfbc
+
+    def validate_generate_outputs(self) -> None:
+        """Check that `generate_outputs` does not request an output product whose
+        prerequisite output product is missing, and that `steps` (if customized)
+        still contains the step that produces each requested output.
+
+        Some output products are built on top of others (e.g. out-of-context synthesis
+        needs the stitched IP), but the steps that produce them only discover a missing
+        prerequisite once they run - potentially after other steps have already spent
+        hours on synthesis. Likewise, each output-producing step decides whether to do
+        its work by checking `generate_outputs` itself, so a custom `steps` list that
+        drops one of them silently produces no output and no error - or, worse, a
+        downstream step still runs and fails with a confusing low-level error because
+        the artifact it depends on was never created. Catching both cases at
+        config-validation time instead avoids wasting time on a build that was always
+        going to fail.
+
+        Raises:
+            FINNConfigurationError: If `generate_outputs` contains an output product
+                without a prerequisite it depends on, or without its producing step
+                present in `steps`.
+        """
+        requested = set(self.generate_outputs)
+
+        if (
+            DataflowOutputType.OOC_SYNTH in requested
+            and DataflowOutputType.STITCHED_IP not in requested
+        ):
+            raise FINNConfigurationError(
+                "generate_outputs requests out_of_context_synth, which requires "
+                "stitched_ip to also be requested. Add stitched_ip to generate_outputs."
+            )
+
+        if DataflowOutputType.DEPLOYMENT_PACKAGE in requested:
+            if DataflowOutputType.BITFILE not in requested:
+                raise FINNConfigurationError(
+                    "generate_outputs requests deployment_package, which requires "
+                    "bitfile to also be requested. Add bitfile to generate_outputs."
+                )
+            if (
+                DataflowOutputType.PYNQ_DRIVER not in requested
+                and DataflowOutputType.CPP_DRIVER not in requested
+            ):
+                raise FINNConfigurationError(
+                    "generate_outputs requests deployment_package, which requires "
+                    "either pynq_driver or cpp_driver to also be requested. Add one "
+                    "of them to generate_outputs."
+                )
+
+        # `steps` defaulting to None means the default step list is used, which
+        # contains every producer step - nothing to check in that case.
+        if self.steps is None:
+            return
+
+        step_names: set[str] = set()
+        for step in self.steps:
+            if isinstance(step, str):
+                step_names.add(step)
+            elif callable(step):
+                step_names.add(getattr(step, "__name__", ""))
+
+        for output_type, required_step in _OUTPUT_TYPE_TO_STEP.items():
+            if output_type in requested and required_step not in step_names:
+                raise FINNConfigurationError(
+                    f"generate_outputs requests {output_type.value}, which requires "
+                    f"the step '{required_step}' to be present in `steps`. Add it, or "
+                    "leave `steps` unset to use the default step list."
+                )
 
     def correct_paths(self) -> None:
         """Fix paths by (if needed) joining them with the config path, so that

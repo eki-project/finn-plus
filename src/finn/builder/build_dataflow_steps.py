@@ -171,7 +171,7 @@ from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth, getHWCustomOp
 from finn.util.config import extract_model_config_to_json
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNConfigurationError, FINNUserError
 from finn.util.execution import execute_parent
 from finn.util.logging import log
 from finn.util.mlo_sim import is_mlo, mlo_prehook_func_factory
@@ -1546,7 +1546,11 @@ def step_out_of_context_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig)
     """Run out-of-context synthesis and generate reports.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
     if DataflowOutputType.OOC_SYNTH in cfg.generate_outputs:
-        assert DataflowOutputType.STITCHED_IP in cfg.generate_outputs, "OOC needs stitched IP"
+        if DataflowOutputType.STITCHED_IP not in cfg.generate_outputs:
+            raise FINNConfigurationError(
+                "generate_outputs requests out_of_context_synth, which requires "
+                "stitched_ip to also be requested. Add stitched_ip to generate_outputs."
+            )
         model = model.transform(
             SynthOutOfContext(part=cfg._resolve_fpga_part(), clk_period_ns=cfg.synth_clk_period_ns)
         )

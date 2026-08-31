@@ -384,6 +384,11 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
     # Setup done, start build flow
     time_per_step: dict[str, float] = {}
     try:
+        # Catch unsupported generate_outputs combinations here (e.g. a config built
+        # directly in Python rather than via DataflowBuildConfig.construct_from, which
+        # skips that validation) before spending any time on the build itself.
+        cfg.validate_generate_outputs()
+
         model = create_model_wrapper(model_filename, cfg)
         build_dataflow_steps: list[BuildStep] = resolve_build_steps(cfg)
 
