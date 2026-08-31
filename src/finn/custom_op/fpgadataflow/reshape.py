@@ -146,7 +146,7 @@ class Reshape(HWCustomOp):
         # Get the input from the execution context
         inp = context[node.input[0]]
         # Squeeze the input along the optionally specified axes
-        out = np.reshape(inp, newshape=self.out_shape)
+        out = np.reshape(inp, shape=self.out_shape)
         # Make sure the output has the right type (always use float32 as the
         # container type) and insert into the execution context
         context[node.output[0]] = out.astype(np.float32)
