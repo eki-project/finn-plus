@@ -67,7 +67,6 @@ def test_resource_est_for_all_layers(
         "step_set_fifo_depths",
         skip_fifo_sizing=True,
         cfg=cfg,
-        pytestconfig=pytestconfig,
     )
 
     # Run the resource estimation
