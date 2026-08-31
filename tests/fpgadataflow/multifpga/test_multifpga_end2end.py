@@ -22,23 +22,35 @@ execution environment with driver testing.
 #     VitisOptStrategy,
 # )
 # from finn.util.basic import make_build_dir
-
-
-# @pytest.mark.slow
-# @pytest.mark.vivado
-# def test_end2end_multifpga_mobilenet(pytestconfig: pytest.Config) -> None:
+#
+#
+# @pytest.mark.parametrize(
+#     "fpgas,synth_clk_period_ns,target_fps,mvau_wwidth_max,folding_two_pass,max_util,communication_kernel,topology,partition_strategy",
+#     [
+#         pytest.param(
+#             2, 10.0, 100, 412, True, 0.85, MFCommunicationKernel.AURORA, MFTopology.CHAIN,
+#             PartitioningStrategy.RESOURCE_UTILIZATION, id="slow_linear_aurora_resource"
+#         )
+#     ]
+# )
+# def test_end2end_multifpga_mobilenet(
+#     fpgas: int, synth_clk_period_ns: float, target_fps: int,
+#     mvau_wwidth_max: int, folding_two_pass: bool,
+#     max_util: float, communication_kernel: MFCommunicationKernel, topology: MFTopology,
+#     partition_strategy: PartitioningStrategy
+# ) -> None:
 #     """Do a complete end2end test of the Multi-FPGA variant of the mobilenet."""
 #     cfg = DataflowBuildConfig(
 #         partitioning_configuration=PartitioningConfiguration(
 #             partitioning=None,
-#             num_fpgas=2,
+#             num_fpgas=fpgas,
 #             ports_per_device=2,
-#             partition_strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
-#             topology=MFTopology.CHAIN,
-#             communication_kernel=MFCommunicationKernel.AURORA,
+#             partition_strategy=partition_strategy,
+#             topology=topology,
+#             communication_kernel=communication_kernel,
 #             communication_kernel_arguments={},
-#             max_utilization=0.85,
-#             ideal_utilization=0.8,
+#             max_utilization=max_util,
+#             ideal_utilization=max_util - 0.05,
 #             considered_resources=["LUT", "FF", "DSP", "BRAM_18K"],
 #             partition_solver_timeout=1200,
 #             partition_solver=None,
@@ -67,10 +79,10 @@ execution environment with driver testing.
 #             "step_make_driver",
 #         ],
 #         output_dir=make_build_dir("mn_end2end_build_"),
-#         synth_clk_period_ns=3.5,
-#         target_fps=6000,
-#         mvau_wwidth_max=512,
-#         folding_two_pass_relaxation=False,
+#         synth_clk_period_ns=synth_clk_period_ns,
+#         target_fps=target_fps,
+#         mvau_wwidth_max=mvau_wwidth_max,
+#         folding_two_pass_relaxation=folding_two_pass,
 #         standalone_thresholds=True,
 #         minimize_bit_width=True,
 #         board="U55C",
@@ -90,8 +102,6 @@ execution environment with driver testing.
 #         abits=4,
 #         pretrained=True,
 #         until_step=None,
-#         pytestconfig=pytestconfig,
-#         identifier="mn-end2end",
 #         skip_fifo_sizing=False,
 #         cfg=cfg,
 #     )
