@@ -4,14 +4,10 @@ import ast
 from collections.abc import Iterable
 from onnx_ir import _enums
 from onnxscript import ir
+from onnxscript.rewriter._context import TapeRewriterContext
 from onnxscript.rewriter._pattern_ir import GraphPattern, NodeOutputPattern, ValuePattern
 from onnxscript.rewriter._rewrite_rule import ReplacementPatternFunction, ReplacementSubgraph
-from onnxscript.rewriter.pattern import (
-    MatchResult,
-    OpsetPatternBuilder,
-    RewriterContext,
-    pattern_builder,
-)
+from onnxscript.rewriter.pattern import MatchResult, OpsetPatternBuilder, pattern_builder
 from qonnx.custom_op.registry import is_custom_op
 from typing import Literal, cast
 
@@ -357,7 +353,7 @@ class ReplacementPatternGraph(ReplacementPatternFunction):
 
     def get_replacement(self, match: MatchResult) -> ReplacementSubgraph | None:
         """Build the replacement subgraph for a successful match."""
-        context = RewriterContext()
+        context = TapeRewriterContext()
         # ``match.bindings`` maps ``value_name`` (str) from the replacement
         # subgraph pattern to actual IR values.
         vvmap = {}  # Maps pattern values to the values that will populate the replacement
