@@ -28,6 +28,7 @@
 
 """Module for convert qonnx to finn onnx."""
 import numpy as np
+import onnx.helper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.extract_conv_bias import ExtractBiasFromConv
 from qonnx.transformation.gemm_to_matmul import GemmToMatMul
@@ -76,6 +77,36 @@ class InferMissingGemmBias(Transformation):
         return (model, graph_modified)
 
 
+class InferMissingConvKernelShape(Transformation):
+    """Insert an explicit "kernel_shape" attribute for Conv/ConvTranspose nodes
+    that were exported without one.
+
+    The ONNX spec marks "kernel_shape" as optional for Conv and ConvTranspose,
+    to be inferred from the shape of the weight input W (its spatial dimensions,
+    i.e. W.shape[2:]) when not present. Newer versions of the ONNX exporter
+    (e.g. torch.onnx dynamo-based export used by newer Brevitas/PyTorch versions)
+    rely on this and omit "kernel_shape" entirely, whereas QONNX's
+    LowerConvsToMatMul transformation still unconditionally expects it to be set
+    explicitly. This transformation restores compatibility by inserting the
+    "kernel_shape" attribute inferred from W whenever it is missing.
+    """
+
+    def apply(self, model):
+        """Apply transformation."""
+        graph = model.graph
+        graph_modified = False
+        for n in graph.node:
+            has_kernel_shape = get_by_name(n.attribute, "kernel_shape") is not None
+            if n.op_type in ("Conv", "ConvTranspose") and not has_kernel_shape:
+                w_shape = model.get_tensor_shape(n.input[1])
+                if w_shape is None or len(w_shape) < 3:
+                    continue
+                kernel_shape = onnx.helper.make_attribute("kernel_shape", list(w_shape[2:]))
+                n.attribute.append(kernel_shape)
+                graph_modified = True
+        return (model, graph_modified)
+
+
 class ConvertQONNXtoFINN(Transformation):
     """Converts QONNX dialect to FINN ONNX dialect.
     First the weights are converted using the FoldQuantWeights transformation,
@@ -108,6 +139,11 @@ class ConvertQONNXtoFINN(Transformation):
     def apply(self, model):
         # Extract the bias from Conv node
         """Apply transformation."""
+        # Newer ONNX exporters may omit the optional Conv/ConvTranspose
+        # kernel_shape attribute entirely; restore it explicitly so downstream
+        # transformations (e.g. LowerConvsToMatMul) that assume it is always
+        # set work correctly.
+        model = model.transform(InferMissingConvKernelShape())
         model = model.transform(ExtractBiasFromConv())
         # Newer ONNX exporters may omit the optional Gemm bias input entirely;
         # restore it explicitly so GemmToMatMul (which assumes 3 inputs) works.
