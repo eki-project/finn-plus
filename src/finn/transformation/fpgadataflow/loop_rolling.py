@@ -565,13 +565,11 @@ class LoopRolling(Transformation):
         # Indexable inputs will have different constant or none producers
         # Constant values broadcast to all nodes will have the same producer
         # Skip the (all) Activation inputs (have been swapped to beginning of the list)
-        parameter_names_inputs: set[str] = set()
         for index in range(activations, len(nodes[0].inputs)):
             inputs = []
             for node in nodes:
                 cinput = node.inputs[index]
                 inputs.append(cinput)
-            parameter_names_inputs.add(inputs[0].name)
 
             if osh.same(inputs) or same_values(inputs):
                 # Constant with Respect to Loop
@@ -612,8 +610,25 @@ class LoopRolling(Transformation):
             loop_body = cast(
                 "ModelWrapper", cast("FINNLoop", getCustomOp(loop_node)).get_nodeattr("body")
             )
+            # Capture parameter input names from the actual (post-rewrite) body
+            # graph inputs, rather than from the pre-rewrite outer-graph node
+            # inputs collected above during I/O normalization. The rewrite
+            # (rewrite_set.apply_to_model above) reconstructs the "body" graph
+            # attribute via TapeRewriterContext, which may rename values to
+            # avoid coincidental name collisions with the enclosing graph being
+            # rewritten -- so names captured before the rewrite can silently
+            # drift from what actually ends up in the model. LoopBody.signature
+            # corresponds index-for-index with loop_body.graph.input (both were
+            # kept in lockstep through the activation swaps and constant
+            # removals above), so we can reliably re-derive the parameter names
+            # from the real, current body graph.
+            actual_parameter_names = {
+                inp.name
+                for idx, inp in enumerate(loop_body.graph.input)
+                if LoopBody.signature[idx] == LoopBodyInputType.PARAMETER
+            }
             loop_body.set_metadata_prop(
-                "mlo_input_parameter_names", str(list(parameter_names_inputs))
+                "mlo_input_parameter_names", str(list(actual_parameter_names))
             )
             for node in loop_body.graph.node:
                 if not is_custom_op(node.domain):
