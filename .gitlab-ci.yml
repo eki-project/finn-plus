@@ -130,8 +130,8 @@ Build:
     - |
       source .venv/bin/activate
       finn deps update --dependency-path ./deps --accept-defaults
-      dvc config -vv cache.dir $CI_DVC_CACHE_DIR
-      dvc pull -vv
+      dvc config cache.dir $CI_DVC_CACHE_DIR
+      dvc pull
   artifacts:
     name: "finn-plus_package"
     paths:
