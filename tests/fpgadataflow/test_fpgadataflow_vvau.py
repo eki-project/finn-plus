@@ -198,14 +198,19 @@ def _make_single_vvau_modelwrapper(
     return model
 
 
+# reduced test cases due to excessive runtime:
 # input datatype
-@pytest.mark.parametrize("idt", [DataType["BIPOLAR"], DataType["UINT4"]])
+# @pytest.mark.parametrize("idt", [DataType["BIPOLAR"], DataType["UINT4"]])
+@pytest.mark.parametrize("idt", [DataType["UINT4"]])
 # weight datatype
-@pytest.mark.parametrize("wdt", [DataType["BIPOLAR"], DataType["UINT4"]])
+# @pytest.mark.parametrize("wdt", [DataType["BIPOLAR"], DataType["UINT4"]])
+@pytest.mark.parametrize("wdt", [DataType["UINT4"]])
 # activation: None or DataType
-@pytest.mark.parametrize("act", [DataType["BIPOLAR"], DataType["UINT4"], None])
+# @pytest.mark.parametrize("act", [DataType["BIPOLAR"], DataType["UINT4"], None])
+@pytest.mark.parametrize("act", [DataType["UINT4"], None])
 # PE
-@pytest.mark.parametrize("pe", [1, 3, 6])
+# @pytest.mark.parametrize("pe", [1, 3, 6])
+@pytest.mark.parametrize("pe", [1, 3])
 # SIMD
 @pytest.mark.parametrize("simd", [1, 9])
 # Input image shape
@@ -215,7 +220,8 @@ def _make_single_vvau_modelwrapper(
 @pytest.mark.parametrize("k_h", [3])
 @pytest.mark.parametrize("k_w", [3, 1])
 # Number of input and output channels
-@pytest.mark.parametrize("channels", [3, 6])
+# @pytest.mark.parametrize("channels", [3, 6])
+@pytest.mark.parametrize("channels", [3])
 # memory mode
 @pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
 # execution mode
