@@ -41,7 +41,9 @@ FINN Build:
       dvc pull
       finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config $BENCH_CFG
   cache:
-    key: $CI_COMMIT_SHA
+    key:
+      files:
+        - external_dependencies.yaml
     policy: pull
     paths:
       - deps
@@ -149,7 +151,9 @@ FINN Build (Follow-up):
       dvc pull
       finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config followup
   cache:
-    key: $CI_COMMIT_SHA
+    key:
+      files:
+        - external_dependencies.yaml
     policy: pull
     paths:
       - deps
