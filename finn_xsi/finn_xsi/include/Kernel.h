@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 #include "xsi.h"
@@ -107,8 +108,12 @@ namespace xsi {
          private:
         friend Design;
         friend Port;
+        // All XSI calls funnel through here so that use of a closed design is reported as
+        // an exception instead of dereferencing a null design handle inside the kernel.
         template<unsigned FID, typename... Args>
         auto xsi(Args&&... args) const {
+            if (!_xsi.hasValidHandle())
+                throw std::runtime_error("Operation on a closed XSI design");
             return _xsi.invoke<FID>(std::forward<Args>(args)...);
         }
 
@@ -125,6 +130,13 @@ namespace xsi {
          public:
         // Port count accessor for Design class
         size_t port_count() const noexcept;
+
+        // True while a design is loaded and has not been closed yet.
+        bool is_open() const noexcept;
+
+        // False for a Kernel whose library has been moved away (e.g. because it was
+        // already consumed by a Design).
+        bool is_loaded() const noexcept;
 
     };  // class Kernel
 

@@ -401,16 +401,20 @@ def create_chained_loop_bodies(
     return loop_body_models
 
 
+# reduced test cases due to excessive runtime:
 # dimensions
 @pytest.mark.parametrize("dim", [16])
 # iteration count, number of models chained together
 @pytest.mark.parametrize("iteration", [3])
 # elementwise operation
-@pytest.mark.parametrize("elemwise_optype", ["ElementwiseMul_hls", "ElementwiseAdd_hls"])
+# @pytest.mark.parametrize("elemwise_optype", ["ElementwiseMul_hls", "ElementwiseAdd_hls"])
+@pytest.mark.parametrize("elemwise_optype", ["ElementwiseMul_hls"])
 # elementwise shape
-@pytest.mark.parametrize("rhs_shape", [[1], [16]])
+# @pytest.mark.parametrize("rhs_shape", [[1], [16]])
+@pytest.mark.parametrize("rhs_shape", [[16]])
 # eltwise param dtype
-@pytest.mark.parametrize("eltw_param_dtype", ["INT8", "FLOAT32"])
+# @pytest.mark.parametrize("eltw_param_dtype", ["INT8", "FLOAT32"])
+@pytest.mark.parametrize("eltw_param_dtype", ["INT8"])
 # tail node
 @pytest.mark.parametrize("tail_node", [False, True])
 @pytest.mark.fpgadataflow

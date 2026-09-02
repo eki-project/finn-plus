@@ -6,6 +6,7 @@ import json
 import matplotlib.pyplot as plt
 import os
 import shutil
+import subprocess
 import sys
 import yaml
 from datetime import date
@@ -479,6 +480,19 @@ class ExperimentComparator:
 
     def _get_experiment_data(self):
         tag = self.collect_cfg.get("Compare").get("compare_tag")
+        print("Using compare_tag: %s" % tag)
+        try:
+            tag_commit = subprocess.run(
+                ["git", "rev-parse", "%s^{commit}" % tag],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            print("compare_tag %s points to commit: %s" % (tag, tag_commit))
+        except subprocess.CalledProcessError as e:
+            print(
+                "ERROR: Could not resolve compare_tag %s to a commit: %s" % (tag, e.stderr.strip())
+            )
         git_remote = "git@github.com:eki-project/finn-plus.git"
 
         with Repo(".") as repo:

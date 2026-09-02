@@ -109,6 +109,24 @@ class SimEngine:
         ] = []
         self.watchdogs: list[SimEngine.Watchdog] = []
 
+    def close(self) -> None:
+        """Close the simulation, flushing traces and unloading the design library.
+
+        This is idempotent. The XSI simulator kernel keeps process-global state and only
+        supports a single open design at a time, so a simulation has to be closed
+        explicitly rather than left to garbage collection, which would let a design stay
+        open while the next one is being loaded.
+        """
+        # Drop the task/watchdog graph first so that nothing holds on to ports of the
+        # design that is about to go away.
+        self.tasks = []
+        self.watchdogs = []
+        self.top.close()
+
+    def is_open(self) -> bool:
+        """Return True while the underlying design is loaded."""
+        return self.top.is_open()
+
     # ------------------------------------------------------------------------
     # Utility
     def get_bus_port(self, bus: str, suffix: str) -> "xsi.Port":
