@@ -90,8 +90,17 @@ Result Collection:
     - dvc pull
     - git fetch origin +refs/tags/*:refs/tags/*
     - git fetch git@github.com:eki-project/finn-plus.git +refs/exps/*:refs/exps/*
-    - python3.10 ci/collect/collect.py
-    - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
+    - |
+      collect_status=0
+      push_status=0
+
+      python3.10 ci/collect/collect.py || collect_status=$?
+      dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
+
+      if [ "$collect_status" -ne 0 ]; then
+        exit "$collect_status"
+      fi
+      exit "$push_status"
   artifacts:
     name: "collected_artifacts"
     when: always
@@ -207,8 +216,17 @@ Result Collection (Follow-up):
     - dvc pull
     - git fetch origin +refs/tags/*:refs/tags/*
     - git fetch git@github.com:eki-project/finn-plus.git +refs/exps/*:refs/exps/*
-    - python3.10 ci/collect/collect.py --followup
-    - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
+    - |
+      collect_status=0
+      push_status=0
+
+      python3.10 ci/collect/collect.py --followup || collect_status=$?
+      dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
+
+      if [ "$collect_status" -ne 0 ]; then
+        exit "$collect_status"
+      fi
+      exit "$push_status"
   artifacts:
     name: "all_artifacts"
     when: always

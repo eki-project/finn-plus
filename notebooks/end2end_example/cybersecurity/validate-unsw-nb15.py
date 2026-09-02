@@ -26,13 +26,29 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""UNSW-NB15 dataset validation script for FINN accelerators.
+
+This module provides utilities for validating FINN-generated accelerators
+against the UNSW-NB15 cybersecurity dataset.
+"""
+
 import argparse
 import numpy as np
-from driver import io_shape_dict
 from driver_base import FINNExampleOverlay
+
+from driver import io_shape_dict
 
 
 def make_unsw_nb15_test_batches(bsize, dataset_root):
+    """Create test batches from the UNSW-NB15 dataset.
+
+    Args:
+        bsize: Batch size for the test batches.
+        dataset_root: Root directory containing the UNSW-NB15 dataset.
+
+    Returns:
+        Tuple of (test_imgs, test_labels) arrays reshaped into batches.
+    """
     unsw_nb15_data = np.load(dataset_root + "/unsw_nb15_binarized.npz")["test"][:82000]
     test_imgs = unsw_nb15_data[:, :-1]
     test_labels = unsw_nb15_data[:, -1]
