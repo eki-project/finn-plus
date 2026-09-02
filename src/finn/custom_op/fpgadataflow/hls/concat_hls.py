@@ -27,77 +27,80 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for concat hls."""
-from finn.custom_op.fpgadataflow.concat import StreamingConcat
+"""HLS backend implementation of the streaming concatenation operator."""
+import numpy as np
+from typing import TYPE_CHECKING
+
+from finn.custom_op.fpgadataflow.concat import NodeAttrTypes, StreamingConcat
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+
+if TYPE_CHECKING:
+    from onnx import GraphProto, NodeProto
 
 
 class StreamingConcat_hls(StreamingConcat, HLSBackend):
     """Streaming concatenation node with dynamically generated HLS.
-    Only supports concatenating along the last axis."""
 
-    def __init__(self, onnx_node, **kwargs):
+    Only supports concatenating along the last axis.
+    """
+
+    def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(StreamingConcat.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         my_attrs.update({"cpp_interface": ("s", False, "hls_vector", {"packed", "hls_vector"})})
         return my_attrs
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "concat.hpp"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        self.code_gen_dict["$DEFINES$"] = ["#define SIMD {}".format(self.get_nodeattr("SIMD"))]
+        self.code_gen_dict["$DEFINES$"] = [f"#define SIMD {self.simd}"]
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = []
         n_inputs = self.get_n_inputs()
         input_folds = [str(self.get_folded_input_shape(i)[-2]) for i in range(n_inputs)]
-        in_streams = []
-        for i in range(n_inputs):
-            in_streams.append("in%d_V" % i)
+        in_streams = [f"in{i}_V" for i in range(n_inputs)]
         in_stream_names = ", ".join(in_streams)
         in_stream_folds = ", ".join(input_folds)
         comp_call = f"StreamingConcat<{in_stream_folds}>(out0_V, {in_stream_names});"
         self.code_gen_dict["$DOCOMPUTE$"] = [comp_call]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
         n_inputs = self.get_n_inputs()
         in_streams = []
         for i in range(n_inputs):
             input_elem_hls_type = self.get_input_datatype(i).get_hls_datatype_str()
-            in_streams.append(
-                "hls::stream<hls::vector<%s, SIMD>> &in%d_V" % (input_elem_hls_type, i)
-            )
-        in_streams = ", ".join(in_streams)
-        out_stream = "hls::stream<hls::vector<%s, SIMD>> &out0_V" % (
-            self.get_output_datatype().get_hls_datatype_str(),
-        )
-        blackbox_hls = "void %s(%s, %s)" % (self.onnx_node.name, in_streams, out_stream)
+            in_streams.append(f"hls::stream<hls::vector<{input_elem_hls_type}, SIMD>> &in{i}_V")
+        in_streams_str = ", ".join(in_streams)
+        out_elem_hls_type = self.get_output_datatype().get_hls_datatype_str()
+        out_stream = f"hls::stream<hls::vector<{out_elem_hls_type}, SIMD>> &out0_V"
+        blackbox_hls = f"void {self.onnx_node.name}({in_streams_str}, {out_stream})"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [blackbox_hls]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Return pragmas."""
         n_inputs = self.get_n_inputs()
-        pragmas = []
-        for i in range(n_inputs):
-            pragmas.append("#pragma HLS INTERFACE axis port=in%d_%s" % (i, self.hls_sname()))
+        pragmas = [
+            f"#pragma HLS INTERFACE axis port=in{i}_{self.hls_sname()}" for i in range(n_inputs)
+        ]
         self.code_gen_dict["$PRAGMAS$"] = pragmas
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
         for i in range(n_inputs):
-            pragmas.append("#pragma HLS aggregate variable=in%d_V compact=bit" % i)
+            pragmas.append(f"#pragma HLS aggregate variable=in{i}_V compact=bit")
         pragmas.append("#pragma HLS aggregate variable=out0_V compact=bit")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")

@@ -7,19 +7,31 @@
 # Numpy math and arrays
 import numpy as np
 
-# QONNX/FINN datatypes
-from qonnx.core.datatype import DataType
-# QONNX wrapper to ONNX model graphs
+# Iterables and filesystem paths
+from collections.abc import Iterator
+from pathlib import Path
+
+# QONNX/FINN datatypes and model wrapper
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
+
 # Some utils for working with tensors in qonnx
 from qonnx.util.basic import interleave_matrix_outer_dim_from_partitions
 
+# Typing helpers
+from typing import cast
+
 # The generic HW custom operator version of the operator as a base class
-from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
+from finn.custom_op.fpgadataflow.attention import NodeAttrTypes, ScaledDotProductAttention
+
 # Base class for specializing HW operators as implemented via HLS
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+
 # Convert and pack (numpy) data for C++ code generation
 from finn.util.data_packing import numpy_to_hls_code
+
+# FINN errors: internal invariant violations and user-fixable config problems
+from finn.util.exception import FINNInternalError, FINNUserError
 
 # Mapping of memory resource attributes to the corresponding C++ HLS
 # pragma directives
@@ -28,13 +40,14 @@ RAM_STYLES = {
 }
 
 
-class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
-    # CapWords convention
-    ScaledDotProductAttention, HLSBackend
-):
+class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
     """HLS Backend specialization of the Scaled Dot-product Attention Operator."""
 
-    def get_nodeattr_types(self):
+    def _dtype(self, attr: str) -> BaseDataType:
+        """Resolve a datatype-valued node attribute to a QONNX DataType."""
+        return DataType[cast("str", self.get_nodeattr(attr))]
+
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return node attributes matching the HLS operator."""
         # Start from parent operator class attributes
         attrs = ScaledDotProductAttention.get_nodeattr_types(self)
@@ -44,7 +57,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         # Return the updated attributes dictionary
         return attrs
 
-    def get_ap_int_max_w(self):
+    def get_ap_int_max_w(self) -> int:
         """Return the maximum width of any ap_int used in this operator.
 
         Calculates the maximum bit width required across all inputs, outputs,
@@ -63,7 +76,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             # folded mask input
             *_, elems = self.get_folded_input_shape(ind=3)
             # Get width of the mask datatype
-            m_bits = elems * DataType[self.get_nodeattr("MType")].bitwidth()
+            m_bits = elems * self._dtype("MType").bitwidth()
 
         # Elements per folded key input (second input)
         *_, i_elems = self.get_folded_input_shape(ind=1)
@@ -75,25 +88,25 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         # folded attention weights
         *_, s_elems = self.get_folded_attention_shape()
         # Number of bits used for the attention weights stream
-        a_bits = s_elems * DataType[self.get_nodeattr("AType")].bitwidth()
+        a_bits = s_elems * self._dtype("AType").bitwidth()
 
         # Maximum bits per tile of the key and value matrix streams
         tile_bits_max = max([
-            i_elems * s_elems * DataType[self.get_nodeattr("KType")].bitwidth(),
-            o_elems * s_elems * DataType[self.get_nodeattr("VType")].bitwidth(),
+            i_elems * s_elems * self._dtype("KType").bitwidth(),
+            o_elems * s_elems * self._dtype("VType").bitwidth(),
         ])
         # Maximum bits per matmul accumulators
         acc_bits_max = max([
             # These are not streamed, thus single element width is counted
-            DataType[self.get_nodeattr("AccQKMatMul")].bitwidth(),
-            DataType[self.get_nodeattr("AccAVMatMul")].bitwidth(),
+            self._dtype("AccQKMatMul").bitwidth(),
+            self._dtype("AccAVMatMul").bitwidth(),
         ])
         # Maximum bits per matmul outputs
         out_bits_max = max([
             # These are the stream widths, which are always >= than individual
             # elements
-            s_elems * DataType[self.get_nodeattr("OutQKMatMul")].bitwidth(),
-            o_elems * DataType[self.get_nodeattr("OutAVMatMul")].bitwidth(),
+            s_elems * self._dtype("OutQKMatMul").bitwidth(),
+            o_elems * self._dtype("OutAVMatMul").bitwidth(),
         ])
         # Aggregate the maximum bit width in both matmul operators over all
         # inputs, intermediates and outputs
@@ -104,7 +117,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         # Find maximum of all (maximal) bit-widths
         return max([i_bits_max, o_bits_max, m_bits, a_bits, matmul_bits_max])
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Generate list of C++ includes to be placed at the top of the generated code.
 
         Adds necessary header files for the attention operator HLS implementation,
@@ -116,7 +129,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         # Attention operator HLS code
         self.code_gen_dict["$GLOBALS$"] += ['#include "attention.hpp"']
 
-    def generate_params(self, model: ModelWrapper, path):
+    def generate_params(self, model: ModelWrapper, path: str | Path) -> None:
         """Generate C++ parameters file including activation function thresholds.
 
         Creates parameter files including activation function thresholds and
@@ -144,7 +157,9 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         thresholds_av_matmul = "{}"
         thresholds_a_softmax = "{}"
 
-        def prepare_thresholds(ts, length, fold, dtype):
+        def prepare_thresholds(
+            ts: np.ndarray, length: int, fold: int, dtype: BaseDataType
+        ) -> tuple[str, int]:
             """Prepare a threshold tensor as C++ string for code generation.
 
             Converts threshold tensors into the proper format for HLS code generation.
@@ -176,12 +191,17 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             thresholds = model.get_initializer(
                 self.get_input_name_by_name("thresholds_qk_matmul")
             )
+            if not isinstance(thresholds, np.ndarray):
+                raise FINNInternalError(
+                    f"{self.onnx_node.name}: missing thresholds initializer"
+                )
             # Get the datatype of the thresholds
-            thresholds_dtype = DataType[self.get_nodeattr("AccQKMatMul")]
+            thresholds_dtype = self._dtype("AccQKMatMul")
             # Activation value, i.e., bias applied after thresholding activation
-            bias = self.get_nodeattr("BiasActQKMatMul")
+            bias = cast("float", self.get_nodeattr("BiasActQKMatMul"))
             # No support for floating-point bias
-            assert int(bias) == bias, "BiasActQKMatMul must be integer"
+            if int(bias) != bias:
+                raise FINNUserError("BiasActQKMatMul must be integer")
             # Convert the bias to integer representation, so it can be used as a
             # template argument
             bias = int(bias)
@@ -215,12 +235,17 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             thresholds = model.get_initializer(
                 self.get_input_name_by_name("thresholds_a_softmax")
             )
+            if not isinstance(thresholds, np.ndarray):
+                raise FINNInternalError(
+                    f"{self.onnx_node.name}: missing thresholds initializer"
+                )
             # Get the datatype of the thresholds
-            thresholds_dtype = DataType[self.get_nodeattr("AccASoftmax")]
+            thresholds_dtype = self._dtype("AccASoftmax")
             # Activation value, i.e., bias applied after thresholding activation
-            bias = self.get_nodeattr("BiasActASoftmax")
+            bias = cast("float", self.get_nodeattr("BiasActASoftmax"))
             # No support for floating-point bias
-            assert int(bias) == bias, "BiasActASoftmax must be integer"
+            if int(bias) != bias:
+                raise FINNUserError("BiasActASoftmax must be integer")
             # Convert the bias to integer representation, so it can be used as a
             # template argument
             bias = int(bias)
@@ -254,12 +279,17 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             thresholds = model.get_initializer(
                 self.get_input_name_by_name("thresholds_av_matmul")
             )
+            if not isinstance(thresholds, np.ndarray):
+                raise FINNInternalError(
+                    f"{self.onnx_node.name}: missing thresholds initializer"
+                )
             # Get the datatype of the thresholds
-            thresholds_dtype = DataType[self.get_nodeattr("AccAVMatMul")]
+            thresholds_dtype = self._dtype("AccAVMatMul")
             # Activation value, i.e., bias applied after thresholding activation
-            bias = self.get_nodeattr("BiasActAVMatMul")
+            bias = cast("float", self.get_nodeattr("BiasActAVMatMul"))
             # No support for floating-point bias
-            assert int(bias) == bias, "BiasActAVMatMul must be integer"
+            if int(bias) != bias:
+                raise FINNUserError("BiasActAVMatMul must be integer")
             # Convert the bias to integer representation, so it can be used as a
             # template argument
             bias = int(bias)
@@ -304,6 +334,10 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             mask_type = "attention::mask::Const<SeqFold, KVLen/SeqFold, QLen>"
             # Get the constant mask values
             mask = model.get_initializer(self.get_input_name_by_name("M"))
+            if not isinstance(mask, np.ndarray):
+                raise FINNInternalError(
+                    f"{self.onnx_node.name}: missing constant mask initializer"
+                )
             # Num should always be equal to QLen
             num = mask.shape[-1]
             # Partition the mask along the length into folds of parallel
@@ -330,7 +364,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             attention_mask = f"static const {mask_type} attention_mask;"
 
         # Open a file to store the thresholds parameters as C++ code
-        with open(f"{code_gen_dir}/params.hpp", "w") as file:
+        with (Path(code_gen_dir) / "params.hpp").open("w") as file:
             # Write lines of C++ code separated by newlines to the file
             file.write("\n".join([
                 # Scale factor preceding the softmax activation function to
@@ -358,9 +392,9 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
                 "\n"
             ]))
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Generate C++ code of type alias, global constant and macro definitions."""
-        def shapedefs(*names):
+        def shapedefs(*names: str) -> Iterator[str]:
             """Generate shape definitions from attributes to C++ constant definitions."""
             # C++ qualified type to be used for shape constants
             shape = "static constexpr std::size_t"
@@ -370,23 +404,23 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
                 f"{shape} {name} = {self.get_nodeattr(name)};" for name in names
             )
 
-        def typedefs(*names):
+        def typedefs(*names: str) -> Iterator[str]:
             """Generate datatype definitions mapping from QONNX DataType to HLS type."""
-            def hls_type(name):
+            def hls_type(name: str) -> str:
                 """Get the HLS type string for the datatype specified by the named attribute."""
                 # Looks up the datatype specified for the attribute and
                 # translates from QONNX to HLS type
-                return DataType[self.get_nodeattr(name)].get_hls_datatype_str()
+                return self._dtype(name).get_hls_datatype_str()
 
             # Generate a C++ type alias definition for each of the attributes
             # given by argument list names
             return (f"using {name} = {hls_type(name)};" for name in names)
 
         # Attribute specifying the memory to use for internal buffers
-        ram_style = self.get_nodeattr("ram_style")
+        ram_style = cast("str", self.get_nodeattr("ram_style"))
         # Attribute specifying the resources to use for implementing MAC
         # operations
-        mac_resource = self.get_nodeattr("mac_resource")
+        mac_resource = cast("str", self.get_nodeattr("mac_resource"))
 
         # Mapping of memory resource attributes to the corresponding C++ tag
         # types
@@ -474,7 +508,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             "using MStream = Attention::MStream;",
         ]
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Generate C++ code for calling the computation part of the operator.
 
         Creates the main HLS computation call with proper RAM style directives
@@ -483,17 +517,19 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         """
         # Convert the thresholds RAM style attribute to HLS directive
         ram_style_thresholds = RAM_STYLES[
-            self.get_nodeattr("ram_style_thresholds")
+            cast("str", self.get_nodeattr("ram_style_thresholds"))
         ]
         # Convert the attention mask RAM style attribute to HLS directive
-        ram_style_mask = RAM_STYLES[self.get_nodeattr("ram_style_mask")]
+        ram_style_mask = RAM_STYLES[
+            cast("str", self.get_nodeattr("ram_style_mask"))
+        ]
 
-        def bind_threshold_storage(name: str):
+        def bind_threshold_storage(name: str) -> str:
             """Generate the BIND_STORAGE pragma for the activations threshold memory."""
             return (f"#pragma HLS BIND_STORAGE variable={name}"
                     f" type=ROM_2P impl={ram_style_thresholds}")
 
-        def partition_thresholds_array(name: str, dim: int):
+        def partition_thresholds_array(name: str, dim: int) -> str:
             """Generate the ARRAY_PARTITION pragma for the activations threshold memory."""
             return (f"#pragma HLS ARRAY_PARTITION variable={name}"
                     f" complete dim={dim}")
@@ -573,7 +609,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             # Implement the attention mask array as a dual-port ROM with the
             # RAM-Style selected via attribute
             pragmas.extend([
-                f"#pragma HLS BIND_STORAGE variable=attention_mask"
+                "#pragma HLS BIND_STORAGE variable=attention_mask"
                 f" type=ROM_2P impl={ram_style_mask}"
             ])
 
@@ -603,7 +639,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             "}"
         ]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Generate the head of the C++ function from which the IP block will be generated.
 
         Creates the function signature describing the top level interface of the
@@ -622,7 +658,7 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             ")",
         ]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Generate C++ pragmas to be inserted into the main function.
 
         Creates HLS interface directives specifying how to create RTL ports for
@@ -645,7 +681,9 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
             "#pragma HLS INTERFACE ap_ctrl_none port=return"
         )
 
-    def get_verilog_top_module_intf_names(self):
+    def get_verilog_top_module_intf_names(
+        self,
+    ) -> dict[str, list[tuple[str, int]] | list[str]]:
         """Return the names of input and output interfaces grouped by protocol.
 
         Collects interface names in a dictionary organized by protocol type
@@ -653,7 +691,9 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
         """
         # Start collecting interface names in a dictionary starting with clock
         # and reset
-        intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}
+        intf_names: dict[str, list[tuple[str, int]] | list[str]] = {
+            "clk": ["ap_clk"], "rst": ["ap_rst_n"]
+        }
         # AXI stream input interfaces
         # TODO: support mask input?
         intf_names["s_axis"] = [

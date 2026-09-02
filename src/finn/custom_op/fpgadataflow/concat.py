@@ -27,26 +27,43 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for concat."""
+"""Streaming concatenation hardware custom operator."""
+
 import math
 import numpy as np
-from qonnx.core.datatype import DataType
+from onnx import NodeProto
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.logging import log
 
+if TYPE_CHECKING:
+    from onnx import GraphProto
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
+
 
 class StreamingConcat(HWCustomOp):
     """Abstraction layer for HW implementation of Concat.
-    Only supports concatenating along the last (channel) axis."""
 
-    def __init__(self, onnx_node, **kwargs):
+    Only supports concatenating along the last (channel) axis.
+    """
+
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             "SIMD": ("i", True, 0),
             # number of elements from each stream to concat
             "ChannelsPerStream": ("ints", True, []),
@@ -61,73 +78,83 @@ class StreamingConcat(HWCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_n_inputs(self):
+    @property
+    def simd(self) -> int:
+        """Get the SIMD parallelism."""
+        return cast("int", self.get_nodeattr("SIMD"))
+
+    @property
+    def channels_per_stream(self) -> list[int]:
+        """Get the number of channels concatenated from each input stream."""
+        return cast("list[int]", self.get_nodeattr("ChannelsPerStream"))
+
+    @property
+    def num_input_vectors(self) -> list[int]:
+        """Get the number of input vectors along the non-concat axes."""
+        return list(cast("list[int]", self.get_nodeattr("numInputVectors")))
+
+    @property
+    def input_datatypes(self) -> list[str]:
+        """Get the per-input FINN datatype names."""
+        return cast("list[str]", self.get_nodeattr("inputDataTypes"))
+
+    def get_n_inputs(self) -> int:
         """Return number of inputs."""
-        return len(self.get_nodeattr("ChannelsPerStream"))
+        return len(self.channels_per_stream)
 
-    def get_total_elems(self):
+    def get_total_elems(self) -> int:
         """Return total elems."""
-        elems_per_stream = self.get_nodeattr("ChannelsPerStream")
-        return int(np.sum(elems_per_stream))
+        return int(np.sum(self.channels_per_stream))
 
-    def get_normal_input_shape(self, ind=0):
+    def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:
         """Return normal input shape."""
-        elems_per_stream = self.get_nodeattr("ChannelsPerStream")
-        elems = elems_per_stream[ind]
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        ishape = tuple(vecs + [elems])
-        return ishape
+        elems = self.channels_per_stream[ind]
+        return (*self.num_input_vectors, elems)
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:
         """Return folded input shape."""
-        simd = self.get_nodeattr("SIMD")
-        folds = self.get_nodeattr("ChannelsPerStream")[ind] // simd
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        return tuple(vecs + [folds, simd])
+        folds = self.channels_per_stream[ind] // self.simd
+        return (*self.num_input_vectors, folds, self.simd)
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal output shape."""
-        total_elems = self.get_total_elems()
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        return tuple(vecs + [total_elems])
+        return (*self.num_input_vectors, self.get_total_elems())
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
-        total_elems = self.get_total_elems()
-        simd = self.get_nodeattr("SIMD")
-        folds = total_elems // simd
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        return tuple(vecs + [folds, simd])
+        folds = self.get_total_elems() // self.simd
+        return (*self.num_input_vectors, folds, self.simd)
 
-    def infer_node_datatype(self, model):
-        # check all input datatypes
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
         """Infer node datatype."""
+        # check all input datatypes
         for i, inp in enumerate(self.onnx_node.input):
             idt = model.get_tensor_datatype(inp)
             if idt != self.get_input_datatype(i):
-                warn_str = "inputDataType changing for %s: %s -> %s " % (
-                    self.onnx_node.name,
-                    str(self.get_input_datatype(i)),
-                    str(idt),
+                log.warning(
+                    f"inputDataType changing for {self.onnx_node.name}: "
+                    f"{self.get_input_datatype(i)} -> {idt} "
                 )
-                log.warning(warn_str)
-                old_datatypes_attr = self.get_nodeattr("inputDataTypes")
+                old_datatypes_attr = list(self.input_datatypes)
                 old_datatypes_attr[i] = idt.name
-                self.set_nodeattr("inputDataTypes", old_datatypes_attr)
+                self.set_nodeattr(
+                    "inputDataTypes",
+                    cast("list[str | int | float]", old_datatypes_attr),
+                )
         odt = self.get_output_datatype()
         model.set_tensor_datatype(self.onnx_node.output[0], odt)
 
-    def get_input_datatype(self, ind=0):
-        # input dt identical for all inputs
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:
         """Return input datatype."""
-        return DataType[self.get_nodeattr("inputDataTypes")[ind]]
+        # input dt identical for all inputs
+        return DataType[self.input_datatypes[ind]]
 
-    def get_output_datatype(self, ind=0):
-        # infer output datatype from declared inputDataTypes
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
         """Return output datatype."""
+        # infer output datatype from declared inputDataTypes
         min_input = 0
         max_input = 0
-        for i in range(len(self.get_nodeattr("inputDataTypes"))):
+        for i in range(len(self.input_datatypes)):
             idt = self.get_input_datatype(i)
             if idt.min() < min_input:
                 min_input = idt.min()
@@ -145,26 +172,25 @@ class StreamingConcat(HWCustomOp):
             odt = DataType[f"INT{out_bit_width}"]
         return odt
 
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind: int = 0) -> int:
         """Return instream width."""
         ibits = self.get_input_datatype(ind).bitwidth()
-        return ibits * self.get_nodeattr("SIMD")
+        return ibits * self.simd
 
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return outstream width."""
         obits = self.get_output_datatype().bitwidth()
-        out_width = obits * self.get_nodeattr("SIMD")
-        return out_width
+        return obits * self.simd
 
-    def get_exp_cycles(self):
+    def get_exp_cycles(self) -> int:
         """Return exp cycles."""
-        return np.prod(self.get_folded_output_shape()[:-1])
+        return int(np.prod(self.get_folded_output_shape()[:-1]))
 
-    def execute_node(self, context, graph):
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         """Execute node."""
         node = self.onnx_node
-        inp_values = []
-        for inp in node.input:
-            inp_values.append(context[inp])
+        inp_values = [context[inp] for inp in node.input]
         result = np.concatenate(inp_values, axis=-1)
         context[node.output[0]] = result
