@@ -137,20 +137,23 @@ def prep_rtlsim_io_dict(
                 f"Check that the outputs are all properly connected."
             )
         last_node = getHWCustomOp(last_node_onnx)
-        o_folded_shape = last_node.get_folded_output_shape()
+        # index of the producer's output stream that feeds this graph output
+        o_ind = list(last_node_onnx.output).index(o_name)
+        o_folded_shape = last_node.get_folded_output_shape(o_ind)
+        n_out_values = last_node.get_number_output_values_for_stream(o_ind)
         # override batch size from actual input
         o_shape = list(o_shape)
         if o_shape[0] != batchsize and (first_node.onnx_node.op_type != "InnerShuffle_rtl"):
             o_shape[0] = batchsize
-            num_out_values[if_name] = batchsize * last_node.get_number_output_values()
+            num_out_values[if_name] = batchsize * n_out_values
         else:
-            num_out_values[if_name] = last_node.get_number_output_values()
+            num_out_values[if_name] = n_out_values
         o_shape = tuple(o_shape)
         o_folded_shape = list(o_folded_shape)
         if o_folded_shape[0] != batchsize and (first_node.onnx_node.op_type != "InnerShuffle_rtl"):
             o_folded_shape[0] = batchsize
         o_folded_shape = tuple(o_folded_shape)
-        o_stream_w = last_node.get_outstream_width()
+        o_stream_w = last_node.get_outstream_width(o_ind)
         o_tensor_info.append((o_stream_w, o_dt, o_folded_shape, o_shape))
     if len(num_out_values.keys()) == 1:
         num_out_values = num_out_values[if_name]

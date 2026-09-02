@@ -1,3 +1,5 @@
+"""Scaled dot-product attention hardware custom operator."""
+
 # fmt: off
 # Disable formatter. This is deliberately formatted to stay within 80 characters
 # per line. Black, however, formats some lines going beyond this.
@@ -9,8 +11,14 @@ import math
 # Numpy math and arrays
 import numpy as np
 
+# ONNX graph node protobuf type used for annotations and node construction
+from onnx import NodeProto
+
 # QONNX/FINN datatypes
-from qonnx.core.datatype import DataType
+from qonnx.core.datatype import BaseDataType, DataType
+
+# QONNX wrapper to ONNX model graphs
+from qonnx.core.modelwrapper import ModelWrapper
 
 # Multithreshold activations
 from qonnx.custom_op.general.multithreshold import multithreshold
@@ -18,17 +26,38 @@ from qonnx.custom_op.general.multithreshold import multithreshold
 # Some utils for working with tensors in qonnx
 from qonnx.util.basic import calculate_matvec_accumulator_range
 
+# Typing helpers
+from typing import TYPE_CHECKING, cast
+
 # Derive custom operators form the FINN base custom op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
+# FINN errors: internal invariant violations and user-fixable config problems
+from finn.util.exception import FINNInternalError, FINNUserError
+
 # FINN logging
 from finn.util.logging import log
 
+if TYPE_CHECKING:
+    # ONNX graph protobuf type, only needed for type annotations
+    from onnx import GraphProto
 
-# Softmax function on numpy arrays with overflow handling matching the HLS
-# operator
-def softmax(x, axis):
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
+
+
+def softmax(x: np.ndarray, axis: int) -> np.ndarray:
+    """Compute a softmax with overflow handling matching the HLS operator.
+
+    On overflow of the exponential sum, the probability mass is distributed
+    equally over all occurrences of the maximum input value along ``axis``.
+    """
     # For overflow handling, find the maximum value along axis and place ones at
     # each occurrence
     max_ones = (x == np.max(x, axis=axis, keepdims=True)).astype(np.float32)
@@ -47,13 +76,22 @@ def softmax(x, axis):
 
 # Scaled Dot-Product Attention Custom Operator
 class ScaledDotProductAttention(HWCustomOp):
+    """Scaled dot-product attention abstraction layer.
+
+    Computes ``softmax(Q @ Kᵀ + mask) @ V`` with optional quantizing
+    thresholding activations after each matmul and the softmax, matching the
+    behavior of the attention-hlslib operator.
+    """
+
     # Initializes the operator given an onnx graph node
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
+        """Initialize the operator from an ONNX node."""
         # Just forward all arguments to the init method of the CustomOp base
         super().__init__(onnx_node, **kwargs)
 
     # Node attributes matching the HLS operator
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
+        """Return the dictionary of node attributes for this operator."""
         # Start from parent operator class attributes
         attrs = HWCustomOp.get_nodeattr_types(self)
         # Update attributes dictionary for new custom operator
@@ -169,23 +207,30 @@ class ScaledDotProductAttention(HWCustomOp):
 
     # Shape configuration of the operator
     @property
-    def shapes(self):
+    def shapes(self) -> tuple[int, int, int, int]:
+        """Return the (QKDim, QLen, VDim, KVLen) shape configuration."""
         # Note: This matches the order of definition above and the order of the
         # HLS lib template as well
-        return (self.get_nodeattr("QKDim"), self.get_nodeattr("QLen"),
-                self.get_nodeattr("VDim"), self.get_nodeattr("KVLen"))
+        return cast("tuple[int, int, int, int]", (
+            self.get_nodeattr("QKDim"), self.get_nodeattr("QLen"),
+            self.get_nodeattr("VDim"), self.get_nodeattr("KVLen")
+        ))
 
     # Folding configuration of the operator
     @property
-    def folds(self):
+    def folds(self) -> tuple[int, int]:
+        """Return the (EmbFold, SeqFold) folding configuration."""
         # Note: This matches the order of definition above and the order of the
         # HLS lib template as well
-        return self.get_nodeattr("EmbFold"), self.get_nodeattr("SeqFold")
+        return cast("tuple[int, int]", (
+            self.get_nodeattr("EmbFold"), self.get_nodeattr("SeqFold")
+        ))
 
     # Tests whether the given folding is a valid configuration with respect to
     # the shape configuration
     @property
-    def is_valid_folding(self):
+    def is_valid_folding(self) -> bool:
+        """Return whether the folding evenly divides the folded dimensions."""
         # Get and unpack the shape attributes (except the q matrix length, which
         # is never folded)
         qkdim, _, vdim, kvlen = self.shapes
@@ -197,21 +242,28 @@ class ScaledDotProductAttention(HWCustomOp):
     # Number of iterations of the attention operator - this can be both, a batch
     # dimension and repetition over packed attention heads.
     @property
-    def iterations(self):
+    def iterations(self) -> int:
+        """Return the number of attention heads / batch iterations."""
         try:
-            return self.get_nodeattr("Heads")
+            return cast("int", self.get_nodeattr("Heads"))
         except AttributeError:
             return 1
 
     # Returns an ONNX node that has the same shape inference behavior
-    def make_shape_compatible_op(self, model):
+    def make_shape_compatible_op(self, model: ModelWrapper) -> NodeProto:
+        """Return an ONNX node with the same shape inference behavior."""
         # Infer the output shape from the input shapes
-        o_shape = (self.get_nodeattr("QLen"), self.get_nodeattr("VDim"))
+        _, q_len, v_dim, _ = self.shapes
+        o_shape = (q_len, v_dim)
         # Get the node wrapped by this custom op
         node = self.onnx_node
         # Get the shape of the input tensor for inferring the number of
         # heads and correctly propagating shapes
         shape = model.get_tensor_shape(node.input[0])
+        if shape is None:
+            raise FINNInternalError(
+                f"{node.name}: shape of input {node.input[0]} is not known"
+            )
         # Determine the rank of the input tensor to support batched and
         # non-batched inputs
         rank = len(shape)
@@ -223,7 +275,8 @@ class ScaledDotProductAttention(HWCustomOp):
         )
 
     # Infers the output data types and updates the input datatypes of the node
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
+        """Infer the output datatype and update the input datatypes."""
         # ONNX graph node of the operator
         node = self.onnx_node
 
@@ -235,27 +288,24 @@ class ScaledDotProductAttention(HWCustomOp):
         # Test for changing query input datatype
         if q_dtype != self.get_nodeattr("QType"):
             # Issue a warning message
-            log.warning("QType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_nodeattr("QType")),
-                str(q_dtype),
-            ))
+            log.warning(
+                f"QType changing for {node.name}: "
+                f"{self.get_nodeattr('QType')} -> {q_dtype} "
+            )
         # Test for changing key input datatype
         if k_dtype != self.get_nodeattr("KType"):
             # Issue a warning message
-            log.warning("KType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_nodeattr("KType")),
-                str(k_dtype),
-            ))
+            log.warning(
+                f"KType changing for {node.name}: "
+                f"{self.get_nodeattr('KType')} -> {k_dtype} "
+            )
         # Test for changing value input datatype
         if v_dtype != self.get_nodeattr("VType"):
             # Issue a warning message
-            log.warning("VType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_nodeattr("VType")),
-                str(v_dtype),
-            ))
+            log.warning(
+                f"VType changing for {node.name}: "
+                f"{self.get_nodeattr('VType')} -> {v_dtype} "
+            )
 
         # Update the node datatype attributes
         self.set_nodeattr("QType", q_dtype.name)
@@ -270,21 +320,21 @@ class ScaledDotProductAttention(HWCustomOp):
             # Test for changing mask input datatype
             if mask_dtype != self.get_nodeattr("MType"):
                 # Issue a warning message
-                log.warning("MType changing for %s: %s -> %s " % (
-                    node.name,
-                    str(self.get_nodeattr("MType")),
-                    str(mask_dtype),
-                ))
+                log.warning(
+                    f"MType changing for {node.name}: "
+                    f"{self.get_nodeattr('MType')} -> {mask_dtype} "
+                )
             # Update the node datatype attribute of the attention mask
             self.set_nodeattr("MType", mask_dtype.name)
 
         # Set the model output datatype
-        model.set_tensor_datatype(
-            node.output[0], DataType[self.get_nodeattr('OType')]
-        )
+        model.set_tensor_datatype(node.output[0], self.get_output_datatype(0))
 
     # Executes the attention operator in python mode simulation
-    def _execute_node_python(self, context, graph):  # noqa: graph unused
+    def _execute_node_python(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
+        """Execute the attention operator in Python mode simulation."""
         # Get the node wrapped by this custom op
         node = self.onnx_node
 
@@ -296,7 +346,8 @@ class ScaledDotProductAttention(HWCustomOp):
 
         # Quantization activation function following the query and key
         # multiplication
-        def act_qk_matmul(x):
+        def act_qk_matmul(x: np.ndarray) -> np.ndarray:
+            """Apply the optional thresholding activation after Q x K."""
             # Only applies if this is specified as a thresholding activation
             if self.get_nodeattr("ActQKMatMul") == "thresholds":
                 # Get the thresholds initializer by name from ordered list of
@@ -306,14 +357,15 @@ class ScaledDotProductAttention(HWCustomOp):
                 ]
                 # Activation value, i.e., bias applied after thresholding
                 # activation
-                bias = self.get_nodeattr("BiasActQKMatMul")
+                bias = cast("float", self.get_nodeattr("BiasActQKMatMul"))
                 # Applies thresholding activation in python to the input
                 return multithreshold(x, thresholds, channels_last=True) + bias
             # If not thresholds, assume identity function
             return x
 
         # Quantization activation function following the softmax normalization
-        def act_a_softmax(x):
+        def act_a_softmax(x: np.ndarray) -> np.ndarray:
+            """Apply the optional thresholding activation after the softmax."""
             # Only applies if this is specified as a thresholding activation
             if self.get_nodeattr("ActASoftmax") == "thresholds":
                 # Get the thresholds initializer by name from ordered list of
@@ -323,7 +375,7 @@ class ScaledDotProductAttention(HWCustomOp):
                 ]
                 # Activation value, i.e., bias applied after thresholding
                 # activation
-                bias = self.get_nodeattr("BiasActASoftmax")
+                bias = cast("float", self.get_nodeattr("BiasActASoftmax"))
                 # Applies thresholding activation in python to the input
                 return multithreshold(x, thresholds, channels_last=True) + bias
             # If not thresholds, assume identity function
@@ -331,7 +383,8 @@ class ScaledDotProductAttention(HWCustomOp):
 
         # Quantization activation function following the attention and values
         # multiplication
-        def act_av_matmul(x):
+        def act_av_matmul(x: np.ndarray) -> np.ndarray:
+            """Apply the optional thresholding activation after A x V."""
             # Only applies if this is specified as a thresholding activation
             if self.get_nodeattr("ActAVMatMul") == "thresholds":
                 # Get the thresholds initializer by name from ordered list of
@@ -341,7 +394,7 @@ class ScaledDotProductAttention(HWCustomOp):
                 ]
                 # Activation value, i.e., bias applied after thresholding
                 # activation
-                bias = self.get_nodeattr("BiasActAVMatMul")
+                bias = cast("float", self.get_nodeattr("BiasActAVMatMul"))
                 # Applies thresholding activation in python to the input
                 return multithreshold(x, thresholds, channels_last=True) + bias
             # If not thresholds, assume identity function
@@ -349,7 +402,7 @@ class ScaledDotProductAttention(HWCustomOp):
 
         # Scale used to dequantize the qk matrix before computing the softmax in
         # floating point
-        dequant = self.get_nodeattr("DequantSoftmax")
+        dequant = cast("float", self.get_nodeattr("DequantSoftmax"))
 
         # 1. Queries and keys multiplication followed by quantizing activation
         # function
@@ -407,35 +460,49 @@ class ScaledDotProductAttention(HWCustomOp):
         )
 
     # Executes the attention operator in C++ mode simulation
-    def _execute_node_cppsim(self, context, graph):  # noqa: graph unused
+    def _execute_node_cppsim(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"
+    ) -> None:
+        """Execute the attention operator in C++ mode simulation."""
         # C++ Simulation needs to be implemented in HLS backend specialization
         raise NotImplementedError(
             f"exec_mode cppsim of {self.__class__.__name__} is not implemented!"
         )
 
     # Executes the attention operator in RTL mode simulation
-    def _execute_node_rtlsim(self, context, graph):  # noqa: graph unused
+    def _execute_node_rtlsim(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"
+    ) -> None:
+        """Execute the attention operator in RTL mode simulation."""
         # RTL Simulation needs to be implemented in backend specialization
         raise NotImplementedError(
             f"exec_mode rtlsim of {self.__class__.__name__} is not implemented!"
         )
 
     # Executes the attention operator in simulation (either python, c++ or rtl)
-    def execute_node(self, context, graph):
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"
+    ) -> None:
+        """Execute the attention operator in the configured simulation mode."""
         # Get the configured execution mode
         mode = self.get_nodeattr("exec_mode")
         if mode == "python":
             self._execute_node_python(context, graph)
         else:
             # Delegate execution to parent class for cppsim and rtlsim
-            HLSBackend.execute_node(self, context, graph)
+            #   Note: Only reachable on the _hls/_rtl specializations, which do
+            #   inherit HLSBackend
+            HLSBackend.execute_node(cast("HLSBackend", self), context, graph)
 
     # Optional node verification
-    def verify_node(self):
-        pass
+    def verify_node(self) -> list:
+        """Verify node attribute/input/output correctness."""
+        # TODO: Implement
+        return []
 
     # Gets the datatype of input at index ind
-    def get_input_datatype(self, ind=0):
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:
+        """Get the datatype of the input at index ind."""
         # Ordered list of names of allowed inputs
         inputs = ["QType", "KType", "VType"]
 
@@ -471,36 +538,37 @@ class ScaledDotProductAttention(HWCustomOp):
             inputs += ["AccAVMatMul"]
 
         # Look up datatype name in attributes and convert to DataType
-        return DataType[self.get_nodeattr(f"{inputs[ind]}")]
+        return DataType[cast("str", self.get_nodeattr(f"{inputs[ind]}"))]
 
     # Gets the datatype of the output (at index ind, but there is just one)
-    def get_output_datatype(self, ind=0):
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:
+        """Get the datatype of the output at index ind (there is just one)."""
         # Ordered list of names of allowed outputs
         outputs = ["O"]
         # Look up datatype name in attributes and convert to DataType
-        return DataType[self.get_nodeattr(f"{outputs[ind]}Type")]
+        return DataType[
+            cast("str", self.get_nodeattr(f"{outputs[ind]}Type"))
+        ]
 
     # Gets the shape of the input at index ind without folding
-    def get_normal_input_shape(self, ind=0):
+    def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:
+        """Get the shape of the input at index ind without folding."""
+        # Unpack the shape configuration
+        qk_dim, q_len, v_dim, kv_len = self.shapes
         # List shapes of inputs in order
-        inputs_shapes = [
+        inputs_shapes: list[tuple[int, ...]] = [
             # Query input sequence
-            (self.iterations, self.get_nodeattr("QLen"),
-             self.get_nodeattr("QKDim")),
+            (self.iterations, q_len, qk_dim),
             # Key input sequence
-            (self.iterations, self.get_nodeattr("KVLen"),
-             self.get_nodeattr("QKDim")),
+            (self.iterations, kv_len, qk_dim),
             # Value input sequence
-            (self.iterations, self.get_nodeattr("KVLen"),
-             self.get_nodeattr("VDim")),
+            (self.iterations, kv_len, v_dim),
         ]
 
         # If the attention mask is provided as input, it has a shape as well
         if self.get_nodeattr("mask_mode") in {"input", "const"}:
             # Mask shape is inferred from query and key sequence lengths
-            inputs_shapes += [
-                (self.get_nodeattr("QLen"), self.get_nodeattr("KVLen"))
-            ]
+            inputs_shapes += [(q_len, kv_len)]
 
         # TODO: All the following shapes are probably never requested, they are
         #  implemented for the sake of completeness for now. If they are ever
@@ -530,21 +598,28 @@ class ScaledDotProductAttention(HWCustomOp):
 
     # Gets the shape of the output at index ind (there is just one) without
     # folding
-    def get_normal_output_shape(self, ind=0):  # noqa, there is just one output
+    def get_normal_output_shape(
+        self, ind: int = 0  # noqa: ARG002
+    ) -> tuple[int, int, int]:
+        """Get the shape of the output without folding (there is just one)."""
         # The output shape is inferred from the length of the query sequence and
         # the embedding dimension of the values
-        return (self.iterations, self.get_nodeattr("QLen"),
-                self.get_nodeattr("VDim"))
+        _, q_len, v_dim, _ = self.shapes
+        return (self.iterations, q_len, v_dim)
 
     # Gets the shape of the attention weights at index ind (there is just one)
     # without folding
-    def get_normal_attention_shape(self, ind=0):  # noqa, there is just one
+    def get_normal_attention_shape(
+        self, ind: int = 0  # noqa: ARG002
+    ) -> tuple[int, int, int]:
+        """Get the shape of the attention weights without folding."""
         # The attention weights have shape covering both sequence dimensions
-        return (self.iterations, self.get_nodeattr("QLen"),
-                self.get_nodeattr("KVLen"))
+        _, q_len, _, kv_len = self.shapes
+        return (self.iterations, q_len, kv_len)
 
     # Gets the shape of the input at index ind with folding
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:
+        """Get the shape of the input at index ind with folding."""
         # Get the unfolded size of the input
         *num, idim = self.get_normal_input_shape(ind)
         # Get the folding configuration specifying the amount of parallelism
@@ -576,28 +651,31 @@ class ScaledDotProductAttention(HWCustomOp):
         return *num, idim, 1
 
     # Gets the shape of the output at index ind (there is just one) with folding
-    def get_folded_output_shape(self, ind=0):  # noqa, there is just one output
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:
+        """Get the shape of the output at index ind with folding."""
         # Get the unfolded size of the output
         *num, odim = self.get_normal_output_shape(ind)
         # Get the folding configuration specifying the amount of parallelism
-        embfold, seqfold = self.folds
+        embfold, _seqfold = self.folds
         # The output is always folded along the embedding dimension, which is
         # assumed to be the second dimension
         return *num, embfold, odim // embfold
 
     # Gets the shape of the attention weights at index ind (there is just one)
     # with folding
-    def get_folded_attention_shape(self, ind=0):  # noqa, there is just one
+    def get_folded_attention_shape(self, ind: int = 0) -> tuple[int, ...]:
+        """Get the shape of the attention weights at index ind with folding."""
         # Get the unfolded size of the attention weights
         *num, adim = self.get_normal_attention_shape(ind)
         # Get the folding configuration specifying the amount of parallelism
-        embfold, seqfold = self.folds
+        _embfold, seqfold = self.folds
         # The attention weights are always folded along the sequence dimension,
         # which is assumed to be the second dimension
         return *num, seqfold, adim // seqfold
 
     # Widths of the input data stream of the input at index ind
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind: int = 0) -> int:
+        """Get the width of the input data stream at index ind."""
         if ind in (0, 1, 2):
             # Get the number of bits used to represent the input
             i_bits = self.get_input_datatype(ind).bitwidth()
@@ -616,7 +694,8 @@ class ScaledDotProductAttention(HWCustomOp):
         return 0  # 0 = not exposed as stream
 
     # Widths of the output data stream of the output at index ind
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:
+        """Get the width of the output data stream at index ind."""
         # Get the number of bits used to represent the output
         o_bits = self.get_output_datatype(ind).bitwidth()
         # Parallelism is the number of elements in the last dimension of the
@@ -626,18 +705,21 @@ class ScaledDotProductAttention(HWCustomOp):
         return elems * o_bits
 
     # Minimize the accumulator bit width
-    def minimize_accumulator_width(self, model):  # noqa: model is unused
+    def minimize_accumulator_width(
+        self, model: ModelWrapper  # noqa: ARG002
+    ) -> None:
+        """Minimize the accumulator bit widths of the internal matmuls."""
         # Get the query, key, value and attention weights type
-        QType = DataType[self.get_nodeattr("QType")]  # noqa
-        KType = DataType[self.get_nodeattr("KType")]  # noqa
-        VType = DataType[self.get_nodeattr("VType")]  # noqa
-        AType = DataType[self.get_nodeattr("AType")]  # noqa
+        QType = DataType[cast("str", self.get_nodeattr("QType"))]  # noqa: N806
+        KType = DataType[cast("str", self.get_nodeattr("KType"))]  # noqa: N806
+        VType = DataType[cast("str", self.get_nodeattr("VType"))]  # noqa: N806
+        AType = DataType[cast("str", self.get_nodeattr("AType"))]  # noqa: N806
 
         # Compute the worst-case upper and lower bounds of the accumulator range
         lower_worst = QType.min() * np.ones(self.get_normal_input_shape(0)[-2:])
         lower_range = calculate_matvec_accumulator_range(lower_worst, KType)
         upper_worst = QType.max() * np.ones(self.get_normal_input_shape(0)[-2:])
-        upper_range = calculate_matvec_accumulator_range(  # noqa: Duplicate
+        upper_range = calculate_matvec_accumulator_range(
             upper_worst, KType
         )
         # Minimum and maximum values of the range
@@ -649,7 +731,7 @@ class ScaledDotProductAttention(HWCustomOp):
             # range. Some values between 0 and acc_min might be unused.
             bitwidth = math.ceil(np.log2(acc_max + 1))
             # New unsigned accumulator datatype of this bitwidth
-            AccQKMatMul = DataType[f"UINT{bitwidth}"]  # noqa
+            AccQKMatMul = DataType[f"UINT{bitwidth}"]  # noqa: N806
         # Signed accumulator range
         else:
             # Maximum absolute value which needs to be represented
@@ -658,7 +740,7 @@ class ScaledDotProductAttention(HWCustomOp):
             # range. Some values on one of the ends might remain unused.
             bitwidth = math.ceil(np.log2(acc_max) + 1)
             # New signed accumulator datatype of this bitwidth
-            AccQKMatMul = DataType[f"INT{bitwidth}"]  # noqa
+            AccQKMatMul = DataType[f"INT{bitwidth}"]  # noqa: N806
         # Update the accumulator datatype attribute
         self.set_nodeattr("AccQKMatMul", AccQKMatMul.name)
         # If there is no activation function following the accumulator, the
@@ -674,7 +756,7 @@ class ScaledDotProductAttention(HWCustomOp):
         lower_range = calculate_matvec_accumulator_range(lower_worst, VType)
         upper_worst = AType.max() * np.ones(
             self.get_normal_attention_shape(0)[-2:])
-        upper_range = calculate_matvec_accumulator_range(  # noqa: Duplicate
+        upper_range = calculate_matvec_accumulator_range(
             upper_worst, VType
         )
         # Minimum and maximum values of the range
@@ -686,7 +768,7 @@ class ScaledDotProductAttention(HWCustomOp):
             # range. Some values between 0 and acc_min might be unused.
             bitwidth = math.ceil(np.log2(acc_max + 1))
             # New unsigned accumulator datatype of this bitwidth
-            AccAVMatMul = DataType[f"UINT{bitwidth}"]  # noqa
+            AccAVMatMul = DataType[f"UINT{bitwidth}"]  # noqa: N806
         # Signed accumulator range
         else:
             # Maximum absolute value which needs to be represented
@@ -695,7 +777,7 @@ class ScaledDotProductAttention(HWCustomOp):
             # range. Some values on one of the ends might remain unused.
             bitwidth = math.ceil(np.log2(acc_max) + 1)
             # New signed accumulator datatype of this bitwidth
-            AccAVMatMul = DataType[f"INT{bitwidth}"]  # noqa
+            AccAVMatMul = DataType[f"INT{bitwidth}"]  # noqa: N806
         # Update the accumulator datatype attribute
         self.set_nodeattr("AccAVMatMul", AccAVMatMul.name)
         # If there is no activation function following the accumulator, the
@@ -713,24 +795,27 @@ class ScaledDotProductAttention(HWCustomOp):
 
     # Gets the number of expected input values, i.e. how many times read()
     # could/should be called on the input stream of this operator
-    def get_number_input_values(self, ind=0):
+    def get_number_input_values(self, ind: int = 0) -> int:
+        """Get the number of expected input values for the input at index ind."""
         # Elements over all but the last dimension of the input folded along
         # the embedding dimension
-        return np.prod(self.get_folded_input_shape(ind=ind)[:-1])
+        return int(np.prod(self.get_folded_input_shape(ind=ind)[:-1]))
 
     # Gets the number of expected output values, i.e. how many times read()
     # could/should be called on the output stream of this operator
-    def get_number_output_values(self):
+    def get_number_output_values(self) -> int:
+        """Get the number of expected output values on the output stream."""
         # Elements over all but the last dimension of the output folded along
         # the embedding dimension
-        return np.prod(self.get_folded_output_shape()[:-1])
+        return int(np.prod(self.get_folded_output_shape()[:-1]))
 
     # Converts names of optional inputs to the node input index and from there
     # to the ONNX node input name if the input is present.
     #   Note: This mapping is required as the ONNX graph/node may provide
     #   different names (in particular automatically generated unique names) and
     #   some of these are optional inputs.
-    def get_input_name_by_name(self, name):
+    def get_input_name_by_name(self, name: str) -> str:
+        """Resolve an optional input's logical name to its ONNX tensor name."""
         # Ordered names of the (optional) threshold inputs
         thresholds = [
             "thresholds_qk_matmul",
@@ -761,7 +846,10 @@ class ScaledDotProductAttention(HWCustomOp):
 
         # Filter the ordered list of input names for those which are actually
         # present
-        inputs = [x for x, present in zip(inputs, inputs_present) if present]
+        inputs = [
+            x for x, present in zip(inputs, inputs_present, strict=True)
+            if present
+        ]
 
         # Find the position of the requested input name and look up the
         # corresponding input name of the ONNX node
@@ -769,12 +857,15 @@ class ScaledDotProductAttention(HWCustomOp):
 
     # Derives the expected cycles for the attention operation given the folding
     # configuration
-    def get_exp_cycles(self):
+    def get_exp_cycles(self) -> int:
+        """Derive the expected cycles given the folding configuration."""
         # Verify the folding configuration
-        assert self.is_valid_folding, \
-            f"Invalid folding configuration for {self.onnx_node.name}"
+        if not self.is_valid_folding:
+            raise FINNUserError(
+                f"Invalid folding configuration for {self.onnx_node.name}"
+            )
         # Get the input/output dimensions
-        qk_dim, q_len, v_dim, kv_len = self.shapes
+        _qk_dim, q_len, _v_dim, kv_len = self.shapes
         # Get folding configuration describing how to parallelize along the
         # dimensions
         emb_fold, seq_fold = self.folds

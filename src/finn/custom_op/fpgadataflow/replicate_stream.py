@@ -244,13 +244,14 @@ class ReplicateStream(HWCustomOp):
 
     # Gets the number of expected output values, i.e. how many times read()
     # could/should be called on any output stream of this operator
-    def get_number_output_values(self):
-        # Elements over all but the last dimension of the output folded along
-        # the embedding dimension.
-        # In case of multiple outputs, the new FINN XSI simulation back-end requires
-        # this to be specified on a per-output basis, in the form of a dict.
-        """Return number output values."""
-        num_outputs_per_stream = np.prod(self.get_folded_output_shape()[:-1])
+    def get_number_output_values(self) -> int | dict[str, int]:
+        """Return number output values.
+
+        Elements over all but the last dimension of the output folded along the
+        embedding dimension. With more than one replica the multi-I/O RTL
+        simulation back-end requires this per output stream, as a dict.
+        """
+        num_outputs_per_stream = int(np.prod(self.get_folded_output_shape()[:-1]))
         if self.num > 1:
             return {f"out{i}": num_outputs_per_stream for i in range(self.num)}
         return num_outputs_per_stream

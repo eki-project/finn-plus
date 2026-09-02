@@ -297,7 +297,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         inst = getCustomOp(node)
         return inst.get_outstream_width(0)
 
-    def get_number_output_values(self):
+    def get_number_output_values(self) -> int | dict[str, int]:
         """Return number output values."""
         loop_body = self.get_nodeattr("body")
         # get last node in loop body and return

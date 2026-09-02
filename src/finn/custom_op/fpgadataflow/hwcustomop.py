@@ -334,10 +334,16 @@ class HWCustomOp(CustomOp):
 
         """
 
-    def get_number_output_values(self) -> int:
+    def get_number_output_values(self) -> int | dict[str, int]:
         """Get the number of expected output values.
 
         Member function of HWCustomOp class that must be implemented by every node.
+
+        Returns a single ``int`` for nodes with one output stream. Nodes with
+        multiple output streams must instead return a ``{"out<i>": count}`` dict,
+        one entry per stream, as required by the multi-I/O RTL simulation
+        back-end (see ``finn.xsi.rtlsim_multi_io``). Consumers that need a scalar
+        for a specific stream should call ``get_number_output_values_for_stream``.
 
         """
         folded_oshape = self.get_folded_output_shape()
@@ -347,6 +353,24 @@ class HWCustomOp(CustomOp):
                 "since folded output shape is not defined."
             )
         return int(np.prod(folded_oshape[:-1]))
+
+    def get_number_output_values_for_stream(self, ind: int = 0) -> int:
+        """Get the expected output value count for a single output stream.
+
+        Resolves the per-stream scalar regardless of whether
+        ``get_number_output_values`` returns a plain ``int`` (single-output
+        nodes) or a ``{"out<i>": count}`` dict (multi-output nodes).
+        """
+        num_output_values = self.get_number_output_values()
+        if isinstance(num_output_values, dict):
+            key = f"out{ind}"
+            if key not in num_output_values:
+                raise FINNInternalError(
+                    f"{self.onnx_node.name}: no output stream {key!r} in "
+                    f"get_number_output_values() result {num_output_values}"
+                )
+            return int(num_output_values[key])
+        return int(num_output_values)
 
     @abstractmethod
     def get_input_datatype(self, ind: int = 0) -> BaseDataType:

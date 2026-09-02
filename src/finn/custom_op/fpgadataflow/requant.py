@@ -134,7 +134,7 @@ class Requant(HWCustomOp):
 
     def get_exp_cycles(self):
         """Return expected number of cycles for execution."""
-        return self.get_number_output_values()
+        return self.get_number_output_values_for_stream(0)
 
     def execute_node(self, context, graph):
         """Execute the requant operation."""

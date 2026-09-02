@@ -150,11 +150,11 @@ class StreamingSplit(HWCustomOp):
         out_width = obits * self.get_nodeattr("SIMD")
         return out_width
 
-    def get_number_output_values(self):
-        """Return number output values."""
+    def get_number_output_values(self) -> dict[str, int]:
+        """Return number output values, one entry per output stream."""
         out_val = {}
         for i in range(len(self.onnx_node.output)):
-            out_val["out%s" % i] = np.prod(self.get_folded_output_shape(i)[1:-1])
+            out_val["out%s" % i] = int(np.prod(self.get_folded_output_shape(i)[1:-1]))
         return out_val
 
     def get_exp_cycles(self):
