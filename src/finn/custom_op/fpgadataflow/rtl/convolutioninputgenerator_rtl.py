@@ -35,17 +35,25 @@ generating sliding windows for convolution operations on FPGA. Supports non-squa
 
 import math
 import numpy as np
-import os
 import shutil
+from onnx import NodeProto
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.general import im2col
 from qonnx.custom_op.general.im2col import compute_conv_output_dim
-from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import roundup_to_integer_multiple
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, cast
 
-from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
+from finn.custom_op.fpgadataflow.convolutioninputgenerator import (
+    ConvolutionInputGenerator,
+    NodeAttrTypes,
+)
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.settings import get_settings
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
 
 # RTL Convolution Input Generator / Sliding Window Generator (SWG)
 # Matches and extends the functionality of all ConvolutionInputGenerator_* functions
@@ -62,31 +70,18 @@ from finn.util.settings import get_settings
 
 class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
     """Class that corresponds to finn-rtllib swg module.
+
     Generates an RTL ConvolutionInputGenerator implementation
     based on (System-)Verilog templates, defined in finn-rtllib/swg.
     """
 
-    def __init__(self, onnx_node, **kwargs):
-        """Initialize the RTL ConvolutionInputGenerator.
-
-        Parameters
-        ----------
-        onnx_node : NodeProto
-            ONNX node to wrap
-        **kwargs : dict
-            Additional arguments passed to parent class
-        """
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
+        """Initialize the RTL ConvolutionInputGenerator."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
-        """Get dictionary of attribute names and their types for this node.
-
-        Returns
-        -------
-        dict
-            Dictionary mapping attribute names to type specifications
-        """
-        my_attrs = {
+    def get_nodeattr_types(self) -> NodeAttrTypes:
+        """Return nodeattr types."""
+        my_attrs: NodeAttrTypes = {
             # additional parallelization parameter - not yet implemented
             "M": ("i", False, 1),
         }
@@ -94,37 +89,31 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def get_number_input_values(self):
-        """Function to get the number of expected input values."""
+    @property
+    def m_par(self) -> int:
+        """Get the additional parallelization parameter M."""
+        return cast("int", self.get_nodeattr("M"))
+
+    def get_number_input_values(self) -> int:
+        """Return the number of expected input values."""
         folded_ishape = self.get_folded_input_shape()
-        num_input_elems = np.prod(folded_ishape[:-1])
-        return num_input_elems
+        return int(np.prod(folded_ishape[:-1]))
 
-    def use_parallel_window_output(self):
-        """Check if parallel window output mode is enabled.
+    def use_parallel_window_output(self) -> bool:
+        """Return whether the parallel window output mode is enabled."""
+        return self.parallel_window
 
-        Returns
-        -------
-        bool
-            True if parallel window output is enabled, False otherwise
-        """
-        return self.get_nodeattr("parallel_window")
-
-    def get_buffer_depth(self):
+    def get_buffer_depth(self) -> int:
         """Return total depth of the internal buffer, depending on
         implementation style.
         """
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        k = self.get_nodeattr("ConvKernelDim")
-        ifm_dim = self.get_nodeattr("IFMDim")
-        stride = self.get_nodeattr("Stride")
-        dilation = self.get_nodeattr("Dilation")
-        simd = self.get_nodeattr("SIMD")
+        ifm_ch = self.ifm_channels
+        k_h, k_w = self.kernel_dim
+        _h, w = self.ifm_dim
+        stride_h, stride_w = self.stride
+        dilation_h, dilation_w = self.dilation
+        simd = self.simd
 
-        k_h, k_w = k
-        h, w = ifm_dim
-        stride_h, stride_w = stride
-        dilation_h, dilation_w = dilation
         mmv_in = 1
         mmv_out = 1
         channel_factor = int(ifm_ch / simd)
@@ -146,39 +135,28 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
                     ((stride_h - 1) * w - (int(mmv_out * k_h * k_w / mmv_in))) * channel_factor,
                 )
             )
-        elif impl_style == "parallel":
+        else:
             buffer_min_size = (
                 (k_h - 1) * dilation_h * w + (k_w - 1) * dilation_w
             ) * channel_factor + 1
             buffer_depth = buffer_min_size + 1
         return buffer_depth
 
-    def get_exp_cycles(self):
-        """Get expected number of clock cycles for one inference.
-
-        Returns
-        -------
-        int
-            Number of clock cycles required for processing
-        """
+    def get_exp_cycles(self) -> int:
+        """Return expected number of clock cycles for one inference."""
         impl_style = self.select_impl_style()
 
         if impl_style == "parallel":
             exp_cycles = self.get_number_input_values() + 2
-        elif impl_style == "default":
-            simd = self.get_nodeattr("SIMD")
-            ifm_ch = self.get_nodeattr("IFMChannels")
-            k = self.get_nodeattr("ConvKernelDim")
-            ifm_dim = self.get_nodeattr("IFMDim")
-            ofm_dim = self.get_nodeattr("OFMDim")
-            stride = self.get_nodeattr("Stride")
-            dilation = self.get_nodeattr("Dilation")
-            depthwise = self.get_nodeattr("depthwise")
-            ifm_dim_h, ifm_dim_w = ifm_dim
-            ofm_dim_h, ofm_dim_w = ofm_dim
-            k_h, k_w = k
-            stride_h, stride_w = stride
-            dilation_h, dilation_w = dilation
+        else:
+            simd = self.simd
+            ifm_ch = self.ifm_channels
+            k_h, k_w = self.kernel_dim
+            ifm_dim_h, ifm_dim_w = self.ifm_dim
+            ofm_dim_h, ofm_dim_w = self.ofm_dim
+            stride_h, stride_w = self.stride
+            dilation_h, dilation_w = self.dilation
+            depthwise = self.depthwise
 
             channel_factor = int(ifm_ch / simd)
             if ifm_dim_h == 1 or ifm_dim_w == 1:
@@ -217,27 +195,21 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
 
         return int(exp_cycles)
 
-    def bram_estimation(self):
-        """Estimate Block RAM (BRAM) resource usage.
-
-        Returns
-        -------
-        int
-            Estimated number of BRAMs needed
-        """
-        simd = self.get_nodeattr("SIMD")
-        ram_style = self.get_nodeattr("ram_style")
+    def bram_estimation(self) -> int:
+        """Estimate Block RAM (BRAM) resource usage."""
+        simd = self.simd
+        ram_style = self.ram_style
         impl_style = self.select_impl_style()
-        [k_h, k_w] = self.get_nodeattr("ConvKernelDim")
-        [ifm_dim_h, ifm_dim_w] = self.get_nodeattr("IFMDim")
-        [dilation_h, dilation_w] = self.get_nodeattr("Dilation")
+        k_h, k_w = self.kernel_dim
+        ifm_dim_h, ifm_dim_w = self.ifm_dim
+        dilation_h, dilation_w = self.dilation
 
-        if ram_style == "block" or ram_style == "auto":
+        if ram_style in ("block", "auto"):
             buffer_width = simd * self.get_input_datatype().bitwidth()
             if impl_style == "default":
                 buffer_depth = self.get_buffer_depth()
                 buffer_count = 1
-            elif impl_style == "parallel":
+            else:
                 if ifm_dim_h == 1 or ifm_dim_w == 1:
                     return 0  # 1D case (no line buffers needed)
                 kernel_width = (k_w - 1) * dilation_w + 1
@@ -283,16 +255,10 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             return int((ram_cascade_depth * ram_cascade_width - cascade_savings) * buffer_count)
         return 0
 
-    def lut_estimation(self):
-        """Estimate LUT resource usage.
-
-        Returns
-        -------
-        int
-            Estimated number of LUTs needed
-        """
-        simd = self.get_nodeattr("SIMD")
-        ram_style = self.get_nodeattr("ram_style")
+    def lut_estimation(self) -> int:
+        """Estimate LUT resource usage."""
+        simd = self.simd
+        ram_style = self.ram_style
         buffer_width = simd * self.get_input_datatype().bitwidth()
         buffer_depth = self.get_buffer_depth()
         if ram_style == "distributed":
@@ -301,27 +267,21 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             ram_luts = 0
         return 300 + ram_luts
 
-    def uram_estimation(self):
-        """Estimate UltraRAM (URAM) resource usage.
-
-        Returns
-        -------
-        int
-            Estimated number of URAMs needed
-        """
-        simd = self.get_nodeattr("SIMD")
-        ram_style = self.get_nodeattr("ram_style")
+    def uram_estimation(self) -> int:
+        """Estimate UltraRAM (URAM) resource usage."""
+        simd = self.simd
+        ram_style = self.ram_style
         impl_style = self.select_impl_style()
-        [k_h, k_w] = self.get_nodeattr("ConvKernelDim")
-        [ifm_dim_h, ifm_dim_w] = self.get_nodeattr("IFMDim")
-        [dilation_h, dilation_w] = self.get_nodeattr("Dilation")
+        k_h, k_w = self.kernel_dim
+        ifm_dim_h, ifm_dim_w = self.ifm_dim
+        dilation_h, dilation_w = self.dilation
 
         if ram_style == "ultra":
             buffer_width = simd * self.get_input_datatype().bitwidth()
             if impl_style == "default":
                 buffer_depth = self.get_buffer_depth()
                 buffer_count = 1
-            elif impl_style == "parallel":
+            else:
                 if ifm_dim_h == 1 or ifm_dim_w == 1:
                     return 0  # 1D case (no line buffers needed)
                 kernel_width = (k_w - 1) * dilation_w + 1
@@ -335,17 +295,10 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             return int(ram_cascade_depth * ram_cascade_width * buffer_count)
         return 0
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute this ConvolutionInputGenerator node.
 
         Performs sliding window generation for convolution operations.
-
-        Parameters
-        ----------
-        context : dict
-            Dictionary mapping tensor names to numpy arrays
-        graph : GraphProto
-            ONNX graph containing this node
         """
         mode = self.get_nodeattr("exec_mode")
 
@@ -355,13 +308,13 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             # interleave channels such that cppsim of ConvolutionInputGenerator_rtl
             # has a notion of SIMD parallelism. Subsequent VVAU_{hls/rtl} expects
             # the channels to be interleaved (i.e. to match their PE parallelism).
-            if self.get_nodeattr("depthwise"):
+            if self.depthwise:
                 node = self.onnx_node
                 im2col_out = context[node.output[0]]
-                simd = getCustomOp(node).get_nodeattr("SIMD")
-                ofm_h, ofm_w = getCustomOp(node).get_nodeattr("OFMDim")
-                k_h, k_w = getCustomOp(node).get_nodeattr("ConvKernelDim")
-                ifm_ch = getCustomOp(node).get_nodeattr("IFMChannels")
+                simd = self.simd
+                ofm_h, ofm_w = self.ofm_dim
+                k_h, k_w = self.kernel_dim
+                ifm_ch = self.ifm_channels
                 im2col_out = im2col_out.reshape(1, ofm_h, ofm_w, k_h * k_w, ifm_ch // simd, simd)
                 im2col_out = im2col_out.transpose(0, 1, 2, 4, 3, 5)
                 im2col_out = im2col_out.reshape(1, ofm_h, ofm_w, ifm_ch * k_h * k_w)
@@ -369,30 +322,26 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         elif mode == "rtlsim":
             RTLBackend.execute_node(self, context, graph)
 
-    def prepare_codegen_default(self):
+    def prepare_codegen_default(self) -> tuple[Path, dict[str, list[str]]]:
         """Fill code generation dict for the default implementation style by computing
         the incremental addressing scheme for the circular buffer.
         """
-        if self.get_nodeattr("dynamic_mode"):
+        if self.dynamic_mode:
             template_select = "swg/swg_template_default_dynamic.sv"
         else:
             template_select = "swg/swg_template_default.sv"
-        template_path = os.path.join(get_settings().finn_rtllib, template_select)
-        code_gen_dict = {}
+        template_path = Path(get_settings().finn_rtllib) / template_select
+        code_gen_dict: dict[str, list[str]] = {}
 
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        k = self.get_nodeattr("ConvKernelDim")
-        ifm_dim = self.get_nodeattr("IFMDim")
-        stride = self.get_nodeattr("Stride")
-        dilation = self.get_nodeattr("Dilation")
-        depthwise = self.get_nodeattr("depthwise")
-        simd = self.get_nodeattr("SIMD")
+        ifm_ch = self.ifm_channels
+        k_h, k_w = self.kernel_dim
+        h, w = self.ifm_dim
+        stride_h, stride_w = self.stride
+        dilation_h, dilation_w = self.dilation
+        depthwise = self.depthwise
+        simd = self.simd
 
-        k_h, k_w = k
-        h, w = ifm_dim
         pad = [0, 0, 0, 0]  # padding happens in separate padding node for now
-        stride_h, stride_w = stride
-        dilation_h, dilation_w = dilation
         pad_h = pad[0] + pad[2]
         pad_w = pad[1] + pad[3]
         out_dim_h = im2col.compute_conv_output_dim(h, k_h, stride_h, pad_h, dilation_h)
@@ -441,12 +390,16 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             addr_incr_end_simd = -buffer_min_size + (channel_factor + 1)
 
         # sanity check for wrap logic
-        assert not (
-            abs(addr_incr_end_window) > buffer_actual_size
-        ), "ERROR: W increment > buffer size, try setting parallel_window=1"
-        assert not (
-            abs(addr_incr_end_row) > buffer_actual_size
-        ), "ERROR: H increment > buffer size, try setting parallel_window=1"
+        if abs(addr_incr_end_window) > buffer_actual_size:
+            raise FINNUserError(
+                f"{self.onnx_node.name}: W increment > buffer size, "
+                "try setting parallel_window=1"
+            )
+        if abs(addr_incr_end_row) > buffer_actual_size:
+            raise FINNUserError(
+                f"{self.onnx_node.name}: H increment > buffer size, "
+                "try setting parallel_window=1"
+            )
 
         # set certain threshold indices to detect when reading/writing finishes
         code_gen_dict["$LAST_READ_ELEM$"] = [str(h * w * channel_factor - 1)]
@@ -551,34 +504,30 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
 
         return template_path, code_gen_dict
 
-    def prepare_codegen_parallel(self):
+    def prepare_codegen_parallel(self) -> tuple[Path, dict[str, list[str]]]:
         """Fill code generation dict for the parallel implementation style by computing
         the loop controller configuration and partitioning the fixed buffer into
         shift-registers (for parallel read access) and line buffers (for efficient
         LUTRAM/BRAM/URAM implementation).
         """
-        template_path = os.path.join(get_settings().finn_rtllib, "swg/swg_template_parallel.sv")
-        code_gen_dict = {}
+        template_path = Path(get_settings().finn_rtllib) / "swg/swg_template_parallel.sv"
+        code_gen_dict: dict[str, list[str]] = {}
 
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        k = self.get_nodeattr("ConvKernelDim")
-        ifm_dim = self.get_nodeattr("IFMDim")
-        stride = self.get_nodeattr("Stride")
-        dilation = self.get_nodeattr("Dilation")
-        simd = self.get_nodeattr("SIMD")
-        M = self.get_nodeattr("M")
+        ifm_ch = self.ifm_channels
+        k_h, k_w = self.kernel_dim
+        h, w = self.ifm_dim
+        stride_h, stride_w = self.stride
+        dilation_h, dilation_w = self.dilation
+        simd = self.simd
+        m_par = self.m_par
 
-        k_h, k_w = k
-        h, w = ifm_dim
         pad = [0, 0, 0, 0]  # padding happens in separate padding node for now
-        stride_h, stride_w = stride
-        dilation_h, dilation_w = dilation
         pad_h = pad[0] + pad[2]
         pad_w = pad[1] + pad[3]
         out_dim_h = im2col.compute_conv_output_dim(h, k_h, stride_h, pad_h, dilation_h)
         out_dim_w = im2col.compute_conv_output_dim(w, k_w, stride_w, pad_w, dilation_w)
-        mmv_in = M * 1
-        mmv_out = M * k_h * k_w
+        mmv_in = m_par * 1
+        mmv_out = m_par * k_h * k_w
         channel_factor = int(ifm_ch / simd)
 
         # compute minimal buffer length (assuming it holds 1 complete window)
@@ -679,8 +628,8 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         # use normalized ([H,W]=[1,W]) dimensions for 1D case
         (
             ifm_ch,
-            [ifm_dim_h, ifm_dim_w],
-            [ofm_dim_h, ofm_dim_w],
+            [_ifm_dim_h, _ifm_dim_w],
+            [_ofm_dim_h, _ofm_dim_w],
             [k_h, k_w],
             [stride_h, stride_w],
             [dilation_h, dilation_w],
@@ -713,53 +662,48 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
 
         code_gen_dict["$GENERATE_REG_FIFOS$"] = []
         for i, reg_fifo in enumerate(reg_fifos):
+            reg_fifo_len = len(reg_fifo)
             code_gen_dict["$GENERATE_REG_FIFOS$"].append(
-                """
-                wire [IN_WIDTH-1:0] reg_fifo_{id}_in;
-                wire [IN_WIDTH-1:0] reg_fifo_{id}_out;
-                wire [IN_WIDTH*{len}-1:0] reg_fifo_{id};
+                f"""
+                wire [IN_WIDTH-1:0] reg_fifo_{i}_in;
+                wire [IN_WIDTH-1:0] reg_fifo_{i}_out;
+                wire [IN_WIDTH*{reg_fifo_len}-1:0] reg_fifo_{i};
                 swg_reg_buffer
                 #(
                 .WIDTH(IN_WIDTH),
-                .DEPTH({len})
+                .DEPTH({reg_fifo_len})
                 )
-                reg_buffer_inst_{id}
+                reg_buffer_inst_{i}
                 (
                     .clk(clk),
                     .shift_enable(shift_enable),
-                    .shift_in(reg_fifo_{id}_in),
-                    .shift_out(reg_fifo_{id}_out),
-                    .data_out(reg_fifo_{id})
-                );""".format(
-                    id=i,
-                    len=len(reg_fifo),
-                )
+                    .shift_in(reg_fifo_{i}_in),
+                    .shift_out(reg_fifo_{i}_out),
+                    .data_out(reg_fifo_{i})
+                );"""
             )
 
         code_gen_dict["$GENERATE_BRAM_FIFOS$"] = []
+        ram_style = self.ram_style
         for i, bram_fifo_depth in enumerate(bram_fifos_depth):
             code_gen_dict["$GENERATE_BRAM_FIFOS$"].append(
-                """
-                wire [IN_WIDTH-1:0] bram_fifo_{id}_in;
-                wire [IN_WIDTH-1:0] bram_fifo_{id}_out;
+                f"""
+                wire [IN_WIDTH-1:0] bram_fifo_{i}_in;
+                wire [IN_WIDTH-1:0] bram_fifo_{i}_out;
                 swg_ram_buffer
                 #(
                 .WIDTH(IN_WIDTH),
-                .DEPTH({len}),
+                .DEPTH({bram_fifo_depth}),
                 .RAM_STYLE("{ram_style}")
                 )
-                ram_buffer_inst_{id}
+                ram_buffer_inst_{i}
                 (
                     .clk(clk),
                     .rst_n(rst_n),
                     .shift_enable(shift_enable),
-                    .shift_in(bram_fifo_{id}_in),
-                    .shift_out(bram_fifo_{id}_out)
-                );""".format(
-                    id=i,
-                    len=bram_fifo_depth,
-                    ram_style=self.get_nodeattr("ram_style"),
-                )
+                    .shift_in(bram_fifo_{i}_in),
+                    .shift_out(bram_fifo_{i}_out)
+                );"""
             )
 
         code_gen_dict["$GENERATE_OUTPUT_MAPPING$"] = []
@@ -770,13 +714,16 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
                     code_gen_dict["$GENERATE_OUTPUT_MAPPING$"].append(
                         f"""assign data_out[OUT_ELEM_WIDTH*{out_idx}+:OUT_ELEM_WIDTH]
                         = reg_fifo_{fifo_id}[
-                        {len(reg_fifo) - 1 - int((max(reg_fifo) - access_idx) / M)}
-                        *{M}*OUT_ELEM_WIDTH+
-                        OUT_ELEM_WIDTH*{(max(reg_fifo) - access_idx) % M}+:OUT_ELEM_WIDTH];"""
+                        {len(reg_fifo) - 1 - int((max(reg_fifo) - access_idx) / m_par)}
+                        *{m_par}*OUT_ELEM_WIDTH+
+                        OUT_ELEM_WIDTH*{(max(reg_fifo) - access_idx) % m_par}+:OUT_ELEM_WIDTH];"""
                     )
                     # reversal: out_idx=0 -> oldest buffer element -> highest access_idx
                     out_idx = out_idx - 1
-        assert out_idx == -1, "ERROR: Not all output vector elements connected"
+        if out_idx != -1:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: not all output vector elements connected"
+            )
 
         code_gen_dict["$GENERATE_BUFFER_CONNECTION$"] = []
         for i in range(len(reg_fifos)):
@@ -803,37 +750,40 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
 
     def select_impl_style(self) -> Literal["parallel", "default"]:
         """Select implementation style based on folding configuration."""
-        simd = self.get_nodeattr("SIMD")
-        M = self.get_nodeattr("M")
-        depthwise = self.get_nodeattr("depthwise")
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        ifm_dim = self.get_nodeattr("IFMDim")
-        stride = self.get_nodeattr("Stride")
-        dilation = self.get_nodeattr("Dilation")
-        k = self.get_nodeattr("ConvKernelDim")
-        ifm_dim_h, ifm_dim_w = ifm_dim
-        stride_h, stride_w = stride
-        dilation_h, dilation_w = dilation
-        k_h, k_w = k
+        simd = self.simd
+        m_par = self.m_par
+        depthwise = self.depthwise
+        ifm_ch = self.ifm_channels
+        ifm_dim_h, ifm_dim_w = self.ifm_dim
+        stride_h, stride_w = self.stride
+        dilation_h, dilation_w = self.dilation
+        k_h, k_w = self.kernel_dim
         kernel_width = (k_w - 1) * dilation_w + 1  # incl. dilation
         kernel_height = (k_h - 1) * dilation_h + 1  # incl. dilation
 
         # check for valid configuration
-        assert (
+        if not (
             kernel_height <= ifm_dim_h
             and kernel_width <= ifm_dim_w
             and stride_h <= ifm_dim_h
             and stride_w <= ifm_dim_w
-        ), "Illegal conv configuration: kernel or stride > FM dimension"
+        ):
+            raise FINNUserError(
+                f"{self.onnx_node.name}: illegal conv configuration, "
+                "kernel or stride > FM dimension"
+            )
 
         # init folding config
-        if self.get_nodeattr("parallel_window"):
+        if self.parallel_window:
             # mmv_in = M * 1
-            mmv_out = M * k_h * k_w
+            mmv_out = m_par * k_h * k_w
         else:
             # mmv_in = 1
             mmv_out = 1
-            assert ifm_ch % simd == 0, "Constraint violated: SIMD must divide IFMChannels"
+            if ifm_ch % simd != 0:
+                raise FINNUserError(
+                    f"{self.onnx_node.name}: SIMD ({simd}) must divide IFMChannels ({ifm_ch})"
+                )
 
         # choose implementation style
         if mmv_out > 1 or (k_h == 1 and k_w == 1):
@@ -841,15 +791,21 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             if depthwise or (k_h == 1 and k_w == 1):
                 # allow SIMD < IFM_CH in depthwise mode (VVAU supports the resulting data layout)
                 # also allowed for 1x1 kernel since depthwise and non-depthwise are equivalent
-                assert ifm_ch % simd == 0, "Constraint violated: SIMD must divide IFMChannels"
-            else:
-                assert ifm_ch == simd, "Constraint violated: SIMD must be equal to IFMChannels"
+                if ifm_ch % simd != 0:
+                    raise FINNUserError(
+                        f"{self.onnx_node.name}: SIMD ({simd}) must divide "
+                        f"IFMChannels ({ifm_ch})"
+                    )
+            elif ifm_ch != simd:
+                raise FINNUserError(
+                    f"{self.onnx_node.name}: SIMD ({simd}) must be equal to IFMChannels ({ifm_ch})"
+                )
         else:
             impl_style = "default"
 
         return impl_style
 
-    def generate_hdl(self, model, fpgapart, clk):
+    def generate_hdl(self, model: ModelWrapper, fpgapart: str, clk: float) -> None:  # noqa: ARG002
         """Generate HDL code and wrapper for the IP, depending on required
         implementation style.
         """
@@ -858,12 +814,12 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         # prepare code generation by filling out dictionaries
         if impl_style == "default":
             template_path, code_gen_dict = self.prepare_codegen_default()
-        elif impl_style == "parallel":
-            template_path, code_gen_dict = self.prepare_codegen_parallel()
-            if self.get_nodeattr("dynamic_mode"):
-                raise Exception("Dynamic mode is not compatible with parallel_window")
         else:
-            raise Exception("Requested impl. style not implemented")
+            template_path, code_gen_dict = self.prepare_codegen_parallel()
+            if self.dynamic_mode:
+                raise FINNUserError(
+                    f"{self.onnx_node.name}: dynamic mode is not compatible with parallel_window"
+                )
 
         # add general parameters to dictionary
         code_gen_dict["$TOP_MODULE_NAME$"] = [self.get_verilog_top_module_name()]
@@ -877,142 +833,127 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
         code_gen_dict["$OUT_WIDTH_PADDED$"] = [
             str(roundup_to_integer_multiple(self.get_outstream_width(), 8))
         ]
-        ram_style = self.get_nodeattr("ram_style")
+        ram_style = self.ram_style
         code_gen_dict["$RAM_STYLE$"] = [f'"{ram_style}"']
 
         # apply code generation to templates
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        with open(template_path) as f:
-            template = f.read()
-        if self.get_nodeattr("dynamic_mode"):
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        template = template_path.read_text()
+        if self.dynamic_mode:
             template_select = "swg/swg_template_wrapper_dynamic.v"
         else:
             template_select = "swg/swg_template_wrapper.v"
-        with open(os.path.join(get_settings().finn_rtllib, template_select)) as f:
-            template_wrapper = f.read()
-        with open(os.path.join(get_settings().finn_rtllib, "swg/swg_template_axilite.v")) as f:
-            template_axilite = f.read()
+        template_wrapper = (Path(get_settings().finn_rtllib) / template_select).read_text()
+        template_axilite = (
+            Path(get_settings().finn_rtllib) / "swg/swg_template_axilite.v"
+        ).read_text()
         for key in code_gen_dict:
             # transform list into long string separated by '\n'
             code_gen_line = "\n".join(code_gen_dict[key])
             template = template.replace(key, code_gen_line)
             template_wrapper = template_wrapper.replace(key, code_gen_line)
             template_axilite = template_axilite.replace(key, code_gen_line)
-        with open(
-            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_impl.sv"),
-            "w",
-        ) as f:
-            f.write(template)
-        with open(
-            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_wrapper.v"),
-            "w",
-        ) as f:
-            f.write(template_wrapper)
+        gen_top_module = cast("str", self.get_nodeattr("gen_top_module"))
+        (code_gen_dir / f"{gen_top_module}_impl.sv").write_text(template)
+        (code_gen_dir / f"{gen_top_module}_wrapper.v").write_text(template_wrapper)
 
         # AXI-Lite reg. file component is only needed for dynamic mode
-        if self.get_nodeattr("dynamic_mode"):
-            with open(
-                os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + "_axilite.v"),
-                "w",
-            ) as f:
-                f.write(template_axilite)
+        if self.dynamic_mode:
+            (code_gen_dir / f"{gen_top_module}_axilite.v").write_text(template_axilite)
 
         # Copy static source file for common core components
-        shutil.copy2(os.path.join(get_settings().finn_rtllib, "swg/swg_common.sv"), code_gen_dir)
-        shutil.copy2(os.path.join(get_settings().finn_rtllib, "swg/swg_pkg.sv"), code_gen_dir)
+        rtllib_dir = Path(get_settings().finn_rtllib)
+        shutil.copy2(rtllib_dir / "swg/swg_common.sv", code_gen_dir)
+        shutil.copy2(rtllib_dir / "swg/swg_pkg.sv", code_gen_dir)
 
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
-        self.set_nodeattr("ipgen_path", code_gen_dir)
-        self.set_nodeattr("ip_path", code_gen_dir)
+        self.set_nodeattr("ipgen_path", str(code_gen_dir))
+        self.set_nodeattr("ip_path", str(code_gen_dir))
 
-    def get_rtl_file_list(self, abspath=False):
-        """Get list of RTL files required for this node.
-
-        Parameters
-        ----------
-        abspath : bool
-            If True, return absolute file paths; otherwise return relative paths
-
-        Returns
-        -------
-        list of str
-            List of RTL file paths
-        """
+    def get_rtl_file_list(self, abspath: bool = False) -> list[str]:
+        """Return list of RTL files required for this node."""
         if abspath:
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(get_settings().finn_rtllib, "swg/")
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen")) + "/"
+            rtllib_dir = str(Path(get_settings().finn_rtllib) / "swg") + "/"
         else:
             code_gen_dir = ""
             rtllib_dir = ""
+        gen_top_module = cast("str", self.get_nodeattr("gen_top_module"))
         verilog_files = [
             rtllib_dir + "swg_pkg.sv",
-            code_gen_dir + self.get_nodeattr("gen_top_module") + "_wrapper.v",
-            code_gen_dir + self.get_nodeattr("gen_top_module") + "_impl.sv",
+            code_gen_dir + gen_top_module + "_wrapper.v",
+            code_gen_dir + gen_top_module + "_impl.sv",
             rtllib_dir + "swg_common.sv",
         ]
-        if self.get_nodeattr("dynamic_mode"):
-            verilog_files.append(code_gen_dir + self.get_nodeattr("gen_top_module") + "_axilite.v")
+        if self.dynamic_mode:
+            verilog_files.append(code_gen_dir + gen_top_module + "_axilite.v")
 
         return verilog_files
 
-    def code_generation_ipi(self):
-        """Constructs and returns the TCL for node instantiation in Vivado IPI."""
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+    def code_generation_ipi(self) -> list[str]:
+        """Construct and return the TCL for node instantiation in Vivado IPI."""
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        gen_top_module = cast("str", self.get_nodeattr("gen_top_module"))
 
         sourcefiles = [
             "swg_pkg.sv",
-            self.get_nodeattr("gen_top_module") + "_wrapper.v",
-            self.get_nodeattr("gen_top_module") + "_impl.sv",
+            gen_top_module + "_wrapper.v",
+            gen_top_module + "_impl.sv",
             "swg_common.sv",
         ]
 
-        if self.get_nodeattr("dynamic_mode"):
-            sourcefiles += [self.get_nodeattr("gen_top_module") + "_axilite.v"]
+        if self.dynamic_mode:
+            sourcefiles += [gen_top_module + "_axilite.v"]
 
-        sourcefiles = [os.path.join(code_gen_dir, f) for f in sourcefiles]
+        sourcepaths = [str(code_gen_dir / f) for f in sourcefiles]
 
-        cmd = []
-        for f in sourcefiles:
-            cmd += ["add_files -norecurse %s" % (f)]
-        cmd += [
-            "create_bd_cell -type module -reference %s %s"
-            % (self.get_nodeattr("gen_top_module"), self.onnx_node.name)
-        ]
+        cmd = [f"add_files -norecurse {f}" for f in sourcepaths]
+        cmd += [f"create_bd_cell -type module -reference {gen_top_module} {self.onnx_node.name}"]
         return cmd
 
-    def get_verilog_top_module_intf_names(self):
-        # Overload default HLSCustomOp implementation to add axilite control IF
+    def get_verilog_top_module_intf_names(self) -> dict[str, list[tuple[str, int]] | list[str]]:
         """Return a dict of names of input and output interfaces.
-        The keys reflect the protocols each interface implements:
-        'clk', 'rst', 'm_axis', 's_axis', 'aximm', 'axilite'.
-        Values are lists of tuples (axis, aximm) or names (axilite):
-        'axis' tuples correspond to the list of node inputs in order,
-        each tuple is (interface_name, interface_width_bits).
-        axilite always assumed to be 32 bits and is not tuple (name only).
-        Each block must have at most one aximm and one axilite.
+
+        Overloads the default HLSCustomOp implementation to add the axilite
+        control interface. The keys reflect the protocols each interface
+        implements: 'clk', 'rst', 'm_axis', 's_axis', 'aximm', 'axilite'.
+        Values are lists of tuples (axis, aximm) or names (axilite): 'axis'
+        tuples correspond to the list of node inputs in order, each tuple is
+        (interface_name, interface_width_bits). axilite always assumed to be
+        32 bits and is not a tuple (name only). Each block must have at most
+        one aximm and one axilite.
         """
         intf_names = super().get_verilog_top_module_intf_names()
-        if self.get_nodeattr("dynamic_mode"):
+        if self.dynamic_mode:
             intf_names["axilite"] = ["s_axilite"]
         return intf_names
 
-    def get_dynamic_config(self, ifm_dim=None, stride=None, dilation=None):
-        """Returns a configuration dict to re-configure FM dimension during
-        runtime. Stride and dilation can also be changed. Certain restrictions
-        apply (e.g. component must be synthesized for largest buffer size)."""
+    def get_dynamic_config(
+        self,
+        ifm_dim: list[int] | None = None,
+        stride: list[int] | None = None,
+        dilation: list[int] | None = None,
+    ) -> dict[str, tuple[int, int]]:
+        """Return a configuration dict to re-configure FM dimension during runtime.
+
+        Stride and dilation can also be changed. Certain restrictions apply
+        (e.g. component must be synthesized for largest buffer size).
+        """
         # NOTE: For better driver integration, this functionality could be packaged
         # as a standalone function in the future
         if self.select_impl_style() != "default":
-            raise Exception("Impl. style is incompatible with dynamic mode")
+            raise FINNUserError(
+                f"{self.onnx_node.name}: impl. style is incompatible with dynamic mode"
+            )
 
         if ifm_dim is None:
-            ifm_dim = self.get_nodeattr("IFMDim")
-        k = self.get_nodeattr("ConvKernelDim")
+            ifm_dim = self.ifm_dim
+        k = self.kernel_dim
         if stride is None:
-            stride = self.get_nodeattr("Stride")
+            stride = self.stride
         if dilation is None:
-            dilation = self.get_nodeattr("Dilation")
+            dilation = self.dilation
 
         k_h, k_w = k
         stride_h, stride_w = stride
@@ -1024,19 +965,20 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
 
         # update attributes and perform sanity check
         original_buffer_depth = self.get_buffer_depth()
-        self.set_nodeattr("IFMDim", list(ifm_dim))
-        self.set_nodeattr("OFMDim", ofm_dim)
-        self.set_nodeattr("Stride", stride)
-        self.set_nodeattr("Dilation", dilation)
-        assert (
-            self.get_buffer_depth() <= original_buffer_depth
-        ), """Error: requested
-            dynamic configuration does not fit in generated buffer implementation."""
+        self.set_nodeattr("IFMDim", cast("list[str | int | float]", list(ifm_dim)))
+        self.set_nodeattr("OFMDim", cast("list[str | int | float]", ofm_dim))
+        self.set_nodeattr("Stride", cast("list[str | int | float]", stride))
+        self.set_nodeattr("Dilation", cast("list[str | int | float]", dilation))
+        if self.get_buffer_depth() > original_buffer_depth:
+            raise FINNUserError(
+                f"{self.onnx_node.name}: requested dynamic configuration does not fit "
+                "in generated buffer implementation"
+            )
 
         # (re-)call codegen and extract new values
         # each setting is mapped to an axi-lite register address
-        template_path, code_gen_dict = self.prepare_codegen_default()
-        config = {
+        _template_path, code_gen_dict = self.prepare_codegen_default()
+        return {
             "cfg_wren": (0 * 4, 1),
             "cfg_cntr_simd": (1 * 4, int(code_gen_dict["$LOOP_SIMD_ITERATIONS$"][0])),
             "cfg_cntr_kw": (2 * 4, int(code_gen_dict["$LOOP_KW_ITERATIONS$"][0])),
@@ -1054,4 +996,3 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             "cfg_last_read": (14 * 4, int(code_gen_dict["$LAST_READ_ELEM$"][0])),
             "cfg_last_write": (15 * 4, int(code_gen_dict["$LAST_WRITE_ELEM$"][0])),
         }
-        return config

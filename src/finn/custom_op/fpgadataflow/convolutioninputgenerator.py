@@ -26,16 +26,31 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for convolutioninputgenerator."""
-from onnx import TensorProto, helper
-from qonnx.core.datatype import DataType
+"""Sliding-window (im2col) hardware custom operator for convolutions."""
+
+import numpy as np
+from onnx import NodeProto, TensorProto, helper
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
 
 # ONNX i/o tensor shape assumptions for ConvolutionInputGenerator:
 # input 0 is the input tensor, shape NHWC = (1, IFMDim, IFMDim, IFMChannels)
@@ -44,15 +59,15 @@ from finn.util.logging import log
 
 
 class ConvolutionInputGenerator(HWCustomOp):
-    """Abstraction layer for HW implementation of ConvolutionInputGenerator"""
+    """Abstraction layer for HW implementation of ConvolutionInputGenerator."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             "ConvKernelDim": ("ints", True, []),  # [H, W] = [Y, X]
             "IFMChannels": ("i", True, 0),
             "IFMDim": ("ints", True, []),  # [H, W] = [Y, X]
@@ -86,57 +101,114 @@ class ConvolutionInputGenerator(HWCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_normal_input_shape(self, ind=0):
+    @property
+    def kernel_dim(self) -> list[int]:
+        """Get the convolution kernel dimensions [H, W]."""
+        return cast("list[int]", self.get_nodeattr("ConvKernelDim"))
+
+    @property
+    def ifm_channels(self) -> int:
+        """Get the number of input feature map channels."""
+        return cast("int", self.get_nodeattr("IFMChannels"))
+
+    @property
+    def ifm_dim(self) -> list[int]:
+        """Get the input feature map spatial dimensions [H, W]."""
+        return cast("list[int]", self.get_nodeattr("IFMDim"))
+
+    @property
+    def ofm_dim(self) -> list[int]:
+        """Get the output feature map spatial dimensions [H, W]."""
+        return cast("list[int]", self.get_nodeattr("OFMDim"))
+
+    @property
+    def simd(self) -> int:
+        """Get the SIMD parallelism."""
+        return cast("int", self.get_nodeattr("SIMD"))
+
+    @property
+    def stride(self) -> list[int]:
+        """Get the convolution stride [H, W]."""
+        return cast("list[int]", self.get_nodeattr("Stride"))
+
+    @property
+    def dilation(self) -> list[int]:
+        """Get the convolution dilation [H, W]."""
+        return cast("list[int]", self.get_nodeattr("Dilation"))
+
+    @property
+    def depthwise(self) -> bool:
+        """Get whether this is a depthwise convolution."""
+        return bool(self.get_nodeattr("depthwise"))
+
+    @property
+    def ram_style(self) -> str:
+        """Get the FPGA resource type for the input buffer."""
+        return cast("str", self.get_nodeattr("ram_style"))
+
+    @property
+    def parallel_window(self) -> bool:
+        """Get whether the parallel-window output mode is enabled."""
+        return bool(self.get_nodeattr("parallel_window"))
+
+    @property
+    def dynamic_mode(self) -> bool:
+        """Get whether runtime-reprogrammable (dynamic) mode is enabled."""
+        return bool(self.get_nodeattr("dynamic_mode"))
+
+    def use_parallel_window_output(self) -> bool:
+        """Return whether all window pixels are streamed out in parallel."""
+        return bool(self.get_nodeattr("parallel_window"))
+
+    def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal input shape."""
-        ifm_dim_h, ifm_dim_w = self.get_nodeattr("IFMDim")
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        ishape = (1, ifm_dim_h, ifm_dim_w, ifm_ch)
-        return ishape
+        ifm_dim_h, ifm_dim_w = self.ifm_dim
+        return (1, ifm_dim_h, ifm_dim_w, self.ifm_channels)
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
-        ifm_dim_h, ifm_dim_w = self.get_nodeattr("IFMDim")
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        simd = self.get_nodeattr("SIMD")
-        assert ifm_ch % simd == 0, "SIMD must divide IFMChannels"
-        wf = int(ifm_ch / simd)
-        folded_ishape = (1, ifm_dim_h, ifm_dim_w, wf, simd)
-        return folded_ishape
+        ifm_dim_h, ifm_dim_w = self.ifm_dim
+        if self.ifm_channels % self.simd != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide "
+                f"IFMChannels ({self.ifm_channels})"
+            )
+        wf = self.ifm_channels // self.simd
+        return (1, ifm_dim_h, ifm_dim_w, wf, self.simd)
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal output shape."""
-        k_h, k_w = self.get_nodeattr("ConvKernelDim")
-        ifm_dim_h, ifm_dim_w = self.get_nodeattr("IFMDim")
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        stride_h, stride_w = self.get_nodeattr("Stride")
-        dilation_h, dilation_w = self.get_nodeattr("Dilation")
+        k_h, k_w = self.kernel_dim
+        ifm_dim_h, ifm_dim_w = self.ifm_dim
+        stride_h, stride_w = self.stride
+        dilation_h, dilation_w = self.dilation
         pad = 0
         ofm_dim_h = compute_conv_output_dim(ifm_dim_h, k_h, stride_h, pad, dilation_h)
         ofm_dim_w = compute_conv_output_dim(ifm_dim_w, k_w, stride_w, pad, dilation_w)
-        oshape = (1, ofm_dim_h, ofm_dim_w, k_h * k_w * ifm_ch)
-        return oshape
+        return (1, ofm_dim_h, ofm_dim_w, k_h * k_w * self.ifm_channels)
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
-        k_h, k_w = self.get_nodeattr("ConvKernelDim")
-        ifm_dim_h, ifm_dim_w = self.get_nodeattr("IFMDim")
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        stride_h, stride_w = self.get_nodeattr("Stride")
-        dilation_h, dilation_w = self.get_nodeattr("Dilation")
-        simd = self.get_nodeattr("SIMD")
+        k_h, k_w = self.kernel_dim
+        ifm_dim_h, ifm_dim_w = self.ifm_dim
+        stride_h, stride_w = self.stride
+        dilation_h, dilation_w = self.dilation
+        simd = self.simd
         pad = 0
         ofm_dim_h = compute_conv_output_dim(ifm_dim_h, k_h, stride_h, pad, dilation_h)
         ofm_dim_w = compute_conv_output_dim(ifm_dim_w, k_w, stride_w, pad, dilation_w)
-        assert ifm_ch % simd == 0, "SIMD must divide IFMChannels"
+        if self.ifm_channels % simd != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: SIMD ({simd}) must divide "
+                f"IFMChannels ({self.ifm_channels})"
+            )
         if self.use_parallel_window_output():
-            wf = int((ifm_ch) // simd)
-            folded_oshape = (1, ofm_dim_h, ofm_dim_w, wf, k_h * k_w * simd)
-        else:
-            wf = int((k_h * k_w * ifm_ch) // simd)
-            folded_oshape = (1, ofm_dim_h, ofm_dim_w, wf, simd)
-        return folded_oshape
+            wf = self.ifm_channels // simd
+            return (1, ofm_dim_h, ofm_dim_w, wf, k_h * k_w * simd)
+        wf = (k_h * k_w * self.ifm_channels) // simd
+        return (1, ofm_dim_h, ofm_dim_w, wf, simd)
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
         """Infer node datatype."""
         node = self.onnx_node
         # data type stays the same
@@ -144,69 +216,70 @@ class ConvolutionInputGenerator(HWCustomOp):
 
         # Test for changing input datatype
         if dtype != self.get_nodeattr("inputDataType"):
-            # Issue a warning message
             log.warning(
                 f"{node.name}: inputDataType changing from"
                 f" {self.get_nodeattr('inputDataType')} to {dtype}"
             )
-            # Set the new datatype attribute
             self.set_nodeattr("inputDataType", dtype.name)
 
         # Test for changing output datatype
         if dtype != self.get_nodeattr("outputDataType"):
-            # Issue a warning message
             log.warning(
                 f"{node.name}: outputDataType changing from"
                 f" {self.get_nodeattr('outputDataType')} to {dtype}"
             )
-            # Set the new datatype attribute
             self.set_nodeattr("outputDataType", dtype.name)
         # Propagate the datatype through the model graph
         model.set_tensor_datatype(node.output[0], dtype)
 
-    def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
-        return DataType[self.get_nodeattr("inputDataType")]
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of input."""
+        return DataType[cast("str", self.get_nodeattr("inputDataType"))]
 
-    def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output."""
-        return DataType[self.get_nodeattr("outputDataType")]
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of output."""
+        return DataType[cast("str", self.get_nodeattr("outputDataType"))]
 
-    def get_instream_width(self, ind=0):
-        """Returns stream width, input and output stream width are equal for
-        the sliding window function"""
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
+        """Return instream width.
+
+        Input and output stream width are equal for the sliding window function.
+        """
         ibits = self.get_input_datatype().bitwidth()
-        simd = self.get_nodeattr("SIMD")
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        assert ifm_ch % simd == 0, "SIMD must divide IFMChannels"
-        in_width = simd * ibits
-        return in_width
+        if self.ifm_channels % self.simd != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide "
+                f"IFMChannels ({self.ifm_channels})"
+            )
+        return self.simd * ibits
 
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return outstream width."""
         if self.use_parallel_window_output():
             # feed all window pixels in parallel
-            k_h, k_w = self.get_nodeattr("ConvKernelDim")
+            k_h, k_w = self.kernel_dim
             return self.get_instream_width() * k_h * k_w
         # if parallel variant not in use: same width for output and input stream
         return self.get_instream_width()
 
-    def get_1d_conv_attrs_normalized(self):
-        # support both (1, D) and (D, 1) cases transparently:
-        # For the kernel, presenting the input data of size D as
-        # [H, W] = [Y, X] = [1, D] or [D, 1]
-        # effectively gives the same result.
-        # For consistency and ease of programming, this function
-        # returns the attributes of the layer as follows:
-        # [H, W] = [Y, X] = [1, D] or [D, 1] are always mapped to [1, D].
-        # The dummy ('1') dimension is the Y-dimension.
-        """Return 1d conv attrs normalized."""
-        ifm_ch = self.get_nodeattr("IFMChannels")
-        k = self.get_nodeattr("ConvKernelDim")
-        ifm_dim = self.get_nodeattr("IFMDim")
-        ofm_dim = self.get_nodeattr("OFMDim")
-        stride = self.get_nodeattr("Stride")
-        dilation = self.get_nodeattr("Dilation")
+    def get_1d_conv_attrs_normalized(
+        self,
+    ) -> tuple[int, list[int], list[int], list[int], list[int], list[int]]:
+        """Return 1d conv attrs normalized.
+
+        Supports both (1, D) and (D, 1) cases transparently: for the kernel,
+        presenting the input data of size D as [H, W] = [Y, X] = [1, D] or
+        [D, 1] effectively gives the same result. For consistency and ease of
+        programming, this function returns the attributes of the layer such that
+        [H, W] = [Y, X] = [1, D] or [D, 1] are always mapped to [1, D]. The
+        dummy ('1') dimension is the Y-dimension.
+        """
+        ifm_ch = self.ifm_channels
+        k = list(self.kernel_dim)
+        ifm_dim = list(self.ifm_dim)
+        ofm_dim = list(self.ofm_dim)
+        stride = list(self.stride)
+        dilation = list(self.dilation)
 
         # see defines() for an explanation
         if ifm_dim[1] == 1:
@@ -218,31 +291,35 @@ class ConvolutionInputGenerator(HWCustomOp):
 
         return (ifm_ch, ifm_dim, ofm_dim, k, stride, dilation)
 
-    def get_exp_cycles(self):
+    def get_exp_cycles(self) -> int:
         """Return exp cycles."""
         return 0
 
-    def bram_estimation(self):
+    def bram_estimation(self) -> int:
         """Return bram estimation."""
         return 0
 
-    def lut_estimation(self):
+    def lut_estimation(self) -> int:
         """Return lut estimation."""
         return 0
 
-    def uram_estimation(self):
+    def uram_estimation(self) -> int:
         """Return uram estimation."""
         return 0
 
-    def execute_node(self, context, graph):
-        # using Im2Col node to calculate output
-        """Execute node."""
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
+        """Execute node.
+
+        Uses an Im2Col node to calculate the output.
+        """
         node = self.onnx_node
-        ifm_dim = self.get_nodeattr("IFMDim")
-        k = self.get_nodeattr("ConvKernelDim")
-        s = self.get_nodeattr("Stride")
-        d = self.get_nodeattr("Dilation")
-        ifm_ch = self.get_nodeattr("IFMChannels")
+        ifm_dim = self.ifm_dim
+        k = self.kernel_dim
+        s = self.stride
+        d = self.dilation
+        ifm_ch = self.ifm_channels
         inp_values = context[node.input[0]]
         oshape = context[node.output[0]].shape
         ishape = inp_values.shape
