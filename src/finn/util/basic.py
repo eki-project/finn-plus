@@ -53,12 +53,23 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import gen_finn_dt_tensor
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from finn.util.data_packing import finnpy_to_packed_bytearray
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 from finn.util.settings import get_settings
+
+MAX_ALLOWED_AP_INT_W: Final[int] = 8191
+"""Constant which describes the max width of an `ap_int` HLS datatype.
+The max width can be changed by setting the `AP_INT_MAX_W` macro in the HLS source code.
+According to UG1399 (2022.02), the default is 1024 bit, the max value that the
+macro can be set to 4096, however according to Vivado's error reporting, values
+up to 8191 are possible (Vivado 2022.2). This constant should be the one checked
+by all relevant transformations. If the default or max values ever change, this
+should be modified.
+"""
+
 
 if TYPE_CHECKING:
     from onnx import NodeProto

@@ -14,7 +14,10 @@
 #include <pybind11/pybind11.h>
 
 #include <map>
+#include <memory>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 
 
 namespace py = pybind11;
@@ -22,14 +25,37 @@ using namespace xsi;
 
 namespace {
     std::mutex use_mutex;
-    std::map<Design const*, std::shared_ptr<Kernel> const> use_map;
+    // Keeps the Kernel that backs a Design alive for as long as the Design exists and
+    // records which design library it was opened from, so that an attempt to open a
+    // second design can be reported with a useful message.
+    struct DesignUse {
+        std::shared_ptr<Kernel> kernel;
+        std::string design_lib;
+    };
+    std::map<Design const*, DesignUse> use_map;
+
     struct DesignDeleter : public std::default_delete<Design> {
         void operator()(Design* d) const {
             std::default_delete<Design>::operator()(d);
             std::lock_guard<std::mutex> lock(use_mutex);
-            use_map.erase(use_map.find(d));
+            use_map.erase(d);
         }
     };
+
+    // The XSI simulator kernel keeps process-global state, and all design libraries
+    // export the same symbols. Having two designs open at the same time therefore
+    // corrupts the simulation and typically ends in a hang or a segfault deep inside
+    // xsi_open. Refuse it with a comprehensible error instead.
+    void assert_no_open_design(std::string const& design_lib) {
+        std::lock_guard<std::mutex> lock(use_mutex);
+        for (auto const& [design, use] : use_map) {
+            if (design->is_open()) {
+                throw std::runtime_error("Cannot open XSI design '" + design_lib + "': design '" + use.design_lib +
+                                         "' is still open in this process. Only one XSI design can be open at a time; close the previous "
+                                         "simulation before starting a new one.");
+            }
+        }
+    }
 }  // namespace
 
 PYBIND11_MODULE(xsi, m) {
@@ -37,11 +63,14 @@ PYBIND11_MODULE(xsi, m) {
 
     py::class_<Design, std::unique_ptr<Design, DesignDeleter>>(m, "Design")
         .def(py::init([](std::shared_ptr<Kernel> const& kernel, std::string const& design_lib, char const* const log_file, char const* const wdb_file) {
+            assert_no_open_design(design_lib);
             std::unique_ptr<Design, DesignDeleter> d{new Design(*kernel, design_lib, log_file, wdb_file)};
             std::lock_guard<std::mutex> lock(use_mutex);
-            use_map.emplace(d.get(), kernel);
+            use_map.emplace(d.get(), DesignUse{kernel, design_lib});
             return d;
         }))
+        .def("close", &Design::close)
+        .def("is_open", &Design::is_open)
         .def("trace_all", &Design::trace_all)
         .def("run", &Design::run)
         .def("restart", &Design::restart)

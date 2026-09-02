@@ -101,7 +101,7 @@ Build:
     - when: always
   before_script:
     - !reference [.n2_setup_general, before_script]
-    - !reference [.n2_setup_xilinx_2022_2, before_script]
+    - !reference [.n2_setup_xilinx_2024_2, before_script]
     # Install current version of Poetry
     - python3 -m venv poetry-install
     - poetry-install/bin/pip install poetry
@@ -114,14 +114,11 @@ Build:
     - export POETRY_VIRTUALENVS_CREATE=false #DO NOT TOUCH: needed to build sub-packages
     # Also build .whl finn-plus-tests package (for test dependencies)
     - poetry build -P tests --clean --format=wheel
-    # Also build .whl finn-plus-notebooks package (for notebooks dependencies)
-    - poetry build -P notebooks --format=wheel
     # Set the version of the sub-packages in the main pyproject.toml
     - |
       VERSION=$(poetry version -s -C tests)
       # Update main pyproject.toml with the correct version
       sed -i "s/finn-plus-tests = { version = \"\*\", optional = true }/finn-plus-tests = { version = \"$VERSION\", optional = true }/" pyproject.toml
-      sed -i "s/finn-plus-notebooks = { version = \"\*\", optional = true }/finn-plus-notebooks = { version = \"$VERSION\", optional = true }/" pyproject.toml
     - export POETRY_VIRTUALENVS_CREATE=true #DO NOT TOUCH: revert to default behavior
     # Build .whl finn-plus package
     - poetry build --clean --format=wheel
@@ -137,10 +134,11 @@ Build:
     paths:
       - dist/*.whl
       - tests/dist/*.whl
-      - notebooks/dist/*.whl
     expire_in: 1 week
   cache:
-    key: $CI_COMMIT_SHA #TODO: cache based on relevant files
+    key:
+      files:
+        - external_dependencies.yaml
     paths:
       - deps
 
@@ -161,7 +159,9 @@ FINN Test Suite 2024.2:
     # Always run, as long as there was no prior failure
     - when: on_success
   cache:
-    key: $CI_COMMIT_SHA
+    key:
+      files:
+        - external_dependencies.yaml
     policy: pull
     paths:
       - deps

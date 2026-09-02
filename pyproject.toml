@@ -61,7 +61,7 @@ mip = "~1.13.0"
 cmake = "~4.0.3"
 brevitas = "0.13.0"
 qonnx = "1.0.0"
-
+pandas = "~2.3.1"
 termcolor = "^2.5.0"
 rich = "^13.9.4"
 click = "^8.1.8"
@@ -70,12 +70,10 @@ pydantic = ">2.0"
 mashumaro = { extras = ["yaml"], version = "^3.15" }
 
 finn-plus-tests = { version = "*", optional = true }
-finn-plus-notebooks = { version = "*", optional = true }
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "~4.2.0"
 finn-plus-tests = { path = "./tests", develop = true }
-finn-plus-notebooks = { path = "./notebooks", develop = true }
 pygments = "~2.19.2"
 torch = "~2.12.1"
 torchvision = "~0.27.0"                            # required by CI
@@ -84,8 +82,7 @@ dvclive = { version = "~3.49.0", extras = ["image"] } # required by CI
 
 [tool.poetry.extras]
 tests = ["finn-plus-tests"]
-notebooks = ["finn-plus-notebooks"]
-all = ["finn-plus-tests", "finn-plus-notebooks"]
+all = ["finn-plus-tests"]
 
 
 [build-system]
@@ -106,7 +103,6 @@ markers = [
     "transform: mark tests that test transformations (before hls layers)",
     "fpgadataflow: mark tests related to hls layers",
     "end2end: mark tests that run the end2end flow",
-    "notebooks: mark tests that execute all Jupyter notebooks",
     "sanity_bnn: mark tests that execute the sanity BNN test",
     "bnn_u250: mark tests that execute U250 BNN tests",
     "bnn_kv260: mark tests that execute KV260 BNN tests",

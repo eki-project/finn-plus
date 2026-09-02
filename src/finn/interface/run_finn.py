@@ -376,7 +376,6 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "the current running installation and will thus not be saved into your (global) settings."
     )
     console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
-    console.print(f"[bold]FINN_NOTEBOOKS[/bold]: {settings.finn_notebooks}")
     console.print(f"[bold]FINN_RTLLIB[/bold]: {settings.finn_rtllib}")
     console.print(f"[bold]FINN_TESTS[/bold]: {settings.finn_tests}")
     console.print(
@@ -412,6 +411,84 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "to take effect.[/bold green]"
     )
     console.rule()
+
+
+# Marks that we already replaced the process image to fix up LD_LIBRARY_PATH, so
+# a search path that still comes back incomplete cannot send us into an exec loop.
+_LD_REEXEC_MARKER = "_FINN_LD_LIBRARY_PATH_REEXEC"
+
+
+def xilinx_ld_library_paths() -> list[str]:
+    """Collect the library directories needed to load the Xilinx simulation libraries.
+
+    Returns an empty list if the Xilinx environment has not been sourced.
+    """
+    vivado_path = os.environ.get("XILINX_VIVADO")
+    if vivado_path is None:
+        return []
+    paths = ["/lib/x86_64-linux-gnu/", f"{vivado_path}/lib/lnx64.o"]
+    # XILINX_HLS resolves to the right fpo_v7_1-containing directory on both
+    # pre-2024.2 (separate Vitis_HLS/VERSION tree) and 2024.2+ (merged into
+    # Vitis/VERSION) installs, unlike XILINX_VITIS which only does so post-2024.2
+    hls_path = os.environ.get("XILINX_HLS")
+    if hls_path is not None:
+        paths.append(f"{hls_path}/lnx64/tools/fpo_v7_1")
+    return paths
+
+
+def prepend_ld_library_paths(paths: list[str]) -> bool:
+    """Prepend the missing entries of paths to LD_LIBRARY_PATH. True if it changed."""
+    current = os.environ.get("LD_LIBRARY_PATH", "")
+    current_paths = current.split(os.pathsep) if current else []
+    missing = [p for p in paths if p not in current_paths]
+    if not missing:
+        return False
+    os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(missing + current_paths)
+    return True
+
+
+def ensure_ld_library_path() -> None:
+    """Put the Xilinx library paths into LD_LIBRARY_PATH, restarting FINN+ if necessary.
+
+    ld.so reads LD_LIBRARY_PATH once, while the process starts, so assigning to
+    os.environ only ever affects subprocesses (xelab, xvlog, pytest, ...). The
+    finn_xsi pybind11 extension however dlopens the XSI simulator kernel inside
+    *this* process, and the kernel's transitive dependencies (libxv_wavedata.so
+    and friends) are resolved against the search path the loader captured at
+    startup. An RPATH on xsi.so does not fix that: it is consulted for the direct
+    dlopen only, not for the dependencies of the library that dlopen brings in.
+    So the process image has to be replaced by one that starts out with the
+    corrected environment.
+    """
+    paths = xilinx_ld_library_paths()
+    if not paths or not prepend_ld_library_paths(paths):
+        return
+
+    if os.environ.get(_LD_REEXEC_MARKER) == "1":
+        # Something outside of our control keeps resetting the search path.
+        # Carry on rather than restarting forever - subprocesses still work.
+        warning(
+            "LD_LIBRARY_PATH is still missing the Xilinx library paths after "
+            "restarting FINN+. In-process RTL simulation via finn_xsi may fail."
+        )
+        return
+
+    # Only argv[0] pointing at a script can be handed back to the interpreter,
+    # which rules out "python -c ..." style invocations.
+    if not Path(sys.argv[0]).is_file():
+        warning(
+            f"Cannot restart FINN+ to apply LD_LIBRARY_PATH because {sys.argv[0]} "
+            "is not a script. In-process RTL simulation via finn_xsi may fail."
+        )
+        return
+
+    os.environ[_LD_REEXEC_MARKER] = "1"
+    # Anything still sitting in the buffers is discarded by execve, which would
+    # swallow the import time output (XSI auto install, ...) whenever stdout is
+    # a pipe rather than a terminal.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execve(sys.executable, [sys.executable, *sys.argv], os.environ)
 
 
 def prepare_finn(
@@ -492,15 +569,11 @@ def prepare_finn(
     # Check synthesis tools
     set_synthesis_tools_paths()
 
-    # Set LD_LIBRARY_PATH
-    # Set LD_LIBRARY_PATH
-    vivado_path = os.environ["XILINX_VIVADO"]
-    if "LD_LIBRARY_PATH" not in os.environ.keys():
-        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
-    else:
-        os.environ[
-            "LD_LIBRARY_PATH"
-        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
+    # Set LD_LIBRARY_PATH for the subprocesses spawned from here (xelab, xvlog,
+    # pytest, ...). For this process it has normally already been fixed up by
+    # ensure_ld_library_path() in main(), which is what the in-process finn_xsi
+    # extension depends on - see there for why setting it here is not enough.
+    prepend_ld_library_paths(xilinx_ld_library_paths())
 
     # Automatically set XILINX_LOCAL_USER_DATA to avoid issues later on
     if "XILINX_LOCAL_USER_DATA" in os.environ and os.environ["XILINX_LOCAL_USER_DATA"] != "no":
@@ -520,7 +593,6 @@ def prepare_finn(
     # e.g., still used in templates.py
     os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
-    os.environ["FINN_NOTEBOOKS"] = resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = resolve_module_path("tests")
 
 
@@ -1185,6 +1257,8 @@ def finn_check() -> None:
 
 def main() -> None:
     """Clicks entrypoint function."""
+    # May replace the process image, so keep it first to not redo any work.
+    ensure_ld_library_path()
     # Select the multiprocessing start method before anything can create workers.
     configure_start_method()
     settings.add_command(config_show)

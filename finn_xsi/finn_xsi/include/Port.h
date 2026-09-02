@@ -28,13 +28,15 @@ namespace xsi {
         ~Port() noexcept;
 
          public:
-        const char* name() const noexcept;
-        int dir() const noexcept;
-        unsigned width() const noexcept;
+        // NOTE: These forward into the simulator kernel and therefore throw once the
+        // owning design has been closed. They cannot be noexcept.
+        const char* name() const;
+        int dir() const;
+        unsigned width() const;
 
-        bool isInput() const noexcept;
-        bool isOutput() const noexcept;
-        bool isInout() const noexcept;
+        bool isInput() const;
+        bool isOutput() const;
+        bool isInout() const;
 
          public:
         // Buffer Synchronization

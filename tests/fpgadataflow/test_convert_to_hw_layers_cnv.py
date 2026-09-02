@@ -126,18 +126,8 @@ def test_convert_to_hw_layers_cnv_w1a1(fused_activation: bool) -> None:
         if node.op_type == "MVAU_hls":
             inst = getCustomOp(node)
             inst.set_nodeattr("mem_mode", "internal_decoupled")
-            mw = inst.get_nodeattr("MW")
-            mh = inst.get_nodeattr("MH")
-            if mh % 4 == 0:
-                pe = mh // 4
-            else:
-                pe = mh
-            inst.set_nodeattr("PE", pe)
-            if mw % 16 == 0:
-                simd = mw // 16
-            else:
-                simd = mw
-            inst.set_nodeattr("SIMD", simd)
+            inst.set_nodeattr("PE", 1)
+            inst.set_nodeattr("SIMD", 1)
     # check topology status
     finn_nodes = model.get_finn_nodes()
     if fused_activation:
