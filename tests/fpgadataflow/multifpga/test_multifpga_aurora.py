@@ -8,6 +8,7 @@ import pytest
 
 import contextlib
 import mip
+import os
 import types
 import yaml
 from copy import deepcopy
@@ -323,6 +324,7 @@ class TestAuroraFlowPartitioning:
                 ideal_utilization=ideal_util,
                 ports_per_device=2,
                 separate_iodmas=True,
+                partition_solver=MIPSolver.GUROBI,
                 partition_solver_timeout=180,
                 verbosity=MFVerbosity.EXTRA_HIGH,
             ),
@@ -463,14 +465,19 @@ class TestAuroraFlowPartitioning:
         board: str,
         model_type: tuple[str, int, int, bool],
         strategy: PartitioningStrategy,
-        pytestconfig: pytest.Config,
+        capsys: pytest.CaptureFixture,
     ) -> None:
         """Test that the partitioning of certain models has not regressed in recent commits.
         Specifically, test the final value of the objective function.
 
-        TODO: Save recent CI run data in proper infrastructure as soon as we have set it
-        up, instead of hardcoding the values.
+        TODO: Consider CI infrastructure instead of committing the data itself.
         """
+        # If this environment variable is set generate new
+        # values instead of testing against old ones.
+        # We do not generate new values automatically on purpose.
+        generation_mode = os.getenv("FINN_TESTS_MF_REGRESSION_GENERATE", default=False)
+        generation_mode = generation_mode in ["", "1", "True", "true"]
+
         if board == "Pynq-Z1":
             pytest.skip("Model too small for this specific test/configuration.")  # type: ignore
 
@@ -482,7 +489,7 @@ class TestAuroraFlowPartitioning:
         DEVICES: Final[list[int]] = [2, 4, 6, 8, 9, 10]  # noqa
         MAX_UTIL: Final[list[float]] = [0.7, 0.8, 0.9]  # noqa
         IDEAL_UTIL: Final[list[float]] = [0.6, 0.7, 0.8]  # noqa
-        SOLVER: Final[MIPSolver] = MIPSolver.CBC  # noqa
+        SOLVER: Final[MIPSolver] = MIPSolver.GUROBI  # noqa
         TIMEOUT: Final[int] = 120  # noqa
 
         # Tolerance of how far from the value the objective function may change:
@@ -522,17 +529,23 @@ class TestAuroraFlowPartitioning:
         # Write/read to/from file
         file_identifier = (
             f"aurora_partitioner_objective_function_{typename}_w{wbits}a{abits}_"
-            f"{pretrained}_{topology.value}_{strategy.value}_{board}"
+            f"{pretrained}_{topology.value}_{strategy.value}_{board}_{SOLVER.value}"
         )
         filepath = Path(__file__).parent / "regression_data" / (file_identifier + ".yaml")
-        assert (
-            filepath.exists()
-        ), f"Could not find regression data. Is the test new? (Checked at: {filepath})"
-        expected_data = {}
+        if generation_mode:
+            with capsys.disabled():
+                print(f"Generating new data for regression test: {filepath}")
 
-        # Read existing regression data
-        with filepath.open("r") as f:
-            expected_data = yaml.load(f, Loader=yaml.Loader)
+        # Read existing data from the expected path (only if no new data is being generated)
+        if not generation_mode:
+            assert (
+                filepath.exists()
+            ), f"Could not find regression data. Is the test new? (Checked at: {filepath})"
+            expected_data = {}
+
+            # Read existing regression data
+            with filepath.open("r") as f:
+                expected_data = yaml.load(f, Loader=yaml.Loader)
 
         # Partition
         found_data = {}
@@ -554,35 +567,52 @@ class TestAuroraFlowPartitioning:
                         f"_idealutil{idealutil}_timeout{TIMEOUT}"
                     )
 
-                    # Partition the model
+                    # Create the partitioner transformation and object
                     partition_transform = PartitionForMultiFPGA(thisconfig)
+
+                    # Run partitioning
                     thismodel = thismodel.transform(partition_transform)
 
+                    # Check that we in fact used the solver assigned and not the fallback
+                    partitioner = cast("AuroraPartitioner", partition_transform.partitioner)
+                    assert partitioner.model.solver_name == SOLVER.value, (
+                        f"Solver was set to {SOLVER.value}, but "
+                        f"{partitioner.model.solver_name} was used. "
+                        f"(Is {SOLVER.name} not available?)"
+                    )
+
                     # Get the objective function value out of the transformation
-                    value = cast(
-                        "AuroraPartitioner", partition_transform.partitioner
-                    ).model.objective.x
+                    value = partitioner.model.objective.x
                     found_data[identifier] = value
 
-                    # Run checks
-                    assert (
-                        identifier in expected_data
-                    ), f"Identifier not found in existing data: {identifier}"
+                    # Run checks (only if no new values should be generated)
+                    if not generation_mode:
+                        assert identifier in expected_data, (
+                            f"Identifier not found in existing data: {identifier}. "
+                            f"If a test parameter was changed or added, run this "
+                            f"test with FINN_TESTS_MF_REGRESSION_GENERATE=1 to "
+                            f"generate new values for this parametrization."
+                        )
 
-                    lower_bound = expected_data[identifier] * (1 - tolerance)
-                    upper_bound = expected_data[identifier] * (1 + tolerance)
-                    assert value >= lower_bound, (
-                        f"Objective function value below lower bound {value} "
-                        f"< {lower_bound} (Tolerance: {tolerance:.2%})"
-                    )
-                    assert value <= upper_bound, (
-                        f"Objective function value above upper bound {value}"
-                        f" > {upper_bound} (Tolerance: {tolerance:.2%})"
-                    )
+                        lower_bound = expected_data[identifier] * (1 - tolerance)
+                        upper_bound = expected_data[identifier] * (1 + tolerance)
+                        assert value >= lower_bound, (
+                            f"Objective function value below lower bound {value} "
+                            f"< {lower_bound} (Tolerance: {tolerance:.2%})"
+                        )
+                        assert value <= upper_bound, (
+                            f"Objective function value above upper bound {value}"
+                            f" > {upper_bound} (Tolerance: {tolerance:.2%})"
+                        )
 
-        # Uncomment this to update the regression values
-        # with filepath.open("w+") as f:
-        #     yaml.dump(found_data, f, Dumper=yaml.Dumper)
+        # Generate new data and store it in the correct path
+        if generation_mode:
+            with filepath.open("w+") as f:
+                yaml.dump(found_data, f, Dumper=yaml.Dumper)
+            with capsys.disabled():
+                print(
+                    f"Generated new regression data for {len(list(found_data.keys()))} test cases."
+                )
 
     @pytest.mark.parametrize(
         "distribution",
@@ -666,6 +696,7 @@ class TestAuroraFlowPartitioning:
                 ports_per_device=network_ports,
                 single_stream_network=False,
                 considered_resources=considered_resources,
+                partition_solver=MIPSolver.GUROBI,
                 partition_strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
             ),
         )
@@ -849,6 +880,7 @@ class TestAuroraFlowPartitioning:
                 ports_per_device=2,
                 single_stream_network=False,
                 considered_resources=["LUT"],
+                partition_solver=MIPSolver.GUROBI,
                 partition_strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
             ),
         )
