@@ -17,9 +17,6 @@ repo_root="$(dirname "$script_dir")"
 # Only actually required on boards with PYNQ images older than 3.1.1.
 pip install pynqmetadata==0.1.5
 
-# Not pulled in automatically by the driver's dependencies:
-pip install grpcio==1.64.0
-
-# Installs the driver together with its dependencies (numpy, bitstring, qonnx, click,
-# matplotlib, h5py, pillow, finn-dataset-loading).
+# Installs the driver together with its dependencies (numpy, grpcio, bitstring, qonnx,
+# click, matplotlib, h5py, pillow, finn-dataset-loading).
 pip install "$repo_root/driver"
