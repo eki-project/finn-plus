@@ -1,6 +1,5 @@
 {
     "global": {
-      "driver": "driver/driver.py",
       "bitfile_name": "bitfile/finn-accel.bit",
       "report_path": "report",
 
