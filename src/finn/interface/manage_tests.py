@@ -94,7 +94,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
             subprocess.run(
                 shlex.split(
                     f"{sys.executable} -m pytest -v -m 'not "
-                    f"(vivado or slow or vitis or board or notebooks or bnn_pynq or end2end)' "
+                    f"(vivado or slow or vitis or board or bnn_pynq or end2end)' "
                     f"--dist=loadfile -n {num_workers}",
                     posix=IS_POSIX,
                 )
@@ -103,7 +103,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
             subprocess.run(
                 shlex.split(
                     f"{sys.executable} -m pytest -q -rf --tb=short -m 'not "
-                    f"(vivado or slow or vitis or board or notebooks or bnn_pynq or end2end)' "
+                    f"(vivado or slow or vitis or board or bnn_pynq or end2end)' "
                     f"--junitxml={ci_project_dir}/reports/quick.xml "
                     f"--html={ci_project_dir}/reports/quick.html "
                     f"--reruns 1 --dist worksteal -n {num_workers}",

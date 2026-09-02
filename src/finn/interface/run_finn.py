@@ -376,7 +376,6 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "the current running installation and will thus not be saved into your (global) settings."
     )
     console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
-    console.print(f"[bold]FINN_NOTEBOOKS[/bold]: {settings.finn_notebooks}")
     console.print(f"[bold]FINN_RTLLIB[/bold]: {settings.finn_rtllib}")
     console.print(f"[bold]FINN_TESTS[/bold]: {settings.finn_tests}")
     console.print(
@@ -584,7 +583,6 @@ def prepare_finn(
     # e.g., still used in templates.py
     os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
-    os.environ["FINN_NOTEBOOKS"] = resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = resolve_module_path("tests")
 
 

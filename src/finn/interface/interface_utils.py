@@ -24,12 +24,12 @@ def resolve_module_path(name: str) -> str:
     try:
         return str(importlib.import_module(name).__path__[0])
     except ModuleNotFoundError:
-        # Try a different location if notebooks have not been found, maybe we
+        # Try a different location if the module has not been found, maybe we
         # are in the Git repository root and should look there as well...
         try:
             return str(importlib.import_module(f"finn.{name}").__path__[0])
         except ModuleNotFoundError:
-            if name not in ["notebooks", "tests"]:
+            if name != "tests":
                 warning(f"Could not resolve {name}. FINN might not work properly.")
             else:
                 status(
