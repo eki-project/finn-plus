@@ -323,6 +323,7 @@ class TestAuroraFlowPartitioning:
                 ideal_utilization=ideal_util,
                 ports_per_device=2,
                 separate_iodmas=True,
+                partition_solver=MIPSolver.GUROBI,
                 partition_solver_timeout=180,
                 verbosity=MFVerbosity.EXTRA_HIGH,
             ),
@@ -482,7 +483,7 @@ class TestAuroraFlowPartitioning:
         DEVICES: Final[list[int]] = [2, 4, 6, 8, 9, 10]  # noqa
         MAX_UTIL: Final[list[float]] = [0.7, 0.8, 0.9]  # noqa
         IDEAL_UTIL: Final[list[float]] = [0.6, 0.7, 0.8]  # noqa
-        SOLVER: Final[MIPSolver] = MIPSolver.CBC  # noqa
+        SOLVER: Final[MIPSolver] = MIPSolver.GUROBI  # noqa
         TIMEOUT: Final[int] = 120  # noqa
 
         # Tolerance of how far from the value the objective function may change:
@@ -666,6 +667,7 @@ class TestAuroraFlowPartitioning:
                 ports_per_device=network_ports,
                 single_stream_network=False,
                 considered_resources=considered_resources,
+                partition_solver=MIPSolver.GUROBI,
                 partition_strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
             ),
         )
@@ -849,6 +851,7 @@ class TestAuroraFlowPartitioning:
                 ports_per_device=2,
                 single_stream_network=False,
                 considered_resources=["LUT"],
+                partition_solver=MIPSolver.GUROBI,
                 partition_strategy=PartitioningStrategy.RESOURCE_UTILIZATION,
             ),
         )
