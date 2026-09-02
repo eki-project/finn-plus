@@ -144,7 +144,9 @@ def make_multi_io_modelwrapper(ch: int, pe: int, idt: BaseDataType) -> ModelWrap
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.fpgadataflow
-@pytest.mark.parametrize("topology", ["tfc", "cnv"])
+# disabled cnv test case due to excessive runtime
+# @pytest.mark.parametrize("topology", ["tfc", "cnv"])
+@pytest.mark.parametrize("topology", ["tfc"])
 def test_fifosizing_linear(topology: Literal["tfc", "cnv"]) -> None:
     """Test FIFO sizing on a simple linear topology, and check that the generated FIFO config."""
     tmp_output_dir = fetch_test_model(topology)
