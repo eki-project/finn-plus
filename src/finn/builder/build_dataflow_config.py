@@ -291,7 +291,56 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
                 f"No folding config file could be found at {dfbc.folding_config_file}."
             )
 
+        dfbc.validate_generate_outputs()
+
         return dfbc
+
+    def validate_generate_outputs(self) -> None:
+        """Check that `generate_outputs` does not request an output product whose
+        prerequisite output product is missing.
+
+        Some output products are built on top of others (e.g. out-of-context synthesis
+        needs the stitched IP), but the steps that produce them only discover a missing
+        prerequisite once they run - potentially after other steps have already spent
+        hours on synthesis. Catching this at config-validation time instead avoids
+        wasting that time on a build that was always going to fail.
+
+        This only checks `generate_outputs` itself. Whether `steps` actually contains a
+        step that produces each requested output is checked separately, in
+        `build_dataflow.validate_steps_produce_outputs`, once `steps` has been resolved
+        to callables - that cannot happen here without a circular import on
+        `build_dataflow_steps`.
+
+        Raises:
+            FINNConfigurationError: If `generate_outputs` contains an output product
+                without a prerequisite it depends on.
+        """
+        requested = set(self.generate_outputs)
+
+        if (
+            DataflowOutputType.OOC_SYNTH in requested
+            and DataflowOutputType.STITCHED_IP not in requested
+        ):
+            raise FINNConfigurationError(
+                "generate_outputs requests out_of_context_synth, which requires "
+                "stitched_ip to also be requested. Add stitched_ip to generate_outputs."
+            )
+
+        if DataflowOutputType.DEPLOYMENT_PACKAGE in requested:
+            if DataflowOutputType.BITFILE not in requested:
+                raise FINNConfigurationError(
+                    "generate_outputs requests deployment_package, which requires "
+                    "bitfile to also be requested. Add bitfile to generate_outputs."
+                )
+            if (
+                DataflowOutputType.PYNQ_DRIVER not in requested
+                and DataflowOutputType.CPP_DRIVER not in requested
+            ):
+                raise FINNConfigurationError(
+                    "generate_outputs requests deployment_package, which requires "
+                    "either pynq_driver or cpp_driver to also be requested. Add one "
+                    "of them to generate_outputs."
+                )
 
     def correct_paths(self) -> None:
         """Fix paths by (if needed) joining them with the config path, so that

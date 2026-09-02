@@ -9,7 +9,7 @@ Please follow the steps below and be sure that your contribution complies with o
     We welcome submissions to:
 
     1. The FINN+ flow like additional custom ONNX nodes, transformation and analysis passes.
-    2. Contributions to the documentation and Jupyter notebooks
+    2. Contributions to the documentation
 
     To ensure clean separation of toolflow and examples. If you want to add example networks, please add them to the models folder -- Please also add a short description/instruction that we can put in our [Wiki](https://github.com/eki-project/finn-plus/wiki).
 
@@ -21,7 +21,7 @@ Please follow the steps below and be sure that your contribution complies with o
 
     3. Please install [pre-commit](https://pre-commit.com/) to ensure your code is formatted to our style guidelines. The hooks we use for pre-commit can be found in [this file](https://github.com/eki-project/finn-plus/blob/main/.pre-commit-config.yaml).
 
-    4. Modify the Python source code, Jupyter notebooks and Sphinx documentation etc. as needed.
+    4. Modify the Python source code and documentation etc. as needed.
 
     5. Use *git add*, *git commit*, *git push* to add changes to your fork.
 

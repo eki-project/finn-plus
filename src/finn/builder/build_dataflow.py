@@ -54,6 +54,7 @@ from typing import Any, TextIO
 import finn.util.logging
 from finn.builder.build_dataflow_config import (
     DataflowBuildConfig,
+    DataflowOutputType,
     LogLevel,
     default_build_dataflow_steps,
     to_logging_level,
@@ -191,6 +192,64 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
         else transform_step
         for transform_step in steps_as_fxns
     ]
+
+
+def validate_steps(cfg: DataflowBuildConfig) -> None:
+    """Check that `steps` is internally well-ordered and covers `generate_outputs`.
+
+    Each output-producing step decides whether to do its work by checking
+    `generate_outputs` itself, so a custom `steps` list that drops one of them silently
+    produces no output and no error - or, worse, a downstream step still runs and fails
+    with a confusing low-level error because the artifact it depends on was never
+    created, or was never created *yet*. This resolves `steps` to callables (the full,
+    unfiltered list - `start_step`/`stop_step` only skip *running* steps that already
+    ran in a previous invocation, they don't mean the output was never produced) and
+    walks it in order, tracking outputs produced so far via each step's
+    `produces_outputs` attribute:
+
+    - a step's `consumes_outputs` (both attributes stamped on by
+      `register_build_dataflow_step` for steps that declare them, or set directly on a
+      custom step's function) must already be in that running set - otherwise the step
+      list is misordered, regardless of `generate_outputs`;
+    - once the full list has run, every requested `generate_outputs` entry must be in
+      the accumulated set - otherwise no step in `steps` produces it at all. Skipped for
+      the default step list, since it contains every producer step by construction.
+
+    Args:
+        cfg: Build configuration to check.
+
+    Raises:
+        FINNConfigurationError: If a step's `consumes_outputs` is not satisfied by an
+            earlier step in `steps`, or if `generate_outputs` requests an output that no
+            step in `steps` produces at all.
+    """
+    resolved_steps = resolve_build_steps(cfg, partial=False)
+    produced: set[DataflowOutputType] = set()
+    for step in resolved_steps:
+        consumed = getattr(step, "consumes_outputs", ())
+        missing = [output_type for output_type in consumed if output_type not in produced]
+        if missing:
+            missing_names = ", ".join(output_type.value for output_type in missing)
+            raise FINNConfigurationError(
+                f"Step '{step.__name__}' requires {missing_names} to already be produced "
+                "by an earlier step in `steps`, but no earlier step produces "
+                f"{'it' if len(missing) == 1 else 'them'}. Check the order of `steps`."
+            )
+        produced.update(getattr(step, "produces_outputs", ()))
+
+    if cfg.steps is None:
+        # The default step list contains every producer step - nothing left to check.
+        return
+
+    missing_outputs = set(cfg.generate_outputs) - produced
+    if missing_outputs:
+        missing_names = ", ".join(sorted(output_type.value for output_type in missing_outputs))
+        raise FINNConfigurationError(
+            f"generate_outputs requests {missing_names}, but no step in `steps` produces "
+            f"{'it' if len(missing_outputs) == 1 else 'them'}. Add the step that produces "
+            f"{'it' if len(missing_outputs) == 1 else 'them'}, or leave `steps` unset to "
+            "use the default step list."
+        )
 
 
 def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: int = 0) -> Path:
@@ -384,6 +443,14 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
     # Setup done, start build flow
     time_per_step: dict[str, float] = {}
     try:
+        # Catch unsupported generate_outputs combinations here (e.g. a config built
+        # directly in Python rather than via DataflowBuildConfig.construct_from, which
+        # skips that validation) before spending any time on the build itself.
+        cfg.validate_generate_outputs()
+        # Needs resolved step callables, so it can only run here, not in
+        # DataflowBuildConfig.validate_generate_outputs (see that method's docstring).
+        validate_steps(cfg)
+
         model = create_model_wrapper(model_filename, cfg)
         build_dataflow_steps: list[BuildStep] = resolve_build_steps(cfg)
 

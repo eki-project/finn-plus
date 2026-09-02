@@ -171,7 +171,7 @@ from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_liveness_threshold_cycles, get_rtlsim_trace_depth, getHWCustomOp
 from finn.util.config import extract_model_config_to_json
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNConfigurationError, FINNUserError
 from finn.util.execution import execute_parent
 from finn.util.logging import log
 from finn.util.mlo_sim import is_mlo, mlo_prehook_func_factory
@@ -188,10 +188,30 @@ build_dataflow_step_lookup: dict[str, BuildDataflowStep] = {}
 
 def register_build_dataflow_step(
     step_name: str | None = None,
+    produces_outputs: list[DataflowOutputType] | None = None,
+    consumes_outputs: list[DataflowOutputType] | None = None,
 ) -> Callable[[BuildDataflowStep], BuildDataflowStep]:
     """Register a dataflow build step.
 
     Uses the function name by default, unless step_name is explicitly provided.
+
+    Args:
+        step_name: Name to register the step under. Defaults to the function name.
+        produces_outputs: Output product(s) this step is responsible for, if any. Stamped
+            onto the function as a `produces_outputs` attribute, which
+            `build_dataflow.validate_steps` reads to check that a custom `steps` list still
+            covers every requested `generate_outputs` entry, and to know what is available
+            to later steps' `consumes_outputs`. A step that does not produce a tracked
+            output (most steps) should leave this unset.
+        consumes_outputs: Output product(s) this step requires to already have been
+            produced by an earlier step, if any. Stamped onto the function as a
+            `consumes_outputs` attribute, which `build_dataflow.validate_steps` reads to
+            enforce step ordering: it is a `FINNConfigurationError` for a step to run
+            before whatever produces something it consumes.
+
+    Custom steps that are not registered via this decorator (dotted import path, raw
+    callable) can opt into both checks the same way, by setting the attributes directly,
+    e.g. `my_step.produces_outputs = [DataflowOutputType.STITCHED_IP]`.
     """
 
     def _decorator(step_fn: BuildDataflowStep) -> BuildDataflowStep:
@@ -200,6 +220,10 @@ def register_build_dataflow_step(
         if key in build_dataflow_step_lookup:
             raise ValueError(f"Duplicate build step registration: {key}")
         build_dataflow_step_lookup[key] = step_fn
+        if produces_outputs is not None:
+            step_fn.produces_outputs = produces_outputs  # type: ignore[attr-defined]
+        if consumes_outputs is not None:
+            step_fn.consumes_outputs = consumes_outputs  # type: ignore[attr-defined]
         return step_fn
 
     return _decorator
@@ -1172,7 +1196,7 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
     return model
 
 
-@register_build_dataflow_step()
+@register_build_dataflow_step(produces_outputs=[DataflowOutputType.ESTIMATE_REPORTS])
 def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Generate per-layer resource and cycle estimates using analytical models."""
     if DataflowOutputType.ESTIMATE_REPORTS in cfg.generate_outputs:
@@ -1309,7 +1333,7 @@ def verify_mlo(model: ModelWrapper, cfg: DataflowBuildConfig, step: str) -> None
     verify_step(model, cfg, "stitched_ip_rtlsim", need_parent=False, rtlsim_pre_hook=mlo_prehook)
 
 
-@register_build_dataflow_step()
+@register_build_dataflow_step(produces_outputs=[DataflowOutputType.STITCHED_IP])
 def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Create stitched IP for a graph after all HLS IP blocks have been generated.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
@@ -1400,7 +1424,7 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
     return model
 
 
-@register_build_dataflow_step()
+@register_build_dataflow_step(produces_outputs=[DataflowOutputType.RTLSIM_PERFORMANCE])
 def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Measure performance + latency of stitched-IP model in rtlsim (xsi)."""
     report_dir = Path(cfg.output_dir) / "report"
@@ -1483,7 +1507,9 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
     return model
 
 
-@register_build_dataflow_step()
+@register_build_dataflow_step(
+    produces_outputs=[DataflowOutputType.PYNQ_DRIVER, DataflowOutputType.CPP_DRIVER]
+)
 def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Create a driver that can be used to interface the generated accelerator.
     Use DataflowBuildConfig to select PYNQ Python or C++ driver."""
@@ -1541,12 +1567,19 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
     return model
 
 
-@register_build_dataflow_step()
+@register_build_dataflow_step(
+    produces_outputs=[DataflowOutputType.OOC_SYNTH],
+    consumes_outputs=[DataflowOutputType.STITCHED_IP],
+)
 def step_out_of_context_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Run out-of-context synthesis and generate reports.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
     if DataflowOutputType.OOC_SYNTH in cfg.generate_outputs:
-        assert DataflowOutputType.STITCHED_IP in cfg.generate_outputs, "OOC needs stitched IP"
+        if DataflowOutputType.STITCHED_IP not in cfg.generate_outputs:
+            raise FINNConfigurationError(
+                "generate_outputs requests out_of_context_synth, which requires "
+                "stitched_ip to also be requested. Add stitched_ip to generate_outputs."
+            )
         model = model.transform(
             SynthOutOfContext(part=cfg._resolve_fpga_part(), clk_period_ns=cfg.synth_clk_period_ns)
         )
@@ -1594,7 +1627,7 @@ def step_vivado_power_estimation(model: ModelWrapper, cfg: DataflowBuildConfig) 
     return model
 
 
-@register_build_dataflow_step()
+@register_build_dataflow_step(produces_outputs=[DataflowOutputType.BITFILE])
 def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Synthesize a bitfile for the using the specified shell flow, using either
     Vivado or Vitis, to target the specified board."""
@@ -1716,7 +1749,14 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
     return model
 
 
-@register_build_dataflow_step()
+@register_build_dataflow_step(
+    produces_outputs=[DataflowOutputType.DEPLOYMENT_PACKAGE],
+    consumes_outputs=[
+        DataflowOutputType.BITFILE,
+        DataflowOutputType.PYNQ_DRIVER,
+        DataflowOutputType.CPP_DRIVER,
+    ],
+)
 def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Create a deployment package including the driver and bitfile."""
     if DataflowOutputType.DEPLOYMENT_PACKAGE in cfg.generate_outputs:
