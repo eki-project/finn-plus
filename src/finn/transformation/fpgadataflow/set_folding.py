@@ -166,7 +166,6 @@ class SetFolding(Transformation):
             "GlobalAccPool_hls",
             "Thresholding_hls",
             "Thresholding_rtl",
-            "ReplicateStream_hls",
             *ELEMENTWISE_BINARY_OPS,
             "Squeeze_hls",
             "Unsqueeze_hls",

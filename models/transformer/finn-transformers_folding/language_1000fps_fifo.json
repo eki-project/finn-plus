@@ -53,7 +53,7 @@
     "depth_trigger_uram": 2147483647,
     "depth_trigger_bram": 2147483647
   },
-  "ReplicateStream_hls_0": {
+  "DuplicateStreams_hls_0": {
     "PE": 1,
     "inFIFODepths": [
       2
@@ -87,7 +87,7 @@
     "depth_trigger_uram": 2147483647,
     "depth_trigger_bram": 2147483647
   },
-  "ReplicateStream_hls_1": {
+  "DuplicateStreams_hls_1": {
     "PE": 1,
     "inFIFODepths": [
       2
@@ -502,7 +502,7 @@
       2
     ]
   },
-  "ReplicateStream_hls_2": {
+  "DuplicateStreams_hls_2": {
     "PE": 1,
     "inFIFODepths": [
       2
@@ -618,7 +618,7 @@
       2
     ]
   },
-  "ReplicateStream_hls_3": {
+  "DuplicateStreams_hls_3": {
     "PE": 1,
     "inFIFODepths": [
       2
@@ -652,7 +652,7 @@
     "depth_trigger_uram": 2147483647,
     "depth_trigger_bram": 2147483647
   },
-  "ReplicateStream_hls_4": {
+  "DuplicateStreams_hls_4": {
     "PE": 1,
     "inFIFODepths": [
       2
@@ -1067,7 +1067,7 @@
       2
     ]
   },
-  "ReplicateStream_hls_5": {
+  "DuplicateStreams_hls_5": {
     "PE": 1,
     "inFIFODepths": [
       2

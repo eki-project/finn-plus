@@ -83,7 +83,6 @@ from finn.custom_op.fpgadataflow.hls.lookup_hls import Lookup_hls
 from finn.custom_op.fpgadataflow.hls.matrixvectoractivation_hls import MVAU_hls
 from finn.custom_op.fpgadataflow.hls.outer_shuffle_hls import OuterShuffle_hls
 from finn.custom_op.fpgadataflow.hls.pool_hls import Pool_hls
-from finn.custom_op.fpgadataflow.hls.replicate_stream_hls import ReplicateStream_hls
 from finn.custom_op.fpgadataflow.hls.requant_hls import Requant_hls
 from finn.custom_op.fpgadataflow.hls.split_hls import StreamingSplit_hls
 from finn.custom_op.fpgadataflow.hls.streamingdatawidthconverter_hls import (
@@ -120,6 +119,5 @@ custom_op["VVAU_hls"] = VVAU_hls
 custom_op["ScaledDotProductAttention_hls"] = ScaledDotProductAttention_hls
 custom_op["SplitMultiHeads_hls"] = SplitMultiHeads_hls
 custom_op["MergeMultiHeads_hls"] = MergeMultiHeads_hls
-custom_op["ReplicateStream_hls"] = ReplicateStream_hls
 custom_op["HWSoftmax_hls"] = HWSoftmax_hls
 custom_op["OuterShuffle_hls"] = OuterShuffle_hls

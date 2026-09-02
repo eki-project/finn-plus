@@ -71,7 +71,6 @@ from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_acti
     InferQuantizedMatrixVectorActivation,
 )
 from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
-from finn.transformation.fpgadataflow.replicate_stream import InferReplicateStream
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.streamline.absorb import (
     Absorb1BitMulIntoConv,
@@ -170,7 +169,7 @@ def step_resnet_convert_to_hw(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
     model = model.transform(SortGraph())
 
     to_hw_transformations = [
-        InferReplicateStream,
+        InferDuplicateStreamsLayer,
         InferLabelSelectLayer,
         InferElementwiseBinaryOperation,
     ]
