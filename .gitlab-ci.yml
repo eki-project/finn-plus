@@ -136,7 +136,9 @@ Build:
       - tests/dist/*.whl
     expire_in: 1 week
   cache:
-    key: $CI_COMMIT_SHA #TODO: cache based on relevant files
+    key:
+      files:
+        - src/finn/interface/external_dependencies.yaml
     paths:
       - deps
 
@@ -157,7 +159,9 @@ FINN Test Suite 2024.2:
     # Always run, as long as there was no prior failure
     - when: on_success
   cache:
-    key: $CI_COMMIT_SHA
+    key:
+      files:
+        - src/finn/interface/external_dependencies.yaml
     policy: pull
     paths:
       - deps

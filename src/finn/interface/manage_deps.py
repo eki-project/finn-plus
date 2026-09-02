@@ -33,6 +33,12 @@ from finn.util.exception import (
 
 from pydantic.networks import HttpUrl  # noqa
 
+# Timeout for the header-only request used to check whether a download is outdated
+HTTP_HEADER_TIMEOUT_S = 10.0
+
+# Headers used to identify the remote file version, in order of preference
+VERSION_HEADERS = ("etag", "last-modified", "content-length")
+
 
 class Dependency:
     """Baseclass for all dependencies."""
@@ -411,6 +417,45 @@ class DependencyUpdater:
             shutil.copytree(source, target)
         return not self.is_outdated(package_name)
 
+    def _version_file(self, url: str, target_directory: Path) -> Path:
+        """Return the path of the sidecar file caching the version token of a download."""
+        return target_directory / f".{Path(url).name}.version"
+
+    def _get_remote_version_token(self, url: str) -> str | None:
+        """Return an opaque token identifying the current remote version of the file.
+
+        Uses the ETag header if available, otherwise Last-Modified, otherwise Content-Length.
+        Returns None if the server is unreachable or provides none of these headers.
+        """
+        try:
+            result = sp.run(
+                shlex.split(
+                    f"wget --spider --server-response --tries=1 "
+                    f"--timeout={HTTP_HEADER_TIMEOUT_S} {url}"
+                ),
+                capture_output=True,
+                text=True,
+                timeout=HTTP_HEADER_TIMEOUT_S,
+            )
+        except sp.TimeoutExpired:
+            debug(f"[{url}] Timed out while requesting headers.", False)
+            return None
+        if result.returncode != 0:
+            debug(f"[{url}] Header request failed:\n{result.stderr.strip()}", False)
+            return None
+
+        # Headers of every redirect hop are printed, so later hops overwrite earlier ones
+        headers: dict[str, str] = {}
+        for line in result.stderr.splitlines():
+            name, separator, value = line.strip().partition(":")
+            if separator and name.lower() in VERSION_HEADERS:
+                headers[name.lower()] = value.strip()
+        for header in VERSION_HEADERS:
+            if headers.get(header):
+                return f"{header}={headers[header]}"
+        debug(f"[{url}] Server provided no version headers.", False)
+        return None
+
     def _install_direct_download_dependency(self, package_name: str) -> bool:
         """Install a direct download dependency. Return success."""
         debug(f"Trying to install DIRECT DOWNLOAD dependency: {package_name}", False)
@@ -424,6 +469,12 @@ class DependencyUpdater:
         )
         url = str(url)
         target: Path = self.dep_location / target_directory
+        if not target.exists():
+            target.mkdir(parents=True)
+
+        # Query the version token before downloading so it matches the fetched content
+        remote_token = self._get_remote_version_token(url)
+        version_file = self._version_file(url, target)
 
         # Return if the download fails
         # Automatically skips if not modified
@@ -441,6 +492,8 @@ class DependencyUpdater:
             debug(f"[{package_name}] wget failed!", False)
             return False
         if "304 Not Modified" in wget_download.stderr.strip() and unzipped.exists():
+            if remote_token is not None:
+                version_file.write_text(remote_token)
             return True
 
         debug(f"[{package_name}] Removing previous install if necessary.", False)
@@ -452,7 +505,11 @@ class DependencyUpdater:
         if do_unzip:  # noqa
             if self._run_silent(f"unzip -o {Path(url).name}", cwd=target) != 0:
                 return False
-        return unzipped.exists()
+        if not unzipped.exists():
+            return False
+        if remote_token is not None:
+            version_file.write_text(remote_token)
+        return True
 
     def install_dependency(self, package_name: str) -> bool:
         """Install the dependency in the dependency location. If no definition for this dependency
@@ -478,30 +535,42 @@ class DependencyUpdater:
                 f"Cannot check if non-existing dependency {package_name} is outdated."
             )
         if package_name in self.deps.direct_download_deps:
-            # TODO: Improve (e.g. by checking directly instead of by using wget).
-            # Check by letting wget compare timestamps. To avoid large wait times
-            # immediately delete the file again after a short timeout.
+            # Not all servers send Last-Modified (which "wget -N" relies on), so compare an
+            # ETag/Last-Modified/Content-Length token against the one cached at install time.
             data = cast("DirectDownloadDependency", data)
-            target = self.dep_location / data.target_directory / Path(str(data.url)).name
-            if not target.parent.exists():
-                target.parent.mkdir(parents=True)
-            try:
-                wget_result = sp.run(
-                    shlex.split(f"wget -N {data.url}"),
-                    cwd=target.parent,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
+            url = str(data.url)
+            target_directory = self.dep_location / data.target_directory
+            if not target_directory.exists():
+                target_directory.mkdir(parents=True)
+            installed_artifact = (target_directory / Path(url).name).with_suffix("")
+            version_file = self._version_file(url, target_directory)
+
+            remote_token = self._get_remote_version_token(url)
+            if remote_token is None:
+                # Without a reachable server we cannot tell, so keep a working installation
+                if installed_artifact.exists():
+                    debug(
+                        f"[{package_name}] Cannot determine remote version, "
+                        f"keeping the existing installation.",
+                        False,
+                    )
+                    return False
+                return True
+            if not installed_artifact.exists():
+                debug(f"[{package_name}] Not installed yet - outdated.", False)
+                return True
+            if not version_file.exists():
+                debug(f"[{package_name}] No cached version token - outdated.", False)
+                return True
+            local_token = version_file.read_text().strip()
+            if local_token != remote_token:
+                debug(
+                    f"[{package_name}] Version mismatch: expected {remote_token}, "
+                    f"got {local_token}",
+                    False,
                 )
-            except sp.TimeoutExpired:
-                debug(f"[{package_name}] wget experienced a timeout!")
-                return False
-            if "304 Not Modified" in wget_result.stderr.strip():
-                return False
-            debug(wget_result.stderr.strip(), False)
-            if target.exists():
-                target.unlink()
-            return True
+                return True
+            return False
 
         # Compare hashes for git dependencies and boardfiles
         # Try to fetch the current hash
