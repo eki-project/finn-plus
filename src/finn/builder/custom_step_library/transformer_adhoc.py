@@ -347,7 +347,7 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
             del config[node.name]
 
     # Create/Open a YAML file to store the configuration for later reuse
-    with Path(cast("str", cfg.output_dir) + "/auto_folding_config.yaml").open("w") as file:
+    with (Path(cfg.output_dir) / "auto_folding_config.yaml").open("w") as file:
         # Store the configuration dictionary as YAML code
         yaml.safe_dump(config, file)
 
