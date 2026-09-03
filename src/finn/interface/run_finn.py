@@ -523,7 +523,17 @@ def prepare_finn(
     # finn.xsi transitively.
     configure_start_method()
 
-    finn.xsi.ensure_available()
+    try:
+        finn.xsi.ensure_available()
+    except FINNUserError:
+        error(
+            "XSI is not available. For details regarding this error, "
+            "check previous outputs and logs. "
+            "Also make sure that your current Python version matches "
+            "the version you installed FINN+ with. "
+            "Use 'finn deps update --force' to delete all dependencies and force a re-installation."
+        )
+        sys.exit(1)
 
     if "PYTHONPATH" not in os.environ:
         os.environ["PYTHONPATH"] = ""
@@ -1128,8 +1138,13 @@ def update(
         flow_config=Path(),
         **get_function_args(),
     )
-    if force and settings.finn_deps.exists():
-        shutil.rmtree(settings.finn_deps)
+    if force:
+        # Delete dependencies
+        if settings.finn_deps.exists():
+            shutil.rmtree(settings.finn_deps)
+        # Also delete xsi.so to force a re-build
+        xsi_so = finn.xsi._xsi_so_path()  # noqa
+        xsi_so.unlink(missing_ok=True)
     prepare_finn(settings, accept_defaults or batch, batch, create_build_dir=False)
 
 
