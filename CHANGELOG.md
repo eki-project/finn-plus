@@ -10,10 +10,11 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 Planned release: 1.5.0.
 
 ### Added
+- Support for Python 3.14 (#233)
+- Added distributed simulation based FIFO sizing and a new performance simulation (#187)
 - Multi-FPGA inference support (#23)
     - Initial communication backend: [AuroraFlow](https://github.com/pc2/AuroraFlow) (new dependency)
     - See [MultiFPGA README](src/finn/transformation/fpgadataflow/multifpga/README.md) for usage and development information
-- Added distributed simulation based FIFO sizing and a new performance simulation (#187)
 - Error lines from Vivado logs are printed to console in case of failing synthesis runs (#190)
 - Added a `CHANGELOG.md` file
 - Added `CITATION.cff` file
@@ -29,14 +30,30 @@ Planned release: 1.5.0.
 - Vivado Stitch Projects have names specifying the nodes they contain if there are 3 or fewer nodes in the project (#190)
 - The dependency definition file can now be found at `src/finn/interface/external_dependencies.yaml` instead of the repository root (#23, #216)
 - Split the monolithic `convert_to_hw_layers.py` into a `convert_to_hw` package with one file per operator for better maintainability (#220)
+- Dependencies can now be cached even without commit hash or Last-Modified header (#242)
+- CI caches dependencies using the dependency definition file as key (#242)
+- The Pynq driver is now a standalone package: `finn-plus-driver` (#234)
+- `onnx-passes` is now a Python package dependency instead of a FINN+ external dependency (#233, #199)
+- If the `target_fps` cannot be met during folding, FINN+ prints a warning with details (#209)
+- Added warnings for floating point operations in the graph (#123, #227)
+- Failed tests in the CI are now immediately printed (#229)
+- Set the default start method for multiprocessing from `fork` to `spawn` (#229)
+    - Enabled `FINNSettings` to work correctly in Python 3.14
+    - Prevents RuntimeErrors in CI/test
+- Tests receive deterministic per-item seeds for RNG (#230)
 
 #### Removed
 - Removed old simulation based FIFO sizing, superseded by the new distributed simulation based sizing (#187)
+- Removed Jupyter notebooks and subpackage in favor of an updated Wiki (#241)
+- Removed deprecated ops (`AddStreams`, `ChannelwiseLinear`, `StreamingEltwise`) (#162, #225)
+- Removed end2end tests (#223)
 
 #### Fixes
+- Git timeouts now display a timeout message instead of "Internal Exception" (#243)
 - Fixed warnings raised during streamlining and added more descriptive details to reorder and absorb warnings (#207)
 - Fixed that `wget` timeouts would crash FINN+, even if dependencies were only checked, not updated (#23, #208)
-
+- Fixed cases in which folding would accidentally create streams wider than `mvau_wwidth_max` due to a missing PE check (#209)
+- `MVAU_hls` now correctly checks that `AP_INT_MAX_W` is below 8192 (#209)
 
 ## 1.4.0 - 03.03.2026
 ### Added
