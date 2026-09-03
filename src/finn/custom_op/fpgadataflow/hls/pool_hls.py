@@ -25,21 +25,24 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""HLSBackend specialization for generic pooling operators:
-MaxPool, AvgPool, AccPool and QuantAvgPool."""
+
+"""HLS backend implementation of the generic pooling operator."""
 
 import numpy as np
+from onnx import GraphProto, NodeProto
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.pool import Pool
+from finn.custom_op.fpgadataflow.pool import NodeAttrTypes, Pool
+from finn.util.exception import FINNUserError
 
 
 class Pool_hls(Pool, HLSBackend):
-    """Class that corresponds to finn-hlslib Pool_batch function.
-    Requires ConvolutionInputGenerator(depthwise == 1) to format its input
+    """Class that corresponds to the finn-hlslib ``Pool_batch`` function.
 
-    Input shape (BatchSize,OutImgDim,OutImgDim,TotalKernelSize*Channels)
-    Output shape (BatchSize,OutImgDim,OutImgDim,Channels)
+    Requires ``ConvolutionInputGenerator(depthwise == 1)`` to format its input.
+
+    Input shape ``(BatchSize, OutImgDim, OutImgDim, TotalKernelSize * Channels)``
+    Output shape ``(BatchSize, OutImgDim, OutImgDim, Channels)``
 
     Notes:
     * The input shape was chosen to be compatible with im2col (only true when there
@@ -47,39 +50,45 @@ class Pool_hls(Pool, HLSBackend):
     * The actual data layout produced by the hlslib kernels is different
       for depthwise ops.
 
-        * depthwise SWG: (1, OFMDim, OFMDim, IFMChannels/PE, K, K, PE)
+        * depthwise SWG: ``(1, OFMDim, OFMDim, IFMChannels/PE, K, K, PE)``
 
-    Channels can be folded using PE (SIMD from the input perspective)
+    Channels can be folded using PE (SIMD from the input perspective).
     """
 
-    def get_nodeattr_types(self):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
+        """Initialize instance."""
+        super().__init__(onnx_node, **kwargs)
+
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Get dictionary of custom node attributes with their types and default values."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(Pool.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """List include directives for generated HLS code."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "pool.hpp"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Constant and type definitions for generated HLS code."""
-        k = int(np.prod(self.get_nodeattr("KernelSize")))
-        cf = int(self.get_nodeattr("Channels") / self.get_nodeattr("PE"))
-        osz = np.prod(self.get_nodeattr("OutImgDims"))
+        k = int(np.prod(self.kernel_size))
+        cf = self.channels // self.pe
+        osz = np.prod(self.out_img_dims)
         self.code_gen_dict["$DEFINES$"] = [
             f"constexpr unsigned  ISIZE = {osz * cf * k};",
             f"constexpr unsigned  K = {k};",
         ]
 
-    def docompute(self):
-        """Generates the computational part of the HLS C++ code."""
-        pe = self.get_nodeattr("PE")
-        fxn = self.get_nodeattr("Function")
+    def docompute(self) -> None:
+        """Generate the computational part of the HLS C++ code."""
+        pe = self.pe
+        fxn = self.function
         idt = self.get_input_datatype()
         odt = self.get_output_datatype()
-        o_hls_dt = "hls::vector<%s, %d>" % (odt.get_hls_datatype_str(), pe)
+        o_hls_dt = f"hls::vector<{odt.get_hls_datatype_str()}, {pe}>"
+        sign = "" if idt.signed() else "u"
+        act_hls_dt = f"hls::vector<ap_{sign}int<{self.accum_bits}>, {pe}>"
 
         self.code_gen_dict["$DOCOMPUTE$"] = []
         if fxn == "MaxPool":
@@ -87,52 +96,39 @@ class Pool_hls(Pool, HLSBackend):
         elif fxn == "AccPool":
             self.code_gen_dict["$DOCOMPUTE$"] += [f"AccPoolFunction<{o_hls_dt}> pool_fxn;"]
         elif fxn == "AvgPool":
-            n = np.prod(self.get_nodeattr("KernelSize"))
-            accum_bits = self.get_nodeattr("AccumBits")
-            act_hls_dt = "hls::vector<ap_%sint<%d>, %d>" % (
-                "" if idt.signed() else "u",
-                accum_bits,
-                pe,
-            )
+            n = np.prod(self.kernel_size)
             self.code_gen_dict["$DOCOMPUTE$"] += [
                 f"AvgPoolFunction<{o_hls_dt},{act_hls_dt},{n}> pool_fxn;"
             ]
         elif fxn == "QuantAvgPool":
-            shift = self.get_nodeattr("Size")
-            accum_bits = self.get_nodeattr("AccumBits")
-            act_hls_dt = "hls::vector<ap_%sint<%d>, %d>" % (
-                "" if idt.signed() else "u",
-                accum_bits,
-                pe,
-            )
             self.code_gen_dict["$DOCOMPUTE$"] += [
-                f"QuantAvgPoolFunction<{o_hls_dt},{act_hls_dt},{shift}> pool_fxn;"
+                f"QuantAvgPoolFunction<{o_hls_dt},{act_hls_dt},{self.size}> pool_fxn;"
             ]
         else:
-            raise Exception("Pool_Batch doesn't currently support " + fxn)
+            raise FINNUserError(f"{self.onnx_node.name}: Pool_Batch does not support {fxn}")
 
         self.code_gen_dict["$DOCOMPUTE$"] += ["Pool_batch<ISIZE, K>(in0_V, out0_V, pool_fxn);"]
 
-    def pragmas(self):
-        """Generate HLS pragmas to apply to the HLS C++ coede."""
+    def pragmas(self) -> None:
+        """Generate HLS pragmas to apply to the HLS C++ code."""
         super().pragmas()
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS dataflow disable_start_propagation")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS aggregate variable=in0_V compact=bit")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS aggregate variable=out0_V compact=bit")
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Blackbox function interface from which the IP will be generated."""
-        pe = self.get_nodeattr("PE")
+        pe = self.pe
         idt = self.get_input_datatype()
         odt = self.get_output_datatype()
-        i_hls_dt = "hls::vector<%s, %d>" % (idt.get_hls_datatype_str(), pe)
-        o_hls_dt = "hls::vector<%s, %d>" % (odt.get_hls_datatype_str(), pe)
+        i_hls_dt = f"hls::vector<{idt.get_hls_datatype_str()}, {pe}>"
+        o_hls_dt = f"hls::vector<{odt.get_hls_datatype_str()}, {pe}>"
 
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            "void %s(hls::stream<%s> &in0_V, hls::stream<%s> &out0_V)"
-            % (self.onnx_node.name, i_hls_dt, o_hls_dt)
+            f"void {self.onnx_node.name}(hls::stream<{i_hls_dt}> &in0_V, "
+            f"hls::stream<{o_hls_dt}> &out0_V)"
         ]
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:
         """Execute the node in HLS C++ simulation."""
         HLSBackend.execute_node(self, context, graph)

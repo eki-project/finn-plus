@@ -28,16 +28,20 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Module for init."""
+from typing import TypeVar
+
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # Dictionary of HWCustomOp implementations
 custom_op = dict()
 
+_CustomOpT = TypeVar("_CustomOpT", bound=HWCustomOp)
+
 
 # Registers a class into the custom_op dictionary
 # Note: This must be defined first, before importing any custom op
 # implementation to avoid "importing partially initialized module" issues.
-def register_custom_op(cls) -> type[HWCustomOp]:
+def register_custom_op(cls: type[_CustomOpT]) -> type[_CustomOpT]:
     # The class must actually implement HWCustomOp
     """Register a custom operation."""
     assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"

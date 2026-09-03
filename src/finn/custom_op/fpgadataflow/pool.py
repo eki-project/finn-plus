@@ -25,20 +25,39 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""HWCustomOp for generic pooling operators MaxPool, AvgPool, AccPool and QuantAvgPool."""
+
+"""Generic pooling hardware custom operator (MaxPool, AvgPool, AccPool, QuantAvgPool)."""
 
 import numpy as np
-from qonnx.core.datatype import DataType
+from onnx import NodeProto
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError, FINNUserError
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
+
+_SUPPORTED_FUNCTIONS = ("MaxPool", "AvgPool", "AccPool", "QuantAvgPool")
 
 
 class Pool(HWCustomOp):
     """Abstraction layer for HW implementation of Pool.
-    Requires ConvolutionInputGenerator(depthwise == 1) to format its input
 
-    Input shape (BatchSize,OutImgDim,OutImgDim,TotalKernelSize*Channels)
-    Output shape (BatchSize,OutImgDim,OutImgDim,Channels)
+    Requires ``ConvolutionInputGenerator(depthwise == 1)`` to format its input.
+
+    Input shape ``(BatchSize, OutImgDim, OutImgDim, TotalKernelSize * Channels)``
+    Output shape ``(BatchSize, OutImgDim, OutImgDim, Channels)``
 
     Notes:
     * The input shape was chosen to be compatible with im2col (only true when there
@@ -46,19 +65,23 @@ class Pool(HWCustomOp):
     * The actual data layout produced by the hlslib kernels is different
       for depthwise ops.
 
-        * depthwise SWG: (1, OFMDim, OFMDim, IFMChannels/PE, K, K, PE)
+        * depthwise SWG: ``(1, OFMDim, OFMDim, IFMChannels/PE, K, K, PE)``
 
-    Channels can be folded using PE (SIMD from the input perspective)
+    Channels can be folded using PE (SIMD from the input perspective).
     """
 
-    def get_nodeattr_types(self):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
+        """Initialize instance."""
+        super().__init__(onnx_node, **kwargs)
+
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Get dictionary of custom node attributes with their types and default values."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             "Channels": ("i", True, 0),
             "PE": ("i", True, 1),
             "KernelSize": ("ints", True, []),
             # Pooling function to use corresponding to hlslib functions
-            "Function": ("s", True, "", {"MaxPool", "AvgPool", "AccPool", "QuantAvgPool"}),
+            "Function": ("s", True, "", set(_SUPPORTED_FUNCTIONS)),
             "OutImgDims": ("ints", True, []),
             # FINN DataTypes for inputs/outputs
             "InputDataType": ("s", True, ""),
@@ -67,113 +90,131 @@ class Pool(HWCustomOp):
             "Size": ("i", False, 1),
             "BatchSize": ("i", False, 1),
         }
-
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
-        return DataType[self.get_nodeattr("InputDataType")]
+    @property
+    def channels(self) -> int:
+        """Get the number of channels."""
+        return cast("int", self.get_nodeattr("Channels"))
 
-    def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output."""
-        fxn = self.get_nodeattr("Function")
-        odt = DataType[self.get_nodeattr("OutputDataType")]
+    @property
+    def pe(self) -> int:
+        """Get the PE (channel) parallelism."""
+        return cast("int", self.get_nodeattr("PE"))
+
+    @property
+    def kernel_size(self) -> list[int]:
+        """Get the pooling kernel size per spatial axis."""
+        return list(cast("list[int]", self.get_nodeattr("KernelSize")))
+
+    @property
+    def out_img_dims(self) -> list[int]:
+        """Get the output feature-map spatial dimensions."""
+        return list(cast("list[int]", self.get_nodeattr("OutImgDims")))
+
+    @property
+    def function(self) -> str:
+        """Get the pooling function name."""
+        return cast("str", self.get_nodeattr("Function"))
+
+    @property
+    def accum_bits(self) -> int:
+        """Get the accumulator bit width (AvgPool/QuantAvgPool)."""
+        return cast("int", self.get_nodeattr("AccumBits"))
+
+    @property
+    def size(self) -> int:
+        """Get the quantization shift amount (QuantAvgPool)."""
+        return cast("int", self.get_nodeattr("Size"))
+
+    @property
+    def batch_size(self) -> int:
+        """Get the batch size."""
+        return cast("int", self.get_nodeattr("BatchSize"))
+
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of input."""
+        return DataType[cast("str", self.get_nodeattr("InputDataType"))]
+
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of output."""
+        fxn = self.function
+        odt = DataType[cast("str", self.get_nodeattr("OutputDataType"))]
 
         if fxn == "MaxPool":
             # Same as input
-            idt = DataType[self.get_nodeattr("InputDataType")]
-            assert odt == idt, "In datatype must be equal to out datatype for Maxpool"
-        elif fxn == "AccPool" or fxn == "AvgPool":
+            if odt != self.get_input_datatype():
+                raise FINNUserError(
+                    f"{self.onnx_node.name}: input datatype must equal output datatype for MaxPool"
+                )
+        elif fxn in ("AccPool", "AvgPool"):
             pass
         elif fxn == "QuantAvgPool":
-            idt = DataType[self.get_nodeattr("InputDataType")]
-            assert (
-                idt.signed() == odt.signed()
-            ), """QuantAvgPool: Can't mix signed
-            and unsigned datatypes"""
+            if self.get_input_datatype().signed() != odt.signed():
+                raise FINNUserError(
+                    f"{self.onnx_node.name}: QuantAvgPool cannot mix signed and unsigned datatypes"
+                )
         else:
-            raise Exception("Pool_Batch doesn't currently support " + fxn)
+            raise FINNUserError(f"{self.onnx_node.name}: Pool_Batch does not support {fxn}")
 
         return odt
 
-    def get_normal_input_shape(self, ind=0):
+    def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return shape of the input tensor."""
-        ifm_ch = self.get_nodeattr("Channels")
-        odims = self.get_nodeattr("OutImgDims")
-        batch_size = self.get_nodeattr("BatchSize")
-        k = self.get_nodeattr("KernelSize")
-        k_prod = int(np.prod(k))
-        ishape = (batch_size, *odims, k_prod * ifm_ch)
-        return ishape
+        k_prod = int(np.prod(self.kernel_size))
+        return (self.batch_size, *self.out_img_dims, k_prod * self.channels)
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return shape of the folded input tensor."""
-        normal_ishape = list(self.get_normal_input_shape())
-        ifm_ch = self.get_nodeattr("Channels")
-        pe = self.get_nodeattr("PE")
-        assert ifm_ch % pe == 0, "PE must divide input channels"
-        fold = int(normal_ishape[-1] / pe)
-        folded_ishape = normal_ishape[:-1] + [fold, pe]
-        return tuple(folded_ishape)
+        normal_ishape = self.get_normal_input_shape()
+        if self.channels % self.pe != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: PE ({self.pe}) must divide Channels ({self.channels})"
+            )
+        fold = normal_ishape[-1] // self.pe
+        return (*normal_ishape[:-1], fold, self.pe)
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return shape of the output tensor."""
-        ofm_ch = self.get_nodeattr("Channels")
-        odims = self.get_nodeattr("OutImgDims")
-        batch_size = self.get_nodeattr("BatchSize")
-        oshape = (batch_size, *odims, ofm_ch)
-        return oshape
+        return (self.batch_size, *self.out_img_dims, self.channels)
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return shape of the folded output tensor."""
-        normal_oshape = list(self.get_normal_output_shape())
-        ifm_ch = self.get_nodeattr("Channels")
-        pe = self.get_nodeattr("PE")
-        assert ifm_ch % pe == 0, "PE must divide input channels"
-        fold = int(ifm_ch / pe)
-        folded_oshape = normal_oshape[:-1] + [fold, pe]
-        return tuple(folded_oshape)
+        if self.channels % self.pe != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: PE ({self.pe}) must divide Channels ({self.channels})"
+            )
+        fold = self.channels // self.pe
+        return (self.batch_size, *self.out_img_dims, fold, self.pe)
 
-    def get_exp_cycles(self):
+    def get_exp_cycles(self) -> int:
         """Return estimation of expected cycles for set folding."""
         # (Channels * kernel * kernel) / PE * odim * odim * batch_size
-        ifm_ch = self.get_nodeattr("Channels")
-        pe = self.get_nodeattr("PE")
-        k = self.get_nodeattr("KernelSize")
-        k_prod = int(np.prod(k))
-        odims = self.get_nodeattr("OutImgDims")
-        batch_size = self.get_nodeattr("BatchSize")
-        exp_cycles = ((ifm_ch * k_prod) / pe) * np.prod(odims) * batch_size
+        k_prod = int(np.prod(self.kernel_size))
+        exp_cycles = (
+            ((self.channels * k_prod) / self.pe) * np.prod(self.out_img_dims) * self.batch_size
+        )
         return int(exp_cycles)
 
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Width of the input stream."""
-        dt_bits = self.get_input_datatype().bitwidth()
-        pe = self.get_nodeattr("PE")
-        in_width = int(dt_bits * pe)
-        return in_width
+        return int(self.get_input_datatype().bitwidth() * self.pe)
 
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Width of the output stream."""
-        dt_bits = self.get_output_datatype().bitwidth()
-        pe = self.get_nodeattr("PE")
-        out_width = int(dt_bits * pe)
-        return out_width
+        return int(self.get_output_datatype().bitwidth() * self.pe)
 
-    def infer_node_datatype(self, model):
-        """Infers the datatype of the output from the node attribute."""
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
+        """Infer the datatype of the output from the node attribute."""
         node = self.onnx_node
-        # Get the new datatype
         new_dtype = model.get_tensor_datatype(node.input[0])
-        # Set the new datatype attribute
         self.set_nodeattr("InputDataType", new_dtype.name)
         # data type stays the same
-        dtype = self.get_output_datatype()
-        model.set_tensor_datatype(node.output[0], dtype)
+        model.set_tensor_datatype(node.output[0], self.get_output_datatype())
 
-    def verify_node(self):
-        """Verifies the node configuration attributes."""
+    def verify_node(self) -> list[str]:
+        """Verify the node configuration attributes."""
         info_messages = []
         # verify that "backend" is set to "fpgadataflow"
         backend_value = self.get_nodeattr("backend")
@@ -189,43 +230,43 @@ class Pool(HWCustomOp):
             info_messages.append("""Pool_Batch needs 1 data input""")
 
         # check supported function
-        fnx = self.get_nodeattr("Function")
-        if fnx in ["MaxPool", "AvgPool", "AccPool", "QuantAvgPool"]:
+        if self.function in _SUPPORTED_FUNCTIONS:
             info_messages.append("Attribute Function contains a supported pool function")
         else:
             info_messages.append("Attribute Function contains an unsupported pool function")
         return info_messages
 
-    def execute_node(self, context, graph):
-        """Executes the node with inputs from context writing outputs to context."""
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
+        """Execute the node with inputs from context, writing outputs to context."""
         # simulate behavior with Python functionality
         node = self.onnx_node
-        fnx = self.get_nodeattr("Function")
-        k = self.get_nodeattr("KernelSize")
-        ch = self.get_nodeattr("Channels")
+        fxn = self.function
+        k = self.kernel_size
+        ch = self.channels
         k2 = k[0] * k[1]
 
         inp_values = context[node.input[0]]
         ishape = inp_values.shape
         # reshape array to apply max or avg function only on kernel
-        tmp_shape = tuple(list(ishape)[:-1] + [k2, ch])
-        tmp_values = inp_values.reshape(tmp_shape)
-        if fnx == "MaxPool":
+        tmp_values = inp_values.reshape((*ishape[:-1], k2, ch))
+        if fxn == "MaxPool":
             result = np.max(tmp_values, axis=3)
-        elif fnx == "AccPool":
+        elif fxn == "AccPool":
             result = np.sum(tmp_values, axis=3)
-        elif fnx == "AvgPool":
+        elif fxn == "AvgPool":
             result = np.mean(tmp_values, axis=3)
-        elif fnx == "QuantAvgPool":
+        elif fxn == "QuantAvgPool":
             # determine bits to shift
             ibits = self.get_input_datatype().bitwidth()
             obits = self.get_output_datatype().bitwidth()
-            max_value = 2**ibits - 1
-            max_value = max_value * k2
+            max_value = (2**ibits - 1) * k2
             max_bit_width = int(max_value).bit_length()
-            shift_bits = max_bit_width - obits
-            shift_bits = shift_bits if shift_bits >= 0 else 0
+            shift_bits = max(max_bit_width - obits, 0)
             result = np.sum(tmp_values, axis=3)
             result = np.right_shift(result.astype(int), shift_bits)
+        else:
+            raise FINNInternalError(f"{self.onnx_node.name}: Pool_Batch does not support {fxn}")
         oshape = context[node.output[0]].shape
         context[node.output[0]] = np.asarray(result, dtype=np.float32).reshape(oshape)
