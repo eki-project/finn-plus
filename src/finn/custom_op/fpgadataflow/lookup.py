@@ -26,29 +26,49 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for lookup."""
+"""Embedding-lookup hardware custom operator (index-to-value gather)."""
+
 import numpy as np
 import onnxruntime as rt
 from math import ceil
-from onnx import TensorProto, helper
-from qonnx.core.datatype import DataType
+from onnx import NodeProto, TensorProto, helper
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
 
 
 class Lookup(HWCustomOp):
-    """Abstraction layer for HW implementation of streaming elementwise lookup,
-    mapping indices to values."""
+    """Abstraction layer for HW implementation of a streaming embedding lookup.
 
-    def __init__(self, onnx_node, **kwargs):
+    Maps a stream of integer indices to the corresponding rows of an embedding
+    table (equivalent to an ONNX ``Gather`` with a constant data operand). The
+    table can be baked into the bitstream (``mem_mode="internal_embedded"``,
+    BRAM) or fetched from external memory over AXI-MM (``mem_mode="external"``).
+    """
+
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             # Number of embeddings ("memory depth")
             "NumEmbeddings": ("i", True, 0),
             # Dimensionality of each embedding (part of "memory width")
@@ -62,7 +82,7 @@ class Lookup(HWCustomOp):
             # Memory mode
             # internal_embedded : parameters baked into bitfile (BRAM)
             # external : lookup performed in external memory over AXI MM
-            "mem_mode": ("s", False, "internal_embedded", ["internal_embedded", "external"]),
+            "mem_mode": ("s", False, "internal_embedded", {"internal_embedded", "external"}),
             # Width for AXI-MM interface
             # only relevant when mem_mode="external"
             "ext_mem_width": ("i", False, 32),
@@ -70,116 +90,133 @@ class Lookup(HWCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_exp_cycles(self):
-        """Return exp cycles."""
-        n_inputs = np.prod(self.get_nodeattr("InputShape"))
-        exp_cycles = int(n_inputs)
-        return exp_cycles
+    @property
+    def num_embeddings(self) -> int:
+        """Get the number of embeddings (memory depth)."""
+        return cast("int", self.get_nodeattr("NumEmbeddings"))
 
-    def get_normal_input_shape(self, ind=0):
+    @property
+    def embedding_dim(self) -> int:
+        """Get the dimensionality of a single embedding."""
+        return cast("int", self.get_nodeattr("EmbeddingDim"))
+
+    @property
+    def embedding_type(self) -> BaseDataType:
+        """Get the FINN DataType of the embedding values."""
+        return DataType[cast("str", self.get_nodeattr("EmbeddingType"))]
+
+    @property
+    def input_type(self) -> BaseDataType:
+        """Get the FINN DataType of the index inputs."""
+        return DataType[cast("str", self.get_nodeattr("InputType"))]
+
+    @property
+    def input_shape(self) -> list[int]:
+        """Get the shape of the index input stream."""
+        return list(cast("list[int]", self.get_nodeattr("InputShape")))
+
+    @property
+    def mem_mode(self) -> str:
+        """Get the memory mode (``internal_embedded`` or ``external``)."""
+        return cast("str", self.get_nodeattr("mem_mode"))
+
+    @property
+    def ext_mem_width(self) -> int:
+        """Get the AXI-MM interface width (only used when ``mem_mode="external"``)."""
+        return cast("int", self.get_nodeattr("ext_mem_width"))
+
+    def get_exp_cycles(self) -> int:
+        """Return exp cycles."""
+        return int(np.prod(self.input_shape))
+
+    def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:
         """Return normal input shape."""
         if ind == 0:
-            return self.get_nodeattr("InputShape")
+            return tuple(self.input_shape)
         if ind == 1:
-            return tuple([self.get_nodeattr("NumEmbeddings"), self.get_nodeattr("EmbeddingDim")])
-        raise Exception("Undefined input ind for this layer type")
+            return (self.num_embeddings, self.embedding_dim)
+        raise FINNInternalError(f"{self.onnx_node.name}: undefined input ind {ind} for Lookup")
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal output shape."""
-        ishape = self.get_normal_input_shape()
-        emb_dim = self.get_nodeattr("EmbeddingDim")
-        oshape = list(ishape) + [emb_dim]
-        return tuple(oshape)
+        return (*self.get_normal_input_shape(), self.embedding_dim)
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:
         """Return folded input shape."""
         if ind == 0:
-            ishape = self.get_normal_input_shape()
-            folded_ishape = list(ishape) + [1]
-        else:
-            folded_ishape = self.get_normal_input_shape(ind)
-        return tuple(folded_ishape)
+            return (*self.get_normal_input_shape(), 1)
+        return tuple(self.get_normal_input_shape(ind))
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
         ishape = self.get_normal_input_shape()
-        mem_mode = self.get_nodeattr("mem_mode")
-        emb_dim = self.get_nodeattr("EmbeddingDim")
-        if mem_mode == "internal_embedded":
-            oshape = list(ishape) + [emb_dim]
-        elif mem_mode == "external":
-            ext_mem_width = self.get_nodeattr("ext_mem_width")
+        if self.mem_mode == "internal_embedded":
+            return (*ishape, self.embedding_dim)
+        if self.mem_mode == "external":
             bits_per_emb_elem = self.get_output_datatype().bitwidth()
-            assert ext_mem_width % bits_per_emb_elem == 0
-            emb_elems_per_ext_mem_width = ext_mem_width // bits_per_emb_elem
-            oshape = list(ishape) + [
-                emb_dim // emb_elems_per_ext_mem_width,
+            if self.ext_mem_width % bits_per_emb_elem != 0:
+                raise FINNInternalError(
+                    f"{self.onnx_node.name}: ext_mem_width ({self.ext_mem_width}) must be a "
+                    f"multiple of the embedding element width ({bits_per_emb_elem})"
+                )
+            emb_elems_per_ext_mem_width = self.ext_mem_width // bits_per_emb_elem
+            return (
+                *ishape,
+                self.embedding_dim // emb_elems_per_ext_mem_width,
                 emb_elems_per_ext_mem_width,
-            ]
-        else:
-            raise Exception("Unrecognized mem_mode:" + mem_mode)
-        return tuple(oshape)
+            )
+        raise FINNInternalError(f"{self.onnx_node.name}: unrecognized mem_mode {self.mem_mode}")
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
         """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
-            warn_str = "InputType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_input_datatype()),
-                str(idt),
+            log.warning(
+                f"InputType changing for {node.name}: {self.get_input_datatype()!s} -> {idt!s}"
             )
-            log.warning(warn_str)
         self.set_nodeattr("InputType", idt.name)
-        odt = DataType[self.get_nodeattr("EmbeddingType")]
-        model.set_tensor_datatype(node.output[0], odt)
+        model.set_tensor_datatype(node.output[0], self.embedding_type)
 
-    def get_input_datatype(self, ind=0):
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:
         """Return input datatype."""
         if ind == 0:
-            ret = DataType[self.get_nodeattr("InputType")]
-        elif ind == 1:
-            ret = DataType[self.get_nodeattr("EmbeddingType")]
-        else:
-            raise Exception("Undefined input ind for this layer type")
-        return ret
+            return self.input_type
+        if ind == 1:
+            return self.embedding_type
+        raise FINNInternalError(f"{self.onnx_node.name}: undefined input ind {ind} for Lookup")
 
-    def get_output_datatype(self, ind=0):
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
         """Return output datatype."""
-        ret = DataType[self.get_nodeattr("EmbeddingType")]
-        return ret
+        return self.embedding_type
 
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind: int = 0) -> int:
         """Return instream width."""
         if ind == 0:
-            bits = self.get_input_datatype().bitwidth()
-        elif ind == 1:
-            if self.get_nodeattr("mem_mode") == "internal_embedded":
-                bits = 0
-            else:
-                bits = self.get_nodeattr("ext_mem_width")
-        else:
-            raise Exception("Undefined input ind for this layer type")
-        return bits
+            return self.get_input_datatype().bitwidth()
+        if ind == 1:
+            if self.mem_mode == "internal_embedded":
+                return 0
+            return self.ext_mem_width
+        raise FINNInternalError(f"{self.onnx_node.name}: undefined input ind {ind} for Lookup")
 
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return outstream width."""
-        folded_oshape = self.get_folded_output_shape()
-        obits = self.get_output_datatype().bitwidth()
-        return obits * folded_oshape[-1]
+        return self.get_output_datatype().bitwidth() * self.get_folded_output_shape()[-1]
 
-    def execute_node(self, context, graph):
-        # create a standard add node to help calculate the result
-        """Execute node."""
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
+        """Execute node.
+
+        Uses an ONNX Runtime ``Gather`` node to compute the result.
+        """
         node = self.onnx_node
         inp_values = context[node.input[0]]
-        ishape = inp_values.shape
         data_values = context[node.input[1]]
-        dshape = data_values.shape
         oshape = context[node.output[0]].shape
-        inp = helper.make_tensor_value_info(node.input[0], TensorProto.INT64, ishape)
-        data = helper.make_tensor_value_info(node.input[1], TensorProto.FLOAT, dshape)
+        inp = helper.make_tensor_value_info(node.input[0], TensorProto.INT64, inp_values.shape)
+        data = helper.make_tensor_value_info(node.input[1], TensorProto.FLOAT, data_values.shape)
         outp = helper.make_tensor_value_info(node.output[0], TensorProto.FLOAT, oshape)
         node_gather = helper.make_node(
             "Gather",
@@ -194,40 +231,37 @@ class Lookup(HWCustomOp):
         )
 
         opset_imports = [helper.make_opsetid("", 13)]
-        onnx_kwargs = {"opset_imports": opset_imports}
-        model_gather = qonnx_make_model(graph_gather, **onnx_kwargs)
+        model_gather = qonnx_make_model(graph_gather, opset_imports=opset_imports)
         idict = {node.input[0]: inp_values, node.input[1]: data_values}
         sess = rt.InferenceSession(model_gather.SerializeToString())
         result = sess.run(None, idict)
         context[node.output[0]] = np.asarray(result, dtype=np.float32).reshape(oshape)
 
-    def bram_estimation(self):
+    def bram_estimation(self) -> int:
         """Return bram estimation."""
-        mem_mode = self.get_nodeattr("mem_mode")
-        if mem_mode == "internal_embedded":
+        if self.mem_mode == "internal_embedded":
             # current calculation assumes embeddings always stored in BRAM_18Ks
             # when mem_mode is internal_embedded
             width_factor = ceil(self.get_outstream_width() / 16)
-            depth_factor = ceil(self.get_nodeattr("NumEmbeddings") / 1024)
+            depth_factor = ceil(self.num_embeddings / 1024)
             return width_factor * depth_factor
         # TODO can we estimate BRAMs for the DMA engine?
         return 0
 
-    def bram_efficiency_estimation(self):
+    def bram_efficiency_estimation(self) -> float:
         """Return bram efficiency estimation."""
         bram16_est = self.bram_estimation()
         if bram16_est == 0:
-            return 1
-        ebits = self.get_outstream_width() * self.get_nodeattr("NumEmbeddings")
+            return 1.0
+        ebits = self.get_outstream_width() * self.num_embeddings
         bram16_est_capacity = bram16_est * 18 * 1024
         return ebits / bram16_est_capacity
 
-    def get_verilog_top_module_intf_names(self):
+    def get_verilog_top_module_intf_names(self) -> dict[str, list[tuple[str, int]] | list[str]]:
         """Return the names of the interface signals for the verilog top module."""
         intf_names = super().get_verilog_top_module_intf_names()
-        mem_mode = self.get_nodeattr("mem_mode")
-        if mem_mode == "external":
+        if self.mem_mode == "external":
             intf_names["axilite"] = ["s_axi_control"]
-            intf_names["aximm"] = [("m_axi_gmem", self.get_nodeattr("ext_mem_width"))]
+            intf_names["aximm"] = [("m_axi_gmem", self.ext_mem_width)]
             intf_names["ap_none"] = ["oob_irq"]
         return intf_names

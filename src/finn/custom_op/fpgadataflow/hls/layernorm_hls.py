@@ -6,23 +6,31 @@
 #
 ############################################################################
 
-"""Module for layernorm hls."""
+"""HLS backend implementation of the layer-normalization operator."""
+
 import numpy as np
+from typing import TYPE_CHECKING
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.layernorm import LayerNorm
+from finn.custom_op.fpgadataflow.layernorm import LayerNorm, NodeAttrTypes
+
+if TYPE_CHECKING:
+    from onnx import GraphProto, NodeProto
 
 
 class LayerNorm_hls(LayerNorm, HLSBackend):
-    """Class for Layer Norm hls."""
+    """HLS backend implementation of LayerNorm.
 
-    def __init__(self, onnx_node, **kwargs):
+    Uses the finn-hlslib ``layernorm`` streamtools function.
+    """
+
+    def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(LayerNorm.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         my_attrs.update(
@@ -33,32 +41,31 @@ class LayerNorm_hls(LayerNorm, HLSBackend):
         )
         return my_attrs
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = [
             "#include <hls_vector.h>",
             '#include "layernorm.hpp"',
         ]
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        simd = self.get_nodeattr("SIMD")
         idtype = self.get_input_datatype()
-        n = self.get_nodeattr("ifm_dim")[-1]
+        n = self.ifm_dim[-1]
         self.code_gen_dict["$DEFINES$"] = [
             f"""
-            constexpr unsigned  SIMD = {simd};
+            constexpr unsigned  SIMD = {self.simd};
             constexpr unsigned  N = {n};
             using  TI = {idtype.get_hls_datatype_str()};
             using  TO = float;
            """
         ]
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = ["layernorm<N>(in0_V, out0_V);"]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             f"""
@@ -69,7 +76,7 @@ class LayerNorm_hls(LayerNorm, HLSBackend):
             """
         ]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = [
             """
@@ -83,11 +90,11 @@ class LayerNorm_hls(LayerNorm, HLSBackend):
             """
         ]
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
-    def timeout_value(self):
-        """Set timeout value for HLS functions defined for one clock cycle"""
-        timeout_value = max(np.prod(self.get_normal_input_shape()), 100)
+    def timeout_value(self) -> None:
+        """Set the timeout value for HLS functions defined for one clock cycle."""
+        timeout_value = max(int(np.prod(self.get_normal_input_shape())), 100)
         self.code_gen_dict["$TIMEOUT_VALUE$"] = [str(timeout_value)]

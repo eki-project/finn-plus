@@ -10,107 +10,137 @@
 #
 ###################################################################################
 
-"""Module for layernorm."""
+"""Layer-normalization hardware custom operator."""
+
 import numpy as np
 import torch
-import torch.nn.functional as F
-from qonnx.core.datatype import DataType
+from onnx import NodeProto
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from torch.nn.functional import layer_norm
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
 
 
 class LayerNorm(HWCustomOp):
-    """Abstraction layer for HW implementation of the LayerNorm layer."""
+    """Abstraction layer for HW implementation of LayerNorm.
 
-    def __init__(self, onnx_node, **kwargs):
+    Normalizes each input vector over its innermost (channel) axis. The affine
+    scale/bias of a full ``LayerNormalization`` are expected to have been split
+    out into separate nodes beforehand, so this operator performs the
+    zero-mean/unit-variance step only.
+    """
+
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = super().get_nodeattr_types()
-        my_attrs.update(
-            {
-                "SIMD": ("i", True, 0),
-                "ifm_dim": ("ints", True, []),
-                "epsilon": ("f", True, 1e-5),
-                # FINN DataTypes for inputs, outputs
-                "inputDataType": ("s", True, ""),
-                "outputDataType": ("s", True, ""),
-            }
-        )
+        my_attrs: NodeAttrTypes = {
+            "SIMD": ("i", True, 0),
+            "ifm_dim": ("ints", True, []),
+            "epsilon": ("f", True, 1e-5),
+            # FINN DataTypes for inputs, outputs
+            "inputDataType": ("s", True, ""),
+            "outputDataType": ("s", True, ""),
+        }
+        my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def execute_node(self, context, graph):
-        """Execute node."""
+    @property
+    def simd(self) -> int:
+        """Get the SIMD parallelism."""
+        return cast("int", self.get_nodeattr("SIMD"))
+
+    @property
+    def ifm_dim(self) -> list[int]:
+        """Get the input feature-map shape."""
+        return list(cast("list[int]", self.get_nodeattr("ifm_dim")))
+
+    @property
+    def epsilon(self) -> float:
+        """Get the numerical-stability epsilon added to the variance."""
+        return cast("float", self.get_nodeattr("epsilon"))
+
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
+        """Execute node.
+
+        Functionally verified against the PyTorch ``layer_norm`` implementation
+        (weight and bias are removed by an earlier transformation).
+        """
         node = self.onnx_node
-        # Get tensor values
         in_values = context[node.input[0]]
-        out_values = context[node.output[0]]
-        # Get any shape info that needs reuse
-        ishape = in_values.shape
-        oshape = out_values.shape
-        # Functionally verify with PyTorch implementation, since weight & bias are removed
+        oshape = context[node.output[0]].shape
         in_act = torch.from_numpy(in_values)
-        out_act = F.layer_norm(in_act, [ishape[-1]], eps=self.get_nodeattr("epsilon"))
+        out_act = layer_norm(in_act, [in_values.shape[-1]], eps=self.epsilon)
         context[node.output[0]] = np.asarray(out_act, dtype=np.float32).reshape(oshape)
 
-    def get_normal_input_shape(self, ind=0):
+    def get_normal_input_shape(self, ind: int = 0) -> list[int]:  # noqa: ARG002
         """Return normal input shape."""
-        return self.get_nodeattr("ifm_dim")
+        return self.ifm_dim
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> list[int]:  # noqa: ARG002
         """Return normal output shape."""
         return self.get_normal_input_shape()
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
-        normal_ishape = list(self.get_normal_input_shape())
-        simd = self.get_nodeattr("SIMD")
-        assert normal_ishape[-1] % simd == 0, "SIMD must divide into input dimension"
-        fold = int(normal_ishape[-1] / simd)
-        folded_ishape = normal_ishape[:-1] + [fold, simd]
-        return tuple(folded_ishape)
+        normal_ishape = self.get_normal_input_shape()
+        if normal_ishape[-1] % self.simd != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide the innermost "
+                f"input dimension ({normal_ishape[-1]})"
+            )
+        fold = normal_ishape[-1] // self.simd
+        return (*normal_ishape[:-1], fold, self.simd)
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
         return self.get_folded_input_shape()
 
-    def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:
+        """Return FINN DataType of input."""
         if ind == 0:
-            return DataType[self.get_nodeattr("inputDataType")]
-        raise Exception("Undefined input ind for this layer type")
+            return DataType[cast("str", self.get_nodeattr("inputDataType"))]
+        raise FINNInternalError(f"{self.onnx_node.name}: undefined input ind {ind} for LayerNorm")
 
-    def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output."""
-        return DataType[self.get_nodeattr("outputDataType")]
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of output."""
+        return DataType[cast("str", self.get_nodeattr("outputDataType"))]
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
         """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
-            warn_str = "inputDataType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_input_datatype()),
-                str(idt),
+            log.warning(
+                f"inputDataType changing for {node.name}: "
+                f"{self.get_input_datatype()!s} -> {idt!s}"
             )
-            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
-        # set output datatype from property
-        odt = self.get_output_datatype()
-        model.set_tensor_datatype(node.output[0], odt)
+        model.set_tensor_datatype(node.output[0], self.get_output_datatype())
 
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return instream width."""
-        i_bits = self.get_input_datatype().bitwidth()
-        in_width = i_bits * self.get_nodeattr("SIMD")
-        return in_width
+        return self.get_input_datatype().bitwidth() * self.simd
 
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return outstream width."""
-        o_bits = self.get_output_datatype().bitwidth()
-        out_width = o_bits * self.get_nodeattr("SIMD")
-        return out_width
+        return self.get_output_datatype().bitwidth() * self.simd
