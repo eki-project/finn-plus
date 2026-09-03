@@ -34,13 +34,21 @@ amounts and spatial feature sizes via optional AXI-Lite interface.
 """
 
 import math
-import os
+import numpy as np
 import shutil
+from onnx import NodeProto
+from pathlib import Path
+from qonnx.core.datatype import BaseDataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import roundup_to_integer_multiple
+from typing import TYPE_CHECKING, cast
 
-from finn.custom_op.fpgadataflow.fmpadding import FMPadding
+from finn.custom_op.fpgadataflow.fmpadding import FMPadding, NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.settings import get_settings
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
 
 
 class FMPadding_rtl(FMPadding, RTLBackend):
@@ -49,28 +57,13 @@ class FMPadding_rtl(FMPadding, RTLBackend):
     Supports adjusting the padding amount and spatial feature sizes at runtime.
     """
 
-    def __init__(self, onnx_node, **kwargs) -> None:
-        """Initialize the RTL FMPadding component.
-
-        Parameters
-        ----------
-        onnx_node : NodeProto
-            ONNX node to wrap
-        **kwargs : dict
-            Additional arguments passed to parent class
-        """
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
+        """Initialize the RTL FMPadding component."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
-        """Get dictionary of attribute names and their types for this node.
-
-        Returns
-        -------
-        dict
-            Dictionary mapping attribute names to type specifications,
-            including dynamic_mode for runtime reconfiguration
-        """
-        my_attrs = {
+    def get_nodeattr_types(self) -> NodeAttrTypes:
+        """Return nodeattr types, including dynamic_mode for runtime reconfiguration."""
+        my_attrs: NodeAttrTypes = {
             # Enable reprogrammable implementation to change FM dimensions,
             # stride, or dilation during runtime
             "dynamic_mode": ("i", False, 0, {0, 1}),
@@ -79,22 +72,30 @@ class FMPadding_rtl(FMPadding, RTLBackend):
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def get_verilog_top_module_intf_names(self):
-        """Get Verilog top module interface names.
+    @property
+    def dynamic_mode(self) -> bool:
+        """Get whether runtime-reprogrammable (dynamic) mode is enabled."""
+        return bool(self.get_nodeattr("dynamic_mode"))
 
-        Returns
-        -------
-        dict
-            Dictionary mapping interface types to interface names,
-            including optional AXI-Lite interface if dynamic_mode is enabled
+    def get_verilog_top_module_intf_names(self) -> dict[str, list[tuple[str, int]] | list[str]]:
+        """Return Verilog top module interface names.
+
+        Overloads the default implementation to add the optional AXI-Lite
+        control interface when dynamic_mode is enabled.
         """
-        # Overload default HLSCustomOp implementation to add axilite control IF
         intf_names = super().get_verilog_top_module_intf_names()
-        if self.get_nodeattr("dynamic_mode"):
+        if self.dynamic_mode:
             intf_names["axilite"] = ["s_axilite"]
         return intf_names
 
-    def get_template_values(self, ifm_dims, pads, chans, simd, idt):
+    def get_template_values(
+        self,
+        ifm_dims: list[int],
+        pads: list[int],
+        chans: int,
+        simd: int,
+        idt: BaseDataType,
+    ) -> dict[str, str | int]:
         """Calculate template parameter values for HDL generation.
 
         Parameters
@@ -115,161 +116,118 @@ class FMPadding_rtl(FMPadding, RTLBackend):
         dict
             Dictionary of template substitution values for HDL generation
         """
-        dimY, dimX = ifm_dims
-        padT, padL, padB, padR = pads
-        y_counter_bits = int(math.ceil(math.log2(padT + dimY + padB + 1)))
-        x_counter_bits = int(math.ceil(math.log2(padL + dimX + padR + 1)))
+        dim_y, dim_x = ifm_dims
+        pad_t, pad_l, pad_b, pad_r = pads
+        y_counter_bits = math.ceil(math.log2(pad_t + dim_y + pad_b + 1))
+        x_counter_bits = math.ceil(math.log2(pad_l + dim_x + pad_r + 1))
         topname = self.get_verilog_top_module_name()
         stream_bits = idt.bitwidth() * simd
         stream_bits = int(roundup_to_integer_multiple(stream_bits, 8))
-        code_gen_dict = {
-            "XCOUNTER_BITS": int(x_counter_bits),
-            "YCOUNTER_BITS": int(y_counter_bits),
+        return {
+            "XCOUNTER_BITS": x_counter_bits,
+            "YCOUNTER_BITS": y_counter_bits,
             "NUM_CHANNELS": int(chans),
             "SIMD": int(simd),
             "ELEM_BITS": idt.bitwidth(),
             "TOP_MODULE_NAME": topname,
-            "INIT_XON": int(padL),
-            "INIT_XOFF": int(padL + dimX),
-            "INIT_XEND": int(padL + dimX + padR - 1),
-            "INIT_YON": int(padT),
-            "INIT_YOFF": int(padT + dimY),
-            "INIT_YEND": int(padT + dimY + padB - 1),
+            "INIT_XON": int(pad_l),
+            "INIT_XOFF": int(pad_l + dim_x),
+            "INIT_XEND": int(pad_l + dim_x + pad_r - 1),
+            "INIT_YON": int(pad_t),
+            "INIT_YOFF": int(pad_t + dim_y),
+            "INIT_YEND": int(pad_t + dim_y + pad_b - 1),
             "STREAM_BITS": int(stream_bits),
         }
-        return code_gen_dict
 
-    def get_dynamic_config(self, ifm_dims=None, pads=None):
+    def get_dynamic_config(
+        self, ifm_dims: list[int] | None = None, pads: list[int] | None = None
+    ) -> dict[str, tuple[int, int]]:
         """Return a configuration dict to re-configure FM dimension and
         padding amounts during runtime.
         """
         if ifm_dims is None:
-            ifm_dims = self.get_nodeattr("ImgDim")
+            ifm_dims = self.img_dim
         if pads is None:
-            pads = self.get_nodeattr("Padding")
-        chans = self.get_nodeattr("NumChannels")
-        simd = self.get_nodeattr("SIMD")
-        idt = self.get_input_datatype()
-        code_gen_dict = self.get_template_values(ifm_dims, pads, chans, simd, idt)
-        config = {
-            "XON": (0 * 4, (code_gen_dict["INIT_XON"])),
-            "XOFF": (1 * 4, (code_gen_dict["INIT_XOFF"])),
-            "XEND": (2 * 4, (code_gen_dict["INIT_XEND"])),
-            "YON": (3 * 4, (code_gen_dict["INIT_YON"])),
-            "YOFF": (4 * 4, (code_gen_dict["INIT_YOFF"])),
-            "YEND": (5 * 4, (code_gen_dict["INIT_YEND"])),
+            pads = self.padding
+        code_gen_dict = self.get_template_values(
+            ifm_dims, pads, self.num_channels, self.simd, self.get_input_datatype()
+        )
+        return {
+            "XON": (0 * 4, int(code_gen_dict["INIT_XON"])),
+            "XOFF": (1 * 4, int(code_gen_dict["INIT_XOFF"])),
+            "XEND": (2 * 4, int(code_gen_dict["INIT_XEND"])),
+            "YON": (3 * 4, int(code_gen_dict["INIT_YON"])),
+            "YOFF": (4 * 4, int(code_gen_dict["INIT_YOFF"])),
+            "YEND": (5 * 4, int(code_gen_dict["INIT_YEND"])),
         }
-        return config
 
-    def generate_hdl(self, model, fpgapart, clk):
-        """Generate HDL code from templates for this node.
-
-        Parameters
-        ----------
-        model : ModelWrapper
-            ONNX model wrapper
-        fpgapart : str
-            Target FPGA part number
-        clk : float
-            Target clock frequency in ns
-        """
-        rtlsrc = os.path.join(get_settings().finn_rtllib, "fmpadding/hdl")
-        template_path = rtlsrc + "/fmpadding_template.v"
-        dims = self.get_nodeattr("ImgDim")
-        pads = self.get_nodeattr("Padding")
-        chans = self.get_nodeattr("NumChannels")
-        simd = self.get_nodeattr("SIMD")
-        idt = self.get_input_datatype()
-        code_gen_dict = self.get_template_values(dims, pads, chans, simd, idt)
+    def generate_hdl(self, model: ModelWrapper, fpgapart: str, clk: float) -> None:  # noqa: ARG002
+        """Generate HDL code from templates for this node."""
+        rtlsrc = Path(get_settings().finn_rtllib) / "fmpadding/hdl"
+        template_path = rtlsrc / "fmpadding_template.v"
+        code_gen_dict = self.get_template_values(
+            self.img_dim, self.padding, self.num_channels, self.simd, self.get_input_datatype()
+        )
         # save top module name so we can refer to it after this node has been renamed
         # (e.g. by GiveUniqueNodeNames(prefix) during MakeZynqProject)
         self.set_nodeattr("gen_top_module", self.get_verilog_top_module_name())
 
         # apply code generation to templates
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        with open(template_path) as f:
-            template = f.read()
-        for key_name in code_gen_dict:
-            key = "$%s$" % key_name
-            template = template.replace(key, str(code_gen_dict[key_name]))
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        template = template_path.read_text()
+        for key_name, value in code_gen_dict.items():
+            template = template.replace(f"${key_name}$", str(value))
 
-        with open(
-            os.path.join(code_gen_dir, self.get_verilog_top_module_name() + ".v"),
-            "w",
-        ) as f:
-            f.write(template)
+        (code_gen_dir / f"{self.get_verilog_top_module_name()}.v").write_text(template)
 
         sv_files = ["fmpadding_axi.sv", "fmpadding.sv", "axi2we.sv"]
         for sv_file in sv_files:
-            shutil.copy(rtlsrc + "/" + sv_file, code_gen_dir)
+            shutil.copy(rtlsrc / sv_file, code_gen_dir)
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
-        self.set_nodeattr("ipgen_path", code_gen_dir)
-        self.set_nodeattr("ip_path", code_gen_dir)
+        self.set_nodeattr("ipgen_path", str(code_gen_dir))
+        self.set_nodeattr("ip_path", str(code_gen_dir))
 
-    def get_rtl_file_list(self, abspath=False):
-        """Get list of RTL files required for this node.
+    def get_rtl_file_list(self, abspath: bool = False) -> list[str]:
+        """Return list of RTL files required for this node.
 
-        Parameters
-        ----------
-        abspath : bool
-            If True, return absolute file paths; otherwise return relative paths
-
-        Returns
-        -------
-        list of str
-            List of RTL file paths (4 files: fmpadding_axi.sv, fmpadding.sv,
-            axi2we.sv, generated .v file)
+        The list is four files: fmpadding_axi.sv, fmpadding.sv, axi2we.sv and
+        the generated .v file.
         """
         if abspath:
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(get_settings().finn_rtllib, "fmpadding/hdl/")
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen")) + "/"
+            rtllib_dir = str(Path(get_settings().finn_rtllib) / "fmpadding/hdl") + "/"
         else:
             code_gen_dir = ""
             rtllib_dir = ""
 
-        verilog_files = [
+        gen_top_module = cast("str", self.get_nodeattr("gen_top_module"))
+        return [
             rtllib_dir + "fmpadding_axi.sv",
             rtllib_dir + "fmpadding.sv",
             rtllib_dir + "axi2we.sv",
-            code_gen_dir + self.get_nodeattr("gen_top_module") + ".v",
+            code_gen_dir + gen_top_module + ".v",
         ]
-        return verilog_files
 
-    def code_generation_ipi(self):
-        """Construct and returns the TCL for node instantiation in Vivado IPI."""
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+    def code_generation_ipi(self) -> list[str]:
+        """Construct and return the TCL for node instantiation in Vivado IPI."""
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        gen_top_module = cast("str", self.get_nodeattr("gen_top_module"))
 
         sourcefiles = [
             "fmpadding_axi.sv",
             "fmpadding.sv",
             "axi2we.sv",
-            self.get_nodeattr("gen_top_module") + ".v",
+            gen_top_module + ".v",
         ]
+        sourcepaths = [str(code_gen_dir / f) for f in sourcefiles]
 
-        sourcefiles = [os.path.join(code_gen_dir, f) for f in sourcefiles]
-
-        cmd = []
-        for f in sourcefiles:
-            cmd += ["add_files -norecurse %s" % (f)]
-        cmd += [
-            "create_bd_cell -type module -reference %s %s"
-            % (self.get_nodeattr("gen_top_module"), self.onnx_node.name)
-        ]
+        cmd = [f"add_files -norecurse {f}" for f in sourcepaths]
+        cmd += [f"create_bd_cell -type module -reference {gen_top_module} {self.onnx_node.name}"]
         return cmd
 
-    def execute_node(self, context, graph):
-        """Execute this FMPadding node.
-
-        Performs feature map padding using C++ or RTL simulation.
-
-        Parameters
-        ----------
-        context : dict
-            Dictionary mapping tensor names to numpy arrays
-        graph : GraphProto
-            ONNX graph containing this node
-        """
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
+        """Execute this FMPadding node via C++ or RTL simulation."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             FMPadding.execute_node(self, context, graph)

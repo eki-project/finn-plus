@@ -68,10 +68,10 @@ from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInp
 from finn.custom_op.fpgadataflow.crop import Crop
 from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams
 from finn.custom_op.fpgadataflow.fmpadding import FMPadding
-from finn.custom_op.fpgadataflow.fmpadding_pixel import FMPadding_Pixel
 from finn.custom_op.fpgadataflow.globalaccpool import GlobalAccPool
 from finn.custom_op.fpgadataflow.hwsoftmax import HWSoftmax
 from finn.custom_op.fpgadataflow.inner_shuffle import InnerShuffle
+from finn.custom_op.fpgadataflow.input_dilation import InputDilation
 from finn.custom_op.fpgadataflow.labelselect import LabelSelect
 from finn.custom_op.fpgadataflow.layernorm import LayerNorm
 from finn.custom_op.fpgadataflow.lookup import Lookup
@@ -100,9 +100,9 @@ custom_op["ConvolutionInputGenerator"] = ConvolutionInputGenerator
 custom_op["Crop"] = Crop
 custom_op["DuplicateStreams"] = DuplicateStreams
 custom_op["FMPadding"] = FMPadding
-custom_op["FMPadding_Pixel"] = FMPadding_Pixel
 custom_op["GlobalAccPool"] = GlobalAccPool
 custom_op["InnerShuffle"] = InnerShuffle
+custom_op["InputDilation"] = InputDilation
 custom_op["LabelSelect"] = LabelSelect
 custom_op["LayerNorm"] = LayerNorm
 custom_op["Lookup"] = Lookup

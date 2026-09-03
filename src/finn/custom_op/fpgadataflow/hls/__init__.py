@@ -73,9 +73,9 @@ from finn.custom_op.fpgadataflow.hls.checksum_hls import CheckSum_hls
 from finn.custom_op.fpgadataflow.hls.concat_hls import StreamingConcat_hls
 from finn.custom_op.fpgadataflow.hls.crop_hls import Crop_hls
 from finn.custom_op.fpgadataflow.hls.duplicatestreams_hls import DuplicateStreams_hls
-from finn.custom_op.fpgadataflow.hls.fmpadding_pixel_hls import FMPadding_Pixel_hls
 from finn.custom_op.fpgadataflow.hls.globalaccpool_hls import GlobalAccPool_hls
 from finn.custom_op.fpgadataflow.hls.hwsoftmax_hls import HWSoftmax_hls
+from finn.custom_op.fpgadataflow.hls.input_dilation_hls import InputDilation_hls
 from finn.custom_op.fpgadataflow.hls.iodma_hls import IODMA_hls
 from finn.custom_op.fpgadataflow.hls.labelselect_hls import LabelSelect_hls
 from finn.custom_op.fpgadataflow.hls.layernorm_hls import LayerNorm_hls
@@ -98,8 +98,8 @@ from finn.custom_op.fpgadataflow.hls.vectorvectoractivation_hls import VVAU_hls
 custom_op["CheckSum_hls"] = CheckSum_hls
 custom_op["Crop_hls"] = Crop_hls
 custom_op["DuplicateStreams_hls"] = DuplicateStreams_hls
-custom_op["FMPadding_Pixel_hls"] = FMPadding_Pixel_hls
 custom_op["GlobalAccPool_hls"] = GlobalAccPool_hls
+custom_op["InputDilation_hls"] = InputDilation_hls
 custom_op["IODMA_hls"] = IODMA_hls
 custom_op["LabelSelect_hls"] = LabelSelect_hls
 custom_op["LayerNorm_hls"] = LayerNorm_hls

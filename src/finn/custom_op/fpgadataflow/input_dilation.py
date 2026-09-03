@@ -1,4 +1,4 @@
-# Copyright (C) 2023, Advanced Micro Devices, Inc.
+# Copyright (c) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -11,7 +11,7 @@
 #   this list of conditions and the following disclaimer in the documentation
 #   and/or other materials provided with the distribution.
 #
-# * Neither the name of FINN nor the names of its
+# * Neither the name of Xilinx nor the names of its
 #   contributors may be used to endorse or promote products derived from
 #   this software without specific prior written permission.
 #
@@ -26,7 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Feature-map zero-padding hardware custom operator."""
+"""Interior zero-padding (input dilation) hardware custom operator.
+
+This is neither an ONNX ``Pad``-style operator nor an ``Upsample``/``Resize``
+operator - it is the input-dilation step of a strided ``ConvTranspose``. See
+the ``InputDilation`` class docstring for details.
+"""
 
 import numpy as np
 from onnx import NodeProto
@@ -50,10 +55,41 @@ NodeAttrTypes = dict[
 ]
 
 
-class FMPadding(HWCustomOp):
-    """Abstraction layer for HW implementation of FMPadding.
+class InputDilation(HWCustomOp):
+    """Interior zero-padding (input dilation) of a feature map.
 
-    Pads the input image by the given amount.
+    This operator inserts ``Stride - 1`` rows/columns of zeros *between* every
+    pair of adjacent input pixels (per spatial axis), producing an output of
+    size ``odim = idim + (idim - 1) * (Stride - 1)``. The original pixels are
+    written at strided positions ``out[b, h * s_h, w * s_w, :] = in[b, h, w, :]``
+    and every gap is left at zero. The datatype is unchanged.
+
+    Relation to ONNX operators
+    --------------------------
+    The input-dilation (a.k.a. "fractionally-strided" or
+    "zero-insertion") is the first step of a strided ``ConvTranspose``. A stride-s
+    transposed convolution is equivalent to dilating the input with ``s - 1``
+    zeros between pixels and then running a stride-1 regular convolution. FINN
+    only produces this node when lowering ``ConvTranspose``:
+    ``InferPixelPaddingDeconv`` (in
+    ``finn.transformation.fpgadataflow.infer_pixel_padding_deconv``) rewrites a
+    ``ConvTranspose`` (NCHW) into ``InputDilation + Im2Col + MatMul`` (NHWC).
+
+    Node attributes
+    ---------------
+    ``ImgDim``
+        Input spatial size ``[H, W]``.
+    ``Stride``
+        Pixel spacing ``[H, W]``; ``Stride - 1`` zeros are inserted between
+        pixels along each axis. ``Stride = [1, 1]`` is the identity.
+    ``NumChannels`` / ``SIMD``
+        Channel count and channel-axis parallelism (``SIMD`` must divide
+        ``NumChannels``).
+    ``inputDataType``
+        FINN datatype of the elements; must be able to represent 0 since the
+        inserted values are zeros.
+    ``numInputVectors``
+        Batch size (input vectors processed per execution).
     """
 
     def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
@@ -64,13 +100,9 @@ class FMPadding(HWCustomOp):
         """Return nodeattr types."""
         my_attrs: NodeAttrTypes = {
             # spatial size of input images
-            "ImgDim": ("ints", True, []),  # [H, W] = [Y, X]
-            # total padding (per dimension) to apply
-            "Padding": (
-                "ints",
-                True,
-                [1, 1, 1, 1],
-            ),  # [H_begin, W_begin, H_end, W_end] = [Y_begin, X_begin, Y_end, X_end]
+            "ImgDim": ("ints", True, []),
+            # stride to apply, can be non-square
+            "Stride": ("ints", True, []),
             # number of channels in input image
             "NumChannels": ("i", True, 0),
             # SIMD Input parallelism
@@ -89,9 +121,9 @@ class FMPadding(HWCustomOp):
         return cast("list[int]", self.get_nodeattr("ImgDim"))
 
     @property
-    def padding(self) -> list[int]:
-        """Get the total padding [H_begin, W_begin, H_end, W_end]."""
-        return cast("list[int]", self.get_nodeattr("Padding"))
+    def stride(self) -> list[int]:
+        """Get the pixel-padding stride [H, W]."""
+        return cast("list[int]", self.get_nodeattr("Stride"))
 
     @property
     def num_channels(self) -> int:
@@ -111,10 +143,10 @@ class FMPadding(HWCustomOp):
     def get_padded_odim(self) -> list[int]:
         """Return the padded spatial size of the output."""
         idim_h, idim_w = self.img_dim
-        pad = self.padding
-        pad_h = pad[0] + pad[2]
-        pad_w = pad[1] + pad[3]
-        return [idim_h + pad_h, idim_w + pad_w]
+        stride_h, stride_w = self.stride
+        odim_h = idim_h + (idim_h - 1) * (stride_h - 1)
+        odim_w = idim_w + (idim_w - 1) * (stride_w - 1)
+        return [odim_h, odim_w]
 
     def get_exp_cycles(self) -> int:
         """Return exp cycles."""
@@ -173,7 +205,7 @@ class FMPadding(HWCustomOp):
         # is able to represent zeros
         if not ret.allowed(0):
             raise FINNUserError(
-                f"{self.onnx_node.name}: FMPadding DataType ({ret}) must support zero"
+                f"{self.onnx_node.name}: InputDilation DataType ({ret}) must support zero"
             )
         return ret
 
@@ -197,10 +229,22 @@ class FMPadding(HWCustomOp):
         Simulates the behavior with plain Python.
         """
         node = self.onnx_node
-        pad = self.padding
+        s_h, s_w = self.stride
         inp_values = context[node.input[0]]
-        oshape = context[node.output[0]].shape
-        result = np.pad(
-            inp_values, ((0, 0), (pad[0], pad[2]), (pad[1], pad[3]), (0, 0)), "constant"
+        ishape = inp_values.shape
+        result = np.zeros(
+            (
+                ishape[0],
+                ishape[1] + (ishape[1] - 1) * (s_h - 1),
+                ishape[2] + (ishape[2] - 1) * (s_w - 1),
+                ishape[3],
+            )
         )
+        for b in range(ishape[0]):
+            for h in range(ishape[1]):
+                for w in range(ishape[2]):
+                    oh = h * s_h
+                    ow = w * s_w
+                    result[b, oh, ow, :] = inp_values[b, h, w, :]
+        oshape = context[node.output[0]].shape
         context[node.output[0]] = np.asarray(result, dtype=np.float32).reshape(oshape)

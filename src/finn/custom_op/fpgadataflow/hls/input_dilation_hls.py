@@ -26,75 +26,71 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for fmpadding pixel hls."""
-from finn.custom_op.fpgadataflow.fmpadding_pixel import FMPadding_Pixel
+"""HLS backend implementation of the input-dilation operator."""
+
+import numpy as np
+from typing import TYPE_CHECKING
+
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.custom_op.fpgadataflow.input_dilation import InputDilation, NodeAttrTypes
+
+if TYPE_CHECKING:
+    from onnx import GraphProto, NodeProto
 
 
-class FMPadding_Pixel_hls(FMPadding_Pixel, HLSBackend):
-    """Class for FM Padding Pixel hls."""
+class InputDilation_hls(InputDilation, HLSBackend):
+    """HLS backend implementation of input dilation.
 
-    def __init__(self, onnx_node, **kwargs):
+    Uses the finn-hlslib ``FMPadding_Pixel_Nonsquare`` streamtools function.
+    """
+
+    def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {}
-        my_attrs.update(FMPadding_Pixel.get_nodeattr_types(self))
+        my_attrs: NodeAttrTypes = {}
+        my_attrs.update(InputDilation.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "streamtools.h"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
         odim_h, odim_w = self.get_padded_odim()
-        stride_h, stride_w = self.get_nodeattr("Stride")
+        stride_h, stride_w = self.stride
         self.code_gen_dict["$DEFINES$"] = [
+            f"""
+            #define OutputDim_x {odim_w}\n
+            #define OutputDim_y {odim_h}\n
+            #define Stride_x {stride_w}\n
+            #define Stride_y {stride_h}\n
+            #define NumChannels {self.num_channels}\n
+            #define SIMD {self.simd}\n
             """
-            #define OutputDim_x {}\n
-            #define OutputDim_y {}\n
-            #define Stride_x {}\n
-            #define Stride_y {}\n
-            #define NumChannels {}\n
-            #define SIMD {}\n
-            """.format(
-                odim_w,
-                odim_h,
-                stride_w,
-                stride_h,
-                self.get_nodeattr("NumChannels"),
-                self.get_nodeattr("SIMD"),
-            )
         ]
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Return docompute."""
         in_t = self.get_input_datatype().get_hls_datatype_str()
-        odim_h, odim_w = self.get_padded_odim()
-        stride_h, stride_w = self.get_nodeattr("Stride")
         hls_call = "FMPadding_Pixel_Nonsquare"
         self.code_gen_dict["$DOCOMPUTE$"] = [
             f"""{hls_call}<OutputDim_x, OutputDim_y, Stride_x, Stride_y, NumChannels,
             SIMD, {in_t}> (in0_V, out0_V);"""
         ]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        packed_bits = self.get_instream_width()
-        packed_hls_type = "ap_uint<%d>" % packed_bits
+        packed_hls_type = f"ap_uint<{self.get_instream_width()}>"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            "void %s(hls::stream<%s > &in0_V, hls::stream<%s > &out0_V)"
-            % (
-                self.onnx_node.name,
-                packed_hls_type,
-                packed_hls_type,
-            )
+            f"void {self.onnx_node.name}(hls::stream<{packed_hls_type} > &in0_V, "
+            f"hls::stream<{packed_hls_type} > &out0_V)"
         ]
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute node."""
         HLSBackend.execute_node(self, context, graph)

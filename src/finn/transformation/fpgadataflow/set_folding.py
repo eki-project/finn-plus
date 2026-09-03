@@ -74,10 +74,13 @@ def common_divisors(numbers: list[int]) -> np.ndarray:
 
 # Find the op-type names for all HLS specializations of elementwise binary
 # operations
+# Note: filter on __module__ so module-level type aliases (which pass
+# inspect.isclass as types.GenericAlias) and imported classes are skipped
 ELEMENTWISE_BINARY_OPS = [
     op_type
     for op_type, cls in inspect.getmembers(elementwise_binary_hls, inspect.isclass)
-    if issubclass(cls, elementwise_binary_hls.ElementwiseBinaryOperation_hls)
+    if getattr(cls, "__module__", None) == elementwise_binary_hls.__name__
+    and issubclass(cls, elementwise_binary_hls.ElementwiseBinaryOperation_hls)
 ]
 
 
@@ -177,7 +180,7 @@ class SetFolding(Transformation):
         # setting parallel_window=1 mode after maxing out SIMD
         simd_ops = [
             "FMPadding_rtl",
-            "FMPadding_Pixel_hls",
+            "InputDilation_hls",
             "ConvolutionInputGenerator_rtl",
             # Streaming Split and Concat are SIMD operations
             "StreamingSplit_hls",
