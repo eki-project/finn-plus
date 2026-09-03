@@ -26,76 +26,82 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for vectorvectoractivation hls."""
+"""HLS backend implementation of the Vector-Vector Activation Unit (VVAU)."""
+
 import math
 import numpy as np
-import os
+from onnx import GraphProto, NodeProto
+from pathlib import Path
 from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import cast
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU
+from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU, NodeAttrTypes
 from finn.util.basic import is_versal
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.util.exception import FINNInternalError, FINNUserError
+
+_MEM_MODES = ("internal_embedded", "internal_decoupled", "external")
 
 
 class VVAU_hls(VVAU, HLSBackend):
-    """Corresponds to finn-hlslib Vector_Vector_Activate_Batch function"""
+    """Corresponds to finn-hlslib Vector_Vector_Activate_Batch function."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(VVAU.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def lut_estimation(self):
-        """Calculates resource estimations for LUTs based on:
-        - FINN-R: An End-to-End Deep-Learning Framework for Fast
-        Exploration of Quantized Neural Networks
-        - M. Blott, T. B. Preusser, N. J. Fraser, G. Gambardella, K. O'Brien,
-        Y. Umuroglu, M. Leeser and K. Vissers
-        - 12. Sep 2018
+    def _uses_weight_stream(self) -> bool:
+        """Return whether the weights arrive over a stream (in1_V)."""
+        return self.mem_mode in ("internal_decoupled", "external")
+
+    def lut_estimation(self) -> int:
+        """Calculate resource estimations for LUTs.
+
+        Based on: FINN-R: An End-to-End Deep-Learning Framework for Fast
+        Exploration of Quantized Neural Networks - M. Blott, T. B. Preusser,
+        N. J. Fraser, G. Gambardella, K. O'Brien, Y. Umuroglu, M. Leeser and
+        K. Vissers - 12. Sep 2018.
         """
         # TODO add in/out FIFO contributions
-        P = self.get_nodeattr("PE")
-        Q = self.get_nodeattr("SIMD")
-        wdt = self.get_input_datatype(1)
-        W = wdt.bitwidth()
+        p = self.pe
+        q = self.simd
+        w = self.get_input_datatype(1).bitwidth()
         # determine tdt with input and weight data types
         idt = self.get_input_datatype(0)
-        A = idt.bitwidth()
+        a = idt.bitwidth()
         # parameters from experiments in paper mentioned above
         c0 = 300
         c1 = 1.1
         c2 = 0
-        mmode = self.get_nodeattr("mem_mode")
-        mstyle = self.get_nodeattr("ram_style")
+        mmode = self.mem_mode
+        mstyle = self.ram_style
         if (mmode == "internal_decoupled" and mstyle == "distributed") or (
             mmode == "internal_embedded" and self.calc_wmem() <= 128
         ):
-            c2 = (P * Q * W) * math.ceil(self.calc_wmem() / 64)
+            c2 = (p * q * w) * math.ceil(self.calc_wmem() / 64)
 
         # multiplication
-        res_type = self.get_nodeattr("resType")
-        if res_type == "dsp":
-            mult_luts = 0
-        else:
-            mult_luts = Q * (2 * math.ceil((W + A) / 6) - 1) * (W + A)
+        res_type = self.res_type
+        mult_luts = 0 if res_type == "dsp" else q * (2 * math.ceil((w + a) / 6) - 1) * (w + a)
         # adder tree
-        addertree_luts = (W + A) * (2 * Q - 1)
+        addertree_luts = (w + a) * (2 * q - 1)
         # accumulator
         acc_datatype = self.get_accumulator_datatype()
-        acc_bits = acc_datatype.bitwidth()
-        k_h, k_w = self.get_nodeattr("Kernel")
+        k_h, k_w = self.kernel
         # if accDataType is not set, then it will default to INT32, which would
         # be a large overestimate in most (if not all) cases. In this scenario,
         # we would use the minimum accumulator as determined by the data types
         # bound, derived in https://arxiv.org/abs/2301.13376
-        alpha = math.log(k_h * k_w, 2) + W + A - 1 - int(idt.signed())
+        alpha = math.log(k_h * k_w, 2) + w + a - 1 - int(idt.signed())
         acc_bits = min(
             acc_datatype.bitwidth(),
             np.ceil(alpha + math.log(1 + pow(2, -alpha), 2) + 1),
@@ -104,61 +110,57 @@ class VVAU_hls(VVAU, HLSBackend):
         # thresholds and threshold comparators
         thr_luts = 0
         comp_luts = 0
-        noact = self.get_nodeattr("noActivation")
+        noact = self.no_activation
         # TODO - add 'ram_style_threshold' node attribute
         if noact == 0:
             odt = self.get_output_datatype()
-            B = odt.bitwidth()
-            thr_luts = (2**B - 1) * acc_bits * self.calc_tmem() / 64
-            comp_luts = (2**B - 1) * acc_bits
+            b = odt.bitwidth()
+            thr_luts = (2**b - 1) * acc_bits * self.calc_tmem() / 64
+            comp_luts = (2**b - 1) * acc_bits
 
         return int(
-            c0 + c1 * (P * (mult_luts + addertree_luts + acc_luts + thr_luts + comp_luts)) + c2
+            c0 + c1 * (p * (mult_luts + addertree_luts + acc_luts + thr_luts + comp_luts)) + c2
         )
 
-    def dsp_estimation(self, fpgapart):
-        # multiplication
+    def dsp_estimation(self, fpgapart: str) -> int:  # noqa: ARG002
         """Return dsp estimation."""
-        P = self.get_nodeattr("PE")
-        res_type = self.get_nodeattr("resType")
-        wdt = self.get_input_datatype(1)
-        W = wdt.bitwidth()
-        idt = self.get_input_datatype(0)
-        A = idt.bitwidth()
-        if res_type == "dsp":
-            mult_dsp = P * np.ceil((W + A) / 48)  # TODO: more accurate modelling
-        else:
-            mult_dsp = 0
+        # multiplication
+        p = self.pe
+        res_type = self.res_type
+        w = self.get_input_datatype(1).bitwidth()
+        a = self.get_input_datatype(0).bitwidth()
+        # TODO: more accurate modelling
+        mult_dsp = p * np.ceil((w + a) / 48) if res_type == "dsp" else 0
         return int(mult_dsp)
 
-    def execute_node(self, context, graph):
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: GraphProto
+    ) -> None:  # noqa: ARG002
         """Execute node."""
         mode = self.get_nodeattr("exec_mode")
-        mem_mode = self.get_nodeattr("mem_mode")
+        mem_mode = self.mem_mode
         node = self.onnx_node
 
         # TODO ensure codegen dir exists
         if mode == "cppsim":
-            code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_cppsim"))
         elif mode == "rtlsim":
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
         else:
-            raise Exception(
-                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
-            has to be set to one of the following value ("cppsim", "rtlsim")"""
+            raise FINNInternalError(
+                f"Invalid value for attribute exec_mode! Is currently set to: {mode} "
+                'has to be set to one of the following value ("cppsim", "rtlsim")'
             )
 
-        # create a npy file fore each input of the node (in_ind is input index)
-        in_ind = 0
-        for inputs in node.input:
+        export_idt = self.get_input_datatype(0)
+        # create a npy file for each input of the node (in_ind is input index)
+        for in_ind, inputs in enumerate(node.input):
             # it is assumed that the first input of the node is the data input
             # the second input are the weights
             # the third input are the thresholds
             if in_ind == 0:
-                assert (
-                    str(context[inputs].dtype) == "float32"
-                ), """Input datatype is
-                not float32 as expected."""
+                if str(context[inputs].dtype) != "float32":
+                    raise FINNInternalError("Input datatype is not float32 as expected.")
                 expected_inp_shape = self.get_folded_input_shape()
                 reshaped_input = context[inputs].reshape(expected_inp_shape)
                 if self.get_input_datatype(0) == DataType["BIPOLAR"]:
@@ -169,13 +171,9 @@ class VVAU_hls(VVAU, HLSBackend):
                     export_idt = self.get_input_datatype(0)
                 # make copy before saving the array
                 reshaped_input = reshaped_input.copy()
-                np.save(
-                    os.path.join(code_gen_dir, f"input_{in_ind}.npy"),
-                    reshaped_input,
-                )
+                np.save(Path(code_gen_dir) / f"input_{in_ind}.npy", reshaped_input)
             elif in_ind > 2:
-                raise Exception("Unexpected input found for VectorVectorActivation")
-            in_ind += 1
+                raise FINNInternalError("Unexpected input found for VectorVectorActivation")
 
         if mode == "cppsim":
             # execute the precompiled model
@@ -187,16 +185,15 @@ class VVAU_hls(VVAU, HLSBackend):
                 out = context[node.output[0]]
                 out = 2 * out - 1
                 context[node.output[0]] = out
-            assert (
-                context[node.output[0]].shape == self.get_normal_output_shape()
-            ), "cppsim did not produce expected output shape"
+            if context[node.output[0]].shape != self.get_normal_output_shape():
+                raise FINNInternalError("cppsim did not produce expected output shape")
         elif mode == "rtlsim":
             sim = self.get_rtlsim()
             nbits = self.get_instream_width(0)
             inp = npy_to_rtlsim_input(f"{code_gen_dir}/input_0.npy", export_idt, nbits)
             super().reset_rtlsim(sim)
 
-            if mem_mode == "external" or mem_mode == "internal_decoupled":
+            if mem_mode in ("external", "internal_decoupled"):
                 wnbits = self.get_instream_width(1)
                 export_wdt = self.get_input_datatype(1)
                 # we have converted bipolar weights to binary for export,
@@ -204,7 +201,7 @@ class VVAU_hls(VVAU, HLSBackend):
                 if self.get_input_datatype(1) == DataType["BIPOLAR"]:
                     export_wdt = DataType["BINARY"]
                 wei = npy_to_rtlsim_input(f"{code_gen_dir}/weights.npy", export_wdt, wnbits)
-                dim_h, dim_w = self.get_nodeattr("Dim")
+                dim_h, dim_w = self.dim
                 num_w_reps = dim_h * dim_w
 
                 io_dict = {
@@ -232,99 +229,95 @@ class VVAU_hls(VVAU, HLSBackend):
             output = np.asarray([output], dtype=np.float32).reshape(*oshape)
             context[node.output[0]] = output
         else:
-            raise Exception(
-                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
-            has to be set to one of the following value ("cppsim", "rtlsim")"""
+            raise FINNInternalError(
+                f"Invalid value for attribute exec_mode! Is currently set to: {mode} "
+                'has to be set to one of the following value ("cppsim", "rtlsim")'
             )
 
-    def code_generation_ipgen(self, model, fpgapart, clk):
-        """Generates c++ code and tcl script for ip generation."""
+    def code_generation_ipgen(self, model: ModelWrapper, fpgapart: str, clk: float) -> None:
+        """Generate C++ code and tcl script for IP generation."""
         super().code_generation_ipgen(model, fpgapart, clk)
-        mem_mode = self.get_nodeattr("mem_mode")
+        mem_mode = self.mem_mode
         if mem_mode == "internal_decoupled":
-            if self.get_nodeattr("ram_style") == "ultra" and not is_versal(fpgapart):
-                runtime_writeable = self.get_nodeattr("runtime_writeable_weights")
-                assert (
-                    runtime_writeable == 1
-                ), """Layer with URAM weights must have runtime_writeable_weights=1
-                    if Ultrascale device is targeted."""
+            if (
+                self.ram_style == "ultra"
+                and not is_versal(fpgapart)
+                and self.runtime_writeable_weights != 1
+            ):
+                raise FINNUserError(
+                    "Layer with URAM weights must have runtime_writeable_weights=1 "
+                    "if an Ultrascale device is targeted."
+                )
             self.generate_hdl_memstream(fpgapart)
 
-    def get_template_param_values(self):
-        """Returns the template parameter values according to input, output and weight
-        data types."""
-        ret = dict()
+    def get_template_param_values(self) -> dict[str, str]:
+        """Return the template parameter values according to input, output and weight data types."""
+        ret: dict[str, str] = {}
         inp_hls_str = self.get_input_datatype(0).get_hls_datatype_str()
         out_hls_str = self.get_output_datatype().get_hls_datatype_str()
         inp_is_binary = self.get_input_datatype(0) == DataType["BINARY"]
-        # out_is_binary = self.get_output_datatype() == DataType["BINARY"]
         wt_is_binary = self.get_input_datatype(1) == DataType["BINARY"]
-        bin_xnor_mode = self.get_nodeattr("binaryXnorMode") == 1
+        bin_xnor_mode = self.binary_xnor_mode == 1
         if (inp_is_binary or wt_is_binary) and (not bin_xnor_mode):
-            raise Exception("True binary (non-bipolar) inputs not yet supported")
+            raise FINNUserError("True binary (non-bipolar) inputs not yet supported")
         inp_is_bipolar = self.get_input_datatype(0) == DataType["BIPOLAR"]
-        # out_is_bipolar = self.get_output_datatype() == DataType["BIPOLAR"]
         wt_is_bipolar = self.get_input_datatype(1) == DataType["BIPOLAR"]
-        # reinterpret inp/wt as bipolar if bin_xnor_mode is iset
+        # reinterpret inp/wt as bipolar if bin_xnor_mode is set
         inp_is_bipolar = inp_is_bipolar or (inp_is_binary and bin_xnor_mode)
         wt_is_bipolar = wt_is_bipolar or (wt_is_binary and bin_xnor_mode)
         # fill in TSrcI and TWeightI
-        # TODO check these with Giulio
         # TODO handle non-bipolar binary inputs
         if inp_is_bipolar and wt_is_bipolar:
             ret["TSrcI"] = "Recast<XnorMul>"
             ret["TWeightI"] = "Identity"
         elif (not inp_is_bipolar) and wt_is_bipolar:
-            ret["TSrcI"] = "Slice<%s>" % inp_hls_str
+            ret["TSrcI"] = f"Slice<{inp_hls_str}>"
             ret["TWeightI"] = "Recast<Binary>"
         elif inp_is_bipolar and (not wt_is_bipolar):
             ret["TSrcI"] = "Recast<Binary>"
             ret["TWeightI"] = "Identity"
         elif (not inp_is_bipolar) and (not wt_is_bipolar):
-            ret["TSrcI"] = "Slice<%s>" % inp_hls_str
+            ret["TSrcI"] = f"Slice<{inp_hls_str}>"
             ret["TWeightI"] = "Identity"
 
         # fill in TDstI
-        ret["TDstI"] = "Slice<%s>" % out_hls_str
+        ret["TDstI"] = f"Slice<{out_hls_str}>"
 
         return ret
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "weights.hpp"']
         self.code_gen_dict["$GLOBALS$"] += ['#include "activations.hpp"']
-        mem_mode = self.get_nodeattr("mem_mode")
-        if mem_mode not in ["internal_embedded", "internal_decoupled", "external"]:
-            raise Exception(
-                """Please set mem_mode to "internal_embedded", "internal_decoupled", or "external",
-                currently no other parameter value is supported!"""
+        if self.mem_mode not in _MEM_MODES:
+            raise FINNInternalError(
+                'Please set mem_mode to "internal_embedded", "internal_decoupled", or "external", '
+                "currently no other parameter value is supported!"
             )
         if self.calc_tmem() != 0:
             self.code_gen_dict["$GLOBALS$"] += ['#include "thresh.h"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        dim_h, dim_w = self.get_nodeattr("Dim")
-        numReps = 1 * dim_h * dim_w
-        k_h, k_w = self.get_nodeattr("Kernel")
-        innerProdDim = k_h * k_w
-        mem_mode = self.get_nodeattr("mem_mode")
+        dim_h, dim_w = self.dim
+        num_reps = 1 * dim_h * dim_w
+        k_h, k_w = self.kernel
+        inner_prod_dim = k_h * k_w
+        mem_mode = self.mem_mode
 
         self.code_gen_dict["$DEFINES$"] = [
-            """#define Channels1 {}\n #define InnerProdDim {}\n
-            #define SIMD1 {}\n #define PE1 {}\n #define numReps {}""".format(
-                self.get_nodeattr("Channels"),
-                innerProdDim,
-                self.get_nodeattr("SIMD"),
-                self.get_nodeattr("PE"),
-                numReps,
-            )
+            f"#define Channels1 {self.channels}\n"
+            f" #define InnerProdDim {inner_prod_dim}\n"
+            "\n"
+            f"            #define SIMD1 {self.simd}\n"
+            f" #define PE1 {self.pe}\n"
+            f" #define numReps {num_reps}"
         ]
-        if mem_mode == "internal_decoupled" or mem_mode == "external":
+        if mem_mode in ("internal_decoupled", "external"):
             wdt = self.get_input_datatype(1)
             self.code_gen_dict["$DEFINES$"].append(f"#define WP1 {wdt.bitwidth()}\n")
 
-    def read_npy_data(self):
+    def read_npy_data(self) -> None:
         """Return read npy data."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_input_datatype(0)
@@ -333,47 +326,35 @@ class VVAU_hls(VVAU, HLSBackend):
             dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_instream_width(0)
-        packed_hls_type = "ap_uint<%d>" % packed_bits
+        packed_hls_type = f"ap_uint<{packed_bits}>"
         elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "float"
-        npy_in = "%s/input_0.npy" % code_gen_dir
+        npy_in = f"{code_gen_dir}/input_0.npy"
         self.code_gen_dict["$READNPYDATA$"] = []
         # note: the innermost dim is reversed for the input
         self.code_gen_dict["$READNPYDATA$"].append(
-            'npy2apintstream<%s, %s, %d, %s>("%s", in0_V, false);'
-            % (
-                packed_hls_type,
-                elem_hls_type,
-                elem_bits,
-                npy_type,
-                npy_in,
-            )
+            f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>("
+            f'"{npy_in}", in0_V, false);'
         )
 
-        mem_mode = self.get_nodeattr("mem_mode")
-        if mem_mode == "internal_decoupled" or mem_mode == "external":
+        mem_mode = self.mem_mode
+        if mem_mode in ("internal_decoupled", "external"):
             wdt = self.get_input_datatype(1)
             elem_bits = wdt.bitwidth()
             packed_bits = self.get_instream_width(1)
-            packed_hls_type = "ap_uint<%d>" % packed_bits
+            packed_hls_type = f"ap_uint<{packed_bits}>"
             elem_hls_type = wdt.get_hls_datatype_str()
             npy_type = "float"
-            npy_in = "%s/weights.npy" % code_gen_dir
+            npy_in = f"{code_gen_dir}/weights.npy"
 
             self.code_gen_dict["$READNPYDATA$"].append(
-                'npy2apintstream<%s, %s, %d, %s>("%s", in1_V, false, numReps);'
-                % (
-                    packed_hls_type,
-                    elem_hls_type,
-                    elem_bits,
-                    npy_type,
-                    npy_in,
-                )
+                f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>("
+                f'"{npy_in}", in1_V, false, numReps);'
             )
 
-    def strm_decl(self):
+    def strm_decl(self) -> None:
         """Return strm decl."""
-        mem_mode = self.get_nodeattr("mem_mode")
+        mem_mode = self.mem_mode
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
             f'hls::stream<ap_uint<{self.get_instream_width(0)}>> in0_V ("in0_V");'
@@ -381,63 +362,50 @@ class VVAU_hls(VVAU, HLSBackend):
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
             f'hls::stream<ap_uint<{self.get_outstream_width()}>> out0_V ("out0_V");'
         )
-        if mem_mode == "internal_decoupled" or mem_mode == "external":
+        if mem_mode in ("internal_decoupled", "external"):
             self.code_gen_dict["$STREAMDECLARATIONS$"].append(
                 f'hls::stream<ap_uint<{self.get_instream_width(1)}>> in1_V ("in1_V");'
             )
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Return docompute."""
-        mem_mode = self.get_nodeattr("mem_mode")
+        mem_mode = self.mem_mode
         map_to_hls_mult_style = {
             "auto": "ap_resource_dflt()",
             "lut": "ap_resource_lut()",
             "dsp": "ap_resource_dsp()",
         }
         tmpl_args = self.get_template_param_values()
+        tsrci, tdsti, tweighti = tmpl_args["TSrcI"], tmpl_args["TDstI"], tmpl_args["TWeightI"]
         if self.calc_tmem() == 0:
             odtype_hls_str = self.get_output_datatype().get_hls_datatype_str()
-            threshs = "PassThroughActivation<%s>()" % odtype_hls_str
+            threshs = f"PassThroughActivation<{odtype_hls_str}>()"
         else:
             threshs = "threshs"
+        mult_style = map_to_hls_mult_style[self.res_type]
 
         if mem_mode == "internal_embedded":
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                """Vector_Vector_Activate_Batch<Channels1, InnerProdDim, SIMD1, PE1, 1, {}, {}, {}>
-                (in0_V, out0_V, weights, {}, numReps, {});""".format(
-                    tmpl_args["TSrcI"],
-                    tmpl_args["TDstI"],
-                    tmpl_args["TWeightI"],
-                    threshs,
-                    map_to_hls_mult_style[self.get_nodeattr("resType")],
-                )
+                f"Vector_Vector_Activate_Batch<Channels1, InnerProdDim, SIMD1, PE1, 1, "
+                f"{tsrci}, {tdsti}, {tweighti}>\n"
+                f"                (in0_V, out0_V, weights, {threshs}, numReps, {mult_style});"
             ]
-        elif mem_mode == "internal_decoupled" or mem_mode == "external":
+        elif mem_mode in ("internal_decoupled", "external"):
             wdt = self.get_input_datatype(1)
-            if wdt == DataType["BIPOLAR"]:
-                export_wdt = DataType["BINARY"]
-            else:
-                export_wdt = wdt
+            export_wdt = DataType["BINARY"] if wdt == DataType["BIPOLAR"] else wdt
             wdtype_hls_str = export_wdt.get_hls_datatype_str()
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                """{}<Channels1, InnerProdDim, SIMD1, PE1, 1, {}, {}, {}, {}>
-                (in0_V, out0_V, in1_V, {}, numReps, {});""".format(
-                    "Vector_Vector_Activate_Stream_Batch",
-                    tmpl_args["TSrcI"],
-                    tmpl_args["TDstI"],
-                    tmpl_args["TWeightI"],
-                    wdtype_hls_str,
-                    threshs,
-                    map_to_hls_mult_style[self.get_nodeattr("resType")],
-                )
+                f"Vector_Vector_Activate_Stream_Batch<Channels1, InnerProdDim, SIMD1, PE1, 1, "
+                f"{tsrci}, {tdsti}, {tweighti}, {wdtype_hls_str}>\n"
+                f"                (in0_V, out0_V, in1_V, {threshs}, numReps, {mult_style});"
             ]
         else:
-            raise Exception(
-                """Please set mem_mode to "internal_embedded", "internal_decoupled", or "external",
-                currently no other parameter value is supported!"""
+            raise FINNInternalError(
+                'Please set mem_mode to "internal_embedded", "internal_decoupled", or "external", '
+                "currently no other parameter value is supported!"
             )
 
-    def dataoutstrm(self):
+    def dataoutstrm(self) -> None:
         """Return dataoutstrm."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
@@ -446,24 +414,17 @@ class VVAU_hls(VVAU, HLSBackend):
             dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_outstream_width()
-        packed_hls_type = "ap_uint<%d>" % packed_bits
+        packed_hls_type = f"ap_uint<{packed_bits}>"
         elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "float"
-        npy_out = "%s/output_0.npy" % code_gen_dir
+        npy_out = f"{code_gen_dir}/output_0.npy"
         shape = self.get_folded_output_shape()
         shape_cpp_str = str(shape).replace("(", "{").replace(")", "}")
 
         # note: the innermost dim is not reversed for the output
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
-            'apintstream2npy<%s, %s, %d, %s>(out0_V, %s, "%s", false);'
-            % (
-                packed_hls_type,
-                elem_hls_type,
-                elem_bits,
-                npy_type,
-                shape_cpp_str,
-                npy_out,
-            )
+            f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>("
+            f'out0_V, {shape_cpp_str}, "{npy_out}", false);'
         ]
 
     def save_as_npy(self) -> None:
@@ -472,7 +433,7 @@ class VVAU_hls(VVAU, HLSBackend):
 
     def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        mem_mode = self.get_nodeattr("mem_mode")
+        mem_mode = self.mem_mode
         if mem_mode == "internal_embedded":
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
                 f"""void {self.onnx_node.name}(
@@ -480,7 +441,7 @@ class VVAU_hls(VVAU, HLSBackend):
                 hls::stream<ap_uint<{self.get_outstream_width()}>> &out0_V
                 )"""
             ]
-        elif mem_mode == "internal_decoupled" or mem_mode == "external":
+        elif mem_mode in ("internal_decoupled", "external"):
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
                 f"""void {self.onnx_node.name}(
                     hls::stream<ap_uint<{self.get_instream_width(0)}>> &in0_V,
@@ -489,14 +450,14 @@ class VVAU_hls(VVAU, HLSBackend):
                     )"""
             ]
         else:
-            raise Exception(
-                """Please set mem_mode to "internal_embedded" or "internal_decoupled",
-                    currently no other parameter value is supported!"""
+            raise FINNInternalError(
+                'Please set mem_mode to "internal_embedded" or "internal_decoupled", '
+                "currently no other parameter value is supported!"
             )
 
     def pragmas(self) -> None:
         """Return pragmas."""
-        mem_mode = self.get_nodeattr("mem_mode")
+        mem_mode = self.mem_mode
         self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0_V"]
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
@@ -508,12 +469,12 @@ class VVAU_hls(VVAU, HLSBackend):
             self.code_gen_dict["$PRAGMAS$"].append(
                 "#pragma HLS ARRAY_PARTITION variable=weights.m_weights complete dim=1"
             )
-        elif mem_mode == "internal_decoupled" or mem_mode == "external":
+        elif mem_mode in ("internal_decoupled", "external"):
             self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=in1_V")
         else:
-            raise Exception(
-                """Please set mem_mode to "internal_embedded", "internal_decoupled", or external,
-                currently no other parameter value is supported!"""
+            raise FINNInternalError(
+                'Please set mem_mode to "internal_embedded", "internal_decoupled", or external, '
+                "currently no other parameter value is supported!"
             )
 
         if self.calc_tmem() != 0:
@@ -525,20 +486,23 @@ class VVAU_hls(VVAU, HLSBackend):
                 "#pragma HLS ARRAY_PARTITION variable=threshs.m_thresholds complete dim=3"
             )
 
-    def minimize_weight_bit_width(self, model) -> BaseDataType:
+    def minimize_weight_bit_width(self, model: ModelWrapper) -> BaseDataType:
         """Minimize weight and threshold datatypes, with HLS-specific adjustments.
 
         The HLS implementation uses the threshold datatype for comparisons.
         When the threshold datatype is narrower than the accumulator datatype,
         accumulator values get truncated, which can cause incorrect results.
         To prevent this, ensure threshold datatype is at least as wide as
-        accumulator datatype."""
+        accumulator datatype.
+        """
         # First, call the base class implementation to minimize weight datatype
         wdt = super().minimize_weight_bit_width(model)
 
         # Minimize threshold datatype if node has thresholds (noActivation=0)
-        if self.get_nodeattr("noActivation") == 0 and len(self.onnx_node.input) > 2:
+        if self.no_activation == 0 and len(self.onnx_node.input) > 2:
             thresholds = model.get_initializer(self.onnx_node.input[2])
+            if not isinstance(thresholds, np.ndarray):
+                return wdt
             acc_dt = self.get_accumulator_datatype()
 
             # Only minimize if accumulator and thresholds are integer
@@ -547,8 +511,8 @@ class VVAU_hls(VVAU, HLSBackend):
                 and model.get_tensor_datatype(self.onnx_node.input[2]).is_integer()
             ):
                 # Use double precision for intermediate calculations to prevent overflow
-                min_threshold = np.float64(thresholds.min())
-                max_threshold = np.float64(thresholds.max())
+                min_threshold = float(thresholds.min())
+                max_threshold = float(thresholds.max())
                 # Check if accumulator datatype is signed
                 acc_is_signed = acc_dt.signed()
                 if min_threshold < 0:
@@ -556,13 +520,12 @@ class VVAU_hls(VVAU, HLSBackend):
                         tdt = DataType.get_smallest_possible(min_threshold)
                     else:
                         tdt = DataType.get_smallest_possible(-max_threshold - 1)
+                elif acc_is_signed:
+                    # If accumulator is signed, use a signed threshold datatype
+                    # even if thresholds are positive
+                    tdt = DataType.get_smallest_possible(-max_threshold - 1)
                 else:
-                    # If accumulator is signed,
-                    # use signed threshold datatype even if thresholds are positive
-                    if acc_is_signed:
-                        tdt = DataType.get_smallest_possible(-max_threshold - 1)
-                    else:
-                        tdt = DataType.get_smallest_possible(max_threshold)
+                    tdt = DataType.get_smallest_possible(max_threshold)
 
                 # HLS-specific: ensure threshold datatype is at least as wide as
                 # accumulator datatype to prevent truncation during comparison
@@ -571,21 +534,20 @@ class VVAU_hls(VVAU, HLSBackend):
 
                 # Verify thresholds can be expressed with the chosen type
                 threshold_tensor = self.get_hw_compatible_threshold_tensor(thresholds)
-                assert np.vectorize(tdt.allowed)(
-                    threshold_tensor
-                ).all(), "Thresholds can't be expressed with type %s" % str(tdt)
+                if not np.vectorize(tdt.allowed)(threshold_tensor).all():
+                    raise FINNInternalError(f"Thresholds can't be expressed with type {tdt!s}")
 
                 # Update threshold datatype
                 model.set_tensor_datatype(self.onnx_node.input[2], tdt)
 
         return wdt
 
-    def instantiate_ip(self, cmd):
-        # instantiate the HLS IP
+    def instantiate_ip(self, cmd: list[str]) -> None:
         """Return instantiate ip."""
+        # instantiate the HLS IP
         vlnv = self.get_nodeattr("ip_vlnv")
         node_name = self.onnx_node.name
-        if self.get_nodeattr("mem_mode") == "internal_decoupled":
-            cmd.append("create_bd_cell -type ip -vlnv %s /%s/%s" % (vlnv, node_name, node_name))
+        if self.mem_mode == "internal_decoupled":
+            cmd.append(f"create_bd_cell -type ip -vlnv {vlnv} /{node_name}/{node_name}")
         else:
-            cmd.append("create_bd_cell -type ip -vlnv %s %s" % (vlnv, node_name))
+            cmd.append(f"create_bd_cell -type ip -vlnv {vlnv} {node_name}")

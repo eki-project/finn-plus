@@ -26,27 +26,41 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for upsampler."""
+"""Nearest-neighbour upsampling hardware custom operator."""
+
 import numpy as np
 import onnxruntime as rt
-from onnx import TensorProto, helper
-from qonnx.core.datatype import DataType
+from onnx import NodeProto, TensorProto, helper
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
 
 
 class UpsampleNearestNeighbour(HWCustomOp):
     """Abstraction layer for HW implementation of UpsampleNearestNeighbour."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             "SIMD": ("i", True, 0),
             # Height, width of the output feature map
             "HO": ("i", True, 0),
@@ -64,89 +78,102 @@ class UpsampleNearestNeighbour(HWCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_exp_cycles(self):
+    @property
+    def simd(self) -> int:
+        """Get the SIMD parallelism."""
+        return cast("int", self.get_nodeattr("SIMD"))
+
+    @property
+    def num_channels(self) -> int:
+        """Get the number of input feature map channels."""
+        return cast("int", self.get_nodeattr("NumChannels"))
+
+    @property
+    def hi(self) -> int:
+        """Get the input feature map height."""
+        return cast("int", self.get_nodeattr("HI"))
+
+    @property
+    def wi(self) -> int:
+        """Get the input feature map width."""
+        return cast("int", self.get_nodeattr("WI"))
+
+    @property
+    def ho(self) -> int:
+        """Get the output feature map height."""
+        return cast("int", self.get_nodeattr("HO"))
+
+    @property
+    def wo(self) -> int:
+        """Get the output feature map width."""
+        return cast("int", self.get_nodeattr("WO"))
+
+    @property
+    def batch_size(self) -> int:
+        """Get the batch size."""
+        return cast("int", self.get_nodeattr("batchSize"))
+
+    def get_exp_cycles(self) -> int:
         """Return exp cycles."""
-        return np.prod(self.get_folded_output_shape()[:-1])
+        return int(np.prod(self.get_folded_output_shape()[:-1]))
 
-    def get_normal_input_shape(self, ind=0):
+    def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal input shape."""
-        batch = self.get_nodeattr("batchSize")
-        HI = self.get_nodeattr("HI")
-        WI = self.get_nodeattr("WI")
-        num_ch = self.get_nodeattr("NumChannels")
-        ishape = (batch, HI, WI, num_ch)
-        return ishape
+        return (self.batch_size, self.hi, self.wi, self.num_channels)
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal output shape."""
-        batch = self.get_nodeattr("batchSize")
-        HO = self.get_nodeattr("HO")
-        WO = self.get_nodeattr("WO")
-        num_ch = self.get_nodeattr("NumChannels")
-        oshape = (batch, HO, WO, num_ch)
-        return oshape
+        return (self.batch_size, self.ho, self.wo, self.num_channels)
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
         spatial_shape = list(self.get_normal_input_shape())[:-1]
-        simd = self.get_nodeattr("SIMD")
-        folds = self.get_nodeattr("NumChannels") // simd
-        return tuple(spatial_shape + [folds, simd])
+        folds = self.num_channels // self.simd
+        return (*spatial_shape, folds, self.simd)
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
         spatial_shape = list(self.get_normal_output_shape())[:-1]
-        simd = self.get_nodeattr("SIMD")
-        folds = self.get_nodeattr("NumChannels") // simd
-        return tuple(spatial_shape + [folds, simd])
+        folds = self.num_channels // self.simd
+        return (*spatial_shape, folds, self.simd)
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
         """Infer node datatype."""
         node = self.onnx_node
         # data type stays the same
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
-            warn_str = "inputDataType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_input_datatype()),
-                str(idt),
+            log.warning(
+                f"inputDataType changing for {node.name}: {self.get_input_datatype()!s} -> {idt!s} "
             )
-            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         model.set_tensor_datatype(node.output[0], idt)
 
-    def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
-        ret = DataType[self.get_nodeattr("inputDataType")]
-        return ret
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of input."""
+        return DataType[cast("str", self.get_nodeattr("inputDataType"))]
 
-    def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output. (Same as input datatype)"""
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of output (same as input datatype)."""
         return self.get_input_datatype()
 
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return instream width."""
-        ibits = self.get_input_datatype().bitwidth()
-        simd = self.get_nodeattr("SIMD")
-        return ibits * simd
+        return self.get_input_datatype().bitwidth() * self.simd
 
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return outstream width."""
-        obits = self.get_output_datatype().bitwidth()
-        simd = self.get_nodeattr("SIMD")
-        return obits * simd
+        return self.get_output_datatype().bitwidth() * self.simd
 
-    def execute_node(self, context, graph):
-        # create a standard resize node to help calculate the result
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"
+    ) -> None:  # noqa: ARG002
         """Execute node."""
+        # create a standard resize node to help calculate the result
         node = self.onnx_node
         inp_values = context[node.input[0]]
         ishape = inp_values.shape
-        HO = self.get_nodeattr("HO")
-        WO = self.get_nodeattr("WO")
-        HI = self.get_nodeattr("HI")
-        WI = self.get_nodeattr("WI")
-        scales_val = [1, int(round(HO / HI)), int(round(WO / WI)), 1]
+        scales_val = [1, round(self.ho / self.hi), round(self.wo / self.wi), 1]
         oshape = context[node.output[0]].shape
         inp = helper.make_tensor_value_info(node.input[0], TensorProto.FLOAT, ishape)
         scales = helper.make_tensor_value_info("scales", TensorProto.FLOAT, [4])

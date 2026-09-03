@@ -36,21 +36,22 @@ Supports multiple memory modes, runtime weight loading, and various data types.
 import numpy as np
 import textwrap
 from math import ceil, log2
-from onnx import NodeProto
+from onnx import GraphProto, NodeProto
 from pathlib import Path
-from qonnx.core.datatype import DataType
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import roundup_to_integer_multiple
-from typing import Any
+from typing import Any, cast
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.thresholding import Thresholding
+from finn.custom_op.fpgadataflow.thresholding import NodeAttrTypes, Thresholding
 from finn.util.data_packing import (
     npy_to_rtlsim_input,
     numpy_to_hls_code,
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.settings import get_settings
 
 # ONNX i/o tensor shape assumptions for Thresholding:
@@ -75,9 +76,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
         """
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(
-        self,
-    ) -> dict[str, tuple[str, bool, str, set[str]] | tuple[str, bool, int, set[int]]]:
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Get the types and default values for node attributes.
 
         Returns
@@ -85,7 +84,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
         dict
             Dictionary mapping attribute names to their type specifications
         """
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             # memory mode for the thresholds
             # internal_embedded -- embedded thresholds
             # internal_decoupled -- default, streaming thresholds with  streamer packaged inside IP
@@ -121,7 +120,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             Number of BRAM blocks required.
         """
         style = self.get_nodeattr("ram_style")
-        pe = self.get_nodeattr("PE")
+        pe = self.pe
         idt = self.get_input_datatype(0)
         bitwidth = idt.bitwidth()
         tmem = self.calc_tmem()
@@ -140,7 +139,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
         """
         # TODO add in/out FIFO contributions
         style = self.get_nodeattr("ram_style")
-        p = self.get_nodeattr("PE")
+        p = self.pe
         idt = self.get_input_datatype(0)
         a = idt.bitwidth()
         tmem = self.calc_tmem()
@@ -219,9 +218,8 @@ class Thresholding_hls(Thresholding, HLSBackend):
         """
         threshold_tensor = self.get_hw_compatible_threshold_tensor(weights)
         tdt = self.get_input_datatype(1)
-        assert np.vectorize(tdt.allowed)(
-            threshold_tensor
-        ).all(), f"Thresholds can't be expressed with type {tdt!s}"
+        if not np.vectorize(tdt.allowed)(threshold_tensor).all():
+            raise FINNInternalError(f"Thresholds can't be expressed with type {tdt!s}")
         if weight_file_mode == "hls_header":
             # save thresholds in thresh.h
             thresholds_hls_code = numpy_to_hls_code(
@@ -252,8 +250,8 @@ class Thresholding_hls(Thresholding, HLSBackend):
             decoupled_thres = np.transpose(threshold_tensor, (0, 2, 1, 3))
             # TODO add flips/reversals as needed here
             # (1, tmem, pe, n_thres_steps) -(1, tmem, pe * n_thres_steps)
-            pe = self.get_nodeattr("PE")
-            n_thres_steps = self.get_nodeattr("numSteps")
+            pe = self.pe
+            n_thres_steps = self.num_steps
             decoupled_thres_pe_flipped = np.flip(decoupled_thres, axis=-2)
             decoupled_thres = decoupled_thres.reshape(1, -1, pe * n_thres_steps)
             decoupled_thres = decoupled_thres.copy()
@@ -300,18 +298,18 @@ class Thresholding_hls(Thresholding, HLSBackend):
                         for word_32b in words_32b:
                             f.write(word_32b + "\n")
             else:
-                raise Exception("Decoupled weight export not yet implemented")
+                raise FINNInternalError("Decoupled weight export not yet implemented")
         else:
-            raise Exception("Unknown weight_file_mode")
+            raise FINNInternalError("Unknown weight_file_mode")
 
-    def generate_params(self, model: ModelWrapper, path: str) -> None:
+    def generate_params(self, model: ModelWrapper, path: str | Path) -> None:
         """Generate parameter files for thresholds.
 
         Parameters
         ----------
         model : ModelWrapper
             The ONNX model wrapper containing initializers.
-        path : str
+        path : str | Path
             Code generation directory path.
         """
         code_gen_dir = path
@@ -320,14 +318,16 @@ class Thresholding_hls(Thresholding, HLSBackend):
         idt = self.get_input_datatype(0)
         tdt = self.get_input_datatype(1)
         if idt.is_integer() and not tdt.is_integer():
-            raise ValueError(
+            raise FINNUserError(
                 "Thresholds must be converted to integers for integer inputs "
                 "using RoundAndClipThresholds transform before code generation."
             )
         if not idt.is_integer() and tdt.is_integer():
-            raise ValueError("Floating-point inputs and integer thresholds are not supported.")
+            raise FINNUserError("Floating-point inputs and integer thresholds are not supported.")
 
         thresholds = model.get_initializer(self.onnx_node.input[1])
+        if not isinstance(thresholds, np.ndarray):
+            raise FINNInternalError(f"{self.onnx_node.name}: threshold initializer is missing")
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_embedded":
             # save thresholds in thresh.h
@@ -341,9 +341,11 @@ class Thresholding_hls(Thresholding, HLSBackend):
             weight_filename_rtl = f"{code_gen_dir}/memblock.dat"
             self.make_weight_file(thresholds, "decoupled_verilog_dat", weight_filename_rtl)
         else:
-            raise Exception("Unrecognized mem_mode")
+            raise FINNInternalError("Unrecognized mem_mode")
 
-    def execute_node(self, context: dict, graph: object) -> None:  # noqa: ARG002
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: GraphProto  # noqa: ARG002
+    ) -> None:
         """Execute this node in the given context.
 
         Parameters
@@ -358,26 +360,24 @@ class Thresholding_hls(Thresholding, HLSBackend):
 
         # TODO ensure codegen dir exists
         if mode == "cppsim":
-            code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_cppsim"))
         elif mode == "rtlsim":
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
         else:
-            raise Exception(
+            raise FINNInternalError(
                 f"Invalid value for attribute exec_mode! Is currently set to: {mode} "
                 'has to be set to one of the following value ("cppsim", "rtlsim")'
             )
 
+        export_idt = self.get_input_datatype(0)
         # create a npy file fore each input of the node (in_ind is input index)
         for in_ind, inputs in enumerate(node.input):
             # it is assumed that the first input of the node is the data input
             # the second input are the weights
             # the third input are the thresholds
             if in_ind == 0:
-                assert str(context[inputs].dtype) in [
-                    "float32",
-                    "float16",
-                ], """Input datatype is
-                not float32 or float16 as expected."""
+                if str(context[inputs].dtype) not in ("float32", "float16"):
+                    raise FINNInternalError("Input datatype is not float32 or float16 as expected.")
                 expected_inp_shape = self.get_folded_input_shape()
                 reshaped_input = context[inputs].reshape(expected_inp_shape)
                 if self.get_input_datatype(0) == DataType["BIPOLAR"]:
@@ -393,7 +393,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
                     reshaped_input,
                 )
             elif in_ind > 2:
-                raise Exception("Unexpected input found for Thresholding_Batch")
+                raise FINNInternalError("Unexpected input found for Thresholding_Batch")
 
         if mode == "cppsim":
             # execute the precompiled model
@@ -406,7 +406,8 @@ class Thresholding_hls(Thresholding, HLSBackend):
                 out = 2 * out - 1
                 context[node.output[0]] = out
             oshape = self.get_normal_output_shape()
-            assert context[node.output[0]].shape == oshape, """Output shape is not as expected"""
+            if context[node.output[0]].shape != oshape:
+                raise FINNInternalError("Output shape is not as expected")
         elif mode == "rtlsim":
             sim = self.get_rtlsim()
             nbits = self.get_instream_width(0)
@@ -416,7 +417,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
                 wnbits = self.get_instream_width(1)
                 export_wdt = self.get_input_datatype(1)
                 wei = npy_to_rtlsim_input(f"{code_gen_dir}/thresholds.npy", export_wdt, wnbits)
-                num_w_reps = np.prod(self.get_nodeattr("numInputVectors"))
+                num_w_reps = int(np.prod(cast("list[int]", self.get_nodeattr("numInputVectors"))))
                 io_dict = {
                     "inputs": {"in0": inp, "in1": wei * num_w_reps},
                     "outputs": {"out0": []},
@@ -427,7 +428,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
                     "outputs": {"out0": []},
                 }
             else:
-                raise Exception("Unrecognized mem_mode")
+                raise FINNInternalError("Unrecognized mem_mode")
             self.rtlsim_multi_io(sim, io_dict)
             super().close_rtlsim(sim)
             output = io_dict["outputs"]["out0"]
@@ -444,7 +445,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             output = np.asarray([output], dtype=np.float32).reshape(*oshape)
             context[node.output[0]] = output
         else:
-            raise Exception(
+            raise FINNInternalError(
                 f"Invalid value for attribute exec_mode! Is currently set to: {mode} "
                 'has to be set to one of the following value ("cppsim", "rtlsim")'
             )
@@ -455,16 +456,16 @@ class Thresholding_hls(Thresholding, HLSBackend):
         if self.get_nodeattr("mem_mode") == "internal_embedded":
             self.code_gen_dict["$GLOBALS$"] += ['#include "thresh.h"']
 
-    def defines(self, var: object) -> None:  # noqa: ARG002
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Generate C++ defines for template parameters.
 
         Parameters
         ----------
-        var : object
+        var : str
             Unused parameter for compatibility with base class.
         """
         num_reps = 1
-        num_input_vectors = list(self.get_nodeattr("numInputVectors"))
+        num_input_vectors = list(cast("list[int]", self.get_nodeattr("numInputVectors")))
         total_spatial_size = int(np.prod(num_input_vectors))
 
         self.code_gen_dict["$DEFINES$"] = [
@@ -491,7 +492,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
         packed_hls_type = f"ap_uint<{packed_bits}>"
         elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "half" if elem_hls_type == "half" else "float"
-        npy_in = "%s/input_0.npy" % code_gen_dir
+        npy_in = f"{code_gen_dir}/input_0.npy"
         self.code_gen_dict["$READNPYDATA$"] = []
         # note: the innermost dim is reversed for the input
         self.code_gen_dict["$READNPYDATA$"].append(
@@ -506,7 +507,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             packed_hls_type = f"ap_uint<{packed_bits}>"
             elem_hls_type = tdt.get_hls_datatype_str()
             npy_type = "half" if elem_hls_type == "half" else "float"
-            npy_in = "%s/thresholds.npy" % code_gen_dir
+            npy_in = f"{code_gen_dir}/thresholds.npy"
 
             self.code_gen_dict["$READNPYDATA$"].append(
                 f'npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>("'
@@ -548,7 +549,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
                 "(in0_V, out0_V, in1_V, numReps);"
             ]
         else:
-            raise Exception("Unrecognized mem_mode")
+            raise FINNInternalError("Unrecognized mem_mode")
 
     def dataoutstrm(self) -> None:
         """Generate C++ code for writing output data stream."""
@@ -562,7 +563,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
         packed_hls_type = f"ap_uint<{packed_bits}>"
         elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "half" if elem_hls_type == "half" else "float"
-        npy_out = "%s/output_0.npy" % code_gen_dir
+        npy_out = f"{code_gen_dir}/output_0.npy"
         shape = self.get_folded_output_shape()
         shape_cpp_str = str(shape).replace("(", "{").replace(")", "}")
 
@@ -588,7 +589,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
                 f"hls::stream<ap_uint<{self.get_outstream_width()}>> &out0_V)"
             ]
         else:
-            raise Exception("Unrecognized mem_mode")
+            raise FINNInternalError("Unrecognized mem_mode")
 
     def pragmas(self) -> None:
         """Generate HLS pragmas for synthesis."""
@@ -608,8 +609,8 @@ class Thresholding_hls(Thresholding, HLSBackend):
             )
             # set resource type
             ram_style = self.get_nodeattr("ram_style")
-            pe = self.get_nodeattr("PE")
-            ich = self.get_nodeattr("NumChannels")
+            pe = self.pe
+            ich = self.num_channels
             # if PE less than NumChannels, assign cores according to ram_style;
             # otherwise if PE == NumChannels, Vivado HLS will unroll to FFs
             if pe < ich:
@@ -622,7 +623,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
                         "#pragma HLS RESOURCE variable=threshs.m_thresholds core=ROM_2P_BRAM"
                     )
                 else:
-                    raise Exception(
+                    raise FINNUserError(
                         f"Invalid value for attribute ram_style! Is currently set to: {ram_style} "
                         'has to be set to one of ("block", "distributed")'
                     )
@@ -666,8 +667,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
                 f"{self.get_nodeattr('ip_vlnv')} /{node_name}/{node_name}"
             )
             # instantiate a streamer and connect it to the IP
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-            from pathlib import Path
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
 
             finn_rtllib = Path(get_settings().finn_rtllib)
             axi_dir = finn_rtllib / "axi/hdl/"
@@ -675,9 +675,13 @@ class Thresholding_hls(Thresholding, HLSBackend):
             file_suffix = "_memstream_wrapper.v"
             # automatically find memstream verilog component in code generation directory
             code_gen_path = Path(code_gen_dir)
-            for fname in code_gen_path.iterdir():
-                if fname.name.endswith(file_suffix):
-                    strm_tmpl = fname.name
+            strm_tmpl = next(
+                (f.name for f in code_gen_path.iterdir() if f.name.endswith(file_suffix)), None
+            )
+            if strm_tmpl is None:
+                raise FINNInternalError(
+                    f"{self.onnx_node.name}: no '*{file_suffix}' file found in {code_gen_dir}"
+                )
             strm_tmpl_name = strm_tmpl[:-2]
             sourcefiles = [
                 str(code_gen_path / strm_tmpl),
@@ -743,7 +747,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             # base class impl sufficient for internal_embedded mode
             return super().code_generation_ipi()
         else:
-            raise Exception("Unrecognized mem_mode for Thresholding_Batch")
+            raise FINNInternalError("Unrecognized mem_mode for Thresholding_Batch")
         return cmd
 
     def get_op_and_param_counts(self) -> dict[str, int]:
@@ -754,15 +758,11 @@ class Thresholding_hls(Thresholding, HLSBackend):
         dict[str, int]
             Dictionary mapping parameter type to count.
         """
-        ret_dict = {}
         weight_bits = self.get_input_datatype(1).bitwidth()
-        out_features = self.get_nodeattr("NumChannels")
-        num_steps = self.get_nodeattr("numSteps")
         # thresholds are called weights in this layer
         thres_param_type = f"param_threshold_{weight_bits}b"
-        thres_count = out_features * num_steps
-        ret_dict[thres_param_type] = thres_count
-        return ret_dict
+        thres_count = self.num_channels * self.num_steps
+        return {thres_param_type: thres_count}
 
     def ipgen_extra_directives(self) -> list[str]:
         """Return a list of extra tcl directives for HLS synthesis.
@@ -774,14 +774,15 @@ class Thresholding_hls(Thresholding, HLSBackend):
         """
         return ["config_compile -pipeline_style frp"]
 
-    def minimize_weight_bit_width(self, model):
+    def minimize_weight_bit_width(self, model: ModelWrapper) -> BaseDataType:
         """Minimize threshold datatype, with HLS-specific adjustments.
 
         The HLS implementation uses the threshold datatype for comparisons.
         When the threshold datatype is narrower than the input datatype,
         input values get truncated, which can cause incorrect results.
         To prevent this, ensure threshold datatype is at least as wide as
-        input datatype."""
+        input datatype.
+        """
         # First, call the base class implementation
         tdt = super().minimize_weight_bit_width(model)
 
@@ -796,10 +797,11 @@ class Thresholding_hls(Thresholding, HLSBackend):
             # Use input datatype to ensure no truncation
             new_tdt = idt
             thresholds = model.get_initializer(self.onnx_node.input[1])
+            if not isinstance(thresholds, np.ndarray):
+                raise FINNInternalError(f"{self.onnx_node.name}: threshold initializer is missing")
             threshold_tensor = self.get_hw_compatible_threshold_tensor(thresholds)
-            assert np.vectorize(new_tdt.allowed)(
-                threshold_tensor
-            ).all(), "Thresholds can't be expressed with type %s" % str(new_tdt)
+            if not np.vectorize(new_tdt.allowed)(threshold_tensor).all():
+                raise FINNInternalError(f"Thresholds can't be expressed with type {new_tdt!s}")
             self.set_nodeattr("weightDataType", new_tdt.name)
             model.set_tensor_datatype(self.onnx_node.input[1], new_tdt)
             return new_tdt

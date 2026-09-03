@@ -26,76 +26,62 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for upsampler hls."""
+"""HLS backend implementation of the nearest-neighbour upsampling operator."""
+
+import numpy as np
+from onnx import GraphProto, NodeProto
+
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.upsampler import UpsampleNearestNeighbour
+from finn.custom_op.fpgadataflow.upsampler import NodeAttrTypes, UpsampleNearestNeighbour
 
 
 class UpsampleNearestNeighbour_hls(UpsampleNearestNeighbour, HLSBackend):
     """Corresponds to finn-hlslib UpsampleNearestNeighbour function.
-    Upsampling is done with the Nearest Neighbour algorithm.
-    The layer expects square feature maps for the in and output.
+
+    Upsampling is done with the Nearest Neighbour algorithm. The layer expects
+    square feature maps for the in and output.
     """
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(UpsampleNearestNeighbour.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "upsample.hpp"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        self.code_gen_dict["$DEFINES$"] = []
-
-        HI = self.get_nodeattr("HI")
-        self.code_gen_dict["$DEFINES$"] += [f"#define HI {HI}"]
-
-        WI = self.get_nodeattr("WI")
-        self.code_gen_dict["$DEFINES$"] += [f"#define WI {WI}"]
-
-        HO = self.get_nodeattr("HO")
-        self.code_gen_dict["$DEFINES$"] += [f"#define HO {HO}"]
-
-        WO = self.get_nodeattr("WO")
-        self.code_gen_dict["$DEFINES$"] += [f"#define WO {WO}"]
-
-        SIMD = self.get_nodeattr("SIMD")
-
-        CF = self.get_nodeattr("NumChannels") // SIMD
-        self.code_gen_dict["$DEFINES$"] += [f"#define CF {CF}"]
-
-    def docompute(self):
-        """Return docompute."""
-        self.code_gen_dict["$DOCOMPUTE$"] = [
-            """upsample_nn<HI, HO, WI, WO, CF, CF>(in0_V, out0_V);"""
+        channel_fold = self.num_channels // self.simd
+        self.code_gen_dict["$DEFINES$"] = [
+            f"#define HI {self.hi}",
+            f"#define WI {self.wi}",
+            f"#define HO {self.ho}",
+            f"#define WO {self.wo}",
+            f"#define CF {channel_fold}",
         ]
 
-    def blackboxfunction(self):
+    def docompute(self) -> None:
+        """Return docompute."""
+        self.code_gen_dict["$DOCOMPUTE$"] = ["upsample_nn<HI, HO, WI, WO, CF, CF>(in0_V, out0_V);"]
+
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        simd = self.get_nodeattr("SIMD")
         input_elem_hls_type = self.get_input_datatype().get_hls_datatype_str()
         output_elem_hls_type = self.get_output_datatype().get_hls_datatype_str()
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            "void %s(hls::stream<hls::vector<%s, %d>> "
-            "&in0_V, hls::stream<hls::vector<%s, %d>> &out0_V)"
-            % (
-                self.onnx_node.name,
-                input_elem_hls_type,
-                simd,
-                output_elem_hls_type,
-                simd,
-            )
+            f"void {self.onnx_node.name}(hls::stream<hls::vector<{input_elem_hls_type}, "
+            f"{self.simd}>> &in0_V, hls::stream<hls::vector<{output_elem_hls_type}, "
+            f"{self.simd}>> &out0_V)"
         ]
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:
         """Execute node."""
         HLSBackend.execute_node(self, context, graph)
