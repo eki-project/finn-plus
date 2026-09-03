@@ -24,6 +24,9 @@ def _dump(data: dict, name: str, path: Path) -> Path:
     return p
 
 
+@pytest.mark.multifpga
+@pytest.mark.slow
+@pytest.mark.vivado
 @pytest.mark.parametrize(
     "model_type",
     [

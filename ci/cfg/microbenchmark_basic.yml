@@ -23,6 +23,7 @@
         "backend": ["hls"],
 
         "dut_duplication": [1],
+        "instrumentation_no_dma": [true],
 
         "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },

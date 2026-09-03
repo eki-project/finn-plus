@@ -145,6 +145,12 @@ class bench:
             ):
                 # Default experiment config for FIFO-Sizing
                 self.experiments_config = Path("ci") / "experiments" / "fifosizing_default.json"
+            elif params.get("instrumentation_no_dma") is True:
+                # Without DMAs, the accelerator has no host-facing data path, so only
+                # instrumentation-based experiments (no throughput_test/validate) can run
+                self.experiments_config = (
+                    Path("ci") / "experiments" / "instrument_only_default.json"
+                )
             else:
                 # Default experiment config for normal builds
                 self.experiments_config = Path("ci") / "experiments" / "default.json"

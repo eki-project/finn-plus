@@ -98,6 +98,7 @@ graphs = {
 }
 
 
+@pytest.mark.multifpga
 @pytest.mark.parametrize(
     "graph_data",
     [
@@ -147,6 +148,9 @@ def test_correct_output_count() -> None:
     assert len(_get_end_nodes_nx(graphs["two_output_graph"][0])) == 2
 
 
+@pytest.mark.vivado
+@pytest.mark.multifpga
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "model_type",
     [
@@ -206,6 +210,7 @@ def test_onnx_to_networkx(
         assert data["onnx_node"] in model.graph.node
 
 
+@pytest.mark.multifpga
 @pytest.mark.parametrize(
     "graph_data",
     [
@@ -250,6 +255,9 @@ def test_inseparable_nodes_qonnx(graph_data: tuple[DiGraph, list[list[str]]]) ->
         )
 
 
+@pytest.mark.multifpga
+@pytest.mark.vivado
+@pytest.mark.slow
 def test_resnet18_examples_inseparable_nodes(pytestconfig: pytest.Config) -> None:
     """Test that the expected number of inseparable-node groups and
     group-sizes are found for the Resnet18.

@@ -746,12 +746,12 @@ if __name__ == "__main__":
             + ")"
         )
 
-        # check every subfolder in measurement_artifacts/runs_output/run_%d for folding_config_lfs
+        # Check for paired Live FIFO configuration artifacts.
         run_output_dir = os.path.join("measurement_artifacts", "runs_output", "run_%d" % (id))
         is_fifo_sizing = False
         if os.path.isdir(run_output_dir):
             for root, dirs, files in os.walk(run_output_dir):
-                if "folding_config_lfs.json" in files:
+                if "folding_config.json" in files and "fifo_config.json" in files:
                     is_fifo_sizing = True
                     break
         is_fifo_sizing = is_fifo_sizing and not args.followup  # Ignore if followup
@@ -935,7 +935,7 @@ if __name__ == "__main__":
                             break
                     if report_hierarchy_level == "(top)":
                         print("ERROR: No MVAU found in post_synth_resources.json")
-                        sys.exit(1)
+                        fail = True
             # TODO: also do this for other reports or make it optional/configurable
 
             dvc_logger.log_nested_metrics_from_report(
@@ -1019,21 +1019,55 @@ if __name__ == "__main__":
         # Prepare benchmarking config for follow-up runs after live FIFO-sizing
         # Only generate follow-up config if this is not already a follow-up run
         if not args.followup:
-            folding_config_lfs_path = os.path.join(
+            # Choose the search order with the lowest fifo_size_total_kB
+            lfs_base_dir = os.path.join(
                 "measurement_artifacts",
                 "runs_output",
                 "run_%d" % (id),
                 "reports",
                 "experiment_fifosizing",
                 "exp_itr_1",
-                "largest_first",  # TODO: make configurable or choose best available FIFO-sizing
-                "both",
-                "folding_config_lfs.json",
             )
-            if os.path.isfile(folding_config_lfs_path):
+            best_search_order = None
+            best_fifo_size = float("inf")
+            if os.path.isdir(lfs_base_dir):
+                for search_order in os.listdir(lfs_base_dir):
+                    sizing_report_path = os.path.join(
+                        lfs_base_dir, search_order, "both", "fifo_sizing_report.json"
+                    )
+                    if os.path.isfile(sizing_report_path):
+                        with open(sizing_report_path, "r") as f:
+                            sizing_report = json.load(f)
+                        fifo_size = sizing_report.get("fifo_size_total_kB", float("inf"))
+                        if fifo_size < best_fifo_size:
+                            best_fifo_size = fifo_size
+                            best_search_order = search_order
+            if best_search_order is not None:
                 print(
-                    "Creating follow-up experiment config based on lfs folding config: %s"
-                    % folding_config_lfs_path
+                    "Selecting search order '%s' with fifo_size_total_kB=%.2f"
+                    % (best_search_order, best_fifo_size)
+                )
+                folding_config_path = os.path.join(
+                    lfs_base_dir, best_search_order, "both", "folding_config.json"
+                )
+                fifo_config_path = os.path.join(
+                    lfs_base_dir, best_search_order, "both", "fifo_config.json"
+                )
+            else:
+                print(
+                    "No valid search order with fifo_sizing_report.json found in %s." % lfs_base_dir
+                )
+                folding_config_path = None
+                fifo_config_path = None
+
+            if (
+                folding_config_path is not None
+                and os.path.isfile(folding_config_path)
+                and os.path.isfile(fifo_config_path)
+            ):
+                print(
+                    "Creating follow-up experiment config using folding config %s "
+                    "and FIFO config %s" % (folding_config_path, fifo_config_path)
                 )
 
                 # Create benchmarking config
@@ -1043,10 +1077,10 @@ if __name__ == "__main__":
                     # wrap in list
                     configuration[key] = [metadata_bench["params"][key]]
                 # overwrite FIFO-related params
-                # configuration["live_fifo_sizing"] = [False]
                 configuration["auto_fifo_depths"] = [False]
                 configuration["target_fps"] = ["None"]
-                configuration["folding_config_file"] = [folding_config_lfs_path]
+                configuration["folding_config_file"] = [folding_config_path]
+                configuration["fifo_config_file"] = [fifo_config_path]
 
                 # Exception for ResNet-50: Final model doesn't fit board used for FIFO-sizing
                 if "dut" in metadata_bench["params"]:
