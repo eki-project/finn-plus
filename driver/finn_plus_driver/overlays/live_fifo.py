@@ -141,6 +141,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             min_latency,
             latency,
             interval,
+            _avg_latency,
+            _avg_interval,
         ) = self.observe_instrumentation(debug_print=True)
         self.stop_accelerator()
 
@@ -220,6 +222,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             min_latency,
             latency,
             interval,
+            _avg_latency,
+            _avg_interval,
         ) = self.observe_instrumentation(False)
         log_total_fifo_size = [self.total_fifo_size(fifo_depths)]
         log_interval = [interval]
@@ -310,6 +314,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                     min_latency,
                     latency,
                     interval,
+                    _avg_latency,
+                    _avg_interval,
                 ) = self.observe_instrumentation(False)
 
                 # Determine if this depth causes degradation based on stop_condition
