@@ -107,7 +107,9 @@ def _create_rn18_onnx(path: Path, w: int, a: int, classes: int = 100) -> None:
     model.eval()
     inp = torch.zeros((1, 3, 32, 32))
     _ = model(inp)
-    export_qonnx(model, (inp,), str(path.absolute()))
+    # The Dynamo exporter treats residual QuantTensor additions as unsupported.
+    # Use Brevitas' TorchScript exporter for this test model instead.
+    export_qonnx(model, (inp,), str(path.absolute()), dynamo=False)
 
 
 def generate_rn18(
