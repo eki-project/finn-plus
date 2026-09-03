@@ -10,52 +10,62 @@
 #
 ###################################################################################
 
-"""Module for crop hls."""
-from finn.custom_op.fpgadataflow.crop import Crop
+"""HLS backend implementation of the spatial cropping operator."""
+
+import numpy as np
+from typing import TYPE_CHECKING
+
+from finn.custom_op.fpgadataflow.crop import Crop, NodeAttrTypes
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+
+if TYPE_CHECKING:
+    from onnx import GraphProto, NodeProto
 
 
 class Crop_hls(Crop, HLSBackend):
-    """Class for Crop hls."""
+    """Crop node with dynamically generated HLS."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        return Crop.get_nodeattr_types(self) | HLSBackend.get_nodeattr_types(self)
+        my_attrs: NodeAttrTypes = {}
+        my_attrs.update(Crop.get_nodeattr_types(self))
+        my_attrs.update(HLSBackend.get_nodeattr_types(self))
+        return my_attrs
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = [
             '#include "crop.hpp"',
         ]
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        simd = self.get_nodeattr("SIMD")
+        simd = self.simd
         dtype = self.get_input_datatype()
-        height, width = self.get_nodeattr("ImgDim")
+        height, width = self.img_dim
         if height == 0:
             # pretend that height is 1 for code generation
             height = 1
-        ch = self.get_nodeattr("NumChannels")
+        ch = self.num_channels
         self.code_gen_dict["$DEFINES$"] = [
             f"""
             constexpr unsigned  SIMD      = {simd};
             constexpr unsigned  H      = {height};
             constexpr unsigned  W      = {width};
             constexpr unsigned  CF     = {ch // simd};
-            constexpr unsigned  CROP_N = {self.get_nodeattr("CropNorth")};
-            constexpr unsigned  CROP_E = {self.get_nodeattr("CropEast")};
-            constexpr unsigned  CROP_S = {self.get_nodeattr("CropSouth")};
-            constexpr unsigned  CROP_W = {self.get_nodeattr("CropWest")};
+            constexpr unsigned  CROP_N = {self.crop_north};
+            constexpr unsigned  CROP_E = {self.crop_east};
+            constexpr unsigned  CROP_S = {self.crop_south};
+            constexpr unsigned  CROP_W = {self.crop_west};
             using  TV = hls::vector<{dtype.get_hls_datatype_str()}, SIMD>;
             """
         ]
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = [
             """
@@ -70,7 +80,7 @@ class Crop_hls(Crop, HLSBackend):
             """
         ]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             f"""
@@ -81,7 +91,7 @@ class Crop_hls(Crop, HLSBackend):
             """
         ]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = [
             """
@@ -95,6 +105,6 @@ class Crop_hls(Crop, HLSBackend):
             """
         ]
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute node."""
         HLSBackend.execute_node(self, context, graph)
