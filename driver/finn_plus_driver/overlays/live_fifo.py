@@ -1,6 +1,5 @@
 """Driver for live FIFO sizing experiments."""
 
-import copy
 import json
 import matplotlib.pyplot as plt
 import os
@@ -23,7 +22,6 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         seed=1,
         fifo_widths=dict(),
         folding_config=None,
-        fifo_config=None,
         **kwargs,
     ):
         """Initialize live FIFO overlay."""
@@ -40,10 +38,9 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.fifo_widths = fifo_widths
         self.num_fifos = len(self.fifo_widths)
 
-        # The settings preserve the folding configuration and the FIFO metadata
-        # needed to export a matching follow-up configuration.
+        # The settings preserve the folding configuration needed for a
+        # follow-up build with FIFO depths measured from this exact design.
         self.folding_config = folding_config
-        self.fifo_config = fifo_config
 
         # Account for additional FIFO depth or implicit registers introduced by the virtual FIFO
         # implementation that are not present in real FIFOs.
@@ -620,26 +617,24 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             json.dump(fifo_report, f, indent=2)
 
         # Export measured FIFO settings for use by the follow-up FINN build.
-        fifo_config = copy.deepcopy(self.fifo_config)
-        if fifo_config is None:
-            raise ValueError("Live FIFO sizing requires fifo_config in settings.json.")
-        total_fifo_size = 0
+        fifo_config = {
+            "fifo_depths": {},
+            "impl_style": {},
+            "ram_style": {},
+        }
         for fifo, depth in enumerate(fifo_depths):
             fifo_name = "StreamingFIFO_rtl_%d" % fifo
             final_depth = depth + self.fifo_depth_offset
             fifo_config["fifo_depths"][fifo_name] = final_depth
-            fifo_config["fifo_sizes"][fifo_name] = (
-                self.fifo_widths[str(fifo)] * ((final_depth + 31) // 32) * 32
-            )
             fifo_config["impl_style"][fifo_name] = "rtl"
-            total_fifo_size += fifo_config["fifo_sizes"][fifo_name]
-        fifo_config["total_fifo_size_kiB"] = total_fifo_size / 8.0 / 1024.0
+            fifo_config["ram_style"][fifo_name] = "auto"
         with open(os.path.join(report_dir, "fifo_config.json"), "w") as f:
             json.dump(fifo_config, f, indent=2)
 
-        if self.folding_config:
-            with open(os.path.join(report_dir, "folding_config.json"), "w") as f:
-                json.dump(self.folding_config, f, indent=2)
+        if self.folding_config is None:
+            raise ValueError("Live FIFO sizing requires folding_config in settings.json.")
+        with open(os.path.join(report_dir, "folding_config.json"), "w") as f:
+            json.dump(self.folding_config, f, indent=2)
 
         # Generate the usual instrumentation performance report based on final state
         min_latency = log_min_latency[-1]

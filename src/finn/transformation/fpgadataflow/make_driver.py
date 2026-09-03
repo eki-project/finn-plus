@@ -692,26 +692,6 @@ class MakePYNQDriver(Transformation):
                 folding_cfg = json.load(f)
             settings["folding_config"] = folding_cfg
 
-        fifo_config = {
-            "fifo_depths": {},
-            "fifo_sizes": {},
-            "impl_style": {},
-            "ram_style": {},
-            "total_fifo_size_kiB": 0,
-        }
-        for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
-            sdp_node_inst = getCustomOp(sdp_node)
-            kernel_model = ModelWrapper(sdp_node_inst.get_nodeattr("model"))
-            for node in kernel_model.graph.node:
-                if node.op_type.startswith("StreamingFIFO"):
-                    node_inst = getCustomOp(node)
-                    fifo_name = node.name
-                    fifo_config["fifo_depths"][fifo_name] = node_inst.get_nodeattr("depth")
-                    fifo_config["fifo_sizes"][fifo_name] = 0
-                    fifo_config["impl_style"][fifo_name] = "rtl"
-                    fifo_config["ram_style"][fifo_name] = node_inst.get_nodeattr("ram_style")
-        settings["fifo_config"] = fifo_config
-
         return settings
 
     def apply(self, model):
