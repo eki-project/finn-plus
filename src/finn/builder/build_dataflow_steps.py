@@ -618,8 +618,9 @@ def step_set_fifo_depths(
     """Depending on the auto_fifo_depths setting, do one of the following:
     * if auto_fifo_depths=True:  Run the appropriate auto-sizing transformation
     to attempt to determine the FIFO sizes that provide full throughput.
-    May take a long time.
-    * if auto_fifo_depths=False:  Load the FIFO sizes from the folding config file and apply them.
+    May take a long time. The `force_minimal_fifos` strategy is the exception here:
+    it inserts all FIFOs at their minimal default depth without running any simulation.
+    * if auto_fifo_depths=False:  Load the FIFO sizes from the fifo config file and apply them.
     Coherency with config file node naming is ensured by calling
     `GiveUniqueNodeNamesRecursive`.
     """
@@ -771,6 +772,19 @@ def step_set_fifo_depths(
                 node_inst.set_nodeattr("fifo_id", idf)
 
             return model
+        elif cfg.auto_fifo_strategy == AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS:
+            # Insert all FIFOs (and DWCs) but keep them at their minimal default depth,
+            # i.e. no sizing simulation is run at all.
+            log.warning(
+                "auto_fifo_strategy is set to force_minimal_fifos: no FIFO sizing is performed "
+                "and all FIFOs are inserted with their minimal (default) depth. The resulting "
+                "design may be throughput-limited or deadlock."
+            )
+            model = model.transform(InsertDWC())
+            model = model.transform(InsertFIFO(create_shallow_fifos=True))
+            model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
+            model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
+            model = model.transform(GiveReadableTensorNames())
         else:
             raise FINNUserError("Unsupported auto_fifo_strategy: " + cfg.auto_fifo_strategy)
 
@@ -1585,7 +1599,9 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
         os.environ["RTLSIM_TRACE_DEPTH"] = "3"
         model.set_metadata_prop("rtlsim_trace", str(report_dir.resolve() / "rtlsim_perf_trace.wdb"))
 
-    if not cfg.auto_fifo_depths and cfg.fifo_config_file is not None:
+    if (not cfg.auto_fifo_depths and cfg.fifo_config_file is not None) or (
+        cfg.auto_fifo_depths and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS
+    ):
         # Use critical path estimate to set the timeout limit for FIFO sim
         model = model.transform(AnnotateCycles())
         perf = model.analysis(dataflow_performance)

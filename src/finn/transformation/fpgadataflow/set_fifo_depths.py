@@ -81,9 +81,13 @@ class ApplyFIFODepthsFromFile(Transformation):
         # }
         fifo_nodes = model.get_nodes_by_op_type("StreamingFIFO_rtl")
 
-        if len(fifo_nodes) != len(fifo_info["fifo_depths"]):
+        # The config file may cover more FIFOs than are present in this model: for multi-DNN
+        # builds this transformation is applied once per partial-reconfiguration body and once
+        # for the top-level model, all sharing a single config file. Every FIFO of the model
+        # must be covered though, which is checked in the loop below.
+        if len(fifo_nodes) > len(fifo_info["fifo_depths"]):
             raise FINNUserError(
-                f"Number of FIFO nodes in the model ({len(fifo_nodes)}) does not match the number "
+                f"Number of FIFO nodes in the model ({len(fifo_nodes)}) exceeds the number "
                 f"of FIFO nodes in the configuration file ({len(fifo_info['fifo_depths'])})"
             )
         graph_modified = False

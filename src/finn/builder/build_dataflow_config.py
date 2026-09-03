@@ -98,6 +98,10 @@ class AutoFIFOSizingMethod(str, Enum):
 
     LIVE_FIFO = "live_fifo"
     DISTRIBUTED_SIMULATION = "distributed_sim"
+    #: Skip any sizing simulation and keep all inserted FIFOs at their minimal
+    #: (default) depth. Useful for designs that are known to work without deeper
+    #: FIFOs and avoids having to maintain a fifo_config_file.
+    FORCE_MINIMAL_FIFOS = "force_minimal_fifos"
 
 
 class FifosimCommMode(str, Enum):
@@ -684,6 +688,8 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: (Only relevant when auto_fifo_depths is enabled)
     #: Select which method will be used for setting the FIFO sizes.
+    #: Note that AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS does not size the FIFOs at all,
+    #: it just inserts them with their minimal (default) depth.
     auto_fifo_strategy: AutoFIFOSizingMethod = AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION
 
     #: (Only relevant when auto_fifo_depths is enabled)
