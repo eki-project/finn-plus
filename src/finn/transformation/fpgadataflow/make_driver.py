@@ -589,6 +589,7 @@ class MakePYNQDriver(Transformation):
         validation_datset=None,
         experiment_info=None,
         board=None,
+        multidnn_mode=None,
     ):
         """Initialize PYNQ driver generation.
 
@@ -607,6 +608,7 @@ class MakePYNQDriver(Transformation):
         self.validation_datset = validation_datset
         self.experiment_info = experiment_info
         self.board = board
+        self.multidnn_mode = multidnn_mode
 
     def _generate_driver_files(self, model):
         """Create the deployment directory for the generated accelerator.
@@ -798,6 +800,9 @@ class MakePYNQDriver(Transformation):
         if "global" in experiment_information:
             if self.board is not None and "board" not in experiment_information["global"]["PAF"]:
                 experiment_information["global"]["PAF"]["board"] = self.board
+
+        if self.multidnn_mode is not None:
+            driver_information["multidnn_mode"] = self.multidnn_mode
 
         settings = {
             "driver_information": driver_information,

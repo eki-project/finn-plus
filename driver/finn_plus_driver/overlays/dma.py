@@ -4,6 +4,7 @@ import json
 import numpy as np
 import os
 import time
+from finn_plus_driver.hwh import get_clk_wiz_params_from_hwh
 from finn_plus_driver.packing import finnpy_to_packed_bytearray, packed_bytearray_to_finnpy
 from pynq import Overlay, allocate
 from pynq.ps import Clocks
@@ -55,7 +56,7 @@ class FINNDMAOverlay(Overlay):
         self.obuf_packed_device = None
         self.platform = platform
         self.batch_size = batch_size
-        self.fclk_mhz = fclk_mhz
+        self.fclk_mhz = fclk_mhz  # currently ignored (TODO: make clocking wizard configurable)
         self.validation_dataset = validation_dataset
         self.idma = []
         self.odma = []
@@ -75,9 +76,14 @@ class FINNDMAOverlay(Overlay):
             if self.platform == "alveo":
                 self.odma_handle.append(None)
         if self.platform == "zynq-iodma":
-            # set the clock frequency as specified by user during transformations
-            if self.fclk_mhz > 0:
-                Clocks.fclk0_mhz = self.fclk_mhz
+            clk_wiz_params = get_clk_wiz_params_from_hwh(bitfile_name)
+            Clocks.fclk0_mhz = 100.0  # Clocking Wizard is configured for fixed 100 MHz input clock
+            self.fclk_mhz_actual = float(
+                clk_wiz_params.get(
+                    "CLKOUT1_OUT_FREQ",
+                    clk_wiz_params.get("CLKOUT1_REQUESTED_OUT_FREQ", str(self.fclk_mhz)),
+                )
+            )
         # load any external + runtime weights
         self.load_external_weights()
         self.load_runtime_weights()

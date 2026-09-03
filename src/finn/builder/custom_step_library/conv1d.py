@@ -23,7 +23,7 @@ def step_pre_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
 
 
 def step_convert_final_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Convert the final channelwise-linear and label-select layers to hardware operations."""
+    """Convert the final elementwise-binary and label-select layers to hardware operations."""
     model = model.transform(InferElementwiseBinaryOperation())
     model = model.transform(InferLabelSelectLayer())
     model = model.transform(GiveUniqueNodeNames())

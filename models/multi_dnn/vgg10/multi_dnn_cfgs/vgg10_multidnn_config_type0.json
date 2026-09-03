@@ -1,0 +1,43 @@
+{
+    "Submodels" : {
+        "vgg10_A" : {
+                "model_path" : "models/multi_dnn/vgg10/models/radioml_own_trained.onnx",
+                "specialize_layers_config_file" : "models/multi_dnn/vgg10/vgg10_specialize_layers.json"
+            },
+        "vgg10_B" : {
+                "model_path" : "models/multi_dnn/vgg10/models/radioml_finn_trained.onnx",
+                "specialize_layers_config_file" : "models/multi_dnn/vgg10/vgg10_specialize_layers.json"
+            }
+    },
+    "Steps": [
+        {"step_tidy_up": ["vgg10_A", "vgg10_B"]},
+        {"finn.builder.custom_step_library.conv1d.step_pre_streamline": ["vgg10_A", "vgg10_B"]},
+        {"step_streamline": ["vgg10_A", "vgg10_B"]},
+        {"step_convert_to_hw": ["vgg10_A", "vgg10_B"]},
+        {"finn.builder.custom_step_library.conv1d.step_convert_final_layers": ["vgg10_A", "vgg10_B"]},
+        {"step_create_dataflow_partition": ["vgg10_A", "vgg10_B"]},
+        {"step_specialize_layers": ["vgg10_A", "vgg10_B"]},
+        {"step_apply_multi_dnn": "Multi_DNN_Wrapper"},
+        {"step_collapse_multi_dnn": "Multi_DNN_Wrapper"},
+        {"step_target_fps_parallelization": "Collapsed_Model"},
+        {"step_apply_folding_config": "Collapsed_Model"},
+        {"step_minimize_bit_width": "Collapsed_Model"},
+        {"step_generate_estimate_reports": "Collapsed_Model"},
+        {"step_set_fifo_depths": "Collapsed_Model"},
+        {"step_hw_codegen": "Collapsed_Model"},
+        {"step_hw_ipgen": "Collapsed_Model"},
+        {"step_create_stitched_ip": "Collapsed_Model"},
+        {"step_measure_rtlsim_performance": "Collapsed_Model"},
+        {"step_out_of_context_synthesis": "Collapsed_Model"},
+        {"step_synthesize_bitfile": "Collapsed_Model"},
+        {"step_make_driver": "Collapsed_Model"},
+        {"step_deployment_package": "Collapsed_Model"}
+    ],
+    "Generation" : {
+        "mode" : "Parallel",
+        "kwargs" : {
+            "combine_inputs_channelwise": true,
+            "combine_outputs_channelwise": true
+        }
+    }
+}

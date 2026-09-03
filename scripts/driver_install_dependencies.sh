@@ -14,8 +14,9 @@ repo_root="$(dirname "$script_dir")"
 
 # Workaround for https://discuss.pynq.io/t/how-to-address-axilite-interface-in-pynq-v3-0/4831
 # Installed first and pinned so the driver install below does not resolve a different version.
+# Only actually required on boards with PYNQ images older than 3.1.1.
 pip install pynqmetadata==0.1.5
 
-# Installs the driver together with its dependencies (numpy, bitstring, qonnx, click,
-# matplotlib, h5py, pillow, finn-dataset-loading).
+# Installs the driver together with its dependencies (numpy, grpcio, bitstring, qonnx,
+# click, matplotlib, h5py, pillow, finn-dataset-loading).
 pip install "$repo_root/driver"

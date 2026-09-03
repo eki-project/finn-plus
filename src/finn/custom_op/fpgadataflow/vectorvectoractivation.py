@@ -895,6 +895,9 @@ class VVAU(HWCustomOp):
             dict: Dictionary mapping interface types to their names
         """
         intf_names = super().get_verilog_top_module_intf_names()
+        # I think it is a bug that in1_V is always generated.
+        # Sometimes its not needed (e.g. internal_decoupled)
+        intf_names["s_axis"] = [x for x in intf_names["s_axis"] if x[0] != "in1_V"]
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "external":
             intf_names["s_axis"].append(("in1_V", self.get_instream_width_padded(1)))

@@ -1,0 +1,115 @@
+{
+    "Submodels" : {
+        "mn_A" : {
+                "model_path" : ".../mn_A/mobilenetv1-w4a4_pre_post_tidy_opset-11_random_weights_elementwisefix.onnx",
+                "specialize_layers_config_file" : ".../mn_specialize_layers.json"
+            },
+        "mn_B" : {
+                "model_path" : ".../mn_B/mobilenetv1-w4a4_pre_post_tidy_opset-11_elementwisefix.onnx",
+                "specialize_layers_config_file" : ".../mn_specialize_layers.json"
+            }
+    },
+    "Steps": [
+        {"finn.builder.custom_step_library.mobilenet.step_mobilenet_streamline": ["mn_A", "mn_B"]},
+        {"finn.builder.custom_step_library.mobilenet.step_mobilenet_lower_convs": ["mn_A", "mn_B"]},
+        {"finn.builder.custom_step_library.mobilenet.step_mobilenet_convert_to_hw_layers_separate_th": ["mn_A", "mn_B"]},
+        {"step_create_dataflow_partition": ["mn_A", "mn_B"]},
+        {"step_specialize_layers": ["mn_A", "mn_B"]},
+        {"step_apply_multi_dnn": "Multi_DNN_Wrapper"},
+        {"step_collapse_multi_dnn": "Multi_DNN_Wrapper"},
+        {"step_apply_folding_config": "Collapsed_Model"},
+        {"step_minimize_bit_width": "Collapsed_Model"},
+        {"step_generate_estimate_reports": "Collapsed_Model"},
+        {"step_prepare_nodecontainer": "Collapsed_Model"},
+        {"step_set_fifo_depths": "Collapsed_Model"},
+        {"step_hw_codegen": "Collapsed_Model"},
+        {"step_hw_ipgen": "Collapsed_Model"},
+        {"step_create_stitched_ip": "Collapsed_Model"},
+        {"step_synthesize_bitfile": "Collapsed_Model"},
+        {"step_make_driver": "Collapsed_Model"},
+        {"step_deployment_package": "Collapsed_Model"}
+    ],
+    "Generation" : {
+        "mode" : "PartialReconfiguration",
+        "kwargs" : {
+            "reference_model_name": "mn_A",
+            "pr_regions" : {
+                "pr_region_0" : {
+                    "mn_A" : ["MVAU_hls_0", "Thresholding_rtl_0"],
+                    "mn_B" : ["MVAU_hls_0", "Thresholding_rtl_0"],
+                    "pblock" : "CLOCKREGION_X1Y1:CLOCKREGION_X1Y1"
+                },
+                "pr_region_1" : {
+                    "mn_A" : ["VVAU_hls_0", "Thresholding_hls_1", "MVAU_hls_1", "Thresholding_hls_2"],
+                    "mn_B" : ["VVAU_hls_0", "Thresholding_hls_1", "MVAU_hls_1", "Thresholding_hls_2"],
+                    "pblock" : "CLOCKREGION_X2Y1:CLOCKREGION_X2Y1"
+                },
+                "pr_region_2" : {
+                    "mn_A" : ["VVAU_hls_1", "Thresholding_hls_3", "MVAU_hls_2", "Thresholding_hls_4"],
+                    "mn_B" : ["VVAU_hls_1", "Thresholding_hls_3", "MVAU_hls_2", "Thresholding_hls_4"],
+                    "pblock" : "CLOCKREGION_X3Y1:CLOCKREGION_X3Y1"
+                },
+                "pr_region_3" : {
+                    "mn_A" : ["VVAU_hls_2", "Thresholding_hls_5", "MVAU_hls_3", "Thresholding_hls_6"],
+                    "mn_B" : ["VVAU_hls_2", "Thresholding_hls_5", "MVAU_hls_3", "Thresholding_hls_6"],
+                    "pblock" : "CLOCKREGION_X1Y2:CLOCKREGION_X2Y2"
+                },
+                "pr_region_4" : {
+                    "mn_A" : ["VVAU_hls_3", "Thresholding_hls_7", "MVAU_hls_4", "Thresholding_hls_8"],
+                    "mn_B" : ["VVAU_hls_3", "Thresholding_hls_7", "MVAU_hls_4", "Thresholding_hls_8"],
+                    "pblock" : "CLOCKREGION_X0Y3:CLOCKREGION_X1Y3"
+                },
+                "pr_region_5" : {
+                    "mn_A" : ["VVAU_hls_4", "Thresholding_hls_9", "MVAU_hls_5", "Thresholding_hls_10"],
+                    "mn_B" : ["VVAU_hls_4", "Thresholding_hls_9", "MVAU_hls_5", "Thresholding_hls_10"],
+                    "pblock" : "CLOCKREGION_X0Y4:CLOCKREGION_X1Y4"
+                },
+                "pr_region_6" : {
+                    "mn_A" : ["VVAU_hls_5", "Thresholding_hls_11", "MVAU_hls_6", "Thresholding_hls_12"],
+                    "mn_B" : ["VVAU_hls_5", "Thresholding_hls_11", "MVAU_hls_6", "Thresholding_hls_12"],
+                    "pblock" : "CLOCKREGION_X2Y4:CLOCKREGION_X2Y4"
+                },
+                "pr_region_7" : {
+                    "mn_A" : ["VVAU_hls_6", "Thresholding_hls_13", "MVAU_hls_7", "Thresholding_hls_14"],
+                    "mn_B" : ["VVAU_hls_6", "Thresholding_hls_13", "MVAU_hls_7", "Thresholding_hls_14"],
+                    "pblock" : "CLOCKREGION_X1Y1:CLOCKREGION_X3Y2"
+                },
+                "pr_region_8" : {
+                    "mn_A" : ["VVAU_hls_7", "Thresholding_hls_15", "MVAU_hls_8", "Thresholding_hls_16"],
+                    "mn_B" : ["VVAU_hls_7", "Thresholding_hls_15", "MVAU_hls_8", "Thresholding_hls_16"],
+                    "pblock" : "CLOCKREGION_X0Y5:CLOCKREGION_X0Y5"
+                },
+                "pr_region_9" : {
+                    "mn_A" : ["VVAU_hls_8", "Thresholding_hls_17", "MVAU_hls_9", "Thresholding_hls_18"],
+                    "mn_B" : ["VVAU_hls_8", "Thresholding_hls_17", "MVAU_hls_9", "Thresholding_hls_18"],
+                    "pblock" : "CLOCKREGION_X1Y5:CLOCKREGION_X1Y5"
+                },
+                "pr_region_10" : {
+                    "mn_A" : ["VVAU_hls_9", "Thresholding_hls_19", "MVAU_hls_10", "Thresholding_hls_20"],
+                    "mn_B" : ["VVAU_hls_9", "Thresholding_hls_19", "MVAU_hls_10", "Thresholding_hls_20"],
+                    "pblock" : "CLOCKREGION_X2Y5:CLOCKREGION_X2Y5"
+                },
+                "pr_region_11" : {
+                    "mn_A" : ["VVAU_hls_10", "Thresholding_hls_21", "MVAU_hls_11", "Thresholding_hls_22"],
+                    "mn_B" : ["VVAU_hls_10", "Thresholding_hls_21", "MVAU_hls_11", "Thresholding_hls_22"],
+                    "pblock" : "CLOCKREGION_X3Y5:CLOCKREGION_X3Y5"
+                },
+                "pr_region_12" : {
+                    "mn_A" : ["VVAU_hls_11", "Thresholding_hls_23", "MVAU_hls_12", "Thresholding_hls_24"],
+                    "mn_B" : ["VVAU_hls_11", "Thresholding_hls_23", "MVAU_hls_12", "Thresholding_hls_24"],
+                    "pblock" : "CLOCKREGION_X4Y5:CLOCKREGION_X4Y5"
+                },
+                "pr_region_13" : {
+                    "mn_A" : ["VVAU_hls_12", "Thresholding_hls_25", "MVAU_hls_13", "Thresholding_hls_26"],
+                    "mn_B" : ["VVAU_hls_12", "Thresholding_hls_25", "MVAU_hls_13", "Thresholding_hls_26"],
+                    "pblock" : "CLOCKREGION_X5Y5:CLOCKREGION_X5Y5"
+                },
+                "pr_region_14" : {
+                    "mn_A" : ["MVAU_hls_14", "ElementwiseAdd_hls_0"],
+                    "mn_B" : ["MVAU_hls_14", "ElementwiseAdd_hls_0"],
+                    "pblock" : "CLOCKREGION_X0Y6:CLOCKREGION_X0Y6"
+                }
+            }
+        }
+    }
+}

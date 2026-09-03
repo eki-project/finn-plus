@@ -1,0 +1,5 @@
+outs:
+- md5: 191c8784fcb3a941379f72157b12d0b8
+  size: 314385
+  hash: md5
+  path: radioml_own_trained.onnx

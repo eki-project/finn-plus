@@ -27,7 +27,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for init."""
+"""Registry of FINN FPGA dataflow custom ops."""
+
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # Dictionary of HWCustomOp implementations
@@ -66,6 +67,7 @@ from finn.custom_op.fpgadataflow.attention_heads import MergeMultiHeads, SplitMu
 from finn.custom_op.fpgadataflow.concat import StreamingConcat
 from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.crop import Crop
+from finn.custom_op.fpgadataflow.dnncontainer import DNNContainer
 from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams
 from finn.custom_op.fpgadataflow.fmpadding import FMPadding
 from finn.custom_op.fpgadataflow.fmpadding_pixel import FMPadding_Pixel
@@ -120,3 +122,4 @@ custom_op["MergeMultiHeads"] = MergeMultiHeads
 custom_op["ReplicateStream"] = ReplicateStream
 custom_op["HWSoftmax"] = HWSoftmax
 custom_op["Requant"] = Requant
+custom_op["DNNContainer"] = DNNContainer

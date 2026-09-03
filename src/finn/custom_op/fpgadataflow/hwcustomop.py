@@ -120,6 +120,7 @@ class HWCustomOp(CustomOp):
             "inFIFODepths": ("ints", False, [2]),
             "outFIFODepths": ("ints", False, [2]),
             "output_hook": ("s", False, ""),
+            "bodies": ("i", False, 0),
             "mlo_max_iter": ("i", False, 0),
         }
 
@@ -428,8 +429,11 @@ class HWCustomOp(CustomOp):
             mname = self.onnx_node.name
             sets = 1
             mlo_max_iter = self.get_nodeattr("mlo_max_iter")
+            bodies = self.get_nodeattr("bodies")
             if mlo_max_iter:
                 sets = mlo_max_iter
+            elif bodies:
+                sets = bodies
             if self.onnx_node.op_type.startswith("Thresholding"):
                 depth = self.calc_tmem()
             else:
