@@ -64,11 +64,15 @@ class GenerateNodeContainerStitched(Transformation):
                     for id in range(bodies):
                         body_attr = f"body_{id}"
                         node_model = node_inst.get_nodeattr(body_attr)
-                        # Give each PR body the same FIFO treatment as the top-level flow
+                        # Give each PR body the same FIFO treatment as the top-level flow.
+                        # GiveUniqueNodeNamesRecursive (used inside step_set_fifo_depths)
+                        # already inserts a "_" between prefix and node name, so the prefix
+                        # must not end with one: a trailing "_" yields names containing "__",
+                        # which Vivado rejects as illegal BD cell names.
                         node_model = step_set_fifo_depths(
                             node_model,
                             self.cfg,
-                            parent_node=node.name + "_" + body_attr + "_",
+                            parent_node=f"{node.name}_{body_attr}",
                         )
                         node_model = node_model.transform(
                             PrepareIP(
