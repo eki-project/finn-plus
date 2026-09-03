@@ -30,7 +30,6 @@
 
 import math
 import numpy as np
-from numpy._typing._shape import _Shape
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import TYPE_CHECKING, cast
 
@@ -42,6 +41,14 @@ if TYPE_CHECKING:
     from onnx import GraphProto
     from qonnx.core.modelwrapper import ModelWrapper
 
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
+
 # does not do anything at the ONNX node-by-node level, and input-output
 # tensor shapes are the same. performs data width conversion at the rtlsim level
 
@@ -49,19 +56,9 @@ if TYPE_CHECKING:
 class StreamingDataWidthConverter(HWCustomOp):
     """Abstraction layer for HW implementation of StreamingDataWidthConverter."""
 
-    def get_nodeattr_types(
-        self,
-    ) -> dict[
-        str,
-        tuple[str, bool, int | float | str | bool | np.ndarray | list]
-        | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-    ]:
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs: dict[
-            str,
-            tuple[str, bool, int | float | str | bool | np.ndarray | list]
-            | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
-        ] = {
+        my_attrs: NodeAttrTypes = {
             # shape of input tensor
             "inShape": ("ints", True, []),
             # shape of output tensor, usually the same as inShape,
@@ -111,7 +108,7 @@ class StreamingDataWidthConverter(HWCustomOp):
     def check_divisible_iowidths(self) -> None:
         """Return check divisible iowidths."""
 
-    def get_folded_input_shape(self, ind: int = 0) -> _Shape:  # noqa: ARG002
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
         self.check_divisible_iowidths()
         iwidth = cast("int", self.get_nodeattr("inWidth"))
@@ -130,7 +127,7 @@ class StreamingDataWidthConverter(HWCustomOp):
         dummy_t = dummy_t.reshape(new_shape)
         return dummy_t.shape
 
-    def get_folded_output_shape(self, ind: int = 0) -> _Shape:  # noqa: ARG002
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
         self.check_divisible_iowidths()
         owidth = cast("int", self.get_nodeattr("outWidth"))
@@ -191,8 +188,8 @@ class StreamingDataWidthConverter(HWCustomOp):
         return info_messages
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: "GraphProto"
-    ) -> None:  # noqa: ARG002
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         """Execute node."""
         node = self.onnx_node
         exp_shape = self.get_normal_input_shape()

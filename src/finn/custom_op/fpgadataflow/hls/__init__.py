@@ -27,6 +27,8 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Module for init."""
+from typing import TypeVar
+
 from finn.custom_op.fpgadataflow.hls.streamingfifo_hls import StreamingFIFO_hls
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
@@ -34,11 +36,13 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 # Dictionary of HLSBackend implementations
 custom_op = dict()
 
+_HLSOpT = TypeVar("_HLSOpT", bound=HLSBackend)
+
 
 # Registers a class into the custom_op dictionary
 # Note: This must be defined first, before importing any custom op
 # implementation to avoid "importing partially initialized module" issues.
-def register_custom_op(cls) -> type[HLSBackend]:
+def register_custom_op(cls: type[_HLSOpT]) -> type[_HLSOpT]:
     # The class must actually implement HWCustomOp
     """Register a custom HLS operation."""
     assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"

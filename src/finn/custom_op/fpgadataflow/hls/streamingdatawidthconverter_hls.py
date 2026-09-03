@@ -26,99 +26,102 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for streamingdatawidthconverter hls."""
+"""HLS backend implementation of the streaming data-width converter."""
+
 import numpy as np
+from onnx import GraphProto, NodeProto
+from typing import cast
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
+from finn.custom_op.fpgadataflow.streamingdatawidthconverter import (
+    NodeAttrTypes,
+    StreamingDataWidthConverter,
+)
+from finn.util.exception import FINNInternalError
 
 # does not do anything at the ONNX node-by-node level, and input-output
 # tensor shapes are the same. performs data width conversion at the rtlsim level
 
 
 class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
-    """Class that corresponds to finn-hlslib StreamingDataWidthConverter_Batch
-    function."""
+    """Corresponds to the finn-hlslib StreamingDataWidthConverter_Batch function."""
 
-    def get_nodeattr_types(self):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
+        """Initialize instance."""
+        super().__init__(onnx_node, **kwargs)
+
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(StreamingDataWidthConverter.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "streamtools.h"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        numReps = 1
-        numInWords = int(np.prod(self.get_folded_input_shape()[:-1]))
-        inWidth = self.get_nodeattr("inWidth")
-        outWidth = self.get_nodeattr("outWidth")
+        num_reps = 1
+        num_in_words = int(np.prod(self.get_folded_input_shape()[:-1]))
+        in_width = cast("int", self.get_nodeattr("inWidth"))
+        out_width = cast("int", self.get_nodeattr("outWidth"))
         self.code_gen_dict["$DEFINES$"] = [
-            "#define InWidth %d " % inWidth,
-            "#define OutWidth %d " % outWidth,
-            "#define NumInWords %d " % numInWords,
-            "#define numReps %d" % numReps,
+            f"#define InWidth {in_width} ",
+            f"#define OutWidth {out_width} ",
+            f"#define NumInWords {num_in_words} ",
+            f"#define numReps {num_reps}",
         ]
         if self.needs_lcm():
-            lcmWidth = self.get_iowidth_lcm()
-            assert numInWords % (lcmWidth / inWidth) == 0, "Error in DWC LCM calculation"
-            numLCMToOut = numInWords // (lcmWidth / inWidth)
-            self.code_gen_dict["$DEFINES$"].append("#define LCMWidth %d" % lcmWidth)
-            self.code_gen_dict["$DEFINES$"].append("#define NumLCMToOut %d" % (numLCMToOut))
+            lcm_width = self.get_iowidth_lcm()
+            if num_in_words % (lcm_width / in_width) != 0:
+                raise FINNInternalError(f"{self.onnx_node.name}: error in DWC LCM calculation")
+            num_lcm_to_out = int(num_in_words // (lcm_width / in_width))
+            self.code_gen_dict["$DEFINES$"].append(f"#define LCMWidth {lcm_width}")
+            self.code_gen_dict["$DEFINES$"].append(f"#define NumLCMToOut {num_lcm_to_out}")
 
-    def strm_decl(self):
+    def strm_decl(self) -> None:
         """Return strm decl."""
-        self.code_gen_dict["$STREAMDECLARATIONS$"] = []
-        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            f'hls::stream<ap_uint<{self.get_instream_width()}>> in0_V ("in0_V");'
-        )
-        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            f'hls::stream<ap_uint<{self.get_outstream_width()}>> out0_V ("out0_V");'
-        )
+        self.code_gen_dict["$STREAMDECLARATIONS$"] = [
+            f'hls::stream<ap_uint<{self.get_instream_width()}>> in0_V ("in0_V");',
+            f'hls::stream<ap_uint<{self.get_outstream_width()}>> out0_V ("out0_V");',
+        ]
 
-    def docompute(self):
-        # TODO continue with fxns below, they are copy-pasted
+    def docompute(self) -> None:
         """Return docompute."""
         op = "StreamingDataWidthConverter_Batch"
         if self.needs_lcm():
             self.code_gen_dict["$DOCOMPUTE$"] = [
                 f'hls::stream<ap_uint<{self.get_iowidth_lcm()}>> intermediate ("intermediate");',
-                "%s<InWidth, LCMWidth, NumInWords>(in0_V, intermediate, numReps);" % op,
-                "%s<LCMWidth, OutWidth, NumLCMToOut>(intermediate, out0_V, numReps);" % op,
+                f"{op}<InWidth, LCMWidth, NumInWords>(in0_V, intermediate, numReps);",
+                f"{op}<LCMWidth, OutWidth, NumLCMToOut>(intermediate, out0_V, numReps);",
             ]
         else:
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                "%s<InWidth, OutWidth, NumInWords>(in0_V, out0_V, numReps);" % op
+                f"{op}<InWidth, OutWidth, NumInWords>(in0_V, out0_V, numReps);"
             ]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        in_packed_bits = self.get_instream_width()
-        in_packed_hls_type = "ap_uint<%d>" % in_packed_bits
-        out_packed_bits = self.get_outstream_width()
-        out_packed_hls_type = "ap_uint<%d>" % out_packed_bits
+        in_packed_hls_type = f"ap_uint<{self.get_instream_width()}>"
+        out_packed_hls_type = f"ap_uint<{self.get_outstream_width()}>"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            "void %s(hls::stream<%s > &in0_V, hls::stream<%s > &out0_V)"
-            % (
-                self.onnx_node.name,
-                in_packed_hls_type,
-                out_packed_hls_type,
-            )
+            f"void {self.onnx_node.name}(hls::stream<{in_packed_hls_type} > &in0_V, "
+            f"hls::stream<{out_packed_hls_type} > &out0_V)"
         ]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Return pragmas."""
-        self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0_V"]
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
+        self.code_gen_dict["$PRAGMAS$"] = [
+            "#pragma HLS INTERFACE axis port=in0_V",
+            "#pragma HLS INTERFACE axis port=out0_V",
+            "#pragma HLS INTERFACE ap_ctrl_none port=return",
+        ]
         if self.needs_lcm():
             self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS DATAFLOW disable_start_propagation")
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:
         """Execute node."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
@@ -126,6 +129,5 @@ class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
             output = context[self.onnx_node.input[0]]
             output = np.asarray([output], dtype=np.float32).reshape(*exp_shape)
             context[self.onnx_node.output[0]] = output
-
         elif mode == "rtlsim":
             HLSBackend.execute_node(self, context, graph)

@@ -26,89 +26,92 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for split hls."""
+"""HLS backend implementation of the streaming channel-split operator."""
+
+import numpy as np
+from onnx import GraphProto, NodeProto
+
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.split import StreamingSplit
+from finn.custom_op.fpgadataflow.split import NodeAttrTypes, StreamingSplit
 
 
 class StreamingSplit_hls(StreamingSplit, HLSBackend):
     """Streaming split node with dynamically generated HLS.
-    Only supports splitting along the last axis."""
 
-    def get_nodeattr_types(self):
+    Only supports splitting along the last axis.
+    """
+
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
+        """Initialize instance."""
+        super().__init__(onnx_node, **kwargs)
+
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(StreamingSplit.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:
         """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "split.hpp"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
         self.code_gen_dict["$DEFINES$"] = []
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Return docompute."""
-        self.code_gen_dict["$DOCOMPUTE$"] = []
         n_outputs = self.get_n_outputs()
-        output_folds = [str(self.get_folded_output_shape(i)[-2]) for i in range(n_outputs)]
-        out_streams = []
-        for i in range(self.get_n_outputs()):
-            out_streams.append("out%d_V" % i)
-        out_stream_names = ", ".join(out_streams)
-        out_stream_folds = ", ".join(output_folds)
-        comp_call = "StreamingSplit<%s>(in0_V, %s);" % (out_stream_folds, out_stream_names)
-        self.code_gen_dict["$DOCOMPUTE$"] = [comp_call]
+        out_stream_folds = ", ".join(
+            str(self.get_folded_output_shape(i)[-2]) for i in range(n_outputs)
+        )
+        out_stream_names = ", ".join(f"out{i}_V" for i in range(n_outputs))
+        self.code_gen_dict["$DOCOMPUTE$"] = [
+            f"StreamingSplit<{out_stream_folds}>(in0_V, {out_stream_names});"
+        ]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
         input_elem_hls_type = self.get_input_datatype().get_hls_datatype_str()
-        simd = self.get_nodeattr("SIMD")
-        in_stream = "hls::stream<hls::vector<%s, %d>> &in0_V" % (input_elem_hls_type, simd)
-        out_streams = []
-        for i in range(self.get_n_outputs()):
-            out_streams.append(
-                "hls::stream<hls::vector<%s, %d>> &out%d_V" % (input_elem_hls_type, simd, i)
-            )
-        out_streams = ", ".join(out_streams)
-        blackbox_hls = "void %s(%s, %s)" % (self.onnx_node.name, in_stream, out_streams)
-        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [blackbox_hls]
+        simd = self.simd
+        in_stream = f"hls::stream<hls::vector<{input_elem_hls_type}, {simd}>> &in0_V"
+        out_streams = ", ".join(
+            f"hls::stream<hls::vector<{input_elem_hls_type}, {simd}>> &out{i}_V"
+            for i in range(self.get_n_outputs())
+        )
+        self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
+            f"void {self.onnx_node.name}({in_stream}, {out_streams})"
+        ]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Return pragmas."""
-        pragmas = []
-        pragmas.append("#pragma HLS INTERFACE axis port=in0_V")
-        for i in range(self.get_n_outputs()):
-            pragmas.append("#pragma HLS INTERFACE axis port=out%d_V" % i)
+        pragmas = ["#pragma HLS INTERFACE axis port=in0_V"]
+        pragmas += [
+            f"#pragma HLS INTERFACE axis port=out{i}_V" for i in range(self.get_n_outputs())
+        ]
         pragmas.append("#pragma HLS INTERFACE ap_ctrl_none port=return")
         pragmas.append("#pragma HLS aggregate variable=in0_V compact=bit")
-        for i in range(self.get_n_outputs()):
-            pragmas.append("#pragma HLS aggregate variable=out%d_V compact=bit" % i)
+        pragmas += [
+            f"#pragma HLS aggregate variable=out{i}_V compact=bit"
+            for i in range(self.get_n_outputs())
+        ]
         self.code_gen_dict["$PRAGMAS$"] = pragmas
 
-    def timeout_condition(self):
+    def timeout_condition(self) -> None:
         """Return timeout condition."""
-        condition = []
-        for i in range(self.get_n_outputs()):
-            condition.append(f"out{i}_V.empty()")
-        condition = " && ".join(condition)
+        condition = " && ".join(f"out{i}_V.empty()" for i in range(self.get_n_outputs()))
         self.code_gen_dict["$TIMEOUT_CONDITION$"] = [condition]
 
-    def timeout_read_stream(self):
+    def timeout_read_stream(self) -> None:
         """Return timeout read stream."""
-        read_stream_command = []
-        for i in range(self.get_n_outputs()):
-            read_stream_command.append(
-                """if(!out%d_V.empty()){
-                   strm%d << out%d_V.read();
-                   }"""
-                % (i, i, i)
-            )
-        self.code_gen_dict["$TIMEOUT_READ_STREAM$"] = read_stream_command
+        self.code_gen_dict["$TIMEOUT_READ_STREAM$"] = [
+            f"""if(!out{i}_V.empty()){{
+                   strm{i} << out{i}_V.read();
+                   }}"""
+            for i in range(self.get_n_outputs())
+        ]

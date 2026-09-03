@@ -26,61 +26,55 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""RTL implementation of streaming data width converter.
+"""RTL backend implementation of the streaming data-width converter."""
 
-This module provides an RTL-based implementation for converting between
-different stream data widths while maintaining throughput.
-"""
-
-import os
+import numpy as np
 import shutil
+from onnx import GraphProto, NodeProto
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import cast
 
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
-from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
+from finn.custom_op.fpgadataflow.streamingdatawidthconverter import (
+    NodeAttrTypes,
+    StreamingDataWidthConverter,
+)
+from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
+
+_RTL_SOURCES = ["dwc_axi.sv", "dwc.sv"]
 
 
 class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
-    """Class that corresponds to finn-rtllib datawidth converter
-    module.
-    """
+    """Corresponds to the finn-rtllib data-width converter module."""
 
-    def get_nodeattr_types(self):
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
+        """Initialize instance."""
+        super().__init__(onnx_node, **kwargs)
+
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Get the attribute types for this node."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(StreamingDataWidthConverter.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def check_divisible_iowidths(self):
-        """Check that input and output widths are divisible.
+    def check_divisible_iowidths(self) -> None:
+        """Check that input and output stream widths have an integer ratio.
 
-        Ensures that the stream width conversion has an integer ratio,
-        which is required for proper operation.
-
-        Returns
-        -------
-        bool
-            True if widths are properly divisible, False otherwise
+        The RTL module only supports stream widths that are integer width
+        ratios of one another.
         """
-        iwidth = self.get_nodeattr("inWidth")
-        owidth = self.get_nodeattr("outWidth")
-        # the rtl module only supports
-        # stream widths that are divisible by
-        # integer width ratios
-        iwidth_d = iwidth % owidth == 0
-        owidth_d = owidth % iwidth == 0
-        assert (
-            iwidth_d or owidth_d
-        ), """RTL implementation of DWC requires
-        stream widths that are integer width ratios
-        from each other. Input width is set to %s
-        and output width is set to %s """ % (
-            iwidth,
-            owidth,
-        )
+        iwidth = cast("int", self.get_nodeattr("inWidth"))
+        owidth = cast("int", self.get_nodeattr("outWidth"))
+        if iwidth % owidth != 0 and owidth % iwidth != 0:
+            raise FINNUserError(
+                f"{self.onnx_node.name}: the RTL DWC requires stream widths that are integer "
+                f"ratios of each other, but inWidth={iwidth} and outWidth={owidth}"
+            )
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:
         """Execute the node in the given context and graph for simulation."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
@@ -88,94 +82,55 @@ class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
         elif mode == "rtlsim":
             RTLBackend.execute_node(self, context, graph)
 
-    def get_template_values(self):
+    def get_template_values(self) -> dict[str, str | int]:
         """Get the code generation template values for this node."""
-        topname = self.get_verilog_top_module_name()
-        ibits = self.get_instream_width()
-        obits = self.get_outstream_width()
-        code_gen_dict = {
-            "IBITS": int(ibits),
-            "OBITS": int(obits),
-            "TOP_MODULE_NAME": topname,
+        return {
+            "IBITS": int(self.get_instream_width()),
+            "OBITS": int(self.get_outstream_width()),
+            "TOP_MODULE_NAME": self.get_verilog_top_module_name(),
         }
-        return code_gen_dict
 
-    def generate_hdl(self, model, fpgapart, clk):
+    def generate_hdl(self, model: ModelWrapper, fpgapart: str, clk: float) -> None:  # noqa: ARG002
         """Generate the HDL code for this node."""
-        rtlsrc = os.path.join(get_settings().finn_rtllib, "dwc/hdl")
-        template_path = rtlsrc + "/dwc_template.v"
+        rtlsrc = Path(get_settings().finn_rtllib) / "dwc" / "hdl"
+        template_path = rtlsrc / "dwc_template.v"
         code_gen_dict = self.get_template_values()
+        topname = self.get_verilog_top_module_name()
         # save top module name so we can refer to it after this node has been renamed
         # (e.g. by GiveUniqueNodeNames(prefix) during MakeZynqProject)
-        self.set_nodeattr("gen_top_module", self.get_verilog_top_module_name())
+        self.set_nodeattr("gen_top_module", topname)
 
-        # apply code generation to templates
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        with open(template_path) as f:
-            template = f.read()
-        for key_name in code_gen_dict:
-            key = "$%s$" % key_name
-            template = template.replace(key, str(code_gen_dict[key_name]))
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        template = template_path.read_text()
+        for key_name, value in code_gen_dict.items():
+            template = template.replace(f"${key_name}$", str(value))
+        (code_gen_dir / f"{topname}.v").write_text(template)
 
-        with open(
-            os.path.join(code_gen_dir, self.get_verilog_top_module_name() + ".v"),
-            "w",
-        ) as f:
-            f.write(template)
-
-        sv_files = ["dwc_axi.sv", "dwc.sv"]
-        for sv_file in sv_files:
-            shutil.copy(rtlsrc + "/" + sv_file, code_gen_dir)
+        for sv_file in _RTL_SOURCES:
+            shutil.copy(rtlsrc / sv_file, code_gen_dir)
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
-        self.set_nodeattr("ipgen_path", code_gen_dir)
-        self.set_nodeattr("ip_path", code_gen_dir)
+        self.set_nodeattr("ipgen_path", str(code_gen_dir))
+        self.set_nodeattr("ip_path", str(code_gen_dir))
 
-    def get_rtl_file_list(self, abspath=False):
-        """Get list of RTL files required for this node.
-
-        Parameters
-        ----------
-        abspath : bool
-            If True, return absolute file paths; otherwise return relative paths
-
-        Returns
-        -------
-        list of str
-            List of RTL file paths
-        """
+    def get_rtl_file_list(self, abspath: bool = False) -> list[str]:
+        """Get list of RTL files required for this node."""
         if abspath:
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(get_settings().finn_rtllib, "dwc/hdl/")
+            code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen")) + "/"
+            rtllib_dir = str(Path(get_settings().finn_rtllib) / "dwc" / "hdl") + "/"
         else:
             code_gen_dir = ""
             rtllib_dir = ""
 
-        verilog_files = [
-            rtllib_dir + "dwc_axi.sv",
-            rtllib_dir + "dwc.sv",
-            code_gen_dir + self.get_nodeattr("gen_top_module") + ".v",
-        ]
+        top_module = cast("str", self.get_nodeattr("gen_top_module"))
+        return [rtllib_dir + f for f in _RTL_SOURCES] + [f"{code_gen_dir}{top_module}.v"]
 
-        return verilog_files
+    def code_generation_ipi(self) -> list[str]:
+        """Construct and return the TCL for node instantiation in Vivado IPI."""
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        top_module = cast("str", self.get_nodeattr("gen_top_module"))
+        sourcefiles = [str(code_gen_dir / f) for f in [*_RTL_SOURCES, f"{top_module}.v"]]
 
-    def code_generation_ipi(self):
-        """Constructs and returns the TCL for node instantiation in Vivado IPI."""
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-
-        sourcefiles = [
-            "dwc_axi.sv",
-            "dwc.sv",
-            self.get_nodeattr("gen_top_module") + ".v",
-        ]
-
-        sourcefiles = [os.path.join(code_gen_dir, f) for f in sourcefiles]
-
-        cmd = []
-        for f in sourcefiles:
-            cmd += ["add_files -norecurse %s" % (f)]
-        cmd += [
-            "create_bd_cell -type module -reference %s %s"
-            % (self.get_nodeattr("gen_top_module"), self.onnx_node.name)
-        ]
+        cmd = [f"add_files -norecurse {f}" for f in sourcefiles]
+        cmd += [f"create_bd_cell -type module -reference {top_module} {self.onnx_node.name}"]
         return cmd

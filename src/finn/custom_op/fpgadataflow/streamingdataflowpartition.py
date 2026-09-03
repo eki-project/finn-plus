@@ -26,22 +26,38 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for streamingdataflowpartition."""
+"""Container node grouping a partitioned FINN-ONNX dataflow sub-model."""
+
+import numpy as np
+from onnx import NodeProto
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.base import CustomOp
+from typing import TYPE_CHECKING, cast
 
 from finn.core.onnx_exec import execute_onnx
+from finn.util.exception import FINNInternalError
 
-# TODO move StreamingDataflowPartition to HLSCustomOp base class
+if TYPE_CHECKING:
+    from onnx import GraphProto
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
 
 
 class StreamingDataflowPartition(CustomOp):
-    """Class that corresponds to the meta/container node StreamingDataflowPartition
-    which is a placeholder for a group of fpgadataflow nodes that have been separated
-    out into a FINN-ONNX model of its own. Note that is does not produce any HLS or
-    bitfile by itself."""
+    """Meta/container node for a group of fpgadataflow nodes.
 
-    def get_nodeattr_types(self):
+    The grouped nodes have been separated out into a FINN-ONNX model of their
+    own. This node is a placeholder only - it does not produce any HLS or
+    bitfile by itself.
+    """
+
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
         return {
             "model": ("s", True, ""),
@@ -56,26 +72,29 @@ class StreamingDataflowPartition(CustomOp):
             "return_full_exec_context": ("i", False, 0),
         }
 
-    def make_shape_compatible_op(self, model):
-        """Create shape compatible op."""
-        pass
+    def make_shape_compatible_op(self, model: ModelWrapper) -> NodeProto:  # noqa: ARG002
+        """Not supported - StreamingDataflowPartition is a container node."""
+        raise FINNInternalError(
+            f"{self.onnx_node.name}: shape inference is not defined for "
+            f"StreamingDataflowPartition container nodes"
+        )
 
-    def infer_node_datatype(self, model):
-        """Infer node datatype."""
-        pass
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
+        """Not supported - StreamingDataflowPartition is a container node."""
 
-    def execute_node(self, context, graph):
-        """Execute node."""
-        model = ModelWrapper(self.get_nodeattr("model"))
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"
+    ) -> None:  # noqa: ARG002
+        """Execute node by running the referenced partition sub-model."""
+        model = ModelWrapper(cast("str", self.get_nodeattr("model")))
         return_full_exec_context = self.get_nodeattr("return_full_exec_context") == 1
         node = self.onnx_node
-        inp_ctx = dict(filter(lambda x: x[0] in node.input, context.items()))
+        inp_ctx = {k: v for k, v in context.items() if k in node.input}
         # inputs may have been renamed in partition
         for i, old_iname in enumerate(node.input):
             new_iname = model.graph.input[i].name
             if old_iname != new_iname:
-                inp_ctx[new_iname] = inp_ctx[old_iname]
-                del inp_ctx[old_iname]
+                inp_ctx[new_iname] = inp_ctx.pop(old_iname)
         ret = execute_onnx(model, inp_ctx, return_full_exec_context)
         # outputs may have been renamed in partition
         for i, node_oname in enumerate(node.output):
@@ -83,12 +102,17 @@ class StreamingDataflowPartition(CustomOp):
             context[node_oname] = ret[model_oname]
         # prefix and insert exec context entries
         if return_full_exec_context:
-            for tname in ret.keys():
-                if tname not in [x.name for x in model.graph.output]:
-                    context[node.name + "_" + tname] = ret[tname]
+            model_onames = {x.name for x in model.graph.output}
+            for tname in ret:
+                if tname not in model_onames:
+                    context[f"{node.name}_{tname}"] = ret[tname]
 
-    def verify_node(self):
-        """Verify node."""
+    def verify_node(self) -> list[str]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Verify node.
+
+        Note: the qonnx ``CustomOp.verify_node`` base is annotated ``-> None`` but
+        the FINN verification passes expect a list of messages.
+        """
         info_messages = []
 
         # verify number of attributes

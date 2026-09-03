@@ -26,22 +26,32 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for streamingfifo hls."""
+"""HLS backend implementation of the streaming FIFO (virtual FIFO for live sizing)."""
+
 import numpy as np
-import os
+from onnx import GraphProto, NodeProto
+from pathlib import Path
 from qonnx.core.datatype import DataType
+from typing import cast
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
-from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.custom_op.fpgadataflow.streamingfifo import NodeAttrTypes, StreamingFIFO
+from finn.util.exception import FINNInternalError
 
 
 class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
-    """HLS-based FIFO implementation. Currently only used as virtual FIFO for live FIFO-sizing."""
+    """HLS-based FIFO implementation.
 
-    def get_nodeattr_types(self):
+    Currently only used as a virtual FIFO for live FIFO-sizing.
+    """
+
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
+        """Initialize instance."""
+        super().__init__(onnx_node, **kwargs)
+
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             # Only purpose of this CustomOp for now: virtual FIFO for live FIFO-sizing
             "impl_style": ("s", False, "virtual", {"virtual"}),
         }
@@ -50,32 +60,29 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
         return my_attrs
 
     def global_includes(self) -> None:
-        """Add global include for virtual FIFO implementation."""
+        """Add the global include for the virtual FIFO implementation."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "virtual_fifo.hpp"']
 
-    def defines(self, var) -> None:
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        numReps = 1
+        num_reps = 1
         width = self.get_instream_width()
         self.code_gen_dict["$DEFINES$"] = [
             f"#define Width {width} ",
-            f"#define numReps {numReps}",
+            f"#define numReps {num_reps}",
         ]
 
-    def strm_decl(self):
+    def strm_decl(self) -> None:
         """Return strm decl."""
-        self.code_gen_dict["$STREAMDECLARATIONS$"] = []
-        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            f"hls::stream<ap_uint<{self.get_instream_width()}>> "
-            f'in0_{self.hls_sname()} ("in0_{self.hls_sname()}");'
-        )
-        self.code_gen_dict["$STREAMDECLARATIONS$"].append(
-            f"hls::stream<ap_uint<{self.get_outstream_width()}>> "
-            f'out0_{self.hls_sname()} ("out0_{self.hls_sname()}");'
-        )
+        sname = self.hls_sname()
+        self.code_gen_dict["$STREAMDECLARATIONS$"] = [
+            f'hls::stream<ap_uint<{self.get_instream_width()}>> in0_{sname} ("in0_{sname}");',
+            f'hls::stream<ap_uint<{self.get_outstream_width()}>> out0_{sname} ("out0_{sname}");',
+        ]
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Return docompute."""
+        sname = self.hls_sname()
         self.code_gen_dict["$DOCOMPUTE$"] = [
             f"""
             #pragma HLS dataflow disable_start_propagation
@@ -86,125 +93,84 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
             #pragma HLS stream variable=out_fifo depth=2
 
             // AXI-Stream -> FIFO
-            move(in0_{self.hls_sname()}, in_fifo);
+            move(in0_{sname}, in_fifo);
 
             // Main
             VirtualFIFO<Width>(in_fifo, out_fifo, mode, depth, occupancy, max_occupancy);
 
             // FIFO -> AXI-Stream
-            move(out_fifo, out0_{self.hls_sname()});
+            move(out_fifo, out0_{sname});
             """
         ]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
-        in_packed_bits = self.get_instream_width()
-        in_packed_hls_type = f"ap_uint<{in_packed_bits}>"
-        out_packed_bits = self.get_outstream_width()
-        out_packed_hls_type = f"ap_uint<{out_packed_bits}>"
+        sname = self.hls_sname()
+        in_packed_hls_type = f"ap_uint<{self.get_instream_width()}>"
+        out_packed_hls_type = f"ap_uint<{self.get_outstream_width()}>"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             f"""void {self.onnx_node.name}(
-            hls::stream<{in_packed_hls_type} > &in0_{self.hls_sname()},
-            hls::stream<{out_packed_hls_type} > &out0_{self.hls_sname()}, ap_uint<32> mode,
+            hls::stream<{in_packed_hls_type} > &in0_{sname},
+            hls::stream<{out_packed_hls_type} > &out0_{sname}, ap_uint<32> mode,
             ap_uint<32> depth, ap_uint<32> &occupancy, ap_uint<32> &max_occupancy)"""
-            % (
-                self.onnx_node.name,
-                in_packed_hls_type,
-                self.hls_sname(),
-                out_packed_hls_type,
-                self.hls_sname(),
-            )
         ]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Return pragmas."""
+        sname = self.hls_sname()
         self.code_gen_dict["$PRAGMAS$"] = [
-            "#pragma HLS INTERFACE axis port=in0_" + self.hls_sname()
+            f"#pragma HLS INTERFACE axis port=in0_{sname}",
+            f"#pragma HLS INTERFACE axis port=out0_{sname}",
+            "#pragma HLS INTERFACE s_axilite port=mode",
+            "#pragma HLS INTERFACE s_axilite port=depth",
+            "#pragma HLS INTERFACE s_axilite port=occupancy",
+            "#pragma HLS INTERFACE s_axilite port=max_occupancy",
+            "#pragma HLS INTERFACE ap_ctrl_none port=return",
         ]
-        self.code_gen_dict["$PRAGMAS$"].append(
-            "#pragma HLS INTERFACE axis port=out0_" + self.hls_sname()
-        )
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE s_axilite port=mode")
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE s_axilite port=depth")
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE s_axilite port=occupancy")
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE s_axilite port=max_occupancy")
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
-    def get_verilog_top_module_intf_names(self):
-        # Overload default HWCustomOp implementation to add axilite control IF
-        """Return verilog top module intf names."""
+    def get_verilog_top_module_intf_names(self) -> dict[str, list[tuple[str, int]] | list[str]]:
+        """Return verilog top module intf names (adds the AXI-lite control interface)."""
         intf_names = super().get_verilog_top_module_intf_names()
         intf_names["axilite"] = ["s_axi_control"]
         return intf_names
 
-    def execute_node(self, context, graph):
-        """Execute node."""
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: GraphProto
+    ) -> None:  # noqa: ARG002
+        """Execute node.
+
+        Only ``cppsim`` (a shape-preserving no-op) is supported; the virtual
+        HLS FIFO has no standalone RTL simulation model.
+        """
         mode = self.get_nodeattr("exec_mode")
         node = self.onnx_node
         exp_shape = self.get_normal_input_shape()
         folded_ishape = self.get_folded_input_shape()
 
-        # TODO ensure codegen dir exists
-        if mode == "cppsim":
-            code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
-        elif mode == "rtlsim":
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        else:
-            raise Exception(
-                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
-            has to be set to one of the following value ("cppsim", "rtlsim")"""
+        if mode != "cppsim":
+            raise FINNInternalError(
+                f"{node.name}: exec_mode {mode} is not supported for the virtual HLS FIFO"
             )
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_cppsim")))
 
         inp = context[node.input[0]]
-        assert str(inp.dtype) == "float32", "Input datatype is not float32"
-        assert inp.shape == tuple(exp_shape), "Input shape does not match expected shape."
+        if str(inp.dtype) != "float32":
+            raise FINNInternalError(f"{node.name}: input datatype is not float32")
+        if inp.shape != tuple(exp_shape):
+            raise FINNInternalError(f"{node.name}: input shape {inp.shape} != {tuple(exp_shape)}")
 
         if self.get_input_datatype() == DataType["BIPOLAR"]:
             # store bipolar activations as binary
             inp = (inp + 1) / 2
-            export_idt = DataType["BINARY"]
-        else:
-            export_idt = self.get_input_datatype()
-        # reshape input into folded shape
-        reshaped_input = inp.reshape(folded_ishape)
-        # make copy before saving array
-        reshaped_input = reshaped_input.copy()
-        np.save(os.path.join(code_gen_dir, "input_0.npy"), reshaped_input)
+        # reshape input into folded shape and make a copy before saving
+        reshaped_input = inp.reshape(folded_ishape).copy()
+        np.save(str(code_gen_dir / "input_0.npy"), reshaped_input)
 
-        if mode == "cppsim":
-            output = inp
-            output = np.asarray([output], dtype=np.float32).reshape(*exp_shape)
-            context[node.output[0]] = output
-
-        elif mode == "rtlsim":
-            sim = self.get_rtlsim()
-            nbits = self.get_instream_width()
-            rtlsim_inp = npy_to_rtlsim_input(f"{code_gen_dir}/input_0.npy", export_idt, nbits)
-            super().reset_rtlsim(sim)
-            rtlsim_output = self.rtlsim(sim, rtlsim_inp)
-            odt = export_idt
-            target_bits = odt.bitwidth()
-            packed_bits = self.get_outstream_width()
-            out_npy_path = f"{code_gen_dir}/output.npy"
-            out_shape = self.get_folded_output_shape()
-            rtlsim_output_to_npy(
-                rtlsim_output, out_npy_path, odt, out_shape, packed_bits, target_bits
-            )
-            # load and reshape output
-            output = np.load(out_npy_path)
-            output = np.asarray([output], dtype=np.float32).reshape(exp_shape)
-            context[node.output[0]] = output
-        else:
-            raise Exception(
-                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
-            has to be set to "rtlsim" """
-            )
+        context[node.output[0]] = np.asarray([inp], dtype=np.float32).reshape(*exp_shape)
         # binary -> bipolar if needed
         if self.get_output_datatype() == DataType["BIPOLAR"]:
-            out = context[node.output[0]]
-            out = 2 * out - 1
-            context[node.output[0]] = out
-        assert context[node.output[0]].shape == tuple(
-            exp_shape
-        ), """Output
-        shape doesn't match expected shape, should be same as input shape"""
+            context[node.output[0]] = 2 * context[node.output[0]] - 1
+        if context[node.output[0]].shape != tuple(exp_shape):
+            raise FINNInternalError(
+                f"{node.name}: output shape {context[node.output[0]].shape} != {tuple(exp_shape)}"
+            )
