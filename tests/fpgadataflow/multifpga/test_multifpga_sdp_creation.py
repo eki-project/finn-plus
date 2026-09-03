@@ -217,6 +217,7 @@ def digraph_from_graph_definition(
     return g
 
 
+@pytest.mark.multifpga
 @pytest.mark.parametrize(
     "graph",
     [pytest.param(graph_data, id=graph_name) for graph_name, graph_data in test_graphs.items()],
@@ -278,6 +279,7 @@ def sdp_overview(model: ModelWrapper) -> str:
     return s
 
 
+@pytest.mark.multifpga
 @pytest.mark.parametrize(
     "graph",
     [pytest.param(graph_data, id=graph_name) for graph_name, graph_data in test_graphs.items()],
@@ -322,6 +324,7 @@ def test_iodma_separation(
             assert "IODMA" in submodel.graph.node[0].op_type
 
 
+@pytest.mark.multifpga
 @pytest.mark.parametrize(
     "graph",
     [pytest.param(graph_data, id=graph_name) for graph_name, graph_data in test_graphs.items()],

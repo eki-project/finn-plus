@@ -24,6 +24,9 @@ execution environment with driver testing.
 # from finn.util.basic import make_build_dir
 #
 #
+# @pytest.mark.slow
+# @pytest.mark.vivado
+# @pytest.mark.multifpga
 # @pytest.mark.parametrize(
 #     "fpgas,synth_clk_period_ns,target_fps,mvau_wwidth_max,folding_two_pass,max_util,communication_kernel,topology,partition_strategy",
 #     [
