@@ -1442,8 +1442,23 @@ class BuildSimulation(Transformation):
         self.model = self.model.transform(GiveUniqueNodeNames())
         old_input_names = [i.name for i in self.model.graph.input]
         self.model = self.model.transform(GiveReadableTensorNames())
-        for old_name, node in zip(old_input_names, self.model.graph.input, strict=True):
-            self.model.rename_tensor(node.name, old_name)
+        # Restore the original input tensor names after GiveReadableTensorNames().
+        # We cannot do this with a single pass of ModelWrapper.rename_tensor() (which
+        # looks up the tensor to rename by its *current* name): an old_name can
+        # coincidentally match another input's freshly assigned readable name (e.g.
+        # both are "global_in_1" -- once from an earlier readable-naming pass at an
+        # outer recursion level captured in old_input_names, and once freshly
+        # (re-)assigned by this GiveReadableTensorNames() call to a *different*
+        # input). Restoring one name at a time then creates a transient duplicate,
+        # and the name-based lookup for the next input raises "Found multiple
+        # get_by_name matches". Renaming through unique placeholder names first
+        # avoids this ambiguity, since placeholders can never collide with any
+        # existing or not-yet-restored name.
+        placeholder_names = [f"__prepare_model_tmp_{i}__" for i in range(len(old_input_names))]
+        for placeholder, node in zip(placeholder_names, self.model.graph.input, strict=True):
+            self.model.rename_tensor(node.name, placeholder)
+        for old_name, placeholder in zip(old_input_names, placeholder_names, strict=True):
+            self.model.rename_tensor(placeholder, old_name)
         log.info("[BuildSimulation] Preparing IPs...")
         self.model = self.model.transform(PrepareIP(self.fpgapart, self.clk_ns))
         log.info("[BuildSimulation] Synthesizing IPs...")

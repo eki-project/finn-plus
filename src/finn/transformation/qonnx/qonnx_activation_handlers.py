@@ -402,7 +402,7 @@ class QuantReluHandler(QuantActBaseHandler):
             thresholds = np.empty((num_scale_channels, num_thresholds), dtype=np_default_dtype)
             for c in range(num_scale_channels):
                 for t in range(num_thresholds):
-                    step = -1.0 + half_scale + scale[c] * t
+                    step = -1.0 + half_scale[c] + scale[c] * t
                     if step <= 0:
                         thresholds[c][t] = np.log(step / (alpha * selu_scale) + 1)
                     else:
