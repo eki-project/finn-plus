@@ -935,7 +935,7 @@ if __name__ == "__main__":
                             break
                     if report_hierarchy_level == "(top)":
                         print("ERROR: No MVAU found in post_synth_resources.json")
-                        sys.exit(1)
+                        fail = True
             # TODO: also do this for other reports or make it optional/configurable
 
             dvc_logger.log_nested_metrics_from_report(
