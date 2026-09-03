@@ -26,26 +26,33 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for duplicatestreams hls."""
-from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams
+"""HLS backend implementation of the stream-duplication operator."""
+
+import numpy as np
+from typing import TYPE_CHECKING
+
+from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams, NodeAttrTypes
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+
+if TYPE_CHECKING:
+    from onnx import GraphProto, NodeProto
 
 
 class DuplicateStreams_hls(DuplicateStreams, HLSBackend):
     """Class that corresponds to finn-hlslib function of the same name."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(DuplicateStreams.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def verify_node(self):
+    def verify_node(self) -> list[str]:
         """Verify node."""
         info_messages = []
         # verify that "backend" is set to "fpgadataflow"
@@ -65,80 +72,65 @@ class DuplicateStreams_hls(DuplicateStreams, HLSBackend):
             self.get_nodeattr("inputDataType")
             info_messages.append("All necessary attributes exist")
         except Exception:
-            info_messages.append("""The required GlobalAccPool_Batch attributes do not exist.""")
+            info_messages.append("The required DuplicateStreams attributes do not exist.")
 
         return info_messages
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "dup.hpp"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
         self.code_gen_dict["$DEFINES$"] = []
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Return docompute."""
-        self.code_gen_dict["$DOCOMPUTE$"] = []
-        n_outputs = self.get_nodeattr("NumOutputStreams")
-        out_streams = []
-        for i in range(n_outputs):
-            out_streams.append("out%d_V" % i)
+        out_streams = [f"out{i}_V" for i in range(self.num_output_streams)]
         out_stream_names = ", ".join(out_streams)
-        comp_call = f"StreamingDup(in0_V, {out_stream_names});"
-        self.code_gen_dict["$DOCOMPUTE$"] = [comp_call]
+        self.code_gen_dict["$DOCOMPUTE$"] = [f"StreamingDup(in0_V, {out_stream_names});"]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
         input_elem_hls_type = self.get_input_datatype().get_hls_datatype_str()
-        pe = self.get_nodeattr("PE")
-        in_stream = "hls::stream<hls::vector<%s, %d>> &in0_V" % (input_elem_hls_type, pe)
-        out_streams = []
-        n_outputs = self.get_nodeattr("NumOutputStreams")
-        for i in range(n_outputs):
-            out_streams.append(
-                "hls::stream<hls::vector<%s, %d>> &out%d_V" % (input_elem_hls_type, pe, i)
-            )
-        out_streams = ", ".join(out_streams)
-        blackbox_hls = "void %s(%s, %s)" % (self.onnx_node.name, in_stream, out_streams)
+        pe = self.pe
+        in_stream = f"hls::stream<hls::vector<{input_elem_hls_type}, {pe}>> &in0_V"
+        out_streams = ", ".join(
+            f"hls::stream<hls::vector<{input_elem_hls_type}, {pe}>> &out{i}_V"
+            for i in range(self.num_output_streams)
+        )
+        blackbox_hls = f"void {self.onnx_node.name}({in_stream}, {out_streams})"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [blackbox_hls]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Return pragmas."""
-        pragmas = []
-        pragmas.append("#pragma HLS dataflow disable_start_propagation")
-        pragmas.append("#pragma HLS INTERFACE axis port=in0_V")
-        n_outputs = self.get_nodeattr("NumOutputStreams")
-        for i in range(n_outputs):
-            pragmas.append("#pragma HLS INTERFACE axis port=out%d_V" % i)
+        pragmas = [
+            "#pragma HLS dataflow disable_start_propagation",
+            "#pragma HLS INTERFACE axis port=in0_V",
+        ]
+        for i in range(self.num_output_streams):
+            pragmas.append(f"#pragma HLS INTERFACE axis port=out{i}_V")
         pragmas.append("#pragma HLS INTERFACE ap_ctrl_none port=return")
         pragmas.append("#pragma HLS aggregate variable=in0_V compact=bit")
-        for i in range(n_outputs):
-            pragmas.append("#pragma HLS aggregate variable=out%d_V compact=bit" % i)
+        for i in range(self.num_output_streams):
+            pragmas.append(f"#pragma HLS aggregate variable=out{i}_V compact=bit")
         self.code_gen_dict["$PRAGMAS$"] = pragmas
 
-    def timeout_condition(self):
+    def timeout_condition(self) -> None:
         """Return timeout condition."""
-        condition = []
-        n_outputs = self.get_nodeattr("NumOutputStreams")
-        for i in range(n_outputs):
-            condition.append(f"out{i}_V.empty()")
-        condition = " && ".join(condition)
+        condition = " && ".join(f"out{i}_V.empty()" for i in range(self.num_output_streams))
         self.code_gen_dict["$TIMEOUT_CONDITION$"] = [condition]
 
-    def timeout_read_stream(self):
+    def timeout_read_stream(self) -> None:
         """Return timeout read stream."""
-        read_stream_command = []
-        n_outputs = self.get_nodeattr("NumOutputStreams")
-        for i in range(n_outputs):
-            read_stream_command.append(
-                """if(!out%d_V.empty()){
-                   strm%d << out%d_V.read();
-                   }"""
-                % (i, i, i)
-            )
+        read_stream_command = [
+            f"""if(!out{i}_V.empty()){{
+                   strm{i} << out{i}_V.read();
+                   }}"""
+            for i in range(self.num_output_streams)
+        ]
         self.code_gen_dict["$TIMEOUT_READ_STREAM$"] = read_stream_command

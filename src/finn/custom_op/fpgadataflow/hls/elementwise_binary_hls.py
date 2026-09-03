@@ -34,13 +34,14 @@ parallel execution.
 """
 
 import numpy as np
-import os
 import textwrap
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import roundup_to_integer_multiple
+from typing import TYPE_CHECKING, cast
 
 import finn.custom_op.fpgadataflow.elementwise_binary as elementwise_binary
-from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation
+from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation, NodeAttrTypes
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.util.data_packing import (
@@ -49,7 +50,11 @@ from finn.util.data_packing import (
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
+from finn.util.exception import FINNInternalError
 from finn.util.settings import get_settings
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
 
 # Mapping of memory resource attributes to the corresponding C++ HLS
 # pragma directives
@@ -69,7 +74,7 @@ class ElementwiseBinaryOperation_hls(
     """
 
     # Node attributes matching the HLS operator
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Get node attribute types for this operator.
 
         Returns
@@ -78,7 +83,7 @@ class ElementwiseBinaryOperation_hls(
             Dictionary of node attribute names and their types.
         """
         # Start from parent operator class attributes
-        attrs = ElementwiseBinaryOperation.get_nodeattr_types(self)
+        attrs: NodeAttrTypes = ElementwiseBinaryOperation.get_nodeattr_types(self)
         # Add the HLSBackend default attributes on top
         attrs.update(HLSBackend.get_nodeattr_types(self))
         # Add/Specialize implementation specific attributes here...
@@ -86,7 +91,7 @@ class ElementwiseBinaryOperation_hls(
         return attrs
 
     # Maximum width of any ap_int used in this operator
-    def get_ap_int_max_w(self):
+    def get_ap_int_max_w(self) -> int:
         """Get maximum ap_int width used in this operator.
 
         Returns
@@ -102,7 +107,7 @@ class ElementwiseBinaryOperation_hls(
         # Find the biggest of the inputs/outputs
         return max([i_bits_max, o_bits_max])
 
-    def adapt_for_loop_body(self, input_types):
+    def adapt_for_loop_body(self, input_types: list) -> None:
         """Adapt elementwise binary operator for loop body execution.
 
         When an elementwise operator is placed inside a loop, parameters that
@@ -114,18 +119,24 @@ class ElementwiseBinaryOperation_hls(
 
         # If rhs (input[1]) is a PARAMETER (streamed per iteration),
         # change its style to "input"
-        if len(input_types) > 1 and input_types[1] == LoopBodyInputType.PARAMETER:
-            if self.rhs_style == "const":
-                self.set_nodeattr("rhs_style", "input")
+        if (
+            len(input_types) > 1
+            and input_types[1] == LoopBodyInputType.PARAMETER
+            and self.rhs_style == "const"
+        ):
+            self.set_nodeattr("rhs_style", "input")
 
         # Similarly for lhs if needed
-        if len(input_types) > 0 and input_types[0] == LoopBodyInputType.PARAMETER:
-            if self.lhs_style == "const":
-                self.set_nodeattr("lhs_style", "input")
+        if (
+            len(input_types) > 0
+            and input_types[0] == LoopBodyInputType.PARAMETER
+            and self.lhs_style == "const"
+        ):
+            self.set_nodeattr("lhs_style", "input")
 
     # Note: End of shape and datatype utilities
 
-    def code_generation_ipgen(self, model, fpgapart, clk) -> None:
+    def code_generation_ipgen(self, model: ModelWrapper, fpgapart: str, clk: float) -> None:
         """Generate c++ code and tcl script for ip generation."""
         super().code_generation_ipgen(model, fpgapart, clk)
         mem_mode = self.get_nodeattr("mem_mode")
@@ -140,19 +151,19 @@ class ElementwiseBinaryOperation_hls(
         self.code_gen_dict["$GLOBALS$"] = ['#include "flatten.hpp"']
 
     # Generates C++ parameters file, i.e., constant initializer inputs
-    def generate_params(self, model: ModelWrapper, path: str) -> None:
+    def generate_params(self, model: ModelWrapper, path: str | Path) -> None:
         """Generate C++ parameters file for constant initializer inputs.
 
         Parameters
         ----------
         model : ModelWrapper
             The ONNX model wrapper.
-        path : str
+        path : str | Path
             Path to the code generation directory.
         """
         # The code generation directory is specified as an argument, so this
         # will work for both RTL and C++ simulation
-        code_gen_dir = path
+        code_gen_dir = Path(path)
         # By default, assume runtime inputs not requiring code to be generated
         lhs_code = rhs_code = ""
         # Check for an initializer providing the left hand side input
@@ -160,7 +171,7 @@ class ElementwiseBinaryOperation_hls(
         # Folded output shape for broadcasting/aligning the input shapes
         out_shape = self.get_folded_output_shape(ind=0)
         # Type of memory to use for storing constant parameters
-        ram_style = RAM_STYLES[self.get_nodeattr("ram_style")]
+        ram_style = RAM_STYLES[cast("str", self.get_nodeattr("ram_style"))]
 
         # Check whether there are already pragmas in the code generation
         # dictionary
@@ -173,7 +184,7 @@ class ElementwiseBinaryOperation_hls(
 
         # If the left hand side input is provided as initializer, generate
         # initializer parameters code
-        if lhs is not None:
+        if isinstance(lhs, np.ndarray):
             # Remember the "style" of receiving the input for further code
             # generation
             self.set_nodeattr("lhs_style", "const")
@@ -187,7 +198,7 @@ class ElementwiseBinaryOperation_hls(
                 #  in terms of memory utilization. It might be ore efficient to
                 #  replicate the PEs when needed in docompute, probably at the
                 #  cost of some latency for extra reads and registers.
-                lhs = np.broadcast_to(lhs, lhs.shape[:-1] + (self.pe,))
+                lhs = np.broadcast_to(lhs, (*lhs.shape[:-1], self.pe))
             # Current, maybe non-aligned input shape
             lhs_shape = lhs.shape
             # Fill up shape from the left to match the broadcast output shape
@@ -213,7 +224,7 @@ class ElementwiseBinaryOperation_hls(
         rhs = model.get_initializer(self.onnx_node.input[1])
         # If the right hand side input is provided as initializer, generate
         # initializer parameters code
-        if rhs is not None:
+        if isinstance(rhs, np.ndarray):
             # Remember the "style" of receiving the input for further code
             # generation
             self.set_nodeattr("rhs_style", "const")
@@ -227,7 +238,7 @@ class ElementwiseBinaryOperation_hls(
                 #  in terms of memory utilization. It might be ore efficient to
                 #  replicate the PEs when needed in docompute, probably at the
                 #  cost of some latency for extra reads and registers.
-                rhs = np.broadcast_to(rhs, rhs.shape[:-1] + (self.pe,))
+                rhs = np.broadcast_to(rhs, (*rhs.shape[:-1], self.pe))
             # Current, maybe non-aligned input shape
             rhs_shape = rhs.shape
             # Fill up shape from the left to match the broadcast output shape
@@ -263,12 +274,12 @@ class ElementwiseBinaryOperation_hls(
                 )
                 rhs_stream = rhs_tensor.flatten()
                 rhs_stream = rhs_stream.copy()
-                with open(f"{code_gen_dir}/memblock.dat", "w") as f:
+                with (code_gen_dir / "memblock.dat").open("w") as f:
                     for val in rhs_stream:
                         f.write(val + "\n")
 
         # Open a file to store the thresholds parameters as C++ code
-        with open(f"{code_gen_dir}/params.hpp", "w") as file:
+        with (code_gen_dir / "params.hpp").open("w") as file:
             file.write(
                 "\n".join(
                     [
@@ -283,7 +294,7 @@ class ElementwiseBinaryOperation_hls(
             )
 
     # Generates C++ code of type alias, global constant and macro definitions
-    def defines(self, var) -> None:
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Generate C++ type aliases, global constants and macro definitions.
 
         Parameters
@@ -389,7 +400,7 @@ class ElementwiseBinaryOperation_hls(
         """Generate C++ code for the computation part of the operator."""
 
         # Add padding ones to a shape to match the broadcast output shape
-        def pad_shape(shape):
+        def pad_shape(shape: tuple[int, ...]) -> tuple[int, ...]:
             """Add padding ones to a shape to match the broadcast output shape.
 
             Parameters
@@ -414,7 +425,7 @@ class ElementwiseBinaryOperation_hls(
         rhs_shape = pad_shape(rhs_shape)
 
         # Removes contiguous matching dimensions from a shape
-        def drop_matching_dims(shape, like):
+        def drop_matching_dims(shape: tuple[int, ...], like: tuple[int, ...]) -> tuple[int, ...]:
             """Remove contiguous matching dimensions from a shape.
 
             Parameters
@@ -434,7 +445,8 @@ class ElementwiseBinaryOperation_hls(
 
             # Compare shapes from left to right removing dimensions as long as
             # they match
-            return (*[size for size, _ in dropwhile(lambda x: x[0] == x[1], zip(shape, like))],)
+            pairs = zip(shape, like, strict=False)
+            return tuple(size for size, _ in dropwhile(lambda x: x[0] == x[1], pairs))
 
         # Take away all contiguous dimensions where these align with the output
         # shape, as these can be consumed directly without buffering to be
@@ -447,7 +459,7 @@ class ElementwiseBinaryOperation_hls(
         rhs_buffer_shape = pad_shape(rhs_buffer_shape)
 
         # Code generation of array index strings with broadcasting
-        def make_index_string(shape) -> str:
+        def make_index_string(shape: tuple[int, ...]) -> str:
             """Generate C++ array index strings with broadcasting.
 
             Parameters
@@ -510,7 +522,7 @@ class ElementwiseBinaryOperation_hls(
 
         # Generate code testing for the condition when the next element needs to
         # be read from the input stream according to broadcasting semantics
-        def read_stream_condition(shape) -> str:
+        def read_stream_condition(shape: tuple[int, ...]) -> str:
             """Generate condition for when to read from input stream with broadcasting.
 
             Parameters
@@ -540,7 +552,7 @@ class ElementwiseBinaryOperation_hls(
 
         # Generate code for unpacking elements read from the stream into the PE-
         # parallel buffer according to broadcasting semantics
-        def unpack_buffer(shape) -> str:
+        def unpack_buffer(shape: tuple[int, ...]) -> str:
             """Generate code for unpacking stream elements into PE-parallel buffer.
 
             Parameters
@@ -564,7 +576,7 @@ class ElementwiseBinaryOperation_hls(
             return "buffer(pe, 0)"
 
         # Type of memory to use for storing constant parameters
-        ram_style = RAM_STYLES[self.get_nodeattr("ram_style")]
+        ram_style = RAM_STYLES[cast("str", self.get_nodeattr("ram_style"))]
 
         # Write the body of the top-level function
         self.code_gen_dict["$DOCOMPUTE$"] = [
@@ -759,7 +771,7 @@ class ElementwiseBinaryOperation_hls(
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
 
     # Returns the names of input and output interfaces grouped by protocol
-    def get_verilog_top_module_intf_names(self) -> dict[str, list[str]]:
+    def get_verilog_top_module_intf_names(self) -> dict[str, list[tuple[str, int]] | list[str]]:
         """Get the names of input and output interfaces grouped by protocol.
 
         Returns
@@ -769,19 +781,23 @@ class ElementwiseBinaryOperation_hls(
         """
         # Start collecting interface names in a dictionary starting with clock
         # and reset
-        intf_names = {"clk": ["ap_clk"], "rst": ["ap_rst_n"]}
+        intf_names: dict[str, list[tuple[str, int]] | list[str]] = {
+            "clk": ["ap_clk"],
+            "rst": ["ap_rst_n"],
+        }
         # AXI stream input interfaces
-        intf_names["s_axis"] = []
+        s_axis: list[tuple[str, int]] = []
         # If the left-hand-side is provided as runtime input interface names
         # need to be inserted
         if self.lhs_style == "input":
-            intf_names["s_axis"] += [("in0_V", self.get_instream_width_padded(ind=0))]
+            s_axis.append(("in0_V", self.get_instream_width_padded(ind=0)))
             if self.rhs_style == "const" and self.get_nodeattr("mlo_max_iter"):
-                intf_names["s_axis"] += [("in1_V", self.get_instream_width_padded(ind=0))]
+                s_axis.append(("in1_V", self.get_instream_width_padded(ind=0)))
         # If the right-hand-side is provided as runtime input interface names
         # need to be inserted
         if self.rhs_style == "input":
-            intf_names["s_axis"] += [("in1_V", self.get_instream_width_padded(ind=1))]
+            s_axis.append(("in1_V", self.get_instream_width_padded(ind=1)))
+        intf_names["s_axis"] = s_axis
         # AXI stream output interfaces
         intf_names["m_axis"] = [("out0_V", self.get_outstream_width_padded(ind=0))]
         # No AXI-MM, AXI-Lite or protocol-less interfaces
@@ -791,7 +807,7 @@ class ElementwiseBinaryOperation_hls(
         # Return the interface name dictionary
         return intf_names
 
-    def code_generation_ipi(self):
+    def code_generation_ipi(self) -> list[str]:
         """Generate IPI (IP Integrator) code for Vivado block design integration.
 
         Returns
@@ -799,8 +815,9 @@ class ElementwiseBinaryOperation_hls(
         list
             List of TCL commands for IP integration.
         """
-        source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
-        cmd = ["file mkdir %s" % source_target]
+        node_name = self.onnx_node.name
+        source_target = f"./ip/verilog/rtl_ops/{node_name}"
+        cmd = [f"file mkdir {source_target}"]
         # add streamer if needed
         mem_mode = self.get_nodeattr("mem_mode")
         mlo = self.get_nodeattr("mlo_max_iter")
@@ -810,105 +827,103 @@ class ElementwiseBinaryOperation_hls(
         )
 
         # lhs_decoupled XOR rhs_decoupled
-        if lhs_decoupled != rhs_decoupled:
-            node_name = self.onnx_node.name
-            # create a hierarchy for this layer, with the same port names
-            clk_name = self.get_verilog_top_module_intf_names()["clk"][0]
-            rst_name = self.get_verilog_top_module_intf_names()["rst"][0]
-            dout_name = self.get_verilog_top_module_intf_names()["m_axis"][0][0]
-            din_name = self.get_verilog_top_module_intf_names()["s_axis"][0][0]
-            cmd.append("create_bd_cell -type hier %s" % node_name)
-            cmd.append("create_bd_pin -dir I -type clk /%s/%s" % (node_name, clk_name))
-            cmd.append("create_bd_pin -dir I -type rst /%s/%s" % (node_name, rst_name))
-            cmd.append(
-                "create_bd_intf_pin -mode Master "
-                "-vlnv xilinx.com:interface:axis_rtl:1.0 /%s/%s" % (node_name, dout_name)
-            )
-            cmd.append(
-                "create_bd_intf_pin -mode Slave "
-                "-vlnv xilinx.com:interface:axis_rtl:1.0 /%s/%s" % (node_name, din_name)
-            )
-            if mlo:
-                cmd.append(
-                    "create_bd_intf_pin -mode Slave "
-                    "-vlnv xilinx.com:interface:axis_rtl:1.0 /%s/in1_V" % node_name
-                )
-            # instantiate the hls ip
-            cmd.append(
-                "create_bd_cell -type ip -vlnv %s /%s/%s"
-                % (self.get_nodeattr("ip_vlnv"), node_name, node_name)
-            )
-            # instantiate a streamer and connect it to the IP
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-            axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
-            ms_rtllib_dir = os.path.join(get_settings().finn_rtllib, "memstream/hdl/")
-            file_suffix = "_memstream_wrapper.v"
-            # automatically find memstream verilog component in code generation directory
-            for fname in os.listdir(code_gen_dir):
-                if fname.endswith(file_suffix):
-                    strm_tmpl = fname
-            strm_tmpl_name = strm_tmpl[:-2]
-            sourcefiles = [
-                os.path.join(code_gen_dir, strm_tmpl),
-                axi_dir + "axilite.sv",
-                ms_rtllib_dir + "memstream_axi.sv",
-                ms_rtllib_dir + "memstream.sv",
-            ]
-            for f in sourcefiles:
-                cmd += ["add_files -copy_to %s -norecurse %s" % (source_target, f)]
-            strm_inst = node_name + "_wstrm"
-            cmd.append(
-                "create_bd_cell -type hier -reference %s /%s/%s"
-                % (strm_tmpl_name, node_name, strm_inst)
-            )
-            if mlo:
-                cmd.append(
-                    "connect_bd_intf_net [get_bd_intf_pins %s/in1_V] "
-                    "[get_bd_intf_pins %s/%s/s_axis_0]" % (node_name, node_name, strm_inst)
-                )
-            cmd.append(
-                "connect_bd_intf_net [get_bd_intf_pins %s/%s/m_axis_0] "
-                "[get_bd_intf_pins %s/%s/in1_V]" % (node_name, strm_inst, node_name, node_name)
-            )
-            cmd.append(
-                "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s/ap_rst_n]"
-                % (node_name, rst_name, node_name, strm_inst)
-            )
-            cmd.append(
-                "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s/ap_clk]"
-                % (node_name, clk_name, node_name, strm_inst)
-            )
-            # 2x clock is not used for decoupled elementwise ops
-            # simply connect input to the 1x clock for now
-            cmd.append(
-                "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s/ap_clk2x]"
-                % (node_name, clk_name, node_name, strm_inst)
-            )
-            cmd.append(
-                "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s/%s]"
-                % (node_name, rst_name, node_name, node_name, rst_name)
-            )
-            cmd.append(
-                "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s/%s]"
-                % (node_name, clk_name, node_name, node_name, clk_name)
-            )
-            cmd.append(
-                "connect_bd_intf_net [get_bd_intf_pins %s/%s] "
-                "[get_bd_intf_pins %s/%s/%s]"
-                % (node_name, din_name, node_name, node_name, din_name)
-            )
-            cmd.append(
-                "connect_bd_intf_net [get_bd_intf_pins %s/%s] "
-                "[get_bd_intf_pins %s/%s/%s]"
-                % (node_name, dout_name, node_name, node_name, dout_name)
-            )
-            cmd.append("save_bd_design")
-        else:
+        if lhs_decoupled == rhs_decoupled:
             # base class impl sufficient
             return super().code_generation_ipi()
+
+        intf_names = self.get_verilog_top_module_intf_names()
+        # create a hierarchy for this layer, with the same port names
+        clk_name = cast("list[str]", intf_names["clk"])[0]
+        rst_name = cast("list[str]", intf_names["rst"])[0]
+        dout_name = cast("list[tuple[str, int]]", intf_names["m_axis"])[0][0]
+        din_name = cast("list[tuple[str, int]]", intf_names["s_axis"])[0][0]
+        cmd.append(f"create_bd_cell -type hier {node_name}")
+        cmd.append(f"create_bd_pin -dir I -type clk /{node_name}/{clk_name}")
+        cmd.append(f"create_bd_pin -dir I -type rst /{node_name}/{rst_name}")
+        cmd.append(
+            "create_bd_intf_pin -mode Master "
+            f"-vlnv xilinx.com:interface:axis_rtl:1.0 /{node_name}/{dout_name}"
+        )
+        cmd.append(
+            "create_bd_intf_pin -mode Slave "
+            f"-vlnv xilinx.com:interface:axis_rtl:1.0 /{node_name}/{din_name}"
+        )
+        if mlo:
+            cmd.append(
+                "create_bd_intf_pin -mode Slave "
+                f"-vlnv xilinx.com:interface:axis_rtl:1.0 /{node_name}/in1_V"
+            )
+        # instantiate the hls ip
+        ip_vlnv = cast("str", self.get_nodeattr("ip_vlnv"))
+        cmd.append(f"create_bd_cell -type ip -vlnv {ip_vlnv} /{node_name}/{node_name}")
+        # instantiate a streamer and connect it to the IP
+        code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
+        axi_dir = Path(get_settings().finn_rtllib) / "axi/hdl"
+        ms_rtllib_dir = Path(get_settings().finn_rtllib) / "memstream/hdl"
+        file_suffix = "_memstream_wrapper.v"
+        # automatically find memstream verilog component in code generation directory
+        strm_tmpl = None
+        for fname in code_gen_dir.iterdir():
+            if fname.name.endswith(file_suffix):
+                strm_tmpl = fname.name
+        if strm_tmpl is None:
+            raise FINNInternalError(f"No memstream wrapper found in {code_gen_dir}")
+        strm_tmpl_name = strm_tmpl[:-2]
+        sourcefiles = [
+            str(code_gen_dir / strm_tmpl),
+            str(axi_dir / "axilite.sv"),
+            str(ms_rtllib_dir / "memstream_axi.sv"),
+            str(ms_rtllib_dir / "memstream.sv"),
+        ]
+        for f in sourcefiles:
+            cmd += [f"add_files -copy_to {source_target} -norecurse {f}"]
+        strm_inst = node_name + "_wstrm"
+        cmd.append(
+            f"create_bd_cell -type hier -reference {strm_tmpl_name} /{node_name}/{strm_inst}"
+        )
+        if mlo:
+            cmd.append(
+                f"connect_bd_intf_net [get_bd_intf_pins {node_name}/in1_V] "
+                f"[get_bd_intf_pins {node_name}/{strm_inst}/s_axis_0]"
+            )
+        cmd.append(
+            f"connect_bd_intf_net [get_bd_intf_pins {node_name}/{strm_inst}/m_axis_0] "
+            f"[get_bd_intf_pins {node_name}/{node_name}/in1_V]"
+        )
+        cmd.append(
+            f"connect_bd_net [get_bd_pins {node_name}/{rst_name}] "
+            f"[get_bd_pins {node_name}/{strm_inst}/ap_rst_n]"
+        )
+        cmd.append(
+            f"connect_bd_net [get_bd_pins {node_name}/{clk_name}] "
+            f"[get_bd_pins {node_name}/{strm_inst}/ap_clk]"
+        )
+        # 2x clock is not used for decoupled elementwise ops
+        # simply connect input to the 1x clock for now
+        cmd.append(
+            f"connect_bd_net [get_bd_pins {node_name}/{clk_name}] "
+            f"[get_bd_pins {node_name}/{strm_inst}/ap_clk2x]"
+        )
+        cmd.append(
+            f"connect_bd_net [get_bd_pins {node_name}/{rst_name}] "
+            f"[get_bd_pins {node_name}/{node_name}/{rst_name}]"
+        )
+        cmd.append(
+            f"connect_bd_net [get_bd_pins {node_name}/{clk_name}] "
+            f"[get_bd_pins {node_name}/{node_name}/{clk_name}]"
+        )
+        cmd.append(
+            f"connect_bd_intf_net [get_bd_intf_pins {node_name}/{din_name}] "
+            f"[get_bd_intf_pins {node_name}/{node_name}/{din_name}]"
+        )
+        cmd.append(
+            f"connect_bd_intf_net [get_bd_intf_pins {node_name}/{dout_name}] "
+            f"[get_bd_intf_pins {node_name}/{node_name}/{dout_name}]"
+        )
+        cmd.append("save_bd_design")
         return cmd
 
-    def execute_node(self, context, graph) -> None:
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute this node in the given context.
 
         Parameters
@@ -927,29 +942,27 @@ class ElementwiseBinaryOperation_hls(
             # Get the node wrapped by this custom op
             node = self.onnx_node
             # Input data is stored in numpy files in the code generation dictionary
-            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+            code_gen_dir = Path(cast("str", self.get_nodeattr("code_gen_dir_ipgen")))
             # Get the inputs out of the execution context
             lhs = context[node.input[0]]
             rhs = context[node.input[1]]
             # Validate the shape of the inputs
-            assert list(lhs.shape) == self.get_normal_input_shape(
-                ind=0
-            ), f"Input shape mismatch for {node.input[0]}"
-            assert list(rhs.shape) == self.get_normal_input_shape(
-                ind=1
-            ), f"Input shape mismatch for {node.input[1]} {rhs.shape=}"
+            if list(lhs.shape) != self.get_normal_input_shape(ind=0):
+                raise FINNInternalError(f"Input shape mismatch for {node.input[0]}")
+            if list(rhs.shape) != self.get_normal_input_shape(ind=1):
+                raise FINNInternalError(f"Input shape mismatch for {node.input[1]} {rhs.shape=}")
             # Reshape the inputs into folded form
             lhs = lhs.reshape(self.get_folded_input_shape(ind=0))
             rhs = rhs.reshape(self.get_folded_input_shape(ind=1))
             # Path to store the intermediate inputs in numpy format
-            lhs_filename = os.path.join(code_gen_dir, "input_0.npy")
-            rhs_filename = os.path.join(code_gen_dir, "input_1.npy")
+            lhs_filename = str(code_gen_dir / "input_0.npy")
+            rhs_filename = str(code_gen_dir / "input_1.npy")
             # Save the folded inputs to file to be used by simulation
             np.save(lhs_filename, lhs)
             np.save(rhs_filename, rhs)
             # Start collecting inputs/outputs to the RTL simulation in a dictionary
             # Note: Prepare one output empty output list
-            io_dict = {"inputs": {}, "outputs": {"out0": []}}
+            io_dict: dict[str, dict] = {"inputs": {}, "outputs": {"out0": []}}
             # Type and width of the input tensors
             lhs_dtype = self.get_input_datatype(ind=0)
             lhs_width = self.get_instream_width(ind=0)
@@ -985,7 +998,7 @@ class ElementwiseBinaryOperation_hls(
             width = self.get_outstream_width(ind=0)
             shape = self.get_folded_output_shape(ind=0)
             # Path to store the intermediate numpy file
-            filename = os.path.join(code_gen_dir, "output_0.npy")
+            filename = str(code_gen_dir / "output_0.npy")
             # Convert from RTL simulation format to numpy format
             rtlsim_output_to_npy(out, filename, dtype, shape, width, dtype.bitwidth())
             # Load the generated output numpy file
@@ -993,9 +1006,9 @@ class ElementwiseBinaryOperation_hls(
             # Reshape the folded output and insert into the execution context
             context[node.output[0]] = out.reshape(self.get_normal_output_shape(ind=0))
         else:
-            raise Exception(
-                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
-            has to be set to one of the following value ("cppsim", "rtlsim")"""
+            raise FINNInternalError(
+                f"Invalid value for attribute exec_mode: {mode}. "
+                'Has to be one of ("cppsim", "rtlsim").'
             )
 
 
@@ -1023,8 +1036,6 @@ class ElementwiseAbsDiff_hls(
     elementwise_binary.ElementwiseAbsDiff,
 ):
     """HLS implementation of elementwise absolute diff operation."""
-
-    pass
 
 
 # Derive a specialization to implement elementwise multiplication of two inputs
