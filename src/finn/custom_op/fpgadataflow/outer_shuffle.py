@@ -7,29 +7,45 @@
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
 
-"""OuterShuffle custom op and simulation helpers."""
+"""Outer (rank-preserving) transpose hardware custom operator."""
 
 import math
 import numpy as np
 import os
 import re
-from qonnx.core.datatype import DataType
+from onnx import NodeProto
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
 
 
 class _NestSim:
-    """Simulate the Nest<R, W, N, C, V...> HLS template from input_gen.hpp.
+    """Simulate the ``Nest<R, W, N, C, V...>`` HLS template from input_gen.hpp.
 
     Models the read-pointer and free-pointer update logic of the HLS reorder
-    buffer, including loop termination and counter reset behavior.
+    buffer, including loop termination and counter reset behavior. The argument
+    names mirror the C++ template parameters.
     """
 
-    def __init__(self, R, W, *rest):
+    def __init__(self, r: bool, w: int, *rest: int) -> None:
         """Initialize the nested loop simulation state."""
-        self.R = R
-        self.W = W
+        self.R = r
+        self.W = w
         self.is_terminal = len(rest) == 0
         if self.is_terminal:
             self._rp_rewind = 0
@@ -38,15 +54,17 @@ class _NestSim:
         else:
             self.N = rest[0]
             self.C = rest[1]
-            self.R_INNER = R and (self.C > 0) and (self.C * self.N <= W)
+            self.R_INNER = r and (self.C > 0) and (w >= self.C * self.N)
             self.inner = _NestSim(self.R_INNER, self.C, *rest[2:])
-            self._rp_rewind = (self.N - 1) * self.C + self.inner._rp_rewind
-            self._fp_rewind = (self.N - 1) * self.C + self.inner._fp_rewind if self.R_INNER else 0
-            self.terminal_rp_inc = W - self._rp_rewind
+            inner_rp_rewind = self.inner._rp_rewind  # noqa: SLF001
+            inner_fp_rewind = self.inner._fp_rewind  # noqa: SLF001
+            self._rp_rewind = (self.N - 1) * self.C + inner_rp_rewind
+            self._fp_rewind = (self.N - 1) * self.C + inner_fp_rewind if self.R_INNER else 0
+            self.terminal_rp_inc = w - self._rp_rewind
             self.cnt = self.N - 2
             self.max_rp_retract = max(-self.terminal_rp_inc, self.inner.max_rp_retract)
 
-    def tick(self):
+    def tick(self) -> tuple[int, int, bool]:
         """Advance the simulation by one step and return increments."""
         if self.is_terminal:
             return self.W, (self.W if self.R else 0), True
@@ -64,16 +82,19 @@ class _NestSim:
 
 
 class OuterShuffle(HWCustomOp):
-    """Abstraction layer for HW OuterShuffle (rearrange and transpose) layers.
-    Only permutations that do not effect the inner most dimensions are feasible"""
+    """Abstraction layer for HW implementation of an outer (rank-preserving) transpose.
 
-    def __init__(self, onnx_node, **kwargs):
+    Rearranges the outer axes of a tensor according to ``perm``. Only
+    permutations that leave the innermost dimension in place are feasible.
+    """
+
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize the OuterShuffle custom op wrapper."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return the node attribute schema for OuterShuffle."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             "data_type": ("s", True, ""),
             "transpose_in_shape": ("ints", True, []),
             "in_shape": ("ints", True, []),
@@ -83,107 +104,151 @@ class OuterShuffle(HWCustomOp):
             "perm": ("ints", True, []),
             "SIMD": ("i", False, 1),
             "NumChannels": ("i", False, 128),
-            "original_node_name": ("s", False, ""),  # Track original shuffle name for SIMD config
-            "original_simd": ("i", False, 1),  # Track original shuffle SIMD for config export
+            # Track original shuffle name/SIMD for SIMD config export
+            "original_node_name": ("s", False, ""),
+            "original_simd": ("i", False, 1),
         }
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_normal_input_shape(self, ind=0):
+    @property
+    def dtype(self) -> BaseDataType:
+        """Get the element data type."""
+        return DataType[cast("str", self.get_nodeattr("data_type"))]
+
+    @property
+    def simd(self) -> int:
+        """Get the SIMD parallelism."""
+        return cast("int", self.get_nodeattr("SIMD"))
+
+    @property
+    def num_channels(self) -> int:
+        """Get the channel count."""
+        return cast("int", self.get_nodeattr("NumChannels"))
+
+    @property
+    def transpose_in_shape(self) -> list[int]:
+        """Get the pre-transpose (reshaped) input shape."""
+        return list(cast("list[int]", self.get_nodeattr("transpose_in_shape")))
+
+    @property
+    def in_shape(self) -> list[int]:
+        """Get the streaming input shape."""
+        return list(cast("list[int]", self.get_nodeattr("in_shape")))
+
+    @property
+    def transpose_out_shape(self) -> list[int]:
+        """Get the post-transpose (pre-reshape) output shape."""
+        return list(cast("list[int]", self.get_nodeattr("transpose_out_shape")))
+
+    @property
+    def out_shape(self) -> list[int]:
+        """Get the streaming output shape."""
+        return list(cast("list[int]", self.get_nodeattr("out_shape")))
+
+    @property
+    def loop_coeffs(self) -> list[int]:
+        """Get the permuted input strides driving the reorder buffer."""
+        return list(cast("list[int]", self.get_nodeattr("loop_coeffs")))
+
+    @property
+    def perm(self) -> list[int]:
+        """Get the axis permutation."""
+        return list(cast("list[int]", self.get_nodeattr("perm")))
+
+    def get_normal_input_shape(self, ind: int = 0) -> list[int]:  # noqa: ARG002
         """Return the non-folded input shape."""
-        return self.get_nodeattr("in_shape")
+        return self.in_shape
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> list[int]:  # noqa: ARG002
         """Return the non-folded output shape."""
-        return self.get_nodeattr("out_shape")
+        return self.out_shape
 
-    def execute_node(self, context, graph):
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         """Execute the outer shuffle using numpy reshape/transpose."""
         node = self.onnx_node
         input_data = context[node.input[0]]
-        input_reshaped = input_data.reshape(self.get_nodeattr("transpose_in_shape"))
-        transposed = np.transpose(input_reshaped, axes=self.get_nodeattr("perm"))
-        output_reshaped = transposed.reshape(self.get_nodeattr("out_shape"))
-        context[node.output[0]] = output_reshaped
+        input_reshaped = input_data.reshape(self.transpose_in_shape)
+        transposed = np.transpose(input_reshaped, axes=self.perm)
+        context[node.output[0]] = transposed.reshape(self.out_shape)
 
-    def get_input_datatype(self, ind=0):
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
         """Return the input datatype."""
-        data_type = DataType[self.get_nodeattr("data_type")]
-        return data_type
+        return self.dtype
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
         """Infer and propagate the node datatype."""
         node = self.onnx_node
         dt = model.get_tensor_datatype(node.input[0])
         if dt != self.get_input_datatype():
-            warn_str = (
+            log.warning(
                 f"data_type changing for {node.name}: {self.get_input_datatype()!s} -> {dt!s}"
             )
-            log.warning(warn_str)
         self.set_nodeattr("data_type", dt.name)
         model.set_tensor_datatype(node.output[0], dt)
 
-    def verify_node(self):
+    def verify_node(self) -> list[str]:
         """Validate node attributes and shapes (not implemented)."""
-        raise NotImplementedError("This function is not yet immplemented.")
+        raise NotImplementedError("This function is not yet implemented.")
 
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return the input stream width in bits."""
-        ibits = self.get_input_datatype().bitwidth()
-        simd = self.get_nodeattr("SIMD")
-        return ibits * simd
+        return self.get_input_datatype().bitwidth() * self.simd
 
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return the output stream width in bits."""
-        obits = self.get_output_datatype().bitwidth()
-        simd = self.get_nodeattr("SIMD")
-        return obits * simd
+        return self.get_output_datatype().bitwidth() * self.simd
 
-    def get_output_datatype(self, ind=0):
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
         """Return the output datatype."""
-        data_type = DataType[self.get_nodeattr("data_type")]
-        return data_type
+        return self.dtype
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return the folded output shape for SIMD streaming."""
         normal_oshape = list(self.get_normal_output_shape())
-        simd = self.get_nodeattr("SIMD")
-        assert normal_oshape[-1] % simd == 0, "SIMD must divide into the innermost output dimension"
-        fold = int(normal_oshape[-1] / simd)
-        folded_oshape = normal_oshape[:-1] + [fold, simd]
-        return tuple(folded_oshape)
+        if normal_oshape[-1] % self.simd != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide the innermost "
+                f"output dimension ({normal_oshape[-1]})"
+            )
+        fold = normal_oshape[-1] // self.simd
+        return (*normal_oshape[:-1], fold, self.simd)
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return the folded input shape for SIMD streaming."""
         normal_ishape = list(self.get_normal_input_shape())
-        simd = self.get_nodeattr("SIMD")
-        assert normal_ishape[-1] % simd == 0, "SIMD must divide into the innermost input dimension"
-        fold = int(normal_ishape[-1] / simd)
-        folded_ishape = normal_ishape[:-1] + [fold, simd]
-        return tuple(folded_ishape)
+        if normal_ishape[-1] % self.simd != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: SIMD ({self.simd}) must divide the innermost "
+                f"input dimension ({normal_ishape[-1]})"
+            )
+        fold = normal_ishape[-1] // self.simd
+        return (*normal_ishape[:-1], fold, self.simd)
 
-    def get_exp_cycles(self):
+    def get_exp_cycles(self) -> int:
         """Estimate cycles by simulating the input_gen HLS pipeline.
 
         Derives all parameters from transpose_in_shape, perm, and SIMD:
         - output shape: apply perm to input shape
         - loop coefficients: input strides permuted by perm
-        - buffer size: power-of-2 >= max_rp_retract + WP_DELAY + 2
+        - buffer size: power-of-2 >= max_rp_retract + wp_delay + 2
 
         The HLS pipeline has three stall sources:
-        1. WP_DELAY (=4): write-pointer pipeline latency before reads begin
+        1. wp_delay (=4): write-pointer pipeline latency before reads begin
         2. Read stalls: consumer waits for data (rp >= wp_delayed)
         3. Write stalls: producer blocked by full buffer (wp - fp >= buf_size)
 
         When buf_size > 262144 (URAM), pipeline II=3 due to read latency.
         """
-        simd = self.get_nodeattr("SIMD")
-        in_shape = list(self.get_nodeattr("transpose_in_shape"))
-        perm = list(self.get_nodeattr("perm"))
+        simd = self.simd
+        in_shape = self.transpose_in_shape
+        perm = self.perm
 
         # Derive output shape and loop coefficients from input shape and perm
         out_shape = [in_shape[p] for p in perm]
-        adjusted = in_shape + [1]
+        adjusted = [*in_shape, 1]
         input_strides = [int(np.prod(adjusted[i + 1 :])) for i in range(len(in_shape))]
         loop_coeffs = [input_strides[p] for p in perm]
 
@@ -193,30 +258,35 @@ class OuterShuffle(HWCustomOp):
         total_elems = int(np.prod(out_shape))
 
         # Build the Nest args: Nest<true, IFM_SIZE, N0, C0, N1, C1, ..., Nn, Cn>
-        interleaved = [int(item) for pair in zip(out_shape, lc) for item in pair]
+        interleaved = [int(item) for pair in zip(out_shape, lc, strict=True) for item in pair]
 
         # Create Nest simulation and compute buffer size
         nest = _NestSim(True, total_elems, *tuple(interleaved))
-        WP_DELAY = 4
-        addr_bits = max(1, math.ceil(math.log2(max(1, nest.max_rp_retract + WP_DELAY + 2))))
+        wp_delay = 4
+        addr_bits = max(1, math.ceil(math.log2(max(1, nest.max_rp_retract + wp_delay + 2))))
         buf_size = 1 << addr_bits
 
         # Check vivado version
         vivado_path = os.environ.get("XILINX_VIVADO")
-        match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path)
+        match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path or "")
+        if match is None:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: unable to determine the Vivado version from "
+                f"XILINX_VIVADO ({vivado_path!r})"
+            )
         year, minor = int(match.group(1)), int(match.group(2))
         if (year, minor) < (2024, 2):
             pipeline_ii = 1
         else:
             # Pipeline II: BRAM (depth <= 262144) achieves II=1;
             # URAM (depth > 262144) has read latency=3, forcing II=3.
-            URAM_DEPTH_THRESHOLD = 262144
-            pipeline_ii = 3 if buf_size > URAM_DEPTH_THRESHOLD else 1
+            uram_depth_threshold = 262144
+            pipeline_ii = 3 if buf_size > uram_depth_threshold else 1
 
         # Simulate the input_gen pipeline at II=1.
         # Models the wp delay pipeline, finite buffer backpressure,
         # and the Nest-driven read pointer pattern.
-        wp = [0] * WP_DELAY
+        wp = [0] * wp_delay
         rp = 0
         fp = 0
         ovld = False
@@ -228,7 +298,7 @@ class OuterShuffle(HWCustomOp):
             cycle += 1
 
             # Shift write pointer delay pipeline
-            for i in range(WP_DELAY - 1, 0, -1):
+            for i in range(wp_delay - 1, 0, -1):
                 wp[i] = wp[i - 1]
 
             # Write into buffer if space available
@@ -242,13 +312,10 @@ class OuterShuffle(HWCustomOp):
                 ovld = False
 
             # Refill output buffer via Nest tick
-            if not ovld and rp < wp[WP_DELAY - 1]:
+            if not ovld and rp < wp[wp_delay - 1]:
                 rp_inc, fp_inc, _ = nest.tick()
                 rp += rp_inc
                 fp += fp_inc
                 ovld = True
-
-        if ovld:
-            output_produced += 1
 
         return cycle * pipeline_ii
