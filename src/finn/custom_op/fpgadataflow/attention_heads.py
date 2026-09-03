@@ -25,6 +25,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, cast
 
 # Derive custom operators form the FINN base custom op
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # Converts inputs/outputs to/from RTL simulation format
@@ -49,6 +50,7 @@ NodeAttrTypes = dict[
 ]
 
 
+@register_custom_op
 class SplitMultiHeads(HWCustomOp):
     """Split input tensor into multiple attention heads.
 
@@ -406,6 +408,7 @@ class SplitMultiHeads(HWCustomOp):
         return int(np.prod(self.num_inputs))
 
 
+@register_custom_op
 class MergeMultiHeads(HWCustomOp):
     """Merging of attention heads (before output projections) custom operator."""
 

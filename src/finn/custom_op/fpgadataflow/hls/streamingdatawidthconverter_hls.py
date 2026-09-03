@@ -32,6 +32,7 @@ import numpy as np
 from onnx import GraphProto, NodeProto
 from typing import cast
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.streamingdatawidthconverter import (
     NodeAttrTypes,
@@ -43,6 +44,7 @@ from finn.util.exception import FINNInternalError
 # tensor shapes are the same. performs data width conversion at the rtlsim level
 
 
+@register_custom_op
 class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
     """Corresponds to the finn-hlslib StreamingDataWidthConverter_Batch function."""
 

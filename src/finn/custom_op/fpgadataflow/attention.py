@@ -30,6 +30,7 @@ from qonnx.util.basic import calculate_matvec_accumulator_range
 from typing import TYPE_CHECKING, cast
 
 # Derive custom operators form the FINN base custom op
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
@@ -75,6 +76,7 @@ def softmax(x: np.ndarray, axis: int) -> np.ndarray:
 
 
 # Scaled Dot-Product Attention Custom Operator
+@register_custom_op
 class ScaledDotProductAttention(HWCustomOp):
     """Scaled dot-product attention abstraction layer.
 

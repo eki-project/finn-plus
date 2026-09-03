@@ -36,6 +36,7 @@ from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import cast
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU, NodeAttrTypes
 from finn.util.basic import MAX_ALLOWED_AP_INT_W, is_versal
@@ -52,6 +53,7 @@ from finn.util.exception import FINNInternalError, FINNUserError
 _MEM_MODES = ("internal_embedded", "internal_decoupled", "external")
 
 
+@register_custom_op
 class MVAU_hls(MVAU, HLSBackend):
     """Corresponds to finn-hlslib MatrixVectorActivation_Batch function."""
 

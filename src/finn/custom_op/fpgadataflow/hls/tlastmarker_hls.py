@@ -36,6 +36,7 @@ from onnx import NodeProto
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.exception import FINNInternalError
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from qonnx.core.modelwrapper import ModelWrapper
 
 
+@register_custom_op
 class TLastMarker_hls(HLSBackend, HWCustomOp):
     """Node that adds/removes AXI stream TLAST signals where needed. Its behavior
     is transparent in node-by-node execution, only visible in IP-stitched rtlsim or

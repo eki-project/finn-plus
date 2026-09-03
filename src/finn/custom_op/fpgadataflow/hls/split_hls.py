@@ -31,10 +31,12 @@
 import numpy as np
 from onnx import GraphProto, NodeProto
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.split import NodeAttrTypes, StreamingSplit
 
 
+@register_custom_op
 class StreamingSplit_hls(StreamingSplit, HLSBackend):
     """Streaming split node with dynamically generated HLS.
 

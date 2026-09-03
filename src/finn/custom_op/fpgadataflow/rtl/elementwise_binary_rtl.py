@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow import elementwise_binary
 from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation, NodeAttrTypes
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.data_packing import (
     npy_to_rtlsim_input,
@@ -486,6 +487,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         raise NotImplementedError("Subclasses must implement _get_rtl_op_name")
 
 
+@register_custom_op
 class ElementwiseAdd_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseAdd):
     """RTL implementation of elementwise addition for FLOAT32."""
 
@@ -496,6 +498,7 @@ class ElementwiseAdd_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseAd
         return '"ADD"'
 
 
+@register_custom_op
 class ElementwiseSub_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseSub):
     """RTL implementation of elementwise subtraction for FLOAT32."""
 
@@ -506,6 +509,7 @@ class ElementwiseSub_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseSu
         return '"SUB"'
 
 
+@register_custom_op
 class ElementwiseMul_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseMul):
     """RTL implementation of elementwise multiplication for FLOAT32."""
 

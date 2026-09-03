@@ -48,6 +48,7 @@ from finn.custom_op.fpgadataflow.convolutioninputgenerator import (
     ConvolutionInputGenerator,
     NodeAttrTypes,
 )
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.settings import get_settings
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
 # NOTE: "Parallel" implementation style not yet implemented in this version!
 
 
+@register_custom_op
 class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
     """Class that corresponds to finn-rtllib swg module.
 

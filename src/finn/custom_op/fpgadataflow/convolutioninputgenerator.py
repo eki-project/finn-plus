@@ -37,6 +37,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import qonnx_make_model
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
@@ -58,6 +59,7 @@ NodeAttrTypes = dict[
 #     = (1, OFMDim, OFMDim, (ConvKernelDim^2)*IFMChannels)
 
 
+@register_custom_op
 class ConvolutionInputGenerator(HWCustomOp):
     """Abstraction layer for HW implementation of ConvolutionInputGenerator."""
 

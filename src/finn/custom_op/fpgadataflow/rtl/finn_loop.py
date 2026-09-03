@@ -48,6 +48,7 @@ import finn.xsi as finnxsi
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.custom_op.fpgadataflow import templates
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.util.basic import getHWCustomOp, make_build_dir
@@ -81,6 +82,7 @@ def collect_ip_dirs(model, ipstitch_path):
     return ip_dirs
 
 
+@register_custom_op
 class FINNLoop(RTLBackend, HWCustomOp):
     """Class that corresponds to the meta/container node FINN loop
     which is a placeholder for a group of fpgadataflow nodes that have been separated

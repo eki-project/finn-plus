@@ -35,6 +35,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import cast
 
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.streamingdatawidthconverter import (
     NodeAttrTypes,
@@ -46,6 +47,7 @@ from finn.util.settings import get_settings
 _RTL_SOURCES = ["dwc_axi.sv", "dwc.sv"]
 
 
+@register_custom_op
 class StreamingDataWidthConverter_rtl(StreamingDataWidthConverter, RTLBackend):
     """Corresponds to the finn-rtllib data-width converter module."""
 

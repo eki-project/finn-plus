@@ -12,6 +12,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.general.quant import max_int, min_int
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.logging import log
 
@@ -27,6 +28,7 @@ NodeAttrTypes = dict[
 ]
 
 
+@register_custom_op
 class Requant(HWCustomOp):
     """Abstraction layer for HW implementation of Requantization.
 

@@ -13,12 +13,14 @@ from pathlib import Path
 # Typing helpers
 from typing import TYPE_CHECKING, cast
 
-# The generic HW custom operator version of the operator as a base class
 from finn.custom_op.fpgadataflow.attention_heads import (
     MergeMultiHeads,
     NodeAttrTypes,
     SplitMultiHeads,
 )
+
+# The generic HW custom operator version of the operator as a base class
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 
 # Base class for specializing HW operators as implemented via HLS
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
 
 
 # HLS Backend specialization of the multi-head attention splitting operator
+@register_custom_op
 class SplitMultiHeads_hls(SplitMultiHeads, HLSBackend):
     """HLS backend implementation for splitting attention heads."""
 
@@ -296,6 +299,7 @@ class SplitMultiHeads_hls(SplitMultiHeads, HLSBackend):
 
 
 # HLS Backend specialization of the multi-head attention merging operator
+@register_custom_op
 class MergeMultiHeads_hls(MergeMultiHeads, HLSBackend):
     """HLS backend implementation for merging attention heads."""
 

@@ -21,6 +21,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.layernorm import LayerNorm, NodeAttrTypes
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNInternalError
 from finn.util.settings import get_settings
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 _RTL_SOURCES = ["layernorm.sv", "queue.sv", "accuf.sv", "binopf.sv", "rsqrtf.sv"]
 
 
+@register_custom_op
 class LayerNorm_rtl(LayerNorm, RTLBackend):
     """RTL backend implementation of LayerNorm.
 

@@ -31,10 +31,12 @@
 import numpy as np
 from onnx import GraphProto, NodeProto
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.upsampler import NodeAttrTypes, UpsampleNearestNeighbour
 
 
+@register_custom_op
 class UpsampleNearestNeighbour_hls(UpsampleNearestNeighbour, HLSBackend):
     """Corresponds to finn-hlslib UpsampleNearestNeighbour function.
 

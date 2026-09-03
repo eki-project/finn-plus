@@ -18,6 +18,7 @@ from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
@@ -81,6 +82,7 @@ class _NestSim:
         return rp_inc, fp_inc, False
 
 
+@register_custom_op
 class OuterShuffle(HWCustomOp):
     """Abstraction layer for HW implementation of an outer (rank-preserving) transpose.
 

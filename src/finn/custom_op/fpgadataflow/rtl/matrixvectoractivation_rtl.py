@@ -40,6 +40,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from typing import Literal, cast
 
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU, NodeAttrTypes
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import get_dsp_block, is_versal
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
@@ -63,6 +64,7 @@ _RTL_SOURCES = [
 ]
 
 
+@register_custom_op
 class MVAU_rtl(MVAU, RTLBackend):
     """Class that corresponds to finn-rtl Matrix Vector Unit."""
 

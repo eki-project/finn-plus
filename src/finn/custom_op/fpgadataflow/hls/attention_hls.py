@@ -21,8 +21,10 @@ from qonnx.util.basic import interleave_matrix_outer_dim_from_partitions
 # Typing helpers
 from typing import cast
 
-# The generic HW custom operator version of the operator as a base class
 from finn.custom_op.fpgadataflow.attention import NodeAttrTypes, ScaledDotProductAttention
+
+# The generic HW custom operator version of the operator as a base class
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 
 # Base class for specializing HW operators as implemented via HLS
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
@@ -40,6 +42,7 @@ RAM_STYLES = {
 }
 
 
+@register_custom_op
 class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
     """HLS Backend specialization of the Scaled Dot-product Attention Operator."""
 

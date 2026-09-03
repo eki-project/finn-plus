@@ -34,11 +34,13 @@ from pathlib import Path
 from qonnx.core.datatype import DataType
 from typing import cast
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.streamingfifo import NodeAttrTypes, StreamingFIFO
 from finn.util.exception import FINNInternalError
 
 
+@register_custom_op
 class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
     """HLS-based FIFO implementation.
 

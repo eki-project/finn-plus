@@ -34,6 +34,7 @@ from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.exception import FINNInternalError, FINNUserError
 
@@ -51,6 +52,7 @@ NodeAttrTypes = dict[
 _SUPPORTED_FUNCTIONS = ("MaxPool", "AvgPool", "AccPool", "QuantAvgPool")
 
 
+@register_custom_op
 class Pool(HWCustomOp):
     """Abstraction layer for HW implementation of Pool.
 

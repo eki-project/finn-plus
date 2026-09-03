@@ -36,6 +36,7 @@ from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import cast
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU, NodeAttrTypes
 from finn.util.basic import is_versal
@@ -45,6 +46,7 @@ from finn.util.exception import FINNInternalError, FINNUserError
 _MEM_MODES = ("internal_embedded", "internal_decoupled", "external")
 
 
+@register_custom_op
 class VVAU_hls(VVAU, HLSBackend):
     """Corresponds to finn-hlslib Vector_Vector_Activate_Batch function."""
 
@@ -134,8 +136,8 @@ class VVAU_hls(VVAU, HLSBackend):
         return int(mult_dsp)
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: GraphProto
-    ) -> None:  # noqa: ARG002
+        self, context: dict[str, np.ndarray], graph: GraphProto  # noqa: ARG002
+    ) -> None:
         """Execute node."""
         mode = self.get_nodeattr("exec_mode")
         mem_mode = self.mem_mode

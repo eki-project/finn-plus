@@ -32,6 +32,7 @@ import numpy as np
 from typing import TYPE_CHECKING
 
 from finn.custom_op.fpgadataflow.globalaccpool import GlobalAccPool, NodeAttrTypes
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.util.exception import FINNInternalError
 
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto
 
 
+@register_custom_op
 class GlobalAccPool_hls(GlobalAccPool, HLSBackend):
     """Class that corresponds to finn-hlslib AccPool_Batch function."""
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from finn.custom_op.fpgadataflow.requant import NodeAttrTypes, Requant
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import get_dsp_block, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 _RTL_SOURCES = ["queue.sv", "requant.sv", "requant_axi.sv"]
 
 
+@register_custom_op
 class Requant_rtl(Requant, RTLBackend):
     """RTL backend for Requant operation using finn-rtllib/requant."""
 

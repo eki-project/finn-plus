@@ -32,12 +32,14 @@ import numpy as np
 from typing import TYPE_CHECKING
 
 from finn.custom_op.fpgadataflow.concat import NodeAttrTypes, StreamingConcat
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 
 if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto
 
 
+@register_custom_op
 class StreamingConcat_hls(StreamingConcat, HLSBackend):
     """Streaming concatenation node with dynamically generated HLS.
 

@@ -44,6 +44,7 @@ from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.fmpadding import FMPadding, NodeAttrTypes
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.settings import get_settings
 
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
     from onnx import GraphProto
 
 
+@register_custom_op
 class FMPadding_rtl(FMPadding, RTLBackend):
     """CustomOp wrapper for the finn-rtllib fmpadding_axi component.
 

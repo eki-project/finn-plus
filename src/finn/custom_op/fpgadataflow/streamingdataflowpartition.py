@@ -35,6 +35,7 @@ from qonnx.custom_op.base import CustomOp
 from typing import TYPE_CHECKING, cast
 
 from finn.core.onnx_exec import execute_onnx
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.util.exception import FINNInternalError
 
 if TYPE_CHECKING:
@@ -49,6 +50,7 @@ NodeAttrTypes = dict[
 ]
 
 
+@register_custom_op
 class StreamingDataflowPartition(CustomOp):
     """Meta/container node for a group of fpgadataflow nodes.
 

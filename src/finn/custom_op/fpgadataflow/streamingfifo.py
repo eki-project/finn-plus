@@ -35,6 +35,7 @@ from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
@@ -55,6 +56,7 @@ _NOT_SPECIALIZED_MSG = (
 )
 
 
+@register_custom_op
 class StreamingFIFO(HWCustomOp):
     """Abstraction layer for HW implementation of a streaming FIFO."""
 

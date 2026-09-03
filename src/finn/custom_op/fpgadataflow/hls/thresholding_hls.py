@@ -43,6 +43,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import roundup_to_integer_multiple
 from typing import Any, cast
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.thresholding import NodeAttrTypes, Thresholding
 from finn.util.data_packing import (
@@ -61,6 +62,7 @@ from finn.util.settings import get_settings
 # the ... here can be any shape (representing groups of vectors)
 
 
+@register_custom_op
 class Thresholding_hls(Thresholding, HLSBackend):
     """Class that corresponds to finn-hls Thresholding_Batch function."""
 

@@ -36,6 +36,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model, roundup_to_integer_multiple
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.exception import FINNInternalError
 
@@ -51,6 +52,7 @@ NodeAttrTypes = dict[
 ]
 
 
+@register_custom_op
 class LabelSelect(HWCustomOp):
     """Abstraction layer for HW implementation of LabelSelect.
 

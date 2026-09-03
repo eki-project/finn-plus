@@ -27,98 +27,67 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for init."""
+"""Registry of abstract fpgadataflow HW custom operators.
+
+Every operator module in this package decorates its op class(es) with
+``@register_custom_op``; importing the submodule (below) is enough to make the
+op resolvable via ``qonnx.custom_op.registry``. There is no hand-maintained
+list of ops.
+"""
+from qonnx.custom_op.base import CustomOp
 from typing import TypeVar
 
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
 
-# Dictionary of HWCustomOp implementations
-custom_op = dict()
+# Dictionary of registered custom-op implementations, keyed by class name
+custom_op: dict[str, type[CustomOp]] = {}
 
-_CustomOpT = TypeVar("_CustomOpT", bound=HWCustomOp)
+_CustomOpT = TypeVar("_CustomOpT", bound=CustomOp)
 
 
-# Registers a class into the custom_op dictionary
-# Note: This must be defined first, before importing any custom op
-# implementation to avoid "importing partially initialized module" issues.
+# Note: This must be defined before importing any custom op implementation to
+# avoid "importing partially initialized module" issues.
 def register_custom_op(cls: type[_CustomOpT]) -> type[_CustomOpT]:
-    # The class must actually implement HWCustomOp
-    """Register a custom operation."""
-    assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"
-    # Insert the class into the custom_op dictionary by its name
+    """Register ``cls`` into the ``custom_op`` dictionary by its name."""
+    if not issubclass(cls, CustomOp):
+        raise FINNInternalError(f"{cls} must subclass {CustomOp}")
     custom_op[cls.__name__] = cls
-    # Pass through the class unmodified
+    # Pass through the class unmodified so this can be used as a decorator
     return cls
 
 
-# flake8: noqa
-# Disable linting from here, as all import will be flagged E402 and maybe F401
+# flake8: noqa: E402, F401
+# ruff: noqa: E402, F401
+# Imports below are for their registration side effects and must follow the
+# register_custom_op definition above.
 
-
-# Import the submodule containing specializations of ElementwiseBinaryOperation
-# Note: This will automatically register all decorated classes into this domain
+import finn.custom_op.fpgadataflow.attention
+import finn.custom_op.fpgadataflow.attention_heads
+import finn.custom_op.fpgadataflow.concat
+import finn.custom_op.fpgadataflow.convolutioninputgenerator
+import finn.custom_op.fpgadataflow.crop
+import finn.custom_op.fpgadataflow.duplicatestreams
 import finn.custom_op.fpgadataflow.elementwise_binary
-
-# Import the submodule containing the Squeeze operation
-# Note: This will automatically register all decorated classes into this domain
+import finn.custom_op.fpgadataflow.fmpadding
+import finn.custom_op.fpgadataflow.globalaccpool
+import finn.custom_op.fpgadataflow.hwsoftmax
+import finn.custom_op.fpgadataflow.inner_shuffle
+import finn.custom_op.fpgadataflow.input_dilation
+import finn.custom_op.fpgadataflow.labelselect
+import finn.custom_op.fpgadataflow.layernorm
+import finn.custom_op.fpgadataflow.lookup
+import finn.custom_op.fpgadataflow.matrixvectoractivation
+import finn.custom_op.fpgadataflow.outer_shuffle
+import finn.custom_op.fpgadataflow.pool
+import finn.custom_op.fpgadataflow.requant
+import finn.custom_op.fpgadataflow.reshape
+import finn.custom_op.fpgadataflow.shuffle
+import finn.custom_op.fpgadataflow.split
 import finn.custom_op.fpgadataflow.squeeze
-
-# Import the submodule containing the Unsqueeze operation
+import finn.custom_op.fpgadataflow.streamingdataflowpartition
+import finn.custom_op.fpgadataflow.streamingdatawidthconverter
+import finn.custom_op.fpgadataflow.streamingfifo
+import finn.custom_op.fpgadataflow.thresholding
 import finn.custom_op.fpgadataflow.unsqueeze
-from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
-from finn.custom_op.fpgadataflow.attention_heads import MergeMultiHeads, SplitMultiHeads
-from finn.custom_op.fpgadataflow.concat import StreamingConcat
-from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
-from finn.custom_op.fpgadataflow.crop import Crop
-from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams
-from finn.custom_op.fpgadataflow.fmpadding import FMPadding
-from finn.custom_op.fpgadataflow.globalaccpool import GlobalAccPool
-from finn.custom_op.fpgadataflow.hwsoftmax import HWSoftmax
-from finn.custom_op.fpgadataflow.inner_shuffle import InnerShuffle
-from finn.custom_op.fpgadataflow.input_dilation import InputDilation
-from finn.custom_op.fpgadataflow.labelselect import LabelSelect
-from finn.custom_op.fpgadataflow.layernorm import LayerNorm
-from finn.custom_op.fpgadataflow.lookup import Lookup
-from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
-from finn.custom_op.fpgadataflow.outer_shuffle import OuterShuffle
-from finn.custom_op.fpgadataflow.pool import Pool
-from finn.custom_op.fpgadataflow.requant import Requant
-from finn.custom_op.fpgadataflow.shuffle import Shuffle
-from finn.custom_op.fpgadataflow.split import StreamingSplit
-from finn.custom_op.fpgadataflow.streamingdataflowpartition import StreamingDataflowPartition
-from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
-from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
-from finn.custom_op.fpgadataflow.thresholding import Thresholding
-from finn.custom_op.fpgadataflow.upsampler import UpsampleNearestNeighbour
-from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU
-
-# make sure new HLSCustomOp subclasses are imported here so that they get
-# registered and plug in correctly into the infrastructure
-custom_op["MVAU"] = MVAU
-custom_op["StreamingFIFO"] = StreamingFIFO
-custom_op["Thresholding"] = Thresholding
-custom_op["VVAU"] = VVAU
-custom_op["StreamingDataflowPartition"] = StreamingDataflowPartition
-
-custom_op["ConvolutionInputGenerator"] = ConvolutionInputGenerator
-custom_op["Crop"] = Crop
-custom_op["DuplicateStreams"] = DuplicateStreams
-custom_op["FMPadding"] = FMPadding
-custom_op["GlobalAccPool"] = GlobalAccPool
-custom_op["InnerShuffle"] = InnerShuffle
-custom_op["InputDilation"] = InputDilation
-custom_op["LabelSelect"] = LabelSelect
-custom_op["LayerNorm"] = LayerNorm
-custom_op["Lookup"] = Lookup
-custom_op["OuterShuffle"] = OuterShuffle
-custom_op["Pool"] = Pool
-custom_op["Shuffle"] = Shuffle
-custom_op["StreamingConcat"] = StreamingConcat
-custom_op["StreamingSplit"] = StreamingSplit
-custom_op["StreamingDataWidthConverter"] = StreamingDataWidthConverter
-custom_op["UpsampleNearestNeighbour"] = UpsampleNearestNeighbour
-custom_op["ScaledDotProductAttention"] = ScaledDotProductAttention
-custom_op["SplitMultiHeads"] = SplitMultiHeads
-custom_op["MergeMultiHeads"] = MergeMultiHeads
-custom_op["HWSoftmax"] = HWSoftmax
-custom_op["Requant"] = Requant
+import finn.custom_op.fpgadataflow.upsampler
+import finn.custom_op.fpgadataflow.vectorvectoractivation

@@ -36,6 +36,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.logging import log
 
@@ -51,6 +52,7 @@ NodeAttrTypes = dict[
 ]
 
 
+@register_custom_op
 class UpsampleNearestNeighbour(HWCustomOp):
     """Abstraction layer for HW implementation of UpsampleNearestNeighbour."""
 
@@ -166,8 +168,8 @@ class UpsampleNearestNeighbour(HWCustomOp):
         return self.get_output_datatype().bitwidth() * self.simd
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: "GraphProto"
-    ) -> None:  # noqa: ARG002
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         """Execute node."""
         # create a standard resize node to help calculate the result
         node = self.onnx_node

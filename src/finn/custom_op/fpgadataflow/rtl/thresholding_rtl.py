@@ -42,6 +42,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, cast
 
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.thresholding import NodeAttrTypes, Thresholding
 from finn.util.data_packing import (
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
     from onnx import GraphProto
 
 
+@register_custom_op
 class Thresholding_rtl(Thresholding, RTLBackend):
     """Class that corresponds to finn-rtllib 'thresholding' function."""
 
@@ -364,9 +366,8 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         cmd = [f"file mkdir {source_target}"]
 
         for rtl_file in rtl_file_list:
-            cmd.append(
-                f"add_files -copy_to {source_target} -norecurse " f"{Path(code_gen_dir) / rtl_file}"
-            )
+            full_path = Path(code_gen_dir) / rtl_file
+            cmd.append(f"add_files -copy_to {source_target} -norecurse {full_path}")
 
         # Create an RTL block, not an IP core (-type ip)
         cmd.append(

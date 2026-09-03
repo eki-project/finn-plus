@@ -14,12 +14,14 @@ from pathlib import Path
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import Any, cast
 
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
 
+@register_custom_op
 class RemoveDataPath_rtl(RTLBackend):
     """RTL implementation for RemoveDataPath custom op."""
 

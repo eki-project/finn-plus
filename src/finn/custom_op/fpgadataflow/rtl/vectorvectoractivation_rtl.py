@@ -40,6 +40,7 @@ from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import Literal, cast
 
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.custom_op.fpgadataflow.vectorvectoractivation import VVAU, NodeAttrTypes
 from finn.util.basic import is_versal
@@ -58,6 +59,7 @@ _RTL_SOURCES = [
 ]
 
 
+@register_custom_op
 class VVAU_rtl(VVAU, RTLBackend):
     """RTL implementation of Vector-Vector Activation Unit.
 

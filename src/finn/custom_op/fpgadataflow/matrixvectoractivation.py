@@ -48,6 +48,7 @@ from qonnx.util.basic import (
 )
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -73,6 +74,7 @@ NodeAttrTypes = dict[
 # the ... here can be any shape (representing groups of vectors)
 
 
+@register_custom_op
 class MVAU(HWCustomOp):
     """Abstraction layer for HW implementation of MatrixVectorActivation layers."""
 

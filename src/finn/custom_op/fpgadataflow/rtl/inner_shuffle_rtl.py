@@ -18,6 +18,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.inner_shuffle import InnerShuffle, NodeAttrTypes
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
@@ -52,6 +53,7 @@ def auto_size_simd(i_dim: int, simd: int) -> int | None:
     return min(candidates)
 
 
+@register_custom_op
 class InnerShuffle_rtl(InnerShuffle, RTLBackend):
     """CustomOp wrapper for the finn-rtllib inner_shuffle component."""
 

@@ -43,6 +43,7 @@ from qonnx.util.basic import (
 )
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
@@ -59,6 +60,7 @@ NodeAttrTypes = dict[
 ]
 
 
+@register_custom_op
 class Thresholding(HWCustomOp):
     """Abstraction layer for HW implementation of Thresholding."""
 
@@ -331,8 +333,8 @@ class Thresholding(HWCustomOp):
         return ret.reshape(1, pe, tmem, n_thres_steps)
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: "GraphProto"
-    ) -> None:  # noqa: ARG002
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         """Execute the thresholding operation.
 
         Performs multi-threshold comparison on input values using the threshold

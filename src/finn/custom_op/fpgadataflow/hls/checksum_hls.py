@@ -31,11 +31,13 @@
 import numpy as np
 from qonnx.core.datatype import DataType
 
+from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.logging import log
 
 
+@register_custom_op
 class CheckSum_hls(HLSBackend, HWCustomOp):
     """Class that corresponds to custom_hls checksum function."""
 

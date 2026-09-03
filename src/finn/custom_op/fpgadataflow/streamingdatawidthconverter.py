@@ -33,6 +33,7 @@ import numpy as np
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import TYPE_CHECKING, cast
 
+from finn.custom_op.fpgadataflow import register_custom_op
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log
@@ -53,6 +54,7 @@ NodeAttrTypes = dict[
 # tensor shapes are the same. performs data width conversion at the rtlsim level
 
 
+@register_custom_op
 class StreamingDataWidthConverter(HWCustomOp):
     """Abstraction layer for HW implementation of StreamingDataWidthConverter."""
 
