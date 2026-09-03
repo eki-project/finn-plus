@@ -43,9 +43,9 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import roundup_to_integer_multiple
 from typing import Any, cast
 
+from finn.custom_op.fpgadataflow.base.thresholding import NodeAttrTypes, Thresholding
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.thresholding import NodeAttrTypes, Thresholding
 from finn.util.data_packing import (
     npy_to_rtlsim_input,
     numpy_to_hls_code,

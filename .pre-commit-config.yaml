@@ -36,7 +36,7 @@ repos:
   rev: v4.4.0
   hooks:
   - id: trailing-whitespace
-    exclude: '\.dat$'
+    exclude: '\.dat$|^src/finn/templates/codegen/'
   - id: check-added-large-files
   - id: check-ast
   - id: check-json
@@ -47,6 +47,9 @@ repos:
   - id: debug-statements
     exclude: '^src/finn/builder/build_dataflow.py$'
   - id: end-of-file-fixer
+    # codegen templates are byte-exact scaffolding: some legitimately end in a
+    # blank line, which this hook would strip and change the generated output
+    exclude: '^src/finn/templates/codegen/'
   - id: requirements-txt-fixer
   - id: mixed-line-ending
     args: ['--fix=no']

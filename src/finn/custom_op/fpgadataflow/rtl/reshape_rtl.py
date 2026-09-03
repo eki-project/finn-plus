@@ -7,7 +7,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import cast
 
-from finn.custom_op.fpgadataflow.reshape import NodeAttrTypes, Reshape
+from finn.custom_op.fpgadataflow.base.reshape import NodeAttrTypes, Reshape
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNInternalError

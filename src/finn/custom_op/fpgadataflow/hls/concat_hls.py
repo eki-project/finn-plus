@@ -31,7 +31,7 @@
 import numpy as np
 from typing import TYPE_CHECKING
 
-from finn.custom_op.fpgadataflow.concat import NodeAttrTypes, StreamingConcat
+from finn.custom_op.fpgadataflow.base.concat import NodeAttrTypes, StreamingConcat
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 

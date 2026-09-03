@@ -40,8 +40,11 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import roundup_to_integer_multiple
 from typing import TYPE_CHECKING, cast
 
-import finn.custom_op.fpgadataflow.elementwise_binary as elementwise_binary
-from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation, NodeAttrTypes
+import finn.custom_op.fpgadataflow.base.elementwise_binary as elementwise_binary
+from finn.custom_op.fpgadataflow.base.elementwise_binary import (
+    ElementwiseBinaryOperation,
+    NodeAttrTypes,
+)
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.util.data_packing import (

@@ -39,7 +39,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import Literal, cast
 
-from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU, NodeAttrTypes
+from finn.custom_op.fpgadataflow.base.matrixvectoractivation import MVAU, NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import get_dsp_block, is_versal

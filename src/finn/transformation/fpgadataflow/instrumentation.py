@@ -7,7 +7,7 @@ from pathlib import Path
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
-from finn.custom_op.fpgadataflow.templates import ipgentcl_template
+from finn.templates import load_codegen_template
 from finn.util.basic import make_build_dir
 from finn.util.hls import CallHLS
 from finn.util.settings import get_settings
@@ -98,7 +98,7 @@ class GenerateInstrumentationIP(Transformation):
             f.write(instrwrp_cpp)
         # fill out HLS synthesis tcl template
         prjname = "project_instrwrap"
-        ipgentcl = ipgentcl_template
+        ipgentcl = load_codegen_template("hls_ipgen_project.tcl")
         ipgentcl = ipgentcl.replace("$PROJECTNAME$", prjname)
         ipgentcl = ipgentcl.replace("$HWSRCDIR$", str(wrapper_output_dir))
         ipgentcl = ipgentcl.replace("$FINNHLSLIB$", str(get_settings().finn_deps / "finn-hlslib"))

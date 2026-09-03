@@ -17,7 +17,7 @@ from qonnx.core.datatype import BaseDataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, cast
 
-from finn.custom_op.fpgadataflow.inner_shuffle import InnerShuffle, NodeAttrTypes
+from finn.custom_op.fpgadataflow.base.inner_shuffle import InnerShuffle, NodeAttrTypes
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNUserError

@@ -7,9 +7,9 @@ could potentially be unified.
 import numpy as np
 from onnx import GraphProto
 
+from finn.custom_op.fpgadataflow.base.squeeze import NodeAttrTypes, Squeeze
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.squeeze import NodeAttrTypes, Squeeze
 
 
 @register_custom_op

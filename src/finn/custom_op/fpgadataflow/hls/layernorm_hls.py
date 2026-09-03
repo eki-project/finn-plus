@@ -11,9 +11,9 @@
 import numpy as np
 from typing import TYPE_CHECKING
 
+from finn.custom_op.fpgadataflow.base.layernorm import LayerNorm, NodeAttrTypes
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.layernorm import LayerNorm, NodeAttrTypes
 
 if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto

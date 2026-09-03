@@ -31,9 +31,9 @@
 import numpy as np
 from typing import TYPE_CHECKING
 
+from finn.custom_op.fpgadataflow.base.input_dilation import InputDilation, NodeAttrTypes
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.input_dilation import InputDilation, NodeAttrTypes
 
 if TYPE_CHECKING:
     from onnx import GraphProto, NodeProto

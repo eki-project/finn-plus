@@ -14,9 +14,9 @@ import numpy as np
 from onnx import NodeProto
 from typing import TYPE_CHECKING
 
+from finn.custom_op.fpgadataflow.base.outer_shuffle import NodeAttrTypes, OuterShuffle
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.outer_shuffle import NodeAttrTypes, OuterShuffle
 from finn.util.exception import FINNUserError
 
 if TYPE_CHECKING:

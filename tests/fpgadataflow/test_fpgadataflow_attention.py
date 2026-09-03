@@ -32,7 +32,7 @@ from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 # Softmax function on numpy arrays with overflow handling matching the HLS
 # operator
-from finn.custom_op.fpgadataflow.attention import softmax
+from finn.custom_op.fpgadataflow.base.attention import softmax
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim

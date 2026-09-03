@@ -31,7 +31,7 @@
 import numpy as np
 from typing import TYPE_CHECKING
 
-from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams, NodeAttrTypes
+from finn.custom_op.fpgadataflow.base.duplicatestreams import DuplicateStreams, NodeAttrTypes
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 

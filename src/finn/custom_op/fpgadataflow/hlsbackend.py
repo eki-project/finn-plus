@@ -38,9 +38,8 @@ from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, Literal, cast
 
 from finn import xsi as finnxsi
-from finn.custom_op.fpgadataflow import templates
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
-from finn.templates import get_templates_folder
+from finn.templates import get_templates_folder, load_codegen_template
 from finn.util.basic import MAX_ALLOWED_AP_INT_W, CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -137,7 +136,7 @@ class HLSBackend(HWCustomOp, ABC):
         self.pragmas()
         self.docompute()
 
-        template = templates.ipgen_template
+        template = load_codegen_template("hls_ipgen.tcl")
 
         for key in self.code_gen_dict:
             # transform list into long string separated by '\n'
@@ -168,7 +167,7 @@ class HLSBackend(HWCustomOp, ABC):
             str(get_settings().finn_deps / "attention-hlslib")
         ]
 
-        template = templates.ipgentcl_template
+        template = load_codegen_template("hls_ipgen_project.tcl")
 
         for key in self.code_gen_dict:
             # transform list into long string separated by '\n'
@@ -259,9 +258,9 @@ class HLSBackend(HWCustomOp, ABC):
             self.timeout_value()
             self.timeout_condition()
             self.timeout_read_stream()
-            template = templates.docompute_template_timeout
+            template = load_codegen_template("execute_single_node_timeout.cpp")
         else:
-            template = templates.docompute_template
+            template = load_codegen_template("execute_single_node.cpp")
 
         for key in self.code_gen_dict:
             # transform list into long string separated by '\n'

@@ -35,12 +35,12 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import cast
 
-from finn.custom_op.fpgadataflow.rtl import register_custom_op
-from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
-from finn.custom_op.fpgadataflow.streamingdatawidthconverter import (
+from finn.custom_op.fpgadataflow.base.streamingdatawidthconverter import (
     NodeAttrTypes,
     StreamingDataWidthConverter,
 )
+from finn.custom_op.fpgadataflow.rtl import register_custom_op
+from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
 

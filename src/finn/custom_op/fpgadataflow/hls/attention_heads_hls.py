@@ -13,7 +13,7 @@ from pathlib import Path
 # Typing helpers
 from typing import TYPE_CHECKING, cast
 
-from finn.custom_op.fpgadataflow.attention_heads import (
+from finn.custom_op.fpgadataflow.base.attention_heads import (
     MergeMultiHeads,
     NodeAttrTypes,
     SplitMultiHeads,

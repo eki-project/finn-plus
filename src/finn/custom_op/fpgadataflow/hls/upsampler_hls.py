@@ -31,9 +31,9 @@
 import numpy as np
 from onnx import GraphProto, NodeProto
 
+from finn.custom_op.fpgadataflow.base.upsampler import NodeAttrTypes, UpsampleNearestNeighbour
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.upsampler import NodeAttrTypes, UpsampleNearestNeighbour
 
 
 @register_custom_op

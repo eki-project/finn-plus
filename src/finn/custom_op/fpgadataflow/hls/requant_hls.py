@@ -13,9 +13,9 @@ from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.general.quant import max_int, min_int
 from typing import cast
 
+from finn.custom_op.fpgadataflow.base.requant import NodeAttrTypes, Requant
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.requant import NodeAttrTypes, Requant
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.exception import FINNInternalError
 from finn.util.logging import log

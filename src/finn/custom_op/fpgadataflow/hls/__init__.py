@@ -26,40 +26,25 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Registry of HLS-backend fpgadataflow custom operators.
+"""Registry for the ``finn.custom_op.fpgadataflow.hls`` ONNX domain.
 
 Every ``*_hls`` module in this package decorates its op class(es) with
 ``@register_custom_op``; importing the submodule (below) is enough to make the
 op resolvable via ``qonnx.custom_op.registry``. There is no hand-maintained
-list of ops.
-"""
-from qonnx.custom_op.base import CustomOp
-from typing import TypeVar
+list of ops."""
 
+from finn.custom_op.fpgadataflow._registry import make_registry
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.util.exception import FINNInternalError
 
-# Dictionary of registered HLSBackend implementations, keyed by class name
-custom_op: dict[str, type[CustomOp]] = {}
-
-_HLSOpT = TypeVar("_HLSOpT", bound=HLSBackend)
-
-
-# Note: This must be defined before importing any custom op implementation to
-# avoid "importing partially initialized module" issues.
-def register_custom_op(cls: type[_HLSOpT]) -> type[_HLSOpT]:
-    """Register ``cls`` (an HLSBackend implementation) into the ``custom_op`` dictionary."""
-    if not issubclass(cls, HLSBackend):
-        raise FINNInternalError(f"{cls} must subclass {HLSBackend}")
-    custom_op[cls.__name__] = cls
-    # Pass through the class unmodified so this can be used as a decorator
-    return cls
-
+# Dictionary of registered custom-op implementations (keyed by class name) and the
+# decorator that fills it. qonnx.custom_op.registry reads ``custom_op`` to resolve
+# nodes carrying this package's name as their ONNX domain.
+custom_op, register_custom_op = make_registry(HLSBackend)
 
 # flake8: noqa: E402, F401
 # ruff: noqa: E402, F401
 # Imports below are for their registration side effects and must follow the
-# register_custom_op definition above.
+# make_registry call above.
 
 import finn.custom_op.fpgadataflow.hls.attention_heads_hls
 import finn.custom_op.fpgadataflow.hls.attention_hls

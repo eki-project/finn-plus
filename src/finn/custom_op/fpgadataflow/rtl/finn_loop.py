@@ -47,10 +47,10 @@ from typing import Any, cast
 import finn.core.onnx_exec as oxe
 import finn.xsi as finnxsi
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
-from finn.custom_op.fpgadataflow import templates
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.templates import load_codegen_template
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
 from finn.util.basic import getHWCustomOp, make_build_dir
 from finn.util.create import adjacency_list
@@ -1107,7 +1107,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
             "-of [ipx::get_bus_interfaces -of [ipx::current_core ]]]"
         )
 
-        template = templates.ip_gen_loop_op
+        template = load_codegen_template("mlo_loop_ip.tcl")
 
         # transform list into long string separated by '\n'
         cmd_str = "\n".join(cmd)

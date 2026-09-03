@@ -10,7 +10,7 @@ from onnx import GraphProto, NodeProto
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
-from finn.custom_op.fpgadataflow.requant import NodeAttrTypes, Requant
+from finn.custom_op.fpgadataflow.base.requant import NodeAttrTypes, Requant
 from finn.custom_op.fpgadataflow.rtl import register_custom_op
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.util.basic import get_dsp_block, make_build_dir

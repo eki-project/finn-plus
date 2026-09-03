@@ -32,12 +32,12 @@ import numpy as np
 from onnx import GraphProto, NodeProto
 from typing import cast
 
-from finn.custom_op.fpgadataflow.hls import register_custom_op
-from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.streamingdatawidthconverter import (
+from finn.custom_op.fpgadataflow.base.streamingdatawidthconverter import (
     NodeAttrTypes,
     StreamingDataWidthConverter,
 )
+from finn.custom_op.fpgadataflow.hls import register_custom_op
+from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.util.exception import FINNInternalError
 
 # does not do anything at the ONNX node-by-node level, and input-output

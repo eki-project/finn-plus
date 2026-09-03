@@ -35,9 +35,9 @@ from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING
 
+from finn.custom_op.fpgadataflow.base.lookup import Lookup, NodeAttrTypes
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.lookup import Lookup, NodeAttrTypes
 from finn.util.data_packing import numpy_to_hls_code, pack_innermost_dim_as_hex_string
 from finn.util.exception import FINNInternalError, FINNUserError
 
