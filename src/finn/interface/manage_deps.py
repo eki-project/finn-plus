@@ -480,9 +480,14 @@ class DependencyUpdater:
         # Automatically skips if not modified
         unzipped = (target / Path(url).name).with_suffix("")
         debug(f"[{package_name}] Running: wget -N {url}", False)
-        wget_download = sp.run(
-            shlex.split(f"wget -N {url}"), cwd=target, capture_output=True, text=True
-        )
+        try:
+            wget_download = sp.run(
+                shlex.split(f"wget -N {url}"), cwd=target, capture_output=True, text=True
+            )
+        except sp.TimeoutExpired as e:
+            raise FINNDependencyInstallationError(
+                f"[{package_name}] wget failed with a timeout!"
+            ) from e
         if wget_download.returncode != 0:
             debug(f"[{package_name}] wget failed!", False)
             return False

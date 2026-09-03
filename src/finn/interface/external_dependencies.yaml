@@ -19,6 +19,11 @@ git_deps:
         commit: "afc9720f10e551e1f734e137b21bb6d0a8342177"
         pip_install: False
         install_editable: False
+    AuroraFlow:
+        url: "https://github.com/pc2/AuroraFlow.git"
+        commit: "6438de8eb91ffa3fbbbaabe8fe75e419871d4a25"
+        pip_install: False
+        install_editable: False
 
 boardfile_deps:
     avnet-bdf:

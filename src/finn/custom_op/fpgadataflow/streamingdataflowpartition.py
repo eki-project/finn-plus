@@ -1,3 +1,5 @@
+"""Meta containers for smaller dataflow graphs."""
+
 # Copyright (c) 2020 Xilinx, Inc.
 # All rights reserved.
 #
@@ -26,7 +28,6 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for streamingdataflowpartition."""
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.base import CustomOp
 
@@ -39,7 +40,8 @@ class StreamingDataflowPartition(CustomOp):
     """Class that corresponds to the meta/container node StreamingDataflowPartition
     which is a placeholder for a group of fpgadataflow nodes that have been separated
     out into a FINN-ONNX model of its own. Note that is does not produce any HLS or
-    bitfile by itself."""
+    bitfile by itself.
+    """
 
     def get_nodeattr_types(self):
         """Return nodeattr types."""
@@ -54,6 +56,7 @@ class StreamingDataflowPartition(CustomOp):
             "mem_port": ("s", False, ""),
             "instance_name": ("s", False, ""),
             "return_full_exec_context": ("i", False, 0),
+            "network_connections": ("strings", False, []),
         }
 
     def make_shape_compatible_op(self, model):

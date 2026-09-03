@@ -43,7 +43,7 @@ FINN Build:
   cache:
     key:
       files:
-        - external_dependencies.yaml
+        - src/finn/interface/external_dependencies.yaml
     policy: pull
     paths:
       - deps
@@ -153,7 +153,7 @@ FINN Build (Follow-up):
   cache:
     key:
       files:
-        - external_dependencies.yaml
+        - src/finn/interface/external_dependencies.yaml
     policy: pull
     paths:
       - deps
