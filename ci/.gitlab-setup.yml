@@ -3,7 +3,7 @@
 .n2_setup_general:
   before_script:
     - ml lang/Python/3.14.2-GCCcore-15.2.0
-    - ml compiler/GCC/14.3.0 devel/Boost/1.88.0-GCC-14.3.0
+    - ml devel/Boost/1.90.0-GCCcore-15.2.0
     - ml tools/git-lfs/3.6.1
     - ml tools/UnZip/6.0-GCCcore-15.2.0
     - ml devel/ncurses/5.9
