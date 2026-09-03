@@ -473,7 +473,7 @@ def step_set_fifo_depths(
     * if auto_fifo_depths=True:  Run the appropriate auto-sizing transformation
     to attempt to determine the FIFO sizes that provide full throughput.
     May take a long time.
-    * if auto_fifo_depths=False:  Load the FIFO sizes from the folding config file and apply them.
+    * if auto_fifo_depths=False:  Load the FIFO sizes from the FIFO config file and apply them.
     Coherency with config file node naming is ensured by calling
     `GiveUniqueNodeNamesRecursive`.
     """
@@ -579,10 +579,10 @@ def step_set_fifo_depths(
             model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
             model = model.transform(GiveReadableTensorNames())
 
-            # save original folding config before potentially modifying it
-            cfg_path = Path(cfg.output_dir) / "report" / "folding_config_before_lfs.json"
+            # Save the exact folding configuration for the live-sizing follow-up build.
+            cfg_path = Path(cfg.output_dir) / "report" / "folding_config.json"
             extract_model_config_to_json(model, cfg_path, hw_attrs)
-            model.set_metadata_prop("folding_config_before_lfs", str(cfg_path))
+            model.set_metadata_prop("folding_config", str(cfg_path))
 
             # Disable runtime-writable weights, external weights, and dynamic mode
             for node in model.graph.node:

@@ -474,7 +474,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: Whether FIFO depths will be set automatically. Involves running stitched
     #: rtlsim and can take a long time.
-    #: If set to False, the folding_config_file can be used to specify sizes
+    #: If set to False, the fifo_config_file can be used to specify sizes
     #: for each FIFO.
     auto_fifo_depths: bool = True
 
@@ -483,7 +483,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     functional_simulation: bool = True
 
     #: Whether FIFO nodes with depth larger than 32768 will be split.
-    #: Allow to configure very large FIFOs in the folding_config_file.
+    #: Allow to configure very large FIFOs in the fifo_config_file.
     split_large_fifos: bool = True
 
     #: (Only relevant when auto_fifo_depths is enabled)

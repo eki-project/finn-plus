@@ -22,7 +22,8 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         download=True,
         seed=1,
         fifo_widths=dict(),
-        folding_config_before_lfs=None,
+        folding_config=None,
+        fifo_config=None,
         **kwargs,
     ):
         """Initialize live FIFO overlay."""
@@ -39,9 +40,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.fifo_widths = fifo_widths
         self.num_fifos = len(self.fifo_widths)
 
-        # The settings can also contain the original folding config,
-        # into which we can insert the live FIFO sizes once we are done
-        self.folding_config_before_lfs = folding_config_before_lfs
+        # The settings preserve the folding configuration and the FIFO metadata
+        # needed to export a matching follow-up configuration.
+        self.folding_config = folding_config
+        self.fifo_config = fifo_config
 
         # Account for additional FIFO depth or implicit registers introduced by the virtual FIFO
         # implementation that are not present in real FIFOs.
@@ -467,7 +469,6 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         report_dir = os.path.join(base_report_dir, fifo_search_order, stop_condition)
         os.makedirs(report_dir, exist_ok=True)
         reportfile = os.path.join(report_dir, "report_experiment_fifosizing.json")
-        folding_config_lfs = copy.deepcopy(self.folding_config_before_lfs)
 
         print("---PHASE 1: RUN_DETACHED---")
         max_period = self.run_detached()
@@ -618,26 +619,27 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         with open(os.path.join(report_dir, "fifo_sizing_report.json"), "w") as f:
             json.dump(fifo_report, f, indent=2)
 
-        # Generate fifo_depth_export.json to export FIFO depths for use in FINN
-        fifo_depth_export = {}
+        # Export measured FIFO settings for use by the follow-up FINN build.
+        fifo_config = copy.deepcopy(self.fifo_config)
+        if fifo_config is None:
+            raise ValueError("Live FIFO sizing requires fifo_config in settings.json.")
+        total_fifo_size = 0
         for fifo, depth in enumerate(fifo_depths):
             fifo_name = "StreamingFIFO_rtl_%d" % fifo
-            fifo_depth_export[fifo_name] = {}
-            fifo_depth_export[fifo_name]["depth"] = depth + self.fifo_depth_offset
-        with open(os.path.join(report_dir, "fifo_depth_export.json"), "w") as f:
-            json.dump(fifo_depth_export, f, indent=2)
+            final_depth = depth + self.fifo_depth_offset
+            fifo_config["fifo_depths"][fifo_name] = final_depth
+            fifo_config["fifo_sizes"][fifo_name] = (
+                self.fifo_widths[str(fifo)] * ((final_depth + 31) // 32) * 32
+            )
+            fifo_config["impl_style"][fifo_name] = "rtl"
+            total_fifo_size += fifo_config["fifo_sizes"][fifo_name]
+        fifo_config["total_fifo_size_kiB"] = total_fifo_size / 8.0 / 1024.0
+        with open(os.path.join(report_dir, "fifo_config.json"), "w") as f:
+            json.dump(fifo_config, f, indent=2)
 
-        # Also export directly into original folding config for convenience
-        if folding_config_lfs:
-            for key in list(folding_config_lfs.keys()):
-                if key.startswith("StreamingFIFO"):
-                    fifo_name = "StreamingFIFO_rtl_%d" % int(key.removeprefix("StreamingFIFO_"))
-                    # Rename FIFO from StreamingFIFO_* to StreamingFIFO_rtl_*
-                    folding_config_lfs[fifo_name] = folding_config_lfs.pop(key)
-                    folding_config_lfs[fifo_name]["depth"] = fifo_depth_export[fifo_name]["depth"]
-                    folding_config_lfs[fifo_name]["impl_style"] = "rtl"
-            with open(os.path.join(report_dir, "folding_config_lfs.json"), "w") as f:
-                json.dump(folding_config_lfs, f, indent=2)
+        if self.folding_config:
+            with open(os.path.join(report_dir, "folding_config.json"), "w") as f:
+                json.dump(self.folding_config, f, indent=2)
 
         # Generate the usual instrumentation performance report based on final state
         min_latency = log_min_latency[-1]

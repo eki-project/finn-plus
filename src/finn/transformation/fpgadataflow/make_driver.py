@@ -684,13 +684,33 @@ class MakePYNQDriver(Transformation):
                     fifo_id = str(node_inst.get_nodeattr("fifo_id"))
                     fifo_widths[fifo_id] = node_inst.get_instream_width()
         settings["fifo_widths"] = fifo_widths
-        # export original folding config to settings file,
-        # so that the driver can generate a final cfg with live fifo sizes applied
-        folding_path = model.get_metadata_prop("folding_config_before_lfs")
+        # Export the exact folding configuration selected for the live-sizing build.
+        # The follow-up build must reuse it so its FIFO node names match.
+        folding_path = model.get_metadata_prop("folding_config")
         if folding_path:
             with open(folding_path) as f:
                 folding_cfg = json.load(f)
-            settings["folding_config_before_lfs"] = folding_cfg
+            settings["folding_config"] = folding_cfg
+
+        fifo_config = {
+            "fifo_depths": {},
+            "fifo_sizes": {},
+            "impl_style": {},
+            "ram_style": {},
+            "total_fifo_size_kiB": 0,
+        }
+        for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
+            sdp_node_inst = getCustomOp(sdp_node)
+            kernel_model = ModelWrapper(sdp_node_inst.get_nodeattr("model"))
+            for node in kernel_model.graph.node:
+                if node.op_type.startswith("StreamingFIFO"):
+                    node_inst = getCustomOp(node)
+                    fifo_name = node.name
+                    fifo_config["fifo_depths"][fifo_name] = node_inst.get_nodeattr("depth")
+                    fifo_config["fifo_sizes"][fifo_name] = 0
+                    fifo_config["impl_style"][fifo_name] = "rtl"
+                    fifo_config["ram_style"][fifo_name] = node_inst.get_nodeattr("ram_style")
+        settings["fifo_config"] = fifo_config
 
         return settings
 
