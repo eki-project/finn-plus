@@ -30,7 +30,7 @@ import pytest
 
 import numpy as np
 from onnx import TensorProto, helper
-from qonnx.core.datatype import DataType
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
@@ -42,7 +42,9 @@ from finn.transformation.fpgadataflow.set_folding import SetFolding
 from tests.testing_util.test import load_test_checkpoint_or_skip
 
 
-def make_multi_fclayer_model(ch, wdt, adt, tdt, nnodes):
+def make_multi_fclayer_model(
+    ch: int, wdt: BaseDataType, adt: BaseDataType, tdt: BaseDataType, nnodes: int
+) -> ModelWrapper:
     W = np.random.randint(wdt.min(), wdt.max() + 1, size=(ch, ch))
     W = W.astype(np.float32)
 

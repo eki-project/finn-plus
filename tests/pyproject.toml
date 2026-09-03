@@ -55,13 +55,14 @@ markers = [
     "transform: mark tests that test transformations (before hls layers)",
     "fpgadataflow: mark tests related to hls layers",
     "end2end: mark tests that run the end2end flow",
-    "notebooks: mark tests that execute all Jupyter notebooks",
     "sanity_bnn: mark tests that execute the sanity BNN test",
     "bnn_u250: mark tests that execute U250 BNN tests",
     "bnn_kv260: mark tests that execute KV260 BNN tests",
     "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
     "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
     "analysis: mark tests that run analysis tests",
+    "multifpga: mark tests that run multifpga tests",
+    "auroraflow: mark tests that check AuroraFlow related functionality",
     "only: mark",
 ]
 
