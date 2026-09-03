@@ -376,7 +376,11 @@ compilation transformations?
                 # Convert the input to floating point representation as the
                 # container datatype
                 inp_val = inp_val.astype(np.float32)
-            assert inp_val.shape == exp_ishape, "Input shape doesn't match expected shape."
+            if inp_val.shape != exp_ishape:
+                raise FINNInternalError(
+                    f"{node.name}: input {i} shape {inp_val.shape} does not match "
+                    f"expected shape {exp_ishape}"
+                )
             export_idt = self.get_input_datatype(i)
 
             if export_idt == DataType["BIPOLAR"]:
@@ -399,9 +403,11 @@ compilation transformations?
             self.npy_to_dynamic_output(context)
             for o, outp in enumerate(node.output):
                 exp_oshape = tuple(self.get_normal_output_shape(o))
-                assert (
-                    context[outp].shape == exp_oshape
-                ), "cppsim did not produce expected output shape"
+                if context[outp].shape != exp_oshape:
+                    raise FINNInternalError(
+                        f"{node.name}: cppsim output {o} shape {context[outp].shape} "
+                        f"does not match expected shape {exp_oshape}"
+                    )
                 # binary -> bipolar if needed
                 if self.get_output_datatype(o) == DataType["BIPOLAR"]:
                     out = context[outp]
@@ -434,12 +440,14 @@ compilation transformations?
                 output = np.asarray([output], dtype=np.float32).reshape(*exp_oshape)
                 context[outp] = output
 
-                assert (
-                    context[outp].shape == exp_oshape
-                ), "Output shape doesn't match expected shape."
+                if context[outp].shape != exp_oshape:
+                    raise FINNInternalError(
+                        f"{node.name}: rtlsim output {o} shape {context[outp].shape} "
+                        f"does not match expected shape {exp_oshape}"
+                    )
 
         else:
-            raise Exception(
+            raise FINNInternalError(
                 f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
             has to be set to one of the following value ("cppsim", "rtlsim")"""
             )

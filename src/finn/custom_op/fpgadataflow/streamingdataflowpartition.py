@@ -85,8 +85,8 @@ class StreamingDataflowPartition(CustomOp):
         """Not supported - StreamingDataflowPartition is a container node."""
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: "GraphProto"
-    ) -> None:  # noqa: ARG002
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         """Execute node by running the referenced partition sub-model."""
         model = ModelWrapper(cast("str", self.get_nodeattr("model")))
         return_full_exec_context = self.get_nodeattr("return_full_exec_context") == 1

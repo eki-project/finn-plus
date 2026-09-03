@@ -435,8 +435,8 @@ class MVAU_hls(MVAU, HLSBackend):
         return final
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: GraphProto
-    ) -> None:  # noqa: ARG002
+        self, context: dict[str, np.ndarray], graph: GraphProto  # noqa: ARG002
+    ) -> None:
         """Execute node."""
         mode = self.get_nodeattr("exec_mode")
         dynamic_input = self.dynamic_input

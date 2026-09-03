@@ -37,27 +37,34 @@ class Squeeze(HWCustomOp):
 
     def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return the dictionary of node attributes for the Squeeze operator."""
-        # Note: the ``axes`` attribute has a ``None`` default, which the
-        # NodeAttrTypes alias does not model; hence the cast on return.
-        attrs = {
-            # Axes to be squeezed can be given as an attribute for opset < 13
-            "axes": ("ints", False, None),
-            # Data type of the input elements
-            "inp_dtype": ("s", True, ""),
-            # Data type of the output elements
-            "out_dtype": ("s", True, ""),
-            # Shape of the input
-            "inp_shape": ("ints", True, [1]),
-            # Shape of the output
-            "out_shape": ("ints", True, [1]),
-            # Number of elements in the last dimensions processed in parallel
-            "PE": ("i", False, 1),
-            # Possible execution modes for simulating this node
-            #   Note: Override to support python mode
-            "exec_mode": ("s", False, "python", {"", "rtlsim", "cppsim", "python"}),
-        }
-        attrs.update(HWCustomOp.get_nodeattr_types(self))
-        return cast("NodeAttrTypes", attrs)
+        # Start from the parent attributes, then override: this op needs its own
+        # ``exec_mode`` default/allowed-set (adds "python"), so the local block
+        # must win over the base. The ``cast`` is because the ``axes`` attribute
+        # has a ``None`` default, which the NodeAttrTypes alias does not model.
+        attrs: NodeAttrTypes = dict(HWCustomOp.get_nodeattr_types(self))
+        attrs.update(
+            cast(
+                "NodeAttrTypes",
+                {
+                    # Axes to be squeezed can be given as an attribute for opset < 13
+                    "axes": ("ints", False, None),
+                    # Data type of the input elements
+                    "inp_dtype": ("s", True, ""),
+                    # Data type of the output elements
+                    "out_dtype": ("s", True, ""),
+                    # Shape of the input
+                    "inp_shape": ("ints", True, [1]),
+                    # Shape of the output
+                    "out_shape": ("ints", True, [1]),
+                    # Number of elements in the last dimensions processed in parallel
+                    "PE": ("i", False, 1),
+                    # Possible execution modes for simulating this node
+                    #   Note: Override to support python mode
+                    "exec_mode": ("s", False, "python", {"", "rtlsim", "cppsim", "python"}),
+                },
+            )
+        )
+        return attrs
 
     @property
     def inp_dtype(self) -> BaseDataType:

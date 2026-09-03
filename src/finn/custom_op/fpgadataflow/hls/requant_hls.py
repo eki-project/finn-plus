@@ -264,8 +264,8 @@ static inline T clip(T const x, TLo const lo, THi const hi) {
         ]
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: GraphProto
-    ) -> None:  # noqa: ARG002
+        self, context: dict[str, np.ndarray], graph: GraphProto  # noqa: ARG002
+    ) -> None:
         """Execute the node using cppsim or rtlsim.
 
         Custom implementation that only passes input 0 (data), since scale and

@@ -50,8 +50,8 @@ class Requant_rtl(Requant, RTLBackend):
                 return 1
 
     def generate_hdl(
-        self, model: "ModelWrapper", fpgapart: str, clk: float
-    ) -> None:  # noqa: ARG002
+        self, model: "ModelWrapper", fpgapart: str, clk: float  # noqa: ARG002
+    ) -> None:
         """Generate RTL code for the requant operation."""
         code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
         if code_gen_dir == "":

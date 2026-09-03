@@ -133,7 +133,7 @@ class TLastMarker_hls(HLSBackend, HWCustomOp):
             elif protocol == "internal":
                 out_stream_dtype = f"ap_axiu<{stream_width},0,0,0>"
             else:
-                raise Exception("Unrecognized Protocol in TLastMarker")
+                raise FINNInternalError("Unrecognized Protocol in TLastMarker")
             in_stream_dtype = f"ap_uint<{stream_width}>"
         elif direction == "in":
             out_stream_dtype = f"ap_uint<{stream_width}>"
@@ -142,9 +142,9 @@ class TLastMarker_hls(HLSBackend, HWCustomOp):
             elif protocol == "internal":
                 in_stream_dtype = f"ap_axiu<{stream_width},0,0,0>"
             else:
-                raise Exception("Unrecognized Protocol in TLastMarker")
+                raise FINNInternalError("Unrecognized Protocol in TLastMarker")
         else:
-            raise Exception("Unrecognized Direction in TLastMarker")
+            raise FINNInternalError("Unrecognized Direction in TLastMarker")
 
         self.code_gen_dict["$DEFINES$"] = [
             f"#define StreamWidth {stream_width}",

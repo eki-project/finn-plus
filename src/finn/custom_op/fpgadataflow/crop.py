@@ -125,8 +125,8 @@ class Crop(HWCustomOp):
         return (*o_img_dim, self.num_channels)
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: "GraphProto"
-    ) -> None:  # noqa: ARG002
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
         """Execute node."""
         node = self.onnx_node
         h, w = self.img_dim

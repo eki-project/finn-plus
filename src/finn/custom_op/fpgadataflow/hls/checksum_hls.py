@@ -28,26 +28,43 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Module for checksum hls."""
+
 import numpy as np
-from qonnx.core.datatype import DataType
+import numpy.typing as npt
+from collections.abc import Sequence
+from qonnx.core.datatype import BaseDataType, DataType
+from typing import TYPE_CHECKING, Any, cast
 
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from onnx import GraphProto, NodeProto
+    from qonnx.core.modelwrapper import ModelWrapper
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | npt.NDArray | list]
+    | tuple[str, bool, int | float | str | bool | npt.NDArray | list, set | None],
+]
 
 
 @register_custom_op
 class CheckSum_hls(HLSBackend, HWCustomOp):
     """Class that corresponds to custom_hls checksum function."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: "NodeProto", **kwargs: Any) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
-        """Return nodeattr types."""
-        my_attrs = {
+    def get_nodeattr_types(self) -> NodeAttrTypes:
+        """Return the dictionary of node attributes for the CheckSum operator."""
+        my_attrs: NodeAttrTypes = {
             # number of data words in a frame
             "words_per_frame": ("i", True, 0),
             # subword count per data word
@@ -61,15 +78,29 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def infer_node_datatype(self, model):
-        """Infer node datatype."""
+    @property
+    def words_per_frame(self) -> int:
+        """Return the number of data words in a frame."""
+        return cast("int", self.get_nodeattr("words_per_frame"))
+
+    @property
+    def items_per_word(self) -> int:
+        """Return the subword count per data word."""
+        return cast("int", self.get_nodeattr("items_per_word"))
+
+    @property
+    def folded_shape(self) -> list[int]:
+        """Return the folded shape of the input/output."""
+        return list(cast("list[int]", self.get_nodeattr("folded_shape")))
+
+    def infer_node_datatype(self, model: "ModelWrapper") -> None:
+        """Infer the node output datatype from the input datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
-            warn_str = "inputDataType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_input_datatype().name),
-                str(idt.name),
+            warn_str = (
+                f"inputDataType changing for {node.name}: "
+                f"{self.get_input_datatype().name!s} -> {idt.name!s} "
             )
             log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
@@ -77,46 +108,43 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
         odt = self.get_output_datatype()
         model.set_tensor_datatype(node.output[0], odt)
 
-    def get_input_datatype(self, ind=0):
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
         """Return FINN DataType of input."""
-        return DataType[self.get_nodeattr("inputDataType")]
+        return DataType[cast("str", self.get_nodeattr("inputDataType"))]
 
-    def get_output_datatype(self, ind=0):
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
         """Return FINN DataType of output."""
         # here same as input data type
-        return DataType[self.get_nodeattr("inputDataType")]
+        return DataType[cast("str", self.get_nodeattr("inputDataType"))]
 
-    def get_instream_width(self, ind=0):
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return instream width."""
-        dtype = DataType[self.get_nodeattr("inputDataType")]
-        folded_shape = self.get_nodeattr("folded_shape")
-        in_width = folded_shape[-1] * dtype.bitwidth()
-        return in_width
+        dtype = self.get_input_datatype()
+        folded_shape = self.folded_shape
+        return folded_shape[-1] * dtype.bitwidth()
 
-    def get_outstream_width(self, ind=0):
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return outstream width."""
         return self.get_instream_width()
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> list[int]:  # noqa: ARG002
         """Return folded input shape."""
-        return self.get_nodeattr("folded_shape")
+        return self.folded_shape
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> list[int]:  # noqa: ARG002
         """Return folded output shape."""
-        return self.get_nodeattr("folded_shape")
+        return self.folded_shape
 
-    def get_normal_input_shape(self, ind=0):
-        # derive normal shape from folded shape
-        # checksum nodes are inserted in between fpgadataflow nodes
-        # the folded shape could be for example (1, nf, pe)
-        # with nf (neuron folding): mh // pe
-        # the normal input shape is in this case (1, mh)
-        # so to achieve this the two inner dimensions are multiplied
-        # and together with all previous dimensions
-        # this gives the normal input shape
+    def get_normal_input_shape(self, ind: int = 0) -> list[int]:  # noqa: ARG002
+        """Return normal input shape, derived from the folded shape.
 
-        """Return normal input shape."""
-        folded_shape = self.get_nodeattr("folded_shape")
+        Checksum nodes are inserted in between fpgadataflow nodes. The folded
+        shape could be for example ``(1, nf, pe)`` with ``nf`` (neuron folding)
+        equal to ``mh // pe``; the normal input shape is then ``(1, mh)``. So the
+        two inner dimensions are multiplied together and prepended by all
+        previous dimensions.
+        """
+        folded_shape = self.folded_shape
         # extract inner dimension
         inner_dim = folded_shape[-1]
         # multiply with the next inner dimension
@@ -129,21 +157,21 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
 
         return normal_ishape
 
-    def get_ap_int_max_w(self):
+    def get_ap_int_max_w(self) -> int:
         """Return ap int max w."""
         return max(super().get_ap_int_max_w(), 32)
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> Sequence[int]:
         """Return normal output shape."""
         if ind == 0:
             # same shape as input
             return self.get_normal_input_shape()
         # second output is scalar checksum output
         if ind == 1:
-            return tuple([1])
-        raise Exception("Undefined input ind for this layer type")
+            return (1,)
+        raise FINNInternalError("Undefined input ind for this layer type")
 
-    def npy_to_dynamic_output(self, context):
+    def npy_to_dynamic_output(self, context: dict[str, np.ndarray]) -> None:
         """Return npy to dynamic output."""
         super().npy_to_dynamic_output(context)
         node = self.onnx_node
@@ -151,18 +179,18 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
         output_checksum = np.load(f"{code_gen_dir}/output_1.npy")
         context[node.output[1]] = output_checksum
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "checksum.hpp"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
-        items_per_word = self.get_nodeattr("items_per_word")
-        words_per_frame = self.get_nodeattr("words_per_frame")
+        items_per_word = self.items_per_word
+        words_per_frame = self.words_per_frame
         word_size = self.get_instream_width()
         my_defines = []
         my_defines.append(f"#define WORDS_PER_FRAME {words_per_frame}")
@@ -170,30 +198,24 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
         my_defines.append(f"#define WORD_SIZE {word_size}")
         self.code_gen_dict["$DEFINES$"] = my_defines
 
-    def read_npy_data(self):
+    def read_npy_data(self) -> None:
         """Return read npy data."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_input_datatype()
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_instream_width()
-        packed_hls_type = "ap_uint<%d>" % packed_bits
+        packed_hls_type = f"ap_uint<{packed_bits}>"
         elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "float"
-        npy_in = "%s/input_0.npy" % code_gen_dir
+        npy_in = f"{code_gen_dir}/input_0.npy"
         self.code_gen_dict["$READNPYDATA$"] = []
         # note: the innermost dim is reversed for the input
         self.code_gen_dict["$READNPYDATA$"].append(
-            'npy2apintstream<%s, %s, %d, %s>("%s", in0_V, false);'
-            % (
-                packed_hls_type,
-                elem_hls_type,
-                elem_bits,
-                npy_type,
-                npy_in,
-            )
+            f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>"
+            f'("{npy_in}", in0_V, false);'
         )
 
-    def strm_decl(self):
+    def strm_decl(self) -> None:
         """Return strm decl."""
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
@@ -206,13 +228,13 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
         # set drain = false for cppsim
         self.code_gen_dict["$STREAMDECLARATIONS$"].append("ap_uint<1> drain = false;")
 
-    def docompute(self):
+    def docompute(self) -> None:
         """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            """checksum<WORDS_PER_FRAME, ITEMS_PER_WORD>(in0_V, out0_V, chk, drain);"""
+            "checksum<WORDS_PER_FRAME, ITEMS_PER_WORD>(in0_V, out0_V, chk, drain);"
         ]
 
-    def dataoutstrm(self):
+    def dataoutstrm(self) -> None:
         """Return dataoutstrm."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
@@ -221,37 +243,30 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
             dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_outstream_width()
-        packed_hls_type = "ap_uint<%d>" % packed_bits
+        packed_hls_type = f"ap_uint<{packed_bits}>"
         elem_hls_type = dtype.get_hls_datatype_str()
         npy_type = "float"
-        npy_out = "%s/output_0.npy" % code_gen_dir
+        npy_out = f"{code_gen_dir}/output_0.npy"
         shape = tuple(self.get_folded_output_shape())
         shape_cpp_str = str(shape).replace("(", "{").replace(")", "}")
 
         # note: the innermost dim is not reversed for the output
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
-            'apintstream2npy<%s, %s, %d, %s>(out0_V, %s, "%s", false);'
-            % (
-                packed_hls_type,
-                elem_hls_type,
-                elem_bits,
-                npy_type,
-                shape_cpp_str,
-                npy_out,
-            ),
+            f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>"
+            f'(out0_V, {shape_cpp_str}, "{npy_out}", false);',
             "std::vector<unsigned int> checksum(1);",
             "checksum[0] = chk;",
-            'cnpy::npy_save("%s/output_1.npy",&checksum[0],{1},"w");' % code_gen_dir,
+            f'cnpy::npy_save("{code_gen_dir}/output_1.npy",&checksum[0],{{1}},"w");',
         ]
 
-    def blackboxfunction(self):
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             f"""using T = ap_uint<WORD_SIZE>;\n void {self.onnx_node.name}(hls::stream<T> &in0_V,
             hls::stream<T> &out0_V, ap_uint<32> &chk, ap_uint<1> &drain)"""
         ]
 
-    def pragmas(self):
+    def pragmas(self) -> None:
         """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS interface axis port=in0_V"]
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS interface axis port=out0_V")
@@ -265,7 +280,7 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS dataflow")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS dataflow disable_start_propagation")
 
-    def get_verilog_top_module_intf_names(self):
+    def get_verilog_top_module_intf_names(self) -> dict:
         """Return verilog top module intf names."""
         intf_names = super().get_verilog_top_module_intf_names()
         # expose axilite interface

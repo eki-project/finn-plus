@@ -137,8 +137,8 @@ class StreamingFIFO_hls(StreamingFIFO, HLSBackend):
         return intf_names
 
     def execute_node(
-        self, context: dict[str, np.ndarray], graph: GraphProto
-    ) -> None:  # noqa: ARG002
+        self, context: dict[str, np.ndarray], graph: GraphProto  # noqa: ARG002
+    ) -> None:
         """Execute node.
 
         Only ``cppsim`` (a shape-preserving no-op) is supported; the virtual
