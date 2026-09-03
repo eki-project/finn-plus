@@ -73,6 +73,7 @@ class TestAuroraFlowPreparationAndMetadata:
     """Tests about the kernel preparation and metadata creation."""
 
     @pytest.mark.slow
+    @pytest.mark.vivado
     @pytest.mark.parametrize("device_node_combinations", [(1, 2), (1, 3), (2, 2), (5, 10), (5, 11)])
     @pytest.mark.parametrize("assignment_type", ["random", "equal"])
     @pytest.mark.parametrize("shuffle_devices", [True, False])
@@ -162,8 +163,8 @@ class TestAuroraFlowPreparationAndMetadata:
                 assert aurora.aurora_xo is not None
                 assert aurora.aurora_xo.exists()
 
-    @pytest.mark.multifpga
     @pytest.mark.slow
+    @pytest.mark.vivado
     def test_aurora_package_single(
         self, communication_kernel_args: dict[str, str], board: str, topology: MFTopology
     ) -> None:
@@ -204,6 +205,7 @@ class TestAuroraFlowPreparationAndMetadata:
 
 
 @pytest.mark.auroraflow
+@pytest.mark.multifpga
 @pytest.mark.parametrize("board", ["U55C", "Pynq-Z1"])
 @pytest.mark.parametrize("topology", [MFTopology.CHAIN])
 class TestAuroraFlowPartitioning:
@@ -249,6 +251,8 @@ class TestAuroraFlowPartitioning:
                 return True
         return False
 
+    @pytest.mark.vivado
+    @pytest.mark.slow
     @pytest.mark.parametrize(
         "model_type",
         [
@@ -449,6 +453,8 @@ class TestAuroraFlowPartitioning:
             for successor_node in suc:
                 assert abs(solution[successor_node.name] - solution[node.name]) <= 1
 
+    @pytest.mark.vivado
+    @pytest.mark.slow
     @pytest.mark.parametrize(
         "model_type",
         [

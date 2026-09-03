@@ -64,6 +64,8 @@ def sdp_model(partition_topology: MFTopology) -> ModelWrapper:  # noqa
     return ModelWrapper(qonnx_make_model(graph))
 
 
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
 @pytest.mark.parametrize("nodes", [1, 10, 100])
 @pytest.mark.parametrize("communication_kernel", [MFCommunicationKernel.AURORA])
 def test_metadata_sdp_only(nodes: int, communication_kernel: MFCommunicationKernel) -> None:
@@ -79,6 +81,8 @@ def test_metadata_sdp_only(nodes: int, communication_kernel: MFCommunicationKern
         )
 
 
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
 @pytest.mark.parametrize("communication_kernel", [MFCommunicationKernel.AURORA])
 @pytest.mark.parametrize("topology", [MFTopology.CHAIN, MFTopology.RETURNCHAIN])
 def test_metadata(
@@ -161,6 +165,8 @@ def test_metadata(
             )
 
 
+@pytest.mark.multifpga
+@pytest.mark.auroraflow
 @pytest.mark.parametrize("communication_kernel", [MFCommunicationKernel.AURORA])
 def test_metadata_small(communication_kernel: MFCommunicationKernel) -> None:
     """Test metadata creation on hand-crafted small models."""

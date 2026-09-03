@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 @pytest.mark.multifpga
 @pytest.mark.slow
+@pytest.mark.vivado
 @pytest.mark.parametrize(
     "platform", [("U55C", ShellFlowType.VITIS_ALVEO), ("Pynq-Z1", ShellFlowType.VIVADO_ZYNQ)]
 )
