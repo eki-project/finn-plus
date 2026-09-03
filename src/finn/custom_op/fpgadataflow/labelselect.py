@@ -25,37 +25,54 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""Module for labelselect."""
+
+"""Top-K label-selection hardware custom operator."""
+
 import numpy as np
 import onnxruntime as rt
-from onnx import TensorProto, helper
-from qonnx.core.datatype import DataType
+from onnx import NodeProto, TensorProto, helper
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model, roundup_to_integer_multiple
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
 
 
 class LabelSelect(HWCustomOp):
-    """Abstraction layer for HW implementation of LabelSelect"""
+    """Abstraction layer for HW implementation of LabelSelect.
 
-    def __init__(self, onnx_node, **kwargs):
+    Emits the indices (labels) of the ``K`` largest input values.
+    """
+
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
-        odt_name = self.get_nodeattr("outputDataType")
+        odt_name = cast("str", self.get_nodeattr("outputDataType"))
         if odt_name == "":
             # If not provided compute min size
-            labels = self.get_nodeattr("Labels")
+            labels = cast("int", self.get_nodeattr("Labels"))
             odt = DataType.get_smallest_possible(labels - 1)
             # ensure a datatype divisible by 8-bits in case this is the last node
             bw = roundup_to_integer_multiple(odt.bitwidth(), 8)
             new_odt_name = odt.name.replace(str(odt.bitwidth()), str(bw))
-            odt = DataType[new_odt_name]
-            odt_name = odt.name
-            self.set_nodeattr("outputDataType", odt_name)
+            self.set_nodeattr("outputDataType", DataType[new_odt_name].name)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             "Labels": ("i", True, 0),
             "PE": ("i", True, 0),
             "K": ("i", True, 0),
@@ -71,78 +88,83 @@ class LabelSelect(HWCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_normal_input_shape(self, ind=0):
+    @property
+    def labels(self) -> int:
+        """Get the number of input labels/classes."""
+        return cast("int", self.get_nodeattr("Labels"))
+
+    @property
+    def pe(self) -> int:
+        """Get the PE parallelism."""
+        return cast("int", self.get_nodeattr("PE"))
+
+    @property
+    def k(self) -> int:
+        """Get the number of top labels to select."""
+        return cast("int", self.get_nodeattr("K"))
+
+    @property
+    def num_input_vectors(self) -> list[int]:
+        """Get the number of input vectors along the non-label axes."""
+        return list(cast("list[int]", self.get_nodeattr("numInputVectors")))
+
+    def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal input shape."""
-        nlabels = self.get_nodeattr("Labels")
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        ishape = tuple(vecs + [nlabels])
-        return ishape
+        return (*self.num_input_vectors, self.labels)
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
-        nlabels = self.get_nodeattr("Labels")
-        pe = self.get_nodeattr("PE")
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        assert nlabels % pe == 0, "PE must divide Labels"
-        folds = int(nlabels / pe)
-        folded_ishape = tuple(vecs + [folds, pe])
-        return folded_ishape
+        if self.labels % self.pe != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: PE ({self.pe}) must divide Labels ({self.labels})"
+            )
+        folds = self.labels // self.pe
+        return (*self.num_input_vectors, folds, self.pe)
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal output shape."""
-        k = self.get_nodeattr("K")
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        oshape = tuple(vecs + [k])
-        return oshape
+        return (*self.num_input_vectors, self.k)
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
-        k = self.get_nodeattr("K")
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        oshape = tuple(vecs + [k, 1])
-        return oshape
+        return (*self.num_input_vectors, self.k, 1)
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
         """Infer node datatype."""
         node = self.onnx_node
         # check input datatype against property
         idt = model.get_tensor_datatype(node.input[0])
         self.set_nodeattr("inputDataType", idt.name)
+        model.set_tensor_datatype(node.output[0], self.get_output_datatype())
 
-        odt = self.get_output_datatype()
-        model.set_tensor_datatype(self.onnx_node.output[0], odt)
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of input."""
+        return DataType[cast("str", self.get_nodeattr("inputDataType"))]
 
-    def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
-        ret = DataType[self.get_nodeattr("inputDataType")]
-        return ret
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of output."""
+        return DataType[cast("str", self.get_nodeattr("outputDataType"))]
 
-    def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output."""
-        ret = DataType[self.get_nodeattr("outputDataType")]
-        return ret
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
+        """Return input stream width."""
+        return self.pe * self.get_input_datatype().bitwidth()
 
-    def get_instream_width(self, ind=0):
-        """Returns input stream width."""
-        ibits = self.get_input_datatype().bitwidth()
-        pe = self.get_nodeattr("PE")
-        in_width = pe * ibits
-        return in_width
-
-    def get_outstream_width(self, ind=0):
-        """Returns output stream width."""
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
+        """Return output stream width."""
         return self.get_output_datatype().bitwidth()
 
-    def get_number_output_values(self):
+    def get_number_output_values(self) -> int:
         """Return number output values."""
-        return self.get_nodeattr("K")
+        return self.k
 
-    def execute_node(self, context, graph):
-        # create a standard add node to help calculate the result
-        """Execute node."""
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
+        """Execute node.
+
+        Uses an ONNX Runtime ``TopK`` node to compute the result.
+        """
         node = self.onnx_node
-        k = self.get_nodeattr("K")
-
         inp_values = context[node.input[0]]
         oshape = context[node.output[0]].shape
         ishape = inp_values.shape
@@ -163,14 +185,11 @@ class LabelSelect(HWCustomOp):
         )
 
         model_topk = qonnx_make_model(graph_topk)
-        idict = {node.input[0]: inp_values, "k_inp": [k]}
+        idict = {node.input[0]: inp_values, "k_inp": [self.k]}
         sess = rt.InferenceSession(model_topk.SerializeToString())
         result = sess.run(None, idict)
         context[node.output[0]] = np.asarray(result[1], dtype=np.float32).reshape(oshape)
 
-    def get_exp_cycles(self):
+    def get_exp_cycles(self) -> int:
         """Return exp cycles."""
-        nlabels = self.get_nodeattr("Labels")
-        pe = self.get_nodeattr("PE")
-        exp_cycles = nlabels / pe
-        return int(exp_cycles)
+        return int(self.labels / self.pe)

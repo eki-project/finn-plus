@@ -26,28 +26,34 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for labelselect hls."""
+"""HLS backend implementation of the top-K label-selection operator."""
+
 import numpy as np
+from typing import TYPE_CHECKING
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
-from finn.custom_op.fpgadataflow.labelselect import LabelSelect
+from finn.custom_op.fpgadataflow.labelselect import LabelSelect, NodeAttrTypes
+from finn.util.exception import FINNInternalError
+
+if TYPE_CHECKING:
+    from onnx import GraphProto, NodeProto
 
 
 class LabelSelect_hls(LabelSelect, HLSBackend):
     """Class that corresponds to finn-hlslib LabelSelect_Batch function."""
 
-    def __init__(self, onnx_node, **kwargs):
+    def __init__(self, onnx_node: "NodeProto", **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {}
+        my_attrs: NodeAttrTypes = {}
         my_attrs.update(LabelSelect.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def verify_node(self):
+    def verify_node(self) -> list[str]:
         """Verify node."""
         info_messages = []
         # verify that "backend" is set to "fpgadataflow"
@@ -68,16 +74,18 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
             self.get_nodeattr("outputDataType")
             info_messages.append("All necessary attributes exist")
         except Exception:
-            info_messages.append("""The required LabelSelect_Batch attributes do not exist.""")
+            info_messages.append("The required LabelSelect_Batch attributes do not exist.")
 
         # verify that input data is 1D
-        if len(self.get_nodeattr("numInputVectors")) > 1:
-            info_messages.append("""LabelSelect_Batch requires 1D data input.""")
-            raise Exception
+        if len(self.num_input_vectors) > 1:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: LabelSelect_Batch requires 1D data input "
+                f"(numInputVectors of length 1), got {self.num_input_vectors}"
+            )
 
         return info_messages
 
-    def execute_node(self, context, graph):
+    def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:
         """Execute node."""
         HLSBackend.execute_node(self, context, graph)
         # TopK ind output normally uses TensorProto.INT64, which
@@ -85,64 +93,47 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
         # (as the custom DataType system always assumes float containers)
         # so cast the output to int64
         outp = self.onnx_node.output[0]
-        ret = context[outp]
-        context[outp] = ret.astype(np.int64)
+        context[outp] = context[outp].astype(np.int64)
 
-    def global_includes(self):
+    def global_includes(self) -> None:
         """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "maxpool.h"']
 
-    def defines(self, var):
+    def defines(self, var: str) -> None:  # noqa: ARG002
         """Return defines."""
         self.code_gen_dict["$DEFINES$"] = []
 
-    def read_npy_data(self):
+    def read_npy_data(self) -> None:
         """Return read npy data."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_input_datatype()
         elem_bits = dtype.bitwidth()
-        packed_bits = self.get_instream_width()
-        packed_hls_type = "ap_uint<%d>" % packed_bits
+        packed_hls_type = f"ap_uint<{self.get_instream_width()}>"
         elem_hls_type = dtype.get_hls_datatype_str()
-        npy_type = "float"
-        npy_in = "%s/input_0.npy" % code_gen_dir
-        self.code_gen_dict["$READNPYDATA$"] = []
+        npy_in = f"{code_gen_dir}/input_0.npy"
 
         # Calling npy2apintstream with reverse_inner = false to have LE packing
         # as required by HLS fxn LabelSelect_Batch
         # Also notice that StreamingDataWidthConverter_Batch performs LE packing
-
-        self.code_gen_dict["$READNPYDATA$"].append(
-            'npy2apintstream<%s, %s, %d, %s>("%s", in0_V, false);'
-            % (
-                packed_hls_type,
-                elem_hls_type,
-                elem_bits,
-                npy_type,
-                npy_in,
-            )
-        )
-
-    def docompute(self):
-        """Return docompute."""
-        self.code_gen_dict["$DOCOMPUTE$"] = [
-            """LabelSelect_Batch<{}, {}, {}, {}, {} > (in0_V, out0_V, 1);""".format(
-                self.get_nodeattr("Labels"),
-                self.get_nodeattr("PE"),
-                self.get_nodeattr("K"),
-                self.get_input_datatype().get_hls_datatype_str(),
-                self.get_output_datatype().get_hls_datatype_str(),
-            )
+        self.code_gen_dict["$READNPYDATA$"] = [
+            f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, float>"
+            f'("{npy_in}", in0_V, false);'
         ]
 
-    def blackboxfunction(self):
+    def docompute(self) -> None:
+        """Return docompute."""
+        in_hls_type = self.get_input_datatype().get_hls_datatype_str()
+        out_hls_type = self.get_output_datatype().get_hls_datatype_str()
+        self.code_gen_dict["$DOCOMPUTE$"] = [
+            f"LabelSelect_Batch<{self.labels}, {self.pe}, {self.k}, {in_hls_type}, "
+            f"{out_hls_type} > (in0_V, out0_V, 1);"
+        ]
+
+    def blackboxfunction(self) -> None:
         """Return blackboxfunction."""
+        in_bits = self.get_input_datatype().bitwidth()
+        out_bits = self.get_output_datatype().bitwidth()
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            """void {}(hls::stream<ap_uint<{}*{}>> &in0_V,
-                hls::stream<ap_uint<{}> > &out0_V)""".format(
-                self.onnx_node.name,
-                self.get_nodeattr("PE"),
-                self.get_input_datatype().bitwidth(),
-                self.get_output_datatype().bitwidth(),
-            )
+            f"""void {self.onnx_node.name}(hls::stream<ap_uint<{self.pe}*{in_bits}>> &in0_V,
+                hls::stream<ap_uint<{out_bits}> > &out0_V)"""
         ]
