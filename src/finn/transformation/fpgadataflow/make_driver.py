@@ -734,13 +734,13 @@ class MakePYNQDriver(Transformation):
                     fifo_id = str(node_inst.get_nodeattr("fifo_id"))
                     fifo_widths[fifo_id] = node_inst.get_instream_width()
         settings["fifo_widths"] = fifo_widths
-        # export original folding config to settings file,
-        # so that the driver can generate a final cfg with live fifo sizes applied
-        folding_path = model.get_metadata_prop("folding_config_before_lfs")
+        # Export the exact folding configuration selected for the live-sizing build.
+        # The follow-up build must reuse it so its FIFO node names match.
+        folding_path = model.get_metadata_prop("folding_config")
         if folding_path:
             with open(folding_path) as f:
                 folding_cfg = json.load(f)
-            settings["folding_config_before_lfs"] = folding_cfg
+            settings["folding_config"] = folding_cfg
 
         return settings
 

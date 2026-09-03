@@ -490,10 +490,11 @@ def step_set_fifo_depths(
     * if auto_fifo_depths=True:  Run the appropriate auto-sizing transformation
     to attempt to determine the FIFO sizes that provide full throughput.
     May take a long time.
-    * if auto_fifo_depths=False:  Load the FIFO sizes from the folding config file and apply them.
+    * if auto_fifo_depths=False:  Load the FIFO sizes from the FIFO config file and apply them.
     Coherency with config file node naming is ensured by calling
     `GiveUniqueNodeNamesRecursive`.
     """
+    live_fifo_sizing = False
     if cfg.auto_fifo_depths:
         if cfg.fifosim_save_waveform:
             report_dir = cfg.get_report_directory()
@@ -563,6 +564,7 @@ def step_set_fifo_depths(
             )
             model = model.transform(ApplySimulatedFIFOSizes(cfg))
         elif cfg.auto_fifo_strategy == AutoFIFOSizingMethod.LIVE_FIFO:
+            live_fifo_sizing = True
             hw_attrs = [
                 "PE",
                 "SIMD",
@@ -594,10 +596,10 @@ def step_set_fifo_depths(
             model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
             model = model.transform(GiveReadableTensorNames())
 
-            # save original folding config before potentially modifying it
-            cfg_path = cfg.get_report_directory() / "folding_config_before_lfs.json"
+            # Save the exact folding configuration for the live-sizing follow-up build.
+            cfg_path = cfg.get_report_directory() / "folding_config.json"
             extract_model_config_to_json(model, cfg_path, hw_attrs)
-            model.set_metadata_prop("folding_config_before_lfs", str(cfg_path))
+            model.set_metadata_prop("folding_config", str(cfg_path))
 
             # Disable runtime-writable weights, external weights, and dynamic mode
             for node in model.graph.node:
@@ -641,38 +643,9 @@ def step_set_fifo_depths(
                 node_inst.set_nodeattr("impl_style", "virtual")
                 node_inst.set_nodeattr("fifo_id", idf)
 
-            return model
         else:
             raise FINNUserError("Unsupported auto_fifo_strategy: " + cfg.auto_fifo_strategy)
 
-        # generate a dedicated report about final FIFO sizes
-        # Report has to be generated before large FIFOs are split.
-        fifo_info = {}
-        fifo_info["fifo_depths"] = {}
-        fifo_info["fifo_sizes"] = {}
-        fifo_info["impl_style"] = {}
-        fifo_info["ram_style"] = {}
-        total_fifo_size = 0
-        for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
-            node_inst = getHWCustomOp(node)
-            fifo_info["fifo_depths"][node.name] = node_inst.get_nodeattr("depth")
-            fifo_info["fifo_sizes"][node.name] = (
-                node_inst.get_instream_width()
-                * math.ceil(cast("int", node_inst.get_nodeattr("depth")) / 32)
-                * 32
-            )  # Round up to nearest multiple of 32 to reflect actual hardware usage
-            fifo_info["impl_style"][node.name] = node_inst.get_nodeattr("impl_style")
-            fifo_info["ram_style"][node.name] = node_inst.get_nodeattr("ram_style")
-            total_fifo_size += fifo_info["fifo_sizes"][node.name]
-        fifo_info["total_fifo_size_kiB"] = total_fifo_size / 8.0 / 1024.0
-
-        with (cfg.get_report_directory() / "fifo_sizing.json").open("w") as f:
-            json.dump(fifo_info, f, indent=2)
-
-        if cfg.split_large_fifos:
-            model = model.transform(SplitLargeFIFOs(max_qsrl_depth=256))
-        model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
-        model = model.transform(GiveReadableTensorNames())
     else:
         if cfg.fifo_config_file is None:
             raise FINNUserError("auto_fifo_depths is set to False but no fifo_config_file provided")
@@ -688,10 +661,46 @@ def step_set_fifo_depths(
         model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
         model = model.transform(GiveReadableTensorNames())
         model = model.transform(ApplyFIFODepthsFromFile(cfg.fifo_config_file))
-        if cfg.split_large_fifos:
-            model = model.transform(SplitLargeFIFOs(max_qsrl_depth=256))
-            model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
-            model = model.transform(GiveReadableTensorNames())
+
+    # Generate a dedicated report about final FIFO sizes before large FIFOs are split.
+    fifo_info = {
+        "fifo_depths": {},
+        "fifo_sizes": {},
+        "fifo_sizes_effective": {},
+        "impl_style": {},
+        "ram_style": {},
+    }
+    total_fifo_size = 0
+    total_fifo_size_effective = 0
+    for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
+        node_inst = getHWCustomOp(node)
+        depth = cast("int", node_inst.get_nodeattr("depth"))
+        fifo_size = node_inst.get_instream_width() * depth
+        # Round up to nearest multiple of 32 to reflect actual hardware usage
+        # TODO: refine this "effective FIFO size" metric and calculate a "FIFO efficiency" metric
+        fifo_size_effective = node_inst.get_instream_width() * math.ceil(depth / 32) * 32
+        fifo_info["fifo_depths"][node.name] = depth
+        fifo_info["fifo_sizes"][node.name] = fifo_size
+        fifo_info["fifo_sizes_effective"][node.name] = fifo_size_effective
+        fifo_info["impl_style"][node.name] = node_inst.get_nodeattr("impl_style")
+        fifo_info["ram_style"][node.name] = node_inst.get_nodeattr("ram_style")
+        total_fifo_size += fifo_size
+        total_fifo_size_effective += fifo_size_effective
+    fifo_info["total_fifo_size_kiB"] = total_fifo_size / 8.0 / 1024.0
+    fifo_info["total_fifo_size_effective_kiB"] = total_fifo_size_effective / 8.0 / 1024.0
+
+    report_dir = Path(cfg.output_dir) / "report"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    with (report_dir / "fifo_sizing.json").open("w") as f:
+        json.dump(fifo_info, f, indent=2)
+
+    if live_fifo_sizing:
+        return model
+
+    if cfg.split_large_fifos:
+        model = model.transform(SplitLargeFIFOs(max_qsrl_depth=256))
+    model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
+    model = model.transform(GiveReadableTensorNames())
 
     # after FIFOs are ready to go, call PrepareIP and HLSSynthIP again
     # this will only run for the new nodes (e.g. FIFOs and DWCs)
@@ -1430,7 +1439,23 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
 
 @register_build_dataflow_step()
 def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Measure performance + latency of stitched-IP model in rtlsim (xsi)."""
+    """Measure performance + latency of stitched-IP model in rtlsim (xsi).
+    Depends on the DataflowOutputType.STITCHED_IP output product."""
+    if DataflowOutputType.RTLSIM_PERFORMANCE not in cfg.generate_outputs:
+        log.warning(
+            "DataflowOutputType.RTLSIM_PERFORMANCE not in requested outputs, "
+            "skipping step_measure_rtlsim_performance."
+        )
+        return model
+    if is_mlo(model):
+        log.warning("Model is MLO, skipping step_measure_rtlsim_performance.")
+        return model
+    if DataflowOutputType.STITCHED_IP not in cfg.generate_outputs:
+        raise FINNUserError(
+            "DataflowOutputType.RTLSIM_PERFORMANCE requires "
+            "DataflowOutputType.STITCHED_IP to be requested as well."
+        )
+
     report_dir = cfg.get_report_directory()
 
     orig_rtlsim_trace_depth = get_rtlsim_trace_depth()

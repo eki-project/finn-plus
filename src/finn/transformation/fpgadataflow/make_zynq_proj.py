@@ -31,6 +31,7 @@
 
 import json
 import math
+import multiprocessing as mp
 import os
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
@@ -38,6 +39,7 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.transformation.infer_data_layouts import InferDataLayouts
+from qonnx.util.basic import get_num_default_workers
 from shutil import copy
 from subprocess import CalledProcessError
 from typing import Literal
@@ -59,9 +61,41 @@ from finn.util.basic import (
     pynq_part_map,
 )
 from finn.util.exception import FINNError, FINNSynthesisError
+from finn.util.logging import log
 from finn.util.settings import get_settings
 
 from . import templates
+
+
+def _build_sdp_kernel(args):
+    """Worker function for parallel SDP kernel builds.
+
+    Runs InsertFIFO (if needed), SpecializeLayers, GiveUniqueNodeNames,
+    PrepareIP, HLSSynthIP, and CreateStitchedIP for a single
+    StreamingDataflowPartition kernel. Saves the result back to disk.
+
+    Args:
+        args: tuple of (sdp_node_name, dataflow_model_filename, fpga_part,
+              period_ns, enable_instrumentation)
+    """
+    sdp_node_name, dataflow_model_filename, fpga_part, period_ns, enable_instrumentation = args
+    prefix = sdp_node_name + "_"
+    kernel_model = ModelWrapper(dataflow_model_filename)
+    # InsertFIFO at this stage interferes with tLastMarker
+    # TODO: is this really needed here at all?
+    if not enable_instrumentation:
+        kernel_model = kernel_model.transform(InsertFIFO())
+    kernel_model = kernel_model.transform(SpecializeLayers(fpga_part))
+    kernel_model = kernel_model.transform(GiveUniqueNodeNames(prefix))
+    kernel_model.save(dataflow_model_filename)
+    kernel_model = kernel_model.transform(PrepareIP(fpga_part, period_ns))
+    # Do not try to parallelize HLSSynthIP here (mp.pool within an mp.pool not allowed)
+    kernel_model = kernel_model.transform(HLSSynthIP(num_workers=1))
+    kernel_model = kernel_model.transform(
+        CreateStitchedIP(fpga_part, period_ns, sdp_node_name, False)
+    )
+    kernel_model.set_metadata_prop("platform", "zynq-iodma")
+    kernel_model.save(dataflow_model_filename)
 
 
 def collect_ip_dirs(model, ipstitch_path):
@@ -691,27 +725,29 @@ class ZynqBuild(Transformation):
             model = model.transform(trn)
             model = model.transform(GiveUniqueNodeNames())
             model = model.transform(GiveReadableTensorNames())
-        # Build each kernel individually
+        # Build each kernel individually (in parallel)
         sdp_nodes = model.get_nodes_by_op_type("StreamingDataflowPartition")
-        for sdp_node in sdp_nodes:
-            prefix = sdp_node.name + "_"
-            sdp_node = getCustomOp(sdp_node)
-            dataflow_model_filename = sdp_node.get_nodeattr("model")
-            kernel_model = ModelWrapper(dataflow_model_filename)
-            # InsertFIFO at this stage interferes with tLastMarker
-            # TODO: is this really needed here at all?
-            if not self.enable_instrumentation:
-                kernel_model = kernel_model.transform(InsertFIFO())
-            kernel_model = kernel_model.transform(SpecializeLayers(self.fpga_part))
-            kernel_model = kernel_model.transform(GiveUniqueNodeNames(prefix))
-            kernel_model.save(dataflow_model_filename)
-            kernel_model = kernel_model.transform(PrepareIP(self.fpga_part, self.period_ns))
-            kernel_model = kernel_model.transform(HLSSynthIP())
-            kernel_model = kernel_model.transform(
-                CreateStitchedIP(self.fpga_part, self.period_ns, sdp_node.onnx_node.name, False)
+        worker_args = [
+            (
+                sdp_node.name,
+                getCustomOp(sdp_node).get_nodeattr("model"),
+                self.fpga_part,
+                self.period_ns,
+                self.enable_instrumentation,
             )
-            kernel_model.set_metadata_prop("platform", "zynq-iodma")
-            kernel_model.save(dataflow_model_filename)
+            for sdp_node in sdp_nodes
+        ]
+        num_workers = get_num_default_workers()
+        if num_workers == 0:
+            num_workers = mp.cpu_count()
+        num_workers = min(num_workers, len(worker_args))
+        log.info(f"Building {len(worker_args)} SDP kernels with {num_workers} workers...")
+        if num_workers > 1:
+            with mp.Pool(num_workers) as pool:
+                pool.map(_build_sdp_kernel, worker_args, chunksize=1)
+        else:
+            for args in worker_args:
+                _build_sdp_kernel(args)
         # Assemble design from IPs
         model = model.transform(
             MakeZYNQProject(
