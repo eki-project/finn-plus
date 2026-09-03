@@ -7,6 +7,7 @@
     - ml tools/git-lfs/3.6.1
     - ml tools/UnZip/6.0-GCCcore-15.2.0
     - ml devel/ncurses/5.9
+    - ml lib/gurobi/1302
     - ulimit -s unlimited # Increase stack size limit
 
 .n2_setup_xilinx_2022_2:

@@ -25,7 +25,7 @@ include = [
     {path = "src/finn/util/vivado_scripts/*.sh", format = ["sdist", "wheel"]},
     {path = "src/finn/util/vivado_scripts/*.tcl", format = ["sdist", "wheel"]},
     {path = "src/finn/util/vivado_scripts/*.xdc", format = ["sdist", "wheel"]},
-    {path = "external_dependencies.yaml", format = ["sdist", "wheel"]}
+    {path = "src/finn/interface/external_dependencies.yaml", format = ["sdist", "wheel"]}
 ]
 version = "0.0.0"
 
@@ -57,7 +57,7 @@ onnx-ir = ">=0.1.15"
 onnx-passes = ">=0.4.0"
 protobuf = "5.29.6"
 pyyaml = "~6.0.2"
-mip = "~1.13.0"
+mip = "1.17.0"
 cmake = "~4.0.3"
 brevitas = "0.13.0"
 qonnx = "1.0.0"
@@ -109,9 +109,14 @@ markers = [
     "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
     "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
     "analysis: mark tests that run analysis tests",
+    "multifpga: mark tests that run multifpga tests"
 ]
 norecursedirs = ["dist", "build", ".tox"]
 testpaths = "tests"
+filterwarnings = [
+    'ignore:Deprecated call to `pkg_resources:DeprecationWarning',
+    'ignore:pkg_resources is deprecated:DeprecationWarning'
+]
 
 [tool.isort]
 line_length = 100

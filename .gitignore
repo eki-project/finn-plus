@@ -86,6 +86,7 @@ htmlcov/*
 junit.xml
 coverage.xml
 .pytest_cache/
+tests/finn_build_output
 
 # Build and docs folder/files
 build/*
@@ -124,6 +125,8 @@ finn_xsi/finn_xsi/rtlsim_config.hpp
 /notebooks/end2end_example/**/*.onnx
 
 # downloaded dep repos
+deps/
+/finn_deps/
 /deps/
 finn_deps/
 

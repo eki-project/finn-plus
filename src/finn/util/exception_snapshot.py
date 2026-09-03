@@ -85,9 +85,7 @@ def snapshot_on_exception(
                 else:
                     prefix = f"{build_dir_prefix}_{date}_"
                 temp_path = Path(make_build_dir(prefix))
-                crash_report_dir = Path(cfg.output_dir) / "crash_reports"
-                if not crash_report_dir.exists():
-                    crash_report_dir.mkdir(parents=True)
+                crash_report_dir = cfg.get_crash_reports_directory()
                 path = crash_report_dir / temp_path.name
                 temp_path.rename(path.absolute())
 
@@ -121,7 +119,7 @@ def snapshot_on_exception(
                                 submodel = Path(getCustomOp(node).get_nodeattr("model"))
                                 if submodel.exists():
                                     submodel_dir = Path(path / "submodels")
-                                    submodel_dir.mkdir()
+                                    submodel_dir.mkdir(exist_ok=True)
                                     shutil.copy(submodel, submodel_dir)
                 if snapshot_config:
                     (path / "cfg.yaml").write_text(str(cfg.to_yaml()))

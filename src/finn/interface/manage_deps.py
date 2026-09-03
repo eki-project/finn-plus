@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
+from subprocess import TimeoutExpired
 from threading import RLock
 from typing import cast
 
@@ -316,24 +317,28 @@ class DependencyUpdater:
     def _git_clone(self, url: str, commit: str, target: Path) -> bool:
         """Try to clone and checkout the git url to the given target directory. If something
         went wrong return False, True otherwise."""
-        clone_result = sp.run(
-            shlex.split(f"git clone {url} {target.absolute()}"),
-            timeout=self.git_timeout,
-            capture_output=True,
-            text=True,
-        )
-        if clone_result.returncode != 0:
-            debug(f"[{url}] Cloning failed! Output was:\n{clone_result.stderr}", False)
-            return False
-        checkout_result = sp.run(
-            shlex.split(f"git checkout {commit}"),
-            cwd=target.absolute(),
-            capture_output=True,
-            text=True,
-        )
-        if checkout_result.returncode != 0:
-            debug(f"[{url}] Checkout failed! Output was:\n{checkout_result.stderr}", False)
-            return False
+        try:
+            clone_result = sp.run(
+                shlex.split(f"git clone {url} {target.absolute()}"),
+                timeout=self.git_timeout,
+                capture_output=True,
+                text=True,
+            )
+            if clone_result.returncode != 0:
+                debug(f"[{url}] Cloning failed! Output was:\n{clone_result.stderr}", False)
+                return False
+            checkout_result = sp.run(
+                shlex.split(f"git checkout {commit}"),
+                cwd=target.absolute(),
+                capture_output=True,
+                timeout=self.git_timeout,
+                text=True,
+            )
+            if checkout_result.returncode != 0:
+                debug(f"[{url}] Checkout failed! Output was:\n{checkout_result.stderr}", False)
+                return False
+        except TimeoutExpired:
+            raise FINNDependencyInstallationError("Timeout during Git operation.") from None
         return True
 
     def _get_git_hash(self, package_name: str) -> str | None:
@@ -480,9 +485,14 @@ class DependencyUpdater:
         # Automatically skips if not modified
         unzipped = (target / Path(url).name).with_suffix("")
         debug(f"[{package_name}] Running: wget -N {url}", False)
-        wget_download = sp.run(
-            shlex.split(f"wget -N {url}"), cwd=target, capture_output=True, text=True
-        )
+        try:
+            wget_download = sp.run(
+                shlex.split(f"wget -N {url}"), cwd=target, capture_output=True, text=True
+            )
+        except sp.TimeoutExpired as e:
+            raise FINNDependencyInstallationError(
+                f"[{package_name}] wget failed with a timeout!"
+            ) from e
         if wget_download.returncode != 0:
             debug(f"[{package_name}] wget failed!", False)
             return False

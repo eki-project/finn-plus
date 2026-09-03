@@ -138,7 +138,7 @@ Build:
   cache:
     key:
       files:
-        - external_dependencies.yaml
+        - src/finn/interface/external_dependencies.yaml
     paths:
       - deps
 
@@ -161,7 +161,7 @@ FINN Test Suite 2024.2:
   cache:
     key:
       files:
-        - external_dependencies.yaml
+        - src/finn/interface/external_dependencies.yaml
     policy: pull
     paths:
       - deps

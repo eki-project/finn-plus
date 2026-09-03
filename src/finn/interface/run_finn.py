@@ -1039,24 +1039,25 @@ def bench(
 @click.option(
     "--variant",
     "-v",
-    help="Which test to execute (quick, quicktest_ci, full_ci, doctest)",
+    help=(
+        "Which test to execute (quick, quicktest_ci, full_ci, doctest, custom)."
+        "'custom' ignores all parameters expect for --args ..."
+    ),
     default="quick",
     show_default=True,
     type=click.Choice(["quick", "quicktest_ci", "full_ci", "custom", "doctest", "doctest"]),
 )
 @click.option(
-    "--name",
+    "--args",
     default="",
     required=False,
-    help="Define the test to run. Only usable in combination with --variant custom. "
-    "Can be passed the same syntax as pytest directly (my_test_module.py "
-    "| my_tests.py::TestClass::myTest | etc.)",
+    help="Arguments to pass to pytest. Only usable with '--variant custom'. ",
 )
 @click.option("--num-test-workers", "-t", default="auto", show_default=True)
 @batch
 def test(
     variant: str,
-    name: str,
+    args: str,
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     num_default_workers: int,
@@ -1099,7 +1100,7 @@ def test(
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
-    run_test(variant, num_test_workers, name)
+    run_test(variant, num_test_workers, args)
 
 
 @click.group(help="Dependency management")
