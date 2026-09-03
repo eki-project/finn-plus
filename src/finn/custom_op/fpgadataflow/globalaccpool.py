@@ -26,24 +26,44 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Module for globalaccpool."""
+"""Global accumulate-pooling hardware custom operator."""
+
 import numpy as np
-from qonnx.core.datatype import DataType
+from onnx import NodeProto
+from qonnx.core.datatype import BaseDataType, DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from typing import TYPE_CHECKING, cast
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.exception import FINNInternalError
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from onnx import GraphProto
+
+# Type of the dictionary returned by get_nodeattr_types: maps attribute names to
+# their (dtype, required, default[, allowed_values]) specification tuples
+NodeAttrTypes = dict[
+    str,
+    tuple[str, bool, int | float | str | bool | np.ndarray | list]
+    | tuple[str, bool, int | float | str | bool | np.ndarray | list, set | None],
+]
 
 
 class GlobalAccPool(HWCustomOp):
-    """Abstraction layer for HW implementation of GlobalAccPool"""
+    """Abstraction layer for HW implementation of GlobalAccPool.
 
-    def __init__(self, onnx_node, **kwargs):
+    Sums each channel over the spatial axes (a non-normalized global average
+    pool); the output datatype is widened to hold the accumulated sum.
+    """
+
+    def __init__(self, onnx_node: NodeProto, **kwargs: int) -> None:
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
-    def get_nodeattr_types(self):
+    def get_nodeattr_types(self) -> NodeAttrTypes:
         """Return nodeattr types."""
-        my_attrs = {
+        my_attrs: NodeAttrTypes = {
             "NumChannels": ("i", True, 0),
             "PE": ("i", True, 0),
             # FINN DataTypes for input
@@ -57,99 +77,109 @@ class GlobalAccPool(HWCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_normal_input_shape(self, ind=0):
+    @property
+    def num_channels(self) -> int:
+        """Get the number of channels."""
+        return cast("int", self.get_nodeattr("NumChannels"))
+
+    @property
+    def pe(self) -> int:
+        """Get the PE parallelism."""
+        return cast("int", self.get_nodeattr("PE"))
+
+    @property
+    def num_input_vectors(self) -> list[int]:
+        """Get the number of input vectors along the non-channel axes."""
+        return list(cast("list[int]", self.get_nodeattr("numInputVectors")))
+
+    def get_normal_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal input shape."""
-        ch = self.get_nodeattr("NumChannels")
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        ishape = tuple(vecs + [ch])
-        return ishape
+        return (*self.num_input_vectors, self.num_channels)
 
-    def get_folded_input_shape(self, ind=0):
+    def get_folded_input_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded input shape."""
-        ch = self.get_nodeattr("NumChannels")
-        pe = self.get_nodeattr("PE")
-        vecs = list(self.get_nodeattr("numInputVectors"))
-        assert ch % pe == 0, "PE must divide NumChannels"
-        folds = int(ch / pe)
-        folded_ishape = tuple(vecs + [folds, pe])
-        return folded_ishape
+        ch = self.num_channels
+        pe = self.pe
+        if ch % pe != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: PE ({pe}) must divide NumChannels ({ch})"
+            )
+        folds = ch // pe
+        return (*self.num_input_vectors, folds, pe)
 
-    def get_normal_output_shape(self, ind=0):
+    def get_normal_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return normal output shape."""
-        ch = self.get_nodeattr("NumChannels")
-        vecs = list(self.get_nodeattr("numInputVectors"))
+        vecs = self.num_input_vectors
         if len(vecs) == 1:
-            oshape = tuple(vecs + [ch])
-        elif len(vecs) == 3:
-            oshape = tuple([vecs[0]] + [1, 1, ch])
-        return oshape
+            return (*vecs, self.num_channels)
+        if len(vecs) == 3:
+            return (vecs[0], 1, 1, self.num_channels)
+        raise FINNInternalError(
+            f"{self.onnx_node.name}: numInputVectors must have length 1 or 3, got {vecs}"
+        )
 
-    def get_folded_output_shape(self, ind=0):
+    def get_folded_output_shape(self, ind: int = 0) -> tuple[int, ...]:  # noqa: ARG002
         """Return folded output shape."""
-        ch = self.get_nodeattr("NumChannels")
-        pe = self.get_nodeattr("PE")
+        ch = self.num_channels
+        pe = self.pe
         unfolded_shape = list(self.get_normal_output_shape())
-        assert ch % pe == 0, "PE must divide NumChannels"
-        folds = int(ch / pe)
-        oshape = tuple(unfolded_shape[:-1] + [folds, pe])
-        return oshape
+        if ch % pe != 0:
+            raise FINNInternalError(
+                f"{self.onnx_node.name}: PE ({pe}) must divide NumChannels ({ch})"
+            )
+        folds = ch // pe
+        return (*unfolded_shape[:-1], folds, pe)
 
-    def infer_node_datatype(self, model):
+    def infer_node_datatype(self, model: ModelWrapper) -> None:
         """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
-            warn_str = "inputDataType changing for %s: %s -> %s " % (
-                node.name,
-                str(self.get_input_datatype()),
-                str(idt),
+            log.warning(
+                f"inputDataType changing for {node.name}: "
+                f"{self.get_input_datatype()!s} -> {idt!s} "
             )
-            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
-        odt = self.get_output_datatype()
-        model.set_tensor_datatype(self.onnx_node.output[0], odt)
+        model.set_tensor_datatype(node.output[0], self.get_output_datatype())
 
-    def get_input_datatype(self, ind=0):
-        """Returns FINN DataType of input."""
-        return DataType[self.get_nodeattr("inputDataType")]
+    def get_input_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of input."""
+        return DataType[cast("str", self.get_nodeattr("inputDataType"))]
 
-    def get_output_datatype(self, ind=0):
-        """Returns FINN DataType of output."""
-        # determine data type from image size and input type
-        idt = DataType[self.get_nodeattr("inputDataType")]
-        vecs = list(self.get_nodeattr("numInputVectors"))
+    def get_output_datatype(self, ind: int = 0) -> BaseDataType:  # noqa: ARG002
+        """Return FINN DataType of output.
+
+        Determined from the accumulation extent and the input datatype.
+        """
+        idt = self.get_input_datatype()
+        vecs = self.num_input_vectors
         npixels = vecs[-1] * vecs[-2]
-        if idt.signed():
-            extreme_value = npixels * idt.min()
-        else:
-            extreme_value = npixels * idt.max()
+        extreme_value = npixels * (idt.min() if idt.signed() else idt.max())
         return DataType.get_smallest_possible(extreme_value)
 
-    def get_instream_width(self, ind=0):
-        """Returns input stream width."""
-        ibits = self.get_input_datatype().bitwidth()
-        pe = self.get_nodeattr("PE")
-        in_width = pe * ibits
-        return in_width
+    def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
+        """Return input stream width."""
+        return self.pe * self.get_input_datatype().bitwidth()
 
-    def get_outstream_width(self, ind=0):
-        """Returns output stream width."""
-        obits = self.get_output_datatype().bitwidth()
-        pe = self.get_nodeattr("PE")
-        out_width = pe * obits
-        return out_width
+    def get_outstream_width(self, ind: int = 0) -> int:  # noqa: ARG002
+        """Return output stream width."""
+        return self.pe * self.get_output_datatype().bitwidth()
 
-    def get_exp_cycles(self):
-        # Channels/PE * batch size * idim * idim + Channels/PE
-        """Return exp cycles."""
-        ch = self.get_nodeattr("NumChannels")
-        pe = self.get_nodeattr("PE")
-        folds = int(ch / pe)
+    def get_exp_cycles(self) -> int:
+        """Return exp cycles.
+
+        Channels/PE * batch size * idim * idim + Channels/PE.
+        """
+        folds = self.num_channels // self.pe
         return int(np.prod(self.get_folded_input_shape()[:-1]) + folds)
 
-    def execute_node(self, context, graph):
-        # simulate behavior with Python functionality
-        """Execute node."""
+    def execute_node(
+        self, context: dict[str, np.ndarray], graph: "GraphProto"  # noqa: ARG002
+    ) -> None:
+        """Execute node.
+
+        Simulates the behavior with plain Python.
+        """
         node = self.onnx_node
         inp_values = context[node.input[0]]
         oshape = context[node.output[0]].shape
