@@ -27,6 +27,7 @@ The framework is fully open-source in order to give a higher degree of flexibili
 - **[Feature Tracker](https://github.com/orgs/eki-project/projects/1)** - Current development status
 - **[Contributing](#contributing)** - Learn how to contribute to FINN+
 - **[Citing FINN+](#citing-finn)** - How to cite FINN+ in your research
+- **[Changelog](CHANGELOG.md)** - Recent additions and changes
 
 ## What's New in FINN+
 
