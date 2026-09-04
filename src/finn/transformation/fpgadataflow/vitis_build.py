@@ -74,6 +74,8 @@ class ParallelVitisSynthesis(Transformation):
             cwd=config.run_script_path.parent,
             capture_output=True,
             text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         if result.returncode != 0:
             raise FINNSynthesisError(
@@ -86,6 +88,8 @@ class ParallelVitisSynthesis(Transformation):
         gen_result = subprocess.run(
             shlex.split(f"vivado -mode batch -source {config.gen_report_xml_path}"),
             cwd=config.gen_report_xml_path.parent,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         if gen_result.returncode != 0:
             log.error(
