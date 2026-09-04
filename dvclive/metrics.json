@@ -1,0 +1,14 @@
+{
+    "status": "failed",
+    "time": {
+        "step_tidy_up": 0,
+        "step_pre_streamline": 0,
+        "step_streamline": 3,
+        "step_convert_to_hw": 0,
+        "step_convert_final_layers": 0,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_target_fps_parallelization": 0,
+        "total_build_time": 3
+    }
+}
