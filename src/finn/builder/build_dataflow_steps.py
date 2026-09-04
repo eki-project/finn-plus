@@ -200,7 +200,7 @@ from finn.util.basic import (
     getHWCustomOp,
 )
 from finn.util.config import extract_model_config_to_json
-from finn.util.exception import FINNMultiFPGAUserError, FINNUserError
+from finn.util.exception import FINNInternalError, FINNMultiFPGAUserError, FINNUserError
 from finn.util.execution import execute_parent
 from finn.util.logging import log
 from finn.util.mlo_sim import is_mlo, mlo_prehook_func_factory
@@ -2130,10 +2130,27 @@ def step_deployment_package(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
             driver_dir, deploy_dir / "driver", dirs_exist_ok=True, copy_function=shutil.copyfile
         )
         if DataflowOutputType.CPP_DRIVER in cfg.generate_outputs:
-            update_bitfile_path_after_copy(
-                deploy_dir / "bitfile" / "finn-accel.xclbin",
-                deploy_dir / "driver" / "acceleratorconfig.json",
-            )
+            bitfile_json = model.get_metadata_prop("bitfile_output")
+            if bitfile_json is None:
+                raise FINNUserError(
+                    "Cannot make deployment package. "
+                    "bitfile_output field is missing. "
+                    "Was synthesis run before calling this step?"
+                )
+            try:
+                xclbin_paths: dict[int, str] = json.loads(bitfile_json)
+            except JSONDecodeError as e:
+                raise FINNInternalError(
+                    "Expected metadata property of the model to be a "
+                    "valid JSON mapping between devices and paths to bitfiles "
+                    "(e.g.: {0: A/a.xlbin, ...}) but there was an error decoding the JSON."
+                ) from e
+            for device, xclbin in xclbin_paths.items():
+                update_bitfile_path_after_copy(
+                    int(device),
+                    deploy_dir / "bitfile" / Path(xclbin).name,
+                    deploy_dir / "driver" / "cpp" / "acceleratorconfig.json",
+                )
 
     else:
         log.info(
