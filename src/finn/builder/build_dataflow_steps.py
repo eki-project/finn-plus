@@ -1916,7 +1916,7 @@ def copy_synthesis_reports(
     except JSONDecodeError:
         rpt_json = {0: reports}
     if len(list(rpt_json.keys())) == 1:
-        res_report = Path(rpt_json[0])
+        res_report = Path(next(iter(rpt_json.values())))
         if res_report.exists():
             target = report_dir / f"{name_prefix}.xml"
             copy(res_report, target)
@@ -1925,6 +1925,7 @@ def copy_synthesis_reports(
             log.warning(f"Resource report XML not found: {res_report}")
     else:
         for device, path in rpt_json.items():
+            path = Path(path)
             if path.exists():
                 target = report_dir / f"{name_prefix}_{device}.xml"
                 copy(path, target)
@@ -1965,12 +1966,12 @@ def copy_and_rename_bitfiles(
     # Copy and rename the files
     if len(list(bitfile_json.keys())) == 1:
         bitfile_path = bitfile_dir / f"finn-accel{single_device_suffix}{suffix}"
-        copy(bitfile_json[0], bitfile_path)
+        copy(next(iter(bitfile_json.values())), bitfile_path)
         log.info("Stored bitfile at: " + str(bitfile_path))
         if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
             model.set_metadata_prop("bitfile_output", str(bitfile_path.absolute()))
         elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
-            model.set_metadata_prop("bitfile_output", str({0: str(bitfile_path.absolute())}))
+            model.set_metadata_prop("bitfile_output", json.dumps({0: str(bitfile_path.absolute())}))
     else:
         paths = {}
         for device, path in bitfile_json.items():
@@ -1978,7 +1979,7 @@ def copy_and_rename_bitfiles(
             copy(path, bitfile_path)
             log.info("Stored bitfile at: " + str(bitfile_path))
             paths.update({device: str(bitfile_path.absolute())})
-        model.set_metadata_prop("bitfile_output", str(paths))
+        model.set_metadata_prop("bitfile_output", json.dumps(paths))
 
     # For Zynq, copy the hwh file too
     if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
