@@ -64,7 +64,7 @@ This is a quick overview of how to get started, for additional information pleas
 
 Before installing FINN+, ensure you have:
 
-- **Python**: Version 3.10 or 3.11 (Python 3.12+ not yet supported)
+- **Python**: Version 3.11-3.14
 - **Xilinx Tools**: Vivado, Vitis, and Vitis HLS (2022.2 or 2024.2)
 - **System Dependencies**: See our [dependency installation script](installDependencies.sh) for required packages
 
