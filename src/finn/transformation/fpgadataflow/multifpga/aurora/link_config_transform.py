@@ -23,12 +23,12 @@ class AddAuroraToLinkConfig(Transformation):
     connecting them to the existing SDP kernels.
     """
 
-    def __init__(self, platform_name: str, fpga_part: str) -> None:
+    def __init__(self, board: str, fpga_part: str) -> None:
         """Iterate over an existing prepared linking configuration, adding AuroraFlow kernels and
         connecting them to the existing SDP kernels.
         """
         super().__init__()
-        self.platform: Platform = platforms[platform_name]()
+        self.platform: Platform = platforms[board]()
         self.part = fpga_part
         self.rx_dummy = None
         self.tx_dummy = None
@@ -61,14 +61,12 @@ class AddAuroraToLinkConfig(Transformation):
         tx_dummy = dummy_dir / "tx_dummy_kernel.xo"
         rx_result = subprocess.run(
             shlex.split(
-                f"vitis_hls -f run.tcl {self.part} 2.5 "
+                f"vitis_hls -f create_dummy_kernel.tcl {self.part} 2.5 "
                 f"rx_dummy_kernel . {width} {dummy_templated}"
             ),
             capture_output=True,
             text=True,
             cwd=dummy_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
         )
         if rx_result.returncode != 0:
             raise FINNInternalError(
@@ -77,14 +75,12 @@ class AddAuroraToLinkConfig(Transformation):
             )
         tx_result = subprocess.run(
             shlex.split(
-                f"vitis_hls -f run.tcl {self.part} 2.5 "
+                f"vitis_hls -f create_dummy_kernel.tcl {self.part} 2.5 "
                 f"tx_dummy_kernel . {width} {dummy_templated}"
             ),
             capture_output=True,
             text=True,
             cwd=dummy_dir,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
         )
         if tx_result.returncode != 0:
             raise FINNInternalError(
