@@ -1609,11 +1609,6 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
     if is_mlo(model):
         log.warning("Model is MLO, skipping step_measure_rtlsim_performance.")
         return model
-    if DataflowOutputType.STITCHED_IP not in cfg.generate_outputs:
-        raise FINNUserError(
-            "DataflowOutputType.RTLSIM_PERFORMANCE requires "
-            "DataflowOutputType.STITCHED_IP to be requested as well."
-        )
 
     report_dir = cfg.get_report_directory()
 
