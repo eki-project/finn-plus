@@ -1,0 +1,36 @@
+{
+    "Submodels" : {
+        "mn_A" : {
+                "model_path" : ".../mn_A/mobilenetv1-w4a4_pre_post_tidy_opset-11_random_weights_elementwisefix.onnx",
+                "specialize_layers_config_file" : ".../mn_specialize_layers.json"
+            },
+        "mn_B" : {
+                "model_path" : ".../mn_B/mobilenetv1-w4a4_pre_post_tidy_opset-11_elementwisefix.onnx",
+                "specialize_layers_config_file" : ".../mn_specialize_layers.json"
+            }
+    },
+    "Steps": [
+        {"finn.builder.custom_step_library.mobilenet.step_mobilenet_streamline": ["mn_A", "mn_B"]},
+        {"finn.builder.custom_step_library.mobilenet.step_mobilenet_lower_convs": ["mn_A", "mn_B"]},
+        {"finn.builder.custom_step_library.mobilenet.step_mobilenet_convert_to_hw_layers_separate_th": ["mn_A", "mn_B"]},
+        {"step_create_dataflow_partition": ["mn_A", "mn_B"]},
+        {"step_specialize_layers": ["mn_A", "mn_B"]},
+        {"step_apply_multi_dnn": "Multi_DNN_Wrapper"},
+        {"step_collapse_multi_dnn": "Multi_DNN_Wrapper"},
+        {"step_apply_folding_config": "Collapsed_Model"},
+        {"step_minimize_bit_width": "Collapsed_Model"},
+        {"step_generate_estimate_reports": "Collapsed_Model"},
+        {"step_prepare_nodecontainer": "Collapsed_Model"},
+        {"step_set_fifo_depths": "Collapsed_Model"},
+        {"step_hw_codegen": "Collapsed_Model"},
+        {"step_hw_ipgen": "Collapsed_Model"},
+        {"step_create_stitched_ip": "Collapsed_Model"},
+        {"step_synthesize_bitfile": "Collapsed_Model"},
+        {"step_make_driver": "Collapsed_Model"},
+        {"step_deployment_package": "Collapsed_Model"}
+    ],
+    "Generation" : {
+        "mode" : "SelectableWeights",
+        "kwargs" : {"models" : ["mn_A", "mn_B"]}
+    }
+}

@@ -29,18 +29,19 @@
 """Handlers for converting QONNX activations into FINN graph patterns."""
 import numpy as np
 from abc import ABC, abstractmethod
-from onnx import TensorProto, helper
+from onnx import NodeProto, TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 
+from finn.util.exception import FINNUserError
 from finn.util.logging import log
 
 np_default_dtype = np.float32
 
 
 class QuantActBaseHandler(ABC):
-    """Base class for converting quantized activation expressed in the QONNX dialect
-    to the FINN ONNX dialect.
+    """Convert a quantized activation from the QONNX dialect to the FINN ONNX dialect.
+
     :param model: The model on which this handler should operate.
     :type model: class: `qonnx.core.modelwrapper.ModelWrapper`
     :param quant_node: The Quant node which a given handler should replace.
@@ -48,22 +49,23 @@ class QuantActBaseHandler(ABC):
     :type quant_node_index: `int`
     """
 
-    def __init__(self, model: ModelWrapper, quant_node, quant_node_index: int):
-        """Base class constructor"""
+    def __init__(self, model: ModelWrapper, quant_node: NodeProto, quant_node_index: int) -> None:
+        """Initialize the handler for one Quant node in the given model."""
         super().__init__()
         self._model = model
         self._q_node = quant_node
         self._q_index = quant_node_index
 
     @classmethod
-    def valid_predecessor_op_types(self):
-        """Defines which op types the preceding node is allowed to have for
-        this type of activation.
+    def valid_predecessor_op_types(cls) -> list[str]:
+        """Return the op types the preceding node is allowed to have.
+
+        Specific to this type of activation.
         """
         raise NotImplementedError()
 
     @abstractmethod
-    def _check_compatibility(self):
+    def _check_compatibility(self) -> None:
         """Check for compatibility with FINN.
         There are many more possible combinations of QONNX settings,
         than what is supported by FINN.
@@ -71,19 +73,19 @@ class QuantActBaseHandler(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def _calculate_act_bias(self):
+    def _calculate_act_bias(self) -> np.ndarray:
         """Calculate the activation bias,
         which is introduced as an Add node behind the MultiThreshold node.
         """
         raise NotImplementedError()
 
     @abstractmethod
-    def _calculate_thresholds(self):
+    def _calculate_thresholds(self) -> np.ndarray:
         """Calculate the threshold array for the MultiThreshold node."""
         raise NotImplementedError()
 
     @abstractmethod
-    def _calculate_act_scale(self):
+    def _calculate_act_scale(self) -> np.ndarray:
         """Calculate the activation scale,
         which is introduced as a Mul node behind the Add node
         for the activation bias.
@@ -91,18 +93,18 @@ class QuantActBaseHandler(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def _remove_activation_node(self, multi_threshold_node):
+    def _remove_activation_node(self, multi_threshold_node: NodeProto) -> None:
         """Remove the activation node in front of the Quant node."""
         raise NotImplementedError()
 
-    def _extract_output_datatype(self):
+    def _extract_output_datatype(self) -> str:
         """Get the output datatype for the MultiThreshold node."""
         q_inst = getCustomOp(self._q_node)
         dtype = q_inst.get_integer_datatype(self._model)
         dtype = dtype.name
         return dtype
 
-    def calculate_node_parameters(self):
+    def calculate_node_parameters(self) -> dict:
         """Calculate all parameters required for replacing the QONNX style activation
         with a FINN style one.
         """
@@ -113,7 +115,7 @@ class QuantActBaseHandler(ABC):
             "mul_scale": self._calculate_act_scale(),
         }
 
-    def replace_quant_node(self):
+    def replace_quant_node(self) -> None:
         """Replace the given QONNX style activation with a FINN style one."""
         # Check that we actually support what the user is trying to do
         self._check_compatibility()
@@ -198,7 +200,7 @@ class QuantActBaseHandler(ABC):
             if bias_scalar:
                 adder_bias = np.atleast_1d(adder_bias)
                 adder_bias = adder_bias[0]
-                add_shape = tuple()
+                add_shape = ()
                 if adder_bias == 0.0:
                     zero_bias = True
             else:
@@ -241,7 +243,7 @@ class QuantActBaseHandler(ABC):
             if scale_scalar:
                 mul_scale = np.atleast_1d(mul_scale)
                 mul_scale = mul_scale[0]
-                mul_shape = tuple()
+                mul_shape = ()
                 if mul_scale == 1.0:
                     unity_scale = True
             else:
@@ -292,14 +294,14 @@ class QuantReluHandler(QuantActBaseHandler):
     dialect to the FINN ONNX dialect."""
 
     @classmethod
-    def valid_predecessor_op_types(self):
+    def valid_predecessor_op_types(cls) -> list[str]:
         """Return supported predecessor op types for quantized ReLU."""
         return [
             "Relu",
             "Selu",
         ]
 
-    def _check_compatibility(self):
+    def _check_compatibility(self) -> None:
         """Validate that the quantized activation is FINN-compatible."""
         if self._q_node.op_type == "Quant":
             q_inst = getCustomOp(self._q_node)
@@ -312,18 +314,17 @@ class QuantReluHandler(QuantActBaseHandler):
                 )
             act_node = self._model.find_direct_predecessors(self._q_node)
             act_node = act_node[0]
-            if act_node.op_type == "Relu":
-                if signed or narrow:
-                    raise ValueError(
-                        "FINN only supports unsigned and non-narrow Quant nodes "
-                        "for Relu activations."
-                    )
+            if act_node.op_type == "Relu" and (signed or narrow):
+                raise ValueError(
+                    "FINN only supports unsigned and non-narrow Quant nodes "
+                    "for Relu activations."
+                )
         elif self._q_node.op_type == "BipolarQuant":
             return
         else:
             raise RuntimeError("Got an unexpected quantizer node type")
 
-    def _calculate_act_bias(self):
+    def _calculate_act_bias(self) -> np.ndarray:
         """Calculate activation bias for the replacement pattern."""
         # No bias allowed for Relu activations, see: https://github.com/Xilinx/
         # brevitas/blob/a5bfd6dc5e030f0047ac1ee47932b60e8e873e17/src/brevitas/
@@ -355,7 +356,7 @@ class QuantReluHandler(QuantActBaseHandler):
                 bias = np.array([min_non_scaled_val], dtype=np_default_dtype)
         return bias
 
-    def _calculate_thresholds(self):
+    def _calculate_thresholds(self) -> np.ndarray:
         """Calculate MultiThreshold thresholds for the activation."""
         # Gather parameters
         if self._q_node.op_type == "Quant":
@@ -385,10 +386,7 @@ class QuantReluHandler(QuantActBaseHandler):
         elif act_node.op_type == "Selu":
             q_inst = getCustomOp(self._q_node)
             narrow = q_inst.get_nodeattr("narrow")
-            if narrow:
-                num_distinct_values = 2**bit_width - 1
-            else:
-                num_distinct_values = 2**bit_width
+            num_distinct_values = 2**bit_width - 1 if narrow else 2**bit_width
 
             num_thresholds = int(num_distinct_values - 1)
             flat_scale = quant_scale.flatten().astype(np.float32)
@@ -402,7 +400,7 @@ class QuantReluHandler(QuantActBaseHandler):
             thresholds = np.empty((num_scale_channels, num_thresholds), dtype=np_default_dtype)
             for c in range(num_scale_channels):
                 for t in range(num_thresholds):
-                    step = -1.0 + half_scale + scale[c] * t
+                    step = -1.0 + half_scale[c] + scale[c] * t
                     if step <= 0:
                         thresholds[c][t] = np.log(step / (alpha * selu_scale) + 1)
                     else:
@@ -442,14 +440,15 @@ class QuantReluHandler(QuantActBaseHandler):
         # ToDo: The index 1 needs to be changed to -1 for the channels last format
         num_output_channels = self._model.get_tensor_shape(self._q_node.output[0])[cdim]
 
-        assert (
-            thresholds.shape[0] == 1 or thresholds.shape[0] == num_output_channels
-        ), """Quant node cannot be converted to MultiThreshold because only
-            per tensor or per channel quantization supported."""
+        if thresholds.shape[0] not in (1, num_output_channels):
+            raise FINNUserError(
+                "Quant node cannot be converted to MultiThreshold because only "
+                "per tensor or per channel quantization supported."
+            )
 
         return thresholds
 
-    def _calculate_act_scale(self):
+    def _calculate_act_scale(self) -> np.ndarray:
         """Calculate activation scale for the replacement pattern."""
         # Gather parameters
         quant_scale = self._model.get_initializer(self._q_node.input[1])
@@ -459,7 +458,7 @@ class QuantReluHandler(QuantActBaseHandler):
         scale = quant_scale
         return scale
 
-    def _remove_activation_node(self, multi_threshold_node):
+    def _remove_activation_node(self, multi_threshold_node: NodeProto) -> None:
         """Remove the activation node preceding the Quant node."""
         # Find the activation node
         act_node = self._model.find_direct_predecessors(self._q_node)
@@ -489,7 +488,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
     """
 
     @classmethod
-    def valid_predecessor_op_types(self):
+    def valid_predecessor_op_types(cls) -> list[str]:
         """Return supported predecessor op types for quantized identity."""
         return [
             "BatchNormalization",
@@ -501,7 +500,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
             None,
         ]
 
-    def _check_compatibility(self):
+    def _check_compatibility(self) -> None:
         """Validate that the quantized identity is FINN-compatible."""
         # Gather parameters to check
         if self._q_node.op_type == "Quant":
@@ -524,7 +523,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
         else:
             raise RuntimeError("Got an unexpected quantizer node type")
 
-    def _calculate_act_bias(self):
+    def _calculate_act_bias(self) -> np.ndarray:
         """Calculate activation bias for identity activations."""
         # Gather parameters
         q_inst = getCustomOp(self._q_node)
@@ -541,14 +540,11 @@ class QuantIdentityHandler(QuantActBaseHandler):
         if bit_width == 1.0:
             bias = np.array([-0.5], dtype=np_default_dtype)
         else:
-            if narrow:
-                min_non_scaled_val = -(2 ** (bit_width - 1) - 1)
-            else:
-                min_non_scaled_val = -(2 ** (bit_width - 1))
+            min_non_scaled_val = -(2 ** (bit_width - 1) - 1) if narrow else -(2 ** (bit_width - 1))
             bias = np.array([min_non_scaled_val], dtype=np_default_dtype)
         return bias
 
-    def _calculate_thresholds(self):
+    def _calculate_thresholds(self) -> np.ndarray:
         """Calculate MultiThreshold thresholds for identity activations."""
         # Gather parameters
         quant_scale = self._model.get_initializer(self._q_node.input[1])
@@ -568,10 +564,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
             thresholds = np.empty([1, 1], dtype=np_default_dtype)
             thresholds[0] = 0
             return thresholds
-        if narrow:
-            num_distinct_values = 2**bit_width - 1
-        else:
-            num_distinct_values = 2**bit_width
+        num_distinct_values = 2**bit_width - 1 if narrow else 2**bit_width
 
         num_thresholds = int(num_distinct_values - 1)
         flat_scale = quant_scale.flatten()
@@ -622,14 +615,15 @@ class QuantIdentityHandler(QuantActBaseHandler):
         # ToDo: The index 1 needs to be changed to -1 for the channels last format
         num_output_channels = self._model.get_tensor_shape(self._q_node.output[0])[cdim]
 
-        assert (
-            thresholds.shape[0] == 1 or thresholds.shape[0] == num_output_channels
-        ), """Quant node cannot be converted to MultiThreshold because only
-                per tensor or per channel quantization supported."""
+        if thresholds.shape[0] not in (1, num_output_channels):
+            raise FINNUserError(
+                "Quant node cannot be converted to MultiThreshold because only "
+                "per tensor or per channel quantization supported."
+            )
 
         return thresholds
 
-    def _calculate_act_scale(self):
+    def _calculate_act_scale(self) -> np.ndarray:
         """Calculate activation scale for identity activations."""
         # Gather parameters
         if self._q_node.op_type == "Quant":
@@ -645,12 +639,14 @@ class QuantIdentityHandler(QuantActBaseHandler):
         if bit_width != 1:
             scale = quant_scale
         else:
-            assert quant_scale.flatten().shape[0] == 1, "Unsupported BIPOLAR per channel scale"
-            assert quant_scale.flatten()[0] == 1.0, "Unsupported BIPOLAR scale != 1"
+            if quant_scale.flatten().shape[0] != 1:
+                raise FINNUserError("Unsupported BIPOLAR per channel scale")
+            if quant_scale.flatten()[0] != 1.0:
+                raise FINNUserError("Unsupported BIPOLAR scale != 1")
             scale = quant_scale * 2
         return scale
 
-    def _remove_activation_node(self, multi_threshold_node):
+    def _remove_activation_node(self, multi_threshold_node: NodeProto) -> None:  # noqa: ARG002
         """Remove the activation node if one exists (no-op)."""
         # The Quant identity activation has per definition no explicit activation node
         return

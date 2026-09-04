@@ -31,9 +31,15 @@ packages = [{ include = "finn_plus_driver" }]
 # PYNQ board image and cannot be installed from PyPI in a meaningful way.
 # Version constraints are kept loose on purpose so that installing this package
 # on a board does not force an upgrade of packages the PYNQ image depends on.
+# The two exceptions are numpy and grpcio, see the comments below.
 [tool.poetry.dependencies]
 python = ">=3.10"
-numpy = ">=1.21"
+# Capped below 2.0: the PYNQ board images ship a numpy 1.x, and pynq's compiled
+# extensions (notably the buffers handed to allocate()) are built against that ABI,
+# so allowing an upgrade to numpy 2.x breaks the overlays at runtime.
+numpy = ">=1.21,<2.0.0"
+# Required on the board but not pulled in by any of the other dependencies.
+grpcio = "1.64.0"
 bitstring = ">=4.0"
 qonnx = ">=1.0.0"
 click = ">=8.0"

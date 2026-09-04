@@ -9,25 +9,51 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 Planned release: 1.5.0.
 
-#### Added
-- Added a `CHANGELOG.md` file
-- Error lines from Vivado logs are printed to console in case of failing synthesis runs
-- Added `CITATION.cff` file
+### Added
+- Multi-DNN support: run several DNNs on one accelerator
+    - Three modes, selected via the `Generation.mode` key of the multi-DNN config JSON (`multi_dnn_config_path`):
+        - `Parallel`: the models run side by side, with their inputs/outputs optionally combined channelwise
+        - `SelectableWeights`: the models share one datapath and are switched by swapping weights at runtime
+        - `PartialReconfiguration`: the models are swapped at runtime via DFX, using a partial bitstream per model
+    - New build steps: `step_apply_multi_dnn`, `step_collapse_multi_dnn` and `step_prepare_nodecontainer`
+    - New custom ops: `DNNContainer` and `NodeContainer`
+    - New RTL components for the DFX flow under `finn-rtllib/dfx/` (wrapper, scheduler, tUSER passthrough, decoupling) plus a `selector` and an ICAPE3 wrapper
+    - Automatic DFX floorplanning (`dfx_auto_floorplanning.tcl`); PR region resource reports and an SVG floorplan diagram are written to the report directory
+    - Partial bitstreams are copied into `<output_dir>/bitfile/partial_bitstreams`
+    - The Pynq driver can drive multi-DNN accelerators, including DFX reconfiguration and tUSER-based round-robin scheduling
+- Multi-FPGA inference support (#23)
+    - Initial communication backend: [AuroraFlow](https://github.com/pc2/AuroraFlow) (new dependency)
+    - See [MultiFPGA README](src/finn/transformation/fpgadataflow/multifpga/README.md) for usage and development information
 - Added distributed simulation based FIFO sizing and a new performance simulation (#187)
+- Error lines from Vivado logs are printed to console in case of failing synthesis runs (#190)
+- Added a `CHANGELOG.md` file
+- Added `CITATION.cff` file
 
-#### Changed
-- Vivado Stitch Projects have names specifying the nodes they contain if there are 3 or fewer nodes in the project
-- Split the monolithic `convert_to_hw_layers.py` into a `convert_to_hw` package with one file per operator for better maintainability
+### Changed
+- Modular creation of linker files (New class: `VitisLinkConfig`) (formerly #27, now #23)
+    - Linker config files are now changed using `Transformation`s as well
+    - Linker config and runner scripts are now provided as Jinja2 templates
+- New step: `step_prepare_synthesis` (#23)
+    - (Vitis Alveo) Adds IODMAs, creates StreamingDataflowPartitions, stitches IPs, generates XOs.
+    - (Zynq) Nothing changed.
+    - New build path: `... -> step_prepare_synthesis -> step_synthesize_bitfile -> ...`
+- Vivado Stitch Projects have names specifying the nodes they contain if there are 3 or fewer nodes in the project (#190)
+- The dependency definition file can now be found at `src/finn/interface/external_dependencies.yaml` instead of the repository root (#23, #216)
+- Split the monolithic `convert_to_hw_layers.py` into a `convert_to_hw` package with one file per operator for better maintainability (#220)
+- Zynq builds now generate the accelerator clock with a PLL (Clocking Wizard) instead of the processing system, for exact and static clock generation
+- The instrumentation core now supports `tLast` generation and simple `tUSER`-based scheduling, and computes the running average in software to reduce pipeline depth
 
 #### Removed
 - Removed old simulation based FIFO sizing, superseded by the new distributed simulation based sizing (#187)
 
 #### Fixes
+- Fixed incorrect clock frequency reporting in the Pynq driver
 - Fixed warnings raised during streamlining and added more descriptive details to reorder and absorb warnings (#207)
+- Fixed that `wget` timeouts would crash FINN+, even if dependencies were only checked, not updated (#23, #208)
 
 
 ## 1.4.0 - 03.03.2026
-#### Added
+### Added
 - Reworked user interface, settings and dependency management (#118)
     - Various new CLI commands. Documentation can be found in PR #118 or the Wiki or by typing `finn --help`
     - Added new method to fetch custom dependencies (`external_dependencies.yaml`)
@@ -46,7 +72,7 @@ Planned release: 1.5.0.
 - (Xilinx) Support for Relu activation as elementwise operator (Xilinx#1479)
 
 
-#### Changed
+### Changed
 - Build flow configs are not allowed to contain unknown keys anymore (#118)
 - By default _all_ `DataflowOutputType` will be produced now (#118)
 - Updated QONNX to version `1.0.0` and moved into project dependencies
@@ -59,13 +85,13 @@ Planned release: 1.5.0.
 - (Xilinx) Generalized transpose and reshape support (Xilinx#1419)
 
 
-#### Deprecated
+### Deprecated
 - Mostly deprecated use of environment variables in #118
 
-#### Removed
+### Removed
 - Removed unused parts of `build_dataflow.py`
 
-#### Fixes
+### Fixes
 - Fix possibility to neither specify a folding config nor a target FPS (#118)
 - Fixed wrong behaviour when specifying `output_dir: ~` in the build flow config
 - Fixed that just-installed packages were not immediately available

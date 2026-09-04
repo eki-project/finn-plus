@@ -73,7 +73,7 @@ from finn.transformation.streamline.absorb import AbsorbConsecutiveTransposes
 
 # FINN Streamlining transformations still required during hardware conversion
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNInternalError, FINNUserError
 
 if TYPE_CHECKING:
     from finn.custom_op.fpgadataflow.hls.attention_hls import ScaledDotProductAttention_hls
@@ -349,7 +349,7 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
             del config[node.name]
 
     # Create/Open a YAML file to store the configuration for later reuse
-    with Path(cast("str", cfg.output_dir) + "/auto_folding_config.yaml").open("w") as file:
+    with (Path(cfg.output_dir) / "auto_folding_config.yaml").open("w") as file:
         # Store the configuration dictionary as YAML code
         yaml.safe_dump(config, file)
 
@@ -364,7 +364,8 @@ def step_set_folding(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
 
         for _index, node in enumerate(model.graph.node):
             # A node should not be named "defaults"...
-            assert node.name != "defaults", "Node has reserved name 'defaults'"
+            if not (node.name != "defaults"):
+                raise FINNInternalError("Node has reserved name 'defaults'")
             # Convert this to the custom-op instance for easy access to node
             # attributes
             inst = getCustomOp(node)

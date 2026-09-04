@@ -824,13 +824,14 @@ class ElementwiseBinaryOperation_hls(
         # add streamer if needed
         mem_mode = self.get_nodeattr("mem_mode")
         mlo = self.get_nodeattr("mlo_max_iter")
+        bodies = cast("int", self.get_nodeattr("bodies"))
         lhs_decoupled = self.lhs_style == "const" and mem_mode == "internal_decoupled"
         rhs_decoupled = (self.rhs_style == "const" and mem_mode == "internal_decoupled") or (
             self.rhs_style == "input" and mlo
         )
 
-        # lhs_decoupled XOR rhs_decoupled
-        if lhs_decoupled == rhs_decoupled:
+        # lhs_decoupled XOR rhs_decoupled, or a multi-DNN body needs its own hierarchy
+        if lhs_decoupled == rhs_decoupled and not bodies:
             # base class impl sufficient
             return super().code_generation_ipi()
 

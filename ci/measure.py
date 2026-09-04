@@ -1,23 +1,22 @@
 """CI measurement script for FINN deployment packages."""
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 
-def delete_dir_contents(dir):
+def delete_dir_contents(directory: str | Path) -> None:
     """Delete all contents of a directory."""
-    for filename in os.listdir(dir):
-        file_path = os.path.join(dir, filename)
+    for file_path in Path(directory).iterdir():
         try:
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
+            if file_path.is_file() or file_path.is_symlink():
+                file_path.unlink()
+            elif file_path.is_dir():
                 shutil.rmtree(file_path)
-        except Exception as e:
-            print("ERROR: Failed to delete %s. Reason: %s" % (file_path, e))
+        except Exception as e:  # noqa: PERF203  (one failure must not stop the cleanup)
+            print(f"ERROR: Failed to delete {file_path}. Reason: {e}")
 
 
 if __name__ == "__main__":
@@ -34,30 +33,27 @@ if __name__ == "__main__":
     print("SCANNING DEPLOYMENT PACKAGES IN BUILD ARTIFACTS..")
     # Find deployment packages from artifacts
     if args.followup:
-        artifacts_in_dir = os.path.join("build_artifacts_followup", "runs_output")
-        artifacts_out_dir = os.path.join("measurement_artifacts_followup", "runs_output")
+        artifacts_in_dir = Path("build_artifacts_followup") / "runs_output"
+        artifacts_out_dir = Path("measurement_artifacts_followup") / "runs_output"
     else:
-        artifacts_in_dir = os.path.join("build_artifacts", "runs_output")
-        artifacts_out_dir = os.path.join("measurement_artifacts", "runs_output")
-    for run in os.listdir(artifacts_in_dir):
-        run_in_dir = os.path.join(artifacts_in_dir, run)
-        run_out_dir = os.path.join(artifacts_out_dir, run)
-        reports_dir = os.path.join(run_out_dir, "reports")
-        deploy_archive = os.path.join(run_in_dir, "deploy.zip")
+        artifacts_in_dir = Path("build_artifacts") / "runs_output"
+        artifacts_out_dir = Path("measurement_artifacts") / "runs_output"
+    for run_in_dir in artifacts_in_dir.iterdir():
+        run = run_in_dir.name
+        run_out_dir = artifacts_out_dir / run
+        reports_dir = run_out_dir / "reports"
+        deploy_archive = run_in_dir / "deploy.zip"
         extract_dir = "measurement"
-        if os.path.isfile(deploy_archive):
-            print("FOUND DEPLOYMENT PACKAGE IN %s, EXTRACTING.." % run_in_dir)
+        if deploy_archive.is_file():
+            print(f"FOUND DEPLOYMENT PACKAGE IN {run_in_dir}, EXTRACTING..")
 
             # Extract to temporary dir
-            os.makedirs(extract_dir, exist_ok=True)
+            Path(extract_dir).mkdir(parents=True, exist_ok=True)
             delete_dir_contents(extract_dir)
             shutil.unpack_archive(deploy_archive, extract_dir)
 
             # Prefix stdout to make it easier to identify the run in the console output
-            print(
-                "LAUNCHING MEASUREMENT MANAGER FOR DEPLOY PACKAGE: %s"
-                % os.path.basename(run_in_dir)
-            )
+            print(f"LAUNCHING MEASUREMENT MANAGER FOR DEPLOY PACKAGE: {run_in_dir.name}")
             sys.stdout.flush()
 
             # Launch experiment manager with generated config
@@ -65,7 +61,7 @@ if __name__ == "__main__":
                 [
                     sys.executable,
                     "ci/power_measurement/experiment_manager.py",
-                    os.path.join(extract_dir, "driver/settings.json"),
+                    str(Path(extract_dir) / "driver/settings.json"),
                     extract_dir,
                 ],
                 capture_output=True,
@@ -73,17 +69,25 @@ if __name__ == "__main__":
             )
 
             for line in result.stdout.splitlines():
-                print(f"[{os.path.basename(run_in_dir)}] {line}")
+                print(f"[{run_in_dir.name}] {line}")
             for line in result.stderr.splitlines():
-                print(f"[{os.path.basename(run_in_dir)}] {line}")
+                print(f"[{run_in_dir.name}] {line}")
             if result.returncode != 0:
-                print("ERROR: MEASUREMENT MANAGER NON-ZERO EXIT CODE!")
+                print(f"ERROR: MEASUREMENT MANAGER NON-ZERO EXIT CODE ({result.returncode})!")
                 exit_code = 1
             else:
                 print("MEASUREMENT MANAGER COMPLETED SUCCESSFULLY.")
 
-            report_path = os.path.join(extract_dir, "report")
-            shutil.copytree(report_path, reports_dir, dirs_exist_ok=True)
+            # Collect whatever reports were produced. A failed measurement may not have
+            # written any, which must not abort the remaining runs or discard the
+            # artifacts of the runs that did succeed.
+            report_path = Path(extract_dir) / "report"
+            if report_path.is_dir():
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(report_path, reports_dir, dirs_exist_ok=True)
+            else:
+                print(f"WARNING: No report directory found in {run}, nothing to collect.")
+                exit_code = 1
 
             delete_dir_contents(extract_dir)
 

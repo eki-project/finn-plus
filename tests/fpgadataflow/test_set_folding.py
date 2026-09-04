@@ -26,11 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Tests for the SetFolding transformation."""
+
 import pytest
 
 import numpy as np
 from onnx import TensorProto, helper
-from qonnx.core.datatype import DataType
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
@@ -42,12 +44,19 @@ from finn.transformation.fpgadataflow.set_folding import SetFolding
 from tests.testing_util.test import load_test_checkpoint_or_skip
 
 
-def make_multi_fclayer_model(ch, wdt, adt, tdt, nnodes):
-    W = np.random.randint(wdt.min(), wdt.max() + 1, size=(ch, ch))
-    W = W.astype(np.float32)
+def make_multi_fclayer_model(
+    ch: int, wdt: BaseDataType, adt: BaseDataType, tdt: BaseDataType, nnodes: int
+) -> ModelWrapper:
+    """Build a chain of ``nnodes`` MVAU_hls layers with random weights and thresholds."""
+    # NPY002: the legacy global RNG is what tests/conftest.py seeds per test item
+    # (np.random.seed(finn_test_seed)); a np.random.Generator would not be seeded.
+    weights = np.random.randint(wdt.min(), wdt.max() + 1, size=(ch, ch))  # noqa: NPY002
+    weights = weights.astype(np.float32)
 
-    T = np.random.randint(tdt.min(), tdt.max() + 1, size=(ch, 2 ** adt.bitwidth() - 1))
-    T = T.astype(np.float32)
+    thresholds = np.random.randint(  # noqa: NPY002
+        tdt.min(), tdt.max() + 1, size=(ch, 2 ** adt.bitwidth() - 1)
+    )
+    thresholds = thresholds.astype(np.float32)
 
     tensors = []
     tensors.append(helper.make_tensor_value_info("inp", TensorProto.FLOAT, [1, ch]))
@@ -56,11 +65,11 @@ def make_multi_fclayer_model(ch, wdt, adt, tdt, nnodes):
         tensors.append(inter)
     tensors.append(helper.make_tensor_value_info("outp", TensorProto.FLOAT, [1, ch]))
 
-    FCLayer_nodes = []
+    fclayer_nodes = []
     for i in range(nnodes):
         pe = 1
         simd = 1
-        FCLayer_nodes += [
+        fclayer_nodes += [
             helper.make_node(
                 "MVAU_hls",
                 [tensors[i].name, "weights_" + str(i), "thresh_" + str(i)],
@@ -81,7 +90,7 @@ def make_multi_fclayer_model(ch, wdt, adt, tdt, nnodes):
         ]
 
     graph = helper.make_graph(
-        nodes=FCLayer_nodes,
+        nodes=fclayer_nodes,
         name="fclayer_graph",
         inputs=[tensors[0]],
         outputs=[tensors[-1]],
@@ -96,8 +105,8 @@ def make_multi_fclayer_model(ch, wdt, adt, tdt, nnodes):
     for i in range(1, nnodes + 1):
         if tensors[i].name != "outp":
             model.graph.value_info.append(tensors[i])
-        model.set_initializer("weights_" + str(i - 1), W)
-        model.set_initializer("thresh_" + str(i - 1), T)
+        model.set_initializer("weights_" + str(i - 1), weights)
+        model.set_initializer("thresh_" + str(i - 1), thresholds)
         model.set_tensor_datatype("weights_" + str(i - 1), wdt)
         model.set_tensor_datatype("thresh_" + str(i - 1), tdt)
 
@@ -109,7 +118,8 @@ def make_multi_fclayer_model(ch, wdt, adt, tdt, nnodes):
 # target chip or board
 @pytest.mark.parametrize("platform", ["Pynq-Z1", "Ultra96", "U200"])
 @pytest.mark.fpgadataflow
-def test_set_folding(target_fps, platform):
+def test_set_folding(target_fps: int, platform: str) -> None:
+    """Check that SetFolding meets the target cycles per frame on each platform."""
     model = make_multi_fclayer_model(128, DataType["INT4"], DataType["INT2"], DataType["INT16"], 5)
 
     model = model.transform(GiveUniqueNodeNames())
@@ -126,7 +136,7 @@ def test_set_folding(target_fps, platform):
     exp_cycles_dict = dataflow_model.analysis(exp_cycles_per_layer)
     achieved_cycles_per_frame = max(exp_cycles_dict.values())
 
-    min_cycles = dict()
+    min_cycles = {}
     min_cycles["Pynq-Z1"] = 128
     min_cycles["Ultra96"] = 64
     min_cycles["U200"] = 1

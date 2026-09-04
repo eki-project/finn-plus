@@ -32,7 +32,6 @@ This module implements the MVAU operation for FPGA deployment, which performs
 matrix-vector multiplication optionally followed by activation/thresholding.
 Supports various memory modes, parallelization strategies, and quantized datatypes.
 """
-
 import math
 import numpy as np
 import qonnx.custom_op.general.xnorpopcount as xp
@@ -384,14 +383,14 @@ class MVAU(HWCustomOp):
     def _require_mh_pe(self) -> None:
         """Raise if MH is not divisible by PE."""
         if self.mh % self.pe != 0:
-            raise FINNInternalError(
+            raise FINNUserError(
                 f"{self.onnx_node.name}: MH ({self.mh}) must be divisible by PE ({self.pe})"
             )
 
     def _require_mw_simd(self) -> None:
         """Raise if MW is not divisible by SIMD."""
         if self.mw % self.simd != 0:
-            raise FINNInternalError(
+            raise FINNUserError(
                 f"{self.onnx_node.name}: MW ({self.mw}) must be divisible by SIMD ({self.simd})"
             )
 

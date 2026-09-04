@@ -72,6 +72,7 @@ class StreamingDataflowPartition(CustomOp):
             "mem_port": ("s", False, ""),
             "instance_name": ("s", False, ""),
             "return_full_exec_context": ("i", False, 0),
+            "network_connections": ("strings", False, []),
         }
 
     def make_shape_compatible_op(self, model: ModelWrapper) -> NodeProto:  # noqa: ARG002

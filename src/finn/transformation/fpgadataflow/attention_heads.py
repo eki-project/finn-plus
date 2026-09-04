@@ -34,6 +34,7 @@ from qonnx.util.basic import get_by_name, remove_by_name
 
 # Utility function for transforming ONNX graphs
 from finn.transformation.util import is_reshape_transpose, is_transpose_reshape, op_types
+from finn.util.exception import FINNInternalError
 
 # Output warning messages
 from finn.util.logging import log
@@ -106,8 +107,12 @@ class InferMultiHeads(Transformation):
 
                 # The intermediate shape must be the same as specified as the
                 # second input to the reshape operation
-                assert (model.get_tensor_shape(mid)
-                        == model.get_initializer(node.input[1])).all()
+                if not (
+                    (model.get_tensor_shape(mid) == model.get_initializer(node.input[1])).all()
+                ):
+                    raise FINNInternalError(
+                        "Reshape target shape does not match the transposed tensor shape"
+                    )
                 # Expected layout after reshape is "head last"
                 _, heads, _ = model.get_tensor_shape(mid)
 
@@ -149,7 +154,7 @@ class InferMultiHeads(Transformation):
                     maybe_mid = mid
                     # Construct a new Transpose with attributes inferred from
                     # the detected graph patter
-                    new_transpose = oh.make_node(**{
+                    new_transpose = oh.make_node(**{  # noqa: PIE804
                         "op_type": "Transpose",
                         # Named inputs extracted from the graph pattern
                         "inputs": [maybe_mid],
@@ -272,8 +277,10 @@ class InferMultiHeads(Transformation):
 
                 # The output of the reshape must be the same as specified as the
                 # second input to the reshape operation
-                assert (out_shape
-                        == model.get_initializer(reshape.input[1])).all()
+                if not ((out_shape == model.get_initializer(reshape.input[1])).all()):
+                    raise FINNInternalError(
+                        "Reshape target shape does not match the expected head-last layout"
+                    )
 
                 # The final output shape must match the expectation of
                 # reintegrating the heads back into the embeddings
@@ -404,15 +411,15 @@ class MoveSplitMultiHeadsPastMultiThreshold(Transformation):
                 thresholds = model.get_initializer(thresholds_node.input[1])
                 # This is indeed an error, no way to recover from this, so
                 # assertion is fine
-                assert thresholds is not None, \
-                    f"Missing threshold tensor for {thresholds_node.name}"
+                if not (thresholds is not None):
+                    raise FINNInternalError(f"Missing threshold tensor for {thresholds_node.name}")
 
                 # The slice node should have an attribute specifying the number
                 # of heads
                 heads = get_by_name(node.attribute, "heads")
                 # Heads must be present, otherwise this is an errr
-                assert heads is not None, \
-                    f"Missing number of heads for {node.name}"
+                if not (heads is not None):
+                    raise FINNInternalError(f"Missing number of heads for {node.name}")
                 # Convert heads attribute proto to integer
                 heads = heads.i
 
@@ -526,15 +533,15 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                 thresholds = model.get_initializer(thresholds_node.input[1])
                 # This is indeed an error, no way to recover from this, so
                 # assertion is fine
-                assert thresholds is not None, \
-                    f"Missing threshold tensor for {thresholds_node.name}"
+                if not (thresholds is not None):
+                    raise FINNInternalError(f"Missing threshold tensor for {thresholds_node.name}")
 
                 # The merge node should have an attribute specifying the number
                 # of heads
                 heads = get_by_name(node.attribute, "heads")
                 # Heads must be present, otherwise this is an errr
-                assert heads is not None, \
-                    f"Missing number of heads for {node.name}"
+                if not (heads is not None):
+                    raise FINNInternalError(f"Missing number of heads for {node.name}")
                 # Convert heads attribute proto to integer
                 heads = heads.i
 
@@ -678,8 +685,10 @@ class UnrollMultiHeadAttention(Transformation):
                 for n in [split0, split1, split2, merge0]:
                     # All heads must match, otherwise this is a failure from
                     # which we cannot recover
-                    assert get_by_name(n.attribute, "heads").i == heads, \
-                        f"Differing number of heads at {node.name} and {n.name}"
+                    if not (get_by_name(n.attribute, "heads").i == heads):
+                        raise FINNInternalError(
+                            f"Differing number of heads at {node.name} and {n.name}"
+                        )
                     # Remove the original node from the graph
                     graph.node.remove(n)
 
@@ -865,4 +874,77 @@ class UnrollMultiHeadAttention(Transformation):
         model = model.transform(GiveUniqueParameterTensors())
         # Return the transformed model and indicate whether the graph actually
         # has been transformed
+        return model, graph_modified
+
+
+class InferSplitIntoSplitMultiHeads(Transformation):
+    """Infer multi-head split layers from ONNX Split nodes operating on the last axis."""
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Replace eligible Split nodes with SplitMultiHeads HW nodes."""
+        graph = model.graph
+        graph_modified = False
+        for index, node in enumerate(graph.node):
+            if node.op_type != "Split":
+                continue
+            split_param = node.input[1]
+            if model.get_initializer(split_param) is None:
+                log.warning("Split param not constant, skipping InferSplitLayer()")
+                continue
+            axis = get_by_name(node.attribute, "axis")
+            inp = node.input[0]
+            ishape = model.get_tensor_shape(inp)
+            if (axis is None) or (ishape is None):
+                continue
+            axis = axis.i
+            last_axis = len(ishape) - 1
+            if (axis != -1) and (axis != last_axis):
+                log.warning(
+                    "SplitMultiHeads supports only last axis, "
+                    "skipping InferSplitIntoSplitMultiHeads()"
+                )
+                continue
+
+            heads = len(node.output)
+            num_elems = model.get_tensor_shape(inp)[-1]
+
+            if num_elems % heads != 0:
+                log.warning(
+                    "SplitMultiHeads supports only uniform splits, "
+                    "skipping InferSplitIntoSplitMultiHeads()"
+                )
+                continue
+
+            if len(node.input) > 1 and node.input[1] != "":
+                split_sizes = model.get_initializer(node.input[1])
+                if split_sizes is not None and not all(
+                    s == num_elems // heads for s in split_sizes
+                ):
+                    log.warning(
+                        "SplitMultiHeads supports only uniform splits, "
+                        "skipping InferSplitIntoSplitMultiHeads()"
+                    )
+                    continue
+
+            num_inputs = list(model.get_tensor_shape(inp)[:-1])
+
+            new_node = oh.make_node(
+                op_type="SplitMultiHeads",
+                domain="finn.custom_op.fpgadataflow",
+                backend="fpgadataflow",
+                inputs=[inp],
+                outputs=list(node.output),
+                name=f"SplitMultiHeads_{node.name}",
+                heads=heads,
+                packed=False,  # We want multiple outputs
+                dtype=model.get_tensor_datatype(inp).name,
+                num_elems=num_elems,
+                num_inputs=num_inputs,
+            )
+
+            graph.node.insert(index, new_node)
+            graph.node.remove(node)
+            graph_modified = True
+            break
+        model = model.transform(InferShapes())
         return model, graph_modified

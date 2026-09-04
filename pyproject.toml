@@ -25,7 +25,7 @@ include = [
     {path = "src/finn/util/vivado_scripts/*.sh", format = ["sdist", "wheel"]},
     {path = "src/finn/util/vivado_scripts/*.tcl", format = ["sdist", "wheel"]},
     {path = "src/finn/util/vivado_scripts/*.xdc", format = ["sdist", "wheel"]},
-    {path = "external_dependencies.yaml", format = ["sdist", "wheel"]}
+    {path = "src/finn/interface/external_dependencies.yaml", format = ["sdist", "wheel"]}
 ]
 version = "0.0.0"
 
@@ -39,51 +39,50 @@ enable = true
 finn = "finn.interface.run_finn:main"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.12"
+python = ">=3.11,<3.14.1 || >3.14.1,<3.15"
 pybind11 = "3.0.1"                              # pybind11==3.0.1 already for FIFO sim rework, after rework remove module load
 bitstring = "~4.3.1"
-numpy = "1.26.4"  # numpy<=1.26.4 required by brevitas
+numpy = "~2.4.6"
 # Cannot upgrade onnx and onnxruntime any further. For now this seems to be the
 # last compatible pair which is also consistent with qonnx.
 # Upgrading onnx will result in model IR version not supported by onnxruntime
 # Upgrading onnxruntime fixes some MaxPool edge case which however requires onnx
 # to be upgraded to produce a consistent model, but this in turn cannot be done
 # due to the model IR version support issue...
-scipy = "~1.15.0"
-onnx = "1.17.0"
-onnxruntime = "1.20.1"
-onnxscript = ">=0.6.2"                                # TODO: the onnx-passes installation will overwrite this version
+scipy = "~1.17.0"
+onnx = "1.21.0"
+onnxruntime = "1.25.1"
+onnxscript = ">=0.7.0"
+onnx-ir = ">=0.1.15"
+onnx-passes = ">=0.4.0"
 protobuf = "5.29.6"
 pyyaml = "~6.0.2"
-mip = "~1.13.0"
+mip = "1.17.0"
 cmake = "~4.0.3"
-brevitas = "0.12.1"
+brevitas = "0.13.0"
 qonnx = "1.0.0"
-
+pandas = "~2.3.1"
 termcolor = "^2.5.0"
 rich = "^13.9.4"
 click = "^8.1.8"
-onnxoptimizer = "^0.3.13"
+onnxoptimizer = "^0.4.2"
 pydantic = ">2.0"
 mashumaro = { extras = ["yaml"], version = "^3.15" }
 
 finn-plus-tests = { version = "*", optional = true }
-finn-plus-notebooks = { version = "*", optional = true }
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "~4.2.0"
 finn-plus-tests = { path = "./tests", develop = true }
-finn-plus-notebooks = { path = "./notebooks", develop = true }
 pygments = "~2.19.2"
-torch = "~2.7.1"                                      # required by CI
-torchvision = "~0.22.1"                               # required by CI
-dvc = { version = " ~3.66.0", extras = ["webdav"] }   # required by CI
+torch = "~2.12.1"
+torchvision = "~0.27.0"                            # required by CI
+dvc = { version = " ~3.67.0", extras = ["webdav"] }   # required by CI
 dvclive = { version = "~3.49.0", extras = ["image"] } # required by CI
 
 [tool.poetry.extras]
 tests = ["finn-plus-tests"]
-notebooks = ["finn-plus-notebooks"]
-all = ["finn-plus-tests", "finn-plus-notebooks"]
+all = ["finn-plus-tests"]
 
 
 [build-system]
@@ -104,16 +103,20 @@ markers = [
     "transform: mark tests that test transformations (before hls layers)",
     "fpgadataflow: mark tests related to hls layers",
     "end2end: mark tests that run the end2end flow",
-    "notebooks: mark tests that execute all Jupyter notebooks",
     "sanity_bnn: mark tests that execute the sanity BNN test",
     "bnn_u250: mark tests that execute U250 BNN tests",
     "bnn_kv260: mark tests that execute KV260 BNN tests",
     "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
     "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
     "analysis: mark tests that run analysis tests",
+    "multifpga: mark tests that run multifpga tests"
 ]
 norecursedirs = ["dist", "build", ".tox"]
 testpaths = "tests"
+filterwarnings = [
+    'ignore:Deprecated call to `pkg_resources:DeprecationWarning',
+    'ignore:pkg_resources is deprecated:DeprecationWarning'
+]
 
 [tool.isort]
 line_length = 100

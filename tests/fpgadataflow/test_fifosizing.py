@@ -388,7 +388,23 @@ def test_fifosizing_linear(topology: Literal["tfc", "cnv"]) -> None:
 
     with (tmp_output_dir / "report/fifo_sizing.json").open() as f:
         fifo_sizing_report = json.load(f)
-    assert fifo_sizing_report == expected_fifos
+    assert fifo_sizing_report["fifo_depths"] == expected_fifos["fifo_depths"]
+    assert fifo_sizing_report["fifo_sizes_effective"] == expected_fifos["fifo_sizes"]
+    assert fifo_sizing_report["impl_style"] == expected_fifos["impl_style"]
+    assert fifo_sizing_report["ram_style"] == expected_fifos["ram_style"]
+    assert (
+        fifo_sizing_report["total_fifo_size_effective_kiB"] == expected_fifos["total_fifo_size_kiB"]
+    )
+    assert (
+        fifo_sizing_report["total_fifo_size_kiB"]
+        <= fifo_sizing_report["total_fifo_size_effective_kiB"]
+    )
+    for fifo_name, depth in fifo_sizing_report["fifo_depths"].items():
+        rounded_depth = ((depth + 31) // 32) * 32
+        assert (
+            fifo_sizing_report["fifo_sizes"][fifo_name] * rounded_depth
+            == fifo_sizing_report["fifo_sizes_effective"][fifo_name] * depth
+        )
     # now run the same build using the generated folding and FIFO config
     tmp_output_dir_cmp = fetch_test_model(topology)
     cfg_cmp = cfg

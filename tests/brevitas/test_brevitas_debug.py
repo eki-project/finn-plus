@@ -26,16 +26,18 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Test that Brevitas debug markers survive FINN-ONNX export and execution."""
+
 import pytest
 
 import brevitas.onnx as bo
 import numpy as np
 import onnx
 import onnx.numpy_helper as nph
-import os
 import torch
 from brevitas.export import export_qonnx
 from brevitas.quant_tensor import _unpack_quant_tensor
+from pathlib import Path
 from pkgutil import get_data
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
@@ -47,14 +49,36 @@ from tests.testing_util.test import get_test_model_trained
 
 
 @pytest.mark.brevitas_export
-@pytest.mark.parametrize("QONNX_FINN_conversion", [False, True])
-def test_brevitas_debug(QONNX_FINN_conversion):
+@pytest.mark.parametrize("qonnx_finn_conversion", [False, True])
+@pytest.mark.parametrize(
+    "dynamo",
+    [
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.xfail(
+                reason=(
+                    "Since torch>=2.9, export_qonnx() defaults to the newer torch.export "
+                    "(dynamo) based exporter, but Brevitas' DebugMarker mechanism (which this "
+                    "test relies on to compare per-layer tensors) is implemented as a custom "
+                    "autograd Function with a `symbolic()` method -- a mechanism the dynamo "
+                    "exporter does not support (ONNXDynamoExportMixin.custom_fns is empty). "
+                    "Forward hooks still populate dbg_hook.values, but no DebugMarker nodes "
+                    "end up in the exported ONNX graph at all, so names_common is always empty "
+                    "regardless of qonnx_finn_conversion."
+                )
+            ),
+        ),
+    ],
+)
+def test_brevitas_debug(dynamo: bool, qonnx_finn_conversion: bool) -> None:
+    """Check that DebugMarker tensors match between Brevitas and FINN-ONNX execution."""
     build_dir = make_build_dir("test_brevitas_debug")
-    finn_onnx = os.path.join(build_dir, "test_brevitas_debug.onnx")
+    finn_onnx = str(Path(build_dir) / "test_brevitas_debug.onnx")
     fc = get_test_model_trained("TFC", 2, 2)
     ishape = (1, 1, 28, 28)
     dbg_hook = bo.enable_debug(fc, proxy_level=True)
-    export_qonnx(fc, torch.randn(ishape), finn_onnx)
+    export_qonnx(fc, torch.randn(ishape), finn_onnx, dynamo=dynamo)
     # DebugMarkers have the brevitas.onnx domain, so that needs adjusting
     model = ModelWrapper(finn_onnx)
     dbg_nodes = model.get_nodes_by_op_type("DebugMarker")
@@ -62,7 +86,7 @@ def test_brevitas_debug(QONNX_FINN_conversion):
         dbg_node.domain = "qonnx.custom_op.general"
     model.save(finn_onnx)
     qonnx_cleanup(finn_onnx, out_file=finn_onnx)
-    if QONNX_FINN_conversion:
+    if qonnx_finn_conversion:
         model = ModelWrapper(finn_onnx)
         model = model.transform(ConvertQONNXtoFINN())
         model.save(finn_onnx)
@@ -88,7 +112,7 @@ def test_brevitas_debug(QONNX_FINN_conversion):
     names_common = names_brevitas.intersection(names_finn)
     # The different exports return debug markers in different numbers and places
     print(len(names_common))
-    if not QONNX_FINN_conversion:
+    if not qonnx_finn_conversion:
         assert len(names_common) == 12
     else:
         assert len(names_common) == 8

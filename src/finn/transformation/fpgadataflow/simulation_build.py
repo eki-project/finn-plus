@@ -661,14 +661,16 @@ class SimulationBuilder:
         for top_inp in model.graph.input:
             iname = top_inp.name
             first_node = model.find_consumer(iname)
-            assert first_node is not None, "Failed to find consumer for " + iname
+            if not (first_node is not None):
+                raise FINNInternalError("Failed to find consumer for " + iname)
             top_ind = list(first_node.input).index(iname)
             ishape_folded = getHWCustomOp(first_node).get_folded_input_shape(ind=top_ind)
             instream_iters.append(int(np.prod(ishape_folded[:-1])))
         for top_out in model.graph.output:
             oname = top_out.name
             last_node = model.find_producer(oname)
-            assert last_node is not None, "Failed to find producer for " + oname
+            if not (last_node is not None):
+                raise FINNInternalError("Failed to find producer for " + oname)
             top_ind = list(last_node.output).index(oname)
             oshape_folded = getHWCustomOp(last_node).get_folded_output_shape(ind=top_ind)
             outstream_iters.append(int(np.prod(oshape_folded[:-1])))
@@ -1315,6 +1317,21 @@ class BuildSimulation(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build / compile the model. Modifies the model."""
         self.model = model
+        # NodeContainer nodes cannot be simulated node-by-node: their block design is only
+        # assembled by NodeContainer.code_generation_ipi() when the surrounding stitched IP
+        # is built, so the synthetic interfaces they report (e.g. the selectable-weights
+        # "s_axis_tap") do not exist in a single-node stitch and Vivado aborts with a
+        # confusing "'set_property' expects at least one object" further down the line.
+        nodecontainers = [n.name for n in model.graph.node if n.op_type == "NodeContainer"]
+        if nodecontainers:
+            raise FINNUserError(
+                "Simulation-based FIFO sizing and rtlsim performance measurement do not "
+                "support multi-DNN NodeContainer nodes yet, but the model contains "
+                f"{len(nodecontainers)} of them (e.g. {nodecontainers[0]}). Remove "
+                "step_measure_rtlsim_performance from the multi-DNN step list and either "
+                "set auto_fifo_depths to False with a fifo_config_file or use the "
+                "force_minimal_fifos auto_fifo_strategy."
+            )
         sim_comm_mode = (
             cast("str", self.model.get_metadata_prop("sim_comm_mode") or "shm")
         ).lower()
@@ -1442,8 +1459,23 @@ class BuildSimulation(Transformation):
         self.model = self.model.transform(GiveUniqueNodeNames())
         old_input_names = [i.name for i in self.model.graph.input]
         self.model = self.model.transform(GiveReadableTensorNames())
-        for old_name, node in zip(old_input_names, self.model.graph.input, strict=True):
-            self.model.rename_tensor(node.name, old_name)
+        # Restore the original input tensor names after GiveReadableTensorNames().
+        # We cannot do this with a single pass of ModelWrapper.rename_tensor() (which
+        # looks up the tensor to rename by its *current* name): an old_name can
+        # coincidentally match another input's freshly assigned readable name (e.g.
+        # both are "global_in_1" -- once from an earlier readable-naming pass at an
+        # outer recursion level captured in old_input_names, and once freshly
+        # (re-)assigned by this GiveReadableTensorNames() call to a *different*
+        # input). Restoring one name at a time then creates a transient duplicate,
+        # and the name-based lookup for the next input raises "Found multiple
+        # get_by_name matches". Renaming through unique placeholder names first
+        # avoids this ambiguity, since placeholders can never collide with any
+        # existing or not-yet-restored name.
+        placeholder_names = [f"__prepare_model_tmp_{i}__" for i in range(len(old_input_names))]
+        for placeholder, node in zip(placeholder_names, self.model.graph.input, strict=True):
+            self.model.rename_tensor(node.name, placeholder)
+        for old_name, placeholder in zip(old_input_names, placeholder_names, strict=True):
+            self.model.rename_tensor(placeholder, old_name)
         log.info("[BuildSimulation] Preparing IPs...")
         self.model = self.model.transform(PrepareIP(self.fpgapart, self.clk_ns))
         log.info("[BuildSimulation] Synthesizing IPs...")

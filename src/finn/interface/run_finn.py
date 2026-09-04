@@ -376,7 +376,6 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "the current running installation and will thus not be saved into your (global) settings."
     )
     console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
-    console.print(f"[bold]FINN_NOTEBOOKS[/bold]: {settings.finn_notebooks}")
     console.print(f"[bold]FINN_RTLLIB[/bold]: {settings.finn_rtllib}")
     console.print(f"[bold]FINN_TESTS[/bold]: {settings.finn_tests}")
     console.print(
@@ -524,7 +523,17 @@ def prepare_finn(
     # finn.xsi transitively.
     configure_start_method()
 
-    finn.xsi.ensure_available()
+    try:
+        finn.xsi.ensure_available()
+    except FINNUserError:
+        error(
+            "XSI is not available. For details regarding this error, "
+            "check previous outputs and logs. "
+            "Also make sure that your current Python version matches "
+            "the version you installed FINN+ with. "
+            "Use 'finn deps update --force' to delete all dependencies and force a re-installation."
+        )
+        sys.exit(1)
 
     if "PYTHONPATH" not in os.environ:
         os.environ["PYTHONPATH"] = ""
@@ -584,7 +593,6 @@ def prepare_finn(
     # e.g., still used in templates.py
     os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
-    os.environ["FINN_NOTEBOOKS"] = resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = resolve_module_path("tests")
 
 
@@ -1031,24 +1039,25 @@ def bench(
 @click.option(
     "--variant",
     "-v",
-    help="Which test to execute (quick, quicktest_ci, full_ci, doctest)",
+    help=(
+        "Which test to execute (quick, quicktest_ci, full_ci, doctest, custom)."
+        "'custom' ignores all parameters expect for --args ..."
+    ),
     default="quick",
     show_default=True,
     type=click.Choice(["quick", "quicktest_ci", "full_ci", "custom", "doctest", "doctest"]),
 )
 @click.option(
-    "--name",
+    "--args",
     default="",
     required=False,
-    help="Define the test to run. Only usable in combination with --variant custom. "
-    "Can be passed the same syntax as pytest directly (my_test_module.py "
-    "| my_tests.py::TestClass::myTest | etc.)",
+    help="Arguments to pass to pytest. Only usable with '--variant custom'. ",
 )
 @click.option("--num-test-workers", "-t", default="auto", show_default=True)
 @batch
 def test(
     variant: str,
-    name: str,
+    args: str,
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     num_default_workers: int,
@@ -1091,7 +1100,7 @@ def test(
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
-    run_test(variant, num_test_workers, name)
+    run_test(variant, num_test_workers, args)
 
 
 @click.group(help="Dependency management")
@@ -1129,8 +1138,13 @@ def update(
         flow_config=Path(),
         **get_function_args(),
     )
-    if force and settings.finn_deps.exists():
-        shutil.rmtree(settings.finn_deps)
+    if force:
+        # Delete dependencies
+        if settings.finn_deps.exists():
+            shutil.rmtree(settings.finn_deps)
+        # Also delete xsi.so to force a re-build
+        xsi_so = finn.xsi._xsi_so_path()  # noqa
+        xsi_so.unlink(missing_ok=True)
     prepare_finn(settings, accept_defaults or batch, batch, create_build_dir=False)
 
 

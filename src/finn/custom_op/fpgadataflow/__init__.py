@@ -50,6 +50,7 @@ custom_op, register_custom_op = make_registry(CustomOp)
 # Imports below are for their registration side effects and must follow the
 # make_registry call above.
 
+import finn.custom_op.fpgadataflow.abstract.dnncontainer
 import finn.custom_op.fpgadataflow.abstract.shuffle
 import finn.custom_op.fpgadataflow.abstract.streamingdataflowpartition
 import finn.custom_op.fpgadataflow.base.attention

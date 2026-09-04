@@ -32,6 +32,8 @@ import numpy as np
 from abc import abstractmethod
 from numpy.typing import NDArray
 
+from finn.util.exception import FINNInternalError
+
 # contains the amount of available FPGA resources for several
 # Xilinx platforms, as well as certain resource limit guidelines
 # for creating designs that can achieve timing closure
@@ -83,6 +85,7 @@ class Platform:
         ddr_slr: list[int] | None = None,
         eth_slr: int = 0,
         eth_gbps: int = 0,
+        qsfp_slr: str | None = None,
         limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
         avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
     ) -> None:
@@ -98,6 +101,7 @@ class Platform:
         self.ndevices = ndevices
         self.hbm_slr = hbm_slr
         self.ddr_slr = ddr_slr
+        self.qsfp_slr = qsfp_slr
         # limits must be a np.array either of
         # the same shape as compute_resources
         # or broadcastable to it
@@ -223,7 +227,8 @@ class Platform:
 
     def map_device_to_slr(self, idx: int) -> tuple[int, int]:
         """Map a global SLR index to (local_slr, device_id)."""
-        assert idx <= self.nslr * self.ndevices
+        if not (idx <= self.nslr * self.ndevices):
+            raise FINNInternalError("SLR index exceeds the number of SLRs on the platform")
         return (idx % self.nslr, idx // self.nslr)
 
 
@@ -382,6 +387,7 @@ class Alveo_NxU50_Platform(Platform):
             hbm_slr=0,
             eth_slr=1,
             eth_gbps=100,
+            qsfp_slr="SLR1",
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -417,6 +423,7 @@ class Alveo_NxU200_Platform(Platform):
             ddr_slr=[0, 2],
             eth_slr=2,
             eth_gbps=100,
+            qsfp_slr="SLR2",
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -459,6 +466,7 @@ class Alveo_NxU250_Platform(Platform):
             ddr_slr=[0, 1, 2, 3],
             eth_slr=3,
             eth_gbps=100,
+            qsfp_slr="SLR2",
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -492,6 +500,7 @@ class Alveo_NxU280_Platform(Platform):
             hbm_slr=0,
             eth_slr=2,
             eth_gbps=100,
+            qsfp_slr="SLR2",
             limits=limits,
             avg_constraints=avg_constraints,
         )
@@ -530,6 +539,7 @@ class Alveo_NxU55C_Platform(Platform):
             hbm_slr=0,
             eth_slr=1,
             eth_gbps=100,
+            qsfp_slr="SLR1",
             limits=limits,
             avg_constraints=avg_constraints,
         )

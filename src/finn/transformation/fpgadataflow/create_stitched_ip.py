@@ -108,6 +108,7 @@ class CreateStitchedIP(Transformation):
         ip_name: str = "finn_design",
         vitis: bool = False,
         signature: list | None = None,
+        nodecontainer: bool = False,
         functional_simulation: bool = False,
     ) -> None:
         """Initialize CreateStitchedIP transformation.
@@ -118,6 +119,9 @@ class CreateStitchedIP(Transformation):
             ip_name: Name for the IP design
             vitis: Whether to target Vitis
             signature: Optional signature list [customer, application, version]
+            nodecontainer: Whether the stitched design is a NodeContainer body, in which
+                case the AXI stream interfaces keep their original names instead of being
+                renamed to the m_axis_<n>/s_axis_<n> scheme
             functional_simulation: Whether to generate functional simulation wrapper
         """
         if signature is None:
@@ -127,6 +131,7 @@ class CreateStitchedIP(Transformation):
         self.clk_ns = clk_ns
         self.ip_name = ip_name
         self.is_mlo = False
+        self.nodecontainer = nodecontainer
         self.vitis = vitis
         self.signature = signature
         self.functional_simulation = functional_simulation
@@ -340,20 +345,35 @@ class CreateStitchedIP(Transformation):
 
         # make output axis external
         for i in range(len(output_intf_names)):
-            if idx is not None and idx != i and node.op_type != "FINNLoop":
+            if (
+                idx is not None
+                and idx != i
+                and node.op_type != "FINNLoop"
+                and not self.nodecontainer
+            ):
                 continue
             output_intf_name = output_intf_names[i][0]
 
-            self.connect_cmds.extend(
-                [
-                    f"make_bd_intf_pins_external [get_bd_intf_pins {inst_name}/{output_intf_name}]",
-                    f"set_property name m_axis_{self.m_axis_idx} "
-                    f"[get_bd_intf_ports {output_intf_name}_0]",
-                ]
+            self.connect_cmds.append(
+                f"make_bd_intf_pins_external [get_bd_intf_pins {inst_name}/{output_intf_name}]"
             )
-
             self.has_m_axis = True
-            self.intf_names["m_axis"].append((f"m_axis_{self.m_axis_idx}", output_intf_names[i][1]))
+            if self.nodecontainer:
+                # NodeContainer bodies keep the original interface names
+                self.connect_cmds.append(
+                    f"set_property name {output_intf_name} "
+                    f"[get_bd_intf_ports {output_intf_name}_0]"
+                )
+                self.intf_names["m_axis"].append(output_intf_names[i])
+            else:
+                self.connect_cmds.append(
+                    f"set_property name m_axis_{self.m_axis_idx} "
+                    f"[get_bd_intf_ports {output_intf_name}_0]"
+                )
+                self.intf_names["m_axis"].append(
+                    (f"m_axis_{self.m_axis_idx}", output_intf_names[i][1])
+                )
+
             self.m_axis_idx += 1
 
     def connect_s_axis_external(self, node: "NodeProto", idx: int | None = None) -> None:
@@ -368,20 +388,34 @@ class CreateStitchedIP(Transformation):
 
         # make input axis external
         for i in range(len(input_intf_names)):
-            if idx is not None and idx != i and node.op_type != "FINNLoop":
+            if (
+                idx is not None
+                and idx != i
+                and node.op_type != "FINNLoop"
+                and not self.nodecontainer
+            ):
                 continue
             input_intf_name = input_intf_names[i][0]
 
-            self.connect_cmds.extend(
-                [
-                    f"make_bd_intf_pins_external [get_bd_intf_pins {inst_name}/{input_intf_name}]",
-                    f"set_property name s_axis_{self.s_axis_idx} "
-                    f"[get_bd_intf_ports {input_intf_name}_0]",
-                ]
+            self.connect_cmds.append(
+                f"make_bd_intf_pins_external [get_bd_intf_pins {inst_name}/{input_intf_name}]"
             )
-
             self.has_s_axis = True
-            self.intf_names["s_axis"].append((f"s_axis_{self.s_axis_idx}", input_intf_names[i][1]))
+            if self.nodecontainer:
+                # NodeContainer bodies keep the original interface names
+                self.connect_cmds.append(
+                    f"set_property name {input_intf_name} "
+                    f"[get_bd_intf_ports {input_intf_name}_0]"
+                )
+                self.intf_names["s_axis"].append(input_intf_names[i])
+            else:
+                self.connect_cmds.append(
+                    f"set_property name s_axis_{self.s_axis_idx} "
+                    f"[get_bd_intf_ports {input_intf_name}_0]"
+                )
+                self.intf_names["s_axis"].append(
+                    (f"s_axis_{self.s_axis_idx}", input_intf_names[i][1])
+                )
             self.s_axis_idx += 1
 
     def connect_ap_none_external(self, node: "NodeProto") -> None:
@@ -533,8 +567,10 @@ class CreateStitchedIP(Transformation):
         for graph_input in model.graph.input:
             inp_name = graph_input.name
             inp_cons = model.find_consumers(inp_name)
-            assert inp_cons != [], f"No consumer for input {inp_name}"
-            assert len(inp_cons) == 1, f"Multiple consumers for input {inp_name}"
+            if not (inp_cons != []):
+                raise FINNInternalError(f"No consumer for input {inp_name}")
+            if not (len(inp_cons) == 1):
+                raise FINNInternalError(f"Multiple consumers for input {inp_name}")
             node = inp_cons[0]
             node_inst = getCustomOp(node)
             for i in range(len(node.input)):
@@ -543,11 +579,32 @@ class CreateStitchedIP(Transformation):
         for output in model.graph.output:
             out_name = output.name
             node = model.find_producer(out_name)
-            assert node is not None, f"No producer for output {out_name}"
+            if not (node is not None):
+                raise FINNInternalError(f"No producer for output {out_name}")
             node_inst = getCustomOp(node)
             for i in range(len(node.output)):
                 if node.output[i] == out_name:
                     self.connect_m_axis_external(node, idx=i)
+
+        # when nodecontainer=True, make every s_axis_tap interface external
+        if not self.nodecontainer:
+            stap_id = 0
+            for node in model.graph.node:
+                node_inst = getCustomOp(node)
+                inst_name = node.name
+                s_axis_intf_names = node_inst.get_verilog_top_module_intf_names()["s_axis"]
+                for intf_name, width in s_axis_intf_names:
+                    if intf_name == "s_axis_tap":
+                        self.connect_cmds.append(
+                            f"make_bd_intf_pins_external [get_bd_intf_pins {inst_name}/{intf_name}]"
+                        )
+                        self.has_s_axis = True
+                        self.connect_cmds.append(
+                            f"set_property name {intf_name}_id_{stap_id} "
+                            f"[get_bd_intf_ports {intf_name}_0]"
+                        )
+                        self.intf_names["s_axis"].append((f"s_axis_tap_id_{stap_id}", width))
+                        stap_id += 1
 
         if self.signature:
             # extract number of checksum layer from graph
@@ -611,7 +668,8 @@ class CreateStitchedIP(Transformation):
 
         model.set_metadata_prop("wrapper_filename", wrapper_filename)
         num_workers = get_num_default_workers()
-        assert num_workers >= 0, "Number of workers must be nonnegative."
+        if not (num_workers >= 0):
+            raise FINNInternalError("Number of workers must be nonnegative.")
         if num_workers == 0:
             num_workers = mp.cpu_count()
 

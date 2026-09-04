@@ -1,4 +1,5 @@
 """Templates module initialization."""
+import jinja2
 from pathlib import Path
 
 
@@ -21,3 +22,12 @@ def load_codegen_template(name: str) -> str:
 
     """
     return (get_templates_folder() / "codegen" / name).read_text(encoding="utf-8")
+
+
+def get_jinja_environment(*args, **kwargs) -> jinja2.Environment:  # noqa
+    """Return a jinja2 templating environment with a loader prepared for this template
+    directory.
+    """
+    return jinja2.Environment(
+        *args, **kwargs, loader=jinja2.FileSystemLoader(Path(__file__).parent)
+    )

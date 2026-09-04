@@ -53,6 +53,7 @@ import finn.custom_op.fpgadataflow.rtl.fmpadding_rtl
 import finn.custom_op.fpgadataflow.rtl.inner_shuffle_rtl
 import finn.custom_op.fpgadataflow.rtl.layernorm_rtl
 import finn.custom_op.fpgadataflow.rtl.matrixvectoractivation_rtl
+import finn.custom_op.fpgadataflow.rtl.nodecontainer
 import finn.custom_op.fpgadataflow.rtl.removedatapath_rtl
 import finn.custom_op.fpgadataflow.rtl.requant_rtl
 import finn.custom_op.fpgadataflow.rtl.reshape_rtl

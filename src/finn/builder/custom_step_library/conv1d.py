@@ -12,7 +12,10 @@ from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation
 from finn.transformation.fpgadataflow.convert_to_hw.label_select import InferLabelSelectLayer
 
 
-def step_pre_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
+def step_pre_streamline(
+    model: ModelWrapper,
+    cfg: DataflowBuildConfig,  # noqa: ARG001
+) -> ModelWrapper:
     """Prepare a 1D convolutional model for streamlining.
 
     Converts 3D tensors to 4D and absorbs scalar mul/add operations into TopK.
@@ -22,8 +25,11 @@ def step_pre_streamline(model: ModelWrapper, cfg: DataflowBuildConfig):
     return model
 
 
-def step_convert_final_layers(model: ModelWrapper, cfg: DataflowBuildConfig):
-    """Convert the final channelwise-linear and label-select layers to hardware operations."""
+def step_convert_final_layers(
+    model: ModelWrapper,
+    cfg: DataflowBuildConfig,  # noqa: ARG001
+) -> ModelWrapper:
+    """Convert the final elementwise-binary and label-select layers to hardware operations."""
     model = model.transform(InferElementwiseBinaryOperation())
     model = model.transform(InferLabelSelectLayer())
     model = model.transform(GiveUniqueNodeNames())

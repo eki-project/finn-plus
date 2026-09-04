@@ -804,6 +804,10 @@ class VVAU(HWCustomOp):
     def get_verilog_top_module_intf_names(self) -> dict[str, list[tuple[str, int]] | list[str]]:
         """Get Verilog top module interface names."""
         intf_names = super().get_verilog_top_module_intf_names()
+        # I think it is a bug that in1_V is always generated.
+        # Sometimes its not needed (e.g. internal_decoupled)
+        s_axis = cast("list[tuple[str, int]]", intf_names["s_axis"])
+        intf_names["s_axis"] = [x for x in s_axis if x[0] != "in1_V"]
         mem_mode = self.mem_mode
         if mem_mode == "external":
             cast("list[tuple[str, int]]", intf_names["s_axis"]).append(

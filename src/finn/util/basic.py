@@ -53,10 +53,10 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.util.basic import gen_finn_dt_tensor
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from finn.util.data_packing import finnpy_to_packed_bytearray
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
@@ -69,7 +69,6 @@ up to 8191 are possible (Vivado 2022.2). This constant should be the one checked
 by all relevant transformations. If the default or max values ever change, this
 should be modified.
 """
-
 
 if TYPE_CHECKING:
     from onnx import NodeProto
@@ -128,6 +127,36 @@ part_map: dict[str, str] = {**pynq_part_map, **alveo_part_map}
 part_map["VEK280"] = "xcve2802-vsvh1760-2MP-e-S"
 part_map["VCK190"] = "xcvc1902-vsva2197-2MP-e-S"
 part_map["V80"] = "xcv80-lsva4737-2MHP-e-s"
+
+
+def get_metadata_prop_safe(model: ModelWrapper, key: str, custom_error: str | None = None) -> Any:
+    """Get a metadata prop from the model. If the key does not exist,
+    this raises a FINNInternalError, and thus never returns none.
+    """
+    data = model.get_metadata_prop(key)
+    if data is None:
+        if custom_error is None:
+            raise FINNInternalError(
+                f"Unable to read metadata prop '{key}' from model. No such key exists."
+            )
+        raise FINNInternalError(custom_error)
+    return data
+
+
+def get_metadata_prop_path(
+    model: ModelWrapper, key: str, must_exist: bool, custom_error: str | None = None
+) -> Path:
+    """Convenience function to load a path from a metadata prop. If the key does not exist,
+    a FINNInternalError is raised. If `must_exist` is set to True, the existence of
+    the file/directory is checked as well.
+    """  # noqa
+    path = Path(get_metadata_prop_safe(model, key, custom_error))
+    if must_exist and not path.exists():
+        raise FINNInternalError(
+            f"Path read from metadata prop {key} does "
+            f"not point to an existing file or directory."
+        )
+    return path
 
 
 def wait_for_file(
@@ -226,11 +255,7 @@ def get_vivado_root() -> str:
     try:
         return os.environ["XILINX_VIVADO"]
     except KeyError:
-        raise Exception(
-            """Environment variable XILINX_VIVADO must be set
-        correctly.
-        """
-        ) from None
+        raise FINNUserError("Environment variable XILINX_VIVADO must be set correctly.") from None
 
 
 def get_liveness_threshold_cycles() -> int:
@@ -246,11 +271,12 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
     try:
         build_dir = get_settings().finn_build_dir
     except KeyError as keyerror:
-        raise Exception("""Environment variable FINN_BUILD_DIR is missing!""") from keyerror
+        raise FINNUserError("Environment variable FINN_BUILD_DIR is missing!") from keyerror
 
     if not build_dir.exists():
-        raise Exception(
-            f"FINN_BUILD_DIR at {build_dir} does not exist! Make sure the FINN setup ran properly!"
+        raise FINNUserError(
+            f"FINN_BUILD_DIR at {build_dir} does not exist! "
+            f"Make sure the FINN setup ran properly!"
         )
 
     tmpdir = Path(tempfile.mkdtemp(prefix=prefix, dir=build_dir))
@@ -521,9 +547,8 @@ def get_driver_shapes(model: ModelWrapper) -> dict:
         if i_consumer.op_type != "StreamingDataflowPartition":
             raise FINNInternalError("Ensure CreateDataflowPartition called before driver creation.")
         first_df_model = ModelWrapper(cast("str", getCustomOp(i_consumer).get_nodeattr("model")))
-        assert (
-            first_df_model.graph.node[0].op_type == "IODMA_hls"
-        ), "First partition must hold input IODMA"
+        if not (first_df_model.graph.node[0].op_type == "IODMA_hls"):
+            raise FINNInternalError("First partition must hold input IODMA")
         successors = model.find_direct_successors(i_consumer)
         if successors is None or len(successors) == 0:
             raise FINNInternalError(
@@ -582,7 +607,8 @@ def get_driver_shapes(model: ModelWrapper) -> dict:
                 f"Output tensor {o_tensor_name} is not part of a StreamingDataflowPartition."
             )
         df_model = ModelWrapper(cast("str", getCustomOp(o_producer).get_nodeattr("model")))
-        assert df_model.graph.node[-1].op_type == "IODMA_hls", "Partition must hold output IODMA"
+        if not (df_model.graph.node[-1].op_type == "IODMA_hls"):
+            raise FINNInternalError("Partition must hold output IODMA")
         predecessors = model.find_direct_predecessors(o_producer)
         if predecessors is None or len(predecessors) == 0:
             raise FINNInternalError(

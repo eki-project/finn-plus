@@ -36,6 +36,7 @@ import contextlib
 import os
 import re
 import sys
+from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 from finn.util.exception import FINNUserError
@@ -77,9 +78,14 @@ _LAZY_NAMES = frozenset(
 )
 
 
-def _xsi_path() -> Any:
+def _xsi_path() -> Path:
     """Return the current finn_xsi installation directory from FINN settings."""
     return get_settings().finn_xsi
+
+
+def _xsi_so_path() -> Path:
+    """Return the assumed xsi.so path. Does not necessarily point to an existing file."""
+    return _xsi_path() / "xsi.so"
 
 
 def is_available() -> bool:
@@ -91,7 +97,7 @@ def is_available() -> bool:
     xsi_path = _xsi_path()
 
     # Check if xsi.so exists
-    xsi_so = xsi_path / "xsi.so"
+    xsi_so = _xsi_so_path()
     vivado_path = os.environ.get("XILINX_VIVADO")
     if vivado_path is None:
         raise OSError("XILINX_VIVADO environment variable not set. Please source Vivado settings.")

@@ -30,23 +30,24 @@ Vitis HLS synthesis reports for nodes with an HLS backend in the given model."""
 import qonnx.custom_op.registry as registry
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING
+from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.util.fpgadataflow import is_hls_node
 from finn.util.logging import log
 
-if TYPE_CHECKING:
-    from qonnx.core.modelwrapper import ModelWrapper
 
-
-def hls_synth_res_estimation(model: "ModelWrapper") -> dict[str, dict[str, int]]:
+def hls_synth_res_estimation(model: ModelWrapper) -> dict[str, dict[str, int | float]]:
     """Extract the FPGA resource results from the Vitis HLS synthesis estimates.
     Note that this analysis pass only works on nodes that have an HLS backend.
     Ensure that all nodes have unique names (by calling the GiveUniqueNodeNames
     transformation) prior to calling this analysis pass to ensure all nodes are
     visible in the results.
 
-    Returns {node name : resources_dict}."""
+    Returns
+    -------
+        `dict[str, dict[str, int | float]]`: Maps node names to resource dicts.
+            Result example: `res_estimation(...)["MVAU_hls_0"]["LUT"]`
+    """
     res_dict = {}
     for node in model.graph.node:
         if is_hls_node(node):

@@ -1,10 +1,12 @@
 """Driver for instrumentation-only accelerators without DMA."""
 
 import json
-import os
 import time
+from finn_plus_driver.hwh import get_clk_wiz_params_from_hwh
+from pathlib import Path
 from pynq import Overlay
 from pynq.ps import Clocks
+from typing import Any
 
 
 class FINNInstrumentationOverlay(Overlay):
@@ -12,49 +14,60 @@ class FINNInstrumentationOverlay(Overlay):
 
     def __init__(
         self,
-        bitfile_name,
-        platform="zynq",
-        fclk_mhz=100.0,
-        device=None,
-        download=True,
-        seed=1,
-        **kwargs,
-    ):
+        bitfile_name: str,
+        platform: str = "zynq-iodma",
+        fclk_mhz: float = 100.0,
+        device: Any = None,
+        download: bool = True,
+        seed: int = 1,
+        **kwargs: Any,  # noqa: ARG002
+    ) -> None:
         """Initialize instrumentation overlay."""
         super().__init__(bitfile_name, download=download, device=device)
 
         self.platform = platform
-        self.fclk_mhz = fclk_mhz
+        self.fclk_mhz = fclk_mhz  # currently ignored (TODO: make clocking wizard configurable)
         self.seed = seed
 
         # configure clock (for ZYNQ platforms)
-        if self.platform == "zynq":
-            if self.fclk_mhz > 0:
-                Clocks.fclk0_mhz = self.fclk_mhz
-                self.fclk_mhz_actual = Clocks.fclk0_mhz
+        if self.platform == "zynq-iodma":
+            clk_wiz_params = get_clk_wiz_params_from_hwh(bitfile_name)
+            Clocks.fclk0_mhz = 100.0  # Clocking Wizard is configured for fixed 100 MHz input clock
+            self.fclk_mhz_actual = float(
+                clk_wiz_params.get(
+                    "CLKOUT1_OUT_FREQ",
+                    clk_wiz_params.get("CLKOUT1_REQUESTED_OUT_FREQ", str(self.fclk_mhz)),
+                )
+            )
 
-    def instrumentation_read(self, name):
+    def instrumentation_read(self, name: str) -> int:
         """Read instrumentation register."""
         return self.instrumentation_wrap_0.read(
             offset=self.ip_dict["instrumentation_wrap_0"]["registers"][name]["address_offset"]
         )
 
-    def instrumentation_write(self, name, value):
+    def instrumentation_write(self, name: str, value: int) -> None:
         """Write instrumentation register."""
         return self.instrumentation_wrap_0.write(
             offset=self.ip_dict["instrumentation_wrap_0"]["registers"][name]["address_offset"],
             value=value,
         )
 
-    def reset_accelerator(self):
+    def reset_accelerator(self) -> None:
         """Reset the accelerator."""
         self.axi_gpio_0.write(
             offset=self.ip_dict["axi_gpio_0"]["registers"]["GPIO_DATA"]["address_offset"], value=0
         )
 
-    def start_accelerator(self, throttle_interval=0, avg_window_size=64):
-        """Start the accelerator. Input is throttled to the specified interval (in cycles)
-        by pausing after each FM transmission. A throttle_interval of 0 means no throttling.
+    def start_accelerator(
+        self, throttle_interval: int = 0, avg_window_size: int = 64, mux_interval: int = 0
+    ) -> None:
+        """Start the accelerator.
+
+        Input is throttled to the specified interval (in cycles) by pausing after each
+        FM transmission. A throttle_interval of 0 means no throttling. mux_interval
+        controls tUSER round-robin scheduling: 0 = fixed tUSER=0, N = advance tUSER
+        every N frames.
         """
         # Set seed
         lfsr_seed = (self.seed << 16) & 0xFFFF0000  # upper 16 bits
@@ -64,43 +77,61 @@ class FINNInstrumentationOverlay(Overlay):
         # maximum is configured in build config, default value = 64
         self.instrumentation_write("avg_n", avg_window_size)
 
+        # Set tUSER multiplexing interval (frames per tUSER value, 0 = fixed)
+        self.instrumentation_write("mux_interval", mux_interval)
+
         # Start operation
         self.instrumentation_write("cfg", (throttle_interval << 1) | 1)  # bit 0 = start
 
-    def stop_accelerator(self):
+    def stop_accelerator(self) -> None:
         """Stop the accelerator."""
         self.instrumentation_write("cfg", 0)  # bit 0 = stop
 
-    def observe_instrumentation(self, debug_print=True):
+    def observe_instrumentation(self, debug_print: bool = True) -> tuple:
         """Read and report instrumentation metrics."""
         status_reg = self.instrumentation_read("status")
         chksum_reg = self.instrumentation_read("checksum")
         min_latency = self.instrumentation_read("min_latency")
         latency = self.instrumentation_read("latency")
         interval = self.instrumentation_read("interval")
-        avg_latency = self.instrumentation_read("avg_latency")
-        avg_interval = self.instrumentation_read("avg_interval")
+        lat_sum_lo = self.instrumentation_read("lat_sum_lo")
+        lat_sum_hi = self.instrumentation_read("lat_sum_hi")
+        int_sum_lo = self.instrumentation_read("int_sum_lo")
+        int_sum_hi = self.instrumentation_read("int_sum_hi")
+        avg_fill = self.instrumentation_read("avg_fill")
+        run_cycles_lo = self.instrumentation_read("run_cycles_lo")
+        run_cycles_hi = self.instrumentation_read("run_cycles_hi")
+        run_frames = self.instrumentation_read("run_frames")
 
         frame = (chksum_reg >> 24) & 0x000000FF
         checksum = chksum_reg & 0x00FFFFFF
         overflow_err = (status_reg & 0x00000001) != 0
         underflow_err = (status_reg & 0x00000002) != 0
+        run_cycles = (run_cycles_hi << 32) | run_cycles_lo
+        lat_sum = (lat_sum_hi << 32) | lat_sum_lo
+        int_sum = (int_sum_hi << 32) | int_sum_lo
+        avg_latency = lat_sum // avg_fill if avg_fill > 0 else 0
+        avg_interval = int_sum // avg_fill if avg_fill > 0 else 0
 
         if debug_print:
             print("---INSTRUMENTATION_REPORT---")
             if overflow_err or underflow_err:
                 print("Status ERROR")
-                print("Overflow error: %s" % overflow_err)
-                print("Underflow error: %s" % underflow_err)
+                print(f"Overflow error: {overflow_err}")
+                print(f"Underflow error: {underflow_err}")
             else:
                 print("Status OK")
-            print("Frame number (8-bit): %d" % frame)
-            print("Checksum: 0x%06x" % checksum)
-            print("Min Latency (cycles): %d" % min_latency)
-            print("Latency (cycles): %d" % latency)
-            print("Interval (cycles): %d" % interval)
-            print("Average Latency (cycles): %d" % avg_latency)
-            print("Average Interval (cycles): %d" % avg_interval)
+            print(f"Frame number (8-bit): {frame}")
+            print(f"Checksum: 0x{checksum:06x}")
+            print(f"Min Latency (cycles): {min_latency}")
+            print(f"Latency (cycles): {latency}")
+            print(f"Interval (cycles): {interval}")
+            print(f"Average Latency (cycles): {avg_latency}")
+            print(f"Average Interval (cycles): {avg_interval}")
+            print(f"Run Cycles: {run_cycles}")
+            print(f"Run Frames: {run_frames}")
+            if run_frames > 0:
+                print(f"Run Average Interval (cycles): {run_cycles / run_frames:.1f}")
             print("----------------------------")
 
         return (
@@ -113,16 +144,19 @@ class FINNInstrumentationOverlay(Overlay):
             interval,
             avg_latency,
             avg_interval,
+            run_cycles,
+            run_frames,
         )
 
-    def experiment_instrumentation(self, *args, **kwargs):
+    def experiment_instrumentation(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
         """Run instrumentation experiment and save report."""
         runtime = kwargs.get("runtime")
         report_dir = kwargs.get("report_dir")
+        mux_interval = kwargs.get("mux_interval", 0)
 
         # start accelerator
-        print("Running accelerator for %d seconds.." % runtime)
-        self.start_accelerator()
+        print(f"Running accelerator for {int(runtime)} seconds..")
+        self.start_accelerator(mux_interval=mux_interval)
 
         # let it run for specified runtime
         time.sleep(runtime)
@@ -131,16 +165,19 @@ class FINNInstrumentationOverlay(Overlay):
         (
             overflow_err,
             underflow_err,
-            frame,
+            _frame,
             checksum,
             min_latency,
             latency,
             interval,
             avg_latency,
             avg_interval,
+            run_cycles,
+            run_frames,
         ) = self.observe_instrumentation()
 
         # write report to file
+        fclk = self.fclk_mhz_actual * 1e6
         report = {
             "error": overflow_err or underflow_err or interval == 0,
             "checksum": checksum,
@@ -149,30 +186,29 @@ class FINNInstrumentationOverlay(Overlay):
             "interval_cycles": interval,
             "avg_latency_cycles": avg_latency,
             "avg_interval_cycles": avg_interval,
+            "run_cycles": run_cycles,
+            "run_frames": run_frames,
             "frequency_mhz": round(self.fclk_mhz_actual),
-            "min_latency_ms": round(min_latency * (1 / (self.fclk_mhz_actual * 1e6)) * 1e3, 6),
-            "latency_ms": round(latency * (1 / (self.fclk_mhz_actual * 1e6)) * 1e3, 6),
-            "avg_latency_ms": round(avg_latency * (1 / (self.fclk_mhz_actual * 1e6)) * 1e3, 6),
-            "throughput_fps": (
-                round(1 / (interval * (1 / (self.fclk_mhz_actual * 1e6)))) if interval != 0 else 0
-            ),
-            "avg_throughput_fps": (
-                round(1 / (avg_interval * (1 / (self.fclk_mhz_actual * 1e6))))
-                if avg_interval != 0
-                else 0
-            ),
+            "min_latency_ms": round(min_latency * (1 / fclk) * 1e3, 6),
+            "latency_ms": round(latency * (1 / fclk) * 1e3, 6),
+            "avg_latency_ms": round(avg_latency * (1 / fclk) * 1e3, 6),
+            "throughput_fps": round(fclk / interval) if interval != 0 else 0,
+            "avg_throughput_fps": round(fclk / avg_interval) if avg_interval != 0 else 0,
+            "run_avg_throughput_fps": round(run_frames / (run_cycles / fclk))
+            if run_cycles > 0
+            else 0,
             "min_pipeline_depth": round(min_latency / interval, 2) if interval != 0 else 0,
             "pipeline_depth": round(latency / interval, 2) if interval != 0 else 0,
         }
-        reportfile = os.path.join(report_dir, "report_experiment_instrumentation.json")
-        with open(reportfile, "w") as f:
+        reportfile = Path(report_dir) / "report_experiment_instrumentation.json"
+        with reportfile.open("w") as f:
             json.dump(report, f, indent=2)
 
         print("Done.")
 
-    def idle(self, *args, **kwargs):
+    def idle(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
         """Run idle for specified time."""
         runtime = kwargs.get("time")
-        print("Running idle for %d seconds.." % runtime)
+        print(f"Running idle for {int(runtime)} seconds..")
         time.sleep(runtime)
         print("Done.")
