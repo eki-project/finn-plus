@@ -363,13 +363,17 @@ class IODMA_hls(HLSBackend, HWCustomOp):
         direction = self.direction
         if direction == "in":
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-                f"void {self.onnx_node.name}({packed_hls_type_in} *in0_V, "
-                f"hls::stream<{packed_hls_type_out} > &out0_V, unsigned int numReps)"
+                (
+                    f"void {self.onnx_node.name}({packed_hls_type_in} *in0_V, "
+                    f"hls::stream<{packed_hls_type_out} > &out0_V, unsigned int numReps)"
+                )
             ]
         elif direction == "out":
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-                f"void {self.onnx_node.name}(hls::stream<{packed_hls_type_in} > &in0_V, "
-                f"{packed_hls_type_out} *out0_V, unsigned int numReps)"
+                (
+                    f"void {self.onnx_node.name}(hls::stream<{packed_hls_type_in} > &in0_V, "
+                    f"{packed_hls_type_out} *out0_V, unsigned int numReps)"
+                )
             ]
         else:
             raise FINNUserError("Invalid IODMA direction, please set to in or out")

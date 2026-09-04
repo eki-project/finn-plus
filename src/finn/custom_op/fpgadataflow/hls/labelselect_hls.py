@@ -118,8 +118,10 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
         # as required by HLS fxn LabelSelect_Batch
         # Also notice that StreamingDataWidthConverter_Batch performs LE packing
         self.code_gen_dict["$READNPYDATA$"] = [
-            f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, float>"
-            f'("{npy_in}", in0_V, false);'
+            (
+                f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, float>"
+                f'("{npy_in}", in0_V, false);'
+            )
         ]
 
     def docompute(self) -> None:
@@ -127,8 +129,10 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
         in_hls_type = self.get_input_datatype().get_hls_datatype_str()
         out_hls_type = self.get_output_datatype().get_hls_datatype_str()
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            f"LabelSelect_Batch<{self.labels}, {self.pe}, {self.k}, {in_hls_type}, "
-            f"{out_hls_type} > (in0_V, out0_V, 1);"
+            (
+                f"LabelSelect_Batch<{self.labels}, {self.pe}, {self.k}, {in_hls_type}, "
+                f"{out_hls_type} > (in0_V, out0_V, 1);"
+            )
         ]
 
     def blackboxfunction(self) -> None:

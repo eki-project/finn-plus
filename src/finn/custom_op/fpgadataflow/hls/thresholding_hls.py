@@ -471,10 +471,12 @@ class Thresholding_hls(Thresholding, HLSBackend):
         total_spatial_size = int(np.prod(num_input_vectors))
 
         self.code_gen_dict["$DEFINES$"] = [
-            f"#define NumChannels1 {self.get_nodeattr('NumChannels')}\n"
-            f" #define PE1 {self.get_nodeattr('PE')}\n"
-            f" #define numReps {num_reps}\n"
-            f" #define ImgDim1 {total_spatial_size}"
+            (
+                f"#define NumChannels1 {self.get_nodeattr('NumChannels')}\n"
+                f" #define PE1 {self.get_nodeattr('PE')}\n"
+                f" #define numReps {num_reps}\n"
+                f" #define ImgDim1 {total_spatial_size}"
+            )
         ]
         if self.get_nodeattr("mem_mode") == "internal_decoupled":
             self.code_gen_dict["$DEFINES$"].append(f"#define ActVal1 {self.get_nodeattr('ActVal')}")
@@ -537,18 +539,22 @@ class Thresholding_hls(Thresholding, HLSBackend):
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_embedded":
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                f"Thresholding_Batch<ImgDim1, NumChannels1, PE1, "
-                f"{tmpl_args['TSrcI']}, {tmpl_args['TDstI']}>"
-                "(in0_V, out0_V, threshs, numReps);"
+                (
+                    f"Thresholding_Batch<ImgDim1, NumChannels1, PE1, "
+                    f"{tmpl_args['TSrcI']}, {tmpl_args['TDstI']}>"
+                    "(in0_V, out0_V, threshs, numReps);"
+                )
             ]
         elif mem_mode == "internal_decoupled":
             # note that numReps is set to 1 in the invocation below, since
             # - for cppsim the repetition comes from the threshold stream reader+input
             # - for synth the unit runs continuously anyway (ap_ctrl_none)
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                f"Thresholding_Stream_Batch<ImgDim1, NumChannels1, PE1, {tmpl_args['TSrcI']}, "
-                f"{tmpl_args['TDstI']}, ActVal1, ThresType1, NumSteps1>"
-                "(in0_V, out0_V, in1_V, numReps);"
+                (
+                    f"Thresholding_Stream_Batch<ImgDim1, NumChannels1, PE1, {tmpl_args['TSrcI']}, "
+                    f"{tmpl_args['TDstI']}, ActVal1, ThresType1, NumSteps1>"
+                    "(in0_V, out0_V, in1_V, numReps);"
+                )
             ]
         else:
             raise FINNInternalError("Unrecognized mem_mode")
@@ -571,24 +577,30 @@ class Thresholding_hls(Thresholding, HLSBackend):
 
         # note: the innermost dim is not reversed for the output
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
-            f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>("
-            f'out0_V, {shape_cpp_str}, "{npy_out}", false);'
+            (
+                f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>("
+                f'out0_V, {shape_cpp_str}, "{npy_out}", false);'
+            )
         ]
 
     def blackboxfunction(self) -> None:
         """Generate C++ black box function signature."""
         if self.get_nodeattr("mem_mode") == "internal_embedded":
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-                f"void {self.onnx_node.name}("
-                f"hls::stream<ap_uint<{self.get_instream_width(0)}>> &in0_V, "
-                f"hls::stream<ap_uint<{self.get_outstream_width()}>> &out0_V)"
+                (
+                    f"void {self.onnx_node.name}("
+                    f"hls::stream<ap_uint<{self.get_instream_width(0)}>> &in0_V, "
+                    f"hls::stream<ap_uint<{self.get_outstream_width()}>> &out0_V)"
+                )
             ]
         elif self.get_nodeattr("mem_mode") == "internal_decoupled":
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-                f"void {self.onnx_node.name}("
-                f"hls::stream<ap_uint<{self.get_instream_width(0)}>> &in0_V, "
-                f"hls::stream<ap_uint<{self.get_instream_width(1)}>> &in1_V, "
-                f"hls::stream<ap_uint<{self.get_outstream_width()}>> &out0_V)"
+                (
+                    f"void {self.onnx_node.name}("
+                    f"hls::stream<ap_uint<{self.get_instream_width(0)}>> &in0_V, "
+                    f"hls::stream<ap_uint<{self.get_instream_width(1)}>> &in1_V, "
+                    f"hls::stream<ap_uint<{self.get_outstream_width()}>> &out0_V)"
+                )
             ]
         else:
             raise FINNInternalError("Unrecognized mem_mode")

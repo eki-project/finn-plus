@@ -308,12 +308,14 @@ class VVAU_hls(VVAU, HLSBackend):
         mem_mode = self.mem_mode
 
         self.code_gen_dict["$DEFINES$"] = [
-            f"#define Channels1 {self.channels}\n"
-            f" #define InnerProdDim {inner_prod_dim}\n"
-            "\n"
-            f"            #define SIMD1 {self.simd}\n"
-            f" #define PE1 {self.pe}\n"
-            f" #define numReps {num_reps}"
+            (
+                f"#define Channels1 {self.channels}\n"
+                f" #define InnerProdDim {inner_prod_dim}\n"
+                "\n"
+                f"            #define SIMD1 {self.simd}\n"
+                f" #define PE1 {self.pe}\n"
+                f" #define numReps {num_reps}"
+            )
         ]
         if mem_mode in ("internal_decoupled", "external"):
             wdt = self.get_input_datatype(1)
@@ -388,18 +390,22 @@ class VVAU_hls(VVAU, HLSBackend):
 
         if mem_mode == "internal_embedded":
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                f"Vector_Vector_Activate_Batch<Channels1, InnerProdDim, SIMD1, PE1, 1, "
-                f"{tsrci}, {tdsti}, {tweighti}>\n"
-                f"                (in0_V, out0_V, weights, {threshs}, numReps, {mult_style});"
+                (
+                    f"Vector_Vector_Activate_Batch<Channels1, InnerProdDim, SIMD1, PE1, 1, "
+                    f"{tsrci}, {tdsti}, {tweighti}>\n"
+                    f"                (in0_V, out0_V, weights, {threshs}, numReps, {mult_style});"
+                )
             ]
         elif mem_mode in ("internal_decoupled", "external"):
             wdt = self.get_input_datatype(1)
             export_wdt = DataType["BINARY"] if wdt == DataType["BIPOLAR"] else wdt
             wdtype_hls_str = export_wdt.get_hls_datatype_str()
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                f"Vector_Vector_Activate_Stream_Batch<Channels1, InnerProdDim, SIMD1, PE1, 1, "
-                f"{tsrci}, {tdsti}, {tweighti}, {wdtype_hls_str}>\n"
-                f"                (in0_V, out0_V, in1_V, {threshs}, numReps, {mult_style});"
+                (
+                    f"Vector_Vector_Activate_Stream_Batch<Channels1, InnerProdDim, SIMD1, PE1, 1, "
+                    f"{tsrci}, {tdsti}, {tweighti}, {wdtype_hls_str}>\n"
+                    f"                (in0_V, out0_V, in1_V, {threshs}, numReps, {mult_style});"
+                )
             ]
         else:
             raise FINNInternalError(
@@ -425,8 +431,10 @@ class VVAU_hls(VVAU, HLSBackend):
 
         # note: the innermost dim is not reversed for the output
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
-            f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>("
-            f'out0_V, {shape_cpp_str}, "{npy_out}", false);'
+            (
+                f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>("
+                f'out0_V, {shape_cpp_str}, "{npy_out}", false);'
+            )
         ]
 
     def save_as_npy(self) -> None:

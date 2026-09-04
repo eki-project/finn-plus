@@ -109,8 +109,10 @@ class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
         in_packed_hls_type = f"ap_uint<{self.get_instream_width()}>"
         out_packed_hls_type = f"ap_uint<{self.get_outstream_width()}>"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            f"void {self.onnx_node.name}(hls::stream<{in_packed_hls_type} > &in0_V, "
-            f"hls::stream<{out_packed_hls_type} > &out0_V)"
+            (
+                f"void {self.onnx_node.name}(hls::stream<{in_packed_hls_type} > &in0_V, "
+                f"hls::stream<{out_packed_hls_type} > &out0_V)"
+            )
         ]
 
     def pragmas(self) -> None:

@@ -119,12 +119,12 @@ class SplitMultiHeads_hls(SplitMultiHeads, HLSBackend):
             # Datatype of elements packed into the output stream
             f"using OPacked = ap_uint<{self.get_outstream_width()}>;",
             # Input and output HLS stream datatypes
-            "using IStream = hls::stream<"
+            ("using IStream = hls::stream<"
             f"  ap_uint<{self.get_instream_width()}>"
-            ">;",
-            "using OStream = hls::stream<"
+            ">;"),
+            ("using OStream = hls::stream<"
             f"  ap_uint<{self.get_outstream_width()}>"
-            ">;",
+            ">;"),
         ]
 
     # Generates C++ code for reading data from .npy (numpy format) for testing
@@ -387,12 +387,12 @@ class MergeMultiHeads_hls(MergeMultiHeads, HLSBackend):
             # Datatype of elements packed into the output stream
             f"using OPacked = ap_uint<{self.get_outstream_width()}>;",
             # Input and output HLS stream datatypes
-            "using IStream = hls::stream<"
+            ("using IStream = hls::stream<"
             f"  ap_uint<{self.get_instream_width()}>"
-            ">;",
-            "using OStream = hls::stream<"
+            ">;"),
+            ("using OStream = hls::stream<"
             f"  ap_uint<{self.get_outstream_width()}>"
-            ">;",
+            ">;"),
         ]
 
     # Generates C++ code for reading data from .npy (numpy format) for testing
@@ -446,9 +446,9 @@ class MergeMultiHeads_hls(MergeMultiHeads, HLSBackend):
             # Read the next input element from each input stream and concatenate
             # using the comma operator overload of ap_uint, writing into the
             # output stream
-            f"out_{self.hls_sname()}.write(({reversed_reads}));"
+            (f"out_{self.hls_sname()}.write(({reversed_reads}));"
             # End of for-loop over repetitions body
-            f"}}"  # Note: closing brace for the loop opened above
+            f"}}")  # Note: closing brace for the loop opened above
         ]
 
     # Generates C++ code for reading the output stream and converting back to

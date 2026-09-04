@@ -161,8 +161,10 @@ class RemoveDataPath_rtl(RTLBackend):
         for f in sourcefiles:
             cmd += [f"add_files -norecurse {f}"]
         cmd += [
-            "create_bd_cell -type module -reference "
-            f"{self.get_nodeattr('gen_top_module')} {self.onnx_node.name}"
+            (
+                "create_bd_cell -type module -reference "
+                f"{self.get_nodeattr('gen_top_module')} {self.onnx_node.name}"
+            )
         ]
         return cmd
 

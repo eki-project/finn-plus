@@ -461,10 +461,11 @@ class NodeContainer(RTLBackend, HWCustomOp):
         rtllib = os.environ["FINN_RTLLIB"]
         return [
             f"add_files -copy_to {source_target} -norecurse {stream_tap}",
-            f"add_files -copy_to {source_target} -norecurse "
-            f"{rtllib + '/stream_tap/hdl/stream_tap.sv'}",
-            f"add_files -copy_to {source_target} -norecurse "
-            f"{rtllib + '/stream_tap/hdl/skid.sv'}",
+            (
+                f"add_files -copy_to {source_target} -norecurse "
+                f"{rtllib + '/stream_tap/hdl/stream_tap.sv'}"
+            ),
+            (f"add_files -copy_to {source_target} -norecurse {rtllib + '/stream_tap/hdl/skid.sv'}"),
         ]
 
     def _code_generation_ipi_tap_hls(self, hier: str, stname: str) -> list[str]:
@@ -475,14 +476,22 @@ class NodeContainer(RTLBackend, HWCustomOp):
         return [
             f"create_bd_cell -type module -reference {stname} {hier}/{stname}",
             f"connect_bd_net [get_bd_pins {name}/ap_clk] [get_bd_pins {hier}/{stname}/ap_clk]",
-            f"connect_bd_net [get_bd_pins {name}/ap_rst_n] "
-            f"[get_bd_pins {hier}/{stname}/ap_rst_n]",
-            f"connect_bd_intf_net [get_bd_intf_pins {hier}/{stname}/m_axis_1]"
-            f" [get_bd_intf_pins {hier}/{name + '_wstrm'}/s_axis_0]",
-            f"create_bd_intf_pin -mode Slave -vlnv xilinx.com:interface:axis_rtl:1.0 "
-            f"{hier}/{tap_pin}",
-            f"connect_bd_intf_net [get_bd_intf_pins {hier}/{tap_pin}] "
-            f"[get_bd_intf_pins {hier}/{stname}/s_axis_0]",
+            (
+                f"connect_bd_net [get_bd_pins {name}/ap_rst_n] "
+                f"[get_bd_pins {hier}/{stname}/ap_rst_n]"
+            ),
+            (
+                f"connect_bd_intf_net [get_bd_intf_pins {hier}/{stname}/m_axis_1]"
+                f" [get_bd_intf_pins {hier}/{name + '_wstrm'}/s_axis_0]"
+            ),
+            (
+                f"create_bd_intf_pin -mode Slave -vlnv xilinx.com:interface:axis_rtl:1.0 "
+                f"{hier}/{tap_pin}"
+            ),
+            (
+                f"connect_bd_intf_net [get_bd_intf_pins {hier}/{tap_pin}] "
+                f"[get_bd_intf_pins {hier}/{stname}/s_axis_0]"
+            ),
         ]
 
     def _code_generation_ipi_tap_rtl(self, hier: str, stname: str) -> list[str]:
@@ -495,44 +504,59 @@ class NodeContainer(RTLBackend, HWCustomOp):
             f"create_bd_cell -type module -reference {stname} {hier}/{stname}",
             "save_bd_design",
             # Internal connection: stream tap output -> inner IP data input
-            f"connect_bd_intf_net "
-            f"[get_bd_intf_pins {hier}/{stname}/m_axis_1] [get_bd_intf_pins {hier}/{name}/in1_V]",
+            (
+                f"connect_bd_intf_net "
+                f"[get_bd_intf_pins {hier}/{stname}/m_axis_1] "
+                f"[get_bd_intf_pins {hier}/{name}/in1_V]"
+            ),
         ]
         # Expose all hierarchy pins and connect them to internal cells
         intf_names = self.get_verilog_top_module_intf_names()
         for intf_name, _width in cast("list[tuple[str, int]]", intf_names.get("s_axis", [])):
             cmd += [
-                f"create_bd_intf_pin -mode Slave "
-                f"-vlnv xilinx.com:interface:axis_rtl:1.0 {hier}/{intf_name}"
+                (
+                    f"create_bd_intf_pin -mode Slave "
+                    f"-vlnv xilinx.com:interface:axis_rtl:1.0 {hier}/{intf_name}"
+                )
             ]
             inner_cell = stname if intf_name == "s_axis_tap" else name
             inner_port = "s_axis_0" if intf_name == "s_axis_tap" else intf_name
             cmd += [
-                f"connect_bd_intf_net [get_bd_intf_pins {hier}/{intf_name}] "
-                f"[get_bd_intf_pins {hier}/{inner_cell}/{inner_port}]"
+                (
+                    f"connect_bd_intf_net [get_bd_intf_pins {hier}/{intf_name}] "
+                    f"[get_bd_intf_pins {hier}/{inner_cell}/{inner_port}]"
+                )
             ]
         for intf_name, _width in cast("list[tuple[str, int]]", intf_names.get("m_axis", [])):
             cmd += [
-                f"create_bd_intf_pin -mode Master "
-                f"-vlnv xilinx.com:interface:axis_rtl:1.0 {hier}/{intf_name}"
+                (
+                    f"create_bd_intf_pin -mode Master "
+                    f"-vlnv xilinx.com:interface:axis_rtl:1.0 {hier}/{intf_name}"
+                )
             ]
             cmd += [
-                f"connect_bd_intf_net [get_bd_intf_pins {hier}/{intf_name}] "
-                f"[get_bd_intf_pins {hier}/{name}/{intf_name}]"
+                (
+                    f"connect_bd_intf_net [get_bd_intf_pins {hier}/{intf_name}] "
+                    f"[get_bd_intf_pins {hier}/{name}/{intf_name}]"
+                )
             ]
         for clk_name in cast("list[str]", intf_names.get("clk", [])):
             cmd += [f"create_bd_pin -dir I -type clk {hier}/{clk_name}"]
             cmd += [
-                f"connect_bd_net "
-                f"[get_bd_pins {hier}/{clk_name}] [get_bd_pins {hier}/{name}/{clk_name}] "
-                f"[get_bd_pins {hier}/{stname}/{clk_name}]"
+                (
+                    f"connect_bd_net "
+                    f"[get_bd_pins {hier}/{clk_name}] [get_bd_pins {hier}/{name}/{clk_name}] "
+                    f"[get_bd_pins {hier}/{stname}/{clk_name}]"
+                )
             ]
         for rst_name in cast("list[str]", intf_names.get("rst", [])):
             cmd += [f"create_bd_pin -dir I -type rst {hier}/{rst_name}"]
             cmd += [
-                f"connect_bd_net "
-                f"[get_bd_pins {hier}/{rst_name}] [get_bd_pins {hier}/{name}/{rst_name}] "
-                f"[get_bd_pins {hier}/{stname}/{rst_name}]"
+                (
+                    f"connect_bd_net "
+                    f"[get_bd_pins {hier}/{rst_name}] [get_bd_pins {hier}/{name}/{rst_name}] "
+                    f"[get_bd_pins {hier}/{stname}/{rst_name}]"
+                )
             ]
         return cmd
 

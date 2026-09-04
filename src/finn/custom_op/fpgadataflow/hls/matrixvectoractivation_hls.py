@@ -247,8 +247,10 @@ class MVAU_hls(MVAU, HLSBackend):
         npy_in = f"{code_gen_dir}/input_0.npy"
         # note: the innermost dim is reversed for the input
         self.code_gen_dict["$READNPYDATA$"] = [
-            f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, float>"
-            f'("{npy_in}", in0_V, false);'
+            (
+                f"npy2apintstream<{packed_hls_type}, {elem_hls_type}, {elem_bits}, float>"
+                f'("{npy_in}", in0_V, false);'
+            )
         ]
 
         if self._uses_weight_stream():
@@ -297,18 +299,22 @@ class MVAU_hls(MVAU, HLSBackend):
         mult_style = map_to_hls_mult_style[self.res_type]
         if self.mem_mode == "internal_embedded":
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                "Matrix_Vector_Activate_Batch<MW1, MH1, SIMD1, PE1, 1, "
-                f"{tsrci}, {tdsti}, {tweighti}>\n"
-                f"                (in0_V, out0_V, weights, {threshs}, numReps, {mult_style});"
+                (
+                    "Matrix_Vector_Activate_Batch<MW1, MH1, SIMD1, PE1, 1, "
+                    f"{tsrci}, {tdsti}, {tweighti}>\n"
+                    f"                (in0_V, out0_V, weights, {threshs}, numReps, {mult_style});"
+                )
             ]
         elif self._uses_weight_stream():
             wdt = self.get_input_datatype(1)
             export_wdt = DataType["BINARY"] if wdt == DataType["BIPOLAR"] else wdt
             wdtype_hls_str = export_wdt.get_hls_datatype_str()
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                "Matrix_Vector_Activate_Stream_Batch<MW1, MH1, SIMD1, PE1, "
-                f"{tsrci}, {tdsti}, {tweighti}, {wdtype_hls_str} >\n"
-                f"                (in0_V, out0_V, in1_V, {threshs}, numReps, {mult_style});"
+                (
+                    "Matrix_Vector_Activate_Stream_Batch<MW1, MH1, SIMD1, PE1, "
+                    f"{tsrci}, {tdsti}, {tweighti}, {wdtype_hls_str} >\n"
+                    f"                (in0_V, out0_V, in1_V, {threshs}, numReps, {mult_style});"
+                )
             ]
         else:
             raise FINNInternalError(
@@ -330,8 +336,10 @@ class MVAU_hls(MVAU, HLSBackend):
 
         # note: the innermost dim is not reversed for the output
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
-            f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, float>"
-            f'(out0_V, {shape_cpp_str}, "{npy_out}", false);'
+            (
+                f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, float>"
+                f'(out0_V, {shape_cpp_str}, "{npy_out}", false);'
+            )
         ]
 
     def save_as_npy(self) -> None:

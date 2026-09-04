@@ -127,8 +127,10 @@ class Pool_hls(Pool, HLSBackend):
         o_hls_dt = f"hls::vector<{odt.get_hls_datatype_str()}, {pe}>"
 
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            f"void {self.onnx_node.name}(hls::stream<{i_hls_dt}> &in0_V, "
-            f"hls::stream<{o_hls_dt}> &out0_V)"
+            (
+                f"void {self.onnx_node.name}(hls::stream<{i_hls_dt}> &in0_V, "
+                f"hls::stream<{o_hls_dt}> &out0_V)"
+            )
         ]
 
     def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:

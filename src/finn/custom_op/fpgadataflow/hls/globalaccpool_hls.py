@@ -103,8 +103,10 @@ class GlobalAccPool_hls(GlobalAccPool, HLSBackend):
         in_hls_type = self.get_input_datatype().get_hls_datatype_str()
         out_hls_type = self.get_output_datatype().get_hls_datatype_str()
         self.code_gen_dict["$DOCOMPUTE$"] = [
-            f"AccPool_Batch<{img_dim}, {self.num_channels}, {in_hls_type}, "
-            f"{self.pe}, {out_hls_type}> (in0_V, out0_V, 1);"
+            (
+                f"AccPool_Batch<{img_dim}, {self.num_channels}, {in_hls_type}, "
+                f"{self.pe}, {out_hls_type}> (in0_V, out0_V, 1);"
+            )
         ]
 
     def blackboxfunction(self) -> None:

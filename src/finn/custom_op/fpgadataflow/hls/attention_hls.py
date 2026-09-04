@@ -221,13 +221,13 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
             #   "defines" method
             act_qk_matmul = "\n".join([
                 "ThresholdsActivation<",
-                " SeqFold,"
+                (" SeqFold,"
                 " KVLen/SeqFold,"
                 f" {num},"
                 " AccQKMatMul,"
                 " OutQKMatMul,"
                 f" {bias},"
-                f" comp::less<{dtype_str}, {dtype_str}>",
+                f" comp::less<{dtype_str}, {dtype_str}>"),
                 ">"
             ])
 
@@ -265,13 +265,13 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
             #   "defines" method
             act_a_softmax = "\n".join([
                 "ThresholdsActivation<",
-                " SeqFold,"
+                (" SeqFold,"
                 " KVLen/SeqFold,"
                 f" {num},"
                 " AccASoftmax,"
                 " AType,"
                 f" {bias},"
-                f" comp::less<{dtype_str}, {dtype_str}>",
+                f" comp::less<{dtype_str}, {dtype_str}>"),
                 ">"
             ])
 
@@ -309,13 +309,13 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
             #   "defines" method
             act_av_matmul = "\n".join([
                 "ThresholdsActivation<",
-                " EmbFold,"
+                (" EmbFold,"
                 " VDim/EmbFold,"
                 f" {num},"
                 " AccAVMatMul,"
                 " OutAVMatMul,"
                 f" {bias},"
-                f" comp::less<{dtype_str}, {dtype_str}>",
+                f" comp::less<{dtype_str}, {dtype_str}>"),
                 ">"
             ])
 
@@ -372,8 +372,8 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
             file.write("\n".join([
                 # Scale factor preceding the softmax activation function to
                 # dequantize the input to floating-point representation
-                "static const float dequant_softmax ="
-                f" {self.get_nodeattr('DequantSoftmax')};",
+                ("static const float dequant_softmax ="
+                f" {self.get_nodeattr('DequantSoftmax')};"),
                 # Attention mask parameters if "none", "causal" or "const"
                 f"{attention_mask};",
                 # Type alias to the generated attention mask for convenience
@@ -501,8 +501,8 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
             "    ActAVMatMul,",
             "    ActASoftmax,",
             "    MacResource,",
-            "    MemResource"
-            ">;",
+            ("    MemResource"
+            ">;"),
             # Short type aliases of attention input and output streams
             "using QStream = Attention::QStream;",
             "using KStream = Attention::KStream;",
@@ -612,8 +612,8 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
             # Implement the attention mask array as a dual-port ROM with the
             # RAM-Style selected via attribute
             pragmas.extend([
-                "#pragma HLS BIND_STORAGE variable=attention_mask"
-                f" type=ROM_2P impl={ram_style_mask}"
+                ("#pragma HLS BIND_STORAGE variable=attention_mask"
+                f" type=ROM_2P impl={ram_style_mask}")
             ])
 
         # Write the body of the attention top-level function
@@ -631,14 +631,14 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
             *pragmas,
             # Connect the attention operator to the input and output streams
             f"for(std::size_t i = 0; i < {self.iterations}; ++i) {{",
-            "    attention("
+            ("    attention("
             "    in0_V, "  # q
             "    in1_V, "  # k
             "    in2_V, "  # v
             "    out0_V, "  # output
             # TODO: Does not work for "input" mode mask
             "    attention_mask"
-            ");",
+            ");"),
             "}"
         ]
 
@@ -654,10 +654,10 @@ class ScaledDotProductAttention_hls(ScaledDotProductAttention, HLSBackend):
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             # Note: Assumes stream type aliases to be set in defines
             f"void {self.onnx_node.name} (",
-            "  QStream &in0_V,"
+            ("  QStream &in0_V,"
             "  KStream &in1_V,"
             "  VStream &in2_V,"
-            "  OStream &out0_V",
+            "  OStream &out0_V"),
             ")",
         ]
 

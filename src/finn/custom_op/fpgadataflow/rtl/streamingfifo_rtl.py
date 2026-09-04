@@ -172,26 +172,46 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
                 f"create_bd_cell -type hier {node_name}",
                 f"create_bd_pin -dir I -type clk /{node_name}/{clk_name}",
                 f"create_bd_pin -dir I -type rst /{node_name}/{rst_name}",
-                "create_bd_intf_pin -mode Master "
-                f"-vlnv xilinx.com:interface:axis_rtl:1.0 /{node_name}/{dout_name}",
-                "create_bd_intf_pin -mode Slave "
-                f"-vlnv xilinx.com:interface:axis_rtl:1.0 /{node_name}/{din_name}",
-                "create_bd_cell -type ip "
-                f"-vlnv xilinx.com:ip:axis_data_fifo:2.0 /{node_name}/fifo",
-                f"set_property -dict [list CONFIG.FIFO_DEPTH {{{depth}}}] "
-                f"[get_bd_cells /{node_name}/fifo]",
-                f"set_property -dict [list CONFIG.FIFO_MEMORY_TYPE {{{ram_style}}}] "
-                f"[get_bd_cells /{node_name}/fifo]",
-                f"set_property -dict [list CONFIG.TDATA_NUM_BYTES {{{tdata_num_bytes}}}] "
-                f"[get_bd_cells /{node_name}/fifo]",
-                f"connect_bd_intf_net [get_bd_intf_pins {node_name}/fifo/M_AXIS] "
-                f"[get_bd_intf_pins {node_name}/{dout_name}]",
-                f"connect_bd_intf_net [get_bd_intf_pins {node_name}/fifo/S_AXIS] "
-                f"[get_bd_intf_pins {node_name}/{din_name}]",
-                f"connect_bd_net [get_bd_pins {node_name}/{rst_name}] "
-                f"[get_bd_pins {node_name}/fifo/s_axis_aresetn]",
-                f"connect_bd_net [get_bd_pins {node_name}/{clk_name}] "
-                f"[get_bd_pins {node_name}/fifo/s_axis_aclk]",
+                (
+                    "create_bd_intf_pin -mode Master "
+                    f"-vlnv xilinx.com:interface:axis_rtl:1.0 /{node_name}/{dout_name}"
+                ),
+                (
+                    "create_bd_intf_pin -mode Slave "
+                    f"-vlnv xilinx.com:interface:axis_rtl:1.0 /{node_name}/{din_name}"
+                ),
+                (
+                    "create_bd_cell -type ip "
+                    f"-vlnv xilinx.com:ip:axis_data_fifo:2.0 /{node_name}/fifo"
+                ),
+                (
+                    f"set_property -dict [list CONFIG.FIFO_DEPTH {{{depth}}}] "
+                    f"[get_bd_cells /{node_name}/fifo]"
+                ),
+                (
+                    f"set_property -dict [list CONFIG.FIFO_MEMORY_TYPE {{{ram_style}}}] "
+                    f"[get_bd_cells /{node_name}/fifo]"
+                ),
+                (
+                    f"set_property -dict [list CONFIG.TDATA_NUM_BYTES {{{tdata_num_bytes}}}] "
+                    f"[get_bd_cells /{node_name}/fifo]"
+                ),
+                (
+                    f"connect_bd_intf_net [get_bd_intf_pins {node_name}/fifo/M_AXIS] "
+                    f"[get_bd_intf_pins {node_name}/{dout_name}]"
+                ),
+                (
+                    f"connect_bd_intf_net [get_bd_intf_pins {node_name}/fifo/S_AXIS] "
+                    f"[get_bd_intf_pins {node_name}/{din_name}]"
+                ),
+                (
+                    f"connect_bd_net [get_bd_pins {node_name}/{rst_name}] "
+                    f"[get_bd_pins {node_name}/fifo/s_axis_aresetn]"
+                ),
+                (
+                    f"connect_bd_net [get_bd_pins {node_name}/{clk_name}] "
+                    f"[get_bd_pins {node_name}/fifo/s_axis_aclk]"
+                ),
             ]
 
         if impl_style == "virtual":

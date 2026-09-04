@@ -89,8 +89,10 @@ class InputDilation_hls(InputDilation, HLSBackend):
         """Return blackboxfunction."""
         packed_hls_type = f"ap_uint<{self.get_instream_width()}>"
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            f"void {self.onnx_node.name}(hls::stream<{packed_hls_type} > &in0_V, "
-            f"hls::stream<{packed_hls_type} > &out0_V)"
+            (
+                f"void {self.onnx_node.name}(hls::stream<{packed_hls_type} > &in0_V, "
+                f"hls::stream<{packed_hls_type} > &out0_V)"
+            )
         ]
 
     def execute_node(self, context: dict[str, np.ndarray], graph: "GraphProto") -> None:

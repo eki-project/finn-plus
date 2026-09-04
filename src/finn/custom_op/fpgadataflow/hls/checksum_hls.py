@@ -252,8 +252,10 @@ class CheckSum_hls(HLSBackend, HWCustomOp):
 
         # note: the innermost dim is not reversed for the output
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
-            f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>"
-            f'(out0_V, {shape_cpp_str}, "{npy_out}", false);',
+            (
+                f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, {npy_type}>"
+                f'(out0_V, {shape_cpp_str}, "{npy_out}", false);'
+            ),
             "std::vector<unsigned int> checksum(1);",
             "checksum[0] = chk;",
             f'cnpy::npy_save("{code_gen_dir}/output_1.npy",&checksum[0],{{1}},"w");',

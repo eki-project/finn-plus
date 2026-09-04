@@ -106,8 +106,10 @@ class Lookup_hls(Lookup, HLSBackend):
         oshape_cpp_str = str(self.get_folded_output_shape()).replace("(", "{").replace(")", "}")
 
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
-            f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, float>"
-            f'(out0_V, {oshape_cpp_str}, "{npy_out}", false);'
+            (
+                f"apintstream2npy<{packed_hls_type}, {elem_hls_type}, {elem_bits}, float>"
+                f'(out0_V, {oshape_cpp_str}, "{npy_out}", false);'
+            )
         ]
 
     def docompute(self) -> None:
@@ -129,15 +131,19 @@ class Lookup_hls(Lookup, HLSBackend):
             packed_input_hls_type = f"ap_uint<{self.get_instream_width()}>"
             packed_output_hls_type = f"ap_uint<{self.get_outstream_width()}>"
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-                f"void {self.onnx_node.name}(hls::stream<{packed_input_hls_type} > &in0_V, "
-                f"hls::stream<{packed_output_hls_type} > &out0_V)"
+                (
+                    f"void {self.onnx_node.name}(hls::stream<{packed_input_hls_type} > &in0_V, "
+                    f"hls::stream<{packed_output_hls_type} > &out0_V)"
+                )
             ]
         elif self.mem_mode == "external":
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-                f"void {self.onnx_node.name}(hls::stream<T_SRC> &in0_V, "
-                f"hls::stream<T_DST> &out0_V, "
-                f"T_DST const *const  mem, unsigned const size, "
-                f"unsigned &oob_count, bool &oob_irq)"
+                (
+                    f"void {self.onnx_node.name}(hls::stream<T_SRC> &in0_V, "
+                    f"hls::stream<T_DST> &out0_V, "
+                    f"T_DST const *const  mem, unsigned const size, "
+                    f"unsigned &oob_count, bool &oob_irq)"
+                )
             ]
 
     def pragmas(self) -> None:

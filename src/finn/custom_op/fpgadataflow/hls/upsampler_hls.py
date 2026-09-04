@@ -79,9 +79,11 @@ class UpsampleNearestNeighbour_hls(UpsampleNearestNeighbour, HLSBackend):
         input_elem_hls_type = self.get_input_datatype().get_hls_datatype_str()
         output_elem_hls_type = self.get_output_datatype().get_hls_datatype_str()
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
-            f"void {self.onnx_node.name}(hls::stream<hls::vector<{input_elem_hls_type}, "
-            f"{self.simd}>> &in0_V, hls::stream<hls::vector<{output_elem_hls_type}, "
-            f"{self.simd}>> &out0_V)"
+            (
+                f"void {self.onnx_node.name}(hls::stream<hls::vector<{input_elem_hls_type}, "
+                f"{self.simd}>> &in0_V, hls::stream<hls::vector<{output_elem_hls_type}, "
+                f"{self.simd}>> &out0_V)"
+            )
         ]
 
     def execute_node(self, context: dict[str, np.ndarray], graph: GraphProto) -> None:

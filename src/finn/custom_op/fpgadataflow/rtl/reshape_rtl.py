@@ -111,7 +111,9 @@ class Reshape_rtl(Reshape, RTLBackend):
 
         cmd = [f"add_files -norecurse {f}" for f in sourcefiles]
         cmd += [
-            "create_bd_cell -type module -reference "
-            f"{self.get_nodeattr('gen_top_module')} {self.onnx_node.name}"
+            (
+                "create_bd_cell -type module -reference "
+                f"{self.get_nodeattr('gen_top_module')} {self.onnx_node.name}"
+            )
         ]
         return cmd
