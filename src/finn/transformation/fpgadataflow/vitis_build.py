@@ -74,8 +74,6 @@ class ParallelVitisSynthesis(Transformation):
             cwd=config.run_script_path.parent,
             capture_output=True,
             text=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
         )
         if result.returncode != 0:
             raise FINNSynthesisError(
