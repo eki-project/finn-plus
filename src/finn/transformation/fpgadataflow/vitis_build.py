@@ -142,7 +142,7 @@ class ParallelVitisSynthesis(Transformation):
         model.set_metadata_prop(
             "vivado_synth_rpt",
             json.dumps(
-                {device: Path(p).parent / "synth_report.xml" for device, p in results.items()}
+                {device: str(Path(p).parent / "synth_report.xml") for device, p in results.items()}
             ),
         )
         return model, False
