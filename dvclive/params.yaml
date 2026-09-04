@@ -1,0 +1,23 @@
+params:
+  dut: resnet50
+  auto_fifo_depths: false
+  auto_fifo_strategy: live_fifo
+  generate_outputs:
+  - stitched_ip
+  - rtlsim_performance
+  - bitfile
+  synth_clk_period_ns: 10
+  board: U250
+  shell_flow_type: vitis_alveo
+  validation_dataset: imagenet
+  model_path: models/resnet50/resnet50_w1a2_exported.onnx
+  target_fps: None
+  folding_config_file: 
+    measurement_artifacts/runs_output/run_9/reports/experiment_fifosizing/exp_itr_1/largest_first/both/folding_config.json
+  fifo_config_file: 
+    measurement_artifacts/runs_output/run_9/reports/experiment_fifosizing/exp_itr_1/largest_first/both/fifo_config.json
+  enable_instrumentation: false
+  rtlsim_batch_size: 3
+  vitis_platform: xilinx_u250_gen3x16_xdma_4_1_202210_1
+metadata:
+  tool_version: '2024.2'

@@ -1,0 +1,11 @@
+{
+    "status": "failed",
+    "time": {
+        "step_resnet50_tidy": 17,
+        "step_resnet50_streamline": 234,
+        "step_resnet50_convert_to_hw": 11,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "total_build_time": 262
+    }
+}
