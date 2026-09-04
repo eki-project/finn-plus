@@ -1315,6 +1315,21 @@ class BuildSimulation(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Build / compile the model. Modifies the model."""
         self.model = model
+        # NodeContainer nodes cannot be simulated node-by-node: their block design is only
+        # assembled by NodeContainer.code_generation_ipi() when the surrounding stitched IP
+        # is built, so the synthetic interfaces they report (e.g. the selectable-weights
+        # "s_axis_tap") do not exist in a single-node stitch and Vivado aborts with a
+        # confusing "'set_property' expects at least one object" further down the line.
+        nodecontainers = [n.name for n in model.graph.node if n.op_type == "NodeContainer"]
+        if nodecontainers:
+            raise FINNUserError(
+                "Simulation-based FIFO sizing and rtlsim performance measurement do not "
+                "support multi-DNN NodeContainer nodes yet, but the model contains "
+                f"{len(nodecontainers)} of them (e.g. {nodecontainers[0]}). Remove "
+                "step_measure_rtlsim_performance from the multi-DNN step list and either "
+                "set auto_fifo_depths to False with a fifo_config_file or use the "
+                "force_minimal_fifos auto_fifo_strategy."
+            )
         sim_comm_mode = (
             cast("str", self.model.get_metadata_prop("sim_comm_mode") or "shm")
         ).lower()

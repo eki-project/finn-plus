@@ -98,6 +98,10 @@ class AutoFIFOSizingMethod(str, Enum):
 
     LIVE_FIFO = "live_fifo"
     DISTRIBUTED_SIMULATION = "distributed_sim"
+    #: Skip any sizing simulation and keep all inserted FIFOs at their minimal
+    #: (default) depth. Useful for designs that are known to work without deeper
+    #: FIFOs and avoids having to maintain a fifo_config_file.
+    FORCE_MINIMAL_FIFOS = "force_minimal_fifos"
 
 
 class FifosimCommMode(str, Enum):
@@ -670,7 +674,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: Whether FIFO depths will be set automatically. Involves running stitched
     #: rtlsim and can take a long time.
-    #: If set to False, the folding_config_file can be used to specify sizes
+    #: If set to False, the fifo_config_file can be used to specify sizes
     #: for each FIFO.
     auto_fifo_depths: bool = True
 
@@ -679,11 +683,13 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     functional_simulation: bool = True
 
     #: Whether FIFO nodes with depth larger than 32768 will be split.
-    #: Allow to configure very large FIFOs in the folding_config_file.
+    #: Allow to configure very large FIFOs in the fifo_config_file.
     split_large_fifos: bool = True
 
     #: (Only relevant when auto_fifo_depths is enabled)
     #: Select which method will be used for setting the FIFO sizes.
+    #: Note that AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS does not size the FIFOs at all,
+    #: it just inserts them with their minimal (default) depth.
     auto_fifo_strategy: AutoFIFOSizingMethod = AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION
 
     #: (Only relevant when auto_fifo_depths is enabled)
@@ -850,6 +856,9 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
 
     #: If set, appends experiments_config to settings file during driver generation
     experiments_config_path: Optional[str] = None
+
+    #: If set, enable Multi-DNN build flow
+    multi_dnn_config_path: Optional[str] = None
 
     def _resolve_hls_clk_period(self) -> float:
         """Resolve the HLS clock period, falling back to synthesis clock period if not set.

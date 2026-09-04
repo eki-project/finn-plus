@@ -143,7 +143,11 @@ class MVAU_rtl(MVAU, RTLBackend):
                         reshaped_input,
                     )
 
-                if in_ind == 1 and (dynamic_input or self.get_nodeattr("mlo_max_iter")):
+                if in_ind == 1 and (
+                    dynamic_input
+                    or self.get_nodeattr("mlo_max_iter")
+                    or self.get_nodeattr("bodies")
+                ):
                     reshaped_input = context[inputs].reshape(-1, context[inputs].shape[-1])
                     self.make_weight_file(
                         reshaped_input, "decoupled_npy", f"{code_gen_dir}/input_1.npy"
@@ -153,10 +157,12 @@ class MVAU_rtl(MVAU, RTLBackend):
             nbits = self.get_instream_width()
             inp = npy_to_rtlsim_input(f"{code_gen_dir}/input_0.npy", export_idt, nbits)
             super().reset_rtlsim(sim)
+
             if (
                 dynamic_input
                 or mem_mode in ["external", "internal_decoupled"]
                 or self.get_nodeattr("mlo_max_iter")
+                or self.get_nodeattr("bodies")
             ):
                 wnbits = self.get_instream_width(1)
                 if dynamic_input:

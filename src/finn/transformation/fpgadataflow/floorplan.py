@@ -134,6 +134,15 @@ class Floorplan(Transformation):
             )
         )
         non_dma_nodes = list(filter(lambda x: x not in dyn_tlastmarker_nodes, non_dma_nodes))
+        node_container_nodes = list(
+            filter(
+                lambda x: x.op_type == "NodeContainer"
+                and getCustomOp(x).get_nodeattr("multi_dnn_type")
+                in ("partial_reconfiguration", "selectable_weights"),
+                non_dma_nodes,
+            )
+        )
+        non_dma_nodes = list(filter(lambda x: x not in node_container_nodes, non_dma_nodes))
 
         # assign every DMA node to its own partition
         for node in dma_nodes:
@@ -143,6 +152,12 @@ class Floorplan(Transformation):
 
         # assign every dynamic tLastMarker node to its own partition
         for node in dyn_tlastmarker_nodes:
+            node_inst = getCustomOp(node)
+            node_inst.set_nodeattr("partition_id", partition_cnt)
+            partition_cnt += 1
+
+        # assign every NodeContainer node to its own partition
+        for node in node_container_nodes:
             node_inst = getCustomOp(node)
             node_inst.set_nodeattr("partition_id", partition_cnt)
             partition_cnt += 1

@@ -42,6 +42,14 @@
  *	be instantiated and integrated with the rest of the system in a manual
  *	process.
  *
+ *	In addition to the sliding-window averages, a simple long-running
+ *	throughput measurement is provided via run_cycles_lo/hi and run_frames.
+ *	Both counters reset on the rising edge of cfg[0] (i.e. when LFSR
+ *	generation is enabled). run_cycles counts every clock cycle elapsed since
+ *	that edge; run_frames counts every completed output frame. Dividing
+ *	run_cycles by run_frames in software gives the average initiation interval
+ *	over an arbitrarily large window without any on-chip buffer.
+ *
  * @param PENDING	maximum number of feature maps in the FINN dataflow pipeline
  * @param ILEN		number of input transactions per IFM
  * @param OLEN		number of output transactions per OFM
@@ -56,11 +64,13 @@
  #include <algorithm>
 
  // Module Configuration
- constexpr unsigned  PENDING = @PENDING@; // Max. feature maps in flight
- constexpr unsigned  ILEN    = @ILEN@;    // Input words per IFM
- constexpr unsigned  OLEN    = @OLEN@;    // Output words per OFM
- constexpr unsigned  KO      = @KO@;      // Subwords within OFM transaction word
- constexpr unsigned  AVG_N   = @AVG_N@;   // Max frames in averaging window
+ constexpr unsigned  PENDING          = @PENDING@;          // Max. feature maps in flight
+ constexpr unsigned  ILEN             = @ILEN@;             // Input words per IFM
+ constexpr unsigned  OLEN             = @OLEN@;             // Output words per OFM
+ constexpr unsigned  KO               = @KO@;               // Subwords within OFM transaction word
+ constexpr unsigned  AVG_N            = @AVG_N@;            // Max frames in averaging window
+ constexpr unsigned  TUSER_WIDTH      = @TUSER_WIDTH@;      // Width of tUSER field on finnix output
+ constexpr unsigned  NUM_TUSER_VALUES = @NUM_TUSER_VALUES@; // Number of round-robin tUSER values (1 = fixed at 0)
  using  TI = @TI@;  // IFM transaction word
  using  TO = @TO@;  // OFM transaction word
 
@@ -85,6 +95,23 @@
  ) {
  #pragma HLS pipeline II=1 style=flp
      dst.write(src.read().data);
+ }
+
+ // Unpack internal {last, user, data} word into an hls::axis beat for the interface port.
+ // hls::axis types must NOT appear in internal hls::stream variables (HLS 214-208).
+ template<typename T, unsigned TUW>
+ static void move(
+     hls::stream<ap_uint<T::width + TUW + 1>> &src,
+     hls::stream<hls::axis<T, TUW, 0, 0>> &dst
+ ) {
+ #pragma HLS pipeline II=1 style=flp
+     ap_uint<T::width + TUW + 1> const  packed = src.read();
+     hls::axis<T, TUW, 0, 0>  beat;
+     beat.data = packed(T::width - 1, 0);
+     beat.user = packed(T::width + TUW - 1, T::width);
+     beat.last = packed[T::width + TUW];
+     beat.keep = -1;
+     dst.write(beat);
  }
 
  template<typename  T>
@@ -139,18 +166,25 @@
      typename  TO
  >
  void instrument(
-     hls::stream<TI> &finnix,
-     hls::stream<TO> &finnox,
-     ap_uint<32>  cfg,   	// [0] - 0:hold, 1:lfsr; [31:1] - minimum interval (cycles) between IFM starts
-     ap_uint<32>  seed,  	// [31:16] - LFSR seed (only upper 16 bits used)
-     ap_uint<32>  avg_n, 	// [31:0] - averaging window size (1..AVG_N frames)
-     ap_uint<32> &status,	// [0] - timestamp overflow; [1] - timestamp underflow
+     hls::stream<ap_uint<TI::width + TUSER_WIDTH + 1>> &finnix,
+     hls::stream<TO> &finnox,  // plain type — hls::axis stripped by move() in wrapper
+     ap_uint<32>  cfg,          // [0] - 0:hold, 1:lfsr; [31:1] - minimum interval (cycles) between IFM starts
+     ap_uint<32>  seed,         // [31:16] - LFSR seed (only upper 16 bits used)
+     ap_uint<32>  avg_n,        // [31:0] - averaging window size (1..AVG_N frames)
+     ap_uint<32>  mux_interval, // frames each tUSER value is held before advancing (0 = fixed at 0)
+     ap_uint<32> &status,       // [0] - timestamp overflow; [1] - timestamp underflow
      ap_uint<32> &latency,
      ap_uint<32> &interval,
      ap_uint<32> &checksum,
      ap_uint<32> &min_latency,
-     ap_uint<32> &avg_latency,
-     ap_uint<32> &avg_interval
+     ap_uint<32> &lat_sum_lo,		// lower 32 bits of latency sliding-window sum (divide by avg_fill in SW)
+     ap_uint<32> &lat_sum_hi,		// upper 32 bits of latency sliding-window sum
+     ap_uint<32> &int_sum_lo,		// lower 32 bits of interval sliding-window sum
+     ap_uint<32> &int_sum_hi,		// upper 32 bits of interval sliding-window sum
+     ap_uint<32> &avg_fill_out,		// number of valid entries in sliding window (divisor)
+     ap_uint<32> &run_cycles_lo,	// lower 32 bits of cycle count since cfg[0] rising edge
+     ap_uint<32> &run_cycles_hi,	// upper 32 bits of cycle count since cfg[0] rising edge
+     ap_uint<32> &run_frames		// completed output frames since cfg[0] rising edge
  ) {
  #pragma HLS pipeline II=1 style=flp
 
@@ -173,6 +207,13 @@
  #pragma HLS reset variable=icnt
  #pragma HLS reset variable=lfsr off
  #pragma HLS reset variable=last_ifm_start
+
+     // tUSER schedule state
+     static ap_uint<TUSER_WIDTH>  tuser_val     = 0; // current tUSER value driven on finnix
+     static ap_uint<32>           frame_mux_cnt = 0; // frames elapsed at current tuser_val
+ #pragma HLS reset variable=tuser_val
+ #pragma HLS reset variable=frame_mux_cnt
+
      if(!finnix.full()) {
 
          bool const  first = icnt == 0;
@@ -206,9 +247,28 @@
          }
 
          if(wr) {
-             finnix.write_nb(lfsr);
+             bool const  frame_last = (icnt == ILEN-1);
+             // Pack {last[1], user[TUSER_WIDTH], data[TI::width]} into a plain ap_uint.
+             // hls::axis cannot be used in internal streams (HLS 214-208); the wrapper's
+             // move() dataflow process reconstructs the axis beat for the interface port.
+             ap_uint<TI::width + TUSER_WIDTH + 1>  beat;
+             beat(TI::width - 1, 0)                     = lfsr;
+             beat(TI::width + TUSER_WIDTH - 1, TI::width) = tuser_val;
+             beat[TI::width + TUSER_WIDTH]              = frame_last ? ap_uint<1>(1) : ap_uint<1>(0);
+             finnix.write_nb(beat);
              if(first)  timestamp_ovf |= !timestamps.write_nb(cnt_clk);
-             icnt = icnt == ILEN-1? decltype(icnt)(0) : decltype(icnt)(icnt + 1);
+             // After the last beat of a frame, advance the tUSER round-robin schedule
+             if(frame_last && NUM_TUSER_VALUES > 1 && mux_interval > 0) {
+                 if(frame_mux_cnt >= ap_uint<32>(mux_interval - 1)) {
+                     frame_mux_cnt = 0;
+                     tuser_val = (tuser_val == ap_uint<TUSER_WIDTH>(NUM_TUSER_VALUES - 1))
+                                 ? ap_uint<TUSER_WIDTH>(0)
+                                 : ap_uint<TUSER_WIDTH>(tuser_val + 1);
+                 } else {
+                     frame_mux_cnt++;
+                 }
+             }
+             icnt = frame_last? decltype(icnt)(0) : decltype(icnt)(icnt + 1);
          }
      }
 
@@ -231,8 +291,6 @@
      static clock_t  int_buf[AVG_N];
      static ap_uint<64>  lat_sum = 0;
      static ap_uint<64>  int_sum = 0;
-     static clock_t  last_avg_latency  = 0;
-     static clock_t  last_avg_interval = 0;
      static ap_uint<32>  prev_avg_n = 0;
  #pragma HLS reset variable=avg_head
  #pragma HLS reset variable=avg_fill
@@ -240,9 +298,17 @@
  #pragma HLS reset variable=int_buf off
  #pragma HLS reset variable=lat_sum
  #pragma HLS reset variable=int_sum
- #pragma HLS reset variable=last_avg_latency
- #pragma HLS reset variable=last_avg_interval
  #pragma HLS reset variable=prev_avg_n
+
+     // Running Throughput Measurement State (resets on rising edge of cfg[0])
+     static bool  prev_cfg0  = false;
+     static bool  run_active = false;  // true after the first cfg[0] rising edge
+     static ap_uint<64>  run_total_cycles = 0;
+     static ap_uint<32>  run_frame_count  = 0;
+ #pragma HLS reset variable=prev_cfg0
+ #pragma HLS reset variable=run_active
+ #pragma HLS reset variable=run_total_cycles
+ #pragma HLS reset variable=run_frame_count
 
      static ap_uint<8>  pkts = 0;
  #pragma HLS reset variable=pkts
@@ -252,6 +318,14 @@
  #pragma HLS reset variable=coeff off
  #pragma HLS reset variable=psum off
  #pragma HLS reset variable=last_checksum
+
+     // Detect rising edge of cfg[0]: reset running throughput counters
+     bool const  cur_cfg0    = cfg[0];
+     if(cur_cfg0 && !prev_cfg0) {
+         run_active       = true;
+         run_total_cycles = 0;
+         run_frame_count  = 0;
+     }
 
      TO  oval;
      if(finnox.read_nb(oval)) {
@@ -314,10 +388,9 @@
                  }
                  avg_head++;
                  if(avg_head >= ap_uint<clog2nz(AVG_N)+1>(win))  avg_head = 0;
-                 last_avg_latency  = lat_sum / avg_fill;
-                 last_avg_interval = int_sum / avg_fill;
              }
              ocnt = 0;
+             if(run_active)  run_frame_count++;
 
              last_checksum = (pkts++, psum);
          }
@@ -326,58 +399,86 @@
      // Advance Timestamp Counter
      cnt_clk++;
 
+     // Advance Running Throughput Counters
+     if(run_active)  run_total_cycles++;
+     prev_cfg0 = cur_cfg0;
+
      // Copy Status Outputs
      status = timestamp_ovf | (timestamp_unf << 1);
      latency  = last_latency;
      interval = last_interval;
      checksum = last_checksum;
      min_latency  = cur_min_latency;
-     avg_latency  = last_avg_latency;
-     avg_interval = last_avg_interval;
+     lat_sum_lo = lat_sum(31,  0);
+     lat_sum_hi = lat_sum(63, 32);
+     int_sum_lo = int_sum(31,  0);
+     int_sum_hi = int_sum(63, 32);
+     avg_fill_out = avg_fill;
+     run_cycles_lo = run_total_cycles(31,  0);
+     run_cycles_hi = run_total_cycles(63, 32);
+     run_frames    = run_frame_count;
 
  } // instrument()
 
  void instrumentation_wrapper(
-     hls::stream<TI> &finnix,
+     hls::stream<hls::axis<TI, TUSER_WIDTH, 0, 0>> &finnix,
      hls::stream<TO> &finnox,
      ap_uint<32>  cfg,
      ap_uint<32>  seed,
      ap_uint<32>  avg_n,
+     ap_uint<32>  mux_interval,
      ap_uint<32> &status,
      ap_uint<32> &latency,
      ap_uint<32> &interval,
      ap_uint<32> &checksum,
      ap_uint<32> &min_latency,
-     ap_uint<32> &avg_latency,
-     ap_uint<32> &avg_interval
+     ap_uint<32> &lat_sum_lo,
+     ap_uint<32> &lat_sum_hi,
+     ap_uint<32> &int_sum_lo,
+     ap_uint<32> &int_sum_hi,
+     ap_uint<32> &avg_fill,
+     ap_uint<32> &run_cycles_lo,
+     ap_uint<32> &run_cycles_hi,
+     ap_uint<32> &run_frames
  ) {
  #pragma HLS interface axis port=finnix
  #pragma HLS interface axis port=finnox
  #pragma HLS interface s_axilite bundle=ctrl port=cfg
  #pragma HLS interface s_axilite bundle=ctrl port=seed
  #pragma HLS interface s_axilite bundle=ctrl port=avg_n
+ #pragma HLS interface s_axilite bundle=ctrl port=mux_interval
  #pragma HLS interface s_axilite bundle=ctrl port=status
  #pragma HLS interface s_axilite bundle=ctrl port=latency
  #pragma HLS interface s_axilite bundle=ctrl port=interval
  #pragma HLS interface s_axilite bundle=ctrl port=checksum
  #pragma HLS interface s_axilite bundle=ctrl port=min_latency
- #pragma HLS interface s_axilite bundle=ctrl port=avg_latency
- #pragma HLS interface s_axilite bundle=ctrl port=avg_interval
+ #pragma HLS interface s_axilite bundle=ctrl port=lat_sum_lo
+ #pragma HLS interface s_axilite bundle=ctrl port=lat_sum_hi
+ #pragma HLS interface s_axilite bundle=ctrl port=int_sum_lo
+ #pragma HLS interface s_axilite bundle=ctrl port=int_sum_hi
+ #pragma HLS interface s_axilite bundle=ctrl port=avg_fill
+ #pragma HLS interface s_axilite bundle=ctrl port=run_cycles_lo
+ #pragma HLS interface s_axilite bundle=ctrl port=run_cycles_hi
+ #pragma HLS interface s_axilite bundle=ctrl port=run_frames
  #pragma HLS interface ap_ctrl_none port=return
 
  #pragma HLS dataflow disable_start_propagation
-     static hls::stream<TI>  finnix0;
-     static hls::stream<Payload<TO>::type>  finnox0;
+     // Internal FIFO for finnix uses a plain ap_uint packing {last, user, data}.
+     // hls::axis types are forbidden in internal hls::stream variables (HLS 214-208).
+     // The move<TI, TUSER_WIDTH> overload below reconstructs the axis beat for the port.
+     static hls::stream<ap_uint<TI::width + TUSER_WIDTH + 1>>  finnix0;
  #pragma HLS stream variable=finnix0 depth=2
+     static hls::stream<Payload<TO>::type>  finnox0;
  #pragma HLS stream variable=finnox0 depth=2
 
      // AXI-Stream -> FIFO
      move(finnox, finnox0);
 
-     // Main
-     instrument<PENDING, ILEN, OLEN, KO, AVG_N>(finnix0, finnox0, cfg, seed, avg_n, status, latency, interval, checksum, min_latency, avg_latency, avg_interval);
+     // Main — writes to internal FIFO (enables II=1 in instrument)
+     // TI and TO must be explicit: TI cannot be deduced from ap_uint<TI::width+...>
+     instrument<PENDING, ILEN, OLEN, KO, AVG_N, TI, TO>(finnix0, finnox0, cfg, seed, avg_n, mux_interval, status, latency, interval, checksum, min_latency, lat_sum_lo, lat_sum_hi, int_sum_lo, int_sum_hi, avg_fill, run_cycles_lo, run_cycles_hi, run_frames);
 
-     // FIFO -> AXI-Stream
-     move(finnix0, finnix);
+     // FIFO -> AXI-Stream: reconstruct hls::axis beat from packed internal word
+     move<TI, TUSER_WIDTH>(finnix0, finnix);
 
  } // instrumentation_wrapper

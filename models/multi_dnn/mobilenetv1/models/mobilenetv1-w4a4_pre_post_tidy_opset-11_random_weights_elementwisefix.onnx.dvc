@@ -1,0 +1,6 @@
+outs:
+- md5: 07235919759ea05de9b0c17b850f0da5
+  size: 17788824
+  hash: md5
+  path:
+    mobilenetv1-w4a4_pre_post_tidy_opset-11_random_weights_elementwisefix.onnx

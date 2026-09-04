@@ -1,5 +1,6 @@
 """Transformations for generating and simulating instrumentation IP."""
 
+import math
 import numpy as np
 import os
 import subprocess
@@ -94,6 +95,18 @@ class GenerateInstrumentationIP(Transformation):
         instrwrp_cpp = instrwrp_cpp.replace("@TI@", str(ti))
         instrwrp_cpp = instrwrp_cpp.replace("@TO@", str(to))
         instrwrp_cpp = instrwrp_cpp.replace("@KO@", str(ko))
+        # Derive the number of distinct tUSER values from NodeContainer nodes in the model.
+        # PR and SW containers both use tUSER low-bits to select the active body/weight-set.
+        # Take the max across all NodeContainers so the width covers all of them.
+        num_tuser_values = 1
+        for nc in model.get_nodes_by_op_type("NodeContainer"):
+            nc_inst = getCustomOp(nc)
+            multi_dnn_type = nc_inst.get_nodeattr("multi_dnn_type")
+            if multi_dnn_type in ("partial_reconfiguration", "selectable_weights"):
+                num_tuser_values = max(num_tuser_values, nc_inst.get_nodeattr("bodies"))
+        tuser_width = max(math.ceil(math.log2(max(num_tuser_values, 2))), 1)
+        instrwrp_cpp = instrwrp_cpp.replace("@TUSER_WIDTH@", str(tuser_width))
+        instrwrp_cpp = instrwrp_cpp.replace("@NUM_TUSER_VALUES@", str(num_tuser_values))
         with open(wrapper_output_dir + "/top_instrumentation_wrapper.cpp", "w") as f:
             f.write(instrwrp_cpp)
         # fill out HLS synthesis tcl template

@@ -12,6 +12,17 @@ Planned release: 1.5.0.
 ### Added
 - Support for Python 3.14 (#233)
 - Added distributed simulation based FIFO sizing and a new performance simulation (#187)
+- Multi-DNN support: run several DNNs on one accelerator
+    - Three modes, selected via the `Generation.mode` key of the multi-DNN config JSON (`multi_dnn_config_path`):
+        - `Parallel`: the models run side by side, with their inputs/outputs optionally combined channelwise
+        - `SelectableWeights`: the models share one datapath and are switched by swapping weights at runtime
+        - `PartialReconfiguration`: the models are swapped at runtime via DFX, using a partial bitstream per model
+    - New build steps: `step_apply_multi_dnn`, `step_collapse_multi_dnn` and `step_prepare_nodecontainer`
+    - New custom ops: `DNNContainer` and `NodeContainer`
+    - New RTL components for the DFX flow under `finn-rtllib/dfx/` (wrapper, scheduler, tUSER passthrough, decoupling) plus a `selector` and an ICAPE3 wrapper
+    - Automatic DFX floorplanning (`dfx_auto_floorplanning.tcl`); PR region resource reports and an SVG floorplan diagram are written to the report directory
+    - Partial bitstreams are copied into `<output_dir>/bitfile/partial_bitstreams`
+    - The Pynq driver can drive multi-DNN accelerators, including DFX reconfiguration and tUSER-based round-robin scheduling
 - Multi-FPGA inference support (#23)
     - Initial communication backend: [AuroraFlow](https://github.com/pc2/AuroraFlow) (new dependency)
     - See [MultiFPGA README](src/finn/transformation/fpgadataflow/multifpga/README.md) for usage and development information
@@ -41,6 +52,8 @@ Planned release: 1.5.0.
     - Enabled `FINNSettings` to work correctly in Python 3.14
     - Prevents RuntimeErrors in CI/test
 - Tests receive deterministic per-item seeds for RNG (#230)
+- Zynq builds now generate the accelerator clock with a PLL (Clocking Wizard) instead of the processing system, for exact and static clock generation
+- The instrumentation core now supports `tLast` generation and simple `tUSER`-based scheduling, and computes the running average in software to reduce pipeline depth
 
 #### Removed
 - Removed old simulation based FIFO sizing, superseded by the new distributed simulation based sizing (#187)
@@ -50,6 +63,7 @@ Planned release: 1.5.0.
 
 #### Fixes
 - Git timeouts now display a timeout message instead of "Internal Exception" (#243)
+- Fixed incorrect clock frequency reporting in the Pynq driver
 - Fixed warnings raised during streamlining and added more descriptive details to reorder and absorb warnings (#207)
 - Fixed that `wget` timeouts would crash FINN+, even if dependencies were only checked, not updated (#23, #208)
 - Fixed cases in which folding would accidentally create streams wider than `mvau_wwidth_max` due to a missing PE check (#209)

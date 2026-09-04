@@ -165,6 +165,18 @@ def _post_synth_res_single_file(  # noqa
     if top_dict is not None:
         res_dict["(top)"] = top_dict
 
+    # stats for largest shell components (so we could subtract them later on)
+    # IDMA/ODMA are modeled in ONNX SDPs (queried below)
+    shell_components = [
+        "top_instrumentation_wrap_0_0",
+        "top_axi_interconnect_0_0",
+        "top_smartconnect_0_0",
+    ]
+    for shell_comp in shell_components:
+        shell_dict = get_instance_stats(shell_comp)
+        if shell_dict is not None:
+            res_dict[shell_comp] = shell_dict
+
     for node in model.graph.node:
         if node.op_type == "StreamingDataflowPartition":
             sdp_model = ModelWrapper(cast("str", getCustomOp(node).get_nodeattr("model")))
@@ -183,7 +195,16 @@ def _post_synth_res_single_file(  # noqa
                 # Cant find info about this SDP node in this resource report, since its a different
                 # devices' report.
                 continue
-            sdp_res_dict = post_synth_res(sdp_model, file)
+            # Recurse directly into the single-file helper (instead of going through
+            # post_synth_res()) so that results from multiple SDPs are merged by node
+            # name instead of being wrapped under (and overwriting each other at) the
+            # same device key.
+            sdp_res_dict = _post_synth_res_single_file(
+                sdp_model, file, sdp_model.get_metadata_prop("platform") == "alveo", sdp_device_id
+            )
+            # drop the nested "(top)" entry: it refers to the same top-level instance
+            # already captured above and would otherwise just duplicate top_dict
+            sdp_res_dict.pop("(top)", None)
             res_dict.update(sdp_res_dict)
         elif is_hls_node(node) or is_rtl_node(node):
             node_dict = get_instance_stats(node.name)

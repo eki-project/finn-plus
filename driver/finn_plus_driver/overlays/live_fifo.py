@@ -16,7 +16,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
     def __init__(
         self,
         bitfile_name,
-        platform="zynq",
+        platform="zynq-iodma",
         fclk_mhz=100.0,
         device=None,
         download=True,
@@ -142,6 +142,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             min_latency,
             latency,
             interval,
+            *_,
         ) = self.observe_instrumentation(debug_print=True)
         self.stop_accelerator()
 
@@ -221,6 +222,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
             min_latency,
             latency,
             interval,
+            *_,
         ) = self.observe_instrumentation(False)
         log_total_fifo_size = [self.total_fifo_size(fifo_depths)]
         log_interval = [interval]
@@ -309,6 +311,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
                     min_latency,
                     latency,
                     interval,
+                    *_,
                 ) = self.observe_instrumentation(False)
 
                 # Determine if this depth causes degradation based on stop_condition

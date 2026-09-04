@@ -240,8 +240,11 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         code_gen_dict["$BIAS$"] = [str(bias)]  # activation bias value
         code_gen_dict["$PE$"] = [str(pe)]  # requires C = M*PE
         mlo_max_iter = self.get_nodeattr("mlo_max_iter")
+        bodies = self.get_nodeattr("bodies")
         if mlo_max_iter:
             code_gen_dict["$SETS$"] = [str(mlo_max_iter)]
+        elif bodies:
+            code_gen_dict["$SETS$"] = [str(bodies)]
         else:
             code_gen_dict["$SETS$"] = [str(1)]
 

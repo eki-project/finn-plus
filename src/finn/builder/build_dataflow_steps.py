@@ -35,6 +35,7 @@ import json
 import math
 import numpy as np
 import os
+import re
 import shutil
 from collections.abc import Callable
 from copy import deepcopy
@@ -177,6 +178,14 @@ from finn.transformation.fpgadataflow.vitis_build import VitisBuild
 from finn.transformation.fpgadataflow.vivado_power_estimation import VivadoPowerEstimation
 from finn.transformation.general import ApplyConfig
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
+from finn.transformation.multi_dnn.multi_dnn_steps import (
+    step_apply_multi_dnn,
+    step_collapse_multi_dnn,
+)
+from finn.transformation.multi_dnn.nodecontainer_transformations import (
+    GenerateNodeContainerStitched,
+    NameNodeContainerNodes,
+)
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.qonnx.give_unique_node_names_recursive import GiveUniqueNodeNamesRecursive
 from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
@@ -223,6 +232,126 @@ def register_build_dataflow_step(
         return step_fn
 
     return _decorator
+
+
+# The multi-DNN steps live in their own module, so register them here rather than
+# decorating them at their definition site (that would import this module and
+# create a circular import).
+register_build_dataflow_step()(step_apply_multi_dnn)
+register_build_dataflow_step()(step_collapse_multi_dnn)
+
+
+def _generate_pblock_svg(report_json_path, svg_path):
+    """Generate an SVG floorplan diagram from a pr_region_resources JSON report.
+
+    The SVG shows the SLICE-coordinate footprint of each auto-placed pblock
+    against the full device SLICE array. Y-axis is flipped so that FPGA Y=0
+    (bottom of die) appears at the bottom of the image.
+    """
+    with open(report_json_path) as f:
+        report = json.load(f)
+
+    regions = report.get("pr_regions", {})
+    dev_max_x = report.get("device_slice_max_x", 0)
+    dev_max_y = report.get("device_slice_max_y", 0)
+
+    # Parse the first SLICE range from each pblock's grid_ranges string.
+    # grid_ranges looks like: "SLICE_X60Y120:SLICE_X109Y239 RAMB36_X3Y24:..."
+    slice_pat = re.compile(r"SLICE_X(\d+)Y(\d+):SLICE_X(\d+)Y(\d+)")
+    pblocks = []  # list of (x0, y0, x1, y1, name)
+    for pblock_name, data in regions.items():
+        m = slice_pat.search(data.get("grid_ranges", ""))
+        if m:
+            x0, y0, x1, y1 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+            # Fall back on pblock extents if device extents not in report
+            dev_max_x = max(dev_max_x, x1)
+            dev_max_y = max(dev_max_y, y1)
+            pblocks.append((x0, y0, x1, y1, pblock_name))
+
+    if not pblocks:
+        return  # Nothing to draw (manual mode or no SLICE ranges found)
+
+    SCALE = 3  # pixels per SLICE unit
+    PAD = 30  # border padding in pixels
+    FONT = 11
+
+    canvas_w = (dev_max_x + 1) * SCALE + 2 * PAD
+    canvas_h = (dev_max_y + 1) * SCALE + 2 * PAD
+
+    # Palette: distinct colours for up to 8 regions
+    palette = [
+        "#4c9be8",
+        "#e8864c",
+        "#4ce87c",
+        "#e84c9b",
+        "#9b4ce8",
+        "#e8e04c",
+        "#4ce8d8",
+        "#e84c4c",
+    ]
+
+    lines = [
+        f'<svg xmlns="http://www.w3.org/2000/svg"' f' width="{canvas_w}" height="{canvas_h}">',
+        # Background = full device SLICE array
+        f'<rect x="{PAD}" y="{PAD}"'
+        f' width="{(dev_max_x + 1) * SCALE}" height="{(dev_max_y + 1) * SCALE}"'
+        f' fill="#d8d8d8" stroke="#555" stroke-width="1"/>',
+        # Y-axis label (rotated)
+        f'<text transform="rotate(-90)" x="-{canvas_h//2}" y="{PAD - 6}"'
+        f' text-anchor="middle" font-size="{FONT}" font-family="sans-serif">SLICE Y</text>',
+        # X-axis label
+        f'<text x="{canvas_w // 2}" y="{canvas_h - 4}"'
+        f' text-anchor="middle" font-size="{FONT}" font-family="sans-serif">SLICE X</text>',
+    ]
+
+    for i, (x0, y0, x1, y1, name) in enumerate(pblocks):
+        color = palette[i % len(palette)]
+        # Flip Y: FPGA Y=0 is at bottom; SVG Y=0 is top
+        svg_y_top = PAD + (dev_max_y - y1) * SCALE
+        svg_x_left = PAD + x0 * SCALE
+        w = (x1 - x0 + 1) * SCALE
+        h = (y1 - y0 + 1) * SCALE
+        cx = svg_x_left + w // 2
+        cy = svg_y_top + h // 2
+        # Pblock rectangle
+        lines.append(
+            f'<rect x="{svg_x_left}" y="{svg_y_top}" width="{w}" height="{h}"'
+            f' fill="{color}" fill-opacity="0.55" stroke="#222" stroke-width="1.5"/>'
+        )
+        # Label — region name (strip the pblock_Hier_ prefix), two lines if tall enough
+        label = name.replace("pblock_Hier_", "")
+        if h >= FONT * 2 + 4:
+            lines.append(
+                f'<text x="{cx}" y="{cy - FONT//2}" text-anchor="middle"'
+                f' font-size="{FONT}" font-family="sans-serif" font-weight="bold">{label}</text>'
+            )
+            lines.append(
+                f'<text x="{cx}" y="{cy + FONT}" text-anchor="middle"'
+                f' font-size="{FONT - 1}" font-family="sans-serif">'
+                f"X{x0}:{x1} Y{y0}:{y1}</text>"
+            )
+        else:
+            lines.append(
+                f'<text x="{cx}" y="{cy + FONT//3}" text-anchor="middle"'
+                f' font-size="{FONT}" font-family="sans-serif" font-weight="bold">{label}</text>'
+            )
+        # Corner coordinate labels (small monospace text)
+        lines.append(
+            f'<text x="{svg_x_left + 2}" y="{svg_y_top + FONT}"'
+            f' font-size="{max(FONT - 3, 7)}" font-family="monospace" fill="#444">'
+            f"({x0},{y1})</text>"
+        )
+        lines.append(
+            f'<text x="{svg_x_left + w - 2}" y="{svg_y_top + h - 3}"'
+            f' text-anchor="end" font-size="{max(FONT - 3, 7)}"'
+            f' font-family="monospace" fill="#444">'
+            f"({x1},{y0})</text>"
+        )
+
+    lines.append("</svg>")
+
+    with open(svg_path, "w") as f:
+        f.write("\n".join(lines))
 
 
 def verify_step(
@@ -489,11 +618,13 @@ def step_set_fifo_depths(
     """Depending on the auto_fifo_depths setting, do one of the following:
     * if auto_fifo_depths=True:  Run the appropriate auto-sizing transformation
     to attempt to determine the FIFO sizes that provide full throughput.
-    May take a long time.
-    * if auto_fifo_depths=False:  Load the FIFO sizes from the folding config file and apply them.
+    May take a long time. The `force_minimal_fifos` strategy is the exception here:
+    it inserts all FIFOs at their minimal default depth without running any simulation.
+    * if auto_fifo_depths=False:  Load the FIFO sizes from the FIFO config file and apply them.
     Coherency with config file node naming is ensured by calling
     `GiveUniqueNodeNamesRecursive`.
     """
+    live_fifo_sizing = False
     if cfg.auto_fifo_depths:
         if cfg.fifosim_save_waveform:
             report_dir = cfg.get_report_directory()
@@ -563,6 +694,7 @@ def step_set_fifo_depths(
             )
             model = model.transform(ApplySimulatedFIFOSizes(cfg))
         elif cfg.auto_fifo_strategy == AutoFIFOSizingMethod.LIVE_FIFO:
+            live_fifo_sizing = True
             hw_attrs = [
                 "PE",
                 "SIMD",
@@ -594,10 +726,10 @@ def step_set_fifo_depths(
             model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
             model = model.transform(GiveReadableTensorNames())
 
-            # save original folding config before potentially modifying it
-            cfg_path = cfg.get_report_directory() / "folding_config_before_lfs.json"
+            # Save the exact folding configuration for the live-sizing follow-up build.
+            cfg_path = cfg.get_report_directory() / "folding_config.json"
             extract_model_config_to_json(model, cfg_path, hw_attrs)
-            model.set_metadata_prop("folding_config_before_lfs", str(cfg_path))
+            model.set_metadata_prop("folding_config", str(cfg_path))
 
             # Disable runtime-writable weights, external weights, and dynamic mode
             for node in model.graph.node:
@@ -641,38 +773,22 @@ def step_set_fifo_depths(
                 node_inst.set_nodeattr("impl_style", "virtual")
                 node_inst.set_nodeattr("fifo_id", idf)
 
-            return model
+        elif cfg.auto_fifo_strategy == AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS:
+            # Insert all FIFOs (and DWCs) but keep them at their minimal default depth,
+            # i.e. no sizing simulation is run at all.
+            log.warning(
+                "auto_fifo_strategy is set to force_minimal_fifos: no FIFO sizing is performed "
+                "and all FIFOs are inserted with their minimal (default) depth. The resulting "
+                "design may be throughput-limited or deadlock."
+            )
+            model = model.transform(InsertDWC())
+            model = model.transform(InsertFIFO(create_shallow_fifos=True))
+            model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
+            model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
+            model = model.transform(GiveReadableTensorNames())
         else:
             raise FINNUserError("Unsupported auto_fifo_strategy: " + cfg.auto_fifo_strategy)
 
-        # generate a dedicated report about final FIFO sizes
-        # Report has to be generated before large FIFOs are split.
-        fifo_info = {}
-        fifo_info["fifo_depths"] = {}
-        fifo_info["fifo_sizes"] = {}
-        fifo_info["impl_style"] = {}
-        fifo_info["ram_style"] = {}
-        total_fifo_size = 0
-        for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
-            node_inst = getHWCustomOp(node)
-            fifo_info["fifo_depths"][node.name] = node_inst.get_nodeattr("depth")
-            fifo_info["fifo_sizes"][node.name] = (
-                node_inst.get_instream_width()
-                * math.ceil(cast("int", node_inst.get_nodeattr("depth")) / 32)
-                * 32
-            )  # Round up to nearest multiple of 32 to reflect actual hardware usage
-            fifo_info["impl_style"][node.name] = node_inst.get_nodeattr("impl_style")
-            fifo_info["ram_style"][node.name] = node_inst.get_nodeattr("ram_style")
-            total_fifo_size += fifo_info["fifo_sizes"][node.name]
-        fifo_info["total_fifo_size_kiB"] = total_fifo_size / 8.0 / 1024.0
-
-        with (cfg.get_report_directory() / "fifo_sizing.json").open("w") as f:
-            json.dump(fifo_info, f, indent=2)
-
-        if cfg.split_large_fifos:
-            model = model.transform(SplitLargeFIFOs(max_qsrl_depth=256))
-        model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
-        model = model.transform(GiveReadableTensorNames())
     else:
         if cfg.fifo_config_file is None:
             raise FINNUserError("auto_fifo_depths is set to False but no fifo_config_file provided")
@@ -688,10 +804,46 @@ def step_set_fifo_depths(
         model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
         model = model.transform(GiveReadableTensorNames())
         model = model.transform(ApplyFIFODepthsFromFile(cfg.fifo_config_file))
-        if cfg.split_large_fifos:
-            model = model.transform(SplitLargeFIFOs(max_qsrl_depth=256))
-            model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
-            model = model.transform(GiveReadableTensorNames())
+
+    # Generate a dedicated report about final FIFO sizes before large FIFOs are split.
+    fifo_info = {
+        "fifo_depths": {},
+        "fifo_sizes": {},
+        "fifo_sizes_effective": {},
+        "impl_style": {},
+        "ram_style": {},
+    }
+    total_fifo_size = 0
+    total_fifo_size_effective = 0
+    for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
+        node_inst = getHWCustomOp(node)
+        depth = cast("int", node_inst.get_nodeattr("depth"))
+        fifo_size = node_inst.get_instream_width() * depth
+        # Round up to nearest multiple of 32 to reflect actual hardware usage
+        # TODO: refine this "effective FIFO size" metric and calculate a "FIFO efficiency" metric
+        fifo_size_effective = node_inst.get_instream_width() * math.ceil(depth / 32) * 32
+        fifo_info["fifo_depths"][node.name] = depth
+        fifo_info["fifo_sizes"][node.name] = fifo_size
+        fifo_info["fifo_sizes_effective"][node.name] = fifo_size_effective
+        fifo_info["impl_style"][node.name] = node_inst.get_nodeattr("impl_style")
+        fifo_info["ram_style"][node.name] = node_inst.get_nodeattr("ram_style")
+        total_fifo_size += fifo_size
+        total_fifo_size_effective += fifo_size_effective
+    fifo_info["total_fifo_size_kiB"] = total_fifo_size / 8.0 / 1024.0
+    fifo_info["total_fifo_size_effective_kiB"] = total_fifo_size_effective / 8.0 / 1024.0
+
+    report_dir = Path(cfg.output_dir) / "report"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    with (report_dir / "fifo_sizing.json").open("w") as f:
+        json.dump(fifo_info, f, indent=2)
+
+    if live_fifo_sizing:
+        return model
+
+    if cfg.split_large_fifos:
+        model = model.transform(SplitLargeFIFOs(max_qsrl_depth=256))
+    model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
+    model = model.transform(GiveReadableTensorNames())
 
     # after FIFOs are ready to go, call PrepareIP and HLSSynthIP again
     # this will only run for the new nodes (e.g. FIFOs and DWCs)
@@ -745,6 +897,17 @@ def step_generate_hardware(
     model = step_set_fifo_depths(model, cfg, parent_node=parent_node)
     log.info("FIFO sizing for the current model done.")
 
+    return model
+
+
+@register_build_dataflow_step()
+def step_prepare_nodecontainer(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Prepare NodeContainer nodes in the model."""
+    # Generate a stitched ip of every nodecontainer (body)
+    # For selectable weights generate a stitched ip for the entire container
+    # For the partial reconfiguration case generate a stitched ip for every body
+    model = model.transform(GenerateNodeContainerStitched(cfg))
+    model = model.transform(NameNodeContainerNodes())
     return model
 
 
@@ -1215,6 +1378,8 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
 @register_build_dataflow_step()
 def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Generate per-layer resource and cycle estimates using analytical models."""
+    apply_to_subgraphs = cfg.multi_dnn_config_path is not None
+
     if DataflowOutputType.ESTIMATE_REPORTS in cfg.generate_outputs:
         report_dir = cfg.get_report_directory()
         ops_and_params = model.analysis(op_and_param_counts)
@@ -1234,6 +1399,7 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
         )
         with (report_dir / "estimate_layer_config_alternatives.json").open("w") as f:
             json.dump(estimate_layer_resources_complete, f, indent=2)
+        # need to call AnnotateCycles before dataflow_performance
 
         # generate reports for MLO nodes
         loop_nodes = model.get_nodes_by_op_type("FINNLoop")
@@ -1262,7 +1428,7 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
 
         if not is_mlo(model):
             # need to call AnnotateCycles before dataflow_performance
-            model = model.transform(AnnotateCycles())
+            model = model.transform(AnnotateCycles(), apply_to_subgraphs=apply_to_subgraphs)
             estimate_network_performance: dict[str, str | int | float] = dict(
                 model.analysis(dataflow_performance)
             )
@@ -1346,7 +1512,9 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
     """Create stitched IP for a graph after all HLS IP blocks have been generated.
     Depends on the DataflowOutputType.STITCHED_IP output product."""
     # introduce tLAST marker, required for instrumentation
-    if cfg.enable_instrumentation:
+    # Skip for multi-DNN builds: all SDPs are wrapped in dfx_wrapper / sw_wrapper /
+    # dfx_tuser_passthrough, which regenerate tlast internally via NUM_OUTPUT_BEATS.
+    if cfg.enable_instrumentation and cfg.multi_dnn_config_path is None:
         if cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
             raise FINNUserError("Instrumentation is not yet implemented for Alveo/Vitis flow")
         model = model.transform(
@@ -1430,7 +1598,23 @@ def step_create_stitched_ip(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
 
 @register_build_dataflow_step()
 def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Measure performance + latency of stitched-IP model in rtlsim (xsi)."""
+    """Measure performance + latency of stitched-IP model in rtlsim (xsi).
+    Depends on the DataflowOutputType.STITCHED_IP output product."""
+    if DataflowOutputType.RTLSIM_PERFORMANCE not in cfg.generate_outputs:
+        log.warning(
+            "DataflowOutputType.RTLSIM_PERFORMANCE not in requested outputs, "
+            "skipping step_measure_rtlsim_performance."
+        )
+        return model
+    if is_mlo(model):
+        log.warning("Model is MLO, skipping step_measure_rtlsim_performance.")
+        return model
+    if DataflowOutputType.STITCHED_IP not in cfg.generate_outputs:
+        raise FINNUserError(
+            "DataflowOutputType.RTLSIM_PERFORMANCE requires "
+            "DataflowOutputType.STITCHED_IP to be requested as well."
+        )
+
     report_dir = cfg.get_report_directory()
 
     orig_rtlsim_trace_depth = get_rtlsim_trace_depth()
@@ -1440,7 +1624,9 @@ def step_measure_rtlsim_performance(model: ModelWrapper, cfg: DataflowBuildConfi
         os.environ["RTLSIM_TRACE_DEPTH"] = "3"
         model.set_metadata_prop("rtlsim_trace", str(report_dir.resolve() / "rtlsim_perf_trace.wdb"))
 
-    if not cfg.auto_fifo_depths and cfg.fifo_config_file is not None:
+    if (not cfg.auto_fifo_depths and cfg.fifo_config_file is not None) or (
+        cfg.auto_fifo_depths and cfg.auto_fifo_strategy == AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS
+    ):
         # Use critical path estimate to set the timeout limit for FIFO sim
         model = model.transform(AnnotateCycles())
         perf = model.analysis(dataflow_performance)
@@ -1550,6 +1736,13 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
 
         experiment_info = cfg.experiments_config_path
 
+        if cfg.multi_dnn_config_path is not None:
+            with open(cfg.multi_dnn_config_path, "r") as f:
+                multi_dnn_config = json.load(f)
+            multidnn_mode = multi_dnn_config["Generation"]["mode"]
+        else:
+            multidnn_mode = None
+
         model = model.transform(
             MakePYNQDriver(
                 cfg._resolve_driver_platform(),
@@ -1557,6 +1750,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
                 clk_period_ns=cfg.synth_clk_period_ns,
                 validation_datset=cfg.validation_dataset,
                 experiment_info=experiment_info,
+                multidnn_mode=multidnn_mode,
                 board=cfg.board,
             )
         )
@@ -1830,6 +2024,24 @@ def copy_timing_report(model: ModelWrapper, report_dir: Path) -> None:
     log.info(f"Stored timing report at: {target}")
 
 
+def copy_partial_reconfiguration_artifacts(
+    model: ModelWrapper, bitfile_dir: Path, report_dir: Path
+) -> None:
+    """Copy DFX partial bitstreams and PR region resource reports, if the build produced any."""
+    partial_bitfiles_dir = model.get_metadata_prop("partial_bitfiles_dir")
+    if partial_bitfiles_dir is not None and os.path.isdir(partial_bitfiles_dir):
+        partial_bitfile_out_dir = bitfile_dir / "partial_bitstreams"
+        shutil.copytree(partial_bitfiles_dir, partial_bitfile_out_dir, dirs_exist_ok=True)
+        log.info(f"Partial bitstreams copied into {partial_bitfile_out_dir}")
+
+    pr_resources_json = model.get_metadata_prop("pr_region_resources_json")
+    if pr_resources_json is not None and os.path.isfile(pr_resources_json):
+        dest_json = report_dir / "pr_region_resources.json"
+        copy(pr_resources_json, dest_json)
+        _generate_pblock_svg(dest_json, report_dir / "pr_region_floorplan.svg")
+        log.info(f"Stored PR region resource report at: {dest_json}")
+
+
 @register_build_dataflow_step()
 def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Synthesize a bitfile for the using the specified shell flow, using either
@@ -1905,6 +2117,8 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
     # Copy timing reports to <output_dir>/report/
     if cfg.shell_flow_type == ShellFlowType.VIVADO_ZYNQ:
         copy_timing_report(model, report_dir)
+        # Copy DFX partial bitstreams and PR region reports, if the build produced any
+        copy_partial_reconfiguration_artifacts(model, bitfile_dir, report_dir)
     return model
 
 
