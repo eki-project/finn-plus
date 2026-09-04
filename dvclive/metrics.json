@@ -1,0 +1,11 @@
+{
+    "status": "failed",
+    "time": {
+        "step_mobilenet_streamline": 16,
+        "step_mobilenet_lower_convs": 1,
+        "step_mobilenet_convert_to_hw_layers_separate_th": 1,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "total_build_time": 18
+    }
+}
