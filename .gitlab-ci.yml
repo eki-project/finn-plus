@@ -21,7 +21,7 @@ variables:
     value: "64"
   PYTEST_FINN_WORKERS:
     description: "Select number of FINN workers per PyTest worker"
-    value: "8"
+    value: "4"
   BENCH_CPU_CORES:
     description: "Select number of CPU cores for each regression/benchmark run"
     value: "32"
