@@ -24,9 +24,9 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.crop import InferCrop
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
@@ -97,7 +97,7 @@ def test_fpgadataflow_gather_crop(ishape_axis_indices, simd, idt, exec_mode):
 
     y_ref = oxe.execute_onnx(model, input_t)[model.graph.output[0].name]
 
-    model = model.transform(to_hw.InferCrop())
+    model = model.transform(InferCrop())
 
     input_t = {model.graph.input[0].name: input}
     y_hw = oxe.execute_onnx(model, input_t)[model.graph.output[0].name]

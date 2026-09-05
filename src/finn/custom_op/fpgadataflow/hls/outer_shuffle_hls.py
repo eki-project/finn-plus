@@ -7,17 +7,16 @@
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
 
+"""Module for outer shuffle hls."""
 import math
 import numpy as np
-from typing import Optional
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.outer_shuffle import OuterShuffle
 
 
-def auto_size_simd(I_dim: int, SIMD: int) -> Optional[int]:
-    """
-    Return the smallest divisor d of I_dim such that d > SIMD.
+def auto_size_simd(I_dim: int, SIMD: int) -> int | None:
+    """Return the smallest divisor d of I_dim such that d > SIMD.
     if no such divisor exists, return None.
     """
     if I_dim <= 0:
@@ -26,7 +25,7 @@ def auto_size_simd(I_dim: int, SIMD: int) -> Optional[int]:
         raise ValueError("SIMD must be a non-negative integer")
 
     candidates = []
-    limit = int(math.isqrt(I_dim))
+    limit = math.isqrt(I_dim)
     for a in range(1, limit + 1):
         if I_dim % a == 0:
             b = I_dim // a
@@ -42,7 +41,10 @@ def auto_size_simd(I_dim: int, SIMD: int) -> Optional[int]:
 
 
 class OuterShuffle_hls(OuterShuffle, HLSBackend):
+    """Class for Outer Shuffle hls."""
+
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
         # check some constraints that it is a legal shuffle_hls
@@ -56,9 +58,11 @@ class OuterShuffle_hls(OuterShuffle, HLSBackend):
                 raise RuntimeError("Unable to determine a new SIMD value for this transpose.")
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         return OuterShuffle.get_nodeattr_types(self) | HLSBackend.get_nodeattr_types(self)
 
     def global_includes(self):
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = [
             '#include "input_gen.hpp"',
             "#include <ap_int.h>",
@@ -67,6 +71,7 @@ class OuterShuffle_hls(OuterShuffle, HLSBackend):
         ]
 
     def defines(self, var):
+        """Return defines."""
         simd = self.get_nodeattr("SIMD")
         dtype = self.get_input_datatype()
         self.code_gen_dict["$DEFINES$"] = [
@@ -77,12 +82,8 @@ class OuterShuffle_hls(OuterShuffle, HLSBackend):
             """
         ]
 
-    def get_exp_cycles(self):
-        out_shape = self.get_nodeattr("transpose_out_shape")
-        simd = self.get_nodeattr("SIMD")
-        return int(np.prod(out_shape) / simd)
-
     def docompute(self):
+        """Return docompute."""
         simd = self.get_nodeattr("SIMD")
         out_shape = self.get_nodeattr("transpose_out_shape")
         out_shape[-1] = int(out_shape[-1] / simd)
@@ -103,6 +104,7 @@ class OuterShuffle_hls(OuterShuffle, HLSBackend):
         ]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             f"""
             void {self.onnx_node.name} (
@@ -113,6 +115,7 @@ class OuterShuffle_hls(OuterShuffle, HLSBackend):
         ]
 
     def pragmas(self):
+        """Return pragmas."""
         self.code_gen_dict["$PRAGMAS$"] = [
             """
             #pragma HLS interface AXIS port=in0_V
@@ -126,6 +129,7 @@ class OuterShuffle_hls(OuterShuffle, HLSBackend):
         ]
 
     def execute_node(self, context, graph):
+        """Execute node."""
         HLSBackend.execute_node(self, context, graph)
 
     def timeout_value(self):

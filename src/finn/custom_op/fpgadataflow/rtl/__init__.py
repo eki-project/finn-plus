@@ -54,10 +54,19 @@ import finn.custom_op.fpgadataflow.rtl.reshape_rtl
 from finn.custom_op.fpgadataflow.rtl.convolutioninputgenerator_rtl import (
     ConvolutionInputGenerator_rtl,
 )
+from finn.custom_op.fpgadataflow.rtl.elementwise_binary_rtl import (
+    ElementwiseAdd_rtl,
+    ElementwiseMul_rtl,
+    ElementwiseSub_rtl,
+)
+from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
 from finn.custom_op.fpgadataflow.rtl.fmpadding_rtl import FMPadding_rtl
 from finn.custom_op.fpgadataflow.rtl.inner_shuffle_rtl import InnerShuffle_rtl
 from finn.custom_op.fpgadataflow.rtl.layernorm_rtl import LayerNorm_rtl
 from finn.custom_op.fpgadataflow.rtl.matrixvectoractivation_rtl import MVAU_rtl
+from finn.custom_op.fpgadataflow.rtl.nodecontainer import NodeContainer
+from finn.custom_op.fpgadataflow.rtl.removedatapath_rtl import RemoveDataPath_rtl
+from finn.custom_op.fpgadataflow.rtl.requant_rtl import Requant_rtl
 from finn.custom_op.fpgadataflow.rtl.streamingdatawidthconverter_rtl import (
     StreamingDataWidthConverter_rtl,
 )
@@ -68,6 +77,9 @@ from finn.custom_op.fpgadataflow.rtl.vectorvectoractivation_rtl import VVAU_rtl
 # make sure new HLSCustomOp subclasses are imported here so that they get
 # registered and plug in correctly into the infrastructure
 custom_op["ConvolutionInputGenerator_rtl"] = ConvolutionInputGenerator_rtl
+custom_op["ElementwiseAdd_rtl"] = ElementwiseAdd_rtl
+custom_op["ElementwiseSub_rtl"] = ElementwiseSub_rtl
+custom_op["ElementwiseMul_rtl"] = ElementwiseMul_rtl
 custom_op["FMPadding_rtl"] = FMPadding_rtl
 custom_op["LayerNorm_rtl"] = LayerNorm_rtl
 custom_op["StreamingDataWidthConverter_rtl"] = StreamingDataWidthConverter_rtl
@@ -75,4 +87,8 @@ custom_op["StreamingFIFO_rtl"] = StreamingFIFO_rtl
 custom_op["MVAU_rtl"] = MVAU_rtl
 custom_op["VVAU_rtl"] = VVAU_rtl
 custom_op["Thresholding_rtl"] = Thresholding_rtl
+custom_op["RemoveDataPath_rtl"] = RemoveDataPath_rtl
 custom_op["InnerShuffle_rtl"] = InnerShuffle_rtl
+custom_op["Requant_rtl"] = Requant_rtl
+custom_op["NodeContainer"] = NodeContainer
+custom_op["FINNLoop"] = FINNLoop

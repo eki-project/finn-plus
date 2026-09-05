@@ -1,25 +1,28 @@
 module finn_switch #(
-    parameter DATA_WIDTH_A = 32,
-    parameter DATA_WIDTH_B = 32
+    parameter DATA_WIDTH_A  = 32,
+    parameter DATA_WIDTH_B  = 32,
+    parameter TUSER_WIDTH_A = 1   // tUSER width on the A (instrumentation) path
 )(
     input wire sel,
 
-    // 2x1 Input 0
+    // 2x1 Input 0 (DMA path — no tuser)
     input wire A_IN0_tvalid,
     input wire [DATA_WIDTH_A-1:0] A_IN0_tdata,
     input wire A_IN0_tlast,
     output wire A_IN0_tready,
 
-    // 2x1 Input 1
+    // 2x1 Input 1 (instrumentation path — carries tuser)
     input wire A_IN1_tvalid,
     input wire [DATA_WIDTH_A-1:0] A_IN1_tdata,
     input wire A_IN1_tlast,
+    input wire [TUSER_WIDTH_A-1:0] A_IN1_tuser,
     output wire A_IN1_tready,
 
     // 2x1 Output
     output wire A_OUT_tvalid,
     output wire [DATA_WIDTH_A-1:0] A_OUT_tdata,
     output wire A_OUT_tlast,
+    output wire [TUSER_WIDTH_A-1:0] A_OUT_tuser,
     input wire A_OUT_tready,
 
     // 1x2 Input
@@ -42,8 +45,9 @@ module finn_switch #(
 );
     // 2x1
     assign A_OUT_tvalid = (sel) ? A_IN1_tvalid : A_IN0_tvalid;
-    assign A_OUT_tdata = (sel) ? A_IN1_tdata : A_IN0_tdata;
-    assign A_OUT_tlast = (sel) ? A_IN1_tlast : A_IN0_tlast;
+    assign A_OUT_tdata  = (sel) ? A_IN1_tdata  : A_IN0_tdata;
+    assign A_OUT_tlast  = (sel) ? A_IN1_tlast  : A_IN0_tlast;
+    assign A_OUT_tuser  = (sel) ? A_IN1_tuser  : {TUSER_WIDTH_A{1'b0}};
     assign A_IN0_tready = A_OUT_tready;
     assign A_IN1_tready = A_OUT_tready;
 

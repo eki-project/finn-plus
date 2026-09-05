@@ -107,16 +107,17 @@ if {$ZYNQ_TYPE == "zynq_us+"} {
         set_property -dict [list CONFIG.PSU__USE__M_AXI_GP0 {1}] [get_bd_cells zynq_ps]
         set_property -dict [list CONFIG.PSU__USE__M_AXI_GP2 {0}] [get_bd_cells zynq_ps]
     }
-    #set frequency of PS clock (this can't always be exactly met)
+    #set PS PL clock to ~100 MHz as reference for the Clocking Wizard
     set_property -dict [list CONFIG.PSU__OVERRIDE__BASIC_CLOCK {0}] [get_bd_cells zynq_ps]
-    set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ [expr int($FREQ_MHZ)]] [get_bd_cells zynq_ps]
+    set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ {100}] [get_bd_cells zynq_ps]
 } elseif {$ZYNQ_TYPE == "zynq_7000"} {
     set zynq_ps_vlnv [get_property VLNV [get_ipdefs "xilinx.com:ip:processing_system7:*"]]
     set zynq_ps_clkname "FCLK_CLK0"
     create_bd_cell -type ip -vlnv $zynq_ps_vlnv zynq_ps
     apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 -config {make_external "FIXED_IO, DDR" apply_board_preset "1" Master "Disable" Slave "Disable" }  [get_bd_cells zynq_ps]
     set_property -dict [list CONFIG.PCW_USE_S_AXI_HP0 {1}] [get_bd_cells zynq_ps]
-    set_property -dict [list CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ [expr int($FREQ_MHZ)]] [get_bd_cells zynq_ps]
+    #set PS PL clock to ~100 MHz as reference for the Clocking Wizard
+    set_property -dict [list CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {100}] [get_bd_cells zynq_ps]
 } else {
     puts "Unrecognized Zynq type"
 }
@@ -130,24 +131,55 @@ create_bd_cell -type ip -vlnv $smartconnect_vlnv smartconnect_0
 set_property -dict [list CONFIG.NUM_SI $NUM_AXIMM] [get_bd_cells smartconnect_0]
 set_property -dict [list CONFIG.NUM_MI $NUM_AXILITE] [get_bd_cells axi_interconnect_0]
 
-#create reset controller and connect interconnects to PS
+# Instantiate Clocking Wizard. The PS PL clock is used as a stable reference.
+# The MMCM generates FREQ_MHZ with far higher accuracy than the PS clock divider
+# chain, eliminating synthesis vs. runtime frequency mismatches.
+# VALUE_SRC PROPAGATED lets Vivado derive PRIM_IN_FREQ automatically from the
+# connected pl_clk0/FCLK_CLK0 pin, avoiding BD 41-238 frequency mismatches.
+create_bd_cell -type ip -vlnv [get_property VLNV [get_ipdefs -filter {NAME == clk_wiz}]] clk_wiz_0
+set_property -dict [list \
+    CONFIG.PRIM_IN_FREQ.VALUE_SRC PROPAGATED \
+    CONFIG.PRIM_SOURCE {No_buffer} \
+    CONFIG.PRIMITIVE {PLL} \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $FREQ_MHZ \
+    CONFIG.USE_LOCKED {true} \
+    CONFIG.USE_RESET {true} \
+    CONFIG.RESET_TYPE {ACTIVE_LOW} \
+    CONFIG.RESET_PORT {resetn} \
+] [get_bd_cells clk_wiz_0]
+
+# Create proc_sys_reset_0 driven by Clocking Wizard output and locked signal.
+# Using a fixed name avoids reliance on naming chosen by apply_bd_automation.
+create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_0
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins proc_sys_reset_0/slowest_sync_clk]
+connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins proc_sys_reset_0/dcm_locked]
+
+#connect interconnects to PS and wire all clocks/resets explicitly
 if {$ZYNQ_TYPE == "zynq_us+"} {
     set axi_peripheral_base 0xA0000000
     connect_bd_intf_net [get_bd_intf_pins smartconnect_0/M00_AXI] [get_bd_intf_pins zynq_ps/S_AXI_HP0_FPD]
     connect_bd_intf_net [get_bd_intf_pins zynq_ps/M_AXI_HPM0_FPD] -boundary_type upper [get_bd_intf_pins axi_interconnect_0/S00_AXI]
-    #connect interconnect clocks and resets
-    apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_interconnect_0/ACLK]
-    apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_interconnect_0/S00_ACLK]
-    apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins zynq_ps/saxihp0_fpd_aclk]
+    connect_bd_net [get_bd_pins zynq_ps/pl_clk0] [get_bd_pins clk_wiz_0/clk_in1]
+    connect_bd_net [get_bd_pins zynq_ps/pl_resetn0] [get_bd_pins clk_wiz_0/resetn]
+    connect_bd_net [get_bd_pins zynq_ps/pl_resetn0] [get_bd_pins proc_sys_reset_0/ext_reset_in]
+    connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins zynq_ps/saxihp0_fpd_aclk]
+    connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins zynq_ps/maxihpm0_fpd_aclk]
 } elseif {$ZYNQ_TYPE == "zynq_7000"} {
     set axi_peripheral_base 0x40000000
     connect_bd_intf_net -boundary_type upper [get_bd_intf_pins zynq_ps/M_AXI_GP0] [get_bd_intf_pins axi_interconnect_0/S00_AXI]
     connect_bd_intf_net [get_bd_intf_pins smartconnect_0/M00_AXI] [get_bd_intf_pins zynq_ps/S_AXI_HP0]
-    apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/FCLK_CLK0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_interconnect_0/ACLK]
-    apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/FCLK_CLK0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins axi_interconnect_0/S00_ACLK]
-    apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/FCLK_CLK0} Freq {} Ref_Clk0 {} Ref_Clk1 {} Ref_Clk2 {}}  [get_bd_pins zynq_ps/S_AXI_HP0_ACLK]
+    connect_bd_net [get_bd_pins zynq_ps/FCLK_CLK0] [get_bd_pins clk_wiz_0/clk_in1]
+    connect_bd_net [get_bd_pins zynq_ps/FCLK_RESET0_N] [get_bd_pins clk_wiz_0/resetn]
+    connect_bd_net [get_bd_pins zynq_ps/FCLK_RESET0_N] [get_bd_pins proc_sys_reset_0/ext_reset_in]
+    connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins zynq_ps/S_AXI_HP0_ACLK]
+    connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins zynq_ps/M_AXI_GP0_ACLK]
 }
-connect_bd_net [get_bd_pins axi_interconnect_0/ARESETN] [get_bd_pins smartconnect_0/aresetn]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins axi_interconnect_0/ACLK]
+connect_bd_net [get_bd_pins proc_sys_reset_0/interconnect_aresetn] [get_bd_pins axi_interconnect_0/ARESETN]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins axi_interconnect_0/S00_ACLK]
+connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins axi_interconnect_0/S00_ARESETN]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins smartconnect_0/aclk]
+connect_bd_net [get_bd_pins proc_sys_reset_0/interconnect_aresetn] [get_bd_pins smartconnect_0/aresetn]
 
 #procedure used by below IP instantiations to map BD address segments based on the axi interface aperture
 proc assign_axi_addr_proc {axi_intf_path} {
@@ -173,9 +205,9 @@ if {%d == 1} {
     set_property HDL_ATTRIBUTE.DEBUG true [get_bd_intf_nets {StreamingDataflowPartition_1_m_axis_0}]
     set_property HDL_ATTRIBUTE.DEBUG true [get_bd_intf_nets {smartconnect_0_M00_AXI}]
     apply_bd_automation -rule xilinx.com:bd_rule:debug -dict [list \
-                                                              [get_bd_intf_nets smartconnect_0_M00_AXI] {AXI_R_ADDRESS "Data and Trigger" AXI_R_DATA "Data and Trigger" AXI_W_ADDRESS "Data and Trigger" AXI_W_DATA "Data and Trigger" AXI_W_RESPONSE "Data and Trigger" CLK_SRC "/zynq_ps/FCLK_CLK0" SYSTEM_ILA "Auto" APC_EN "0" } \
-                                                              [get_bd_intf_nets idma0_m_axis_0] {AXIS_SIGNALS "Data and Trigger" CLK_SRC "/zynq_ps/FCLK_CLK0" SYSTEM_ILA "Auto" APC_EN "0" } \
-                                                              [get_bd_intf_nets StreamingDataflowPartition_1_m_axis_0] {AXIS_SIGNALS "Data and Trigger" CLK_SRC "/zynq_ps/FCLK_CLK0" SYSTEM_ILA "Auto" APC_EN "0" } \
+                                                              [get_bd_intf_nets smartconnect_0_M00_AXI] {AXI_R_ADDRESS "Data and Trigger" AXI_R_DATA "Data and Trigger" AXI_W_ADDRESS "Data and Trigger" AXI_W_DATA "Data and Trigger" AXI_W_RESPONSE "Data and Trigger" CLK_SRC "/clk_wiz_0/clk_out1" SYSTEM_ILA "Auto" APC_EN "0" } \
+                                                              [get_bd_intf_nets idma0_m_axis_0] {AXIS_SIGNALS "Data and Trigger" CLK_SRC "/clk_wiz_0/clk_out1" SYSTEM_ILA "Auto" APC_EN "0" } \
+                                                              [get_bd_intf_nets StreamingDataflowPartition_1_m_axis_0] {AXIS_SIGNALS "Data and Trigger" CLK_SRC "/clk_wiz_0/clk_out1" SYSTEM_ILA "Auto" APC_EN "0" } \
                                                              ]
 }
 
@@ -194,22 +226,38 @@ if { $enable_gpio_reset == 1 || $enable_finn_switch == 1 } {
 
 # Connect GPIO1 to
 if { $enable_gpio_reset == 1 } {
-    connect_bd_net [get_bd_pins axi_gpio_0/gpio_io_o] [get_bd_pins rst_zynq_ps_*/aux_reset_in]
+    connect_bd_net [get_bd_pins axi_gpio_0/gpio_io_o] [get_bd_pins proc_sys_reset_0/aux_reset_in]
 }
 
 #finalize clock and reset connections for interconnects
-if {$ZYNQ_TYPE == "zynq_us+"} {
-    apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/pl_clk0} }  [get_bd_pins axi_interconnect_0/M*_ACLK]
-} elseif {$ZYNQ_TYPE == "zynq_7000"} {
-    apply_bd_automation -rule xilinx.com:bd_rule:clkrst -config { Clk {/zynq_ps/FCLK_CLK0} }  [get_bd_pins axi_interconnect_0/M*_ACLK]
-}
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins axi_interconnect_0/M*_ACLK]
+connect_bd_net [get_bd_pins proc_sys_reset_0/peripheral_aresetn] [get_bd_pins axi_interconnect_0/M*_ARESETN]
 
 if { $enable_finn_switch == 1 } {
     set_property -dict [list CONFIG.C_ALL_OUTPUTS_2 {1} CONFIG.C_GPIO2_WIDTH {1} CONFIG.C_IS_DUAL {1}] [get_bd_cells axi_gpio_0]
     connect_bd_net [get_bd_pins axi_gpio_0/gpio2_io_o] [get_bd_pins finn_switch/sel]
-    # TODO: This is a workaround - FREQ_HZ changes after applying validate_bd_design the first time, which results in an error
-    catch validate_bd_design
-    set_property CONFIG.FREQ_HZ [get_property CONFIG.FREQ_HZ [get_bd_intf_pins /zynq_ps/M_AXI_HPM0_FPD]] [get_bd_intf_pins /finn_switch/*]
+    # finn_switch is plain combinational RTL with no clock port, so Vivado cannot infer a
+    # frequency for its AXI-Stream interfaces and defaults them to 100 MHz. Its neighbours
+    # run at the Clocking Wizard's *achieved* output, which is not necessarily the
+    # requested FREQ_MHZ: the PLL reference comes from the PS, whose FCLK is 99.999 MHz
+    # rather than exactly 100, so requesting 100 MHz yields 99999000 Hz. That mismatch is
+    # what validate_bd_design reports as BD 41-237.
+    #
+    # The achieved frequency only becomes readable once Vivado has run parameter
+    # propagation over the assembled design, which happens as part of validation. Until
+    # then every pin - including the Clocking Wizard's own clk_out1 - still reports the
+    # requested value. So force a propagation pass first; it is expected to report the
+    # very BD 41-237 mismatch we are about to fix, hence the catch. The message is
+    # suppressed for that pass only, so it cannot be mistaken for a real failure in the
+    # build log, and is re-enabled before the genuine validation below.
+    set_msg_config -id {BD 41-237} -suppress
+    catch {validate_bd_design -force}
+    reset_msg_config -id {BD 41-237} -suppress
+    set clk_freq_hz [get_property -quiet CONFIG.FREQ_HZ [get_bd_pins /clk_wiz_0/clk_out1]]
+    if { $clk_freq_hz eq "" || $clk_freq_hz == 0 } {
+        set clk_freq_hz [expr {int($FREQ_MHZ * 1000000)}]
+    }
+    set_property CONFIG.FREQ_HZ $clk_freq_hz [get_bd_intf_pins /finn_switch/*]
 }
 
 save_bd_design
@@ -232,16 +280,215 @@ update_compile_order -fileset sources_1
 #set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
 #set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
 
-# out-of-context synth can't be used for bitstream generation
-# set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} -value {-mode out_of_context} -objects [get_runs synth_1]
-# TODO: make number of jobs configurable
-launch_runs -jobs 4 -to_step write_bitstream impl_1
-wait_on_run [get_runs impl_1]
+set pr_flow 0
 
+$PR_CONFIG$
+
+if {$pr_flow == 0} {
+    # out-of-context synth can't be used for bitstream generation
+    # set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} -value {-mode out_of_context} -objects [get_runs synth_1]
+    # TODO: make number of jobs configurable
+    launch_runs -jobs 4 -to_step write_bitstream impl_1
+    wait_on_run [get_runs impl_1]
+
+}
 # generate synthesis report
 open_run impl_1
 report_utilization -hierarchical -hierarchical_depth 4 -file synth_report.xml -format xml
 close_project
+"""
+
+selector_zynq_shell_template_procs = """
+proc create_broadcaster_tree {num_outputs base_name} {
+    set MAX_MI 16
+    set bc_cells [list]
+
+    if {$num_outputs <= $MAX_MI} {
+        set cell_name "${base_name}_0"
+        create_bd_cell -type ip -vlnv xilinx.com:ip:axis_broadcaster:1.1 $cell_name
+        set_property CONFIG.NUM_MI $num_outputs [get_bd_cells $cell_name]
+        lappend bc_cells $cell_name
+
+    } else {
+        set leaf_broadcasters [list]
+        set outputs_left $num_outputs
+        set bc_idx 0
+        set eff_max_mi $MAX_MI
+        if {$outputs_left > $MAX_MI && $outputs_left % $MAX_MI == 1} {
+            set eff_max_mi [expr {$MAX_MI - 1}]
+        }
+        while {$outputs_left > 0} {
+            set mi [expr {min($outputs_left, $eff_max_mi)}]
+            set eff_max_mi $MAX_MI
+            set cell_name "${base_name}_leaf_${bc_idx}"
+            create_bd_cell -type ip -vlnv xilinx.com:ip:axis_broadcaster:1.1 $cell_name
+            set_property CONFIG.NUM_MI $mi [get_bd_cells $cell_name]
+            lappend leaf_broadcasters $cell_name
+            lappend bc_cells $cell_name
+            set outputs_left [expr {$outputs_left - $mi}]
+            incr bc_idx
+        }
+
+        set current_level $leaf_broadcasters
+        set level 0
+
+        # Create levels of broadcasters until we have a single root
+        while {[llength $current_level] > 1} {
+            set next_level [list]
+            set inputs_needed [llength $current_level]
+            set outputs_left $inputs_needed
+            set bc_idx 0
+            set tmp_max_mi $MAX_MI
+            if {$inputs_needed % $MAX_MI == 1} {
+                # Reduce the amount of ports for the first broadcaster by one to avoid creating a
+                # leaf broadcaster with just one output port
+                set tmp_max_mi [expr {$MAX_MI - 1}]
+            }
+
+            while {$outputs_left > 0} {
+                set mi [expr {min($outputs_left, $tmp_max_mi)}]
+                set tmp_max_mi $MAX_MI
+                set cell_name "${base_name}_lvl${level}_${bc_idx}"
+                create_bd_cell -type ip -vlnv xilinx.com:ip:axis_broadcaster:1.1 $cell_name
+                set_property CONFIG.NUM_MI $mi [get_bd_cells $cell_name]
+                lappend next_level $cell_name
+                lappend bc_cells $cell_name
+                set outputs_left [expr {$outputs_left - $mi}]
+                incr bc_idx
+            }
+
+            set leaf_idx 0
+            foreach parent $next_level {
+                set parent_mi [get_property CONFIG.NUM_MI [get_bd_cells $parent]]
+                for {set mi_port 0} {$mi_port < $parent_mi} {incr mi_port} {
+                    set child [lindex $current_level $leaf_idx]
+                    set port_str [format "M%02d_AXIS" $mi_port]
+                    connect_bd_intf_net \
+                        [get_bd_intf_pins ${parent}/${port_str}] \
+                        [get_bd_intf_pins ${child}/S_AXIS]
+                    incr leaf_idx
+                }
+            }
+
+            set current_level $next_level
+            incr level
+        }
+    }
+
+    group_bd_cells $base_name [get_bd_cells $bc_cells]
+
+    current_bd_instance $base_name
+    create_bd_pin -dir I -type clk aclk
+    create_bd_pin -dir I -type rst aresetn
+    connect_bd_net [get_bd_pins aclk] \
+        [get_bd_pins -of_objects [get_bd_cells *] -filter {NAME == aclk}]
+    connect_bd_net [get_bd_pins aresetn] \
+        [get_bd_pins -of_objects [get_bd_cells *] -filter {NAME == aresetn}]
+
+    set master_idx 0
+    foreach cell [get_bd_cells *] {
+        foreach intf_pin [get_bd_intf_pins -of_objects $cell] {
+            if {[llength [get_bd_intf_nets -quiet -of_objects $intf_pin]] == 0} {
+                set mode [get_property MODE $intf_pin]
+                set vlnv [get_property VLNV $intf_pin]
+                if {$mode eq "Slave"} {
+                    set hier_port [get_property NAME $intf_pin]
+                } else {
+                    set hier_port [format "M%02d_AXIS" $master_idx]
+                    incr master_idx
+                }
+                create_bd_intf_pin -mode $mode -vlnv $vlnv $hier_port
+                connect_bd_intf_net [get_bd_intf_pins $hier_port] $intf_pin
+            }
+        }
+    }
+    current_bd_instance ..
+
+    return [get_bd_cells $base_name]
+}
+
+proc create_fifo_stage {num_inputs depth base_name} {
+    set fifo_list [list]
+
+    for {set i 0} {$i < $num_inputs} {incr i} {
+        set fifo_name "axis_data_fifo_${i}"
+        create_bd_cell -type ip -vlnv xilinx.com:ip:axis_data_fifo:2.0 $fifo_name
+        set_property CONFIG.FIFO_DEPTH $depth [get_bd_cells $fifo_name]
+        lappend fifo_list $fifo_name
+    }
+
+    group_bd_cells $base_name [get_bd_cells $fifo_list]
+    current_bd_instance $base_name
+
+    create_bd_pin -dir I -type clk aclk
+    create_bd_pin -dir I -type rst aresetn
+    connect_bd_net [get_bd_pins aclk] [get_bd_pins -of_objects [get_bd_cells *] -filter {NAME == s_axis_aclk}]
+    connect_bd_net [get_bd_pins aresetn] [get_bd_pins -of_objects [get_bd_cells *] -filter {NAME == s_axis_aresetn}]
+
+    set slave_idx 0
+    set master_idx 0
+    foreach cell [get_bd_cells *] {
+        foreach intf_pin [get_bd_intf_pins -of_objects $cell] {
+            if {[llength [get_bd_intf_nets -quiet -of_objects $intf_pin]] == 0} {
+                set mode [get_property MODE $intf_pin]
+                set vlnv [get_property VLNV $intf_pin]
+                if {$mode eq "Slave"} {
+                    set hier_port [format "S%02d_AXIS" $slave_idx]
+                    incr slave_idx
+                } else {
+                    set hier_port [format "M%02d_AXIS" $master_idx]
+                    incr master_idx
+                }
+                create_bd_intf_pin -mode $mode -vlnv $vlnv $hier_port
+                connect_bd_intf_net [get_bd_intf_pins $hier_port] $intf_pin
+            }
+        }
+    }
+
+    current_bd_instance ..
+    return [get_bd_cells $base_name]
+}
+"""
+
+selector_zynq_shell_template = """
+set partition_name %s
+set clk_net [get_bd_pins ${partition_name}/ap_clk]
+set rst_net [get_bd_pins ${partition_name}/ap_rst_n]
+set s_axis_pins [get_bd_intf_pins ${partition_name}/s_axis_tap*]
+set num_inputs [llength $s_axis_pins]
+
+set fifo_name "${partition_name}_selector_fifo"
+set broadcaster_name "${partition_name}_selector_broadcaster"
+set selector_name "${partition_name}_selector"
+
+set bc_cells [create_fifo_stage $num_inputs 32 $fifo_name]
+
+create_bd_cell -type module -reference selector_verilog $selector_name
+set_property CONFIG.N {%d} [get_bd_cells $selector_name]
+# CLK/RESET
+connect_bd_net $clk_net [get_bd_pins $fifo_name/aclk]
+connect_bd_net $clk_net [get_bd_pins $selector_name/aclk]
+
+# -boundary_type upper
+connect_bd_net $rst_net [get_bd_pins $fifo_name/aresetn ]
+connect_bd_net $rst_net [get_bd_pins $selector_name/aresetn]
+
+#AXI
+if {$num_inputs == 1} {
+    connect_bd_intf_net [get_bd_intf_pins $selector_name/M_AXIS] [get_bd_intf_pins $fifo_name/S00_AXIS]
+} else {
+    set bc_cells [create_broadcaster_tree $num_inputs $broadcaster_name]
+    connect_bd_net $clk_net [get_bd_pins $broadcaster_name/aclk]
+    connect_bd_net $rst_net [get_bd_pins $broadcaster_name/aresetn]
+    connect_bd_intf_net [get_bd_intf_pins $selector_name/M_AXIS] [get_bd_intf_pins $broadcaster_name/S_AXIS]
+    for {set i 0} {$i < $num_inputs} {incr i} {
+        connect_bd_intf_net [get_bd_intf_pins $broadcaster_name/[format "M%%02d_AXIS" $i]] [get_bd_intf_pins $fifo_name/[format "S%%02d_AXIS" $i]]
+    }
+}
+set s_axis_pins_sorted [lsort $s_axis_pins]
+for {set i 0} {$i < $num_inputs} {incr i} {
+    connect_bd_intf_net [get_bd_intf_pins $fifo_name/[format "M%%02d_AXIS" $i]] [lindex $s_axis_pins_sorted $i]
+}
 """
 
 vitis_gen_xml_report_tcl_template = """

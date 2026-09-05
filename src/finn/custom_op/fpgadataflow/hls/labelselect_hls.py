@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for labelselect hls."""
 import numpy as np
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
@@ -36,15 +37,18 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
     """Class that corresponds to finn-hlslib LabelSelect_Batch function."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(LabelSelect.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
     def verify_node(self):
+        """Verify node."""
         info_messages = []
         # verify that "backend" is set to "fpgadataflow"
         backend_value = self.get_nodeattr("backend")
@@ -74,6 +78,7 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
         return info_messages
 
     def execute_node(self, context, graph):
+        """Execute node."""
         HLSBackend.execute_node(self, context, graph)
         # TopK ind output normally uses TensorProto.INT64, which
         # can cause issues for the node-by-node simulation in FINN
@@ -84,12 +89,15 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
         context[outp] = ret.astype(np.int64)
 
     def global_includes(self):
+        """Return global includes."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "maxpool.h"']
 
     def defines(self, var):
+        """Return defines."""
         self.code_gen_dict["$DEFINES$"] = []
 
     def read_npy_data(self):
+        """Return read npy data."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_input_datatype()
         elem_bits = dtype.bitwidth()
@@ -116,6 +124,7 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
         )
 
     def docompute(self):
+        """Return docompute."""
         self.code_gen_dict["$DOCOMPUTE$"] = [
             """LabelSelect_Batch<{}, {}, {}, {}, {} > (in0_V, out0_V, 1);""".format(
                 self.get_nodeattr("Labels"),
@@ -127,6 +136,7 @@ class LabelSelect_hls(LabelSelect, HLSBackend):
         ]
 
     def blackboxfunction(self):
+        """Return blackboxfunction."""
         self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
             """void {}(hls::stream<ap_uint<{}*{}>> &in0_V,
                 hls::stream<ap_uint<{}> > &out0_V)""".format(

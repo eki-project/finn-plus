@@ -27,9 +27,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Module for minimize accumulator width."""
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
+from typing import Literal
 
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
@@ -39,10 +42,12 @@ class MinimizeAccumulatorWidth(Transformation):
     functions to save on resources. May alter tensor DataType for
     certain nodes if they produce an accumulator as result."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize instance."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Apply transformation."""
         for node_id in range(len(model.graph.node)):
             # Since InferDataTypes potentially changes node attributes in each loop iterations,
             # the for-loop cannot loop over a list of a snapshot of the graph's node protos
@@ -50,7 +55,7 @@ class MinimizeAccumulatorWidth(Transformation):
             if is_fpgadataflow_node(node):
                 inst = getCustomOp(node)
                 if hasattr(inst, "minimize_accumulator_width"):
-                    inst.minimize_accumulator_width(model)
+                    inst.minimize_accumulator_width(model)  # type: ignore
                     # Since this transformation is applied iteratively, we have to ensure that
                     # we propagate the new datatype to other layers
                     model = model.transform(InferDataTypes())

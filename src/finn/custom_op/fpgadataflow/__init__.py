@@ -27,6 +27,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Registry of FINN FPGA dataflow custom ops."""
+
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 # Dictionary of HWCustomOp implementations
@@ -36,8 +38,9 @@ custom_op = dict()
 # Registers a class into the custom_op dictionary
 # Note: This must be defined first, before importing any custom op
 # implementation to avoid "importing partially initialized module" issues.
-def register_custom_op(cls):
+def register_custom_op(cls) -> type[HWCustomOp]:
     # The class must actually implement HWCustomOp
+    """Register a custom operation."""
     assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"
     # Insert the class into the custom_op dictionary by its name
     custom_op[cls.__name__] = cls
@@ -59,13 +62,12 @@ import finn.custom_op.fpgadataflow.squeeze
 
 # Import the submodule containing the Unsqueeze operation
 import finn.custom_op.fpgadataflow.unsqueeze
-from finn.custom_op.fpgadataflow.addstreams import AddStreams
 from finn.custom_op.fpgadataflow.attention import ScaledDotProductAttention
 from finn.custom_op.fpgadataflow.attention_heads import MergeMultiHeads, SplitMultiHeads
-from finn.custom_op.fpgadataflow.channelwise_op import ChannelwiseOp
 from finn.custom_op.fpgadataflow.concat import StreamingConcat
 from finn.custom_op.fpgadataflow.convolutioninputgenerator import ConvolutionInputGenerator
 from finn.custom_op.fpgadataflow.crop import Crop
+from finn.custom_op.fpgadataflow.dnncontainer import DNNContainer
 from finn.custom_op.fpgadataflow.duplicatestreams import DuplicateStreams
 from finn.custom_op.fpgadataflow.fmpadding import FMPadding
 from finn.custom_op.fpgadataflow.fmpadding_pixel import FMPadding_Pixel
@@ -79,11 +81,11 @@ from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.custom_op.fpgadataflow.outer_shuffle import OuterShuffle
 from finn.custom_op.fpgadataflow.pool import Pool
 from finn.custom_op.fpgadataflow.replicate_stream import ReplicateStream
+from finn.custom_op.fpgadataflow.requant import Requant
 from finn.custom_op.fpgadataflow.shuffle import Shuffle
 from finn.custom_op.fpgadataflow.split import StreamingSplit
 from finn.custom_op.fpgadataflow.streamingdataflowpartition import StreamingDataflowPartition
 from finn.custom_op.fpgadataflow.streamingdatawidthconverter import StreamingDataWidthConverter
-from finn.custom_op.fpgadataflow.streamingeltwise import StreamingEltwise
 from finn.custom_op.fpgadataflow.streamingfifo import StreamingFIFO
 from finn.custom_op.fpgadataflow.thresholding import Thresholding
 from finn.custom_op.fpgadataflow.upsampler import UpsampleNearestNeighbour
@@ -97,8 +99,6 @@ custom_op["Thresholding"] = Thresholding
 custom_op["VVAU"] = VVAU
 custom_op["StreamingDataflowPartition"] = StreamingDataflowPartition
 
-custom_op["AddStreams"] = AddStreams
-custom_op["ChannelwiseOp"] = ChannelwiseOp
 custom_op["ConvolutionInputGenerator"] = ConvolutionInputGenerator
 custom_op["Crop"] = Crop
 custom_op["DuplicateStreams"] = DuplicateStreams
@@ -115,10 +115,11 @@ custom_op["Shuffle"] = Shuffle
 custom_op["StreamingConcat"] = StreamingConcat
 custom_op["StreamingSplit"] = StreamingSplit
 custom_op["StreamingDataWidthConverter"] = StreamingDataWidthConverter
-custom_op["StreamingEltwise"] = StreamingEltwise
 custom_op["UpsampleNearestNeighbour"] = UpsampleNearestNeighbour
 custom_op["ScaledDotProductAttention"] = ScaledDotProductAttention
 custom_op["SplitMultiHeads"] = SplitMultiHeads
 custom_op["MergeMultiHeads"] = MergeMultiHeads
 custom_op["ReplicateStream"] = ReplicateStream
 custom_op["HWSoftmax"] = HWSoftmax
+custom_op["Requant"] = Requant
+custom_op["DNNContainer"] = DNNContainer

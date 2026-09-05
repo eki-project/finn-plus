@@ -10,22 +10,25 @@
 #
 ###################################################################################
 
+"""Module for layernorm."""
 import numpy as np
 import torch
 import torch.nn.functional as F
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class LayerNorm(HWCustomOp):
     """Abstraction layer for HW implementation of the LayerNorm layer."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = super().get_nodeattr_types()
         my_attrs.update(
             {
@@ -40,6 +43,7 @@ class LayerNorm(HWCustomOp):
         return my_attrs
 
     def execute_node(self, context, graph):
+        """Execute node."""
         node = self.onnx_node
         # Get tensor values
         in_values = context[node.input[0]]
@@ -53,12 +57,15 @@ class LayerNorm(HWCustomOp):
         context[node.output[0]] = np.asarray(out_act, dtype=np.float32).reshape(oshape)
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         return self.get_nodeattr("ifm_dim")
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         return self.get_normal_input_shape()
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         normal_ishape = list(self.get_normal_input_shape())
         simd = self.get_nodeattr("SIMD")
         assert normal_ishape[-1] % simd == 0, "SIMD must divide into input dimension"
@@ -67,20 +74,21 @@ class LayerNorm(HWCustomOp):
         return tuple(folded_ishape)
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         return self.get_folded_input_shape()
 
     def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""
         if ind == 0:
             return DataType[self.get_nodeattr("inputDataType")]
-        else:
-            raise Exception("Undefined input ind for this layer type")
+        raise Exception("Undefined input ind for this layer type")
 
     def get_output_datatype(self, ind=0):
         """Returns FINN DataType of output."""
         return DataType[self.get_nodeattr("outputDataType")]
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -89,18 +97,20 @@ class LayerNorm(HWCustomOp):
                 str(self.get_input_datatype()),
                 str(idt),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         # set output datatype from property
         odt = self.get_output_datatype()
         model.set_tensor_datatype(node.output[0], odt)
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         i_bits = self.get_input_datatype().bitwidth()
         in_width = i_bits * self.get_nodeattr("SIMD")
         return in_width
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         o_bits = self.get_output_datatype().bitwidth()
         out_width = o_bits * self.get_nodeattr("SIMD")
         return out_width

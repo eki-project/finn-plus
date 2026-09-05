@@ -1,0 +1,31 @@
+{
+    "global": {
+      "bitfile_name": "bitfile/finn-accel.bit",
+      "report_path": "report",
+
+      "PAF": {
+        "rails": [
+          "0V85",
+          "3V3"
+        ],
+        "sensors": []
+      }
+    },
+    "experiments": [
+      {
+        "name": "multi_dnn_experiment",
+        "warmup": 1,
+        "num_runs": 1,
+        "functions": [
+          {
+            "function_name": "experiment_ma",
+            "kwargs" : {
+                "instr_runtime": 10,
+                "avg_window_size": 64,
+                "num_measurements": 1
+            }
+          }
+        ]
+      }
+    ]
+  }

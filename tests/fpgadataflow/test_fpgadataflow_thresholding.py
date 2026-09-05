@@ -41,15 +41,19 @@ from qonnx.util.basic import gen_finn_dt_tensor
 import finn.core.onnx_exec as oxe
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import InferThresholdingLayer
+from finn.transformation.fpgadataflow.convert_to_hw.thresholding import InferThresholdingLayer
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
+from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
+from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOSizes
+from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
+from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 
@@ -57,32 +61,83 @@ test_fpga_part = "xczu3eg-sbva484-1-e"
 target_clk_ns = 5
 
 
-def generate_random_threshold_values(
+def InsertAndSetFIFODepths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = fpga_part
+    cfg.synth_clk_period_ns = clk_ns
+    model = model.transform(
+        BuildSimulation(
+            fpga_part,
+            clk_ns,
+            True,
+            performance_sim=False,
+        )
+    )
+    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
+    model = model.transform(ApplySimulatedFIFOSizes(cfg))
+    return model
+
+
+def generate_edge_threshold_values(
     data_type, num_input_channels, num_steps, narrow=False, per_tensor=False
 ):
+    """Generate threshold values that include edge cases (min/max of datatype range)."""
     if per_tensor:
         num_input_channels = 1
     if narrow:
         num_steps -= 1
-    if data_type.is_integer():
-        return np.random.randint(
-            data_type.min(),
-            data_type.max() + 1,
-            (num_input_channels, num_steps),
-        ).astype(np.float32)
-    elif data_type.is_fixed_point():
-        return (
-            np.random.randint(
-                data_type.min() / data_type.scale_factor(),
-                data_type.max() / data_type.scale_factor() + 1,
-                (num_input_channels, num_steps),
-            ).astype(np.float32)
-            * data_type.scale_factor()
-        )
+
+    # Use gen_finn_dt_tensor to generate valid values for the datatype
+    thresholds = gen_finn_dt_tensor(data_type, (num_input_channels, num_steps))
+
+    # Get min and max for this datatype
+    dt_min = data_type.min()
+    dt_max = data_type.max()
+
+    # Replace first and last threshold per channel with min and max
+    # if num_steps >=2
+    if num_steps >= 2:
+        for ch in range(num_input_channels):
+            thresholds[ch, 0] = dt_min
+            thresholds[ch, -1] = dt_max
+
+    # For FLOAT16, preserve the dtype; otherwise convert to float32
+    if data_type == DataType["FLOAT16"]:
+        return thresholds.astype(np.float16)
     else:
-        return (np.random.randn(num_input_channels, num_steps) * 1000).astype(
-            data_type.to_numpy_dt()
-        )
+        return thresholds.astype(np.float32)
+
+
+def generate_edge_input_tensor(data_type, shape):
+    """Generate input tensor that includes edge cases (min/max of datatype range)."""
+    # Use gen_finn_dt_tensor to generate valid values for the datatype
+    values = gen_finn_dt_tensor(data_type, shape)
+
+    # Flatten to easily replace some values
+    flat_values = values.flatten()
+    total_elements = len(flat_values)
+
+    # Get min and max for this datatype
+    dt_min = data_type.min()
+    dt_max = data_type.max()
+
+    # Replace some values with min and max
+    num_edge_values = max(1, min(total_elements // 4, 10))
+
+    # Set first few elements to min
+    flat_values[:num_edge_values] = dt_min
+    # Set next few elements to max
+    flat_values[num_edge_values : 2 * num_edge_values] = dt_max
+
+    # Shuffle to distribute edge cases throughout
+    np.random.shuffle(flat_values)
+
+    reshaped = flat_values.reshape(shape)
+    # For FLOAT16, ensure the array is actually float16
+    if data_type == DataType["FLOAT16"]:
+        return reshaped.astype(np.float16)
+    else:
+        return reshaped
 
 
 def sort_thresholds_increasing(thresholds):
@@ -166,6 +221,7 @@ def make_single_multithresholding_modelwrapper(
     [
         (DataType["INT8"], DataType["INT25"]),
         (DataType["UINT5"], DataType["UINT8"]),
+        (DataType["INT8"], DataType["INT7"]),
         (DataType["FLOAT32"], DataType["FLOAT32"]),
         (DataType["FLOAT16"], DataType["FLOAT16"]),
         (DataType["FIXED<6,2>"], DataType["FIXED<8,4>"]),
@@ -232,8 +288,8 @@ def test_fpgadataflow_thresholding(
         if narrow and activation.signed():
             activation_bias += 1
 
-    # Generate random thresholds and sort in ascending order
-    thresholds = generate_random_threshold_values(
+    # Generate thresholds with edge cases (min/max) and sort in ascending order
+    thresholds = generate_edge_threshold_values(
         threshold_data_type, num_input_channels, num_steps, narrow, per_tensor
     )
 
@@ -251,11 +307,11 @@ def test_fpgadataflow_thresholding(
         num_input_channels,
     )
 
-    # calculate reference output
-    x = gen_finn_dt_tensor(input_data_type, tuple(num_input_vecs + [num_input_channels]))
+    # calculate reference output with edge case inputs (min/max values)
+    x = generate_edge_input_tensor(input_data_type, tuple(num_input_vecs + [num_input_channels]))
 
-    input_dict = {model.graph.input[0].name: x}
-    y_expected = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
+    input_dict = {model.get_first_global_in(): x}
+    y_expected = oxe.execute_onnx(model, input_dict)[model.get_first_global_out()]
 
     if output_data_type == DataType["BIPOLAR"]:
         # binary to bipolar
@@ -264,7 +320,7 @@ def test_fpgadataflow_thresholding(
     model = model.transform(InferThresholdingLayer())
 
     # Perform functional validation of the InferThresholdingLayer transform
-    y_produced = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
+    y_produced = oxe.execute_onnx(model, input_dict)[model.get_first_global_out()]
     assert (y_produced.astype(np.float32) == y_expected.astype(np.float32)).all()
 
     # Transform to the specified implementation style, either the
@@ -281,6 +337,7 @@ def test_fpgadataflow_thresholding(
     inst.set_nodeattr("PE", pe)
     if round_thresh is True:
         model = model.transform(RoundAndClipThresholds())
+    model = model.transform(MinimizeWeightBitWidth())
     model = model.transform(GiveUniqueNodeNames())
 
     if impl_style == "hls":
@@ -296,7 +353,7 @@ def test_fpgadataflow_thresholding(
         model = model.transform(HLSSynthIP())
         model = model.transform(PrepareRTLSim())
 
-    y_produced = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
+    y_produced = oxe.execute_onnx(model, input_dict)[model.get_first_global_out()]
     assert (y_produced.astype(np.float32) == y_expected.astype(np.float32)).all()
 
     if exec_mode == "rtlsim":
@@ -345,8 +402,8 @@ def test_fpgadataflow_thresholding_stitched_ip(
     output_data_type = activation
     activation_bias = activation.min()
 
-    # Generate random thresholds and sort in ascending order
-    thresholds = generate_random_threshold_values(
+    # Generate thresholds with edge cases (min/max) and sort in ascending order
+    thresholds = generate_edge_threshold_values(
         threshold_data_type, num_input_channels, num_steps, False, False
     )
 
@@ -364,11 +421,11 @@ def test_fpgadataflow_thresholding_stitched_ip(
         num_input_channels,
     )
 
-    # calculate reference output
-    x = gen_finn_dt_tensor(input_data_type, tuple(num_input_vecs + [num_input_channels]))
+    # calculate reference output with edge case inputs (min/max values)
+    x = generate_edge_input_tensor(input_data_type, tuple(num_input_vecs + [num_input_channels]))
 
-    input_dict = {model.graph.input[0].name: x}
-    y_expected = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
+    input_dict = {model.get_first_global_in(): x}
+    y_expected = oxe.execute_onnx(model, input_dict)[model.get_first_global_out()]
 
     model = model.transform(InferThresholdingLayer())
 
@@ -387,9 +444,10 @@ def test_fpgadataflow_thresholding_stitched_ip(
     inst.set_nodeattr("mem_mode", "internal_decoupled")
     inst.set_nodeattr("ram_style", ram_style)
 
+    model = model.transform(MinimizeWeightBitWidth())
     model = model.transform(GiveUniqueNodeNames())
     # Run stitched-ip RTLsim to have memstream in the test loop
-    model = model.transform(InsertAndSetFIFODepths(part, target_clk_ns))
+    model = InsertAndSetFIFODepths(model, part, target_clk_ns)
     model = model.transform(PrepareIP(part, target_clk_ns))
     model = model.transform(HLSSynthIP())
     model = model.transform(CreateStitchedIP(part, target_clk_ns))

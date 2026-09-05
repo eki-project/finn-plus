@@ -48,13 +48,34 @@ from tests.testing_util.test import get_test_model_trained
 
 @pytest.mark.brevitas_export
 @pytest.mark.parametrize("QONNX_FINN_conversion", [False, True])
-def test_brevitas_debug(QONNX_FINN_conversion):
+@pytest.mark.parametrize(
+    "dynamo",
+    [
+        False,
+        pytest.param(
+            True,
+            marks=pytest.mark.xfail(
+                reason=(
+                    "Since torch>=2.9, export_qonnx() defaults to the newer torch.export "
+                    "(dynamo) based exporter, but Brevitas' DebugMarker mechanism (which this "
+                    "test relies on to compare per-layer tensors) is implemented as a custom "
+                    "autograd Function with a `symbolic()` method -- a mechanism the dynamo "
+                    "exporter does not support (ONNXDynamoExportMixin.custom_fns is empty). "
+                    "Forward hooks still populate dbg_hook.values, but no DebugMarker nodes "
+                    "end up in the exported ONNX graph at all, so names_common is always empty "
+                    "regardless of QONNX_FINN_conversion."
+                )
+            ),
+        ),
+    ],
+)
+def test_brevitas_debug(dynamo, QONNX_FINN_conversion):
     build_dir = make_build_dir("test_brevitas_debug")
     finn_onnx = os.path.join(build_dir, "test_brevitas_debug.onnx")
     fc = get_test_model_trained("TFC", 2, 2)
     ishape = (1, 1, 28, 28)
     dbg_hook = bo.enable_debug(fc, proxy_level=True)
-    export_qonnx(fc, torch.randn(ishape), finn_onnx)
+    export_qonnx(fc, torch.randn(ishape), finn_onnx, dynamo=dynamo)
     # DebugMarkers have the brevitas.onnx domain, so that needs adjusting
     model = ModelWrapper(finn_onnx)
     dbg_nodes = model.get_nodes_by_op_type("DebugMarker")
@@ -73,9 +94,9 @@ def test_brevitas_debug(QONNX_FINN_conversion):
     raw_i = get_data("qonnx.data", "onnx/mnist-conv/test_data_set_0/input_0.pb")
     input_tensor = onnx.load_tensor_from_string(raw_i)
     # run using FINN-based execution
-    input_dict = {model.graph.input[0].name: nph.to_array(input_tensor)}
+    input_dict = {model.get_first_global_in(): nph.to_array(input_tensor)}
     output_dict = oxe.execute_onnx(model, input_dict, return_full_exec_context=True)
-    produced = output_dict[model.graph.output[0].name]
+    produced = output_dict[model.get_first_global_out()]
     # run using PyTorch/Brevitas
     input_tensor = torch.from_numpy(nph.to_array(input_tensor)).float()
     assert input_tensor.shape == (1, 1, 28, 28)

@@ -1,12 +1,14 @@
 """Experiment manager for measurement workflows."""
 
-import importlib.util
+# This is used as a workaround because there is some bug with multiprocessing and h5py
+import h5py  # noqa
 import inspect
 import json
 import multiprocessing
 import os
 import sys
 import time
+from finn_plus_driver import get_driver_class
 from measurement_util import PAF, Recorder
 from pynq import PL
 
@@ -15,7 +17,6 @@ class ExperimentManager:
     """Manages multiple experiments."""
 
     # Information Important for ExperimentManager
-    #   driver (path)   -> Experiment Info
     #   driver_type     -> Driver Info
     def __init__(self, config_path, working_dir):
         """Initialize experiment manager with configuration."""
@@ -28,9 +29,6 @@ class ExperimentManager:
         self._driver_info = config["driver_information"]
         self._experiment_info = config["experiment_information"]
 
-        self._experiment_info["global"]["driver"] = os.path.join(
-            working_dir, self._experiment_info["global"]["driver"]
-        )
         self._experiment_info["global"]["bitfile_name"] = os.path.join(
             working_dir, self._experiment_info["global"]["bitfile_name"]
         )
@@ -38,28 +36,10 @@ class ExperimentManager:
             working_dir, self._experiment_info["global"]["report_path"]
         )
 
-        # add driver path to path for experiments
-        self._driver = self._experiment_info["global"]["driver"]
-        if self._driver not in sys.path:
-            print("[EM] Adding driver to path")
-            sys.path.insert(0, self._driver)
-        else:
-            print("[EM] Driver already part of path")
-
-        # setup driver module
-        spec = importlib.util.spec_from_file_location("driver", self._driver)
-
-        # Add the directory of the driver to sys.path
-        module_dir = os.path.dirname(spec.origin)
-        if module_dir not in sys.path:
-            sys.path.append(module_dir)
-
-        self._driver_module = importlib.util.module_from_spec(spec)
-        sys.modules["driver"] = self._driver_module
-        spec.loader.exec_module(self._driver_module)
-
+        # The driver is installed as the finn-plus-driver package on the board, so the
+        # deployment package only ships accelerator-specific artifacts.
         driver_type = self._driver_info["driver_type"]
-        self._driver_class = getattr(sys.modules["driver"], driver_type)
+        self._driver_class = get_driver_class(driver_type)
 
         # ex_config includes:
         # experiment_information/global
@@ -204,12 +184,14 @@ class Experiment:
             # stop & reset recorder and save results
             self._recorder.stop()
             self._recorder.save_dfs_to_xlsx(experiment_path, f"{self._name}_run_{i}")
+            self._recorder.save_dfs_to_json(experiment_path, f"{self._name}_run_{i}")
             self._recorder.reset()
 
             if (
                 p.exitcode != 0
             ):  # If the process exit code is not 0 return with nonzero. This cancels the experiment
                 return p.exitcode
+
         return 0
 
 

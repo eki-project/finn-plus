@@ -42,8 +42,8 @@ from qonnx.util.basic import calculate_signed_dot_prod_range, gen_finn_dt_tensor
 
 import finn.core.onnx_exec as oxe
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import (
-    InferConvInpGen,
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
     InferVectorVectorActivation,
 )
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -121,7 +121,7 @@ def set_up_reference_model(act, idt, wdt, k, ifm_dim, ifm_ch, stride, padding):
 
     # initialize model
     model.set_tensor_datatype("inp", idt)
-    model.set_tensor_datatype(model.graph.output[0].name, odt)
+    model.set_tensor_datatype(model.get_first_global_out(), odt)
     model.set_tensor_datatype("W_sparse", wdt)
 
     w_tensor = gen_finn_dt_tensor(wdt, [ofm_ch, 1, k, k])

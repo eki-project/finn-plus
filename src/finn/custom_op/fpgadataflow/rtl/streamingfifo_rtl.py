@@ -161,8 +161,8 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             self.set_nodeattr("ip_path", code_gen_dir)
             return
 
-        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "fifo/hdl")
-        template_path = rtlsrc + "/fifo_template.v"
+        rtlsrc = os.path.join(get_settings().finn_rtllib, "fifo", "hdl")
+        template_path = os.path.join(rtlsrc, "fifo_template.v")
 
         # save top module name so we can refer to it after this node has been renamed
         # (e.g. by GiveUniqueNodeNames(prefix) during MakeZynqProject)
@@ -177,14 +177,14 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         count_width = int(self.get_nodeattr("depth")).bit_length()
         depth = int(self.get_nodeattr("depth"))
         code_gen_dict["$COUNT_WIDTH$"] = f"{count_width}"
-        code_gen_dict["$COUNT_RANGE$"] = "[{}:0]".format(count_width - 1)
-        code_gen_dict["$IN_RANGE$"] = "[{}:0]".format(in_width - 1)
-        code_gen_dict["$OUT_RANGE$"] = "[{}:0]".format(in_width - 1)
+        code_gen_dict["$COUNT_RANGE$"] = f"[{count_width - 1}:0]"
+        code_gen_dict["$IN_RANGE$"] = f"[{in_width - 1}:0]"
+        code_gen_dict["$OUT_RANGE$"] = f"[{in_width - 1}:0]"
         code_gen_dict["$WIDTH$"] = str(in_width)
         code_gen_dict["$DEPTH$"] = str(depth)
         # apply code generation to templates
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template = f.read()
         for key_name in code_gen_dict:
             key = "%s" % key_name
@@ -195,8 +195,8 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         ) as f:
             f.write(template)
 
-        shutil.copy(rtlsrc + "/fifo_gauge.sv", code_gen_dir)
-        shutil.copy(rtlsrc + "/Q_srl.v", code_gen_dir)
+        shutil.copy(os.path.join(rtlsrc, "fifo_gauge.sv"), code_gen_dir)
+        shutil.copy(os.path.join(rtlsrc, "Q_srl.v"), code_gen_dir)
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
         self.set_nodeattr("ipgen_path", code_gen_dir)
@@ -230,7 +230,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
                 % (self.get_nodeattr("gen_top_module"), self.onnx_node.name)
             ]
             return cmd
-        elif impl_style == "vivado":
+        if impl_style == "vivado":
             cmd = []
             node_name = self.onnx_node.name
             depth = self.get_adjusted_depth()
@@ -285,7 +285,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
                 "[get_bd_pins %s/fifo/s_axis_aclk]" % (node_name, clk_name, node_name)
             )
             return cmd
-        elif impl_style == "virtual":
+        if impl_style == "virtual":
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
             sourcefiles = self.get_rtl_file_list(abspath=True)
             fifo_name = self.onnx_node.name
@@ -301,10 +301,9 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
             cmd += [f"set_property CONFIG.DATA_WIDTH {width} [get_bd_cells {fifo_name}]"]
             cmd += [f"set_property CONFIG.FM_SIZE {fm_size} [get_bd_cells {fifo_name}]"]
             return cmd
-        else:
-            raise Exception(
-                "FIFO implementation style %s not supported, please use rtl or vivado" % impl_style
-            )
+        raise Exception(
+            "FIFO implementation style %s not supported, please use rtl or vivado" % impl_style
+        )
 
     def get_rtl_file_list(self, abspath=False):
         """Get list of RTL files required for this node.
@@ -338,6 +337,7 @@ class StreamingFIFO_rtl(StreamingFIFO, RTLBackend):
         else:
             verilog_files = [
                 rtllib_dir + "Q_srl.v",
+                rtllib_dir + "fifo_gauge.sv",
                 code_gen_dir + self.get_nodeattr("gen_top_module") + ".v",
             ]
         return verilog_files

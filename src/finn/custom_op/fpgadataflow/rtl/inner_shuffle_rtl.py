@@ -6,19 +6,19 @@
 #
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
+"""Module for inner shuffle rtl."""
 import math
 import os
 import shutil
 from qonnx.core.datatype import DataType
-from typing import Optional
 
 from finn.custom_op.fpgadataflow.inner_shuffle import InnerShuffle
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.util.settings import get_settings
 
 
-def auto_size_simd(I_dim: int, SIMD: int) -> Optional[int]:
-    """
-    Return the smallest divisor d of I_dim such that d > SIMD.
+def auto_size_simd(I_dim: int, SIMD: int) -> int | None:
+    """Return the smallest divisor d of I_dim such that d > SIMD.
     if no such divisor exists, return None.
     """
     if I_dim <= 0:
@@ -27,7 +27,7 @@ def auto_size_simd(I_dim: int, SIMD: int) -> Optional[int]:
         raise ValueError("SIMD must be a non-negative integer")
 
     candidates = []
-    limit = int(math.isqrt(I_dim))
+    limit = math.isqrt(I_dim)
     for a in range(1, limit + 1):
         if I_dim % a == 0:
             b = I_dim // a
@@ -46,6 +46,7 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
     """CustomOp wrapper for the finn-rtllib inner_shuffle component."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
         # check some constraints that it is a legal InnerShuffle
@@ -59,12 +60,14 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
                 raise RuntimeError("Unable to determine a new SIMD value for this transpose.")
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(InnerShuffle.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
     def get_template_values(self, idims, simd, dt):
+        """Return template values."""
         code_gen_dict = {
             "TOP_MODULE_NAME": self.get_verilog_top_module_name(),
             "I": idims[0],
@@ -76,8 +79,9 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
         return code_gen_dict
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtlsrc = f'{os.environ["FINN_RTLLIB"]}/inner_shuffle'
-        template_path = f"{rtlsrc}/inner_shuffle_template.v"
+        """Generate hdl."""
+        rtlsrc = os.path.join(get_settings().finn_rtllib, "inner_shuffle")
+        template_path = os.path.join(rtlsrc, "inner_shuffle_template.v")
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         dt = DataType[self.get_nodeattr("data_type")]
         simd = self.get_nodeattr("SIMD")
@@ -89,7 +93,7 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
             "WIDTH": dt.bitwidth(),
             "STREAM_BITS": simd * dt.bitwidth(),
         }
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template = f.read()
         for key_name in code_gen_dict:
             key = f"${key_name}$"
@@ -103,15 +107,16 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
         self.set_nodeattr("gen_top_module", self.get_verilog_top_module_name())
 
         sv_files = ["inner_shuffle.sv", "skid.sv", "elasticmem.sv"]
-        for sv_files in sv_files:
-            shutil.copy(f"{rtlsrc}/{sv_files}", code_gen_dir)
+        for sv_file in sv_files:
+            shutil.copy(f"{rtlsrc}/{sv_file}", code_gen_dir)
         self.set_nodeattr("ipgen_path", code_gen_dir)
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Return rtl file list."""
         if abspath:
             code_gen_dir = f"{self.get_nodeattr('code_gen_dir_ipgen')}/"
-            rtllib_dir = f'{os.environ["FINN_RTLLIB"]}/inner_shuffle'
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "inner_shuffle")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
@@ -125,7 +130,7 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
         ]
 
     def code_generation_ipi(self):
-        """Constructs and returns the TCL for node instantiation in Vivado IPI."""
+        """Construct and returns the TCL for node instantiation in Vivado IPI."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         top_module = self.get_nodeattr("gen_top_module")
         sourcefiles = ["inner_shuffle.sv", "skid.sv", "elasticmem.sv", f"{top_module}.v"]
@@ -138,6 +143,7 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
         return cmd
 
     def execute_node(self, context, graph):
+        """Execute node."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "rtlsim":
             RTLBackend.execute_node(self, context, graph)

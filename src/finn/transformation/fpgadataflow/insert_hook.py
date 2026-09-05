@@ -27,6 +27,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Insert hook layers into dataflow graphs based on node attributes."""
+
 import numpy as np
 from onnx import TensorProto
 from onnx import helper as oh
@@ -38,23 +40,21 @@ from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 
 
 def _is_hook_node(node):
+    """Return True if the node is a supported hook op."""
     if node.op_type in ["CheckSum_hls"]:
         return True
-    else:
-        return False
+    return False
 
 
 def _suitable_node(node):
+    """Return True if the node can have a hook inserted after it."""
     if node is not None:
         if is_hls_node(node) or is_rtl_node(node):
             if not _is_hook_node(node):
                 return True
-            else:
-                return False
-        else:
             return False
-    else:
         return False
+    return False
 
 
 class InsertHook(Transformation):
@@ -62,9 +62,11 @@ class InsertHook(Transformation):
     'output_hook' specified"""
 
     def __init__(self):
+        """Initialize the transformation."""
         super().__init__()
 
     def apply(self, model):
+        """Insert supported hook nodes after eligible operators."""
         list_supported_hooks = ["checksum"]
         graph = model.graph
         node_ind = -1

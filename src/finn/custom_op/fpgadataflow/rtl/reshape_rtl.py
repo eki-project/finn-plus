@@ -18,6 +18,7 @@ from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 
 # Logging and error handling in FINN
 from finn.util.exception import FINNInternalError
+from finn.util.settings import get_settings
 
 
 @register_custom_op
@@ -43,11 +44,10 @@ class Reshape_rtl(Reshape, RTLBackend):
 
     def generate_hdl(self, model, fpgapart, clk):
         """Generate HLD code by filling in the verilog template."""
-
         # Path to RTL sources implementing the AXI pass-through operator
         # Note: Implements AXI pass-through via the data width converter, which,
         # for identical input and output width, reduces to a no-op.
-        rtlsrc = os.path.join(os.environ["FINN_RTLLIB"], "dwc", "hdl")
+        rtlsrc = os.path.join(get_settings().finn_rtllib, "dwc", "hdl")
         # Path to the verilog template of the top-level module
         template = os.path.join(rtlsrc, "dwc_template.v")
 
@@ -69,7 +69,7 @@ class Reshape_rtl(Reshape, RTLBackend):
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
         # Load the code template and fill in the parameter values from the dict
-        with open(template, "r") as f:
+        with open(template) as f:
             template = f.read()
             for placeholder, value in code_gen_dict.items():
                 template = template.replace(f"${placeholder}$", str(value))

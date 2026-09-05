@@ -1,5 +1,4 @@
-"""
-FINN benchmarking execution framework.
+"""FINN benchmarking execution framework.
 
 This module provides the main entry point for running FINN benchmarks, supporting
 both SLURM-based cluster execution and local testing. It handles configuration
@@ -16,6 +15,7 @@ import traceback
 import yaml
 
 from finn.benchmarking.bench_base import bench
+from finn.benchmarking.dut.bench_mvau_multi_dnn import bench_mvau_multi_dnn
 from finn.benchmarking.dut.mvau import bench_mvau
 from finn.benchmarking.dut.synthetic_nonlinear import bench_synthetic_nonlinear
 
@@ -25,10 +25,11 @@ from finn.benchmarking.util import delete_dir_contents
 # Register custom bench subclasses that offer more control than YAML-based flow
 dut = dict()
 dut["mvau"] = bench_mvau
+dut["mvau_multi_dnn"] = bench_mvau_multi_dnn
 dut["synthetic_nonlinear"] = bench_synthetic_nonlinear
 
 
-class PrefixPrinter(object):
+class PrefixPrinter:
     """Custom stream handler that adds a prefix to console output for run identification."""
 
     def __init__(self, prefix, originalstream):
@@ -48,8 +49,7 @@ class PrefixPrinter(object):
 
 
 def start_bench_run(config_name):
-    """
-    Start a benchmarking run with the specified configuration.
+    """Start a benchmarking run with the specified configuration.
 
     This function handles both SLURM cluster execution and local testing,
     loading configuration files, expanding parameter combinations, and
@@ -102,7 +102,10 @@ def start_bench_run(config_name):
             is_followup = True
             save_dir = save_dir + "_followup"
         else:
-            config_path = os.path.join("ci", "cfg", config_name + ".yml")
+            if config_name.endswith(".yaml") or config_name.endswith(".yml"):
+                config_path = config_name
+            else:
+                config_path = os.path.join("ci", "cfg", config_name + ".yml")
         print("Job launched with SLURM ID: %d" % (job_id))
     except KeyError:
         # Launched without SLURM, assume test run on local machine
@@ -145,11 +148,11 @@ def start_bench_run(config_name):
     # Load config
     print("Loading config %s" % (config_path))
     if os.path.exists(config_path):
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config = yaml.load(f, Loader=yaml.SafeLoader)
     else:
         print("ERROR: config file not found")
-        return
+        return None
 
     # Expand all specified config combinations (gridsearch)
     config_expanded = []
@@ -172,7 +175,7 @@ def start_bench_run(config_name):
         if task_id < total_runs:
             selected_runs = [task_id]
         else:
-            return
+            return None
     else:
         selected_runs = []
         idx = task_id
@@ -248,7 +251,7 @@ def start_bench_run(config_name):
         # we could also fail the pipeline if functional verification fails (TODO)
         builder_log_path = os.path.join(bench_object.report_dir, "metadata_builder.json")
         if os.path.isfile(builder_log_path):
-            with open(builder_log_path, "r") as f:
+            with open(builder_log_path) as f:
                 builder_log = json.load(f)
             if builder_log["status"] == "failed":
                 print("BENCH RUN %d FAILED (BUILDER REPORTED FAILURE)" % run_id)

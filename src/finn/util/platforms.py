@@ -26,30 +26,33 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""FPGA platform resource definitions and floorplanning constraints."""
+
 import numpy as np
 from abc import abstractmethod
+from numpy.typing import NDArray
 
 # contains the amount of available FPGA resources for several
 # Xilinx platforms, as well as certain resource limit guidelines
 # for creating designs that can achieve timing closure
 
 # explicit value for res types/costs we don't care about
-DONT_CARE = -1
+DONT_CARE: int = -1
 # recommended resource limits from Xilinx for timing closure
 # respectively for LUT, FF, BRAM_18K, URAM, DSP res types
-DEFAULT_RES_LIMITS = np.array([0.7, 0.5, 0.80, 0.80, 0.80])
-DEFAULT_AVG_CONSTRAINTS = [((2, 3, 4), 0.7)]  #
+DEFAULT_RES_LIMITS: NDArray[np.float64] = np.array([0.7, 0.5, 0.80, 0.80, 0.80])
+DEFAULT_AVG_CONSTRAINTS: list[tuple[tuple[int, ...], float]] = [((2, 3, 4), 0.7)]
 
 # resources required to instantiate certain infrastructure components
 # such as memory controllers and network interfaces
-DDR_RESOURCE_REQUIREMENTS = {
+DDR_RESOURCE_REQUIREMENTS: dict[str, int] = {
     "LUT": 33256,
     "FF": 44889,
     "BRAM_18K": 199,
     "URAM": 0,
     "DSP": 3,
 }
-HBM_RESOURCE_REQUIREMENTS = {
+HBM_RESOURCE_REQUIREMENTS: dict[str, int] = {
     "LUT": 10718,
     "FF": 21793,
     "BRAM_18K": 8,
@@ -59,7 +62,7 @@ HBM_RESOURCE_REQUIREMENTS = {
 
 # we assume use of VNx Alveo UDP stack
 # see: https://gitenterprise.xilinx.com/mruiznog/vitis_network_layer
-ETH_RESOURCE_REQUIREMENTS = {
+ETH_RESOURCE_REQUIREMENTS: dict[str, int] = {
     "LUT": 35219,
     "FF": 86269,
     "BRAM_18K": 183,
@@ -69,18 +72,26 @@ ETH_RESOURCE_REQUIREMENTS = {
 
 
 class Platform:
+    """Base class for platform resource and interconnect models."""
+
     def __init__(
         self,
-        nslr=1,
-        ndevices=1,
-        sll_count=[],
-        hbm_slr=-1,
-        ddr_slr=[0],
-        eth_slr=0,
-        eth_gbps=0,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
+        nslr: int = 1,
+        ndevices: int = 1,
+        sll_count: list[list[int]] | None = None,
+        hbm_slr: int = -1,
+        ddr_slr: list[int] | None = None,
+        eth_slr: int = 0,
+        eth_gbps: int = 0,
+        qsfp_slr: str | None = None,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize platform parameters and resource constraints."""
+        if ddr_slr is None:
+            ddr_slr = [0]
+        if sll_count is None:
+            sll_count = []
         self.nslr = nslr
         self.sll_count = sll_count
         self.eth_slr = eth_slr
@@ -88,6 +99,7 @@ class Platform:
         self.ndevices = ndevices
         self.hbm_slr = hbm_slr
         self.ddr_slr = ddr_slr
+        self.qsfp_slr = qsfp_slr
         # limits must be a np.array either of
         # the same shape as compute_resources
         # or broadcastable to it
@@ -97,11 +109,12 @@ class Platform:
 
     @property
     @abstractmethod
-    def compute_resources(self):
-        pass
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources as [LUT, FF, BRAM_18K, URAM, DSP]."""
 
     @property
-    def guide_resources(self):
+    def guide_resources(self) -> list[list[int]]:
+        """Return per-SLR guide resources after subtracting infra costs."""
         guide = []
         # TODO: assert limits is of correct size
         guide_res = (np.tile(np.array(self.compute_resources), (self.ndevices, 1))).astype(int)
@@ -132,10 +145,11 @@ class Platform:
         return guide
 
     @property
-    def resource_count_dict(self):
-        res = dict()
+    def resource_count_dict(self) -> dict[str, dict[str, int]]:
+        """Return per-SLR resource counts keyed by SLR name."""
+        res = {}
         for i in range(self.nslr * self.ndevices):
-            slr_res = dict()
+            slr_res = {}
             slr_res["LUT"] = self.compute_resources[i % self.nslr][0]
             slr_res["FF"] = self.compute_resources[i % self.nslr][1]
             slr_res["BRAM_18K"] = self.compute_resources[i % self.nslr][2]
@@ -145,7 +159,8 @@ class Platform:
         return res
 
     @property
-    def compute_connection_cost(self):
+    def compute_connection_cost(self) -> NDArray[np.int_]:
+        """Return an SLR-to-SLR connection cost matrix."""
         x = np.full((self.nslr * self.ndevices, self.nslr * self.ndevices), DONT_CARE)
         # build connection cost matrix for one device's SLRs
         xlocal = np.full((self.nslr, self.nslr), DONT_CARE)
@@ -165,7 +180,8 @@ class Platform:
         return x
 
     @property
-    def compute_connection_resource(self):
+    def compute_connection_resource(self) -> list[list[tuple[int, int]]]:
+        """Return SLL/ETH constraints for each SLR-to-SLR connection."""
         sll = np.full((self.nslr * self.ndevices, self.nslr * self.ndevices), 0)
         # build connection resource matrix for one device's SLRs
         slllocal = np.full((self.nslr, self.nslr), -1)
@@ -207,20 +223,23 @@ class Platform:
             constraints.append(constraints_line)
         return constraints
 
-    def map_device_to_slr(self, idx):
-        """Given a global SLR index, return device id and local slr index"""
+    def map_device_to_slr(self, idx: int) -> tuple[int, int]:
+        """Map a global SLR index to (local_slr, device_id)."""
         assert idx <= self.nslr * self.ndevices
         return (idx % self.nslr, idx // self.nslr)
 
 
 class Zynq7020_Platform(Platform):
+    """Platform definition for Zynq-7020 devices."""
+
     def __init__(
         self,
-        ndevices=1,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
-        super(Zynq7020_Platform, self).__init__(
+        ndevices: int = 1,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize a Zynq-7020 platform."""
+        super().__init__(
             nslr=1,
             ndevices=ndevices,
             sll_count=[[0]],
@@ -232,18 +251,22 @@ class Zynq7020_Platform(Platform):
         )
 
     @property
-    def compute_resources(self):
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources."""
         return [[53200, 2 * 53200, 280, 0, 220] for i in range(1)]
 
 
 class ZU3EG_Platform(Platform):
+    """Platform definition for ZU3EG devices."""
+
     def __init__(
         self,
-        ndevices=1,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
-        super(ZU3EG_Platform, self).__init__(
+        ndevices: int = 1,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize a ZU3EG platform."""
+        super().__init__(
             nslr=1,
             ndevices=ndevices,
             sll_count=[[0]],
@@ -255,18 +278,22 @@ class ZU3EG_Platform(Platform):
         )
 
     @property
-    def compute_resources(self):
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources."""
         return [[71000, 2 * 71000, 412, 0, 360] for i in range(1)]
 
 
 class ZU7EV_Platform(Platform):
+    """Platform definition for ZU7EV devices."""
+
     def __init__(
         self,
-        ndevices=1,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
-        super(ZU7EV_Platform, self).__init__(
+        ndevices: int = 1,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize a ZU7EV platform."""
+        super().__init__(
             nslr=1,
             ndevices=ndevices,
             sll_count=[[0]],
@@ -278,18 +305,22 @@ class ZU7EV_Platform(Platform):
         )
 
     @property
-    def compute_resources(self):
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources."""
         return [[230000, 2 * 230000, 610, 92, 1728] for i in range(1)]
 
 
 class ZU9EG_Platform(Platform):
+    """Platform definition for ZU9EG devices."""
+
     def __init__(
         self,
-        ndevices=1,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
-        super(ZU9EG_Platform, self).__init__(
+        ndevices: int = 1,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize a ZU9EG platform."""
+        super().__init__(
             nslr=1,
             ndevices=ndevices,
             sll_count=[[0]],
@@ -301,18 +332,22 @@ class ZU9EG_Platform(Platform):
         )
 
     @property
-    def compute_resources(self):
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources."""
         return [[274000, 2 * 274000, 1824, 0, 2520] for i in range(1)]
 
 
 class ZU28DR_Platform(Platform):
+    """Platform definition for ZU28DR devices."""
+
     def __init__(
         self,
-        ndevices=1,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
-        super(ZU28DR_Platform, self).__init__(
+        ndevices: int = 1,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize a ZU28DR platform."""
+        super().__init__(
             nslr=1,
             ndevices=ndevices,
             sll_count=[[0]],
@@ -324,20 +359,24 @@ class ZU28DR_Platform(Platform):
         )
 
     @property
-    def compute_resources(self):
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources."""
         return [[425000, 2 * 425000, 2160, 80, 4272] for i in range(1)]
 
 
 class Alveo_NxU50_Platform(Platform):
+    """Platform definition for Alveo U50 devices."""
+
     def __init__(
         self,
-        ndevices=1,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
+        ndevices: int = 1,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize an Alveo U50 platform."""
         # according to Vivado: 23040 SLR0 <-> SLR1
         sll_counts = [[0, 5000], [5000, 0]]
-        super(Alveo_NxU50_Platform, self).__init__(
+        super().__init__(
             nslr=2,
             ndevices=ndevices,
             sll_count=sll_counts,
@@ -345,12 +384,14 @@ class Alveo_NxU50_Platform(Platform):
             hbm_slr=0,
             eth_slr=1,
             eth_gbps=100,
+            qsfp_slr="SLR1",
             limits=limits,
             avg_constraints=avg_constraints,
         )
 
     @property
-    def compute_resources(self):
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources."""
         # According to UG1120:
         # U50 has identical resource counts on both SLRs
         # return [[365000,2*365000,2*564, 304, 2580] for i in range(2)]
@@ -362,26 +403,31 @@ class Alveo_NxU50_Platform(Platform):
 
 
 class Alveo_NxU200_Platform(Platform):
+    """Platform definition for Alveo U200 devices."""
+
     def __init__(
         self,
-        ndevices=1,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
+        ndevices: int = 1,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize an Alveo U200 platform."""
         sll_counts = [[0, 5000, 0], [5000, 0, 5000], [0, 5000, 0]]
-        super(Alveo_NxU200_Platform, self).__init__(
+        super().__init__(
             nslr=3,
             ndevices=ndevices,
             sll_count=sll_counts,
             ddr_slr=[0, 2],
             eth_slr=2,
             eth_gbps=100,
+            qsfp_slr="SLR2",
             limits=limits,
             avg_constraints=avg_constraints,
         )
 
     @property
-    def compute_resources(self):
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources."""
         # According to UG1120:
         # return [[355000, 723000, 2*638, 320, 2265],
         #        [160000, 331000, 2*326, 160, 1317],
@@ -395,31 +441,36 @@ class Alveo_NxU200_Platform(Platform):
 
 
 class Alveo_NxU250_Platform(Platform):
+    """Platform definition for Alveo U250 devices."""
+
     def __init__(
         self,
-        ndevices=1,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
+        ndevices: int = 1,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize an Alveo U250 platform."""
         sll_counts = [
             [0, 5000, 0, 0],
             [5000, 0, 5000, 0],
             [0, 5000, 0, 5000],
             [0, 0, 5000, 0],
         ]
-        super(Alveo_NxU250_Platform, self).__init__(
+        super().__init__(
             nslr=4,
             ndevices=ndevices,
             sll_count=sll_counts,
             ddr_slr=[0, 1, 2, 3],
             eth_slr=3,
             eth_gbps=100,
+            qsfp_slr="SLR2",
             limits=limits,
             avg_constraints=avg_constraints,
         )
 
     @property
-    def compute_resources(self):
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources."""
         # According to UG1120:
         # U250 has identical resource counts on all 4 SLRs:
         # return [[345000,2*345000,2*500, 320, 2877] for i in range(4)]
@@ -428,14 +479,17 @@ class Alveo_NxU250_Platform(Platform):
 
 
 class Alveo_NxU280_Platform(Platform):
+    """Platform definition for Alveo U280 devices."""
+
     def __init__(
         self,
-        ndevices=1,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
+        ndevices: int = 1,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize an Alveo U280 platform."""
         sll_counts = [[0, 5000, 0], [5000, 0, 5000], [0, 5000, 0]]
-        super(Alveo_NxU280_Platform, self).__init__(
+        super().__init__(
             nslr=3,
             ndevices=ndevices,
             sll_count=sll_counts,
@@ -443,12 +497,14 @@ class Alveo_NxU280_Platform(Platform):
             hbm_slr=0,
             eth_slr=2,
             eth_gbps=100,
+            qsfp_slr="SLR2",
             limits=limits,
             avg_constraints=avg_constraints,
         )
 
     @property
-    def compute_resources(self):
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources."""
         # according to UG1120
         # return [[369000, 746000, 2*507, 320, 2733],
         #        [333000, 675000, 2*468, 320, 2877],
@@ -462,14 +518,17 @@ class Alveo_NxU280_Platform(Platform):
 
 
 class Alveo_NxU55C_Platform(Platform):
+    """Platform definition for Alveo U55C devices."""
+
     def __init__(
         self,
-        ndevices=1,
-        limits=DEFAULT_RES_LIMITS,
-        avg_constraints=DEFAULT_AVG_CONSTRAINTS,
-    ):
+        ndevices: int = 1,
+        limits: NDArray[np.float64] = DEFAULT_RES_LIMITS,
+        avg_constraints: list[tuple[tuple[int, ...], float]] = DEFAULT_AVG_CONSTRAINTS,
+    ) -> None:
+        """Initialize an Alveo U55C platform."""
         sll_counts = [[0, 5000, 0], [5000, 0, 5000], [0, 5000, 0]]
-        super(Alveo_NxU55C_Platform, self).__init__(
+        super().__init__(
             nslr=3,
             ndevices=ndevices,
             sll_count=sll_counts,
@@ -477,12 +536,14 @@ class Alveo_NxU55C_Platform(Platform):
             hbm_slr=0,
             eth_slr=1,
             eth_gbps=100,
+            qsfp_slr="SLR1",
             limits=limits,
             avg_constraints=avg_constraints,
         )
 
     @property
-    def compute_resources(self):
+    def compute_resources(self) -> list[list[int]]:
+        """Return per-SLR compute resources."""
         # according to UG1120
         return [
             [386000, 773000, 2 * 600, 320, 2664],
@@ -491,7 +552,7 @@ class Alveo_NxU55C_Platform(Platform):
         ]
 
 
-platforms = dict()
+platforms: dict[str, type[Platform]] = {}
 platforms["U50"] = Alveo_NxU50_Platform
 platforms["U200"] = Alveo_NxU200_Platform
 platforms["U250"] = Alveo_NxU250_Platform

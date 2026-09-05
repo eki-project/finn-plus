@@ -85,14 +85,17 @@ def test_streamline_fc(size, wbits, abits):
     # run using FINN-based execution
     input_dict = {"global_in": nph.to_array(input_tensor)}
     expected_ctx = oxe.execute_onnx(model, input_dict, True)
-    expected = expected_ctx[model.graph.output[0].name]
+    expected = expected_ctx[model.get_first_global_out()]
     model = model.transform(Streamline())
     model = model.transform(RemoveUnusedTensors())
     assert len(model.graph.initializer) == 11
     assert len(model.graph.value_info) == 21
     # The first tensor (input to the Reshape) doesn't have a quantization annotation (why?),
-    # but it does have a layout annotation now, which is also stored as "quantization_annotation"
-    assert len(model.graph.quantization_annotation) == 21
+    # but it does have a layout annotation now, which is also stored as "quantization_annotation".
+    # After recent changes, the threshold tensors don't have a quant annotation at this stage.
+    # Total number of tensors: 11 initializers + 10 value_info + 2 global i/o = 23
+    # Total number of quantization annotations: 23 - 1x Reshape param - 4x MT param = 18
+    assert len(model.graph.quantization_annotation) == 18
     produced_ctx = oxe.execute_onnx(model, input_dict, True)
-    produced = produced_ctx[model.graph.output[0].name]
+    produced = produced_ctx[model.get_first_global_out()]
     assert np.isclose(expected, produced, atol=1e-3).all()

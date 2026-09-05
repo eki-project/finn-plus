@@ -39,9 +39,12 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import InferElementwiseBinaryOperation
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
@@ -50,7 +53,9 @@ from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
+from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOSizes
+from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
+from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 
 # Mapping of ElementwiseBinaryOperation specializations to numpy reference
@@ -76,6 +81,24 @@ NUMPY_REFERENCES = {
     # TODO: "ElementwiseBitShift": np.left_shift / np.right_shift
     # TODO: "ElementwisePow": np.power
 }
+
+
+def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    """Run FIFO sizing for testing."""
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = fpga_part
+    cfg.synth_clk_period_ns = clk_ns
+    model = model.transform(
+        BuildSimulation(
+            fpga_part,
+            clk_ns,
+            True,
+            performance_sim=False,
+        )
+    )
+    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
+    model = model.transform(ApplySimulatedFIFOSizes(cfg))
+    return model
 
 
 # Creates a model executing a binary elementwise operation
@@ -337,7 +360,7 @@ def test_elementwise_binary_operation_stitched_ip(
     o_expected = numpy_reference(lhs, rhs)
 
     # node-by-node rtlsim
-    o_produced = execute_onnx(model, context)[model.graph.output[0].name]
+    o_produced = execute_onnx(model, context)[model.get_first_global_out()]
 
     if out_dtype == "FLOAT16":
         # Equivalence checking is more relaxed for arithmetic operations in fp16
@@ -348,7 +371,7 @@ def test_elementwise_binary_operation_stitched_ip(
         assert np.all(o_produced == o_expected)
 
     # prepare for stitched ip rtlsim
-    model = model.transform(InsertAndSetFIFODepths("xczu7ev-ffvc1156-2-e", 10))
+    model = insert_and_set_fifo_depths(model, "xczu7ev-ffvc1156-2-e", 10)
     model = model.transform(PrepareIP("xczu7ev-ffvc1156-2-e", 10))
     model = model.transform(HLSSynthIP())
     model = model.transform(
@@ -362,16 +385,16 @@ def test_elementwise_binary_operation_stitched_ip(
     # Tensor names might have changed during the test, so assembling an updated context dict
     io_dict = {}
     if not initializers:
-        io_dict[model.graph.input[0].name] = lhs
+        io_dict[model.get_first_global_in()] = lhs
         io_dict[model.graph.input[1].name] = rhs
     elif len(initializers) == 1:
         if initializers[0] == "in_x":
-            io_dict[model.graph.input[0].name] = rhs
+            io_dict[model.get_first_global_in()] = rhs
         elif initializers[0] == "in_y":
-            io_dict[model.graph.input[0].name] = lhs
+            io_dict[model.get_first_global_in()] = lhs
     # stitched-ip rtlsim
     model.set_metadata_prop("exec_mode", "rtlsim")
-    o_produced = execute_onnx(model, io_dict)[model.graph.output[0].name]
+    o_produced = execute_onnx(model, io_dict)[model.get_first_global_out()]
 
     if out_dtype == "FLOAT16":
         # Equivalence checking is more relaxed for arithmetic operations in fp16

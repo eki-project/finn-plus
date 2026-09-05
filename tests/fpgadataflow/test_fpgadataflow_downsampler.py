@@ -39,10 +39,10 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.util.basic import gen_finn_dt_tensor
 
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
@@ -52,7 +52,6 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 
 
 def build_model(is_1d, in_dim, k, stride, dt_in, dt_w, pad_half=0, flip_1d=False):
-    np.random.seed(0)
     out_dim = compute_conv_output_dim(in_dim, k, stride, 2 * pad_half)
     ifm = 8
     ofm = 16
@@ -127,7 +126,7 @@ def test_fpgadataflow_downsampler(is_1d, flip_1d, exec_mode):
     inp = gen_finn_dt_tensor(dt_in, model.get_tensor_shape("in0"))
     idict = {"in0": inp}
     y_expected = execute_onnx(model, idict)["out0"]
-    model = model.transform(to_hw.InferConvInpGen())
+    model = model.transform(InferConvInpGen())
     assert len(model.get_nodes_by_op_type("ConvolutionInputGenerator")) == 1
     y_produced = execute_onnx(model, idict)["out0"]
     assert (y_produced == y_expected).all()

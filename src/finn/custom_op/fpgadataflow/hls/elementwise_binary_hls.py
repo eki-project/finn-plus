@@ -102,13 +102,34 @@ class ElementwiseBinaryOperation_hls(
         # Find the biggest of the inputs/outputs
         return max([i_bits_max, o_bits_max])
 
+    def adapt_for_loop_body(self, input_types):
+        """Adapt elementwise binary operator for loop body execution.
+
+        When an elementwise operator is placed inside a loop, parameters that
+        are indexed per iteration (PARAMETER type) need to be received as
+        streaming inputs rather than embedded constants. This method changes
+        the lhs_style/rhs_style attributes from "const" to "input" as needed.
+        """
+        from finn.transformation.fpgadataflow.loop_rolling import LoopBodyInputType
+
+        # If rhs (input[1]) is a PARAMETER (streamed per iteration),
+        # change its style to "input"
+        if len(input_types) > 1 and input_types[1] == LoopBodyInputType.PARAMETER:
+            if self.rhs_style == "const":
+                self.set_nodeattr("rhs_style", "input")
+
+        # Similarly for lhs if needed
+        if len(input_types) > 0 and input_types[0] == LoopBodyInputType.PARAMETER:
+            if self.lhs_style == "const":
+                self.set_nodeattr("lhs_style", "input")
+
     # Note: End of shape and datatype utilities
 
     def code_generation_ipgen(self, model, fpgapart, clk) -> None:
         """Generate c++ code and tcl script for ip generation."""
         super().code_generation_ipgen(model, fpgapart, clk)
         mem_mode = self.get_nodeattr("mem_mode")
-        if mem_mode == "internal_decoupled":
+        if mem_mode == "internal_decoupled" or self.get_nodeattr("mlo_max_iter"):
             self.generate_hdl_memstream(fpgapart)
 
     # Generates list of C++ includes to be placed at the top of the generated
@@ -213,7 +234,9 @@ class ElementwiseBinaryOperation_hls(
             rhs_shape = (len(out_shape) - len(rhs_shape)) * (1,) + rhs_shape
             # Reshape the input to align with the output shape
             rhs = rhs.reshape(*rhs_shape)
-            if self.get_nodeattr("mem_mode") == "internal_embedded":
+            if self.get_nodeattr("mem_mode") == "internal_embedded" and not self.get_nodeattr(
+                "mlo_max_iter"
+            ):
                 # Generate C++ array initialization code
                 # Note: no packing, but with variable name/type declaration
                 rhs_code = numpy_to_hls_code(rhs, self.rhs_dtype, "rhs", False, False)
@@ -614,10 +637,11 @@ class ElementwiseBinaryOperation_hls(
             if self.rhs_style == "input" or rhs_decoupled
             else """""",
             # Apply PE parallel elementwise operations by filling the operation
-            # template
+            # template. Use recursive inline to ensure flushable pipeline is possible.
             f"""
             for(std::size_t pe = 0; pe < {self.pe}; ++pe) {{
             #pragma HLS unroll
+            #pragma HLS INLINE recursive
                 out[pe] = {self.cpp_op.format(f"lhs{lhs_index}[pe]", f"rhs{rhs_index}[pe]")};
             }}
             """,
@@ -752,6 +776,8 @@ class ElementwiseBinaryOperation_hls(
         # need to be inserted
         if self.lhs_style == "input":
             intf_names["s_axis"] += [("in0_V", self.get_instream_width_padded(ind=0))]
+            if self.rhs_style == "const" and self.get_nodeattr("mlo_max_iter"):
+                intf_names["s_axis"] += [("in1_V", self.get_instream_width_padded(ind=0))]
         # If the right-hand-side is provided as runtime input interface names
         # need to be inserted
         if self.rhs_style == "input":
@@ -777,11 +803,14 @@ class ElementwiseBinaryOperation_hls(
         cmd = ["file mkdir %s" % source_target]
         # add streamer if needed
         mem_mode = self.get_nodeattr("mem_mode")
+        mlo = self.get_nodeattr("mlo_max_iter")
         lhs_decoupled = self.lhs_style == "const" and mem_mode == "internal_decoupled"
-        rhs_decoupled = self.rhs_style == "const" and mem_mode == "internal_decoupled"
+        rhs_decoupled = (self.rhs_style == "const" and mem_mode == "internal_decoupled") or (
+            self.rhs_style == "input" and mlo
+        )
 
         # lhs_decoupled XOR rhs_decoupled
-        if lhs_decoupled != rhs_decoupled:
+        if lhs_decoupled != rhs_decoupled or self.get_nodeattr("bodies"):
             node_name = self.onnx_node.name
             # create a hierarchy for this layer, with the same port names
             clk_name = self.get_verilog_top_module_intf_names()["clk"][0]
@@ -799,6 +828,11 @@ class ElementwiseBinaryOperation_hls(
                 "create_bd_intf_pin -mode Slave "
                 "-vlnv xilinx.com:interface:axis_rtl:1.0 /%s/%s" % (node_name, din_name)
             )
+            if mlo:
+                cmd.append(
+                    "create_bd_intf_pin -mode Slave "
+                    "-vlnv xilinx.com:interface:axis_rtl:1.0 /%s/in1_V" % node_name
+                )
             # instantiate the hls ip
             cmd.append(
                 "create_bd_cell -type ip -vlnv %s /%s/%s"
@@ -827,6 +861,11 @@ class ElementwiseBinaryOperation_hls(
                 "create_bd_cell -type hier -reference %s /%s/%s"
                 % (strm_tmpl_name, node_name, strm_inst)
             )
+            if mlo:
+                cmd.append(
+                    "connect_bd_intf_net [get_bd_intf_pins %s/in1_V] "
+                    "[get_bd_intf_pins %s/%s/s_axis_0]" % (node_name, node_name, strm_inst)
+                )
             cmd.append(
                 "connect_bd_intf_net [get_bd_intf_pins %s/%s/m_axis_0] "
                 "[get_bd_intf_pins %s/%s/in1_V]" % (node_name, strm_inst, node_name, node_name)
@@ -974,6 +1013,18 @@ class ElementwiseSub_hls(
     elementwise_binary.ElementwiseSub,
 ):
     """HLS implementation of elementwise subtraction operation."""
+
+
+# Derive a specialization to implement elementwise absolute difference of two inputs
+@register_custom_op
+class ElementwiseAbsDiff_hls(
+    # CapWords convention
+    ElementwiseBinaryOperation_hls,
+    elementwise_binary.ElementwiseAbsDiff,
+):
+    """HLS implementation of elementwise absolute diff operation."""
+
+    pass
 
 
 # Derive a specialization to implement elementwise multiplication of two inputs
@@ -1161,5 +1212,3 @@ class ElementwiseMax_hls(
     elementwise_binary.ElementwiseMax,
 ):
     """HLS Implementation of the elementwise max operation."""
-
-    pass

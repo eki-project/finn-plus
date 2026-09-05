@@ -42,9 +42,15 @@ from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
+    InferVectorVectorActivation,
+)
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
@@ -64,7 +70,6 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 @pytest.mark.vivado
 def test_convert_to_hw_conv_layer(conv_config, depthwise, exec_mode):
     kernel_size, stride, pad = conv_config
-    np.random.seed(0)
     idt = DataType["UINT4"]
 
     in_feature_dim = 7
@@ -117,12 +122,12 @@ def test_convert_to_hw_conv_layer(conv_config, depthwise, exec_mode):
     model = model.transform(InferDataTypes())
 
     new_model = model.transform(LowerConvsToMatMul())
-    new_model = new_model.transform(to_hw.InferConvInpGen())
+    new_model = new_model.transform(InferConvInpGen())
     if depthwise is True:
-        new_model = new_model.transform(to_hw.InferVectorVectorActivation())
+        new_model = new_model.transform(InferVectorVectorActivation())
         new_model = new_model.transform(SpecializeLayers("xc7z020clg400-1"))
     else:
-        new_model = new_model.transform(to_hw.InferQuantizedMatrixVectorActivation())
+        new_model = new_model.transform(InferQuantizedMatrixVectorActivation())
         new_model = new_model.transform(SpecializeLayers("xc7z020clg400-1"))
         # set folding parameters for MVAU
         if new_model.get_nodes_by_op_type("MVAU_hls"):
@@ -155,7 +160,7 @@ def test_convert_to_hw_conv_layer(conv_config, depthwise, exec_mode):
         raise Exception("Unknown exec_mode")
 
     x = gen_finn_dt_tensor(idt, input_shape)
-    inp_dict = {model.graph.input[0].name: x}
+    inp_dict = {model.get_first_global_in(): x}
     assert oxe.compare_execution(model, new_model, inp_dict)
 
     if pad:

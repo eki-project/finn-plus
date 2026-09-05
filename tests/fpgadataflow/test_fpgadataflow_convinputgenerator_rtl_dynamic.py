@@ -50,11 +50,17 @@ from qonnx.util.basic import (
 )
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 import finn.transformation.streamline.absorb as absorb
-from finn import xsi
+import finn.xsi as finnxsi
 from finn.core.onnx_exec import execute_onnx
 from finn.core.rtlsim_exec import rtlsim_exec
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
+from finn.transformation.fpgadataflow.convert_to_hw.vector_vector_activation import (
+    InferVectorVectorActivation,
+)
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
@@ -64,11 +70,21 @@ from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.util.basic import get_liveness_threshold_cycles
 
-finnxsi = xsi if xsi.is_available() else None
 
-
-def create_conv_model(idim_h, idim_w, ifm, k, stride, ofm, idt, wdt, pad_mode, depthwise):
-    np.random.seed(0)
+def create_conv_model(
+    idim_h,
+    idim_w,
+    ifm,
+    k,
+    stride,
+    ofm,
+    idt,
+    wdt,
+    pad_mode,
+    depthwise,
+    c0_weight,
+    c1_weight,
+):
     group = ifm if depthwise else 1
     group_str = str(group)
     ishp = (1, ifm, idim_h, idim_w)
@@ -120,8 +136,8 @@ def create_conv_model(idim_h, idim_w, ifm, k, stride, ofm, idt, wdt, pad_mode, d
     model.set_tensor_datatype("in0", idt)
     model.set_tensor_datatype("param_c0_weight", wdt)
     model.set_tensor_datatype("param_c1_weight", wdt)
-    model.set_initializer("param_c0_weight", gen_finn_dt_tensor(wdt, wshp))
-    model.set_initializer("param_c1_weight", gen_finn_dt_tensor(wdt, wshp_1))
+    model.set_initializer("param_c0_weight", c0_weight)
+    model.set_initializer("param_c1_weight", c1_weight)
     return model
 
 
@@ -231,15 +247,29 @@ def test_fpgadataflow_conv_dynamic(cfg):
     ofm = cfg["ofm"]
     idt = DataType["UINT4"]
     wdt = DataType["INT2"]
+    wshp = (ifm, 1, k, k) if depthwise else (ofm, ifm, k, k)
+    wshp_1 = (ifm, 1, k, k) if depthwise else (ofm, ofm, k, k)
+    c0_weight = gen_finn_dt_tensor(wdt, wshp)
+    c1_weight = gen_finn_dt_tensor(wdt, wshp_1)
     exp_cfgs = []
     largest_model = None
     for idim in idims:
         idim_h, idim_w = idim
         ishp = (1, ifm, idim_h, idim_w)
-        np.random.seed(0)
         inp = gen_finn_dt_tensor(idt, ishp)
         model = create_conv_model(
-            idim_h, idim_w, ifm, k, stride, ofm, idt, wdt, pad_mode, depthwise
+            idim_h,
+            idim_w,
+            ifm,
+            k,
+            stride,
+            ofm,
+            idt,
+            wdt,
+            pad_mode,
+            depthwise,
+            c0_weight,
+            c1_weight,
         )
         _, _, int_dim_h, int_dim_w = model.get_tensor_shape("conv0")
         _, _, odim_h, odim_w = model.get_tensor_shape("out0")
@@ -262,9 +292,9 @@ def test_fpgadataflow_conv_dynamic(cfg):
 
     # convert to hardware and prepare simulation
     model = largest_model.transform(LowerConvsToMatMul())
-    model = model.transform(to_hw.InferConvInpGen())
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
-    model = model.transform(to_hw.InferVectorVectorActivation())
+    model = model.transform(InferConvInpGen())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferVectorVectorActivation())
     model = model.transform(absorb.AbsorbConsecutiveTransposes())
     model = model.transform(SpecializeLayers("xc7z020clg400-1"))
     parent_model = model.transform(CreateDataflowPartition())

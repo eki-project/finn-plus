@@ -1,0 +1,22 @@
+[connectivity]
+{% for kernel, cu in nk -%}
+nk={{ kernel }}:1:{{ cu }}
+{% endfor %}
+{% for origin_cu in sc.keys() -%}
+{% for target_cu in sc[origin_cu] -%}
+sc={{ origin_cu }}:{{ target_cu }}
+{% endfor -%}
+{% endfor %}
+{% for cu, sp_type in sp.items() -%}
+sp={{ cu }}:{{ sp_type }}
+{% endfor %}
+{% for cu, slr in slr.items() -%}
+slr={{ cu }}:{{ slr }}
+{% endfor %}
+{% for a, b in connects -%}
+connect={{ a }}:{{ b }}
+{% endfor %}
+{{ connectivity_extras }}
+
+[vivado]
+{{ vivado_extras }}

@@ -1,6 +1,5 @@
 {
     "global": {
-      "driver": "driver/driver.py",
       "bitfile_name": "bitfile/finn-accel.bit",
       "report_path": "report",
 
@@ -9,8 +8,7 @@
           "0V85",
           "3V3"
         ],
-        "sensors": [],
-        "board": "rfsoc2x2"
+        "sensors": []
       }
     },
     "experiments": [
@@ -31,22 +29,8 @@
         "num_runs": 1,
         "functions": [
           {
-            "function_name": "run_throughput_test",
+            "function_name": "throughput_test",
             "kwargs" : {}
-          }
-        ]
-      },
-      {
-        "name": "validate_experiment",
-        "warmup": 1,
-        "num_runs": 1,
-        "functions": [
-          {
-            "function_name": "validate",
-            "kwargs" : {
-              "dataset_root" : "/home/xilinx/datasets",
-              "dataset" : "mnist"
-            }
           }
         ]
       }

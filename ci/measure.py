@@ -77,13 +77,21 @@ if __name__ == "__main__":
             for line in result.stderr.splitlines():
                 print(f"[{os.path.basename(run_in_dir)}] {line}")
             if result.returncode != 0:
-                print("ERROR: MEASUREMENT MANAGER NON-ZERO EXIT CODE!")
+                print("ERROR: MEASUREMENT MANAGER NON-ZERO EXIT CODE (%d)!" % result.returncode)
                 exit_code = 1
             else:
                 print("MEASUREMENT MANAGER COMPLETED SUCCESSFULLY.")
 
+            # Collect whatever reports were produced. A failed measurement may not have
+            # written any, which must not abort the remaining runs or discard the
+            # artifacts of the runs that did succeed.
             report_path = os.path.join(extract_dir, "report")
-            shutil.copytree(report_path, reports_dir, dirs_exist_ok=True)
+            if os.path.isdir(report_path):
+                os.makedirs(reports_dir, exist_ok=True)
+                shutil.copytree(report_path, reports_dir, dirs_exist_ok=True)
+            else:
+                print("WARNING: No report directory found in %s, nothing to collect." % run)
+                exit_code = 1
 
             delete_dir_contents(extract_dir)
 

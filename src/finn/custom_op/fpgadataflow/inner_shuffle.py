@@ -6,20 +6,23 @@
 #
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
+"""Module for inner shuffle."""
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class InnerShuffle(HWCustomOp):
     """Abstraction layer for the Parallel 2D transpose."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {
             "data_type": ("s", True, ""),
             "in_shape": ("ints", True, []),  # Needs to be len==2 can we assert that somewhere?
@@ -31,13 +34,16 @@ class InnerShuffle(HWCustomOp):
         return my_attrs
 
     def get_normal_input_shape(self, ind=0):
+        """Return normal input shape."""
         return self.get_nodeattr("in_shape")
 
     def get_normal_output_shape(self, ind=0):
+        """Return normal output shape."""
         ishape = tuple(self.get_normal_input_shape())
         return ishape[:-2] + (ishape[-1], ishape[-2])
 
     def execute_node(self, context, graph):
+        """Execute node."""
         node = self.onnx_node
         input_data = context[node.input[0]]
         assert len(input_data.shape) >= 2, "InnerShuffle HWCustomOp requires at least 2D input"
@@ -48,35 +54,41 @@ class InnerShuffle(HWCustomOp):
         context[node.output[0]] = transposed
 
     def get_input_datatype(self, ind=0):
+        """Return input datatype."""
         data_type = DataType[self.get_nodeattr("data_type")]
         return data_type
 
     def infer_node_datatype(self, model):
+        """Infer node datatype."""
         node = self.onnx_node
         dt = model.get_tensor_datatype(node.input[0])
         if dt != self.get_input_datatype():
             warn_str = (
-                f"data_type changing for {node.name}: {str(self.get_input_datatype())} -> {str(dt)}"
+                f"data_type changing for {node.name}: {self.get_input_datatype()!s} -> {dt!s}"
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("data_type", dt.name)
         model.set_tensor_datatype(node.output[0], dt)
 
     def get_instream_width(self, ind=0):
+        """Return instream width."""
         ibits = self.get_input_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return ibits * simd
 
     def get_outstream_width(self, ind=0):
+        """Return outstream width."""
         obits = self.get_output_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return obits * simd
 
     def get_output_datatype(self, ind=0):
+        """Return output datatype."""
         data_type = DataType[self.get_nodeattr("data_type")]
         return data_type
 
     def get_folded_output_shape(self, ind=0):
+        """Return folded output shape."""
         normal_oshape = list(self.get_normal_output_shape())
         simd = self.get_nodeattr("SIMD")
         assert normal_oshape[-1] % simd == 0, "SIMD must divide into the innermost output dimension"
@@ -85,8 +97,25 @@ class InnerShuffle(HWCustomOp):
         return tuple(folded_oshape)
 
     def get_folded_input_shape(self, ind=0):
+        """Return folded input shape."""
         normal_ishape = list(self.get_normal_input_shape())
         simd = self.get_nodeattr("SIMD")
         fold = int(np.prod(normal_ishape) / simd)
         folded_ishape = [fold, simd]
         return tuple(folded_ishape)
+
+    def get_exp_cycles(self):
+        """Estimate cycles for the double-buffered InnerShuffle RTL.
+
+        The RTL uses two BRAM banks with page_size = I*J/SIMD. The first page
+        must be fully written before reads can begin, adding one extra page of
+        latency beyond the streaming throughput. Empirically verified to match
+        cycles_rtlsim within atol=10.
+        """
+        in_shape = self.get_nodeattr("in_shape")
+        simd = self.get_nodeattr("SIMD")
+        I_dim = in_shape[-2]
+        J_dim = in_shape[-1]
+        page_size = I_dim * J_dim // simd
+        total_elems = int(np.prod(in_shape)) // simd
+        return 2 * total_elems + page_size

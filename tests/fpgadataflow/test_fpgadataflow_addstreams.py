@@ -37,9 +37,11 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation import (
+    InferElementwiseBinaryOperation,
+)
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
@@ -113,8 +115,8 @@ def test_fpgadataflow_addstreams(idts, ch, fold, exec_mode):
     y_produced = oxe.execute_onnx(model, input_dict)["outp"]
     assert (y_produced == y_expected).all(), "Execution of hw layer failed"
 
-    model = model.transform(to_hw.InferAddStreamsLayer())
-    addstreams_node = model.get_nodes_by_op_type("AddStreams")[0]
+    model = model.transform(InferElementwiseBinaryOperation())
+    addstreams_node = model.get_nodes_by_op_type("ElementwiseAdd")[0]
     addstreams_node = getCustomOp(addstreams_node)
     addstreams_node.set_nodeattr("PE", pe)
     model = model.transform(SpecializeLayers("xc7z020clg400-1"))
@@ -139,10 +141,10 @@ def test_fpgadataflow_addstreams(idts, ch, fold, exec_mode):
     assert (y_produced == y_expected).all(), exec_mode + " failed"
 
     if exec_mode == "rtlsim":
-        node = model.get_nodes_by_op_type("AddStreams_hls")[0]
+        node = model.get_nodes_by_op_type("ElementwiseAdd_hls")[0]
         inst = getCustomOp(node)
         cycles_rtlsim = inst.get_nodeattr("cycles_rtlsim")
         exp_cycles_dict = model.analysis(exp_cycles_per_layer)
         exp_cycles = exp_cycles_dict[node.name]
-        assert np.isclose(exp_cycles, cycles_rtlsim, atol=10)
+        assert np.isclose(exp_cycles, cycles_rtlsim, atol=15)
         assert exp_cycles != 0

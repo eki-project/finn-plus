@@ -10,6 +10,7 @@
 #
 ############################################################################
 
+"""Module for layernorm rtl."""
 import math
 import numpy as np
 import os
@@ -17,6 +18,7 @@ import shutil
 
 from finn.custom_op.fpgadataflow.layernorm import LayerNorm
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.util.settings import get_settings
 
 
 class LayerNorm_rtl(LayerNorm, RTLBackend):
@@ -25,17 +27,20 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
     """
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return nodeattr types."""
         my_attrs = {}
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         my_attrs.update(LayerNorm.get_nodeattr_types(self))
         return my_attrs
 
     def generate_hdl(self, model, fpgapart, clk):
-        rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "layernorm/")
-        template_path = rtllib_dir + "layernorm_wrapper_template.v"
+        """Generate hdl."""
+        rtllib_dir = os.path.join(get_settings().finn_rtllib, "layernorm")
+        template_path = os.path.join(rtllib_dir, "layernorm_wrapper_template.v")
         simd = self.get_nodeattr("SIMD")
         topname = self.get_verilog_top_module_name()
         n = self.get_normal_input_shape()[-1]
@@ -43,7 +48,6 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
             n % simd == 0
         ), """Requirement N (last dim) divisable by SIMD is violated.
             Please set SIMD to a different value"""
-        assert n // simd > 12, "N/SIMD must be larger than 12 for rsqrt throughput."
         code_gen_dict = {
             "$N$": int(n),
             "$SIMD$": int(simd),
@@ -56,7 +60,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
 
         # apply code generation to templates
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template = f.read()
         for key in code_gen_dict:
             template = template.replace(key, str(code_gen_dict[key]))
@@ -69,31 +73,33 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
 
         sv_files = ["layernorm.sv", "queue.sv", "accuf.sv", "binopf.sv", "rsqrtf.sv"]
         for sv_file in sv_files:
-            shutil.copy(rtllib_dir + sv_file, code_gen_dir)
+            shutil.copy(os.path.join(rtllib_dir, sv_file), code_gen_dir)
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
         self.set_nodeattr("ipgen_path", code_gen_dir)
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Return rtl file list."""
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
-            rtllib_dir = os.path.join(os.environ["FINN_RTLLIB"], "layernorm/")
+            rtllib_dir = os.path.join(get_settings().finn_rtllib, "layernorm")
         else:
             code_gen_dir = ""
             rtllib_dir = ""
 
         verilog_files = [
-            rtllib_dir + "layernorm.sv",
-            rtllib_dir + "queue.sv",
-            rtllib_dir + "accuf.sv",
-            rtllib_dir + "binopf.sv",
-            rtllib_dir + "rsqrtf.sv",
-            code_gen_dir + self.get_nodeattr("gen_top_module") + ".v",
+            os.path.join(rtllib_dir, "layernorm.sv"),
+            os.path.join(rtllib_dir, "queue.sv"),
+            os.path.join(rtllib_dir, "accuf.sv"),
+            os.path.join(rtllib_dir, "binopf.sv"),
+            os.path.join(rtllib_dir, "rsqrtf.sv"),
+            os.path.join(code_gen_dir, self.get_nodeattr("gen_top_module") + ".v"),
         ]
         return verilog_files
 
     def code_generation_ipi(self):
+        """Return code generation ipi."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
         sourcefiles = [
@@ -118,6 +124,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
         return cmd
 
     def execute_node(self, context, graph):
+        """Execute node."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             LayerNorm.execute_node(self, context, graph)
@@ -125,6 +132,7 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
             RTLBackend.execute_node(self, context, graph)
 
     def get_exp_cycles(self):
+        """Return exp cycles."""
         simd = self.get_nodeattr("SIMD")
         idim = self.get_normal_input_shape()
         n = idim[-1]
@@ -132,8 +140,6 @@ class LayerNorm_rtl(LayerNorm, RTLBackend):
             n % simd == 0
         ), """Requirement N (last dim) divisable by SIMD is violated.
             Please set SIMD to a different value"""
-        assert n // simd > 12, "N/SIMD must be larger than 12 for rsqrt throughput."
-
         val_queue_len_0 = n // simd + math.ceil(math.log2(simd)) * 2 + 7
         val_queue_len_1 = n // simd + math.ceil(math.log2(simd)) * 2 + 24
         exp_cycles = val_queue_len_0 + val_queue_len_1 + np.prod(idim) // simd + 5

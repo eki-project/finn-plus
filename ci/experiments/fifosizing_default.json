@@ -1,6 +1,5 @@
 {
     "global": {
-      "driver": "driver/driver.py",
       "bitfile_name": "bitfile/finn-accel.bit",
       "report_path": "report",
 
@@ -9,8 +8,7 @@
           "0V85",
           "3V3"
         ],
-        "sensors": [],
-        "board": "rfsoc2x2"
+        "sensors": []
       }
     },
     "experiments": [

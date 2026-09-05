@@ -59,8 +59,16 @@ from finn.builder.build_dataflow_config import (
     to_logging_level,
 )
 from finn.builder.build_dataflow_steps import build_dataflow_step_lookup
+from finn.transformation.multi_dnn.multi_dnn_config import MultiDNNConfig
+from finn.transformation.multi_dnn.multi_dnn_wrapper import MultiDNNWrapper
 from finn.util.basic import get_vivado_root
-from finn.util.exception import FINNConfigurationError, FINNDataflowError, FINNError, FINNUserError
+from finn.util.exception import (
+    FINNConfigurationError,
+    FINNDataflowError,
+    FINNError,
+    FINNSynthesisError,
+    FINNUserError,
+)
 from finn.util.exception_snapshot import snapshot_on_exception
 from finn.util.logging import log
 from finn.util.settings import get_settings
@@ -97,7 +105,9 @@ class PrintLogger:
 BuildStep = Callable[[ModelWrapper, DataflowBuildConfig], ModelWrapper]
 
 
-def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[BuildStep]:
+def resolve_build_steps(
+    cfg: DataflowBuildConfig, partial: bool = True, list_as_input: list[str] | None = None
+) -> list[BuildStep]:
     """Resolve build step names to callable functions.
 
     Converts string step names to callable functions by looking up in the step registry,
@@ -107,13 +117,18 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
     Args:
         cfg: Build configuration containing step definitions
         partial: If True, respect start_step/stop_step boundaries
+        list_as_input: If True, ignore cfg and partial flags and instead use the
+                       list to generate the callable build_steps
 
     Returns:
         List of callable step functions ready for execution
     """
-    steps = cfg.steps
-    if steps is None:
-        steps = default_build_dataflow_steps
+    if list_as_input is None:
+        steps = cfg.steps
+        if steps is None:
+            steps = default_build_dataflow_steps
+    else:
+        steps = list_as_input
     steps_as_fxns = []
     for transform_step in steps:
         if type(transform_step) is str:
@@ -167,10 +182,16 @@ def resolve_build_steps(cfg: DataflowBuildConfig, partial: bool = True) -> list[
             steps_as_fxns.append(transform_step)
         else:
             raise FINNConfigurationError("Could not resolve build step: " + str(transform_step))
-    if partial:
-        step_names = [x.__name__ for x in steps_as_fxns]
-        start_ind = 0 if cfg.start_step is None else step_names.index(cfg.start_step)
-        stop_ind = len(step_names) - 1 if cfg.stop_step is None else step_names.index(cfg.stop_step)
+    if partial and list_as_input is None:
+        step_names = list(map(lambda x: x.__name__, steps_as_fxns))
+        if cfg.start_step is None:
+            start_ind = 0
+        else:
+            start_ind = step_names.index(cfg.start_step)
+        if cfg.stop_step is None:
+            stop_ind = len(step_names) - 1
+        else:
+            stop_ind = step_names.index(cfg.stop_step)
         steps_as_fxns = steps_as_fxns[start_ind : (stop_ind + 1)]
 
     # Add the exception snapshot decorator if needed
@@ -212,7 +233,7 @@ def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: 
         raise FINNUserError(
             f"Step filename could not be resolved. Step "
             f"{step_name} was not found in your flow configuration"
-        )
+        ) from None
     if step_no < 0 and step_delta != 0 and step_names.index(step_name) == 0:
         # We simply assume that --start was given, since this method is only called in that case
         # TODO: Move the error (check) to the creation of the modelwrapper
@@ -230,7 +251,7 @@ def resolve_step_filename(step_name: str, cfg: DataflowBuildConfig, step_delta: 
         )
 
     # Return if it exists
-    filename = Path(cfg.output_dir) / "intermediate_models" / f"{step_names[step_no]}.onnx"
+    filename = cfg.get_intermediate_models_directory() / f"{step_names[step_no]}.onnx"
     if not filename.exists():
         raise FINNConfigurationError(
             f"Expected model file at {filename} to start from step "
@@ -314,24 +335,24 @@ def exit_buildflow(
         "status": "failed" if exit_code else "ok",
         "tool_version": Path(get_vivado_root()).name,
     }
-    metadata_builder = Path(cfg.output_dir) / "report" / "metadata_builder.json"
+    metadata_builder = cfg.get_report_directory() / "metadata_builder.json"
     metadata_builder.write_text(json.dumps(metadata, indent=2))
 
     # Generate time_per_step.json
-    time_per_step_json = Path(cfg.output_dir) / "report" / "time_per_step.json"
+    time_per_step_json = cfg.get_report_directory() / "time_per_step.json"
     if time_per_step is not None:
         time_per_step["total_build_time"] = sum(time_per_step.values())
         time_per_step_json.write_text(json.dumps(time_per_step, indent=2))
     return exit_code
 
 
-def create_model_wrapper(model_filename: str, cfg: DataflowBuildConfig) -> ModelWrapper:
+def create_model_wrapper(model_filename: str | Path, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Create a modelwrapper from the given config and filename. If a start-step
     is given, the ModelWrapper is constructed from a previous intermediate model.
     """
     if cfg.start_step is None:
         print(f"Building dataflow accelerator from {model_filename}")
-        return ModelWrapper(model_filename)
+        return ModelWrapper(str(model_filename))
     if model_filename != "":
         log.warning(
             "When using a start-step, FINN automatically searches "
@@ -345,10 +366,10 @@ def create_model_wrapper(model_filename: str, cfg: DataflowBuildConfig) -> Model
         f"Building dataflow accelerator from intermediate"
         f" checkpoint {intermediate_model_filename}"
     )
-    return ModelWrapper(intermediate_model_filename)
+    return ModelWrapper(str(intermediate_model_filename))
 
 
-def build_dataflow_cfg(model_filename: str, cfg: DataflowBuildConfig) -> int:
+def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> int:
     """Build a dataflow accelerator using the given configuration.
 
     Main entry point for building FINN dataflow accelerators. Handles step execution,
@@ -361,12 +382,11 @@ def build_dataflow_cfg(model_filename: str, cfg: DataflowBuildConfig) -> int:
     Returns:
         Exit code (0=success, non-zero=failure)
     """
+    # First create the build directory
+    Path(cfg.output_dir).mkdir(exist_ok=True, parents=True)
+
     # Create the output directories
-    output_dir = Path(cfg.output_dir)
-    intermediate_model_dir = output_dir / "intermediate_models"
-    intermediate_model_dir.mkdir(parents=True, exist_ok=True)
-    report_dir = output_dir / "report"
-    report_dir.mkdir(parents=True, exist_ok=True)
+    intermediate_model_dir = cfg.get_intermediate_models_directory()
 
     # Initialize logger
     log = setup_logging(cfg)
@@ -378,24 +398,91 @@ def build_dataflow_cfg(model_filename: str, cfg: DataflowBuildConfig) -> int:
     # Setup done, start build flow
     time_per_step: dict[str, float] = {}
     try:
-        model = create_model_wrapper(model_filename, cfg)
-        build_dataflow_steps: list[BuildStep] = resolve_build_steps(cfg)
+        if cfg.multi_dnn_config_path is None:
+            multidnn = False
+        else:
+            multidnn = True
+            print("Multi-DNN Mode Active")
 
-        # Execute all steps
-        for step_num, transform_step in enumerate(build_dataflow_steps):
-            step_name = transform_step.__name__
-            print(f"Running step: {step_name} [{step_num + 1}/{len(build_dataflow_steps)}]")
+        # If start_step is specified, override the input model
+        if multidnn:
+            assert cfg.start_step is None, "Multi-DNN Mode currently does not support start_step"
+            mdnn_config = MultiDNNConfig(cfg.multi_dnn_config_path)
+            mdnn = MultiDNNWrapper(
+                {
+                    name: model
+                    for name, model in zip(
+                        mdnn_config.submodel_names,
+                        [
+                            mdnn_config.get_submodel_model(name)
+                            for name in mdnn_config.submodel_names
+                        ],
+                    )
+                }
+            )
+        else:
+            model = create_model_wrapper(model_filename, cfg)
 
-            # Run the step
-            step_start = time.time()
-            model = transform_step(model, cfg)
-            step_end = time.time()
-            time_per_step[step_name] = round(step_end - step_start)
-            if cfg.save_intermediate_models:
-                model.save(str(intermediate_model_dir / f"{step_name}.onnx"))
+        time_per_step = dict()
+        step_num = 1
+        if multidnn is False:
+            # Start processing
+            build_dataflow_steps = resolve_build_steps(cfg)
 
+            for transform_step in build_dataflow_steps:
+                step_name = transform_step.__name__
+                print(f"Running step: {step_name} [{step_num}/{len(build_dataflow_steps)}]")
+
+                # Run the step
+                step_start = time.time()
+                model = transform_step(model, cfg)
+                step_end = time.time()
+                time_per_step[step_name] = round(step_end - step_start)
+                chkpt_name = f"{step_name}.onnx"
+                if cfg.save_intermediate_models:
+                    intermediate_model_dir = os.path.join(cfg.output_dir, "intermediate_models")
+                    if not os.path.exists(intermediate_model_dir):
+                        os.makedirs(intermediate_model_dir)
+                    model.save(os.path.join(intermediate_model_dir, chkpt_name))
+                step_num += 1
+        else:
+            steps = mdnn_config.get_steps()
+            for step, targets in steps:
+                step_name = step
+                print(f"Running step: {step_name} [{step_num}/{len(steps)}] on targets {targets}")
+                step = resolve_build_steps(cfg, list_as_input=[step])[
+                    0
+                ]  # TODO: do this some better way
+                model_cfgs = mdnn_config.generate_virtual_configs(
+                    targets, cfg
+                )  # Can we really assume that the cfg is not edited?
+                # Run the step
+                step_start = time.time()
+                mdnn.apply_step(step, targets, model_cfgs)
+                step_end = time.time()
+                time_per_step[step_name] = round(step_end - step_start)
+                chkpt_name = f"{'_'.join(targets)}_{step_name}.onnx"
+                if cfg.save_intermediate_models:
+                    intermediate_model_dir = os.path.join(cfg.output_dir, "intermediate_models")
+                    if not os.path.exists(intermediate_model_dir):
+                        os.makedirs(intermediate_model_dir)
+                    mdnn.multi_model.save(os.path.join(intermediate_model_dir, chkpt_name))
+                step_num += 1
     except KeyboardInterrupt:
         print("KeyboardInterrupt detected. Aborting...")
+        return exit_buildflow(cfg, time_per_step, -1)
+
+    except FINNSynthesisError as e:
+        if e.vivado_logfile.exists():
+            lines = e.vivado_logfile.read_text().split("\n")
+            log.error("Synthesis failed. Listing errors from Vivado's logfile:")
+            for line in lines:
+                if "ERROR" in line:
+                    log.error(line)
+            log.error(e.msg)
+        else:
+            log.error(f"Synthesis failed and no logfile was found at {e.vivado_logfile}")
+            log.error(e.msg)
         return exit_buildflow(cfg, time_per_step, -1)
 
     except (Exception, FINNError) as e:

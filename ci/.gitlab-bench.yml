@@ -27,8 +27,8 @@ FINN Build:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES_BENCH --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
-    NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    NUM_DEFAULT_WORKERS: "$BENCH_FINN_WORKERS"
   extends: .setup_full_2024_2
   script:
     # Launch additional monitoring
@@ -39,9 +39,11 @@ FINN Build:
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
-      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $CPU_CORES_BENCH --bench_config $BENCH_CFG
+      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config $BENCH_CFG
   cache:
-    key: $CI_COMMIT_SHA
+    key:
+      files:
+        - src/finn/interface/external_dependencies.yaml
     policy: pull
     paths:
       - deps
@@ -68,7 +70,7 @@ Measurement:
     # Install dependencies for FINN driver
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && chmod +x scripts/driver_install_dependencies.sh && scripts/driver_install_dependencies.sh"
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
-    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python ci/measure.py"
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && python ci/measure.py"
   artifacts:
     name: "measurement_artifacts"
     when: always
@@ -88,8 +90,19 @@ Result Collection:
   script:
     # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
     - dvc pull
-    - python3.10 ci/collect.py
-    - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
+    - git fetch origin +refs/tags/*:refs/tags/*
+    - git fetch git@github.com:eki-project/finn-plus.git +refs/exps/*:refs/exps/*
+    - |
+      collect_status=0
+      push_status=0
+
+      python3.10 ci/collect/collect.py || collect_status=$?
+      dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
+
+      if [ "$collect_status" -ne 0 ]; then
+        exit "$collect_status"
+      fi
+      exit "$push_status"
   artifacts:
     name: "collected_artifacts"
     when: always
@@ -97,6 +110,8 @@ Result Collection:
       - build_artifacts/
       - measurement_artifacts/
       - followup_bench_config.json
+      - metric_report_plots.png
+      - metric_report.json
 
 # Follow-up stages for live FIFO sizing experiments
 # These stages re-run experiments with the FIFO sizes determined during measurement
@@ -116,8 +131,8 @@ FINN Build (Follow-up):
       pipeline: $PARENT_PIPELINE_ID
     - job: Result Collection
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --cpus-per-task $CPU_CORES_BENCH --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
-    NUM_DEFAULT_WORKERS: "$CPU_CORES_BENCH"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    NUM_DEFAULT_WORKERS: "$BENCH_FINN_WORKERS"
   extends: .setup_full_2024_2
   script:
     # Check if follow-up config exists, exit gracefully if not
@@ -134,9 +149,11 @@ FINN Build (Follow-up):
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
-      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-workers $CPU_CORES_BENCH --bench_config followup
+      finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config followup
   cache:
-    key: $CI_COMMIT_SHA
+    key:
+      files:
+        - src/finn/interface/external_dependencies.yaml
     policy: pull
     paths:
       - deps
@@ -171,7 +188,7 @@ Measurement (Follow-up):
     # Install dependencies for FINN driver
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && chmod +x scripts/driver_install_dependencies.sh && scripts/driver_install_dependencies.sh"
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
-    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export XILINX_XRT=/usr && python ci/measure.py --followup"
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && python ci/measure.py --followup"
   artifacts:
     name: "measurement_artifacts_followup"
     when: always
@@ -201,8 +218,19 @@ Result Collection (Follow-up):
       fi
     # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
     - dvc pull
-    - python3.10 ci/collect.py --followup
-    - dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git
+    - git fetch origin +refs/tags/*:refs/tags/*
+    - git fetch git@github.com:eki-project/finn-plus.git +refs/exps/*:refs/exps/*
+    - |
+      collect_status=0
+      push_status=0
+
+      python3.10 ci/collect/collect.py --followup || collect_status=$?
+      dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
+
+      if [ "$collect_status" -ne 0 ]; then
+        exit "$collect_status"
+      fi
+      exit "$push_status"
   artifacts:
     name: "all_artifacts"
     when: always
@@ -212,3 +240,5 @@ Result Collection (Follow-up):
       - followup_bench_config.json
       - build_artifacts_followup/
       - measurement_artifacts_followup/
+      - metric_report_plots_followup.png
+      - metric_report_followup.json

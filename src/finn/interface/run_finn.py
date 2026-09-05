@@ -20,6 +20,7 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from typing import TYPE_CHECKING, Any, cast
 
 import finn.util.settings
+import finn.xsi
 from finn.interface import IS_POSIX
 from finn.interface.interface_utils import (
     NullablePath,
@@ -33,6 +34,7 @@ from finn.interface.manage_deps import DependencyUpdater
 from finn.interface.manage_tests import run_test
 from finn.interface.settings import FINNSettings
 from finn.util.exception import FINNUserError, FINNValidationError
+from finn.util.multiprocessing import configure_start_method
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -57,13 +59,13 @@ def edit_file(p: Path) -> None:
 
 def output(f: Callable) -> Callable[..., Any]:
     """Add a click parameter named --output (-o) that defaults to
-    None if the param is empty, and a path otherwise."""  # noqa
+    None if the param is empty, and a path otherwise."""
     return click.option("--output", "-o", "output", default="", type=NullablePath())(f)
 
 
 def finn_deps(f: Callable) -> Callable[..., Any]:
     """Add a click parameter named --dependency-path (-d) (finn_deps) that defaults to
-    None if the param is empty, and a path otherwise."""  # noqa
+    None if the param is empty, and a path otherwise."""
     return click.option("--dependency-path", "-d", "finn_deps", default="", type=NullablePath())(f)
 
 
@@ -77,7 +79,7 @@ def finn_deps_definitions(f: Callable) -> Callable[..., Any]:
 
 def finn_build_dir(f: Callable) -> Callable[..., Any]:
     """Add a click parameter named --build-path (-b) (finn_build_dir) that defaults to
-    None if the param is empty, and a path otherwise."""  # noqa
+    None if the param is empty, and a path otherwise."""
     return click.option(
         "--build-path",
         "-b",
@@ -374,7 +376,6 @@ def run_setup_wizard(settings: FINNSettings) -> None:
         "the current running installation and will thus not be saved into your (global) settings."
     )
     console.print(f"[bold]FINN_CUSTOM_HLS[/bold]: {settings.finn_custom_hls}")
-    console.print(f"[bold]FINN_NOTEBOOKS[/bold]: {settings.finn_notebooks}")
     console.print(f"[bold]FINN_RTLLIB[/bold]: {settings.finn_rtllib}")
     console.print(f"[bold]FINN_TESTS[/bold]: {settings.finn_tests}")
     console.print(
@@ -412,7 +413,90 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     console.rule()
 
 
-def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = False) -> None:
+# Marks that we already replaced the process image to fix up LD_LIBRARY_PATH, so
+# a search path that still comes back incomplete cannot send us into an exec loop.
+_LD_REEXEC_MARKER = "_FINN_LD_LIBRARY_PATH_REEXEC"
+
+
+def xilinx_ld_library_paths() -> list[str]:
+    """Collect the library directories needed to load the Xilinx simulation libraries.
+
+    Returns an empty list if the Xilinx environment has not been sourced.
+    """
+    vivado_path = os.environ.get("XILINX_VIVADO")
+    if vivado_path is None:
+        return []
+    paths = ["/lib/x86_64-linux-gnu/", f"{vivado_path}/lib/lnx64.o"]
+    # XILINX_HLS resolves to the right fpo_v7_1-containing directory on both
+    # pre-2024.2 (separate Vitis_HLS/VERSION tree) and 2024.2+ (merged into
+    # Vitis/VERSION) installs, unlike XILINX_VITIS which only does so post-2024.2
+    hls_path = os.environ.get("XILINX_HLS")
+    if hls_path is not None:
+        paths.append(f"{hls_path}/lnx64/tools/fpo_v7_1")
+    return paths
+
+
+def prepend_ld_library_paths(paths: list[str]) -> bool:
+    """Prepend the missing entries of paths to LD_LIBRARY_PATH. True if it changed."""
+    current = os.environ.get("LD_LIBRARY_PATH", "")
+    current_paths = current.split(os.pathsep) if current else []
+    missing = [p for p in paths if p not in current_paths]
+    if not missing:
+        return False
+    os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(missing + current_paths)
+    return True
+
+
+def ensure_ld_library_path() -> None:
+    """Put the Xilinx library paths into LD_LIBRARY_PATH, restarting FINN+ if necessary.
+
+    ld.so reads LD_LIBRARY_PATH once, while the process starts, so assigning to
+    os.environ only ever affects subprocesses (xelab, xvlog, pytest, ...). The
+    finn_xsi pybind11 extension however dlopens the XSI simulator kernel inside
+    *this* process, and the kernel's transitive dependencies (libxv_wavedata.so
+    and friends) are resolved against the search path the loader captured at
+    startup. An RPATH on xsi.so does not fix that: it is consulted for the direct
+    dlopen only, not for the dependencies of the library that dlopen brings in.
+    So the process image has to be replaced by one that starts out with the
+    corrected environment.
+    """
+    paths = xilinx_ld_library_paths()
+    if not paths or not prepend_ld_library_paths(paths):
+        return
+
+    if os.environ.get(_LD_REEXEC_MARKER) == "1":
+        # Something outside of our control keeps resetting the search path.
+        # Carry on rather than restarting forever - subprocesses still work.
+        warning(
+            "LD_LIBRARY_PATH is still missing the Xilinx library paths after "
+            "restarting FINN+. In-process RTL simulation via finn_xsi may fail."
+        )
+        return
+
+    # Only argv[0] pointing at a script can be handed back to the interpreter,
+    # which rules out "python -c ..." style invocations.
+    if not Path(sys.argv[0]).is_file():
+        warning(
+            f"Cannot restart FINN+ to apply LD_LIBRARY_PATH because {sys.argv[0]} "
+            "is not a script. In-process RTL simulation via finn_xsi may fail."
+        )
+        return
+
+    os.environ[_LD_REEXEC_MARKER] = "1"
+    # Anything still sitting in the buffers is discarded by execve, which would
+    # swallow the import time output (XSI auto install, ...) whenever stdout is
+    # a pipe rather than a terminal.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execve(sys.executable, [sys.executable, *sys.argv], os.environ)
+
+
+def prepare_finn(
+    settings: FINNSettings,
+    accept_defaults: bool,
+    batch: bool = False,
+    create_build_dir: bool = True,
+) -> None:
     """Prepare FINN to run."""
     if not settings.settingsfile_exists() and not accept_defaults:
         run_setup_wizard(settings)
@@ -429,11 +513,33 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
     status(f"{'[DEPENDENCY DEFINITIONS PATH]':<32} {settings.finn_deps_definitions!s:<50}")
     status(f"{'[NUM WORKERS]':<32} {settings.num_default_workers!s:<50}")
     finn.util.settings._SETTINGS = settings  # noqa
+
+    # Select the configured multiprocessing start method and pre-start any daemon
+    # now, while single-threaded, so a later Pool()/Process() call can't race
+    # the bootstrap against some other library's (e.g. filelock's) fork-safety
+    # machinery. Then verify (and if needed, build/rebuild) XSI for the currently
+    # loaded Vivado version, also now, once, before any parallel work
+    # (multiprocessing.Pool / pytest-xdist workers) gets a chance to import
+    # finn.xsi transitively.
+    configure_start_method()
+
+    try:
+        finn.xsi.ensure_available()
+    except FINNUserError:
+        error(
+            "XSI is not available. For details regarding this error, "
+            "check previous outputs and logs. "
+            "Also make sure that your current Python version matches "
+            "the version you installed FINN+ with. "
+            "Use 'finn deps update --force' to delete all dependencies and force a re-installation."
+        )
+        sys.exit(1)
+
     if "PYTHONPATH" not in os.environ:
         os.environ["PYTHONPATH"] = ""
 
     # Create FINN_BUILD_DIR if it doesnt exist yet
-    if not settings.finn_build_dir.exists():
+    if not settings.finn_build_dir.exists() and create_build_dir:
         settings.finn_build_dir.mkdir()
 
     # Update / Install all dependencies
@@ -460,29 +566,14 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
         error(f"FINN ERROR: {e}")
         sys.exit(1)
 
-    # Even if we dont update deps, we still need to make xsi available
-    finn_xsi = Path(resolve_module_path("finn_xsi"))
-    os.environ["FINN_XSI"] = str(finn_xsi)
-    finn_xsi_so = finn_xsi / "xsi.so"
-    if not finn_xsi_so.exists():
-        error(f"finn_xsi was not found at {finn_xsi}")
-        sys.exit(1)
-    status(f"Loading finn_xsi from {finn_xsi}")
-    os.environ["PYTHONPATH"] = f"{os.environ['PYTHONPATH']}:{finn_xsi.absolute()}"
-    sys.path.append(str(finn_xsi))
-
     # Check synthesis tools
     set_synthesis_tools_paths()
 
-    # Set LD_LIBRARY_PATH
-    # Set LD_LIBRARY_PATH
-    vivado_path = os.environ["XILINX_VIVADO"]
-    if "LD_LIBRARY_PATH" not in os.environ.keys():
-        os.environ["LD_LIBRARY_PATH"] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o"
-    else:
-        os.environ[
-            "LD_LIBRARY_PATH"
-        ] = f"/lib/x86_64-linux-gnu/:{vivado_path}/lib/lnx64.o:{os.environ['LD_LIBRARY_PATH']}"
+    # Set LD_LIBRARY_PATH for the subprocesses spawned from here (xelab, xvlog,
+    # pytest, ...). For this process it has normally already been fixed up by
+    # ensure_ld_library_path() in main(), which is what the in-process finn_xsi
+    # extension depends on - see there for why setting it here is not enough.
+    prepend_ld_library_paths(xilinx_ld_library_paths())
 
     # Automatically set XILINX_LOCAL_USER_DATA to avoid issues later on
     if "XILINX_LOCAL_USER_DATA" in os.environ and os.environ["XILINX_LOCAL_USER_DATA"] != "no":
@@ -498,9 +589,10 @@ def prepare_finn(settings: FINNSettings, accept_defaults: bool, batch: bool = Fa
         )
         os.environ["XILINX_LOCAL_USER_DATA"] = "no"
 
+    # TODO: these are deprecated and mostly intended as fallback
+    # e.g., still used in templates.py
     os.environ["FINN_RTLLIB"] = resolve_module_path("finn-rtllib")
     os.environ["FINN_CUSTOM_HLS"] = resolve_module_path("custom_hls")
-    os.environ["FINN_NOTEBOOKS"] = resolve_module_path("notebooks")
     os.environ["FINN_TESTS"] = resolve_module_path("tests")
 
 
@@ -596,9 +688,7 @@ def _build(
             sys.exit(1)
         else:
             model = mp
-    status(
-        f"Starting FINN build with config {flow_config.name} and model " f"{model.name}!"
-    )  # type: ignore
+    status(f"Starting FINN build with config {flow_config.name} and model {model.name}!")
     if finn_build_dir is not None:
         finn_build_dir = finn_build_dir.expanduser().absolute()
         finn_build_dir.mkdir(parents=True, exist_ok=True)
@@ -637,7 +727,7 @@ def _build(
         )
         sys.exit(1)
     except FileNotFoundError:
-        error(f"The flow configuration file could not be found at " f"{flow_config}.")
+        error(f"The flow configuration file could not be found at {flow_config}.")
         sys.exit(1)
 
     if dfbc is None:
@@ -934,7 +1024,7 @@ def bench(
     # Late import because we need prepare_finn to setup remaining dependencies first
     from finn.benchmarking.bench import start_bench_run
 
-    exit_code = start_bench_run(bench_config)
+    exit_code = start_bench_run(str(bench_config))
     sys.exit(exit_code)
 
 
@@ -949,24 +1039,25 @@ def bench(
 @click.option(
     "--variant",
     "-v",
-    help="Which test to execute (quick, quicktest_ci, full_ci, doctest)",
+    help=(
+        "Which test to execute (quick, quicktest_ci, full_ci, doctest, custom)."
+        "'custom' ignores all parameters expect for --args ..."
+    ),
     default="quick",
     show_default=True,
     type=click.Choice(["quick", "quicktest_ci", "full_ci", "custom", "doctest", "doctest"]),
 )
 @click.option(
-    "--name",
+    "--args",
     default="",
     required=False,
-    help="Define the test to run. Only usable in combination with --variant custom. "
-    "Can be passed the same syntax as pytest directly (my_test_module.py "
-    "| my_tests.py::TestClass::myTest | etc.)",
+    help="Arguments to pass to pytest. Only usable with '--variant custom'. ",
 )
 @click.option("--num-test-workers", "-t", default="auto", show_default=True)
 @batch
 def test(
     variant: str,
-    name: str,
+    args: str,
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     num_default_workers: int,
@@ -994,14 +1085,22 @@ def test(
 
     prepare_finn(settings, True, batch)
 
-    # Save settings so that the test fixture can reload it
-    if settings.settingsfile_exists():
-        os.environ["FINN_SETTINGS"] = str(settings.get_path())
-        status("Saved settings path in FINN_SETTINGS: " + os.environ["FINN_SETTINGS"])
+    # Save settings so that the test fixture and any child interpreters can reload
+    # them. Non-fork start methods give children a fresh interpreter with no global
+    # settings, so they rebuild from the file that FINN_SETTINGS points at. On CI
+    # there is usually no pre-existing settings file, so write one into the build
+    # directory rather than skipping the export and leaving children without settings.
+    if not settings.settingsfile_exists():
+        settings_path = finn_build_dir / "settings.yaml"
+        settings.save(installation_independent=False, path=settings_path)
+    else:
+        settings_path = settings.get_path()
+    os.environ["FINN_SETTINGS"] = str(settings_path)
+    status("Saved settings path in FINN_SETTINGS: " + os.environ["FINN_SETTINGS"])
 
     status(f"Using {num_test_workers} test workers")
     Console().rule("RUNNING TESTS")
-    run_test(variant, num_test_workers, name)
+    run_test(variant, num_test_workers, args)
 
 
 @click.group(help="Dependency management")
@@ -1040,13 +1139,13 @@ def update(
         **get_function_args(),
     )
     if force:
+        # Delete dependencies
         if settings.finn_deps.exists():
             shutil.rmtree(settings.finn_deps)
-        finnxsi = resolve_module_path("finn_xsi")
-        so = Path(finnxsi) / "xsi.so"
-        if so.exists():
-            so.unlink()
-    prepare_finn(settings, accept_defaults or batch, batch)
+        # Also delete xsi.so to force a re-build
+        xsi_so = finn.xsi._xsi_so_path()  # noqa
+        xsi_so.unlink(missing_ok=True)
+    prepare_finn(settings, accept_defaults or batch, batch, create_build_dir=False)
 
 
 @click.command("edit", help="Edit the dependency definition file.")
@@ -1109,7 +1208,7 @@ def _command_get_settings() -> FINNSettings:
     settings = FINNSettings.init(
         auto_set_environment_vars=True, automatic_dependency_updates=False, flow_config=Path()
     )
-    prepare_finn(settings, True)
+    prepare_finn(settings, True, create_build_dir=False)
     if not settings.settingsfile_exists():
         warning("Could not resolve settings file.")
         sys.exit(1)
@@ -1153,12 +1252,16 @@ def config_create() -> None:
 def finn_check() -> None:
     """Start FINN and close it after loading the environment."""
     settings = FINNSettings.init(auto_set_environment_vars=False, flow_config=Path())
-    prepare_finn(settings, True)
+    prepare_finn(settings, True, create_build_dir=False)
     Console().print("[bold green]FINN is ready![/bold green]")
 
 
 def main() -> None:
     """Clicks entrypoint function."""
+    # May replace the process image, so keep it first to not redo any work.
+    ensure_ld_library_path()
+    # Select the multiprocessing start method before anything can create workers.
+    configure_start_method()
     settings.add_command(config_show)
     settings.add_command(config_edit)
     settings.add_command(config_create)

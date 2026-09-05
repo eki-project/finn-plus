@@ -1,3 +1,4 @@
+"""HLSSynthIP transformation."""
 # Copyright (C) 2020, Xilinx, Inc.
 # Copyright (C) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -27,12 +28,18 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
 import qonnx.custom_op.registry as registry
+from onnx import NodeProto
+from pathlib import Path
 from qonnx.transformation.base import NodeLocalTransformation
+from typing import TYPE_CHECKING, Literal, cast
 
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import is_hls_node
 from finn.util.logging import log
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 
 
 class HLSSynthIP(NodeLocalTransformation):
@@ -50,35 +57,44 @@ class HLSSynthIP(NodeLocalTransformation):
       NodeLocalTransformation for more details.
     """
 
-    def __init__(self, num_workers=None):
+    def __init__(self, fpgapart: str | None = None, num_workers: int | None = None) -> None:
+        """Initialize the transformation with the given FPGA part and number of workers."""
+        self.fpgapart = fpgapart
         super().__init__(num_workers=num_workers)
 
-    def applyNodeLocal(self, node):
+    def applyNodeLocal(self, node: "NodeProto") -> tuple[NodeProto, Literal[False]]:  # noqa: N802
+        """Apply the transformation to a single node.
+        See documentation in NodeLocalTransformation for more details."""
         op_type = node.op_type
-        if is_hls_node(node):
+        if is_hls_node(node) or node.op_type == "FINNLoop":
             try:
                 # lookup op_type in registry of CustomOps
-                inst = registry.getCustomOp(node)
+                inst = cast("HLSBackend", registry.getCustomOp(node))
                 # ensure that code is generated
-                assert (
-                    inst.get_nodeattr("code_gen_dir_ipgen") != ""
-                ), """Node
-                attribute "code_gen_dir_ipgen" is empty. Please run
-                transformation PrepareIP first."""
-                if not os.path.isdir(inst.get_nodeattr("ipgen_path")) or not inst.get_nodeattr(
-                    "code_gen_dir_ipgen"
-                ) in inst.get_nodeattr("ipgen_path"):
+                if inst.get_nodeattr("code_gen_dir_ipgen") == "":
+                    raise FINNUserError(
+                        "Node attribute 'code_gen_dir_ipgen' is empty. "
+                        "Please run transformation PrepareIP first."
+                    )
+                ip_path = cast("str", inst.get_nodeattr("ipgen_path"))
+                ip_path_p = Path(ip_path)
+                if (
+                    not (ip_path_p.is_dir() or ip_path_p.is_file())
+                    or cast("str", inst.get_nodeattr("code_gen_dir_ipgen")) not in ip_path
+                ):
                     # call the compilation function for this node
-                    inst.ipgen_singlenode_code()
+                    inst.ipgen_singlenode_code(self.fpgapart)
                 else:
-                    log.info(f"Using pre-existing IP for {node.name}")
+                    log.debug(f"Using cached IP for {node.name}")
                 # ensure that executable path is now set
-                assert (
-                    inst.get_nodeattr("ipgen_path") != ""
-                ), """Transformation
-                HLSSynthIP was not successful. Node attribute "ipgen_path"
-                is empty."""
+                if inst.get_nodeattr("ipgen_path") == "":
+                    raise FINNInternalError(
+                        "Transformation HLSSynthIP was not successful. "
+                        "Node attribute 'ipgen_path' is empty."
+                    )
             except KeyError:
                 # exception if op_type is not supported
-                raise Exception("Custom op_type %s is currently not supported." % op_type)
+                raise FINNUserError(
+                    f"Custom op_type {op_type} is currently not supported."
+                ) from None
         return (node, False)

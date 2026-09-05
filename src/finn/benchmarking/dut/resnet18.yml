@@ -1,0 +1,25 @@
+model_path: models/resnet18/resnet18_w3a3_cifar100.onnx
+folding_config_file: models/resnet18/resnet18_folding_config.json
+specialize_layers_config_file: models/resnet18/resnet18_specialize_layers.json
+
+steps:
+  - step_qonnx_to_finn
+  - step_tidy_up
+  - finn.builder.custom_step_library.resnet.step_resnet_tidy
+  - finn.builder.custom_step_library.resnet.step_resnet_streamline
+  - step_convert_to_hw
+  - finn.builder.custom_step_library.resnet.step_resnet_convert_to_hw
+  - step_create_dataflow_partition
+  - step_specialize_layers
+  - step_target_fps_parallelization
+  - step_apply_folding_config
+  - step_minimize_bit_width
+  - step_generate_estimate_reports
+  - step_generate_hardware
+  - step_create_stitched_ip
+  - step_synthesize_bitfile
+  - step_make_driver
+  - step_deployment_package
+
+# Required to use RTL MVAUs
+standalone_thresholds: true

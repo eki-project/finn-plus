@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
-import os
 import shlex
 import shutil
 import subprocess as sp
@@ -21,11 +20,12 @@ from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
+from subprocess import TimeoutExpired
 from threading import RLock
 from typing import cast
 
 from finn.interface import IS_POSIX
-from finn.interface.interface_utils import debug, error, resolve_module_path
+from finn.interface.interface_utils import debug, error
 from finn.util.exception import (
     FINNConfigurationError,
     FINNDependencyInstallationError,
@@ -33,6 +33,12 @@ from finn.util.exception import (
 )
 
 from pydantic.networks import HttpUrl  # noqa
+
+# Timeout for the header-only request used to check whether a download is outdated
+HTTP_HEADER_TIMEOUT_S = 10.0
+
+# Headers used to identify the remote file version, in order of preference
+VERSION_HEADERS = ("etag", "last-modified", "content-length")
 
 
 class Dependency:
@@ -91,25 +97,12 @@ class DirectDownloadDependency(BaseModel, Dependency):
     target_directory: Path = Field(strict=False)
 
 
-class CustomDependency(BaseModel, Dependency):
-    """Data model for a custom dependency.
-
-    installation_function: Name of the function that should be implemented in the DependencyUpdater
-                            to install this dependency.
-    outdated_function: Name of function that returns whether this dependency is outdated.
-    """
-
-    installation_function: str
-    outdated_function: str
-
-
 class DependencyData(BaseModel):
     """Data model that stores all dependencies."""
 
     git_deps: dict[str, GitDependency]
     boardfile_deps: dict[str, BoardfileDependency]
     direct_download_deps: dict[str, DirectDownloadDependency]
-    custom_deps: dict[str, CustomDependency]
 
     def get_all_dependencies(self) -> list[str]:
         """Return a list of all packages, across dependency types."""
@@ -121,7 +114,6 @@ class DependencyData(BaseModel):
                         self.git_deps,
                         self.boardfile_deps,
                         self.direct_download_deps,
-                        self.custom_deps,
                     ]
                 ]
             )
@@ -149,8 +141,6 @@ class DependencyData(BaseModel):
             return "Boardfiles"
         if package_name in self.direct_download_deps:
             return "Data"
-        if package_name in self.custom_deps:
-            return "Custom"
         return "Misc"
 
     def get_dependency_data(self, package_name: str) -> Dependency | None:
@@ -161,7 +151,6 @@ class DependencyData(BaseModel):
             self.git_deps,
             self.boardfile_deps,
             self.direct_download_deps,
-            self.custom_deps,
         ]:
             if package_name in depdict:
                 return depdict[package_name]
@@ -169,7 +158,7 @@ class DependencyData(BaseModel):
 
     def get_fields(self, package_name: str, *field_names: str) -> tuple:
         """Return a tuple with all required fields from the data. If one of the fields does not
-        exist, raise an exception."""  # noqa
+        exist, raise an exception."""
         self.assert_unique_dependency_names()
         dep_data = self.get_dependency_data(package_name)
         if dep_data is None:
@@ -218,7 +207,7 @@ class _StatusTracker:
     def _generate_renderable(self) -> Table:
         """Generate a renderable for rich to display in a live context."""
         if self.non_interactive:
-            return
+            return None
         with self.datalock:
             table = Table(
                 title="Dependency Updates",
@@ -313,10 +302,6 @@ class DependencyUpdater:
         except ValidationError as e:
             raise FINNUserError(f"Validation error: {e}") from e
 
-        # Try to find FINN_XSI. If it cannot be found, it is ignored in the
-        # list of all dependencies (since this is neither a failed nor a successful install)
-        self.finn_xsi_str = resolve_module_path("finn_xsi")
-
     def _run_silent(self, cmd: str, cwd: Path | None = None, timeout: float | None = None) -> int:
         """Run a given command silently. Return its returncode."""
         debug(f"[DependencyUpdater] Running command: {cmd}", False)
@@ -331,30 +316,34 @@ class DependencyUpdater:
 
     def _git_clone(self, url: str, commit: str, target: Path) -> bool:
         """Try to clone and checkout the git url to the given target directory. If something
-        went wrong return False, True otherwise."""  # noqa
-        clone_result = sp.run(
-            shlex.split(f"git clone {url} {target.absolute()}"),
-            timeout=self.git_timeout,
-            capture_output=True,
-            text=True,
-        )
-        if clone_result.returncode != 0:
-            debug(f"[{url}] Cloning failed! Output was:\n{clone_result.stderr}", False)
-            return False
-        checkout_result = sp.run(
-            shlex.split(f"git checkout {commit}"),
-            cwd=target.absolute(),
-            capture_output=True,
-            text=True,
-        )
-        if checkout_result.returncode != 0:
-            debug(f"[{url}] Checkout failed! Output was:\n{checkout_result.stderr}", False)
-            return False
+        went wrong return False, True otherwise."""
+        try:
+            clone_result = sp.run(
+                shlex.split(f"git clone {url} {target.absolute()}"),
+                timeout=self.git_timeout,
+                capture_output=True,
+                text=True,
+            )
+            if clone_result.returncode != 0:
+                debug(f"[{url}] Cloning failed! Output was:\n{clone_result.stderr}", False)
+                return False
+            checkout_result = sp.run(
+                shlex.split(f"git checkout {commit}"),
+                cwd=target.absolute(),
+                capture_output=True,
+                timeout=self.git_timeout,
+                text=True,
+            )
+            if checkout_result.returncode != 0:
+                debug(f"[{url}] Checkout failed! Output was:\n{checkout_result.stderr}", False)
+                return False
+        except TimeoutExpired:
+            raise FINNDependencyInstallationError("Timeout during Git operation.") from None
         return True
 
     def _get_git_hash(self, package_name: str) -> str | None:
         """Return the hash of the given package_name dependency.
-        If there is no such package return None."""  # noqa
+        If there is no such package return None."""
         if package_name in self.deps.git_deps:
             target = self.dep_location / package_name
         elif package_name in self.deps.boardfile_deps:
@@ -433,12 +422,51 @@ class DependencyUpdater:
             shutil.copytree(source, target)
         return not self.is_outdated(package_name)
 
+    def _version_file(self, url: str, target_directory: Path) -> Path:
+        """Return the path of the sidecar file caching the version token of a download."""
+        return target_directory / f".{Path(url).name}.version"
+
+    def _get_remote_version_token(self, url: str) -> str | None:
+        """Return an opaque token identifying the current remote version of the file.
+
+        Uses the ETag header if available, otherwise Last-Modified, otherwise Content-Length.
+        Returns None if the server is unreachable or provides none of these headers.
+        """
+        try:
+            result = sp.run(
+                shlex.split(
+                    f"wget --spider --server-response --tries=1 "
+                    f"--timeout={HTTP_HEADER_TIMEOUT_S} {url}"
+                ),
+                capture_output=True,
+                text=True,
+                timeout=HTTP_HEADER_TIMEOUT_S,
+            )
+        except sp.TimeoutExpired:
+            debug(f"[{url}] Timed out while requesting headers.", False)
+            return None
+        if result.returncode != 0:
+            debug(f"[{url}] Header request failed:\n{result.stderr.strip()}", False)
+            return None
+
+        # Headers of every redirect hop are printed, so later hops overwrite earlier ones
+        headers: dict[str, str] = {}
+        for line in result.stderr.splitlines():
+            name, separator, value = line.strip().partition(":")
+            if separator and name.lower() in VERSION_HEADERS:
+                headers[name.lower()] = value.strip()
+        for header in VERSION_HEADERS:
+            if headers.get(header):
+                return f"{header}={headers[header]}"
+        debug(f"[{url}] Server provided no version headers.", False)
+        return None
+
     def _install_direct_download_dependency(self, package_name: str) -> bool:
         """Install a direct download dependency. Return success."""
         debug(f"Trying to install DIRECT DOWNLOAD dependency: {package_name}", False)
         if shutil.which("wget") is None or shutil.which("unzip") is None:
             # TODO: Allow curl and gzip etc. as well
-            raise FINNConfigurationError(
+            raise FINNDependencyInstallationError(
                 'Make sure that both "wget" and "unzip" are available on your system.'
             )
         url, do_unzip, target_directory = self.deps.get_fields(
@@ -446,18 +474,31 @@ class DependencyUpdater:
         )
         url = str(url)
         target: Path = self.dep_location / target_directory
+        if not target.exists():
+            target.mkdir(parents=True)
+
+        # Query the version token before downloading so it matches the fetched content
+        remote_token = self._get_remote_version_token(url)
+        version_file = self._version_file(url, target)
 
         # Return if the download fails
         # Automatically skips if not modified
         unzipped = (target / Path(url).name).with_suffix("")
         debug(f"[{package_name}] Running: wget -N {url}", False)
-        wget_download = sp.run(
-            shlex.split(f"wget -N {url}"), cwd=target, capture_output=True, text=True
-        )
+        try:
+            wget_download = sp.run(
+                shlex.split(f"wget -N {url}"), cwd=target, capture_output=True, text=True
+            )
+        except sp.TimeoutExpired as e:
+            raise FINNDependencyInstallationError(
+                f"[{package_name}] wget failed with a timeout!"
+            ) from e
         if wget_download.returncode != 0:
             debug(f"[{package_name}] wget failed!", False)
             return False
         if "304 Not Modified" in wget_download.stderr.strip() and unzipped.exists():
+            if remote_token is not None:
+                version_file.write_text(remote_token)
             return True
 
         debug(f"[{package_name}] Removing previous install if necessary.", False)
@@ -469,47 +510,11 @@ class DependencyUpdater:
         if do_unzip:  # noqa
             if self._run_silent(f"unzip -o {Path(url).name}", cwd=target) != 0:
                 return False
-        return unzipped.exists()
-
-    def _install_custom(self, package_name: str) -> bool:
-        """Install the custom dependency. The function name provided by the definition file
-        must exist as a method of this class. If so, it is executed and it's return value
-        used to check for success.
-        """
-        data = self.deps.get_dependency_data(package_name)
-        assert data is not None
-        function_name = cast("CustomDependency", data).installation_function
-        try:
-            return self.__getattribute__(function_name)()
-        except AttributeError as e:
-            raise FINNUserError(
-                f"Implementation for custom installation function for "
-                f"{package_name} not found in DependencyUpdater!"
-            ) from e
-
-    def _is_outdated_finn_xsi(self) -> bool:
-        """Return whether FINN XSI is outdated."""
-        # If finn xsi was found its outdated, if it wasnt found, its never outdated
-        return self.finn_xsi_str != ""
-
-    def _install_finn_xsi(self) -> bool:
-        """Install FINN XSI bindings and return if installation was successful."""
-        # Hacky workaround
-        os.environ["FINN_XSI"] = self.finn_xsi_str
-        from finn.xsi import is_available
-
-        result = sp.run(
-            shlex.split(f"{sys.executable} -m finn.xsi.setup"),
-            capture_output=True,
-            text=True,
-            env=os.environ.copy(),
-        )
-        if result.returncode != 0:
-            raise FINNDependencyInstallationError(
-                "Installation of FINN XSI failed!:\n" + result.stdout
-            )
-        sys.path.append(self.finn_xsi_str)
-        return is_available()
+        if not unzipped.exists():
+            return False
+        if remote_token is not None:
+            version_file.write_text(remote_token)
+        return True
 
     def install_dependency(self, package_name: str) -> bool:
         """Install the dependency in the dependency location. If no definition for this dependency
@@ -524,8 +529,6 @@ class DependencyUpdater:
             return self._install_boardfile_dependency(package_name)
         if t is DirectDownloadDependency:
             return self._install_direct_download_dependency(package_name)
-        if t is CustomDependency:
-            return self._install_custom(package_name)
         return False
 
     def is_outdated(self, package_name: str, installed: bool = False) -> bool:
@@ -536,36 +539,43 @@ class DependencyUpdater:
             raise FINNUserError(
                 f"Cannot check if non-existing dependency {package_name} is outdated."
             )
-        if package_name in self.deps.custom_deps:
-            function_name = cast("CustomDependency", data).outdated_function
-            try:
-                return self.__getattribute__(function_name)()
-            except AttributeError as e:
-                raise FINNUserError(
-                    f"Custom package {package_name} is missing the implementation"
-                    f"of the outdated check function in DependencyUpdater!"
-                ) from e
         if package_name in self.deps.direct_download_deps:
-            # TODO: Improve (e.g. by checking directly instead of by using wget).
-            # Check by letting wget compare timestamps. To avoid large wait times
-            # immediately delete the file again after a short timeout.
+            # Not all servers send Last-Modified (which "wget -N" relies on), so compare an
+            # ETag/Last-Modified/Content-Length token against the one cached at install time.
             data = cast("DirectDownloadDependency", data)
-            target = self.dep_location / data.target_directory / Path(str(data.url)).name
-            if not target.parent.exists():
-                target.parent.mkdir(parents=True)
-            wget_result = sp.run(
-                shlex.split(f"wget -N {data.url}"),
-                cwd=target.parent,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if "304 Not Modified" in wget_result.stderr.strip():
-                return False
-            debug(wget_result.stderr.strip(), False)
-            if target.exists():
-                target.unlink()
-            return True
+            url = str(data.url)
+            target_directory = self.dep_location / data.target_directory
+            if not target_directory.exists():
+                target_directory.mkdir(parents=True)
+            installed_artifact = (target_directory / Path(url).name).with_suffix("")
+            version_file = self._version_file(url, target_directory)
+
+            remote_token = self._get_remote_version_token(url)
+            if remote_token is None:
+                # Without a reachable server we cannot tell, so keep a working installation
+                if installed_artifact.exists():
+                    debug(
+                        f"[{package_name}] Cannot determine remote version, "
+                        f"keeping the existing installation.",
+                        False,
+                    )
+                    return False
+                return True
+            if not installed_artifact.exists():
+                debug(f"[{package_name}] Not installed yet - outdated.", False)
+                return True
+            if not version_file.exists():
+                debug(f"[{package_name}] No cached version token - outdated.", False)
+                return True
+            local_token = version_file.read_text().strip()
+            if local_token != remote_token:
+                debug(
+                    f"[{package_name}] Version mismatch: expected {remote_token}, "
+                    f"got {local_token}",
+                    False,
+                )
+                return True
+            return False
 
         # Compare hashes for git dependencies and boardfiles
         # Try to fetch the current hash
@@ -605,7 +615,7 @@ class DependencyUpdater:
 
     def get_outdated_dependencies(self) -> list[str]:
         """Return a list of the names of all outdated packages. For Git dependencies this means
-        an outdated commit hash, for the others a different URL or target directory."""  # noqa
+        an outdated commit hash, for the others a different URL or target directory."""
         return list(
             map(
                 str,

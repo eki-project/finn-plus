@@ -30,8 +30,10 @@ import pytest
 
 import numpy as np
 import onnx
+import onnx.helper as oh
 import onnx.numpy_helper as nph
 import os
+import torch
 import torchvision.transforms.functional as torchvision_util
 import warnings
 from brevitas_examples import bnn_pynq, imagenet_classification
@@ -40,9 +42,10 @@ from pkgutil import get_data
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 
+from finn.builder.build_dataflow_config import DataflowBuildConfig, VitisOptStrategy
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
-from finn.transformation.fpgadataflow.vitis_build import VitisBuild, VitisOptStrategy
+from finn.transformation.fpgadataflow.vitis_build import VitisBuild
 from finn.util.basic import alveo_default_platform, alveo_part_map, pynq_part_map
 
 # map of (wbits,abits) -> model
@@ -62,8 +65,8 @@ example_map = {
 }
 
 
-def get_test_model(netname, wbits, abits, pretrained):
-    """Returns the model specified by input arguments from the Brevitas BNN-PYNQ
+def get_test_model(netname: str, wbits: int, abits: int, pretrained: bool) -> torch.nn.Module:
+    """Return the model specified by input arguments from the Brevitas BNN-PYNQ
     test networks. Pretrained weights loaded if pretrained is True."""
     model_cfg = (netname, wbits, abits)
     model_def_fxn = example_map[model_cfg]
@@ -72,7 +75,7 @@ def get_test_model(netname, wbits, abits, pretrained):
 
 
 def get_test_model_trained(netname, wbits, abits):
-    "get_test_model with pretrained=True"
+    """get_test_model with pretrained=True"""
     return get_test_model(netname, wbits, abits, pretrained=True)
 
 
@@ -117,12 +120,15 @@ def get_build_env(board, target_clk_ns):
     elif board in alveo_part_map:
         ret["kind"] = "alveo"
         ret["part"] = alveo_part_map[board]
-        ret["build_fxn"] = VitisBuild(
-            ret["part"],
-            target_clk_ns,
-            alveo_default_platform[board],
-            strategy=VitisOptStrategy.BUILD_SPEED,
+        cfg = DataflowBuildConfig(
+            fpga_part=alveo_part_map[board],
+            board=board,
+            synth_clk_period_ns=target_clk_ns,
+            vitis_platform=alveo_default_platform[board],
+            vitis_opt_strategy=VitisOptStrategy.BUILD_SPEED,
         )
+        ret["cfg"] = cfg
+        ret["build_fxn"] = VitisBuild(cfg)
     else:
         raise Exception("Unknown board specified")
     return ret
@@ -148,9 +154,10 @@ def get_example_input(topology):
         raise Exception("Unknown topology, can't return example input")
 
 
-def get_trained_network_and_ishape(topology, wbits, abits):
-    "Return (trained_model, shape) for given BNN-PYNQ test config."
-
+def get_trained_network_and_ishape(
+    topology: str, wbits: int, abits: int
+) -> tuple[torch.nn.Module, tuple[int, int, int, int]]:
+    """Return (trained_model, shape) for given BNN-PYNQ test config."""
     topology_to_ishape = {
         "tfc": (1, 1, 28, 28),
         "lfc": (1, 1, 28, 28),

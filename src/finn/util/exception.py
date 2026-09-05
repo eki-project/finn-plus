@@ -1,5 +1,9 @@
 """Here we organize FINN+`s exceptions and error handling."""
 from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 """
 FINNError is the base class for all errors.
@@ -52,6 +56,16 @@ class FINNValidationError(FINNUserError):
         super().__init__(*args)
 
 
+class FINNSynthesisError(FINNUserError):
+    """Error emitted if synthesis fails. Contains the path to the Vivado logfile."""
+
+    def __init__(self, msg: str, vivado_logfile: Path) -> None:
+        """Create a new FINNSynthesisError."""
+        super().__init__(msg)
+        self.msg = msg
+        self.vivado_logfile = vivado_logfile
+
+
 class FINNConfigurationError(FINNUserError):
     """Error emitted if FINN is configured incorrectly."""
 
@@ -61,8 +75,52 @@ class FINNConfigurationError(FINNUserError):
 
 
 class FINNDataflowError(FINNInternalError):
-    """Errors regarding the dataflow, dataflow config, step resolution, etc."""
+    """(Internal) Errors regarding the dataflow, dataflow config, step resolution, etc."""
 
     def __init__(self, *args: object) -> None:
         """Create a new FINNDataflowError."""
+        super().__init__(*args)
+
+
+class FINNMultiFPGAError(FINNInternalError):
+    """(Internal) Multi-FPGA error during one of the transformations."""
+
+    def __init__(self, *args: object) -> None:
+        """Create a new FINNMultiFPGAError."""
+        super().__init__(*args)
+
+
+class FINNMultiFPGAUserError(FINNUserError):
+    """(User) Multi-FPGA error during one of the transformations."""
+
+    # TODO: Reorganize error-types
+
+    def __init__(self, *args: object) -> None:
+        """Create a new FINNMultiFPGAUserError."""
+        super().__init__(*args)
+
+
+class FINNMultiFPGAConfigError(FINNUserError):
+    """(User) Multi-FPGA Error in the configuration or the model."""
+
+    def __init__(self, *args: object) -> None:
+        """Create a new FINNMultiFPGAConfigError."""
+        super().__init__(*args)
+
+
+class FINNMultiFPGAPartitionerError(FINNUserError):
+    """(User) Multi-FPGA Error in the partitioning of the model."""
+
+    def __init__(self, *args: object) -> None:
+        """Create a new FINNMultiFPGAPartitionerError."""
+        super().__init__(*args)
+
+
+class FINNVitisLinkConfigError(FINNInternalError):
+    """(Internal) An error appearing in a vitis link configuration when trying to
+    generate a script or config. May happen in both single- and multifpga cases.
+    """
+
+    def __init__(self, *args: object) -> None:
+        """Create a new FINNVitisLinkConfigError."""
         super().__init__(*args)

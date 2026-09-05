@@ -1,0 +1,81 @@
+# Selects and aggregates the per-iteration measurement reports produced on the FPGA runner.
+# Each entry becomes a metric "measurement/<report file stem>/<key>"; "fn" is the aggregation
+# across the exp_itr_* iterations (default: first value). This is applied when an experiment is
+# logged, so changes here only affect future runs and cannot be backfilled into the compare_tag.
+# Build-side metrics (synth/..., estimate/..., rtlsim/..., time/..., ...) are not configured here,
+# they are logged with a hardcoded key selection in collect.py.
+Metrics:
+  report_experiment_instrumentation.json:
+    - error:
+      - fn : anytrue
+    - chechksum
+    - min_latency_cycles
+    - latency_cycles
+    - interval_cycles
+    - frequency_mhz:
+        - fn : max
+    - min_latency_ms
+    - latency_ms:
+        - fn : min
+    - throughput_fps:
+        - fn : max
+    - min_pipeline_depth
+    - pipeline_depth
+
+  report_dma_validate.json:
+    - top-1_accuracy
+
+  report_experiment_fifosizing.json:
+    - error
+    - fifo_size_total_kB:
+        - fn : min
+
+# Regression check against the newest experiment of compare_tag that matches the same model.
+# Live FIFO-sizing runs and their follow-up runs are excluded as reference points, and their own
+# results are reported but not enforced.
+# Keys are the flattened metric paths as logged above. Metrics not listed here use
+# allowed_uncertainty from this section and are never required, i.e. they cannot fail the job.
+# Unlike the "Metrics" section, changes here take effect retroactively since the reference
+# values are re-evaluated on every run - except for metrics that did not exist yet back then.
+Compare:
+  compare_tag: ci_known_good
+  allowed_uncertainty: 0.01
+
+  Metrics:
+
+    measurement/report_dma_validate/top-1_accuracy:
+      required: true
+      plot: true
+      allowed_uncertainty: 0.00
+
+    measurement/report_experiment_instrumentation/throughput_fps:
+      required: true
+      plot: true
+
+    measurement/report_experiment_instrumentation/interval_cycles:
+      required: true
+      plot: true
+
+    measurement/report_experiment_instrumentation/min_latency_cycles:
+      required: true
+      plot: true
+
+    synth/resources/LUT:
+      required: true
+      plot: true
+
+    synth/resources/DSP:
+      required: true
+      plot: true
+
+    synth/resources/BRAM_18K:
+      required: true
+      plot: true
+
+    synth/resources/BRAM_36K:
+      required: true
+      plot: true
+
+    synth/resources/URAM:
+      required: true
+      plot: true

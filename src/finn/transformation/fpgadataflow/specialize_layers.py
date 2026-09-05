@@ -74,41 +74,43 @@ def _determine_impl_style(node, fpgapart, model):
                 weight_width_fit = wdt.bitwidth() >= 4
                 if inp_width_fit and weight_width_fit and _mvu_rtl_possible(node, fpgapart, model):
                     return "rtl"
-                else:
-                    return "hls"
-            elif optype == "VVAU":
+                return "hls"
+            if optype == "VVAU":
                 idt = node_inst.get_input_datatype(0)
                 wdt = node_inst.get_input_datatype(1)
                 inp_width_fit = idt.bitwidth() >= 4
                 weight_width_fit = wdt.bitwidth() >= 4
                 if inp_width_fit and weight_width_fit and _vvu_rtl_possible(node, fpgapart):
                     return "rtl"
-                else:
-                    return "hls"
-            elif optype == "LayerNorm":
+                return "hls"
+            if optype in ["ElementwiseAdd", "ElementwiseSub", "ElementwiseMul"]:
+                if _elementwise_rtl_possible(node, fpgapart):
+                    return "rtl"
+                return "hls"
+            if optype == "LayerNorm":
                 if _layernorm_rtl_possible(node, fpgapart):
                     return "rtl"
-                else:
-                    return "hls"
+                return "hls"
+            if optype == "Requant":
+                if _requant_rtl_possible(node, fpgapart):
+                    return "rtl"
+                return "hls"
             return "rtl"
         # but if no rtl variant, set impl_style to hls
-        elif hls_variant:
+        if hls_variant:
             return "hls"
         # if there is neither an rtl nor hls variant
         # throw error
-        else:
-            raise Exception(
-                """Node {} with optype {} has no hw implementation variant)""".format(
-                    node.name, optype
-                )
-            )
+        raise Exception(
+            f"""Node {node.name} with optype {optype} has no hw implementation variant)"""
+        )
 
     # check if user setting can be fulfilled
     # otherwise change impl_style
-    elif impl_style == "hls":
+    if impl_style == "hls":
         if hls_variant:
             return "hls"
-        elif rtl_variant:
+        if rtl_variant:
             warn_str = """There is no HLS variant of %s. Node %s will automatically be
                         set to RTL variant.""" % (
                 node.op_type,
@@ -116,13 +118,10 @@ def _determine_impl_style(node, fpgapart, model):
             )
             log.warning(warn_str)
             return "rtl"
-        else:
-            raise Exception(
-                """Node {} with optype {} has no hw implementation variant)""".format(
-                    node.name, optype
-                )
-            )
-    elif impl_style == "rtl":
+        raise Exception(
+            f"""Node {node.name} with optype {optype} has no hw implementation variant)"""
+        )
+    if impl_style == "rtl":
         # rtl dwc does not support every inWidth to outWidth ratio
         if optype == "StreamingDataWidthConverter":
             if _dwc_determine_impl_style(node) != "rtl":
@@ -134,48 +133,64 @@ def _determine_impl_style(node, fpgapart, model):
                 )
                 log.warning(warn_str)
                 return "hls"
-            else:
-                # user setting can be fulfilled
-                return "rtl"
-        elif optype == "MVAU":
+            # user setting can be fulfilled
+            return "rtl"
+        if optype == "MVAU":
             if _mvu_rtl_possible(node, fpgapart, model):
                 return "rtl"
-            else:
-                warn_str = """There is no RTL variant for %s. The node will automatically be
+            warn_str = """There is no RTL variant for %s. The node will automatically be
                         set to HLS variant. Please check the bit-widths to be <= 8 and ensure the
                         thresholds are implemented as standalone layer""" % (
-                    node.name,
-                )
-                log.warning(warn_str)
-                return "hls"
-        elif optype == "VVAU":
+                node.name,
+            )
+            log.warning(warn_str)
+            return "hls"
+        if optype == "VVAU":
             if _vvu_rtl_possible(node, fpgapart):
                 return "rtl"
-            else:
-                warn_str = """There is no RTL variant for %s. The node will automatically be
+            warn_str = """There is no RTL variant for %s. The node will automatically be
                         set to HLS variant. Please check the bit-widths to be <= 8 and ensure the
                         thresholds are implemented as standalone layer. Note that the RTL-variant
                         of this layer is only supported on Versal boards""" % (
-                    node.name,
-                )
-                log.warning(warn_str)
-                return "hls"
+                node.name,
+            )
+            log.warning(warn_str)
+            return "hls"
 
-        elif optype == "LayerNorm":
+        if optype == "LayerNorm":
             if _layernorm_rtl_possible(node, fpgapart):
                 return "rtl"
-            else:
-                warn_str = """There is no RTL variant for %s. The node will automatically be
+            warn_str = """There is no RTL variant for %s. The node will automatically be
                         set to HLS variant. The RTL Layernorm layer currently only supports
                         float32 inputs and uses DSP58, so only versal devices supported.""" % (
-                    node.name,
-                )
-                log.warning(warn_str)
-                return "hls"
+                node.name,
+            )
+            log.warning(warn_str)
+            return "hls"
+        if optype in ["ElementwiseAdd", "ElementwiseSub", "ElementwiseMul"]:
+            if _elementwise_rtl_possible(node, fpgapart):
+                return "rtl"
+            warn_str = """There is no RTL variant for %s. The node will automatically be
+                        set to HLS variant. The RTL Elementwise layers currently only supports
+                        float32 inputs and use DSP58, so only versal devices supported.""" % (
+                node.name,
+            )
+            log.warning(warn_str)
+            return "hls"
+        if optype == "Requant":
+            if _requant_rtl_possible(node, fpgapart):
+                return "rtl"
+            warn_str = """There is no RTL variant for %s. The node will automatically be
+                        set to HLS variant. The RTL Requant layers currently only supports
+                        integer inputs, unsigned outputs and non-narrow quantization.""" % (
+                node.name,
+            )
+            log.warning(warn_str)
+            return "hls"
 
         if rtl_variant:
             return "rtl"
-        elif hls_variant:
+        if hls_variant:
             warn_str = """There is no RTL variant of %s. Node %s will automatically be
                         set to HLS variant.""" % (
                 node.op_type,
@@ -183,19 +198,13 @@ def _determine_impl_style(node, fpgapart, model):
             )
             log.warning(warn_str)
             return "hls"
-        else:
-            raise Exception(
-                """Node {} with optype {} has no hw implementation variant)""".format(
-                    node.name, optype
-                )
-            )
-    else:
         raise Exception(
-            """Invalid value for attribute preferred_impl_style! Is currently set to: {}
-            has to be set to one of the following value ("hls", "rtl")""".format(
-                impl_style
-            )
+            f"""Node {node.name} with optype {optype} has no hw implementation variant)"""
         )
+    raise Exception(
+        f"""Invalid value for attribute preferred_impl_style! Is currently set to: {impl_style}
+            has to be set to one of the following value ("hls", "rtl")"""
+    )
 
 
 def _dwc_determine_impl_style(node):
@@ -211,8 +220,7 @@ def _dwc_determine_impl_style(node):
     owidth_d = dwc_out_width % dwc_in_width == 0
     if iwidth_d or owidth_d:
         return "rtl"
-    else:
-        return "hls"
+    return "hls"
 
 
 def _mvu_rtl_possible(n, fpgapart, model):
@@ -285,21 +293,69 @@ def _vvu_rtl_possible(n, fpgapart):
     return in_width_in_range and weight_width_in_range and signed_weights
 
 
+def _elementwise_rtl_possible(n, fpgapart):
+    """Check whether RTL-based ElementwiseOp is possible
+    Currently, we only support float32 inputs, versal fabric,
+    the rhs needs to be a const input while the lhs is the dynamic data input
+    and no broadcasting support."""
+    if not is_versal(fpgapart):
+        return False
+
+    node_inst = getCustomOp(n)
+    lhs_dtype = node_inst.get_input_datatype(0)
+    rhs_dtype = node_inst.get_input_datatype(1)
+    out_dtype = node_inst.get_output_datatype(0)
+
+    if not all([dt == "FLOAT32" for dt in [lhs_dtype, rhs_dtype, out_dtype]]):
+        return False
+
+    lhs_style = node_inst.get_nodeattr("lhs_style")
+    rhs_style = node_inst.get_nodeattr("rhs_style")
+
+    if lhs_style == "input" and rhs_style == "const":
+        lhs_shape = node_inst.get_nodeattr("lhs_shape")
+        rhs_shape = node_inst.get_nodeattr("rhs_shape")
+        out_shape = node_inst.get_nodeattr("out_shape")
+        # check if data input shape matches output shape
+        if list(lhs_shape) != list(out_shape):
+            return False
+        # check if broadcasting is required
+        if len(rhs_shape) != len(out_shape) and len(rhs_shape) != len(out_shape) - 1:
+            for dim_c, dim_o in zip(rhs_shape, out_shape[-len(rhs_shape) :]):
+                if dim_c != 1 and dim_c != dim_o:
+                    return False
+        return True
+    return False
+
+
 def _layernorm_rtl_possible(n, fpgapart):
-    # Checks whether RTL-based Layernorm is supported
-    # Currently, we only support float32 inputs and versal fabric
+    """Check whether RTL-based Layernorm is supported
+    Currently, we only support float32 inputs and versal fabric."""
     if not is_versal(fpgapart):
         return False
     node_inst = getCustomOp(n)
     idt = node_inst.get_input_datatype(0)
     if idt != "FLOAT32":
         return False
-    else:
-        return True
+    return True
+
+
+def _requant_rtl_possible(n, fpgapart):
+    """Check whether RTL-based Requant is supported
+    RTL Requant requires:
+    - Integer input (not float)
+    - Unsigned output (RTL clips to [0, 2^N-1])
+    - Full range (narrow=0)."""
+    node_inst = getCustomOp(n)
+    idt = node_inst.get_input_datatype(0)
+    odt = node_inst.get_output_datatype(0)
+    narrow = node_inst.get_nodeattr("narrow")
+    # RTL backend works with integer inputs, unsigned outputs, and full range
+    return idt.is_integer() and not odt.signed() and narrow == 0
 
 
 class SpecializeLayers(Transformation):
-    """Specialize all layers to either HLS or RTL variants"""
+    """Specialize all layers to either HLS or RTL variants."""
 
     def __init__(self, fpgapart):
         """Initialize the SpecializeLayers transformation.

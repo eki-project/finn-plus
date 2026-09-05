@@ -182,7 +182,8 @@ class Thresholding_rtl(Thresholding, RTLBackend):
 
         t_path = self.get_nodeattr("code_gen_dir_ipgen")
 
-        self.generate_params(model, t_path)
+        if not self.get_nodeattr("mlo_max_iter"):
+            self.generate_params(model, t_path)
 
         bias = self.get_nodeattr("ActVal")  # activation bias value
         input_data_type = self.get_nodeattr("inputDataType")  # input/threshold precision
@@ -209,15 +210,15 @@ class Thresholding_rtl(Thresholding, RTLBackend):
                     "Fixed-point thresholds have more fractional bits than input. "
                     "Run RoundAndClipThresholds to reduce threshold fractional bits."
                 )
-            elif wdt.scale_factor() > idt.scale_factor():
+            if wdt.scale_factor() > idt.scale_factor():
                 raise ValueError(
                     "Fixed-point inputs and with more fractional bits "
                     "than thresholds are not supported."
                 )
 
         # If a single threshold value is found, set num_channels to PE
-        thresholds = model.get_initializer(self.onnx_node.input[1])
-        if thresholds.shape[0] == 1:
+        thresholds_shape = model.get_tensor_shape(self.onnx_node.input[1])
+        if thresholds_shape[0] == 1:
             num_channels = pe
 
         code_gen_dict["$THRESHOLDS_PATH$"] = ['"./%s_"' % self.onnx_node.name]
@@ -238,6 +239,14 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         code_gen_dict["$C$"] = [str(num_channels)]  # number of channels
         code_gen_dict["$BIAS$"] = [str(bias)]  # activation bias value
         code_gen_dict["$PE$"] = [str(pe)]  # requires C = M*PE
+        mlo_max_iter = self.get_nodeattr("mlo_max_iter")
+        bodies = self.get_nodeattr("bodies")
+        if mlo_max_iter:
+            code_gen_dict["$SETS$"] = [str(mlo_max_iter)]
+        elif bodies:
+            code_gen_dict["$SETS$"] = [str(bodies)]
+        else:
+            code_gen_dict["$SETS$"] = [str(1)]
 
         # Is the input datatype signed or unsigned?
         # The thresholding core needs to know this when comparing weights to inputs
@@ -304,7 +313,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
         rtlsrc = os.path.join(get_settings().finn_rtllib, "thresholding/hdl")
         template_path = rtlsrc + "/thresholding_template_wrapper.v"
-        with open(template_path, "r") as f:
+        with open(template_path) as f:
             template_wrapper = f.read()
         for key in code_gen_dict:
             # transform list into long string separated by '\n'
@@ -370,7 +379,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
                     # make copy before saving the array
                     reshaped_input = reshaped_input.copy()
                     np.save(
-                        os.path.join(code_gen_dir, "input_{}.npy".format(in_ind)),
+                        os.path.join(code_gen_dir, f"input_{in_ind}.npy"),
                         reshaped_input,
                     )
                 elif in_ind > 2:
@@ -379,9 +388,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
 
             sim = self.get_rtlsim()
             nbits = self.get_instream_width()
-            rtlsim_inp = npy_to_rtlsim_input(
-                "{}/input_0.npy".format(code_gen_dir), export_idt, nbits
-            )
+            rtlsim_inp = npy_to_rtlsim_input(f"{code_gen_dir}/input_0.npy", export_idt, nbits)
             io_dict = {
                 "inputs": {"in0": rtlsim_inp},
                 "outputs": {"out0": []},
@@ -395,7 +402,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
             odt = self.get_output_datatype()
             target_bits = odt.bitwidth()
             packed_bits = self.get_outstream_width()
-            out_npy_path = "{}/output.npy".format(code_gen_dir)
+            out_npy_path = f"{code_gen_dir}/output.npy"
             out_shape = self.get_folded_output_shape()
 
             rtlsim_output_to_npy(
@@ -409,10 +416,8 @@ class Thresholding_rtl(Thresholding, RTLBackend):
             context[node.output[0]] = output
         else:
             raise Exception(
-                """Invalid value for attribute exec_mode! Is currently set to: {}
-            has to be set to one of the following value ("cppsim", "rtlsim")""".format(
-                    mode
-                )
+                f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
+            has to be set to one of the following value ("cppsim", "rtlsim")"""
             )
 
     def code_generation_ipi(self):
@@ -465,7 +470,7 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         """
         thresholds = model.get_initializer(self.onnx_node.input[1])
         rt_weights = self.get_nodeattr("runtime_writeable_weights")
-        file_name = "{}/memblock.dat".format(path)
+        file_name = f"{path}/memblock.dat"
         if rt_weights:
             self.make_weight_file(thresholds, "decoupled_runtime", file_name)
         self.make_weight_file(thresholds, "internal_embedded", file_name)
@@ -569,3 +574,51 @@ class Thresholding_rtl(Thresholding, RTLBackend):
                     with open(thresh_file, "w") as f:
                         for val in threshs:
                             f.write(val + "\n")
+
+    def minimize_weight_bit_width(self, model):
+        """Minimize threshold datatype, with RTL-specific adjustments.
+
+        The RTL implementation saturates inputs to the threshold datatype range
+        when the threshold datatype is narrower than the input datatype. To ensure
+        correct comparisons at saturation boundaries, the threshold datatype must
+        be able to represent [min_threshold - 1 : max_threshold]."""
+        # First, call the base class implementation
+        tdt = super().minimize_weight_bit_width(model)
+
+        # Check if we need RTL-specific adjustments
+        idt = self.get_input_datatype(0)
+        if not idt.is_integer() or not tdt.is_integer():
+            return tdt
+
+        # If threshold datatype is smaller than input datatype, we need to ensure
+        # it can represent min_threshold - 1 to handle RTL saturation correctly
+        if tdt.bitwidth() < idt.bitwidth():
+            thresholds = model.get_initializer(self.onnx_node.input[1])
+            min_threshold = np.float64(thresholds.min())
+            max_threshold = np.float64(thresholds.max())
+            min_required = min_threshold - 1
+            max_required = max_threshold
+
+            # Compute the new datatype that can represent the extended range
+            if min_required < 0:
+                if abs(min_required) > max_required:
+                    new_tdt = DataType.get_smallest_possible(min_required)
+                else:
+                    new_tdt = DataType.get_smallest_possible(-max_required - 1)
+            else:
+                if idt.signed():
+                    new_tdt = DataType.get_smallest_possible(-max_required - 1)
+                else:
+                    new_tdt = DataType.get_smallest_possible(max_required)
+
+            # Only update if the new datatype is wider
+            if new_tdt.bitwidth() > tdt.bitwidth():
+                threshold_tensor = self.get_hw_compatible_threshold_tensor(thresholds)
+                assert np.vectorize(new_tdt.allowed)(
+                    threshold_tensor
+                ).all(), "Thresholds can't be expressed with type %s" % str(new_tdt)
+                self.set_nodeattr("weightDataType", new_tdt.name)
+                model.set_tensor_datatype(self.onnx_node.input[1], new_tdt)
+                return new_tdt
+
+        return tdt

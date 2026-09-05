@@ -39,7 +39,7 @@ from qonnx.util.basic import qonnx_make_model
 
 from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.convert_to_hw_layers import InferSplitLayer
+from finn.transformation.fpgadataflow.convert_to_hw.split import InferSplitLayer
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
@@ -107,7 +107,7 @@ def test_fpgadataflow_split(exec_mode, idt):
     for out_shape in exp_oshapes:
         inputs.append(np.random.randint(idt.min(), idt.max() + 1, out_shape).astype(np.float32))
     test_input = np.concatenate(inputs, axis=split_axis)
-    input_dict = {model.graph.input[0].name: test_input}
+    input_dict = {model.get_first_global_in(): test_input}
     ret = execute_onnx(model, input_dict)
     for i, (k, v) in enumerate(ret.items()):
         assert (v == inputs[i]).all()

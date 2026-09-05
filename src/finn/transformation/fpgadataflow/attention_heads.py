@@ -272,7 +272,7 @@ class InferMultiHeads(Transformation):
 
                 # The output of the reshape must be the same as specified as the
                 # second input to the reshape operation
-                assert (out_shape  # noqa
+                assert (out_shape
                         == model.get_initializer(reshape.input[1])).all()
 
                 # The final output shape must match the expectation of
@@ -499,7 +499,7 @@ class MoveMergeMultiHeadsPastMultiThreshold(Transformation):
                     continue
                 # Now we know there is only one consumer operation following the
                 # slice node
-                thresholds_node = model.find_direct_successors(node)[0]  # noqa
+                thresholds_node = model.find_direct_successors(node)[0]
                 # Successor must actually be a MultiThresholds for this
                 # transform to apply
                 if thresholds_node.op_type != "MultiThreshold":
@@ -865,4 +865,76 @@ class UnrollMultiHeadAttention(Transformation):
         model = model.transform(GiveUniqueParameterTensors())
         # Return the transformed model and indicate whether the graph actually
         # has been transformed
+        return model, graph_modified
+
+
+class InferSplitIntoSplitMultiHeads(Transformation):
+    """Infer multi-head split layers from ONNX Split nodes operating on the last axis."""
+
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Replace eligible Split nodes with SplitMultiHeads HW nodes."""
+        graph = model.graph
+        graph_modified = False
+        for index, node in enumerate(graph.node):
+            if node.op_type != "Split":
+                continue
+            split_param = node.input[1]
+            if model.get_initializer(split_param) is None:
+                log.warning("Split param not constant, skipping InferSplitLayer()")
+                continue
+            axis = get_by_name(node.attribute, "axis")
+            inp = node.input[0]
+            ishape = model.get_tensor_shape(inp)
+            if (axis is None) or (ishape is None):
+                continue
+            axis = axis.i
+            last_axis = len(ishape) - 1
+            if (axis != -1) and (axis != last_axis):
+                log.warning(
+                    "SplitMultiHeads supports only last axis, "
+                    "skipping InferSplitIntoSplitMultiHeads()"
+                )
+                continue
+
+            heads = len(node.output)
+            num_elems = model.get_tensor_shape(inp)[-1]
+
+            if num_elems % heads != 0:
+                log.warning(
+                    "SplitMultiHeads supports only uniform splits, "
+                    "skipping InferSplitIntoSplitMultiHeads()"
+                )
+                continue
+
+            if len(node.input) > 1 and node.input[1] != "":
+                split_sizes = model.get_initializer(node.input[1])
+                if split_sizes is not None:
+                    if not all(s == num_elems // heads for s in split_sizes):
+                        log.warning(
+                            "SplitMultiHeads supports only uniform splits, "
+                            "skipping InferSplitIntoSplitMultiHeads()"
+                        )
+                        continue
+
+            num_inputs = list(model.get_tensor_shape(inp)[:-1])
+
+            new_node = oh.make_node(
+                op_type="SplitMultiHeads",
+                domain="finn.custom_op.fpgadataflow",
+                backend="fpgadataflow",
+                inputs=[inp],
+                outputs=list(node.output),
+                name=f"SplitMultiHeads_{node.name}",
+                heads=heads,
+                packed=False,  # We want multiple outputs
+                dtype=model.get_tensor_datatype(inp).name,
+                num_elems=num_elems,
+                num_inputs=num_inputs,
+            )
+
+            graph.node.insert(index, new_node)
+            graph.node.remove(node)
+            graph_modified = True
+            break
+        model = model.transform(InferShapes())
         return model, graph_modified

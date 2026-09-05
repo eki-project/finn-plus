@@ -1,3 +1,4 @@
+"""Module which implements the PrepareIP transformation, which generates the code for each node."""
 # Copyright (C) 2020, Xilinx, Inc.
 # Copyright (C) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
@@ -27,36 +28,45 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
-import qonnx.custom_op.registry as registry
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
+from typing import TYPE_CHECKING, Literal, cast
 
-from finn.util.basic import make_build_dir
+from finn.util.basic import getHWCustomOp, make_build_dir
+from finn.util.exception import FINNUserError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.logging import log
 
+if TYPE_CHECKING:
+    from onnx import NodeProto
 
-def _codegen_single_node(node, model, fpgapart, clk):
-    """Calls C++ code generation for one node. Resulting code can be used
+    from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+    from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+
+
+def _codegen_single_node(
+    node: "NodeProto", model: "ModelWrapper", fpgapart: str, clk: float
+) -> None:
+    """Call C++ code generation for one node. Resulting code can be used
     to generate a Vivado IP block for the node."""
-
     op_type = node.op_type
     try:
         # lookup op_type in registry of CustomOps
-        inst = registry.getCustomOp(node)
+        inst = cast("RTLBackend|HLSBackend", getHWCustomOp(node))
         # get the path of the code generation directory
-        code_gen_dir = inst.get_nodeattr("code_gen_dir_ipgen")
+        code_gen_dir = cast("str", inst.get_nodeattr("code_gen_dir_ipgen"))
         # ensure that there is a directory
-        if code_gen_dir == "" or not os.path.isdir(code_gen_dir):
+        if code_gen_dir == "" or not Path(code_gen_dir).is_dir():
             code_gen_dir = make_build_dir(prefix="code_gen_ipgen_" + str(node.name) + "_")
-            inst.set_nodeattr("code_gen_dir_ipgen", code_gen_dir)
+            inst.set_nodeattr("code_gen_dir_ipgen", str(code_gen_dir))
             # ensure that there is generated code inside the dir
             inst.code_generation_ipgen(model, fpgapart, clk)
         else:
-            log.info(f"Using pre-existing code for {node.name}")
+            log.debug(f"Using cached code for {node.name}")
     except KeyError:
         # exception if op_type is not supported
-        raise Exception(f"Custom op_type {op_type} is currently not supported.")
+        raise FINNUserError(f"Custom op_type {op_type} is currently not supported.") from None
 
 
 class PrepareIP(Transformation):
@@ -67,7 +77,7 @@ class PrepareIP(Transformation):
 
     * fpgapart (string)
 
-    * clk in ns (int)
+    * clk in ns (float)
 
     Any nodes that already have a code_gen_dir_ipgen attribute pointing to a valid path
     will be skipped.
@@ -81,14 +91,16 @@ class PrepareIP(Transformation):
     * For RTL layers: filled template verilog files that can be used to instantiate as
       module during IP stitching.
 
-    """
+    """  # noqa: D400, D415
 
-    def __init__(self, fpgapart, clk):
+    def __init__(self, fpgapart: str, clk: float) -> None:
+        """Initialize the transformation with the given FPGA part and clock period."""
         super().__init__()
         self.fpgapart = fpgapart
         self.clk = clk
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
+        """Apply the transformation to the model."""
         for node in model.graph.node:
             if is_hls_node(node) or is_rtl_node(node):
                 _codegen_single_node(node, model, self.fpgapart, self.clk)

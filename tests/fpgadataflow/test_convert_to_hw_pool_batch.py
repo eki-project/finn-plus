@@ -38,9 +38,10 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.conv_inp_gen import InferConvInpGen
+from finn.transformation.fpgadataflow.convert_to_hw.pool import InferPool
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
@@ -143,7 +144,6 @@ def test_convert_to_hw_pool(idt, odt, pool_config, ifm_ch, pe, op_type, exec_mod
     if pad != 0 and idt.signed():
         pytest.skip("No support for pal_val != 0. Skipping")
 
-    np.random.seed(0)
     ofm_dim = int(((ifm_dim + 2 * pad - k) / stride) + 1)
 
     ishape = (1, ifm_ch, ifm_dim, ifm_dim)
@@ -175,9 +175,9 @@ def test_convert_to_hw_pool(idt, odt, pool_config, ifm_ch, pe, op_type, exec_mod
 
     y_expected = oxe.execute_onnx(model, input_dict)["outp"]
 
-    new_model = model.transform(to_hw.InferPool())
+    new_model = model.transform(InferPool())
     new_model = new_model.transform(GiveUniqueNodeNames())
-    new_model = new_model.transform(to_hw.InferConvInpGen())
+    new_model = new_model.transform(InferConvInpGen())
     # to test cppsim, set preferred_impl_style for swg to hls
     inst = getCustomOp(new_model.get_nodes_by_op_type("ConvolutionInputGenerator")[0])
     inst.set_nodeattr("preferred_impl_style", "hls")

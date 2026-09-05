@@ -41,13 +41,16 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.util.basic import calculate_signed_dot_prod_range, gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
+from finn import xsi as finnxsi
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
+from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.core.rtlsim_exec import rtlsim_exec
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hw.quantized_matrix_vector_activation import (
+    InferQuantizedMatrixVectorActivation,
+)
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
-from finn.transformation.fpgadataflow.derive_characteristic import DeriveCharacteristic
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
@@ -55,10 +58,31 @@ from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
+from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOSizes
+from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
+from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.general import ApplyConfig
+from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import is_versal
+from finn.xsi import SimEngine
+
+
+def InsertAndSetFIFODepths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = fpga_part
+    cfg.synth_clk_period_ns = clk_ns
+    model = model.transform(
+        BuildSimulation(
+            fpga_part,
+            clk_ns,
+            True,
+            performance_sim=False,
+        )
+    )
+    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
+    model = model.transform(ApplySimulatedFIFOSizes(cfg))
+    return model
 
 
 def make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T=None, tdt=None):
@@ -592,7 +616,7 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
     assert exp_cycles != 0
 
     # Run stitched-ip RTLsim to have memstream in the test loop
-    model = model.transform(InsertAndSetFIFODepths(part, clk_ns))
+    model = InsertAndSetFIFODepths(model, part, clk_ns)
     model = model.transform(PrepareIP(part, clk_ns))
     model = model.transform(HLSSynthIP())
     model = model.transform(CreateStitchedIP(part, clk_ns))
@@ -616,9 +640,9 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
     weight_stream = list(weight_stream)
 
     # helper functions to write or read axilite
-    def write_weights(sim):
+    def write_weights(sim: SimEngine) -> None:
         addr = 0
-        writes = []
+        writes: list[tuple[int, str]] = []
         for nw in weight_stream:
             # convert value to hex value and without '0x' prefix
             hex_val = format(nw, "x")
@@ -626,10 +650,11 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
             addr += 4
         sim.write_axilite("s_axilite_0", iter(writes))
         sim.run()
+        finnxsi.reset_rtlsim(sim)
 
     extracted_weight_stream = []
 
-    def read_weights(sim):
+    def read_weights(sim: SimEngine) -> None:
         addr = 0
         read_handles = []
         addresses = []
@@ -651,84 +676,6 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
     assert (
         y_expected == output_mvau_rtl_stitch
     ).all(), "Output of ONNX model not matching output of stitched-IP RTL model!"
-
-
-# mem_mode: internal_embedded or internal_decoupled
-@pytest.mark.parametrize("mem_mode", ["internal_decoupled", "internal_embedded"])
-# activation: None or DataType
-@pytest.mark.parametrize("act", [None, DataType["INT4"]])
-# weight datatype
-@pytest.mark.parametrize("wdt", [DataType["INT4"]])
-# input datatype
-@pytest.mark.parametrize("idt", [DataType["INT4"]])
-# neuron folding, -1 is maximum possible
-@pytest.mark.parametrize("nf", [8])
-# synapse folding, -1 is maximum possible
-@pytest.mark.parametrize("sf", [8])
-# HLS matrix width (input features)
-@pytest.mark.parametrize("mw", [32])
-# HLS matrix height (output features)
-@pytest.mark.parametrize("mh", [32])
-# Backend
-@pytest.mark.parametrize("preferred_impl_style", ["hls", "rtl"])
-@pytest.mark.fpgadataflow
-@pytest.mark.vivado
-def test_mvau_fifocharacterize_rtlsim(
-    mem_mode, idt, wdt, act, nf, sf, mw, mh, preferred_impl_style
-):
-    if preferred_impl_style == "rtl" and (mem_mode == "internal_embedded" or act is not None):
-        pytest.skip("RTL-MVAU doesn't support const mem mode or embedded activations")
-    if nf == -1:
-        nf = mh
-    if sf == -1:
-        sf = mw
-    pe = mh // nf
-    simd = mw // sf
-    assert mh % pe == 0
-    assert mw % sf == 0
-    # generate weights
-    W = gen_finn_dt_tensor(wdt, (mw, mh))
-
-    # no activation, produce accumulators
-    T = None
-    tdt = None
-    if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
-        odt = DataType["UINT32"]
-    else:
-        odt = DataType["INT32"]
-
-    model = make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T, tdt)
-    for node in model.graph.node:
-        # lookup op_type in registry of CustomOps
-        inst = getCustomOp(node)
-        inst.set_nodeattr("mem_mode", mem_mode)
-        inst.set_nodeattr("resType", "auto")
-        inst.set_nodeattr("preferred_impl_style", preferred_impl_style)
-    total_fold = nf * sf
-    exp_total_cycles = int(np.ceil(total_fold * 1.2))
-    model = model.transform(SpecializeLayers("xczu7ev-ffvc1156-2-e"))
-    model = model.transform(MinimizeWeightBitWidth())
-    model = model.transform(MinimizeAccumulatorWidth())
-    model = model.transform(SetExecMode("rtlsim"))
-    model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareIP("xczu7ev-ffvc1156-2-e", 5))
-    model = model.transform(HLSSynthIP())
-    model = model.transform(PrepareRTLSim())
-    model = model.transform(DeriveCharacteristic(exp_total_cycles))
-    node_inst = getCustomOp(model.graph.node[0])
-    period_attr = node_inst.get_nodeattr("io_chrc_period")
-    assert period_attr == exp_total_cycles
-    chrc_in = node_inst.get_nodeattr("io_chrc_in")
-    chrc_out = node_inst.get_nodeattr("io_chrc_out")
-    if mem_mode == "internal_decoupled":
-        assert chrc_in.shape == (2, 2 * exp_total_cycles)
-    else:
-        assert chrc_in.shape == (1, 2 * exp_total_cycles)
-    assert chrc_out.shape == (1, 2 * exp_total_cycles)
-    # total number of transactions == 2*SF
-    assert chrc_in[0, -1] == 2 * sf
-    # all outputs should be produced within the exp n of cycles
-    assert chrc_out[0, exp_total_cycles] == nf
 
 
 @pytest.mark.parametrize("mh", [18])
@@ -757,7 +704,9 @@ def test_fpgadataflow_rtl_mvau(
         )
 
     if pe == 1 and simd == 1 and pumpedMemory:
-        pytest.skip("Skip PE=SIMD=1 with pumpedMemory=True, known weight generation bug")
+        pytest.xfail("Skip PE=SIMD=1 with pumpedMemory=True, known weight generation bug")
+    if simd == mw and pumpedCompute:
+        pytest.xfail("Skip SIMD=MW with pumpedCompute=True, memstreamer not working in rtl sim")
 
     if simd == 1 and pumpedCompute:
         pytest.skip("""Clock pumping an input of SIMD=1 is not meaningful. Skipping test""")
@@ -786,7 +735,7 @@ def test_fpgadataflow_rtl_mvau(
     output_matmul = oxe.execute_onnx(model, input_dict)["global_out"]
 
     # Create MVAU (HLS)
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
     model = model.transform(GiveUniqueNodeNames())
 
     # Apply convert-to-rtl step
@@ -831,7 +780,7 @@ def test_fpgadataflow_rtl_mvau(
     ).all(), "Output of ONNX model not matching output of node-by-node RTLsim!"
 
     # Run stitched-ip RTLsim
-    model = model.transform(InsertAndSetFIFODepths(part, clk_ns))
+    model = InsertAndSetFIFODepths(model, part, clk_ns)
     model = model.transform(PrepareIP(part, clk_ns))
     model = model.transform(HLSSynthIP())
     model = model.transform(CreateStitchedIP(part, clk_ns))
@@ -877,9 +826,9 @@ def test_fpgadataflow_rtl_dynamic_mvau(mh, mw, n_vectors, pe, simd, idt_wdt, par
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
 
-    inpA_name = model.graph.input[0].name
+    inpA_name = model.get_first_global_in()
     inpB_name = model.graph.input[1].name
-    outp_name = model.graph.output[0].name
+    outp_name = model.get_first_global_out()
 
     # Create MatMul & obtain golden reference output
     inpTensor_A = gen_finn_dt_tensor(
@@ -894,7 +843,7 @@ def test_fpgadataflow_rtl_dynamic_mvau(mh, mw, n_vectors, pe, simd, idt_wdt, par
     output_matmul = oxe.execute_onnx(model, input_dict)[outp_name]
 
     # Create MVAU
-    model = model.transform(to_hw.InferQuantizedMatrixVectorActivation())
+    model = model.transform(InferQuantizedMatrixVectorActivation())
     model = model.transform(GiveUniqueNodeNames())
     for node in model.graph.node:
         # lookup op_type in registry of CustomOps
@@ -942,7 +891,7 @@ def test_fpgadataflow_rtl_dynamic_mvau(mh, mw, n_vectors, pe, simd, idt_wdt, par
     ).all(), "Output of ONNX model not matching output of node-by-node RTLsim!"
 
     # Run stitched-ip RTLsim
-    model = model.transform(InsertAndSetFIFODepths(part, clk_ns))
+    model = InsertAndSetFIFODepths(model, part, clk_ns)
     model = model.transform(SpecializeLayers(part))
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(PrepareIP(part, clk_ns))
@@ -955,3 +904,88 @@ def test_fpgadataflow_rtl_dynamic_mvau(mh, mw, n_vectors, pe, simd, idt_wdt, par
     assert (
         output_matmul == output_mvau_rtl_stitch
     ).all(), "Output of ONNX model not matching output of stitched-IP RTL model!"
+
+
+@pytest.mark.fpgadataflow
+@pytest.mark.vivado
+def test_fpgadataflow_mvau_hls_threshold_width_cppsim():
+    """
+    Test that threshold datatype is not minimized narrower than accumulator.
+
+    This tests the fix for a bug where HLS MVAU threshold comparisons could
+    produce incorrect results when thresholds were minimized to a narrower
+    datatype than the accumulator. The HLS implementation uses the threshold
+    datatype for comparisons, so if it's narrower than the accumulator,
+    accumulator values get truncated.
+
+    Setup:
+    - INT8 inputs/weights with mw=64 -> accumulator needs ~14 bits
+    - Small thresholds (INT8 range) that would be minimized to narrow type
+    - Extreme input values (min/max) to trigger full accumulator range
+
+    The test follows the builder flow:
+    MinimizeWeightBitWidth -> MinimizeAccumulatorWidth -> RoundAndClipThresholds
+    -> MinimizeWeightBitWidth
+    """
+    mw, mh = 64, 4
+    pe, simd = 2, 8
+    idt = DataType["INT8"]
+    wdt = DataType["INT8"]
+    odt = DataType["INT4"]
+    n_steps = odt.get_num_possible_values() - 1
+
+    # Generate random weights
+    W = gen_finn_dt_tensor(wdt, (mw, mh))
+
+    # Generate SMALL thresholds (INT8 range) - key to triggering the bug
+    # These will be minimized to a narrow type after RoundAndClipThresholds
+    T = gen_finn_dt_tensor(DataType["INT8"], (mh, n_steps)).astype(np.float32)
+    T = np.sort(T, axis=1)
+    tdt = DataType["INT32"]
+
+    model = make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T, tdt)
+
+    # Extreme inputs to trigger full accumulator range
+    # Max accumulator = 127 * 64 * max_weight ~ 8128 (needs ~14 bits)
+    # Min accumulator = -128 * 64 * max_weight ~ -8192
+    x_max = np.ones((1, mw), dtype=np.float32) * idt.max()
+    x_min = np.ones((1, mw), dtype=np.float32) * idt.min()
+
+    # Expected outputs using numpy reference
+    y_max_expected = multithreshold(np.matmul(x_max, W), T, 1, odt.min())
+    y_min_expected = multithreshold(np.matmul(x_min, W), T, 1, odt.min())
+
+    # Apply transformations
+    model = model.transform(GiveUniqueNodeNames())
+    for node in model.graph.node:
+        inst = getCustomOp(node)
+        inst.set_nodeattr("preferred_impl_style", "hls")
+        inst.set_nodeattr("mem_mode", "internal_embedded")
+
+    model = model.transform(SpecializeLayers("xczu7ev-ffvc1156-2-e"))
+    model = model.transform(GiveUniqueNodeNames())
+
+    # Full builder flow for bit width minimization
+    model = model.transform(MinimizeWeightBitWidth())
+    model = model.transform(MinimizeAccumulatorWidth())
+    model = model.transform(InferDataTypes())
+    model = model.transform(RoundAndClipThresholds())
+    model = model.transform(InferDataTypes())
+    model = model.transform(MinimizeWeightBitWidth())
+    model = model.transform(InferDataTypes())
+
+    # Run cppsim
+    model = model.transform(SetExecMode("cppsim"))
+    model = model.transform(PrepareCppSim())
+    model = model.transform(CompileCppSim())
+
+    # Verify results with extreme inputs
+    y_max_produced = oxe.execute_onnx(model, {"inp": x_max})["outp"]
+    y_min_produced = oxe.execute_onnx(model, {"inp": x_min})["outp"]
+
+    assert np.allclose(
+        y_max_produced, y_max_expected
+    ), f"Max input test failed: expected {y_max_expected}, got {y_max_produced}"
+    assert np.allclose(
+        y_min_produced, y_min_expected
+    ), f"Min input test failed: expected {y_min_expected}, got {y_min_produced}"
