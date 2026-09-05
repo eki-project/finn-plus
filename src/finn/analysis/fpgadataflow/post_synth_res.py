@@ -68,14 +68,15 @@ def post_synth_res(
             "Cannot generate resource reports - model metadata "
             "property 'vivado_synth_rpt' is empty!"
         )
+    reports: dict[int, str]
     try:
         reports = json.loads(report_json_data)
     except JSONDecodeError:
-        reports = {0: Path(report_json_data)}
-    result = {}
+        reports = {0: report_json_data}
+    result: dict[int, dict] = {}
     for device, file in reports.items():
         result[device] = _post_synth_res_single_file(
-            model, file, model.get_metadata_prop("platform") == "alveo", device
+            model, Path(file), model.get_metadata_prop("platform") == "alveo", device
         )
     return result
 

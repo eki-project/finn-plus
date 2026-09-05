@@ -86,6 +86,8 @@ class ParallelVitisSynthesis(Transformation):
         gen_result = subprocess.run(
             shlex.split(f"vivado -mode batch -source {config.gen_report_xml_path}"),
             cwd=config.gen_report_xml_path.parent,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         if gen_result.returncode != 0:
             log.error(
@@ -118,7 +120,7 @@ class ParallelVitisSynthesis(Transformation):
             tpe.shutdown(wait=True)
 
         # Check results and exceptions
-        results = {}
+        results: dict[int, str] = {}
         any_failed = False
         for i, future in futures.items():
             result = cast("Path", future.result())
@@ -139,7 +141,9 @@ class ParallelVitisSynthesis(Transformation):
         model.set_metadata_prop("bitfile", json.dumps(results))
         model.set_metadata_prop(
             "vivado_synth_rpt",
-            json.dumps({device: Path(p).parent / "synth_report.xml" for device, p in results}),
+            json.dumps(
+                {device: str(Path(p).parent / "synth_report.xml") for device, p in results.items()}
+            ),
         )
         return model, False
 
@@ -152,7 +156,7 @@ class VitisBuild(Transformation):
 
     def __init__(self, cfg: DataflowBuildConfig) -> None:
         """Run a Vitis build on the entire graph by creating a linking config and executing it."""
-        self.cfg = cfg
+        self.cfg: DataflowBuildConfig = cfg
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Run the build."""
@@ -175,7 +179,10 @@ class VitisBuild(Transformation):
             match self.cfg.partitioning_configuration.communication_kernel:
                 case MFCommunicationKernel.AURORA:
                     model = model.transform(
-                        AddAuroraToLinkConfig(platform_name=self.cfg._resolve_vitis_platform())
+                        AddAuroraToLinkConfig(
+                            board=self.cfg.board,
+                            fpga_part=self.cfg._resolve_fpga_part(),
+                        )
                     )
                 case _:
                     raise FINNInternalError(
