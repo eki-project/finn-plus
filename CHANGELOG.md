@@ -6,13 +6,14 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
-## Unreleased
-Planned release: 1.5.0.
+## 1.5.0 - 05.09.2026
 
 ### Added
-- Support for Python 3.14 (#233)
-- Added distributed simulation based FIFO sizing and a new performance simulation (#187)
-- Multi-DNN support: run several DNNs on one accelerator
+- New distributed simulation infrastructure for search-based FIFO sizing and performance simulation (#187)
+- Multi-FPGA inference support (#23)
+    - Initial communication backend: [AuroraFlow](https://github.com/pc2/AuroraFlow) (new dependency)
+    - See [MultiFPGA README](src/finn/transformation/fpgadataflow/multifpga/README.md) for usage and development information
+- Experimental Multi-DNN support: run several DNNs on one accelerator (#213)
     - Three modes, selected via the `Generation.mode` key of the multi-DNN config JSON (`multi_dnn_config_path`):
         - `Parallel`: the models run side by side, with their inputs/outputs optionally combined channelwise
         - `SelectableWeights`: the models share one datapath and are switched by swapping weights at runtime
@@ -23,12 +24,17 @@ Planned release: 1.5.0.
     - Automatic DFX floorplanning (`dfx_auto_floorplanning.tcl`); PR region resource reports and an SVG floorplan diagram are written to the report directory
     - Partial bitstreams are copied into `<output_dir>/bitfile/partial_bitstreams`
     - The Pynq driver can drive multi-DNN accelerators, including DFX reconfiguration and tUSER-based round-robin scheduling
-- Multi-FPGA inference support (#23)
-    - Initial communication backend: [AuroraFlow](https://github.com/pc2/AuroraFlow) (new dependency)
-    - See [MultiFPGA README](src/finn/transformation/fpgadataflow/multifpga/README.md) for usage and development information
+- Live-FIFO sizing improvements: parallelized SDP creation, improved resilience against latency jitter (#237)
+- Support for Python 3.14 (#233)
+- Added ResNet-18 model support and build flows (#182)
+- Added dataset validation to the Pynq driver and CI validation workflow (#173)
 - Error lines from Vivado logs are printed to console in case of failing synthesis runs (#190)
-- Added a `CHANGELOG.md` file
-- Added `CITATION.cff` file
+- Added `CHANGELOG.md` and `CITATION.cff` files
+- (Xilinx) Multi-Layer Offload (MLO / FINNLoop): looping execution across layers (loop rolling, stream tapping with skid buffer, weight fetching, and intermediate frame buffering on HBM/DRAM) (Xilinx#1489, Xilinx#1415, Xilinx#1466, Xilinx#1559)
+- (Xilinx) RTL and HLS integer Requantization operators (`Requant_rtl`, `Requant_hls`) with baked-in weights (Xilinx#1557)
+- (Xilinx) Float2Int custom operator and conversion transformation (`InferQuantAsFloat2Int`) (Xilinx#1512, Xilinx#1523)
+- (Xilinx) Support for FLOAT32 RTL elementwise operations (`ElementwiseBinary_rtl`) (Xilinx#1530, Xilinx#1545)
+- (Xilinx) Node-by-node waveform saving during RTL simulation (Xilinx#1547)
 
 ### Changed
 - Modular creation of linker files (New class: `VitisLinkConfig`) (formerly #27, now #23)
@@ -38,28 +44,32 @@ Planned release: 1.5.0.
     - (Vitis Alveo) Adds IODMAs, creates StreamingDataflowPartitions, stitches IPs, generates XOs.
     - (Zynq) Nothing changed.
     - New build path: `... -> step_prepare_synthesis -> step_synthesize_bitfile -> ...`
-- Vivado Stitch Projects have names specifying the nodes they contain if there are 3 or fewer nodes in the project (#190)
+- Vivado Stitch Projects have names specifying the nodes they contain if there are 3 or fewer nodes in the project (#190, #222)
 - The dependency definition file can now be found at `src/finn/interface/external_dependencies.yaml` instead of the repository root (#23, #216)
 - Split the monolithic `convert_to_hw_layers.py` into a `convert_to_hw` package with one file per operator for better maintainability (#220)
 - Dependencies can now be cached even without commit hash or Last-Modified header (#242)
 - CI caches dependencies using the dependency definition file as key (#242)
 - The Pynq driver is now a standalone package: `finn-plus-driver` (#234)
-- `onnx-passes` is now a Python package dependency instead of a FINN+ external dependency (#233, #199)
+- `onnx-passes` is now a Python package dependency instead of a FINN+ external dependency (#233)
 - If the `target_fps` cannot be met during folding, FINN+ prints a warning with details (#209)
 - Added warnings for floating point operations in the graph (#123, #227)
 - Failed tests in the CI are now immediately printed (#229)
 - Set the default start method for multiprocessing from `fork` to `spawn` (#229)
-    - Enabled `FINNSettings` to work correctly in Python 3.14
-    - Prevents RuntimeErrors in CI/test
 - Tests receive deterministic per-item seeds for RNG (#230)
 - Zynq builds now generate the accelerator clock with a PLL (Clocking Wizard) instead of the processing system, for exact and static clock generation
-- The instrumentation core now supports `tLast` generation and simple `tUSER`-based scheduling, and computes the running average in software to reduce pipeline depth
+- The instrumentation core now supports `tLast` generation and simple `tUSER`-based scheduling, and computes the running average in software to reduce pipeline depth (#212)
+- (Xilinx) LayerNorm parallelism scaling below N/SIMD = 12 (Xilinx#1534)
+- (Xilinx) Generic `step_convert_to_hw` transformation application in default build flow (Xilinx#1542)
+- (Xilinx) Optional skipping of the very first transpose node (NCHW -> NHWC) in build flow (Xilinx#1535)
+- (Xilinx) Accurate expected cycle estimation for Shuffle operations accounting for subsequent decompositions (Xilinx#1537)
+- (Xilinx) Optimized RAM style attributes for baked-in weights thresholding (Xilinx#1515)
+- (Xilinx) Support for `DuplicateStreams` across additional graph patterns (Xilinx#1529, Xilinx#1532)
 
 #### Removed
-- Removed old simulation based FIFO sizing, superseded by the new distributed simulation based sizing (#187)
-- Removed Jupyter notebooks and subpackage in favor of an updated Wiki (#241)
+- Removed old "largefifo_rtlsim" and "characterize" FIFO sizing methods, superseded by the new distributed simulation based sizing (#187)
 - Removed deprecated ops (`AddStreams`, `ChannelwiseLinear`, `StreamingEltwise`) (#162, #225)
-- Removed end2end tests (#223)
+- Removed Jupyter notebooks and subpackage in favor of an updated Wiki (#241)
+- Removed end2end tests from the Pytest test suite in favor of full regression testing builds in our CI (#223)
 
 #### Fixes
 - Git timeouts now display a timeout message instead of "Internal Exception" (#243)
@@ -68,6 +78,11 @@ Planned release: 1.5.0.
 - Fixed that `wget` timeouts would crash FINN+, even if dependencies were only checked, not updated (#23, #208)
 - Fixed cases in which folding would accidentally create streams wider than `mvau_wwidth_max` due to a missing PE check (#209)
 - `MVAU_hls` now correctly checks that `AP_INT_MAX_W` is below 8192 (#209)
+- Fixed `LD_LIBRARY_PATH` not being set correctly for PyBind-based simulation (#224)
+- Fixed segmentation faults in Vivado simulation infrastructure (#228)
+- Fixed C++ driver deployment package generation, Vitis synthesis log handling, and post-synthesis report collection (#249)
+- (Xilinx) Fixed threshold datatype minimization for HLS MVAU/VVAU and narrowing cast handling when WT < WI (Xilinx#1561, Xilinx#1553)
+- (Xilinx) Fixed integer processing in `minimize_accumulator_width` (Xilinx#1524)
 
 ## 1.4.0 - 03.03.2026
 ### Added
