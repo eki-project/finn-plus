@@ -1,0 +1,6 @@
+outs:
+- md5: 47d465ea1c5d559cd863551f824deb86.dir
+  size: 21564294
+  nfiles: 21
+  hash: md5
+  path: reports
