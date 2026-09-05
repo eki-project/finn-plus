@@ -9,11 +9,15 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## 1.5.0 - 05.09.2026
 
 ### Added
-- New distributed simulation infrastructure for search-based FIFO sizing and performance simulation (#187)
-- Multi-FPGA inference support (#23)
+- **New distributed simulation infrastructure** for search-based FIFO sizing and performance simulation (#187)
+    - *To be presented as a Poster @ FPL'26*
+- **Multi-FPGA inference support** (#23)
+    - *Corresponding paper @ HEART'25: ["AuroraFlow, an Easy-to-Use, Low-Latency FPGA Communication Solution Demonstrated on Multi-FPGA Neural Network Inference"](https://doi.org/10.1145/3728179.3728190)*
     - Initial communication backend: [AuroraFlow](https://github.com/pc2/AuroraFlow) (new dependency)
     - See [MultiFPGA README](src/finn/transformation/fpgadataflow/multifpga/README.md) for usage and development information
-- Experimental Multi-DNN support: run several DNNs on one accelerator (#213)
+- **Live-FIFO sizing improvements**: parallelized SDP creation, improved resilience against latency jitter (#237)
+    - *Corresponding paper @ ARC'26: ["LiveFIFO: FPGA-in-the-Loop Buffer Sizing for Dataflow Accelerators"](https://doi.org/10.1007/978-3-032-29365-7_3)*
+- **Experimental Multi-DNN support**: run several DNNs on one accelerator (#213)
     - Three modes, selected via the `Generation.mode` key of the multi-DNN config JSON (`multi_dnn_config_path`):
         - `Parallel`: the models run side by side, with their inputs/outputs optionally combined channelwise
         - `SelectableWeights`: the models share one datapath and are switched by swapping weights at runtime
@@ -24,13 +28,12 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
     - Automatic DFX floorplanning (`dfx_auto_floorplanning.tcl`); PR region resource reports and an SVG floorplan diagram are written to the report directory
     - Partial bitstreams are copied into `<output_dir>/bitfile/partial_bitstreams`
     - The Pynq driver can drive multi-DNN accelerators, including DFX reconfiguration and tUSER-based round-robin scheduling
-- Live-FIFO sizing improvements: parallelized SDP creation, improved resilience against latency jitter (#237)
 - Support for Python 3.14 (#233)
 - Added ResNet-18 model support and build flows (#182)
 - Added dataset validation to the Pynq driver and CI validation workflow (#173)
 - Error lines from Vivado logs are printed to console in case of failing synthesis runs (#190)
 - Added `CHANGELOG.md` and `CITATION.cff` files
-- (Xilinx) Multi-Layer Offload (MLO / FINNLoop): looping execution across layers (loop rolling, stream tapping with skid buffer, weight fetching, and intermediate frame buffering on HBM/DRAM) (Xilinx#1489, Xilinx#1415, Xilinx#1466, Xilinx#1559)
+- (Xilinx) **Multi-Layer Offload (MLO / FINNLoop)**: looping execution across layers (loop rolling, stream tapping with skid buffer, weight fetching, and intermediate frame buffering on HBM/DRAM) (Xilinx#1489, Xilinx#1415, Xilinx#1466, Xilinx#1559)
 - (Xilinx) RTL and HLS integer Requantization operators (`Requant_rtl`, `Requant_hls`) with baked-in weights (Xilinx#1557)
 - (Xilinx) Float2Int custom operator and conversion transformation (`InferQuantAsFloat2Int`) (Xilinx#1512, Xilinx#1523)
 - (Xilinx) Support for FLOAT32 RTL elementwise operations (`ElementwiseBinary_rtl`) (Xilinx#1530, Xilinx#1545)
