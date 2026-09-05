@@ -50,10 +50,11 @@ from finn.util.logging import log
 from finn.util.settings import get_settings
 
 
-def update_bitfile_path_after_copy(bitfile_path: Path, json_path: Path) -> None:
+def update_bitfile_path_after_copy(device: int, bitfile_path: Path, json_path: Path) -> None:
     """Update the xclbinPath in the JSON configuration to point to the new bitfile location.
 
     Args:
+        device (int): Device for which to update the path.
         json_path (Path): Path to the JSON configuration file
         bitfile_path (Path): New path to the bitfile (.xclbin)
     """
@@ -68,12 +69,13 @@ def update_bitfile_path_after_copy(bitfile_path: Path, json_path: Path) -> None:
     with json_path.open() as f:
         data = json.load(f)
 
-    # Update the xclbinPath for each device in the configuration
-    for device_config in data:
-        device_config["xclbinPath"] = bitfile_path.resolve().as_posix()
+    # Update the xclbinPath for the specified device
+    for i in range(len(data)):
+        if int(data[i]["xrtDeviceIndex"]) == int(device):
+            data[i]["xclbinPath"] = str(bitfile_path.resolve().as_posix())
 
     # Write the updated configuration back to the file
-    with json_path.open("w") as f:
+    with json_path.open("w+") as f:
         json.dump(data, f, indent=4)
 
 

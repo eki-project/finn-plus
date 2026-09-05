@@ -57,7 +57,19 @@ def open_json_report(id, report_name, is_followup=False):
         return None
 
 
+def classify_run(params):
+    """Classify a run as a standard build, a live FIFO-sizing build or its follow-up build."""
+    if params.get("auto_fifo_strategy") != "live_fifo":
+        return "standard"
+    # The follow-up build reuses the params of the live FIFO-sizing run with sizing disabled
+    if params.get("auto_fifo_depths"):
+        return "live_fifo"
+    return "live_fifo_followup"
+
+
 def generate_power_report(rails_names, experiment_reports_path):
+    if not os.path.isdir(experiment_reports_path):
+        return None
     for filename in os.listdir(experiment_reports_path):
         power_measurements = [
             m
@@ -351,6 +363,12 @@ class DVCLoggerHelper:
 
 
 class ExperimentMetricsLogger:
+    """Aggregate the per-iteration measurement reports selected by the "Metrics" config section.
+
+    Aggregation happens at log time, so the selected keys and their "fn" are baked into the
+    experiment: changing them only affects future runs, never experiments already pushed.
+    """
+
     def __init__(self, dvc_logger, collect_cfg_path):
         self.dvc_logger = dvc_logger
         with open(collect_cfg_path, "r") as f:
@@ -360,6 +378,9 @@ class ExperimentMetricsLogger:
         metrics = self.collect_cfg.get("Metrics", {})
         experiment_files = list(metrics.keys())
         exp_reports = {exp: [] for exp in experiment_files}
+
+        if not os.path.isdir(report_path):
+            return {k: [] for k in exp_reports}
 
         for foldername in os.listdir(report_path):
             files = os.listdir(os.path.join(report_path, foldername))
@@ -467,12 +488,21 @@ class ExperimentMetricsLogger:
                 self.dvc_logger.log_metric(prefix, key, value)
 
     def log_metrics(self, metrics, prefix="measurement/"):
+        # Yields keys of the form "measurement/<report file stem>/<metric>", which is how they
+        # have to be referenced in the "Compare" config section
         for report_file, report_data in metrics.items():
             file_stem = os.path.splitext(report_file)[0]
             self._log_nested(report_data, prefix + file_stem + "/")
 
 
 class ExperimentComparator:
+    """Compare the current run against the newest matching experiment of the compare tag.
+
+    Comparison reads the raw metric values of the reference experiment, so tolerances and
+    required/plot flags from the "Compare" config section apply retroactively. Metrics that did
+    not exist yet when the reference experiment ran cannot be backfilled.
+    """
+
     def __init__(self, dvc_logger, collect_cfg_path):
         self.dvc_logger = dvc_logger
         with open(collect_cfg_path, "r") as f:
@@ -510,6 +540,7 @@ class ExperimentComparator:
                 for exp_range in exp_state.experiments or []:
                     for exp_rev in exp_range.revs or []:
                         if exp_rev.name and exp_rev.data:
+                            # The full metric dump of the reference run, not its metric_report.json
                             exp_data[exp_rev.name] = {
                                 "metrics": exp_rev.data.metrics["dvclive/metrics.json"]["data"],
                                 "params": exp_rev.data.params["dvclive/params.yaml"]["data"],
@@ -522,9 +553,19 @@ class ExperimentComparator:
                 if not (v.get("metrics", {}).get("status") == "failed")
             }
 
-        return exp_data
+        # Live FIFO-sizing runs build a surrogate design and their follow-up runs use an
+        # externally supplied FIFO config, so neither is a valid regression reference.
+        filtered = {}
+        for name, data in exp_data.items():
+            kind = classify_run(data.get("params", {}).get("params", {}))
+            if kind != "standard" or "_followup_" in name:
+                continue
+            filtered[name] = data
+
+        return filtered
 
     def _flatten_metrics_dict(self, d, prefix=""):
+        # DVC nests metrics on '/', undo that to get the keys used in the "Compare" config section
         flat = {}
         for k, v in d.items():
             key = f"{prefix}/{k}" if prefix else k
@@ -594,6 +635,8 @@ class ExperimentComparator:
         all_keys = set(current.keys()) | set(compare.keys())
 
         for key in sorted(all_keys):
+            # Metrics not listed in the config fall back to the global tolerance and are never
+            # required, i.e. they are reported but cannot fail the job
             metric_cfg = metrics_cfg.get(key, {})
             if isinstance(metric_cfg, dict) and "allowed_uncertainty" in metric_cfg:
                 uncertainty = metric_cfg["allowed_uncertainty"]
@@ -746,19 +789,15 @@ if __name__ == "__main__":
             + ")"
         )
 
-        # Check for paired Live FIFO configuration artifacts.
-        run_output_dir = os.path.join("measurement_artifacts", "runs_output", "run_%d" % (id))
-        is_fifo_sizing = False
-        if os.path.isdir(run_output_dir):
-            for root, dirs, files in os.walk(run_output_dir):
-                if "folding_config.json" in files and "fifo_config.json" in files:
-                    is_fifo_sizing = True
-                    break
-        is_fifo_sizing = is_fifo_sizing and not args.followup  # Ignore if followup
-
         # initialize logging wrapper with input parameters logged by benchmarking infrastructure
         metadata_bench = open_json_report(id, "metadata_bench.json", args.followup)
         params = {"params": metadata_bench["params"]}
+        run_kind = "live_fifo_followup" if args.followup else classify_run(metadata_bench["params"])
+        # Only standard builds are held against the regression tolerances of the compare tag
+        enforce_comparison = run_kind == "standard"
+        print(
+            "Run %d classified as '%s' (enforce_comparison=%s)" % (id, run_kind, enforce_comparison)
+        )
         with DVCLoggerHelper(
             experiment_name, experiment_msg, id, params, is_followup=args.followup
         ) as dvc_logger:
@@ -780,6 +819,9 @@ if __name__ == "__main__":
 
             # METRICS
             # TODO: make all logs consistent (at generation), e.g., BRAM vs BRAM18 vs BRAM36)
+            # Note: the build-side reports below are logged with a hardcoded key selection, they
+            # do not go through the "Metrics" section of collect.yaml and are not aggregated
+            # (unlike the measurement reports handled by ExperimentMetricsLogger further down).
 
             # status
             status = metadata_bench["status"]
@@ -963,13 +1005,17 @@ if __name__ == "__main__":
 
             # power measurement
             experiment_reports_path = os.path.join(
-                "measurement_artifacts", "runs_output", "run_%d" % (id), "reports"
+                "measurement_artifacts_followup" if args.followup else "measurement_artifacts",
+                "runs_output",
+                "run_%d" % (id),
+                "reports",
             )
             power = generate_power_report(
                 ["0V85_power", "3V3_power", "total_power"], experiment_reports_path
             )
-            for name, value in power.items():
-                dvc_logger.log_metric(prefix="measurement/power/", name=name, value=value)
+            if power:
+                for name, value in power.items():
+                    dvc_logger.log_metric(prefix="measurement/power/", name=name, value=value)
 
             # measurement metric logging
             collect_cfg_path = os.path.join(
@@ -1017,8 +1063,7 @@ if __name__ == "__main__":
             microbench_result_data[dut].append(dvc_logger.data_dict)
 
         # Prepare benchmarking config for follow-up runs after live FIFO-sizing
-        # Only generate follow-up config if this is not already a follow-up run
-        if not args.followup:
+        if run_kind == "live_fifo":
             # Choose the search order with the lowest fifo_size_total_kB
             lfs_base_dir = os.path.join(
                 "measurement_artifacts",
@@ -1042,7 +1087,13 @@ if __name__ == "__main__":
                         if fifo_size < best_fifo_size:
                             best_fifo_size = fifo_size
                             best_search_order = search_order
-            if best_search_order is not None:
+
+            if best_search_order is None:
+                print(
+                    "ERROR: No valid search order with fifo_sizing_report.json found in %s."
+                    % lfs_base_dir
+                )
+            else:
                 print(
                     "Selecting search order '%s' with fifo_size_total_kB=%.2f"
                     % (best_search_order, best_fifo_size)
@@ -1053,25 +1104,12 @@ if __name__ == "__main__":
                 fifo_config_path = os.path.join(
                     lfs_base_dir, best_search_order, "both", "fifo_config.json"
                 )
-            else:
-                print(
-                    "No valid search order with fifo_sizing_report.json found in %s." % lfs_base_dir
-                )
-                folding_config_path = None
-                fifo_config_path = None
-
-            if (
-                folding_config_path is not None
-                and os.path.isfile(folding_config_path)
-                and os.path.isfile(fifo_config_path)
-            ):
                 print(
                     "Creating follow-up experiment config using folding config %s "
                     "and FIFO config %s" % (folding_config_path, fifo_config_path)
                 )
 
                 # Create benchmarking config
-                metadata_bench = open_json_report(id, "metadata_bench.json", args.followup)
                 configuration = dict()
                 for key in metadata_bench["params"]:
                     # wrap in list
@@ -1083,33 +1121,40 @@ if __name__ == "__main__":
                 configuration["fifo_config_file"] = [fifo_config_path]
 
                 # Exception for ResNet-50: Final model doesn't fit board used for FIFO-sizing
-                if "dut" in metadata_bench["params"]:
-                    if metadata_bench["params"]["dut"] == "resnet50":
-                        configuration["board"] = ["U250"]
-                        configuration["enable_instrumentation"] = [False]
-                        configuration["rtlsim_batch_size"] = [3]
-                        configuration["generate_outputs"] = [
-                            ["stitched_ip", "rtlsim_performance", "bitfile"]
-                        ]
+                if metadata_bench["params"].get("dut") == "resnet50":
+                    configuration["board"] = ["U250"]
+                    configuration["enable_instrumentation"] = [False]
+                    configuration["rtlsim_batch_size"] = [3]
+                    configuration["generate_outputs"] = [
+                        ["stitched_ip", "rtlsim_performance", "bitfile"]
+                    ]
 
                 follow_up_bench_cfg.append(configuration)
 
-            collect_cfg_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "collect.yaml"
-            )
-        if not is_fifo_sizing:
+        # Always aggregate/compare/plot metrics, but only enforce the result for standard builds
+        collect_cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "collect.yaml")
+        try:
             comp = ExperimentComparator(dvc_logger, collect_cfg_path)
             metrics = comp.aggregate_metrics_across_reports()
-            if metrics is None:
-                print("ERROR: Metric comparison failed for run %d" % id)
+        except Exception as e:
+            print("ERROR: Metric aggregation raised an exception for run %d: %s" % (id, e))
+            metrics = None
+        if metrics is None:
+            print(
+                "%s: No comparison point found for run %d (kind '%s')"
+                % ("ERROR" if enforce_comparison else "WARNING", id, run_kind)
+            )
+            if enforce_comparison:
                 fail_missing_comparison = True
+        else:
+            report = comp.compare_metrics_across_reports(metrics)
+            report["enforced"] = enforce_comparison
+            report["run_kind"] = run_kind
+            if args.followup:
+                name = metrics[0].get("dut") + f"_followup_r{id}"
             else:
-                report = comp.compare_metrics_across_reports(metrics)
-                if args.followup:
-                    name = metrics[0].get("dut") + f"_followup_r{id}"
-                else:
-                    name = metrics[0].get("dut") + f"_r{id}"
-                metric_reports[name] = report
+                name = metrics[0].get("dut") + f"_r{id}"
+            metric_reports[name] = report
 
     # Save microbenchmark results as (DVC-tracked? TODO) JSON for each DUT
     for dut in microbench_result_data:
@@ -1162,6 +1207,8 @@ if __name__ == "__main__":
 
     # Fail collect if any required metric is not ok
     for dut, report in metric_reports.items():
+        if not report.get("enforced", True):
+            continue
         for metric, result in report["metrics"].items():
             if result.get("required") and result.get("status") != "ok":
                 fail = True
