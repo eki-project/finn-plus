@@ -1,0 +1,69 @@
+{
+    "status": "ok",
+    "hls_estimate": {
+        "resources": {
+            "LUT": 107266.0,
+            "FF": 46898.0,
+            "DSP": 120.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 368.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 142903,
+            "FF": 116712,
+            "SRL": 17457,
+            "DSP": 120,
+            "BRAM_18K": 47,
+            "BRAM_36K": 79,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 2516.0,
+            "avg_3V3_power": 888.085,
+            "avg_total_power": 3404.085,
+            "min_0V85_power": 2516.0,
+            "min_3V3_power": 888.085,
+            "min_total_power": 3404.085,
+            "max_0V85_power": 2516.0,
+            "max_3V3_power": 888.085,
+            "max_total_power": 3404.085
+        },
+        "report_experiment_instrumentation": {
+            "min_latency_cycles": 265970,
+            "frequency_mhz": 100,
+            "throughput_fps": 1221,
+            "min_pipeline_depth": 3.25,
+            "pipeline_depth": 3.32,
+            "latency_ms": 2.72103,
+            "min_latency_ms": 2.6597,
+            "error": false,
+            "interval_cycles": 81920,
+            "latency_cycles": 272103
+        }
+    },
+    "time": {
+        "export": 0,
+        "step_qonnx_to_finn": 0,
+        "step_tidy_up": 3,
+        "step_streamline": 18,
+        "step_convert_to_hw": 2,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_set_folding": 0,
+        "step_minimize_bit_width": 2,
+        "step_generate_estimate_reports": 0,
+        "step_generate_hardware": 433,
+        "step_create_stitched_ip": 76,
+        "step_measure_rtlsim_performance": 0,
+        "step_out_of_context_synthesis": 0,
+        "step_synthesize_bitfile": 2176,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 2710
+    }
+}
