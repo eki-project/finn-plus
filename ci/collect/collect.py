@@ -503,10 +503,29 @@ class ExperimentComparator:
     not exist yet when the reference experiment ran cannot be backfilled.
     """
 
+    # Params that are allowed to differ between the current run and its comparison reference
+    # (they affect only how/where results are stored, not the DUT configuration itself).
+    _IGNORED_PARAM_KEYS = {
+        "store_results_in_dvc_experiment",
+        "store_results_in_dvc_data",
+    }
+
     def __init__(self, dvc_logger, collect_cfg_path):
         self.dvc_logger = dvc_logger
         with open(collect_cfg_path, "r") as f:
             self.collect_cfg = yaml.safe_load(f)
+
+    def _normalize_params(self, metadata):
+        """Return the bench params of a run, stripped of keys irrelevant to matching.
+
+        Used to compare the full DUT configuration (e.g. idt/wdt/nhw/... for microbenchmarks
+        like "mvau"), not just the DUT name, so that e.g. two "mvau" runs with different data
+        types are never mistaken for one another when picking a comparison reference.
+        """
+        params = dict((metadata or {}).get("params", {}) or {})
+        for key in self._IGNORED_PARAM_KEYS:
+            params.pop(key, None)
+        return params
 
     def _get_experiment_data(self):
         tag = self.collect_cfg.get("Compare").get("compare_tag")
@@ -583,11 +602,18 @@ class ExperimentComparator:
 
         matching_exps = {}
         current_model_name = self.extract_model_name(current_params)
+        current_full_params = self._normalize_params(current_params)
 
         for exp_name, exp_data in experiment_data.items():
             exp_model_name = self.extract_model_name(exp_data.get("params"))
-            if exp_model_name == current_model_name:
-                matching_exps[exp_name] = exp_data
+            if exp_model_name != current_model_name:
+                continue
+            # The model_name alone is not specific enough to disambiguate microbenchmark
+            # configs that share the same DUT but differ in other params (e.g. "mvau" runs
+            # with different idt/wdt/nhw/...), so compare the full param set as well.
+            if self._normalize_params(exp_data.get("params")) != current_full_params:
+                continue
+            matching_exps[exp_name] = exp_data
 
         # Get newest matching experiment
         newest_exp = None
@@ -599,7 +625,10 @@ class ExperimentComparator:
                     newest_date = exp_date
                     newest_exp = (exp_name, exp_data)
         else:
-            print("ERROR: No matching experiments found with model_name %s" % current_model_name)
+            print(
+                "ERROR: No matching experiments found with model_name %s and matching params"
+                % current_model_name
+            )
             return None
 
         compare = {
