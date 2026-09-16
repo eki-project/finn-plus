@@ -1149,15 +1149,6 @@ if __name__ == "__main__":
                 configuration["folding_config_file"] = [folding_config_path]
                 configuration["fifo_config_file"] = [fifo_config_path]
 
-                # Exception for ResNet-50: Final model doesn't fit board used for FIFO-sizing
-                if metadata_bench["params"].get("dut") == "resnet50":
-                    configuration["board"] = ["U250"]
-                    configuration["enable_instrumentation"] = [False]
-                    configuration["rtlsim_batch_size"] = [3]
-                    configuration["generate_outputs"] = [
-                        ["stitched_ip", "rtlsim_performance", "bitfile"]
-                    ]
-
                 follow_up_bench_cfg.append(configuration)
 
         # Always aggregate/compare/plot metrics, but only enforce the result for standard builds
