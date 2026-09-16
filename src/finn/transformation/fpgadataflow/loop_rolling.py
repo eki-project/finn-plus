@@ -643,7 +643,7 @@ class LoopRolling(Transformation):
         # This must be done after serialization so we can work with protobuf nodes
 
         for loop_node in model_wrapper.get_nodes_by_op_type("FINNLoop"):
-            loop_body = cast(
+            body_model = cast(
                 "ModelWrapper", cast("FINNLoop", getCustomOp(loop_node)).get_nodeattr("body")
             )
             # Capture parameter input names from the actual (post-rewrite) body
@@ -660,13 +660,13 @@ class LoopRolling(Transformation):
             # from the real, current body graph.
             actual_parameter_names = {
                 inp.name
-                for idx, inp in enumerate(loop_body.graph.input)
+                for idx, inp in enumerate(body_model.graph.input)
                 if loop_body.signature[idx] == LoopBodyInputType.PARAMETER
             }
-            loop_body.set_metadata_prop(
+            body_model.set_metadata_prop(
                 "mlo_input_parameter_names", str(list(actual_parameter_names))
             )
-            for node in loop_body.graph.node:
+            for node in body_model.graph.node:
                 if not is_custom_op(node.domain):
                     continue
                 try:
@@ -675,7 +675,7 @@ class LoopRolling(Transformation):
                 except (KeyError, AttributeError):
                     # Operator doesn't need adaptation or doesn't support it
                     pass
-            getCustomOp(loop_node).set_nodeattr("body", loop_body.graph)
+            getCustomOp(loop_node).set_nodeattr("body", body_model.graph)
 
         model = model_wrapper.transform(FoldConstants(), apply_to_subgraphs=True)
 

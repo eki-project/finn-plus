@@ -181,7 +181,7 @@ class VitisBuild(Transformation):
                 case MFCommunicationKernel.AURORA:
                     model = model.transform(
                         AddAuroraToLinkConfig(
-                            board=self.cfg.board,
+                            platform_name=self.cfg._resolve_vitis_platform(),  # noqa: SLF001
                             fpga_part=self.cfg._resolve_fpga_part(),  # noqa: SLF001
                         )
                     )
