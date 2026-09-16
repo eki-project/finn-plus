@@ -18,7 +18,7 @@ from pathlib import Path
 def delete_dir_contents(directory: str) -> None:
     """Delete all contents of a directory."""
     for filename in [_p.name for _p in Path(directory).iterdir()]:
-        file_path = str(Path(dir) / filename)
+        file_path = str(Path(directory) / filename)
         try:
             if Path(file_path).is_file() or Path(file_path).is_symlink():
                 Path(file_path).unlink()
