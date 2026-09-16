@@ -11,6 +11,7 @@
 #
 ############################################################################
 
+"""Transformation extracting MultiThreshold output scale and bias into separate nodes."""
 import numpy as np
 from onnx import TensorProto
 from onnx import helper as oh
@@ -26,9 +27,11 @@ class ExtractMultiThresholdScaleBias(Transformation):
     and reset attributes to 1.0 and 0.0 respectively."""
 
     def __init__(self):
+        """Initialize instance."""
         super().__init__()
 
     def apply(self, model):
+        """Move non-trivial out_scale/out_bias of MultiThreshold nodes into Mul/Add nodes."""
         graph = model.graph
         graph_modified = False
         for node in graph.node:

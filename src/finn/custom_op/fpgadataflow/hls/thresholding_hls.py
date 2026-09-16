@@ -57,9 +57,11 @@ class Thresholding_hls(Thresholding, HLSBackend):
     """Class that corresponds to finn-hls Thresholding_Batch function."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types, adding mem_mode, ram_style and runtime_writeable_weights."""
         my_attrs = {
             # memory mode for the thresholds
             # internal_embedded -- embedded thresholds
@@ -88,6 +90,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
         return my_attrs
 
     def _threshold_mem_width(self):
+        """Return the bit width of one threshold memory word (PE * threshold bits * numSteps)."""
         pe = self.get_nodeattr("PE")
         weight_bits = self.get_input_datatype(1).bitwidth()
         n_thres_steps = self.get_nodeattr("numSteps")
@@ -114,6 +117,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             return 0
 
     def bram_efficiency_estimation(self, fpgapart):
+        """Return the fraction of estimated BRAM capacity actually used by thresholds."""
         bram16_est = self.bram_estimation(fpgapart)
         if bram16_est == 0:
             return 1
@@ -122,6 +126,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
         return wbits / bram16_est_capacity
 
     def uram_efficiency_estimation(self, fpgapart):
+        """Return the fraction of estimated URAM capacity actually used by thresholds."""
         # TODO: Versal URAM supports flexible bit widths (9/18/36/72) unlike
         # UltraScale+ which only supports 72-bit. This could improve efficiency
         # for narrow data types on Versal devices.
@@ -151,6 +156,9 @@ class Thresholding_hls(Thresholding, HLSBackend):
         return comparator_cost + lutram_cost
 
     def get_ap_int_max_w(self):
+        """Return the maximum ap_int width, including the threshold
+        stream in internal_decoupled mode.
+        """
         ap_int_max_w = HLSBackend.get_ap_int_max_w(self)
         if self.get_nodeattr("mem_mode") == "internal_decoupled":
             weightstream = self.get_instream_width(1)
@@ -300,6 +308,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             raise Exception("Unknown weight_file_mode")
 
     def generate_params(self, model, path):
+        """Write threshold parameter files (header or decoupled npy/dat) into the given path."""
         code_gen_dir = path
 
         # Check input and threshold datatypes
@@ -330,6 +339,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             raise Exception("Unrecognized mem_mode")
 
     def execute_node(self, context, graph):
+        """Execute the node via cppsim or rtlsim, including streamed thresholds if decoupled."""
         mode = self.get_nodeattr("exec_mode")
         node = self.onnx_node
 
@@ -435,12 +445,14 @@ class Thresholding_hls(Thresholding, HLSBackend):
             )
 
     def global_includes(self):
+        """Populate the C++ includes for the generated HLS code."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "activations.hpp"']
         if self.get_nodeattr("mem_mode") == "internal_embedded":
             self.code_gen_dict["$GLOBALS$"] += ['#include "thresh.h"']
 
     # TODO check and add whatever missing
     def defines(self, var):
+        """Emit C++ macro definitions for channel count, folding, steps and datatypes."""
         numReps = 1
         numInputVectors = list(self.get_nodeattr("numInputVectors"))
         total_spatial_size = int(np.prod(numInputVectors))
@@ -466,6 +478,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             )
 
     def read_npy_data(self):
+        """Emit C++ code that reads the input (and streamed threshold) numpy data for cppsim."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_input_datatype(0)
         packed_bits = self.get_instream_width(0)
@@ -504,6 +517,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             )
 
     def strm_decl(self):
+        """Emit C++ stream declarations for the input, threshold and output streams."""
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
             'hls::stream<ap_uint<{}>> in0_V ("in0_V");'.format(self.get_instream_width(0))
@@ -518,6 +532,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             )
 
     def docompute(self):
+        """Emit the C++ call to the finn-hlslib Thresholding kernel for the selected mem_mode."""
         tmpl_args = self.get_template_param_values()
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_embedded":
@@ -544,6 +559,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             raise Exception("Unrecognized mem_mode")
 
     def dataoutstrm(self):
+        """Emit C++ code that writes the output stream to a numpy file for cppsim."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
         if dtype == DataType["BIPOLAR"]:
@@ -570,6 +586,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
         ]
 
     def blackboxfunction(self):
+        """Emit the top-level HLS function signature for the selected mem_mode."""
         if self.get_nodeattr("mem_mode") == "internal_embedded":
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
                 """void {}(hls::stream<ap_uint<{}>> &in0_V,
@@ -596,6 +613,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
             raise Exception("Unrecognized mem_mode")
 
     def pragmas(self):
+        """Emit HLS interface and resource pragmas for the selected mem_mode."""
         self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0_V"]
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out0_V")
         self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE ap_ctrl_none port=return")
@@ -641,6 +659,9 @@ class Thresholding_hls(Thresholding, HLSBackend):
             self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=in1_V")
 
     def code_generation_ipi(self):
+        """Construct and return the TCL for node instantiation in Vivado
+        IPI, adding a memstream if decoupled.
+        """
         source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
         cmd = ["file mkdir %s" % source_target]
         # add streamer if needed
@@ -751,6 +772,7 @@ class Thresholding_hls(Thresholding, HLSBackend):
         return cmd
 
     def get_op_and_param_counts(self):
+        """Return a dictionary with the number of threshold parameters keyed by their bit width."""
         ret_dict = {}
         weight_bits = self.get_input_datatype(1).bitwidth()
         out_features = self.get_nodeattr("NumChannels")

@@ -6,6 +6,7 @@
 #
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
+"""RTL backend implementations of elementwise binary operations (Add, Sub, Mul)."""
 import numpy as np
 import os
 import shutil
@@ -32,9 +33,11 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
     """
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types, adding mem_mode and runtime_writeable_weights."""
         my_attrs = {}
         my_attrs.update(ElementwiseBinaryOperation.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
@@ -73,6 +76,9 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
                 self.set_nodeattr("lhs_style", "input")
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Render the eltwise wrapper template, generate the
+        memstream if needed and copy RTL sources.
+        """
         lhs_style = self.get_nodeattr("lhs_style")
         rhs_style = self.get_nodeattr("rhs_style")
         mlo = self.get_nodeattr("mlo_max_iter")
@@ -185,6 +191,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Return the list of RTL files (eltwise core, wrapper and FIFO) for this node."""
         if abspath:
             code_gen_dir = f"{self.get_nodeattr('code_gen_dir_ipgen')}/"
             rtllib_dir = os.path.join(get_settings().finn_rtllib, "eltwise/")
@@ -366,6 +373,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         return cmd
 
     def instantiate_ip(self, cmd):
+        """Append Vivado IPI commands that add the RTL sources and instantiate the core."""
         node_name = self.onnx_node.name
         top_module = self.get_nodeattr("gen_top_module")
         source_target = "./ip/verilog/rtl_ops/%s" % node_name
@@ -381,6 +389,9 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         )
 
     def execute_node(self, context, graph):
+        """Execute the node via rtlsim (packing lhs/rhs streams)
+        or fall back to Python execution.
+        """
         mode = self.get_nodeattr("exec_mode")
         if mode == "rtlsim":
             node = self.onnx_node
@@ -455,12 +466,16 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
             ElementwiseBinaryOperation.execute_node(self, context, graph)
 
     def generate_params(self, model, code_gen_dir):
+        """Write the constant operand as decoupled npy and Verilog
+        dat files into the codegen dir.
+        """
         weights = model.get_initializer(self.onnx_node.input[1])
         if weights is not None:
             self.make_weight_file(weights, "decoupled_npy", f"{code_gen_dir}/input_1.npy")
             self.make_weight_file(weights, "decoupled_verilog_dat", f"{code_gen_dir}/memblock.dat")
 
     def make_weight_file(self, weights, weight_file_mode, weight_file_name):
+        """Write the folded constant operand in the requested weight file format."""
         folded_weight_shape = self.get_folded_input_shape(1)
         weight_tensor = weights.reshape(folded_weight_shape).copy()
 
@@ -497,6 +512,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
                 f.write(val + "\n")
 
     def calc_wmem(self):
+        """Return the number of constant memory words as an int."""
         return int(super().calc_wmem())
 
     def calc_wmem_reps(self):
@@ -521,6 +537,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         return int(num_w_reps // base_wmem)
 
     def calc_numInputVectors(self):
+        """Return the outer (non-channel) dimensions of the folded lhs input shape."""
         folded_lhs = self.get_folded_input_shape(0)
         if len(folded_lhs) >= 2:
             return list(folded_lhs[:-1])
@@ -537,6 +554,7 @@ class ElementwiseAdd_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseAd
     _operation = "Add", np.add, "({0} + {1})", '"ADD"'
 
     def _get_rtl_op_name(self):
+        """Return the RTL operation name literal for addition."""
         return '"ADD"'
 
 
@@ -546,6 +564,7 @@ class ElementwiseSub_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseSu
     _operation = "Sub", np.subtract, "({0} - {1})", '"SUB"'
 
     def _get_rtl_op_name(self):
+        """Return the RTL operation name literal for subtraction."""
         return '"SUB"'
 
 
@@ -555,4 +574,5 @@ class ElementwiseMul_rtl(ElementwiseBinary_rtl, elementwise_binary.ElementwiseMu
     _operation = "Mul", np.multiply, "({0} * {1})", '"MUL"'
 
     def _get_rtl_op_name(self):
+        """Return the RTL operation name literal for multiplication."""
         return '"MUL"'

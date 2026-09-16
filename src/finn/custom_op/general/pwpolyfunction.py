@@ -185,6 +185,7 @@ class PWPolyFunction(CustomOp):
     """
 
     def get_nodeattr_types(self):
+        """Return node attribute types for the function name, K and polynomial degree."""
         return {
             "func": ("s", True, ""),
             "K": ("i", False, 3),

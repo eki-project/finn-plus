@@ -157,6 +157,7 @@ def pack_innermost_dim_as_hex_string(
         ndarray = np.asarray(ndarray, dtype=np.float32)
 
     def fun(x):
+        """Pack one innermost-dimension slice into a hex string."""
         return array2hexstring(x, dtype, pad_to_nbits, reverse=reverse_inner, prefix=prefix)
 
     return np.apply_along_axis(fun, ndarray.ndim - 1, ndarray)
@@ -272,6 +273,7 @@ def numpy_to_hls_code(ndarray, dtype, hls_var_name, pack_innermost_dim=True, no_
     # define a function to convert a single element into a C++ init string
     # a single element can be a hex string if we are using packing
     def elem2str(x):
+        """Convert a single element (hex string or float) into a C++ initializer string."""
         if type(x) is str or type(x) is np.str_:
             return '%s("%s", 16)' % (hls_dtype, x)
         elif type(x) is np.float32:
@@ -577,6 +579,7 @@ def prepare_values(
     reverse_inner,
     reverse_endian,
 ):
+    """Unpack a byte array into an unsigned integer array with one element per value of `dtype`."""
     target_bits = dtype.bitwidth()
 
     if reverse_endian:
@@ -630,6 +633,7 @@ def prepare_values(
 
 
 def unsiged_array_to_signed(data_array, bitsize):
+    """Sign-extend `bitsize`-bit unsigned values into a signed numpy integer array."""
     # Convert uint to int (do the sign extension)
     data_type_bits = np.dtype(data_array.dtype).itemsize * 8
     shift_sign_value = (2 ** (data_type_bits - bitsize) - 1) << bitsize
@@ -648,23 +652,27 @@ def unsiged_array_to_signed(data_array, bitsize):
 
 
 def packed_bytearray_to_finnpy_fast(packed_bytearray, dtype, output_shape):
+    """Reinterpret the byte array with the datatype's native numpy type and cast to float32."""
     as_np_type = packed_bytearray.view(dtype.to_numpy_dt())
     return as_np_type.reshape(output_shape).astype(np.float32)
 
 
 def data_prepared_to_finnpy_bipolar(data_prepared):
+    """Convert unpacked {0, 1} values into bipolar {-1, +1} float32 values."""
     data_prepared_converted = data_prepared.astype(np.int32)
     data_prepared_bipolar = data_prepared_converted * 2 - 1
     return data_prepared_bipolar.astype(np.float32)
 
 
 def data_prepared_to_finnpy_ternary(data_prepared):
+    """Convert unpacked 2-bit ternary values into {-1, 0, +1} float32 values."""
     data_prepared_converted = data_prepared.astype(np.int32)
     data_prepared = np.where(data_prepared_converted == 3, -1, data_prepared_converted)
     return data_prepared.astype(np.float32)
 
 
 def data_prepared_to_finnpy_fixed(data_prepared, dtype):
+    """Convert unpacked fixed-point bit patterns into float32 values."""
     int_bits = dtype.int_bits()
     frac_bits = dtype.frac_bits()
     # Mask data
@@ -681,6 +689,7 @@ def data_prepared_to_finnpy_fixed(data_prepared, dtype):
 
 
 def data_prepared_to_finnpy_int(data_prepared, dtype):
+    """Convert unpacked integer bit patterns into float32 values, sign-extending if signed."""
     target_bits = dtype.bitwidth()
     signed = True if dtype.name.startswith("INT") or dtype.name == "BIPOLAR" else False
     if signed:
@@ -693,6 +702,7 @@ def data_prepared_to_finnpy_int(data_prepared, dtype):
 def packed_bytearray_to_finnpy_float(
     packed_bytearray, dtype, reverse_inner=False, reverse_endian=False
 ):
+    """Reinterpret the byte array as big-endian floats and return them as float32."""
     target_bits = dtype.bitwidth()
     if reverse_endian:
         packed_bytearray = np.ascontiguousarray(np.flip(packed_bytearray, axis=-1))

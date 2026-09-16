@@ -1,6 +1,7 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Transformation absorbing elementwise scale and bias operations into Requant nodes."""
 import numpy as np
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
@@ -28,6 +29,7 @@ class AbsorbElementwiseOpsIntoRequant(Transformation):
     """
 
     def apply(self, model):
+        """Fold preceding constant ElementwiseMul/Add nodes into each Requant's scale and bias."""
         graph = model.graph
         graph_modified = False
 

@@ -54,9 +54,11 @@ class MVAU_rtl(MVAU, RTLBackend):
     """Class that corresponds to finn-rtl Matrix Vector Unit."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types, adding pumpedCompute to MVAU and RTLBackend attributes."""
         my_attrs = {
             # Double-pumped DSPs enabled
             "pumpedCompute": ("i", False, 0, {0, 1}),
@@ -82,6 +84,9 @@ class MVAU_rtl(MVAU, RTLBackend):
             self.set_nodeattr("mem_mode", "external_mem")
 
     def execute_node(self, context, graph):
+        """Execute the node via Python (cppsim) or rtlsim, packing
+        inputs and weights per mem_mode.
+        """
         mode = self.get_nodeattr("exec_mode")
         mem_mode = self.get_nodeattr("mem_mode")
         node = self.onnx_node
@@ -172,9 +177,11 @@ class MVAU_rtl(MVAU, RTLBackend):
             )
 
     def lut_estimation(self, fpgapart):
+        """Return the LUT estimate (0, RTL MVU is DSP-based)."""
         return 0
 
     def dsp_estimation(self, fpgapart):
+        """Estimate the number of DSPs used for the multiplications based on the DSP block type."""
         # multiplication
         P = self.get_nodeattr("PE")
         Q = self.get_nodeattr("SIMD")
@@ -186,6 +193,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         return int(mult_dsp)
 
     def instantiate_ip(self, cmd):
+        """Append Vivado IPI commands that add the RTL sources and instantiate the MVU core."""
         # instantiate the RTL IP
         node_name = self.onnx_node.name
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
@@ -268,6 +276,7 @@ class MVAU_rtl(MVAU, RTLBackend):
                 )
 
     def _resolve_segment_len(self, clk):
+        """Return the DSP chain segment length that meets the target clock period."""
         # Insert pipeline registers in the DSP58 chain to meet target clock frequency
         # ~0.741 ns seems the worst-case delay through first DSP
         # ~0.605 ns seems to be (on average) delay for all subsequent DSPs
@@ -291,6 +300,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         return dsp_chain_len
 
     def _resolve_dsp_version(self, dsp_block):
+        """Return the RTL compute core version for the given DSP block type."""
         # Based on target device and activation/weight-width, choose the
         # supported RTL compute core
         if self.get_nodeattr("resType") == "lut":
@@ -309,6 +319,7 @@ class MVAU_rtl(MVAU, RTLBackend):
                 return 1
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Generate parameters, render the MVU wrapper template and set the codegen attributes."""
         # Generate params as part of IP preparation
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         if not self.get_nodeattr("mlo_max_iter"):
@@ -354,6 +365,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def prepare_codegen_default(self, fpgapart, clk):
+        """Return the wrapper template path and the code generation dictionary for this node."""
         if self.get_nodeattr("TH") > 1:
             template_path = os.path.join(
                 get_settings().finn_rtllib, "mvu_tiled/mvu_tiled_axi_wrapper.v"
@@ -426,6 +438,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         return template_path, code_gen_dict
 
     def get_rtl_file_list(self, abspath=False):
+        """Return the list of RTL files (wrapper and MVU core sources) for this node."""
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
             if self.get_nodeattr("TH") > 1:
@@ -466,6 +479,7 @@ class MVAU_rtl(MVAU, RTLBackend):
         return verilog_files
 
     def get_verilog_paths(self):
+        """Return the Verilog include paths, adding the mvu or mvu_tiled rtllib directory."""
         verilog_paths = super().get_verilog_paths()
         if self.get_nodeattr("TH") > 1:
             verilog_paths.append(os.path.join(get_settings().finn_rtllib, "mvu_tiled"))

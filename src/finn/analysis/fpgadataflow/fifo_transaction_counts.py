@@ -1,12 +1,14 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Analysis pass computing expected per-FIFO stream transaction counts."""
 import numpy as np
 import onnx
 from qonnx.custom_op.registry import getCustomOp
 
 
 def _has_fifos(model):
+    """Return True if the model (or any nested subgraph) contains StreamingFIFO nodes."""
     if any(n.op_type.startswith("StreamingFIFO") for n in model.graph.node):
         return True
     for node in model.graph.node:
@@ -37,6 +39,9 @@ def fifo_transaction_counts(model, apply_to_subgraphs=False):
 
 
 def _count(model, apply_to_subgraphs):
+    """Collect per-FIFO transaction counts, scaling subgraph
+    FIFOs by the FINNLoop iteration count.
+    """
     ret = {}
     for node in model.graph.node:
         if node.op_type.startswith("StreamingFIFO"):

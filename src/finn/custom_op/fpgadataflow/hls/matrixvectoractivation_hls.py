@@ -26,6 +26,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""HLS backend implementation of the MatrixVectorActivation (MVAU) layer."""
 import math
 import numpy as np
 import os
@@ -49,9 +50,11 @@ class MVAU_hls(MVAU, HLSBackend):
     """Corresponds to finn-hlslib MatrixVectorActivation_Batch function."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types, combining MVAU and HLSBackend attributes."""
         my_attrs = {}
         my_attrs.update(MVAU.get_nodeattr_types(self))
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
@@ -123,6 +126,7 @@ class MVAU_hls(MVAU, HLSBackend):
         )
 
     def dsp_estimation(self, fpgapart):
+        """Estimate the number of DSP slices used for the multiplications (0 if resType is lut)."""
         # multiplication
         P = self.get_nodeattr("PE")
         res_type = self.get_nodeattr("resType")
@@ -183,6 +187,7 @@ class MVAU_hls(MVAU, HLSBackend):
         return ret
 
     def global_includes(self):
+        """Populate the C++ includes for the generated HLS code."""
         self.code_gen_dict["$GLOBALS$"] = ['#include "weights.hpp"']
         self.code_gen_dict["$GLOBALS$"] += ['#include "activations.hpp"']
 
@@ -204,6 +209,7 @@ class MVAU_hls(MVAU, HLSBackend):
             self.code_gen_dict["$GLOBALS$"] += ['#include "thresh.h"']
 
     def defines(self, var):
+        """Emit C++ macro definitions for matrix dimensions, folding and datatypes."""
         # Tiling (TH>1) is supported by the RTL backend (mvu_tiled). The HLS
         # backend implements the untiled MVAU, so TH must be 1 here.
         assert self.get_nodeattr("TH") == 1, (
@@ -242,6 +248,7 @@ class MVAU_hls(MVAU, HLSBackend):
             self.code_gen_dict["$DEFINES$"].append("#define WP1 {}\n".format(wdt.bitwidth()))
 
     def read_npy_data(self):
+        """Emit C++ code that reads the input (and streamed weight) numpy data for cppsim."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_input_datatype(0)
         if dtype == DataType["BIPOLAR"]:
@@ -286,6 +293,7 @@ class MVAU_hls(MVAU, HLSBackend):
             )
 
     def strm_decl(self):
+        """Emit C++ stream declarations for the input, weight and output streams."""
         mem_mode = self.get_nodeattr("mem_mode")
         self.code_gen_dict["$STREAMDECLARATIONS$"] = []
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
@@ -304,6 +312,7 @@ class MVAU_hls(MVAU, HLSBackend):
             )
 
     def docompute(self):
+        """Emit the C++ call to the finn-hlslib MVAU kernel for the selected mem_mode."""
         mem_mode = self.get_nodeattr("mem_mode")
         map_to_hls_mult_style = {
             "auto": "ap_resource_dflt()",
@@ -353,6 +362,7 @@ class MVAU_hls(MVAU, HLSBackend):
             )
 
     def dataoutstrm(self):
+        """Emit C++ code that writes the output stream to a numpy file for cppsim."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
         if dtype == DataType["BIPOLAR"]:
@@ -379,9 +389,11 @@ class MVAU_hls(MVAU, HLSBackend):
         ]
 
     def save_as_npy(self):
+        """Emit C++ code for saving outputs as numpy (unused, handled by dataoutstrm)."""
         self.code_gen_dict["$SAVEASCNPY$"] = []
 
     def blackboxfunction(self):
+        """Emit the top-level HLS function signature for the selected mem_mode."""
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_embedded":
             self.code_gen_dict["$BLACKBOXFUNCTION$"] = [
@@ -417,6 +429,7 @@ class MVAU_hls(MVAU, HLSBackend):
             )
 
     def pragmas(self):
+        """Emit HLS interface, resource and array partition pragmas."""
         mem_mode = self.get_nodeattr("mem_mode")
         ram_style_thresholds = self.get_nodeattr("ram_style_thresholds")
         self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0_V"]
@@ -466,6 +479,9 @@ class MVAU_hls(MVAU, HLSBackend):
                 raise Exception("Unrecognized ram_style_thresholds value:" + ram_style_thresholds)
 
     def get_ap_int_max_w(self):
+        """Return the maximum ap_int width needed, accounting for the
+        weight stream and single-PE entries.
+        """
         # base class impl (max of inp/out stream widths)
         max_of_io = super().get_ap_int_max_w()
         # internal_decoupled mode weight stream
@@ -488,6 +504,9 @@ class MVAU_hls(MVAU, HLSBackend):
         return final
 
     def execute_node(self, context, graph):
+        """Execute the node via cppsim or rtlsim, handling weight
+        and threshold inputs per mem_mode.
+        """
         mode = self.get_nodeattr("exec_mode")
         mem_mode = self.get_nodeattr("mem_mode")
         node = self.onnx_node
@@ -660,6 +679,7 @@ class MVAU_hls(MVAU, HLSBackend):
         return wdt
 
     def instantiate_ip(self, cmd):
+        """Append Vivado IPI commands that instantiate the HLS IP for this node."""
         # instantiate the HLS IP
         vlnv = self.get_nodeattr("ip_vlnv")
         node_name = self.onnx_node.name

@@ -43,10 +43,12 @@ class InferWhereLayer(Transformation):
 
     @staticmethod
     def _warn_skip(node, reason):
+        """Log a warning that the given Where node is skipped for the given reason."""
         node_name = node.name if node.name else "<unnamed Where>"
         log.warning("%s: %s. Can't infer HWWhere layer." % (node_name, reason))
 
     def apply(self, model):
+        """Replace supported Where nodes by HWWhere nodes."""
         graph = model.graph
         node_ind = 0
         graph_modified = False

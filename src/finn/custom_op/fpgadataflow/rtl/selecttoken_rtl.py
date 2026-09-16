@@ -1,6 +1,7 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""RTL backend implementation of the SelectToken layer."""
 from finn.custom_op.fpgadataflow.rtl.crop_rtl import Crop_rtl
 from finn.custom_op.fpgadataflow.selecttoken import SelectToken
 
@@ -9,9 +10,11 @@ class SelectToken_rtl(SelectToken, Crop_rtl):
     """RTL SelectToken implemented by the shared Crop core."""
 
     def get_nodeattr_types(self):
+        """Return node attribute types, combining SelectToken and Crop_rtl attributes."""
         return SelectToken.get_nodeattr_types(self) | Crop_rtl.get_nodeattr_types(self)
 
     def _get_template_param_dict(self):
+        """Return crop-core template parameters that select the single token column."""
         num_tokens = self.get_nodeattr("NumTokens")
         token_index = self.get_nodeattr("TokenIndex")
         if token_index < 0:
@@ -34,6 +37,7 @@ class SelectToken_rtl(SelectToken, Crop_rtl):
         }
 
     def execute_node(self, context, graph):
+        """Execute the node via Python (cppsim) or rtlsim depending on exec_mode."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             SelectToken.execute_node(self, context, graph)

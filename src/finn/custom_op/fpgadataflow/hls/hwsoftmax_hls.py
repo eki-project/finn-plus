@@ -32,6 +32,7 @@ class HWSoftmax_hls(HWSoftmax, HLSBackend):
         return my_attrs
 
     def get_exp_cycles(self):
+        """Return the expected cycle count including per-vector stalls and pipeline overhead."""
         # SoftMax is a 3-stage dataflow pipeline (max, exp+sum, divide) with
         # depth=N/SIMD FIFOs between stages. Each vector incurs pipeline stall
         # overhead as stages wait for max/sum values before proceeding.

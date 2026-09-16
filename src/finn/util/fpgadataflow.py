@@ -197,6 +197,9 @@ def detect_hls_rtl_dsp_conflict(
     rtl_dsp_ops: list[str] = []
 
     def check_nodes(nodes: list[NodeProto], prefix: str = "") -> None:
+        """Classify nodes into HLS floating-point and RTL DSPFP32
+        users, recursing into loop bodies.
+        """
         for node in nodes:
             full_name = f"{prefix}{node.name}" if prefix else node.name
             # Check for HLS ops that always use floating-point

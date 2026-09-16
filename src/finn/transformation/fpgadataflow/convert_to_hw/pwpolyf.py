@@ -40,6 +40,7 @@ class InferPWPolyFLayer(Transformation):
     _SINGLE_OP_MAP = {"Gelu": "gelu", "Tanh": "tanh"}
 
     def __init__(self):
+        """Initialize instance."""
         super().__init__()
 
     @staticmethod
@@ -96,6 +97,7 @@ class InferPWPolyFLayer(Transformation):
 
     @staticmethod
     def _make_pwpolyf_node(pwp_input, pwp_output, func, in_shape, idt, name, K=3, degree=2):
+        """Create a PWPolyF node with PE=1 for the given function, shape and datatype."""
         num_channels = in_shape[-1]
         return helper.make_node(
             "PWPolyF",
@@ -115,6 +117,7 @@ class InferPWPolyFLayer(Transformation):
         )
 
     def apply(self, model):
+        """Replace PWPolyFunction ops and matched activation patterns by PWPolyF nodes."""
         graph = model.graph
         node_ind = 0
         graph_modified = False

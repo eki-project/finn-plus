@@ -7,6 +7,7 @@
 # @author       Shane T. Fleming <shane.fleming@amd.com>
 ############################################################################
 
+"""RTL backend implementation of the SoftMax layer."""
 import numpy as np
 import os
 import shutil
@@ -24,15 +25,18 @@ class HWSoftmax_rtl(HWSoftmax, RTLBackend):
     input conversion via int_to_fp32)."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types, combining RTLBackend and HWSoftmax attributes."""
         my_attrs = {}
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         my_attrs.update(HWSoftmax.get_nodeattr_types(self))
         return my_attrs
 
     def _rtllib_files(self):
+        """Return the finn-rtllib source file names used by the softmax core."""
         return [
             "softmaxf.sv",
             "softmaxf_pkg.sv",
@@ -43,6 +47,7 @@ class HWSoftmax_rtl(HWSoftmax, RTLBackend):
         ]
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Render the softmax wrapper template and copy the RTL sources into the codegen dir."""
         rtllib_dir = os.path.join(get_settings().finn_rtllib, "softmax_rtl/")
         template_path = rtllib_dir + "softmax_wrapper_template.v"
         simd = self.get_nodeattr("SIMD")
@@ -92,6 +97,7 @@ class HWSoftmax_rtl(HWSoftmax, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Return the list of RTL files (core sources, wrapper and FIFO) for this node."""
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
             rtllib_dir = os.path.join(get_settings().finn_rtllib, "softmax_rtl/")
@@ -104,6 +110,7 @@ class HWSoftmax_rtl(HWSoftmax, RTLBackend):
         return verilog_files + fifo_rtl_files(abspath)
 
     def code_generation_ipi(self):
+        """Construct and return the TCL for node instantiation in Vivado IPI."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
         sourcefiles = list(self._rtllib_files())
@@ -121,6 +128,7 @@ class HWSoftmax_rtl(HWSoftmax, RTLBackend):
         return cmd
 
     def get_exp_cycles(self):
+        """Return the expected cycle count including pipeline fill latency."""
         # softmaxf is a fully-pipelined 4-stage RTL design with elastic queues
         # between stages. Once the pipeline fills, throughput is 1 beat/cycle.
         # Pipeline fill latency: max-tree + exp-poly + recip-NR + div-mul.
@@ -135,6 +143,7 @@ class HWSoftmax_rtl(HWSoftmax, RTLBackend):
         return n_beats + beats_per_vec + 50
 
     def execute_node(self, context, graph):
+        """Execute the node via Python (cppsim) or rtlsim depending on exec_mode."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             HWSoftmax.execute_node(self, context, graph)

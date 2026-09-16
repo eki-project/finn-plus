@@ -1,6 +1,7 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Hardware abstraction layer for piecewise polynomial activation functions."""
 import math
 import numpy as np
 from qonnx.core.datatype import DataType
@@ -24,9 +25,11 @@ class PWPolyF(HWCustomOp):
     """
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types for the function, segmentation, folding and datatypes."""
         my_attrs = {
             # activation function: gelu, silu, sigmoid, tanh
             "func": ("s", True, ""),
@@ -51,14 +54,17 @@ class PWPolyF(HWCustomOp):
         return my_attrs
 
     def get_num_segments(self):
+        """Return the number of polynomial segments derived from K."""
         K = self.get_nodeattr("K")
         return 1 + 2 * NUM_OCTAVES * (1 << K)
 
     def make_shape_compatible_op(self, model):
+        """Return a constant-shape op for the output."""
         oshape = self.get_normal_output_shape()
         return super().make_const_shape_op(oshape)
 
     def infer_node_datatype(self, model):
+        """Assert FLOAT32 input and set the input and output datatypes accordingly."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         assert idt == DataType["FLOAT32"], "%s: PWPolyF requires FLOAT32 input, got %s" % (
@@ -70,6 +76,9 @@ class PWPolyF(HWCustomOp):
         model.set_tensor_datatype(node.output[0], idt)
 
     def verify_node(self):
+        """Verify the backend, function, folding and datatype
+        attributes and return info messages.
+        """
         info_messages = []
 
         backend_value = self.get_nodeattr("backend")
@@ -111,12 +120,15 @@ class PWPolyF(HWCustomOp):
         return DataType[self.get_nodeattr("outputDataType")]
 
     def get_instream_width(self, ind=0):
+        """Return the width of the input stream in bits."""
         return self.get_input_datatype().bitwidth() * self.get_nodeattr("PE")
 
     def get_outstream_width(self, ind=0):
+        """Return the width of the output stream in bits."""
         return self.get_output_datatype().bitwidth() * self.get_nodeattr("PE")
 
     def get_folded_input_shape(self, ind=0):
+        """Return the folded input shape."""
         pe = self.get_nodeattr("PE")
         nch = self.get_nodeattr("NumChannels")
         fold = nch // pe
@@ -124,26 +136,32 @@ class PWPolyF(HWCustomOp):
         return tuple(vecs + [fold, pe])
 
     def get_folded_output_shape(self, ind=0):
+        """Return the folded output shape (same as input)."""
         return self.get_folded_input_shape()
 
     def get_normal_input_shape(self, ind=0):
+        """Return the unfolded input shape."""
         nch = self.get_nodeattr("NumChannels")
         vecs = list(self.get_nodeattr("numInputVectors"))
         return tuple(vecs + [nch])
 
     def get_normal_output_shape(self, ind=0):
+        """Return the unfolded output shape (same as input)."""
         return self.get_normal_input_shape()
 
     def get_exp_cycles(self):
+        """Return the expected cycle count (one per output stream word)."""
         # II=1, latency amortised over stream length
         return np.prod(self.get_folded_output_shape()[:-1])
 
     def lut_estimation(self, fpgapart):
+        """Estimate the LUTs used per FMA stage and PE."""
         pe = self.get_nodeattr("PE")
         degree = self.get_nodeattr("degree")
         return 100 * degree * pe
 
     def bram_estimation(self, fpgapart):
+        """Estimate the RAMB18s used for the per-stage coefficient ROMs."""
         pe = self.get_nodeattr("PE")
         degree = self.get_nodeattr("degree")
         num_segs = self.get_num_segments()
@@ -162,14 +180,17 @@ class PWPolyF(HWCustomOp):
         return pe * (degree - 1) * bram18_per_coeff_rom
 
     def uram_estimation(self, fpgapart):
+        """Return the number of URAMs used (none)."""
         return 0
 
     def dsp_estimation(self, fpgapart=None):
+        """Estimate the DSPs used (one per FMA stage and PE)."""
         pe = self.get_nodeattr("PE")
         degree = self.get_nodeattr("degree")
         return degree * pe
 
     def execute_node(self, context, graph):
+        """Execute the node in Python via segment lookup, Horner evaluation and clamping."""
         node = self.onnx_node
         inp = context[node.input[0]]
 

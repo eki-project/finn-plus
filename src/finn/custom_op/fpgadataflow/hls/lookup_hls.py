@@ -54,6 +54,9 @@ class Lookup_hls(Lookup, HLSBackend):
         return my_attrs
 
     def _check_uram_codegen_support(self, fpgapart):
+        """Assert that internal_embedded URAM tables are supported
+        by the target part and HLS version.
+        """
         mem_mode = self.get_nodeattr("mem_mode")
         ram_style = self.get_nodeattr("ram_style")
         if mem_mode != "internal_embedded" or ram_style != "ultra":

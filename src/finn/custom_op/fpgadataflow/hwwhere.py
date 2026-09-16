@@ -1,6 +1,7 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Hardware abstraction layer for the elementwise Where operation."""
 import math
 import numpy as np
 from qonnx.core.datatype import DataType
@@ -13,9 +14,13 @@ class HWWhere(HWCustomOp):
     """Elementwise ONNX Where with multidirectional broadcasting."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types, adding shape, rank, PE,
+        datatype and ram_style attributes.
+        """
         my_attrs = super().get_nodeattr_types()
         my_attrs.update(
             {
@@ -43,9 +48,11 @@ class HWWhere(HWCustomOp):
         return my_attrs
 
     def _shape(self):
+        """Return the (broadcast) output shape as a tuple."""
         return tuple(self.get_nodeattr("Shape"))
 
     def _input_shape(self, ind):
+        """Return the shape of input `ind`, falling back to the output shape if not set."""
         if ind == 0:
             attr_name, rank_name = "CondShape", "CondRank"
         elif ind == 1:
@@ -68,45 +75,54 @@ class HWWhere(HWCustomOp):
         return self._shape()
 
     def _rtl_shape(self, shape):
+        """Return the shape as a tuple, mapping a scalar (rank 0) to (1,)."""
         if len(shape) == 0:
             return (1,)
         return tuple(shape)
 
     def _input_stream_pe(self, ind):
+        """Return the stream parallelism of input `ind` (1 if its innermost dim is broadcast)."""
         shape = self._rtl_shape(self.get_normal_input_shape(ind))
         if shape[-1] == 1:
             return 1
         return self._output_stream_pe()
 
     def _output_stream_pe(self):
+        """Return the output stream parallelism (1 if the innermost output dim is 1, else PE)."""
         shape = self._rtl_shape(self.get_normal_output_shape())
         if shape[-1] == 1:
             return 1
         return self.get_nodeattr("PE")
 
     def _folded_shape(self, shape, stream_pe):
+        """Return the shape with its innermost dimension folded by `stream_pe`."""
         rtl_shape = self._rtl_shape(shape)
         *outer, channels = rtl_shape
         assert channels % stream_pe == 0, "Stream PE must divide the innermost dimension"
         return tuple(outer + [channels // stream_pe, stream_pe])
 
     def get_normal_input_shape(self, ind=0):
+        """Return the unfolded shape of input `ind`."""
         if ind not in [0, 1, 2]:
             raise Exception("Where has exactly three inputs")
         return self._input_shape(ind)
 
     def get_folded_input_shape(self, ind=0):
+        """Return the folded shape of input `ind`."""
         return self._folded_shape(self.get_normal_input_shape(ind), self._input_stream_pe(ind))
 
     def get_normal_output_shape(self, ind=0):
+        """Return the unfolded output shape."""
         if ind != 0:
             raise Exception("Where has exactly one output")
         return self._shape()
 
     def get_folded_output_shape(self, ind=0):
+        """Return the folded output shape."""
         return self._folded_shape(self.get_normal_output_shape(ind), self._output_stream_pe())
 
     def make_shape_compatible_op(self, model):
+        """Check the input shapes and return a constant-shape op for the output."""
         for i, inp in enumerate(self.onnx_node.input):
             ishape = tuple(model.get_tensor_shape(inp))
             assert ishape == self.get_normal_input_shape(i), (
@@ -115,6 +131,7 @@ class HWWhere(HWCustomOp):
         return super().make_const_shape_op(self.get_normal_output_shape())
 
     def infer_node_datatype(self, model):
+        """Infer and set the condition, input and output datatypes from the model tensors."""
         node = self.onnx_node
 
         cond_dt = model.get_tensor_datatype(node.input[0])
@@ -157,9 +174,11 @@ class HWWhere(HWCustomOp):
         model.set_tensor_datatype(node.output[0], idt)
 
     def get_condition_datatype(self):
+        """Return the FINN DataType of the condition input."""
         return DataType[self.get_nodeattr("conditionDataType")]
 
     def get_input_datatype(self, ind=0):
+        """Return the FINN DataType of input `ind` (condition for 0, inputDataType for 1 and 2)."""
         if ind == 0:
             return self.get_condition_datatype()
         if ind in [1, 2]:
@@ -167,12 +186,14 @@ class HWWhere(HWCustomOp):
         raise Exception("Where has exactly three inputs")
 
     def get_output_datatype(self, ind=0):
+        """Return the FINN DataType of the output (defaults to the X input datatype)."""
         odt = self.get_nodeattr("outputDataType")
         if odt == "":
             return self.get_input_datatype(1)
         return DataType[odt]
 
     def get_instream_width(self, ind=0):
+        """Return the width of input stream `ind` in bits."""
         if ind == 0:
             return self._input_stream_pe(ind)
         if ind in [1, 2]:
@@ -180,17 +201,21 @@ class HWWhere(HWCustomOp):
         return 0
 
     def get_outstream_width(self, ind=0):
+        """Return the width of the output stream in bits."""
         return self.get_output_datatype(ind).bitwidth() * self._output_stream_pe()
 
     def get_number_output_values(self):
+        """Return the number of output stream words per frame."""
         return int(np.prod(self.get_folded_output_shape()[:-1]))
 
     def get_exp_cycles(self):
+        """Return the expected cycle count from the longest input stream plus the output stream."""
         input_cycles = max(int(np.prod(self.get_folded_input_shape(ind)[:-1])) for ind in range(3))
         output_cycles = self.get_number_output_values()
         return input_cycles + output_cycles + 4
 
     def execute_node(self, context, graph):
+        """Execute the node in Python using numpy.where."""
         node = self.onnx_node
         cond = context[node.input[0]]
         xval = context[node.input[1]]
@@ -223,6 +248,9 @@ class HWWhere(HWCustomOp):
             aligned_shape = (1,) * (len(out_shape) - len(in_shape)) + in_shape
 
             def word_dim(axis):
+                """Return the size of `axis` in stream words, folding the
+                innermost non-broadcast dim by PE.
+                """
                 dim = aligned_shape[axis]
                 if axis == len(out_shape) - 1 and dim != 1:
                     dim //= out_pe
@@ -276,6 +304,7 @@ class HWWhere(HWCustomOp):
 
     @staticmethod
     def _bram18_estimation(width, depth):
+        """Return the number of RAMB18 blocks needed for a buffer of the given width and depth."""
         if width == 1:
             return math.ceil(depth / 16384)
         if width == 2:
@@ -289,6 +318,7 @@ class HWWhere(HWCustomOp):
         return math.ceil(depth / 512) * math.ceil(width / 36)
 
     def bram_estimation(self, fpgapart):
+        """Estimate the number of BRAMs used by the input replay buffers."""
         ram_style = self.get_nodeattr("ram_style")
         if ram_style == "block":
             buffer_specs = self._input_gen_buffer_specs()
@@ -305,6 +335,7 @@ class HWWhere(HWCustomOp):
         return int(sum(self._bram18_estimation(width, depth) for width, depth in buffer_specs))
 
     def uram_estimation(self, fpgapart):
+        """Estimate the number of URAMs used by the input replay buffers."""
         if self.get_nodeattr("ram_style") != "ultra":
             return 0
         return int(
@@ -315,6 +346,7 @@ class HWWhere(HWCustomOp):
         )
 
     def bram_efficiency_estimation(self, fpgapart):
+        """Return the fraction of estimated BRAM capacity actually used by the buffers."""
         bram_estimate = self.bram_estimation(fpgapart)
         if bram_estimate == 0:
             return 1
@@ -328,6 +360,7 @@ class HWWhere(HWCustomOp):
         return used_bits / (bram_estimate * 36 * 512)
 
     def uram_efficiency_estimation(self, fpgapart):
+        """Return the fraction of estimated URAM capacity actually used by the buffers."""
         uram_estimate = self.uram_estimation(fpgapart)
         if uram_estimate == 0:
             return 1
@@ -335,6 +368,7 @@ class HWWhere(HWCustomOp):
         return used_bits / (uram_estimate * 72 * 4096)
 
     def lut_estimation(self, fpgapart):
+        """Estimate the LUTs used for selection logic and LUTRAM-backed buffers."""
         selection_luts = 64 + self.get_nodeattr("PE") * self.get_output_datatype().bitwidth()
         ram_style = self.get_nodeattr("ram_style")
         if ram_style == "distributed":
@@ -355,4 +389,5 @@ class HWWhere(HWCustomOp):
         return int(selection_luts + buffer_luts)
 
     def get_op_and_param_counts(self):
+        """Return a dictionary with the number of where operations per inference."""
         return {"op_where": int(np.prod(self.get_normal_output_shape()))}

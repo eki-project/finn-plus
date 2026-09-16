@@ -1,6 +1,7 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""RTL backend implementation of the Crop layer."""
 import os
 
 from finn.custom_op.fpgadataflow.crop import Crop
@@ -9,6 +10,7 @@ from finn.util.settings import get_settings
 
 
 def _rtlsrc_dir():
+    """Return the directory of the finn-rtllib crop HDL sources."""
     return os.path.join(get_settings().finn_rtllib, "crop", "hdl")
 
 
@@ -16,6 +18,7 @@ class Crop_rtl(Crop, RTLBackend):
     """RTL implementation of Crop using the finn-rtllib crop core."""
 
     def get_nodeattr_types(self):
+        """Return node attribute types, combining Crop and RTLBackend attributes."""
         return Crop.get_nodeattr_types(self) | RTLBackend.get_nodeattr_types(self)
 
     def _get_template_param_dict(self):
@@ -40,6 +43,7 @@ class Crop_rtl(Crop, RTLBackend):
         }
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Render the crop wrapper template with this node's parameters into the codegen dir."""
         rtlsrc = _rtlsrc_dir()
         with open(os.path.join(rtlsrc, "crop_template.v"), "r") as f:
             template = f.read()
@@ -58,6 +62,7 @@ class Crop_rtl(Crop, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Return the list of RTL files (crop core and generated wrapper) for this node."""
         if abspath:
             return [
                 os.path.join(_rtlsrc_dir(), "crop.sv"),
@@ -69,6 +74,7 @@ class Crop_rtl(Crop, RTLBackend):
         return ["crop.sv", self.get_nodeattr("gen_top_module") + ".v"]
 
     def code_generation_ipi(self):
+        """Construct and return the TCL for node instantiation in Vivado IPI."""
         sourcefiles = self.get_rtl_file_list(abspath=True)
         source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
         cmd = ["file mkdir %s" % source_target]
@@ -81,6 +87,7 @@ class Crop_rtl(Crop, RTLBackend):
         return cmd
 
     def execute_node(self, context, graph):
+        """Execute the node via Python (cppsim) or rtlsim depending on exec_mode."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             Crop.execute_node(self, context, graph)

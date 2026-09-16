@@ -37,10 +37,14 @@ from finn.util.resource_models import _fifo_cost, _resolve
 
 
 class StreamingFIFO(HWCustomOp):
+    """Hardware abstraction layer for a streaming FIFO buffering data between layers."""
+
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types for depth, shapes, datatype and storage style."""
         my_attrs = super().get_nodeattr_types()
         my_attrs.update(
             {
@@ -105,6 +109,7 @@ class StreamingFIFO(HWCustomOp):
         return style
 
     def infer_node_datatype(self, model):
+        """Infer and set the datatype from the input tensor and propagate it to the output."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -119,37 +124,46 @@ class StreamingFIFO(HWCustomOp):
         model.set_tensor_datatype(node.output[0], idt)
 
     def get_normal_input_shape(self, ind=0):
+        """Return the unfolded input shape."""
         assert self.get_nodeattr("depth") >= 1, """Depth is too low"""
         return self.get_nodeattr("normal_shape")
 
     def get_normal_output_shape(self, ind=0):
+        """Return the unfolded output shape (same as input)."""
         return self.get_normal_input_shape()
 
     def get_folded_input_shape(self, ind=0):
+        """Return the folded input shape."""
         return self.get_nodeattr("folded_shape")
 
     def get_folded_output_shape(self, ind=0):
+        """Return the folded output shape (same as input)."""
         return self.get_nodeattr("folded_shape")
 
     def get_instream_width(self, ind=0):
+        """Return the width of the input stream in bits."""
         dtype = DataType[self.get_nodeattr("dataType")]
         folded_shape = self.get_nodeattr("folded_shape")
         in_width = folded_shape[-1] * dtype.bitwidth()
         return in_width
 
     def get_outstream_width(self, ind=0):
+        """Return the width of the output stream in bits."""
         dtype = DataType[self.get_nodeattr("dataType")]
         folded_shape = self.get_nodeattr("folded_shape")
         in_width = folded_shape[-1] * dtype.bitwidth()
         return in_width
 
     def get_input_datatype(self, ind=0):
+        """Return the FINN DataType of the input."""
         return DataType[self.get_nodeattr("dataType")]
 
     def get_output_datatype(self, ind=0):
+        """Return the FINN DataType of the output."""
         return DataType[self.get_nodeattr("dataType")]
 
     def execute_node(self, context, graph):
+        """Execute the node in Python by passing the input through unchanged."""
         node = self.onnx_node
         context[node.output[0]] = context[node.input[0]]
 
@@ -185,6 +199,7 @@ class StreamingFIFO(HWCustomOp):
         return self.get_fifo_cost(fpgapart).lut
 
     def bram_efficiency_estimation(self, fpgapart):
+        """Return the fraction of estimated BRAM capacity actually used by the FIFO."""
         bram_est = self.bram_estimation(fpgapart)
         if bram_est == 0:
             return 1
@@ -192,6 +207,7 @@ class StreamingFIFO(HWCustomOp):
         return wbits / (bram_est * 18 * 1024)
 
     def uram_efficiency_estimation(self, fpgapart):
+        """Return the fraction of estimated URAM capacity actually used by the FIFO."""
         # every URAM288 aspect holds 288 Kib, so this capacity is correct on the
         # Versal ladder too; narrow words show up as a smaller uram_estimation()
         uram_est = self.uram_estimation(fpgapart)

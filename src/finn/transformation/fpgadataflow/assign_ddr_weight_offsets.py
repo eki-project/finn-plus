@@ -1,18 +1,23 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Transformation assigning DDR address offsets to MLO loops and their weights."""
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import roundup_to_integer_multiple
 
 
 class AssignMemoryOffset(Transformation):
+    """Assign non-overlapping DDR address offsets to FINNLoop frames and MVAU_rtl weights."""
+
     def apply(self, model):
+        """Walk the model and assign address offsets; the graph is never marked as modified."""
         self._offset = 0
         self._walk(model)
         return model, False
 
     def _walk(self, model):
+        """Recursively assign 32-byte aligned offsets to DDR loops and MLO MVAU_rtl nodes."""
         for node in model.graph.node:
             if node.op_type == "FINNLoop":
                 loop_inst = getCustomOp(node)

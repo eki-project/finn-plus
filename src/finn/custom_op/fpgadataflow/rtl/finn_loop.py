@@ -59,6 +59,9 @@ from finn.util.settings import get_settings
 
 
 def collect_ip_dirs(model, ipstitch_path):
+    """Return the IP directories of all nodes in the model plus
+    the stitched IP and memstream dirs.
+    """
     # collect list of all IP dirs
     ip_dirs = []
     need_memstreamer = False
@@ -86,6 +89,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
     out into a FINN-ONNX model of its own and are meant to be executed in a loop."""
 
     def get_nodeattr_types(self):
+        """Return node attribute types for the loop body, iteration count, datatypes and memory."""
         my_attrs = {
             "body": ("g", True, ""),
             "iteration": ("i", False, 1),
@@ -159,6 +163,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
             raise AttributeError("Op has no such attribute: " + name)
 
     def get_normal_input_shape(self, ind=0):
+        """Return the unfolded shape of input `ind` as seen by its consumer in the loop body."""
         loop_body = self.get_nodeattr("body")
         if ind == 0:
             # get first node in loop body and return
@@ -182,6 +187,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return ishape
 
     def get_normal_output_shape(self, ind=0):
+        """Return the unfolded output shape of the last node in the loop body."""
         loop_body = self.get_nodeattr("body")
         # get last node in loop body and return
         # normal output shape
@@ -194,6 +200,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return oshape
 
     def get_folded_input_shape(self, ind=0):
+        """Return the folded shape of input `ind` as seen by its consumer in the loop body."""
         loop_body = self.get_nodeattr("body")
         if ind == 0:
             # get first node in loop body and return
@@ -210,6 +217,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return ishape
 
     def get_folded_output_shape(self, ind=0):
+        """Return the folded output shape of the last node in the loop body."""
         loop_body = self.get_nodeattr("body")
         # get last node in loop body and return
         # normal output shape
@@ -218,6 +226,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return inst.get_folded_output_shape(0)
 
     def infer_node_datatype(self, model):
+        """Do nothing; datatypes are fixed by the inputDataType/outputDataType attributes."""
         pass
 
     def get_input_datatype(self, ind=0):
@@ -237,10 +246,12 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return idt
 
     def get_output_datatype(self, ind=0):
+        """Return the FINN DataType of the output."""
         odt = DataType[self.get_nodeattr("outputDataType")]
         return odt
 
     def get_instream_width(self, ind=0):
+        """Return the width of input stream `ind` as seen by its consumer in the loop body."""
         loop_body = self.get_nodeattr("body")
         if ind == 0:
             # get first node in loop body and return
@@ -257,6 +268,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return iwidth
 
     def get_exp_cycles(self):
+        """Return the expected cycle count from the body latency, throughput and iteration count."""
         loop_body = self.get_nodeattr("body")
         check_if_cycles_annotated = False
 
@@ -276,6 +288,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return body_latency + (iteration - 1) * body_throughput + overhead_per_iter * iteration
 
     def get_outstream_width(self, ind=0):
+        """Return the output stream width of the last node in the loop body."""
         loop_body = self.get_nodeattr("body")
         # get last node in loop body and return
         # normal output shape
@@ -284,6 +297,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return inst.get_outstream_width(0)
 
     def get_number_output_values(self):
+        """Return the number of output values of the last node in the loop body."""
         loop_body = self.get_nodeattr("body")
         # get last node in loop body and return
         # normal output values
@@ -311,6 +325,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         self.set_nodeattr("rtlsim_so", sim_base + "/" + sim_rel)
 
     def execute_node(self, context, graph):
+        """Execute the loop via rtlsim or by running the body model once per iteration in Python."""
         node = self.onnx_node
         inp_values = context[node.input[0]]
         if self.get_nodeattr("exec_mode") == "rtlsim":
@@ -376,6 +391,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         context[node.output[0]] = np.asarray(result, dtype=np.float32)
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Generate the loop control wrapper, stream taps, parameters and body IP for this loop."""
         # Generate params as part of IP preparation
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         self.generate_hdl_stream_tap()
@@ -650,6 +666,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
                     f.write(template_wrapper)
 
     def ipgen_singlenode_code(self, fpgapart=None):
+        """Build the Vivado block design and package the loop as a single IP."""
         prjname = "MakeLoopIP"
         block_name = self.onnx_node.name
         vivado_stitch_proj_dir = self.get_nodeattr("code_gen_dir_ipgen")
@@ -1271,6 +1288,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         self.set_nodeattr("ip_vlnv", block_vlnv)
 
     def get_verilog_top_module_intf_names(self):
+        """Return the top-level interface names grouped by protocol, including body AXI-MM ports."""
         # from wrapper template
         addr_bits = 64
 
@@ -1308,6 +1326,9 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return intf_names
 
     def code_generation_ipi(self):
+        """Construct and return the TCL for node instantiation in
+        Vivado IPI, adding IP repo paths.
+        """
         vlnv = self.get_nodeattr("ip_vlnv")
         cmd = []
         # add all the generated IP dirs to ip_repo_paths
@@ -1327,9 +1348,13 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return cmd
 
     def get_rtl_file_list(self, abspath=False):
+        """Return no RTL files; the loop is packaged as a Vivado IP."""
         pass
 
     def intermediate_frame_bytes(self):
+        """Return the DDR bytes reserved for intermediate frames
+        (outstanding DMAs times frame size).
+        """
         N_OUTSTANDING_DMAS = 128  # Currently hard-coded in intermediate_frames.sv
         input_elem_bytes = (self.get_input_datatype(0).bitwidth() + 7) // 8
         input_elements = int(np.prod(self.get_normal_input_shape(0)))

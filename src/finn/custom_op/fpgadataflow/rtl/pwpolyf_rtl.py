@@ -1,6 +1,7 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""RTL backend implementation of piecewise polynomial activation functions."""
 import numpy as np
 import os
 import shutil
@@ -88,20 +89,24 @@ class PWPolyF_rtl(PWPolyF, RTLBackend):
     """RTL variant of PWPolyF, wraps the finn-rtllib pwpolyf IP."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types, combining PWPolyF and RTLBackend attributes."""
         my_attrs = {}
         my_attrs.update(PWPolyF.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
     def _generate_coeffs_pkg(self, num_samples=1000):
+        """Return the coefficient package source for this node's K and degree."""
         K = self.get_nodeattr("K")
         degree = self.get_nodeattr("degree")
         return _generate_coeffs_pkg_data(K, degree=degree, num_samples=num_samples)
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Render the pwpolyf wrapper template and write the coefficient package and RTL sources."""
         rtllib_dir = os.path.join(get_settings().finn_rtllib, "pwpolyf/hdl/")
         template_path = rtllib_dir + "pwpolyf_template_wrapper.v"
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
@@ -141,6 +146,7 @@ class PWPolyF_rtl(PWPolyF, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Return the list of RTL files (package, core, wrapper and FIFO) for this node."""
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
             rtllib_dir = os.path.join(get_settings().finn_rtllib, "pwpolyf/hdl/")
@@ -156,6 +162,7 @@ class PWPolyF_rtl(PWPolyF, RTLBackend):
         return verilog_files + fifo_rtl_files(abspath=abspath)
 
     def execute_node(self, context, graph):
+        """Execute the node via Python (cppsim) or rtlsim depending on exec_mode."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             PWPolyF.execute_node(self, context, graph)
@@ -163,6 +170,7 @@ class PWPolyF_rtl(PWPolyF, RTLBackend):
             RTLBackend.execute_node(self, context, graph)
 
     def code_generation_ipi(self):
+        """Construct and return the TCL for node instantiation in Vivado IPI."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
         sourcefiles = [

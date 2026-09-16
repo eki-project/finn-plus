@@ -40,6 +40,7 @@ class InferSelectTokenLayer(Transformation):
     """Convert a scalar Gather on the token axis into SelectToken."""
 
     def apply(self, model):
+        """Replace scalar Gather nodes on the token axis by SelectToken nodes."""
         graph = model.graph
         graph_modified = False
         for node_ind, node in enumerate(list(graph.node)):

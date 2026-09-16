@@ -1,6 +1,7 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""RTL backend implementation of the elementwise Where layer."""
 import os
 import shutil
 
@@ -10,6 +11,7 @@ from finn.util.settings import get_settings
 
 
 def _rtlsrc_dir():
+    """Return the directory of the finn-rtllib where HDL sources."""
     return os.path.join(get_settings().finn_rtllib, "where/hdl")
 
 
@@ -17,24 +19,31 @@ class HWWhere_rtl(HWWhere, RTLBackend):
     """RTL implementation of the ONNX Where operator with multidirectional broadcasting."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types, combining HWWhere and RTLBackend attributes."""
         my_attrs = {}
         my_attrs.update(HWWhere.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
     def _shape_literal(self, shape):
+        """Return the shape as a SystemVerilog unpacked-array literal string."""
         rtl_shape = self._rtl_shape(shape)
         return "'{ " + ", ".join(str(int(x)) for x in rtl_shape) + " }"
 
     def _pad_shape_to_rank(self, shape, rank):
+        """Return the shape left-padded with ones to the given rank."""
         rtl_shape = self._rtl_shape(shape)
         assert len(rtl_shape) <= rank, "Input rank must not exceed output rank"
         return (1,) * (rank - len(rtl_shape)) + rtl_shape
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Render the where wrapper and core templates and copy the
+        RTL sources into the codegen dir.
+        """
         pe = self._output_stream_pe()
         out_shape = self.get_normal_output_shape()
         cond_shape = self.get_normal_input_shape(0)
@@ -98,6 +107,7 @@ class HWWhere_rtl(HWWhere, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Return the list of RTL files (core sources and generated wrappers) for this node."""
         if abspath:
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen") + "/"
             rtllib_dir = _rtlsrc_dir() + "/"
@@ -113,6 +123,7 @@ class HWWhere_rtl(HWWhere, RTLBackend):
         ]
 
     def code_generation_ipi(self):
+        """Construct and return the TCL for node instantiation in Vivado IPI."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         sourcefiles = self.get_rtl_file_list()
         sourcefiles = [os.path.join(code_gen_dir, f) for f in sourcefiles]
@@ -127,6 +138,7 @@ class HWWhere_rtl(HWWhere, RTLBackend):
         return cmd
 
     def execute_node(self, context, graph):
+        """Execute the node via Python (cppsim) or rtlsim depending on exec_mode."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             HWWhere.execute_node(self, context, graph)

@@ -27,6 +27,7 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+"""Transformation removing generated files and projects of fpgadataflow nodes."""
 import os
 import qonnx.custom_op.registry as registry
 from qonnx.transformation.base import Transformation
@@ -39,9 +40,11 @@ class CleanUp(Transformation):
     """Remove any generated files for fpgadataflow nodes."""
 
     def __init__(self):
+        """Initialize instance."""
         super().__init__()
 
     def apply(self, model):
+        """Delete the PYNQ and IP stitching projects and each node's generated code directories."""
         # delete PYNQ project, if any
         vivado_pynq_proj_dir = model.get_metadata_prop("vivado_pynq_proj")
         if vivado_pynq_proj_dir is not None and os.path.isdir(vivado_pynq_proj_dir):

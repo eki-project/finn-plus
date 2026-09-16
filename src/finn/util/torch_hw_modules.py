@@ -107,10 +107,12 @@ class PWPolyFFunction(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree):
+        """Evaluate the piecewise polynomial activation on `x`."""
         return _pwpolyf_eval(x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree)
 
     @staticmethod
     def symbolic(g, x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree):
+        """Emit a qonnx PWPolyFunction node carrying func, K and degree during ONNX export."""
         # Use qonnx.custom_op.general domain to match Brevitas export convention
         # and enable QONNX's registry to find the PWPolyFunction custom op
         ret = g.op(
@@ -134,6 +136,7 @@ class PWPolyFActivation(nn.Module):
     """
 
     def __init__(self, func="gelu", K=3, degree=2, fit_samples=1000):
+        """Initialize the activation and fit the polynomial coefficients for `func`."""
         super().__init__()
         if func not in SUPPORTED_FUNCS:
             raise ValueError("Unsupported func=%r; choose from %s" % (func, SUPPORTED_FUNCS))
@@ -154,6 +157,7 @@ class PWPolyFActivation(nn.Module):
         self.register_buffer("pos_clamp_val", pos_cv)
 
     def forward(self, x):
+        """Apply the piecewise polynomial activation to `x`."""
         return PWPolyFFunction.apply(
             x,
             self.coeffs,

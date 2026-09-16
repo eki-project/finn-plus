@@ -1,6 +1,7 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""RTL backend implementation of the Pad1D layer."""
 import numpy as np
 import os
 from qonnx.core.datatype import DataType
@@ -12,6 +13,7 @@ from finn.util.settings import get_settings
 
 
 def _rtlsrc_dir():
+    """Return the directory of the finn-rtllib pad1d HDL sources."""
     return os.path.join(get_settings().finn_rtllib, "pad1d/hdl")
 
 
@@ -19,15 +21,18 @@ class Pad1D_rtl(Pad1D, RTLBackend):
     """RTL implementation of Pad1D."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types, combining Pad1D and RTLBackend attributes."""
         my_attrs = {}
         my_attrs.update(Pad1D.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
     def _pack_value(self, value, dtype):
+        """Return the unsigned bit pattern of a single value in the given FINN datatype."""
         bitwidth = dtype.bitwidth()
         if dtype == DataType["BIPOLAR"]:
             int_value = int((value + 1) // 2)
@@ -40,12 +45,14 @@ class Pad1D_rtl(Pad1D, RTLBackend):
         return int_value & ((1 << bitwidth) - 1)
 
     def _get_pad_data_width(self, ind):
+        """Return the total bit width of the pad data for pad input `ind`."""
         dtype = self.get_input_datatype()
         pad_count = self._get_pad_count(ind)
         num_channels = self.get_nodeattr("NumChannels")
         return max(1, pad_count) * num_channels * dtype.bitwidth()
 
     def _get_pad_values(self, model, ind):
+        """Return the constant pad values for input `ind` expanded to the full pad length."""
         pad_count = self._get_pad_count(ind)
         num_channels = self.get_nodeattr("NumChannels")
         if pad_count == 0:
@@ -71,6 +78,7 @@ class Pad1D_rtl(Pad1D, RTLBackend):
         return pad_values
 
     def _pack_pad_data(self, model, ind):
+        """Return the pad values of input `ind` packed as a Verilog sized hex literal."""
         dtype = self.get_input_datatype()
         bitwidth = dtype.bitwidth()
         if self._get_pad_count(ind) == 0:
@@ -95,6 +103,7 @@ class Pad1D_rtl(Pad1D, RTLBackend):
         return "%d'h%0*x" % (data_width, hex_digits, packed)
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Render the pad1d wrapper template with embedded pad data into the codegen dir."""
         simd = self.get_nodeattr("SIMD")
         num_channels = self.get_nodeattr("NumChannels")
         assert num_channels % simd == 0, "SIMD must divide NumChannels"
@@ -134,6 +143,7 @@ class Pad1D_rtl(Pad1D, RTLBackend):
         self.set_nodeattr("ip_path", code_gen_dir)
 
     def get_rtl_file_list(self, abspath=False):
+        """Return the list of RTL files (pad1d core and generated wrapper) for this node."""
         if abspath:
             return [
                 os.path.join(_rtlsrc_dir(), "pad1d.sv"),
@@ -145,6 +155,7 @@ class Pad1D_rtl(Pad1D, RTLBackend):
         return ["pad1d.sv", self.get_nodeattr("gen_top_module") + ".v"]
 
     def code_generation_ipi(self):
+        """Construct and return the TCL for node instantiation in Vivado IPI."""
         sourcefiles = self.get_rtl_file_list(abspath=True)
         source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
         cmd = ["file mkdir %s" % source_target]
@@ -157,6 +168,7 @@ class Pad1D_rtl(Pad1D, RTLBackend):
         return cmd
 
     def execute_node(self, context, graph):
+        """Execute the node via Python (cppsim) or rtlsim on the streamed token input."""
         mode = self.get_nodeattr("exec_mode")
         if mode == "cppsim":
             Pad1D.execute_node(self, context, graph)

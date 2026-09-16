@@ -44,6 +44,7 @@ class InferPad1DLayer(Transformation):
     """
 
     def _make_pad_initializer(self, model, graph, values, idt):
+        """Create a new float32 initializer holding the pad values and return its name."""
         values = np.asarray(values, dtype=np.float32)
         pad_name = model.make_new_valueinfo_name()
         graph.initializer.append(numpy_helper.from_array(values, name=pad_name))
@@ -51,11 +52,13 @@ class InferPad1DLayer(Transformation):
         return pad_name
 
     def _make_or_reuse_pad_initializer(self, model, graph, values, tensor_names, idt):
+        """Return the single existing pad tensor name or create a new pad initializer."""
         if len(tensor_names) == 1:
             return tensor_names[0]
         return self._make_pad_initializer(model, graph, values, idt)
 
     def apply(self, model):
+        """Replace Concat nodes that pad one streamed tensor with constants by Pad1D nodes."""
         graph = model.graph
         node_ind = 0
         graph_modified = False

@@ -60,9 +60,11 @@ class MVAU(HWCustomOp):
     """Abstraction layer for HW implementation of MatrixVectorActivation layers."""
 
     def __init__(self, onnx_node, **kwargs):
+        """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
+        """Return node attribute types for folding, datatypes, memory and weight infrastructure."""
         my_attrs = {
             "PE": ("i", True, 0),
             "SIMD": ("i", True, 0),
@@ -137,6 +139,7 @@ class MVAU(HWCustomOp):
         return my_attrs
 
     def execute_node(self, context, graph):
+        """Execute the node in Python via (xnorpopcount) matmul and optional multithresholding."""
         node = self.onnx_node
         in_act = context[node.input[0]]
         # ensure that shape is compatible
@@ -172,6 +175,7 @@ class MVAU(HWCustomOp):
         context[node.output[0]] = result.reshape(oshape)
 
     def verify_node(self):
+        """Verify the node attributes, inputs and outputs and return a list of info messages."""
         info_messages = []
         # verify that "backend" is set to "fpgadataflow"
         backend_value = self.get_nodeattr("backend")
@@ -227,6 +231,7 @@ class MVAU(HWCustomOp):
         return info_messages
 
     def infer_node_datatype(self, model):
+        """Infer and set the input, weight and output datatypes from the model tensors."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype(0):
@@ -261,6 +266,7 @@ class MVAU(HWCustomOp):
         return DataType[self.get_nodeattr("outputDataType")]
 
     def get_instream_width(self, ind=0):
+        """Return the width of input stream `ind` (activations or weights) in bits."""
         if ind == 0:
             i_bits = self.get_input_datatype(0).bitwidth()
             width = i_bits * self.get_nodeattr("SIMD")
@@ -293,11 +299,13 @@ class MVAU(HWCustomOp):
         return width
 
     def get_outstream_width(self, ind=0):
+        """Return the width of the output stream in bits."""
         o_bits = self.get_output_datatype().bitwidth()
         out_width = o_bits * self.get_nodeattr("PE")
         return out_width
 
     def get_folded_input_shape(self, ind=0):
+        """Return the folded shape of input `ind` (activations or weights)."""
         mw = self.get_nodeattr("MW")
         mh = self.get_nodeattr("MH")
         simd = self.get_nodeattr("SIMD")
@@ -326,6 +334,7 @@ class MVAU(HWCustomOp):
         return folded_input_shape
 
     def get_folded_output_shape(self, ind=0):
+        """Return the folded output shape."""
         mh = self.get_nodeattr("MH")
         pe = self.get_nodeattr("PE")
         nf = mh // pe
@@ -334,6 +343,7 @@ class MVAU(HWCustomOp):
         return folded_output_shape
 
     def get_normal_input_shape(self, ind=0):
+        """Return the unfolded shape of input `ind` (activations or weights)."""
         mw = self.get_nodeattr("MW")
         if ind == 0:
             vecs = list(self.get_nodeattr("numInputVectors"))
@@ -346,6 +356,7 @@ class MVAU(HWCustomOp):
         return shape
 
     def get_normal_output_shape(self, ind=0):
+        """Return the unfolded output shape."""
         mh = self.get_nodeattr("MH")
         vecs = list(self.get_nodeattr("numInputVectors"))
         normal_output_shape = tuple(vecs + [mh])
@@ -378,6 +389,7 @@ class MVAU(HWCustomOp):
             return mh // pe
 
     def uram_estimation(self, fpgapart):
+        """Estimate the number of URAMs used for weight storage."""
         P = self.get_nodeattr("PE")
         Q = self.get_nodeattr("SIMD")
         wdt = self.get_input_datatype(1)
@@ -442,6 +454,7 @@ class MVAU(HWCustomOp):
             return (math.ceil(omega / 512)) * (math.ceil(mem_width / 36))
 
     def bram_efficiency_estimation(self, fpgapart):
+        """Return the fraction of estimated BRAM capacity actually used by weights."""
         wdt = self.get_input_datatype(1)
         W = wdt.bitwidth()
         D_in = self.get_nodeattr("MW")
@@ -498,6 +511,7 @@ class MVAU(HWCustomOp):
             )
 
     def get_exp_cycles(self):
+        """Return the expected cycle count given the folding configuration and tiling factor."""
         pe = self.get_nodeattr("PE")
         simd = self.get_nodeattr("SIMD")
         th = self.get_nodeattr("TH")
@@ -850,6 +864,9 @@ class MVAU(HWCustomOp):
             raise Exception("Unknown weight_file_mode")
 
     def generate_params(self, model, path):
+        """Write weight and threshold parameter files for the
+        selected mem_mode into the given path.
+        """
         mem_mode = self.get_nodeattr("mem_mode")
         code_gen_dir = path
         # weights, if not external
@@ -925,6 +942,7 @@ class MVAU(HWCustomOp):
                 f_thresh.close()
 
     def get_op_and_param_counts(self):
+        """Return a dictionary with MAC operation, weight and threshold parameter counts."""
         in_features = self.get_nodeattr("MW")
         out_features = self.get_nodeattr("MH")
         weight_bits = self.get_input_datatype(1).bitwidth()
@@ -949,6 +967,7 @@ class MVAU(HWCustomOp):
         return ret_dict
 
     def get_verilog_top_module_intf_names(self):
+        """Return the top-level interface names grouped by protocol for the selected mem_mode."""
         # intf_names = super().get_verilog_top_module_intf_names()
         intf_names = {}
         intf_names["clk"] = ["ap_clk"]
@@ -1008,6 +1027,9 @@ class MVAU(HWCustomOp):
                 )
 
     def code_generation_ipi(self):
+        """Construct and return the TCL for node instantiation in
+        Vivado IPI, including weight infra.
+        """
         source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
         cmd = ["file mkdir %s" % source_target]
 
