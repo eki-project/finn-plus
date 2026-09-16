@@ -2074,7 +2074,7 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
             raise FINNUserError("Please specify the 'board' parameter for Zynq builds.")
         if cfg.instrumentation_no_dma is None:
             raise FINNUserError(
-                "Please specify the " "'instrumentation_no_dma' parameter for Zynq builds."
+                "Please specify the 'instrumentation_no_dma' parameter for Zynq builds."
             )
 
         model = model.transform(
@@ -2090,6 +2090,17 @@ def step_synthesize_bitfile(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
             )
         )
     elif cfg.shell_flow_type == ShellFlowType.VITIS_ALVEO:
+        steps = cfg.steps
+        if steps is not None:
+            for i in range(len(steps)):
+                if callable(steps[i]):
+                    steps[i] = steps[i].__name__
+            if "step_prepare_synthesis" not in steps and "step_synthesize_bitfile" in steps:
+                log.error(
+                    "Did not find 'step_prepare_synthesis' but found 'step_synthesize_bitfile' in"
+                    "your configuration. Running synthesis without preparation will most likely "
+                    "fail, unless preparation is done manually."
+                )
         model = model.transform(VitisBuild(cfg))
     else:
         raise Exception("Unrecognized shell_flow_type: " + str(cfg.shell_flow_type))
