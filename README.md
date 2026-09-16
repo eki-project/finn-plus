@@ -27,6 +27,7 @@ The framework is fully open-source in order to give a higher degree of flexibili
 - **[Feature Tracker](https://github.com/orgs/eki-project/projects/1)** - Current development status
 - **[Contributing](#contributing)** - Learn how to contribute to FINN+
 - **[Citing FINN+](#citing-finn)** - How to cite FINN+ in your research
+- **[Changelog](CHANGELOG.md)** - Recent additions and changes
 
 ## What's New in FINN+
 
@@ -63,7 +64,7 @@ This is a quick overview of how to get started, for additional information pleas
 
 Before installing FINN+, ensure you have:
 
-- **Python**: Version 3.10 or 3.11 (Python 3.12+ not yet supported)
+- **Python**: Version 3.11-3.14
 - **Xilinx Tools**: Vivado, Vitis, and Vitis HLS (2022.2 or 2024.2)
 - **System Dependencies**: See our [dependency installation script](installDependencies.sh) for required packages
 
@@ -115,11 +116,69 @@ If you find FINN+ useful in your research, please cite the [Zenodo record](https
 
 If you use a specific feature, please additionally cite the corresponding publication:
 
+**Multi-DNN:** Jentzsch, Klassen et al., "Compiling Multi-DNN Dataflow Accelerators: Dynamic Weight Reconfiguration in FINN" (FPT '26 Poster)
+
+```bibtex
+Publication pending
+```
+
+**Simulation-based FIFO-sizing:** Jungemann, Wintermann et al., "Accelerating Buffer Sizing for Dataflow Architectures: Control-Path-Driven Black-Box RTL Simulation in FINN" (FPL '26 Poster)
+
+```bibtex
+Publication pending
+```
+
+**LiveFIFO:** Jentzsch et al., ["LiveFIFO: FPGA-in-the-Loop Buffer Sizing for Dataflow Accelerators"](https://doi.org/10.1007/978-3-032-29365-7_3) (ARC '26)
+
+```bibtex
+@inproceedings{livefifo,
+  author    = {Jentzsch, Felix and Preu{\ss}er, Thomas B. and Stasytis, Lukas and Umuro{\u{g}}lu, Yaman and Petri-Koenig, Jakoba and Berganski, Christoph and Platzner, Marco},
+  title     = {{LiveFIFO}: {FPGA}-in-the-Loop Buffer Sizing for Dataflow Accelerators},
+  booktitle = {Applied Reconfigurable Computing. Architectures, Tools, and Applications (ARC)},
+  year      = {2027},
+  pages     = {34--50},
+  doi       = {10.1007/978-3-032-29365-7_3}
+}
+```
+
 **High-performance driver:** Jungemann et al., ["FINN-HPC: Closing the Gap for Energy-Efficient Neural Network Inference on FPGAs in HPC"](https://doi.org/10.1145/3728179.3728189) (HEART '25)
+
+```bibtex
+@inproceedings{finn-hpc,
+  author    = {Jungemann, Linus and Wintermann, Bjarne and Riebler, Heinrich and Plessl, Christian},
+  title     = {{FINN-HPC}: Closing the Gap for Energy-Efficient Neural Network Inference on {FPGAs} in {HPC}},
+  booktitle = {Proceedings of the 15th International Symposium on Highly Efficient Accelerators and Reconfigurable Technologies (HEART)},
+  year      = {2025},
+  pages     = {103--116},
+  doi       = {10.1145/3728179.3728189}
+}
+```
 
 **Multi-FPGA:** Pape, Wintermann et al., ["AuroraFlow, an Easy-to-Use, Low-Latency FPGA Communication Solution Demonstrated on Multi-FPGA Neural Network Inference"](https://doi.org/10.1145/3728179.3728190) (HEART '25)
 
+```bibtex
+@inproceedings{auroraflow,
+  author    = {Pape, Gerrit and Wintermann, Bjarne and Jungemann, Linus and Lass, Michael and Meyer, Marius and Riebler, Heinrich and Plessl, Christian},
+  title     = {{AuroraFlow}, an Easy-to-Use, Low-Latency {FPGA} Communication Solution Demonstrated on Multi-{FPGA} Neural Network Inference},
+  booktitle = {Proceedings of the 15th International Symposium on Highly Efficient Accelerators and Reconfigurable Technologies (HEART)},
+  year      = {2025},
+  pages     = {35--48},
+  doi       = {10.1145/3728179.3728190}
+}
+```
+
 **Transformer support:** Berganski et al., ["FINN-T: Compiling Custom Dataflow Accelerators for Quantized Transformers"](https://doi.org/10.1109/ICFPT64416.2024.11113391) (FPT '24)
+
+```bibtex
+@inproceedings{finn-t,
+  author    = {Berganski, Christoph and Jentzsch, Felix and Platzner, Marco and Kuhmichel, Max and Giefers, Heiner},
+  title     = {{FINN-T}: Compiling Custom Dataflow Accelerators for Quantized Transformers},
+  booktitle = {International Conference on Field Programmable Technology (ICFPT)},
+  year      = {2024},
+  pages     = {1--10},
+  doi       = {10.1109/ICFPT64416.2024.11113391}
+}
+```
 
 ## About Us
 
