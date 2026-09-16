@@ -27,9 +27,9 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-# This file is intended to serve as an example showing how to set up custom builds
-# using FINN. The custom build can be launched like this:
-# ./run-docker.sh build_custom /path/to/folder
+""" This file is intended to serve as an example showing how to set up custom builds
+ using FINN. The custom build can be launched like this:
+ finn run /path/to/folder """
 
 
 import numpy as np
@@ -45,6 +45,7 @@ platform_name = "fpga"
 
 
 def custom_step_gen_tb_and_io(model, cfg):
+    """Create testbench and io"""
     sim_output_dir = cfg.output_dir + "/sim"
     os.makedirs(sim_output_dir, exist_ok=True)
     # load the provided input data

@@ -15,5 +15,5 @@ config_export -format xo -output $export_path
 config_interface -m_axi_alignment_byte_size $width -m_axi_latency $width -m_axi_max_widen_bitwidth [expr $width * 8]
 config_rtl -register_reset_num 3
 csynth_design
-export_design -rtl verilog -format xo -output exported
+export_design -rtl verilog -format xo -output $target
 exit

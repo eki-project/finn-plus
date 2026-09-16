@@ -1,6 +1,5 @@
 """Driver for live FIFO sizing experiments."""
 
-import copy
 import json
 import matplotlib.pyplot as plt
 import random
@@ -22,7 +21,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         download: bool = True,
         seed: int = 1,
         fifo_widths: dict | None = None,
-        folding_config_before_lfs: dict | None = None,
+        folding_config: dict | None = None,
         **kwargs: Any,  # noqa: ARG002
     ) -> None:
         """Initialize live FIFO overlay."""
@@ -39,9 +38,9 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         self.fifo_widths = {} if fifo_widths is None else fifo_widths
         self.num_fifos = len(self.fifo_widths)
 
-        # The settings can also contain the original folding config,
-        # into which we can insert the live FIFO sizes once we are done
-        self.folding_config_before_lfs = folding_config_before_lfs
+        # The settings preserve the folding configuration needed for a
+        # follow-up build with FIFO depths measured from this exact design.
+        self.folding_config = folding_config
 
         # Account for additional FIFO depth or implicit registers introduced by the virtual FIFO
         # implementation that are not present in real FIFOs.
@@ -242,8 +241,10 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         target_latency = latency
 
         # Apply relaxation to thresholds
+        # Always allow 0.05% latency degradation due to jitter observed for some models
+        latency_default_relaxation = 0.0005
         relaxed_interval_threshold = target_interval * (1 + relaxation)
-        relaxed_latency_threshold = target_latency * (1 + relaxation)
+        relaxed_latency_threshold = target_latency * (1 + (latency_default_relaxation + relaxation))
 
         # Binary search for each FIFO to find minimum depth
         iteration = 0
@@ -469,7 +470,6 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         report_dir = str(Path(base_report_dir) / fifo_search_order / stop_condition)
         Path(report_dir).mkdir(parents=True, exist_ok=True)
         reportfile = Path(report_dir) / "report_experiment_fifosizing.json"
-        folding_config_lfs = copy.deepcopy(self.folding_config_before_lfs)
 
         print("---PHASE 1: RUN_DETACHED---")
         max_period = self.run_detached()
@@ -490,7 +490,7 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         print(f"RELAXATION: {relaxation * 100:.1f}%")
         print(f"RELAXATION SWEEP: {'Enabled' if relaxation_sweep else 'Disabled'}")
         # Determine search iteration runtime via heuristic based on free-running latency
-        iteration_runtime = max(0.001, (paced_latency * 10) * 10 / 1000 / 1000 / 1000)
+        iteration_runtime = max(0.001, (paced_latency * 4) * 10 / 1000 / 1000 / 1000)
 
         search_log = self.size_iteratively_binary_search(
             start_depth=max_occupancy,
@@ -620,26 +620,25 @@ class FINNLiveFIFOOverlay(FINNInstrumentationOverlay):
         with (Path(report_dir) / "fifo_sizing_report.json").open("w") as f:
             json.dump(fifo_report, f, indent=2)
 
-        # Generate fifo_depth_export.json to export FIFO depths for use in FINN
-        fifo_depth_export = {}
+        # Export measured FIFO settings for use by the follow-up FINN build.
+        fifo_config = {
+            "fifo_depths": {},
+            "impl_style": {},
+            "ram_style": {},
+        }
         for fifo, depth in enumerate(fifo_depths):
             fifo_name = f"StreamingFIFO_rtl_{fifo}"
-            fifo_depth_export[fifo_name] = {}
-            fifo_depth_export[fifo_name]["depth"] = depth + self.fifo_depth_offset
-        with (Path(report_dir) / "fifo_depth_export.json").open("w") as f:
-            json.dump(fifo_depth_export, f, indent=2)
+            final_depth = depth + self.fifo_depth_offset
+            fifo_config["fifo_depths"][fifo_name] = final_depth
+            fifo_config["impl_style"][fifo_name] = "rtl"
+            fifo_config["ram_style"][fifo_name] = "auto"
+        with (Path(report_dir) / "fifo_config.json").open("w") as f:
+            json.dump(fifo_config, f, indent=2)
 
-        # Also export directly into original folding config for convenience
-        if folding_config_lfs:
-            for key in list(folding_config_lfs.keys()):
-                if key.startswith("StreamingFIFO"):
-                    fifo_name = f"StreamingFIFO_rtl_{int(key.removeprefix('StreamingFIFO_'))}"
-                    # Rename FIFO from StreamingFIFO_* to StreamingFIFO_rtl_*
-                    folding_config_lfs[fifo_name] = folding_config_lfs.pop(key)
-                    folding_config_lfs[fifo_name]["depth"] = fifo_depth_export[fifo_name]["depth"]
-                    folding_config_lfs[fifo_name]["impl_style"] = "rtl"
-            with (Path(report_dir) / "folding_config_lfs.json").open("w") as f:
-                json.dump(folding_config_lfs, f, indent=2)
+        if self.folding_config is None:
+            raise ValueError("Live FIFO sizing requires folding_config in settings.json.")
+        with (Path(report_dir) / "folding_config.json").open("w") as f:
+            json.dump(self.folding_config, f, indent=2)
 
         # Generate the usual instrumentation performance report based on final state
         min_latency = log_min_latency[-1]
