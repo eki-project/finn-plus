@@ -217,7 +217,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
 
         return int(exp_cycles)
 
-    def bram_estimation(self):
+    def bram_estimation(self, fpgapart):
         """Estimate Block RAM (BRAM) resource usage.
 
         Returns
@@ -283,7 +283,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             return int((ram_cascade_depth * ram_cascade_width - cascade_savings) * buffer_count)
         return 0
 
-    def lut_estimation(self):
+    def lut_estimation(self, fpgapart):
         """Estimate LUT resource usage.
 
         Returns
@@ -301,7 +301,7 @@ class ConvolutionInputGenerator_rtl(ConvolutionInputGenerator, RTLBackend):
             ram_luts = 0
         return 300 + ram_luts
 
-    def uram_estimation(self):
+    def uram_estimation(self, fpgapart):
         """Estimate UltraRAM (URAM) resource usage.
 
         Returns
