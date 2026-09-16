@@ -6,6 +6,36 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## Unreleased
+
+### Added
+- (Xilinx) **Upstream sync with FINN v1.0.0-alpha** (Xilinx#1687): pulls in all upstream `dev` changes since April 2026, see the sections below for the user-facing ones
+- (Xilinx) New hardware operators: `PWPolyF` (piecewise-polynomial GELU/SiLU/Sigmoid/Tanh, RTL, Versal only) with a `PWPolyFunction` QONNX op and PyTorch export modules in `finn.util.torch_hw_modules` (Xilinx#1573), `HWWhere` (Xilinx#1579), `Pad1D` (1D padding / CLS token insertion) (Xilinx#1620), `SelectToken` and `Crop_rtl` (Xilinx#1639), `HWSoftmax_rtl` (Xilinx#1624)
+    - New conversion transformations in the `convert_to_hw` package: `InferPWPolyFLayer`, `InferWhereLayer`, `InferPad1DLayer`, `InferSelectTokenLayer`
+- (Xilinx) MLO: tiled RTL MVAU (`TH` attribute, Xilinx#1566, Xilinx#1594) and DDR weight streaming for `FINNLoop` (`mem_type`, `address_offset`, `AssignMemoryOffset`, new build step `step_assign_ddr_weight_offsets`, MLO weight export in the driver) (Xilinx#1607, Xilinx#1664)
+- (Xilinx) URAM support and resource/efficiency estimation for `Thresholding_hls`, `Lookup` (new `ram_style` attribute), `ElementwiseBinary_hls` and the RTL sliding window generator (Xilinx#1586)
+- (Xilinx) RTL elementwise operations now support int/float and int/int operand combinations (Xilinx#1570, Xilinx#1649)
+- (Xilinx) `InnerShuffle` supports a fused reshape via the `transpose_in_shape` attribute (Xilinx#1649, Xilinx#1669)
+- (Xilinx) New streamlining transformations `ExtractMultiThresholdScaleBias` (Xilinx#1567) and `MoveMulPastJoinMul` (Xilinx#1275); unsigned identity Quant nodes are converted to MultiThreshold (Xilinx#1653)
+- (Xilinx) `AbsorbElementwiseOpsIntoRequant` absorbs scalar Mul/Add nodes into `Requant`; `InferRequantLayer` gained a `bitwidth_threshold` (build config `requant_bitwidth_threshold`, default 9) to prefer Requant over Thresholding for high-bitwidth activations (Xilinx#1569)
+- (Xilinx) Build config: `inject_steps_before`/`inject_steps_after` to run custom steps around named steps (Xilinx#1591), `verify_rtlsim_behavioral` (behavioral models + FIFO gauge for rtlsim verification) and `debug_fifo` (per-FIFO transaction logs in `<output_dir>/debug/fifo_logs`) (Xilinx#1592)
+- (Xilinx) rtlsim: watchdog timeouts are derived from the cycle estimate (`LIVENESS_THRESHOLD` only raises them), stitched-IP rtlsim of models with AXI-MM weight streaming loads the weight images automatically, `FINN_XELAB_MT` bounds the xelab thread count (Xilinx#1612, Xilinx#1614, Xilinx#1674)
+- (Xilinx) `FINN_TOOL_DIR_OVERRIDE` redirects Xilinx tool invocations (`vivado`, `vitis_hls`, `vitis-run`, `xelab`) to a shim directory (Xilinx#1600)
+- (Xilinx) `ApplyConfig` reports configurations for non-custom-op nodes instead of silently ignoring them (Xilinx#1593); `execute_onnx` validates input tensor names (Xilinx#1576)
+- (Xilinx) Board support: `AUP-ZU3_8GB` (Xilinx#1659)
+
+### Changed
+- (Xilinx) **FIFO consolidation** (Xilinx#1658, Xilinx#1679): all RTL FIFOs are built from a single `finn-rtllib/fifo/hdl/fifo.sv` (SRL / LUTRAM / BRAM / URAM selected by `ram_style`, new value `srl`). The Vivado `axis_data_fifo` implementation (`impl_style=vivado`), `SplitLargeFIFOs` and the `split_large_fifos`/`large_fifo_mem_style` build config options are removed; FIFOs of any depth are built as one instance. The FIFO gauge counts 32 bit with an overflow sentinel. The distributed simulation no longer models per-sub-FIFO pipeline overhead.
+- (Xilinx) Out-of-context synthesis now runs place & route inside the stitched-IP Vivado project (`CreateStitchedIP(run_synth, run_pnr)`); `step_out_of_context_synthesis` keeps its name and report (`ooc_synth_and_timing.json`) but reuses the stitched-IP project, the separate `vivadocompile` flow is gone. `CreateStitchedIP` takes `run_synth` instead of `vitis`. Power estimation opens the routed checkpoint. (Xilinx#1587)
+- (Xilinx) `AbsorbSignBiasIntoMultiThreshold` is renamed to `AbsorbScalarBiasIntoMultiThreshold` (absorbs any scalar bias, bounded by `max_bitwidth_increase`); the old name remains as a deprecated alias (Xilinx#1173)
+- (Xilinx) MVAU: the `dynamic_input` attribute is replaced by `mem_mode="dynamic"`, new memory mode `external_mem` for MLO weight streaming (Xilinx#1566)
+- (Xilinx) `InsertFIFO` takes `ram_style` instead of `max_qsrl_depth`/`vivado_ram_style`; `LoopExtraction` takes the loop body template path (default: build directory) instead of writing into the working directory (Xilinx#1680)
+- (Xilinx) `npy2apintstream`/`apintstream2npy` lost the element-bits template parameter and cnpy is vendored into `src/finn/templates/npy2stream` (no separate `cnpy` dependency anymore, cppsim compiles with C++17); `finnpy_to_packed_bytearray` lost the `fast_mode` argument and is much faster (Xilinx#1588, Xilinx#1625)
+- (Xilinx) `finn.util.mlo_sim` moved to `finn.util.rtlsim`, `is_mlo` to `finn.util.fpgadataflow`; `finn-rtllib/mlo/fetch_weights*` moved to `finn-rtllib/fetch_weights/`; upstream `derive_characteristic` based FIFO sizing remains removed in FINN+
+- (Xilinx) finn-hlslib dependency bumped to `8d979e2b` (Xilinx#1588)
+- (Xilinx) Node-by-node rtlsim verification is skipped for models mixing HLS floating-point ops with RTL LayerNorm (known xsim DSP conflict) (Xilinx#1661)
+- Not pulled from upstream: the SLASH/V80 linker (`alveo_build.py`), phase-based build steps, `build_dataflow_checks`, the Jenkins CI package
+
 ## 1.5.0 - 05.09.2026
 
 ### Added
