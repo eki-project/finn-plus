@@ -926,7 +926,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             # return as-is when explicitly specified
             return self.fpga_part
 
-    def _resolve_cycles_per_frame(self) -> None | int:
+    def _resolve_cycles_per_frame(self) -> int | None:
         """Calculate the number of clock cycles available per frame based on target FPS.
 
         Uses the target_fps and synth_clk_period_ns to compute how many clock cycles
@@ -975,7 +975,7 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
             return []
         return self.verify_steps
 
-    def _resolve_verification_io_pair(self) -> None | tuple[np.ndarray, np.ndarray]:
+    def _resolve_verification_io_pair(self) -> tuple[np.ndarray, np.ndarray] | None:
         """Load and validate the input/output numpy arrays for verification.
 
         Loads the verification input and expected output arrays from the files

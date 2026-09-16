@@ -9,29 +9,34 @@
 """Decompose Shuffle nodes into inner/outer shuffle operations."""
 import numpy as np
 from collections import deque
-from onnx import helper
+from collections.abc import Sequence
+from onnx import NodeProto, helper
 from operator import itemgetter
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
+from typing import cast
+
 from finn.util.logging import log
 
 
-def shuffle_perfect_loopnest_coeffs(shape: tuple[int], perm: tuple[int]) -> tuple[int]:
+def shuffle_perfect_loopnest_coeffs(shape: Sequence[int], perm: Sequence[int]) -> tuple[int, ...]:
     """Given an input shape and permutation matrix calculate the
     coefficients for the perfect loop nest for HLS generation.
     """
-    adjusted_shape = list(shape) + [1]
-    input_coeffs = [np.prod(adjusted_shape[i + 1 :]) for i in range(len(shape))]
+    adjusted_shape = [*list(shape), 1]
+    input_coeffs = [int(np.prod(adjusted_shape[i + 1 :])) for i in range(len(shape))]
     out_coeffs = [input_coeffs[i] for i in perm]
     return tuple(out_coeffs)
 
 
 def apply_inner_shuffle_operation(
-    perm: list[int], shape: list[int] = None, simd: int = 1
+    perm: list[int], shape: list[int] | None = None, simd: int = 1
 ) -> list[int]:
-    """Apply inner_shuffle operation: swap the last two positions
+    """Apply inner_shuffle operation: swap the last two positions.
+
     (..., a, b) -> (..., b, a)
     """
     if len(perm) < 2:
@@ -50,9 +55,10 @@ def apply_inner_shuffle_operation(
 
 
 def apply_outer_shuffle_operation(
-    perm: list[int], i: int, j: int, shape: list[int] = None, simd: int = 1
+    perm: list[int], i: int, j: int, shape: list[int] | None = None, simd: int = 1
 ) -> list[int] | None:
-    """Apply outer_shuffle operation: swap positions i and j
+    """Apply outer_shuffle operation: swap positions i and j.
+
     Constraint: cannot move the very last dimension
     """
     n = len(perm)
@@ -80,7 +86,7 @@ def apply_outer_shuffle_operation(
 
 
 def get_all_possible_moves(
-    perm: list[int], shape: list[int] = None, simd: int = 1
+    perm: list[int], shape: list[int] | None = None, simd: int = 1
 ) -> list[tuple[list[int], str, tuple[int, int] | None]]:
     """Get all possible moves from current permutation.
     Returns list of (new_permutation, operation_type, operation_params) tuples.
@@ -112,6 +118,7 @@ def get_all_possible_moves(
 
 def is_valid_hardware_permutation(perm_array: list[int]) -> bool:
     """Check if a permutation array represents a valid hardware operation.
+
     Valid operations are:
     - inner_shuffle: swap last two elements
     - outer_shuffle: any permutation that doesn't move the last element
@@ -137,9 +144,13 @@ def is_valid_hardware_permutation(perm_array: list[int]) -> bool:
         diff_positions = [i for i in range(n) if perm_array[i] != identity[i]]
         if len(diff_positions) == 2:
             pos1, pos2 = diff_positions
-            if pos1 != n - 1 and pos2 != n - 1:
-                if perm_array[pos1] == pos2 and perm_array[pos2] == pos1:
-                    return True
+            if (
+                pos1 != n - 1
+                and pos2 != n - 1
+                and perm_array[pos1] == pos2
+                and perm_array[pos2] == pos1
+            ):
+                return True
 
     return False
 
@@ -147,7 +158,7 @@ def is_valid_hardware_permutation(perm_array: list[int]) -> bool:
 def find_minimal_operation_sequence(
     start_perm: list[int],
     target_perm: list[int],
-    shape: list[int] = None,
+    shape: list[int] | None = None,
     simd: int = 1,
 ) -> list[tuple[str, tuple[int, int] | None]] | None:
     """Find minimal sequence of operations to transform start_perm into target_perm.
@@ -168,7 +179,7 @@ def find_minimal_operation_sequence(
         current_perm, operations = queue.popleft()
 
         for next_perm, op_type, op_params in get_all_possible_moves(current_perm, shape, simd):
-            test_operations = operations + [(op_type, op_params)]
+            test_operations = [*operations, (op_type, op_params)]
             test_perms = convert_operations_to_permutations(
                 list(range(len(start_perm))), test_operations, shape, simd
             )
@@ -190,7 +201,7 @@ def find_minimal_operation_sequence(
 def convert_operations_to_permutations(
     start_perm: list[int],
     operations: list[tuple[str, tuple[int, int] | None]],
-    shape: list[int] = None,
+    shape: list[int] | None = None,
     simd: int = 1,
 ) -> list[list[int]]:
     """Convert a sequence of operations to a list of permutation arrays.
@@ -222,7 +233,7 @@ def convert_operations_to_permutations(
 
 
 def can_be_single_operation(
-    target_perm: list[int], shape: list[int] = None, simd: int = 1
+    target_perm: list[int], shape: list[int] | None = None, simd: int = 1
 ) -> tuple[str, tuple[int, int] | None] | None:
     """Check if the target permutation can be achieved with a single operation.
     i.e. no decomposition is required.
@@ -252,7 +263,7 @@ def can_be_single_operation(
 
 
 def decompose_transpose_with_constraints(
-    target_perm: list[int], shape: list[int] = None, simd: int = 1
+    target_perm: list[int], shape: list[int] | None = None, simd: int = 1
 ) -> tuple[list[list[int]], list[str]]:
     """Decompose a target permutation into a sequence of hardware-constrained
     operations.
@@ -275,7 +286,7 @@ def decompose_transpose_with_constraints(
     # First check if this can be done with a single operation
     single_op = can_be_single_operation(target_perm, shape, simd)
     if single_op is not None:
-        op_type, op_params = single_op
+        op_type, _op_params = single_op
         # Create the permutation array for this single operation
         permutations = convert_operations_to_permutations(start_perm, [single_op], shape, simd)
         return permutations, [op_type]
@@ -302,25 +313,25 @@ class ShuffleDecomposition(Transformation):
     and OuterShuffle nodes.
     """
 
-    def __init__(self, debug=False):
+    def __init__(self, debug: bool = False) -> None:
         """Initialize the transformation with optional debug logging."""
         super().__init__()
         self.debug = debug
         self._name_counter = 0
 
-    def _unique(self, base):
+    def _unique(self, base: str) -> str:
         """Return a unique name using the provided base string."""
         self._name_counter += 1
         return f"{base}_{self._name_counter}"
 
-    def get_perm(self, node) -> list[int]:
+    def get_perm(self, node: NodeProto) -> list[int]:
         """Extract the permutation list from a Shuffle node."""
         for a in node.attribute:
             if a.name == "perm":
                 return list(a.ints)
         raise RuntimeError("Unable to determine the permutations from the Transpose node")
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply shuffle decomposition to eligible Shuffle nodes."""
         g = model.graph
         original_nodes = list(g.node)
@@ -331,16 +342,16 @@ class ShuffleDecomposition(Transformation):
 
             perm = self.get_perm(node)
             f_inst = getCustomOp(node)
-            orig_in_shape = f_inst.get_nodeattr("in_shape")
+            orig_in_shape = cast("list[int]", f_inst.get_nodeattr("in_shape"))
             in_shape = orig_in_shape
-            transpose_in_shape = f_inst.get_nodeattr("transpose_in_shape")
-            simd = f_inst.get_nodeattr("SIMD")
+            transpose_in_shape = cast("list[int]", f_inst.get_nodeattr("transpose_in_shape"))
+            simd = cast("int", f_inst.get_nodeattr("SIMD"))
 
             try:
-                P_list, operation_types = decompose_transpose_with_constraints(
+                perm_list, operation_types = decompose_transpose_with_constraints(
                     perm, transpose_in_shape, simd
                 )
-                if len(P_list) == 0:
+                if len(perm_list) == 0:
                     log.info("\tNo swaps necessary (identity permutation).")
                     continue
             except RuntimeError as e:
@@ -358,25 +369,24 @@ class ShuffleDecomposition(Transformation):
 
             prev_tensor = orig_input[0]
             new_nodes = []
-            orig_out_shape = f_inst.get_nodeattr("out_shape")
+            orig_out_shape = cast("list[int]", f_inst.get_nodeattr("out_shape"))
 
             # Create decomposed transposes using hardware-constrained operations
-            for step_idx, (P, op_type) in enumerate(zip(P_list, operation_types), start=1):
+            for step_idx, (perm_step, op_type) in enumerate(
+                zip(perm_list, operation_types, strict=True), start=1
+            ):
                 step_name = self._unique(f"{node.name}_{op_type}_step{step_idx}")
-                out_shape = itemgetter(*P)(transpose_in_shape)
-                if step_idx < len(P_list):
+                out_shape = itemgetter(*perm_step)(transpose_in_shape)
+                if step_idx < len(perm_list):
                     out_tensor = self._unique(f"{node.output[0]}_step{step_idx}")
                     out_reshaped = out_shape
                 else:
                     out_tensor = orig_output[0]
                     out_reshaped = orig_out_shape
 
-                if step_idx == 1:
-                    in_shape = orig_in_shape
-                else:
-                    in_shape = transpose_in_shape
+                in_shape = orig_in_shape if step_idx == 1 else transpose_in_shape
 
-                perm_attr = helper.make_attribute("perm", P)
+                perm_attr = helper.make_attribute("perm", perm_step)
                 transpose_node = helper.make_node(
                     op_type="Shuffle",
                     domain="finn.custom_op.fpgadataflow",
@@ -413,8 +423,9 @@ class ShuffleDecomposition(Transformation):
         return model, False
 
 
-def _is_inner_shuffle(perm, shape):
+def _is_inner_shuffle(perm: list[int], shape: list[int]) -> bool:
     """Check if the permutation represents a streaming InnerShuffle case.
+
     A streaming InnerShuffle is only possible when only the last two dimensions
     are swapped, regardless of how many outer dimensions there are.
     """
@@ -422,7 +433,7 @@ def _is_inner_shuffle(perm, shape):
         return False
 
     # Check if last two dimensions are swapped while others stay in order
-    expected_perm = list(range(len(perm) - 2)) + [len(perm) - 1, len(perm) - 2]
+    expected_perm = [*range(len(perm) - 2), len(perm) - 1, len(perm) - 2]
     return perm == expected_perm
 
 
@@ -431,29 +442,27 @@ class InferInnerOuterShuffles(Transformation):
     This should run after the ShuffleDecomposition transformation.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the transformation."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Replace Shuffle nodes with InnerShuffle or OuterShuffle nodes."""
         graph = model.graph
         graph_modified = False
-        node_ind = 0
-        for node in graph.node:
-            node_ind += 1
+        for node_ind, node in enumerate(graph.node, start=1):
             if node.op_type == "Shuffle":  # should we also check for fpgadataflow here?
                 to_remove = [node]
                 new_in_tensor = node.input[0]
                 new_out_tensor = node.output[0]  # What if a transpose is going to multiple sinks?
                 f_inst = getCustomOp(node)
-                in_shape = f_inst.get_nodeattr("in_shape")
-                in_reshaped = f_inst.get_nodeattr("transpose_in_shape")
-                out_shape = f_inst.get_nodeattr("out_shape")
-                out_reshaped = f_inst.get_nodeattr("transpose_out_shape")
-                data_type = f_inst.get_nodeattr("data_type")
-                perm = f_inst.get_nodeattr("perm")
-                simd = f_inst.get_nodeattr("SIMD")
+                in_shape = cast("list[int]", f_inst.get_nodeattr("in_shape"))
+                in_reshaped = cast("list[int]", f_inst.get_nodeattr("transpose_in_shape"))
+                out_shape = cast("list[int]", f_inst.get_nodeattr("out_shape"))
+                out_reshaped = cast("list[int]", f_inst.get_nodeattr("transpose_out_shape"))
+                data_type = cast("str", f_inst.get_nodeattr("data_type"))
+                perm = cast("list[int]", f_inst.get_nodeattr("perm"))
+                simd = cast("int", f_inst.get_nodeattr("SIMD"))
 
                 if _is_inner_shuffle(perm, in_shape):
                     # Get original node name if it exists, otherwise use current node name

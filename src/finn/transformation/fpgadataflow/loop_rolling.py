@@ -32,17 +32,28 @@ from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
     from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
 
 
 def get_constant_from_value(value: ir.Value) -> np.ndarray | None:
     """Get the constant value of a tensor."""
     # Handle input and/or inititalizer values
-    if value.producer() is None:
+    producer = value.producer()
+    if producer is None:
+        if value.const_value is None:
+            return None
         return value.const_value.numpy()
-    if value.producer().op_type == "Constant":
-        return value.producer().attributes["value"].value.numpy()
+    if producer.op_type == "Constant":
+        return producer.attributes["value"].value.numpy()
     return None
+
+
+def _require_value(value: "ir.Value | None", description: str) -> ir.Value:
+    """Return a non-None ir.Value, raising if it is unexpectedly omitted."""
+    if value is None:
+        raise FINNInternalError(f"Expected {description} to be present, but it was omitted")
+    return value
 
 
 def same_values(inputs: list[ir.Value]) -> bool:
@@ -52,7 +63,10 @@ def same_values(inputs: list[ir.Value]) -> bool:
 
     first_value = get_constant_from_value(inputs[0])
 
-    return all(np.array_equal(first_value, get_constant_from_value(inp)) for inp in inputs[1:])
+    return all(
+        np.array_equal(first_value, get_constant_from_value(inp))  # type: ignore
+        for inp in inputs[1:]
+    )
 
 
 def build_loop_replace_pattern(
@@ -70,12 +84,13 @@ def build_loop_replace_pattern(
     for i, loop_input_type in enumerate(loop_body.signature):
         if loop_input_type == LoopBodyInputType.PARAMETER:
             # validate parameter shapes
-            g_shape = nodes[0].inputs[i].shape
+            g_shape = _require_value(nodes[0].inputs[i], f"loop-body input {i}").shape
             for node in nodes:
-                if node.inputs[i].shape != g_shape:
+                node_input = _require_value(node.inputs[i], f"loop-body input {i}")
+                if node_input.shape != g_shape:
                     log.warning(
                         f"LoopRolling: Index {i} expected shape {g_shape}, "
-                        f"got {node.inputs[i].shape}."
+                        f"got {node_input.shape}."
                     )
                     raise FINNUserError(
                         "LoopRolling: all loop-body initializers of the same index "
@@ -85,7 +100,8 @@ def build_loop_replace_pattern(
             # Build Concat Node
             concat_inputs = []
             for node in nodes:
-                nvalue = osh.vdisconnect(copy.copy(node.inputs[i]))
+                node_input = _require_value(node.inputs[i], f"loop-body input {i}")
+                nvalue = osh.vdisconnect(copy.copy(node_input))
                 graph_inputs.append(nvalue)
                 concat_inputs.append(nvalue)
 
@@ -105,7 +121,7 @@ def build_loop_replace_pattern(
                     const_values_as_const_node.outputs[0], reshape_shape_const.outputs[0]
                 )
             else:
-                concat_node = osh.build_concat_node_from_inputs(concat_inputs)
+                concat_node = osh.build_concat_node_from_inputs(tuple(concat_inputs))
                 graph_nodes.append(concat_node)
                 # Build Reshape Node
                 reshape_shape_const = osh.build_constant_from_tensor(
@@ -141,17 +157,19 @@ def build_loop_replace_pattern(
 
             # if input is constant push down into loop body graph
             # constant_producer       = nodes[0].inputs[i].producer()
-            constant_producer_value = nodes[0].inputs[i]
+            constant_producer_value = _require_value(
+                nodes[0].inputs[i], f"loop-body constant input {i}"
+            )
 
             # build new node and value for the loop body graph
             new_const_prod_value = ir.Value(
-                name=constant_producer_value.name + "_push_down",
+                name=(constant_producer_value.name or "") + "_push_down",
                 type=constant_producer_value.type,
                 shape=constant_producer_value.shape,
                 const_value=constant_producer_value.const_value,
             )
             new_const_prod_node = ir.Node(
-                name=constant_producer_value.name + "_push_down_node",
+                name=(constant_producer_value.name or "") + "_push_down_node",
                 domain="",
                 inputs=[],
                 op_type="Constant",
@@ -168,13 +186,15 @@ def build_loop_replace_pattern(
             loop_body.function.append(new_const_prod_node)
             loop_body.function.sort()
 
-            for usage in loop_body.function.inputs[i].uses():
+            fn_input = _require_value(loop_body.function.inputs[i], f"loop-body function input {i}")
+            for usage in fn_input.uses():
                 usage.node.replace_input_with(usage.idx, new_const_prod_value)
 
             loop_body.function.sort()
 
         elif loop_input_type == LoopBodyInputType.ACTIVATION:
-            cinp = osh.vdisconnect(copy.copy(nodes[0].inputs[i]))
+            act_input = _require_value(nodes[0].inputs[i], f"loop-body activation input {i}")
+            cinp = osh.vdisconnect(copy.copy(act_input))
             graph_inputs.append(cinp)
             loop_inputs.append(cinp)
 
@@ -276,15 +296,16 @@ class LoopExtraction(Transformation):
                     f"LoopExtraction: could not place node {node.name} in the hierarchy tree"
                 )
         graph.sort()
-        for i, hierarchy in enumerate(self.hierarchy_list):
-            if i == 0:
-                nodes = hierarchy_tree.get_nodes(hierarchy)
-            else:
-                nodes += hierarchy_tree.get_nodes(hierarchy)
+        nodes = []
+        for hierarchy in self.hierarchy_list:
+            nodes += hierarchy_tree.get_nodes(hierarchy)
 
         loop_body_graph_view = osh.SubGraphView(graph, "loop-body", nodes)
+        # SubGraphView is an ir.GraphView, not an ir.Graph, but onnxscript's Model
+        # accepts it at runtime; the constructor's type stub is just narrower.
         loop_body_model = onnxscript.ir.Model(
-            loop_body_graph_view, ir_version=model.model.ir_version
+            loop_body_graph_view,  # type: ignore
+            ir_version=model.model.ir_version,
         )
         proto = onnxscript.ir.serde.serialize_model(loop_body_model)
 
@@ -314,11 +335,15 @@ class LoopExtraction(Transformation):
 def add_finn_datatype_if_needed(tensor: ir.Value) -> None:
     """Ensure the tensor metadata includes a FINN datatype."""
     if not tensor_has_finn_datatype(tensor):
+        if tensor.type is None:
+            raise FINNInternalError(
+                f"Cannot determine FINN datatype for tensor {tensor.name}: no type set"
+            )
         if "quant_parameter_tensor_names" not in tensor.meta:
             tensor.meta["quant_parameter_tensor_names"] = {}
         tensor.meta["quant_parameter_tensor_names"][
             "finn_datatype"
-        ] = osh.tensor_type_to_finn_datatype_string(tensor.type)
+        ] = osh.tensor_type_to_finn_datatype_string(cast("ir.TensorType", tensor.type))
 
 
 def validate_loop_type(loop_node: ir.Node) -> None:
@@ -400,9 +425,13 @@ def validate_loop_io_tensors(loop_node: ir.Node) -> None:
     # Validate that loop body activation input and output types and shapes match
     body_graph = loop_node.attributes["body"].value
     for i in range(len(body_graph.outputs)):
-        validate_loop_io_tensor_pair(loop_node.inputs[i], body_graph.inputs[i])
-        validate_loop_io_tensor_pair(loop_node.outputs[i], body_graph.outputs[i])
-        validate_loop_io_tensor_pair(body_graph.inputs[i], body_graph.outputs[i])
+        loop_in = _require_value(loop_node.inputs[i], f"FINNLoop input {i}")
+        loop_out = _require_value(loop_node.outputs[i], f"FINNLoop output {i}")
+        body_in = _require_value(body_graph.inputs[i], f"FINNLoop body input {i}")
+        body_out = _require_value(body_graph.outputs[i], f"FINNLoop body output {i}")
+        validate_loop_io_tensor_pair(loop_in, body_in)
+        validate_loop_io_tensor_pair(loop_out, body_out)
+        validate_loop_io_tensor_pair(body_in, body_out)
 
 
 def validate_loop_node(loop_node: ir.Node) -> None:
@@ -442,7 +471,10 @@ class LoopBodyTemplate:
     def _build_ir_function(self) -> ir.Function:
         """Build an IR function from the loop body graph."""
         return ir.Function(
-            domain="loop", name="fn_" + self._ir_graph.name, graph=self._ir_graph, attributes=[]
+            domain="loop",
+            name="fn_" + (self._ir_graph.name or ""),
+            graph=self._ir_graph,
+            attributes=[],
         )
 
     def _build_function_replace_pattern(self) -> osh.ReplacementPatternGraph:
@@ -472,8 +504,10 @@ class LoopBodyTemplate:
             nodes.insert(0, graph.node("iteration_ext"))
             nodes.insert(0, graph.node("condition_ext"))
 
+        # SubGraphView is an ir.GraphView, not an ir.Graph, but onnxscript's Model
+        # accepts it at runtime; the constructor's type stub is just narrower.
         ir_model = ir.Model(
-            osh.SubGraphView(graph, "inlined_pipe_pattern", nodes),
+            osh.SubGraphView(graph, "inlined_pipe_pattern", nodes),  # type: ignore
             ir_version=self._model_proto.ir_version,
         )
 
@@ -540,9 +574,19 @@ class LoopRolling(Transformation):
         if len(nodes) == 1:
             # find and label the activation inputs
             for i, node_input in enumerate(nodes[0].inputs):
-                if not node_input.is_initializer() and (
-                    node_input.is_graph_input() or node_input.producer().op_type != "Constant"
-                ):
+                val = _require_value(node_input, f"loop-body node input {i}")
+                if val.is_initializer():
+                    continue
+                if val.is_graph_input():
+                    input_swaps.append((len(input_swaps), i))
+                    continue
+                producer = val.producer()
+                if producer is None:
+                    raise FINNInternalError(
+                        f"LoopRolling: expected {val.name} (not an initializer or graph "
+                        f"input) to have a producer node"
+                    )
+                if producer.op_type != "Constant":
                     input_swaps.append((len(input_swaps), i))
         else:
             for i in range(len(nodes) - 1):
@@ -551,18 +595,19 @@ class LoopRolling(Transformation):
 
                 for a_out in a_node.outputs:
                     # Require that outputs of a have a single use of b_node
-                    if len(a_out.uses()) != 1:
+                    a_out_uses = list(a_out.uses())
+                    if len(a_out_uses) != 1:
                         raise FINNInternalError(
                             f"LoopRolling: loop-body output {a_out.name} must have exactly "
-                            f"one use, got {len(a_out.uses())}"
+                            f"one use, got {len(a_out_uses)}"
                         )
-                    if a_out.uses()[0][0] is not b_node:
+                    if a_out_uses[0][0] is not b_node:
                         raise FINNInternalError(
                             f"LoopRolling: loop-body output {a_out.name} must feed the next "
                             f"loop-body instance"
                         )
 
-                    a_use_index = a_out.uses()[0][1]
+                    a_use_index = a_out_uses[0][1]
                     input_swap = (a_out.index(), a_use_index)
                     if i == 0:
                         # add swaps from the first node
@@ -605,7 +650,7 @@ class LoopRolling(Transformation):
                 cinput = node.inputs[index]
                 inputs.append(cinput)
 
-            if osh.same(inputs) or same_values(inputs):
+            if osh.same(tuple(inputs)) or same_values(inputs):
                 # Constant with Respect to Loop
                 loop_body.signature[index] = LoopBodyInputType.CONSTANT
             else:
@@ -633,9 +678,9 @@ class LoopRolling(Transformation):
             if node.op_type == "FINNLoop":
                 validate_loop_node(node)
 
-        model = onnxscript.ir.serde.serialize_model(model_ir)
+        model_proto = onnxscript.ir.serde.serialize_model(model_ir)
 
-        model_wrapper = ModelWrapper(model)
+        model_wrapper = ModelWrapper(model_proto)
 
         # Allow operators in the loop body to adapt their attributes based on
         # the determined input signature (e.g., changing parameter styles from
@@ -643,7 +688,11 @@ class LoopRolling(Transformation):
         # This must be done after serialization so we can work with protobuf nodes
 
         for loop_node in model_wrapper.get_nodes_by_op_type("FINNLoop"):
-            loop_body = cast(
+            # NOTE: loop_body here is intentionally the per-instance body ModelWrapper,
+            # distinct from the outer `loop_body` (self.loop_body_template) above -- its
+            # .graph is the real (post-rewrite) body, while .signature below is read from
+            # the template, which is still in scope under the same name.
+            loop_body_model = cast(
                 "ModelWrapper", cast("FINNLoop", getCustomOp(loop_node)).get_nodeattr("body")
             )
             # Capture parameter input names from the actual (post-rewrite) body
@@ -654,28 +703,28 @@ class LoopRolling(Transformation):
             # avoid coincidental name collisions with the enclosing graph being
             # rewritten -- so names captured before the rewrite can silently
             # drift from what actually ends up in the model. loop_body.signature
-            # corresponds index-for-index with loop_body.graph.input (both were
-            # kept in lockstep through the activation swaps and constant
+            # corresponds index-for-index with loop_body_model.graph.input (both
+            # were kept in lockstep through the activation swaps and constant
             # removals above), so we can reliably re-derive the parameter names
             # from the real, current body graph.
             actual_parameter_names = {
                 inp.name
-                for idx, inp in enumerate(loop_body.graph.input)
+                for idx, inp in enumerate(loop_body_model.graph.input)
                 if loop_body.signature[idx] == LoopBodyInputType.PARAMETER
             }
-            loop_body.set_metadata_prop(
+            loop_body_model.set_metadata_prop(
                 "mlo_input_parameter_names", str(list(actual_parameter_names))
             )
-            for node in loop_body.graph.node:
+            for node in loop_body_model.graph.node:
                 if not is_custom_op(node.domain):
                     continue
                 try:
-                    inst = getCustomOp(node)
+                    inst = cast("HWCustomOp", getCustomOp(node))
                     inst.adapt_for_loop_body(loop_body.signature)
                 except (KeyError, AttributeError):
                     # Operator doesn't need adaptation or doesn't support it
                     pass
-            getCustomOp(loop_node).set_nodeattr("body", loop_body.graph)
+            cast("FINNLoop", getCustomOp(loop_node)).set_nodeattr("body", loop_body_model.graph)
 
         model = model_wrapper.transform(FoldConstants(), apply_to_subgraphs=True)
 

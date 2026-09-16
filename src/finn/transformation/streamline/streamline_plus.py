@@ -2,22 +2,56 @@
 # to multiple lines...
 # fmt: off
 
-# Exhaustive composition of ONNX graph transformation
-"""Module for streamline plus."""
+"""Exhaustive composition of ONNX graph streamlining transformations."""
+
 from qonnx.transformation.batchnorm_to_affine import BatchNormToAffine
 from qonnx.transformation.composed import ComposedTransformation
 
 # Some extra QONNX conversion, streamlining transformations
 from qonnx.transformation.general import ConvertDivToMul, ConvertSubToAdd
 
-from finn.transformation.streamline.absorb import *
-from finn.transformation.streamline.collapse_repeated import *
-from finn.transformation.streamline.remove import *
-
-# Import whole submodules of basic streamlining transformations
-from finn.transformation.streamline.reorder import *
-
-# Some more specialized streamlining transformations
+from finn.transformation.streamline.absorb import (
+    Absorb1BitMulIntoConv,
+    Absorb1BitMulIntoMatMul,
+    AbsorbAddIntoMultiThreshold,
+    AbsorbMulIntoMultiThreshold,
+    AbsorbSignBiasIntoMultiThreshold,
+    AbsorbTransposeIntoMultiThreshold,
+    FactorOutMulSignMagnitude,
+)
+from finn.transformation.streamline.collapse_repeated import (
+    CollapseRepeatedAdd,
+    CollapseRepeatedMul,
+    CollapseRepeatedTranspose,
+)
+from finn.transformation.streamline.remove import RemoveIdentityReshape, RemoveIdentityTranspose
+from finn.transformation.streamline.reorder import (
+    MoveAddPastConv,
+    MoveAddPastJoinAdd,
+    MoveAddPastJoinConcat,
+    MoveAddPastMul,
+    MoveAffinePastJoinConcat,
+    MoveChannelwiseLinearPastFork,
+    MoveConstMulPastJoinMul,
+    MoveLinearPastEltwiseAdd,
+    MoveMulPastFork,
+    MoveMulPastJoinAdd,
+    MoveMulPastJoinConcat,
+    MoveMulPastMaxPool,
+    MoveScalarAddPastMatMul,
+    MoveScalarLinearPastInvariants,
+    MoveScalarLinearPastSplit,
+    MoveScalarMulPastConv,
+    MoveScalarMulPastMatMul,
+    MoveScalesPastIm2Col,
+    MoveSqueezePastMultiThreshold,
+    MoveTransposePastEltwise,
+    MoveTransposePastFork,
+    MoveTransposePastJoinAdd,
+    MoveTransposePastJoinConcat,
+    MoveTransposePastJoinMul,
+    MoveTransposePastSplit,
+)
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.transformation.streamline.sign_to_thres import ConvertSignToThres
 
@@ -26,9 +60,13 @@ from finn.transformation.streamline.sign_to_thres import ConvertSignToThres
 # during the actual streamlining step and once after converting attention to
 # hardware (the associated cleanup afterward might enable some Streamlining
 # transformations once again)
-def StreamlinePlus():  # noqa: Uppercase
+def StreamlinePlus() -> ComposedTransformation:  # noqa: N802  (factory, class-like name)
     # Return a set of exhaustively applied transformations
-    """Return ComposedTransformation."""
+    """Compose the exhaustive FINN+ streamlining transformation.
+
+    Returns a :class:`ComposedTransformation` that applies the standard and
+    residual-topology streamlining passes until the graph stops changing.
+    """
     return ComposedTransformation([
         # On skip-connections: prefer pushing scalar multiplication forward
         # before MoveAddPastMul

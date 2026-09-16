@@ -18,6 +18,7 @@ from finn.benchmarking.bench_base import bench
 from finn.builder.build_dataflow_config import DataflowBuildConfig
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
+from finn.util.exception import FINNUserError
 
 
 class bench_mvau_multi_dnn(bench):
@@ -86,7 +87,7 @@ class bench_mvau_multi_dnn(bench):
             domain = "finn.custom_op.fpgadataflow.rtl"
             res_type = "dsp"
         else:
-            raise ValueError(f"Unsupported backend: {backend} (supported: 'hls', 'rtl')")
+            raise FINNUserError(f"Unsupported backend: {backend} (supported: 'hls', 'rtl')")
 
         mvau_node = helper.make_node(
             customop_name,
@@ -149,11 +150,6 @@ class bench_mvau_multi_dnn(bench):
         weights = np.reshape(weights, -1)
         weights[idx] = 0.0
         return np.reshape(weights, (mw, mh))
-
-    def _step_export_onnx(self) -> None:
-        """Generate and save multi-DNN ONNX models and config."""
-        result = self._generate_multi_dnn_models_and_config()
-        self._multi_dnn_config_path = result
 
     def _generate_multi_dnn_models_and_config(self) -> str | None:
         """Create two MVAU submodels and their multi-DNN config JSON; return config path."""
@@ -310,7 +306,7 @@ class bench_mvau_multi_dnn(bench):
                 },
             }
         else:
-            raise ValueError(f"Unsupported multi_dnn scenario: {scenario} (supported: 0, 3, 4)")
+            raise FINNUserError(f"Unsupported multi_dnn scenario: {scenario} (supported: 0, 3, 4)")
 
         return {
             "Submodels": {
@@ -351,7 +347,7 @@ class bench_mvau_multi_dnn(bench):
         cfg.save_intermediate_models = True
         cfg.verify_save_full_context = True
         cfg.enable_instrumentation = True
-        cfg.experiments_config_path = self.experiments_config
+        cfg.experiments_config_path = str(self.experiments_config)
         valid_params = {
             k: v
             for k, v in self._params.items()
@@ -372,4 +368,4 @@ class bench_mvau_multi_dnn(bench):
             setattr(cfg, pk, pv)
         os.environ["LIVENESS_THRESHOLD"] = "10000000"
         build.build_dataflow_cfg(None, cfg)
-        self._step_parse_builder_output(self._build_dir)
+        self._step_parse_builder_output(str(self._build_dir))

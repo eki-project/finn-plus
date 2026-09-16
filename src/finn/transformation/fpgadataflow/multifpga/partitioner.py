@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import locale
 import mip
+import mip.exceptions
 import yaml
 from abc import ABC, abstractmethod
 from mip import Model
@@ -68,7 +69,11 @@ class Partitioner(ABC):
 
         # Initialize the model
         self.status: mip.OptimizationStatus | None
-        self.model = self.init_model(cfg.partitioning_configuration.partition_solver)
+        # Explicitly annotated: without it, pyright's loop-narrowing infers a spurious
+        # "Model | LinExpr" union for self.model wherever a subclass does `self.model +=
+        # <constraint>` inside a for loop, since mip's LinExpr overloads comparison
+        # operators (e.g. `==`) to build constraint objects instead of returning bool.
+        self.model: mip.Model = self.init_model(cfg.partitioning_configuration.partition_solver)
         self.model.emphasis = cfg.partitioning_configuration.partition_solver_emphasis
 
         # Restore locale, as mentioned above.

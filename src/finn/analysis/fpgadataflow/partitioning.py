@@ -36,8 +36,12 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+    from collections.abc import Sequence
+
+    from numpy.typing import NDArray
     from qonnx.core.modelwrapper import ModelWrapper
+
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 import networkx as nx
 import numpy as np
@@ -63,9 +67,9 @@ class ILP_partitioner:
         task_requirements: list[list[tuple[int, ...]]],
         task_dependencies: list[tuple[int, int]],
         task_dependencies_requirements: list[tuple[int, int]],
-        compute_resources: np.ndarray,
-        compute_connection_cost: list[list[float]],
-        compute_connection_resource: list[list[list[float]]],
+        compute_resources: list[list[int]],
+        compute_connection_cost: NDArray[np.int_],
+        compute_connection_resource: list[list[tuple[int, int]]],
         compute_resource_limits: np.ndarray,
         abs_anchors: list[tuple[int, list[int]]] | None = None,
         rel_anchors: list[tuple[int, int]] | None = None,
@@ -103,7 +107,7 @@ class ILP_partitioner:
         model.objective = minimize(
             xsum(
                 [
-                    opt_connection_matrix[o][d][j] * compute_connection_cost[o][d]
+                    opt_connection_matrix[o][d][j] * compute_connection_cost[o][d]  # type: ignore
                     for j in range(len(task_dependencies))
                     for o in compute_nodes
                     for d in compute_nodes
@@ -128,19 +132,22 @@ class ILP_partitioner:
                 )
 
         # constraint 2: not exceed compute resources
+        # numpy's reflected __rmul__ makes `list * ndarray` return an ndarray at runtime
+        resource_caps: Any = compute_resources * compute_resource_limits
+        compute_resource_caps = resource_caps.astype(np.int_)
         for i in compute_nodes:
             for r in range(len(compute_resources[0])):
                 model += (
                     xsum(
                         [
                             xsum(
-                                task_requirements[j][v][r] * opt_placement[i][j][v]
+                                task_requirements[j][v][r] * opt_placement[i][j][v]  # type: ignore
                                 for v in task_versions[j]
                             )
                             for j in task_nodes
                         ]
                     )
-                    <= (compute_resources * compute_resource_limits).astype(np.int_)[i][r]
+                    <= compute_resource_caps[i][r]
                 )
 
         # constraint 3: not exceed connection resources
@@ -150,11 +157,11 @@ class ILP_partitioner:
                     if compute_connection_resource[o][d][cr] >= 0:
                         model += (
                             xsum(
-                                opt_connection_matrix[o][d][td]
+                                opt_connection_matrix[o][d][td]  # type: ignore
                                 * task_dependencies_requirements[td][cr]
                                 for td in range(len(task_dependencies))
                             )
-                            <= compute_connection_resource[o][d][cr]
+                            <= compute_connection_resource[o][d][cr]  # type: ignore
                         )
 
         # constraint 4: each task is allocated once and only once
@@ -194,7 +201,7 @@ class ILP_partitioner:
         self.rel_anchors = rel_anchors
 
     def add_average_of_utilizations_constrain(
-        self, resource_numbers: list[int], limit: float
+        self, resource_numbers: Sequence[int], limit: float
     ) -> None:
         """Implement average utilization constraints for the specified resource types."""
         task_nodes = list(range(len(self.task_requirements)))
@@ -206,7 +213,8 @@ class ILP_partitioner:
                     xsum(
                         [
                             xsum(
-                                self.task_requirements[j][v][r] * self.opt_placement[i][j][v]
+                                self.task_requirements[j][v][r]  # type: ignore
+                                * self.opt_placement[i][j][v]
                                 for v in task_versions[j]
                             )
                             for j in task_nodes
@@ -216,7 +224,9 @@ class ILP_partitioner:
                     for r in resource_numbers
                     if self.compute_resources[i][r] > 0
                 ]
-            ) <= limit * len(resource_numbers)
+            ) <= limit * len(
+                resource_numbers
+            )  # type: ignore
 
         self.avg_util_constrains += [(resource_numbers, limit)]
 
@@ -226,13 +236,13 @@ class ILP_partitioner:
         max_seconds: float = np.inf,
         max_gap: float = 1e-4,
         verbose: bool = False,
-    ) -> tuple[OptimizationStatus, float, int]:
+    ) -> tuple[OptimizationStatus, float | None, int]:
         """Solve the ILP model and return solution status, objective value, and solution count."""
         self.model.emphasis = emphasis
-        self.model.max_gap = max_gap
+        self.model.max_mip_gap = max_gap
 
         time_init = time.perf_counter()
-        self.solution_status = self.model.optimize(max_seconds=max_seconds)
+        self.solution_status = self.model.optimize(max_seconds=max_seconds)  # type: ignore
         self.time_solve_model = time.perf_counter() - time_init
         # if fails first increase a little the failing resource limit until MAX_LIMIT,
         # then increase number of SLRs
@@ -247,7 +257,7 @@ class ILP_partitioner:
 
         return (
             self.solution_status,
-            self.model.objective_value,
+            cast("float | None", self.model.objective_value),
             self.model.num_solutions,
         )
 
@@ -340,8 +350,8 @@ class ILP_partitioner:
             print(f"{compute_resources_names[r]:8s}", end="|")
         print()
 
-        max_per_r = [0 for r in self.compute_resources[0]]
-        acc_per_r = [0 for r in self.compute_resources[0]]
+        max_per_r = [0.0 for r in self.compute_resources[0]]
+        acc_per_r = [0.0 for r in self.compute_resources[0]]
         cnt_per_r = [0 for r in self.compute_resources[0]]
 
         for i in compute_nodes:
@@ -352,7 +362,8 @@ class ILP_partitioner:
                         sum(
                             [
                                 sum(
-                                    self.task_requirements[t][v][r] * self.opt_placement[i][t][v].x
+                                    self.task_requirements[t][v][r]  # type: ignore
+                                    * self.opt_placement[i][t][v].x
                                     for v in task_versions[t]
                                 )
                                 for t in task_nodes
@@ -397,7 +408,7 @@ class ILP_partitioner:
                             sum(
                                 [
                                     sum(
-                                        self.task_requirements[j][v][r]
+                                        self.task_requirements[j][v][r]  # type: ignore
                                         * self.opt_placement[i][j][v].x
                                         for v in task_versions[j]
                                     )
@@ -429,7 +440,7 @@ class ILP_partitioner:
                     if self.compute_connection_resource[o][d][cr] > 0:
                         res_usage = (
                             sum(
-                                self.opt_connection_matrix[o][d][td].x
+                                self.opt_connection_matrix[o][d][td].x  # type: ignore
                                 * self.task_dependencies_requirements[td][cr]
                                 for td in range(len(self.task_dependencies))
                             )
@@ -471,7 +482,7 @@ class ILP_partitioner:
                     *self.task_dependencies[td],
                     sum(
                         [
-                            self.opt_connection_matrix[o][d][td].x
+                            self.opt_connection_matrix[o][d][td].x  # type: ignore
                             * self.compute_connection_cost[o][d]
                             for o in compute_nodes
                             for d in compute_nodes
@@ -577,8 +588,8 @@ class ILP_partitioner:
                 print(f"{compute_resources_names[r]:8s}", end="|")
             print()
 
-            max_per_r = [0 for r in self.compute_resources[0]]
-            acc_per_r = [0 for r in self.compute_resources[0]]
+            max_per_r = [0.0 for r in self.compute_resources[0]]
+            acc_per_r = [0.0 for r in self.compute_resources[0]]
             cnt_per_r = [0 for r in self.compute_resources[0]]
 
             for i in compute_nodes:
@@ -589,7 +600,7 @@ class ILP_partitioner:
                             sum(
                                 [
                                     sum(
-                                        self.task_requirements[t][v][r]
+                                        self.task_requirements[t][v][r]  # type: ignore
                                         * self.opt_placement[i][t][v].xi(k)
                                         for v in task_versions[t]
                                     )
@@ -636,7 +647,11 @@ class ILP_partitioner:
         dg.add_edges_from(self.task_dependencies)
         # Make the graph
         nx.draw_circular(
-            dg, with_labels=with_labels, node_size=node_size, alpha=alpha, arrows=arrows
+            dg,
+            with_labels=with_labels,
+            node_size=node_size,
+            alpha=alpha,
+            arrows=arrows,  # type: ignore[call-arg]
         )
 
 

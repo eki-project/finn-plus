@@ -84,7 +84,8 @@ class PrepareCppSim(Transformation):
             self._num_workers = get_num_default_workers()
         else:
             self._num_workers = num_workers
-        assert self._num_workers >= 0, "Number of workers must be nonnegative."
+        if self._num_workers < 0:
+            raise FINNUserError("Number of workers must be nonnegative.")
         if self._num_workers == 0:
             self._num_workers = mp.cpu_count()
 

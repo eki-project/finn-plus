@@ -425,7 +425,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
             result = outp_dict[loop_body.graph.output[0].name]
             # Save all iteration contexts to file
             if save_iteration_context:
-                np.savez(iteration_context_path, **all_iteration_contexts)
+                np.savez(iteration_context_path, **all_iteration_contexts)  # type: ignore[arg-type]
         context[node.output[0]] = np.asarray(result, dtype=np.float32)
 
     def generate_hdl(self, model: ModelWrapper, fpgapart: str, clk: float) -> None:  # noqa: ARG002

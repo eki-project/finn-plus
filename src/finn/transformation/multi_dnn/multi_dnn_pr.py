@@ -4,27 +4,41 @@ from onnx import helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from typing import TYPE_CHECKING, Any, cast
+
+from finn.util.exception import FINNUserError
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.abstract.dnncontainer import DNNContainer
 
 
 class ApplyPartialReconfiguration(Transformation):
     """Restructure DNNContainer nodes into a partial reconfiguration NodeContainer."""
 
-    def __init__(self, **kwargs: str | int | list) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize with reference_model_name and pr_regions keyword arguments."""
         super().__init__()
-        self.reference_model_name = kwargs.get("reference_model_name")
-        self.pr_regions = kwargs.get("pr_regions")
+        reference_model_name = kwargs.get("reference_model_name")
+        pr_regions = kwargs.get("pr_regions")
+        if reference_model_name is None or pr_regions is None:
+            raise FINNUserError(
+                "ApplyPartialReconfiguration requires 'reference_model_name' and "
+                "'pr_regions' kwargs"
+            )
+        self.reference_model_name: str = reference_model_name
+        self.pr_regions: dict[str, dict] = pr_regions
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply partial reconfiguration restructuring to the model."""
         reference_model_name = self.reference_model_name
         pr_regions = self.pr_regions
 
-        dnn_nodes = [getCustomOp(node) for node in model.get_nodes_by_op_type("DNNContainer")]
-        dnn_nodes_and_bodies = {
-            op.get_nodeattr("body").graph.name: op.get_nodeattr("body") for op in dnn_nodes
-        }
-        dnn_op_map = {op.get_nodeattr("body").graph.name: op for op in dnn_nodes}
+        dnn_nodes = [
+            cast("DNNContainer", getCustomOp(node))
+            for node in model.get_nodes_by_op_type("DNNContainer")
+        ]
+        dnn_nodes_and_bodies = {op.body.graph.name: op.body for op in dnn_nodes}
+        dnn_op_map = {op.body.graph.name: op for op in dnn_nodes}
         reference_model = dnn_nodes_and_bodies[reference_model_name]
 
         for pr_region_name in pr_regions:

@@ -27,7 +27,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Module for quant act to multithreshold."""
+from collections.abc import Callable
+from onnx import NodeProto
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 from finn.transformation.qonnx.qonnx_activation_handlers import (
     QuantActBaseHandler,
@@ -36,7 +43,9 @@ from finn.transformation.qonnx.qonnx_activation_handlers import (
 from finn.util.logging import log
 
 
-def default_filter_function_generator(max_multithreshold_bit_width=8):
+def default_filter_function_generator(
+    max_multithreshold_bit_width: int = 8,
+) -> Callable[[ModelWrapper, NodeProto], bool]:
     """Generate the default filter function for the
     ConvertQuantActToMultiThreshold transformation. Per default the returned
     function disables the conversion of Quant nodes which have a bit width above 8 bit.
@@ -45,7 +54,7 @@ def default_filter_function_generator(max_multithreshold_bit_width=8):
     filter functions.
     """
 
-    def filter_function(model, q_node):
+    def filter_function(model: ModelWrapper, q_node: NodeProto) -> bool:
         """Return filter function."""
         if q_node.op_type == "Quant":
             bit_width = model.get_initializer(q_node.input[3])
@@ -55,6 +64,7 @@ def default_filter_function_generator(max_multithreshold_bit_width=8):
             raise RuntimeError("Got an unexpected quantizer node type")
         if bit_width is None:
             raise ValueError("Quant nodes must have a static bit width.")
+        bit_width = cast("npt.NDArray[Any] | float", bit_width)
         if bit_width > max_multithreshold_bit_width:
             log.warning(
                 f'The Quant node with name: "{q_node.name}" was not converted to a '
@@ -66,6 +76,11 @@ def default_filter_function_generator(max_multithreshold_bit_width=8):
         return True
 
     return filter_function
+
+
+# Module-level singleton so it is not rebuilt (and not evaluated at import of every
+# caller) as a mutable default argument.
+_DEFAULT_FILTER_FUNCTION = default_filter_function_generator(max_multithreshold_bit_width=8)
 
 
 class ConvertQuantActToMultiThreshold(Transformation):
@@ -87,13 +102,15 @@ class ConvertQuantActToMultiThreshold(Transformation):
 
     def __init__(
         self,
-        filter_function=default_filter_function_generator(max_multithreshold_bit_width=8),
-    ):
+        filter_function: Callable[[ModelWrapper, NodeProto], bool] | None = None,
+    ) -> None:
         """Initialize instance."""
         super().__init__()
-        self._filter_function = filter_function
+        self._filter_function = (
+            _DEFAULT_FILTER_FUNCTION if filter_function is None else filter_function
+        )
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
         graph = model.graph
         node_ind = 0

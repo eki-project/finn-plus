@@ -7,12 +7,16 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from typing import TYPE_CHECKING, cast
 
 from finn.templates import load_codegen_template
 from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError
 from finn.util.hls import CallHLS
 from finn.util.settings import get_settings
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 
 
 # TODO: duplicate function from make_zynq_proj.py
@@ -22,7 +26,7 @@ def collect_ip_dirs(model: ModelWrapper, ipstitch_path: str) -> list[str]:
     need_memstreamer = False
     for node in model.graph.node:
         node_inst = getCustomOp(node)
-        ip_dir_value = node_inst.get_nodeattr("ip_path")
+        ip_dir_value = cast("str", node_inst.get_nodeattr("ip_path"))
         if not Path(ip_dir_value).is_dir():
             raise FINNInternalError(
                 f"{node.name}: the directory that should contain the generated ip blocks "
@@ -61,7 +65,7 @@ class GenerateInstrumentationIP(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Generate instrumentation IP core."""
         # Create directory for code-gen and HLS of instrumentation IP
-        wrapper_output_dir = make_build_dir(prefix="code_gen_ipgen_Instrumentation_")
+        wrapper_output_dir = cast("str", make_build_dir(prefix="code_gen_ipgen_Instrumentation_"))
         model.set_metadata_prop("instrumentation_ipgen", wrapper_output_dir)
 
         # Heuristic for setting timestamp buffer size of instrumentation wrapper:
@@ -72,7 +76,10 @@ class GenerateInstrumentationIP(Transformation):
         # query the parallelism-dependent folded input shape from the
         # node consuming the graph input
         inp_name = model.graph.input[0].name
-        inp_node = getCustomOp(model.find_consumer(inp_name))
+        inp_consumer = model.find_consumer(inp_name)
+        if inp_consumer is None:
+            raise FINNInternalError(f"Could not find a consumer for {inp_name}.")
+        inp_node = cast("HWCustomOp", getCustomOp(inp_consumer))
         inp_shape_folded = list(inp_node.get_folded_input_shape())
         inp_stream_width = inp_node.get_instream_width_padded()
         # number of beats per input is given by product of folded input
@@ -81,7 +88,10 @@ class GenerateInstrumentationIP(Transformation):
         ti = f"ap_uint<{inp_stream_width}>"
         # perform the same for the output
         out_name = model.graph.output[0].name
-        out_node = getCustomOp(model.find_producer(out_name))
+        out_producer = model.find_producer(out_name)
+        if out_producer is None:
+            raise FINNInternalError(f"Could not find a producer for {out_name}.")
+        out_node = cast("HWCustomOp", getCustomOp(out_producer))
         out_shape_folded = list(out_node.get_folded_output_shape())
         out_stream_width = out_node.get_outstream_width_padded()
         olen = np.prod(out_shape_folded[:-1])
@@ -106,7 +116,9 @@ class GenerateInstrumentationIP(Transformation):
             nc_inst = getCustomOp(nc)
             multi_dnn_type = nc_inst.get_nodeattr("multi_dnn_type")
             if multi_dnn_type in ("partial_reconfiguration", "selectable_weights"):
-                num_tuser_values = max(num_tuser_values, nc_inst.get_nodeattr("bodies"))
+                num_tuser_values = max(
+                    num_tuser_values, cast("int", nc_inst.get_nodeattr("bodies"))
+                )
         tuser_width = max(math.ceil(math.log2(max(num_tuser_values, 2))), 1)
         instrwrp_cpp = instrwrp_cpp.replace("@TUSER_WIDTH@", str(tuser_width))
         instrwrp_cpp = instrwrp_cpp.replace("@NUM_TUSER_VALUES@", str(num_tuser_values))
@@ -174,7 +186,7 @@ class PrepareInstrumentationSim(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Prepare scripts for simulating instrumentation IP."""
         # Create directory for simulation of instrumentation IP + FINN IP
-        sim_output_dir = make_build_dir(prefix="sim_Instrumentation_")
+        sim_output_dir = cast("str", make_build_dir(prefix="sim_Instrumentation_"))
         model.set_metadata_prop("instrumentation_sim", sim_output_dir)
 
         # check if instrumentation IP was generated
@@ -197,6 +209,11 @@ class PrepareInstrumentationSim(Transformation):
 
         # collect ip repo paths for finn accelerator sub cores so Vivado can find them
         ipstitch_path = model.get_metadata_prop("vivado_stitch_proj")
+        if ipstitch_path is None:
+            raise FINNInternalError(
+                "Model is missing the vivado_stitch_proj metadata property; "
+                "run CreateStitchedIP first."
+            )
         ip_dirs = ["list"]
         ip_dirs += collect_ip_dirs(model, ipstitch_path)
         ip_dirs += [instr_ip_dir]

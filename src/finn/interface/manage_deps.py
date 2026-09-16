@@ -208,7 +208,7 @@ class _StatusTracker:
             if name in self.data:
                 self.data[name] = (self.data[name][0], status, color)
 
-    def _generate_renderable(self) -> Table:
+    def _generate_renderable(self) -> Table | None:
         """Generate a renderable for rich to display in a live context."""
         if self.non_interactive:
             return None
@@ -233,7 +233,9 @@ class _StatusTracker:
         if self.non_interactive:
             return
         with self.datalock:
-            self.live.update(self._generate_renderable(), refresh=True)
+            # self.non_interactive already confirms self.live is a real Live instance
+            # here, and _generate_renderable() only returns None in the non-interactive case
+            cast("Live", self.live).update(cast("Table", self._generate_renderable()), refresh=True)
 
     def set_updating(self, name: str) -> None:
         """Set the package to updating and update the live display.

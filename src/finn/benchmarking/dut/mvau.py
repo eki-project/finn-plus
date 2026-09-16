@@ -20,7 +20,7 @@ import json
 import math
 import numpy as np
 from onnx import TensorProto, helper
-from qonnx.core.datatype import DataType
+from qonnx.core.datatype import BaseDataType, DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
@@ -29,11 +29,13 @@ from qonnx.util.basic import (
     gen_finn_dt_tensor,
     qonnx_make_model,
 )
+from typing import Literal, cast
 
 import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.bench_base import bench
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
+from finn.util.exception import FINNInternalError, FINNUserError
 
 
 class bench_mvau(bench):
@@ -59,21 +61,21 @@ class bench_mvau(bench):
 
     def _make_single_mvau_model(
         self,
-        W,
-        numInputVectors,
-        pe,
-        simd,
-        m,
-        wdt,
-        idt,
-        odt,
-        T=None,
-        tdt=None,
-        mem_mode="const",
-        ram_style="auto",
-        ram_style_thresholds="auto",
-        backend="hls",
-    ):
+        w: np.ndarray,
+        num_input_vectors: list[int],
+        pe: int,
+        simd: int,
+        m: int,
+        wdt: BaseDataType,
+        idt: BaseDataType,
+        odt: BaseDataType,
+        t: np.ndarray | None = None,
+        tdt: BaseDataType | None = None,
+        mem_mode: str = "const",
+        ram_style: str = "auto",
+        ram_style_thresholds: str = "auto",
+        backend: str = "hls",
+    ) -> ModelWrapper:
         """Create a single MVAU ONNX model with specified parameters.
 
         This method constructs a complete ONNX model containing a single MVAU node
@@ -81,15 +83,15 @@ class bench_mvau(bench):
         It handles both HLS and RTL backend variants with appropriate optimizations.
 
         Args:
-            W (np.ndarray): Weight matrix of shape (mw, mh) containing the weights
-            numInputVectors (list): Input tensor shape prefix ([N] for dense, [N,H,W] for conv)
+            w (np.ndarray): Weight matrix of shape (mw, mh) containing the weights
+            num_input_vectors (list): Input tensor shape prefix ([N] for dense, [N,H,W] for conv)
             pe (int): Number of output channels computed in parallel
             simd (int): Number of input channels processed in parallel
             m (int): Sample-level parallelism factor (currently unused)
             wdt (DataType): Weight data type (e.g., BINARY, INT8)
             idt (DataType): Input data type (e.g., BINARY, INT8)
             odt (DataType): Output data type (e.g., INT32, BIPOLAR)
-            T (np.ndarray, optional): Threshold matrix for activation quantization.
+            t (np.ndarray, optional): Threshold matrix for activation quantization.
                                     Defaults to None (no activation).
             tdt (DataType, optional): Threshold data type. Defaults to None.
             mem_mode (str, optional): Memory mode for weights storage. Options:
@@ -107,8 +109,8 @@ class bench_mvau(bench):
             representation and sets binaryXnorMode=1 for efficient XNOR-based computation.
             The model undergoes bit-width minimization optimizations to reduce resource usage.
         """
-        mw = W.shape[0]
-        mh = W.shape[1]
+        mw = w.shape[0]
+        mh = w.shape[1]
 
         # there are two ways to implement bipolar weights and inputs for
         # MatrixVectorActivation:
@@ -125,17 +127,14 @@ class bench_mvau(bench):
             export_idt = idt
             binary_xnor_mode = 0
 
-        # numInputVectors for dense = [N]
-        # numInputVectors for conv  = [N, H, W]
-        inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, numInputVectors + [mw])
-        outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, numInputVectors + [mh])
-        if T is not None:
+        # num_input_vectors for dense = [N]
+        # num_input_vectors for conv  = [N, H, W]
+        inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [*num_input_vectors, mw])
+        outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [*num_input_vectors, mh])
+        if t is not None:
             no_act = 0
             node_inp_list = ["inp", "weights", "thresh"]
-            if odt == DataType["BIPOLAR"]:
-                actval = 0
-            else:
-                actval = odt.min()
+            actval = 0 if odt == DataType["BIPOLAR"] else odt.min()
         else:
             # no thresholds
             node_inp_list = ["inp", "weights"]
@@ -145,11 +144,13 @@ class bench_mvau(bench):
         if backend == "hls":
             customop_name = "MVAU_hls"
             domain = "finn.custom_op.fpgadataflow.hls"
-            resType = "lut"
+            res_type = "lut"
         elif backend == "rtl":
             customop_name = "MVAU_rtl"
             domain = "finn.custom_op.fpgadataflow.rtl"
-            resType = "dsp"
+            res_type = "dsp"
+        else:
+            raise FINNUserError(f"Unknown backend {backend!r}, expected 'hls' or 'rtl'")
 
         mvau_node = helper.make_node(
             customop_name,
@@ -162,14 +163,14 @@ class bench_mvau(bench):
             SIMD=simd,
             PE=pe,
             M=m,
-            numInputVectors=numInputVectors,
+            numInputVectors=num_input_vectors,
             inputDataType=export_idt.name,
             weightDataType=export_wdt.name,
             outputDataType=odt.name,
             ActVal=actval,
             binaryXnorMode=binary_xnor_mode,
             noActivation=no_act,
-            resType=resType,
+            resType=res_type,
             mem_mode=mem_mode,
             ram_style=ram_style,
             ram_style_thresholds=ram_style_thresholds,
@@ -188,12 +189,12 @@ class bench_mvau(bench):
         # model.set_tensor_shape("weights", (channels, 1, k_h, k_w)) from VVAU
         if binary_xnor_mode:
             # convert bipolar to binary
-            model.set_initializer("weights", (W + 1) / 2)
+            model.set_initializer("weights", (w + 1) / 2)
         else:
-            model.set_initializer("weights", W)
-        if T is not None:
+            model.set_initializer("weights", w)
+        if t is not None:
             model.set_tensor_datatype("thresh", tdt)
-            model.set_initializer("thresh", T)
+            model.set_initializer("thresh", t)
 
         # Minimize weight & accumulator width to obtain realistic resource consumption
         # model = model.transform(InferShapes())
@@ -203,7 +204,7 @@ class bench_mvau(bench):
 
         return model
 
-    def _step_export_onnx(self, onnx_export_path):
+    def _step_export_onnx(self, onnx_export_path: str) -> Literal["skipped"] | None:
         """Generate and export a synthetic MVAU ONNX model for benchmarking.
 
         This method creates a synthetic MVAU model based on the benchmark parameters,
@@ -236,30 +237,29 @@ class bench_mvau(bench):
         as dut_info.json for analysis.
         """
         # Read params
-        idt = self._params["idt"]
-        wdt = self._params["wdt"]
-        act = self._params["act"]
+        idt_name = cast("str", self._params["idt"])
+        wdt_name = cast("str", self._params["wdt"])
+        act_name = cast("str | None", self._params["act"])
 
-        numInputVectors = self._params["nhw"]
-        mw = self._params["mw"]
-        mh = self._params["mh"]
-        sf = self._params["sf"]
-        nf = self._params["nf"]
-        m = self._params["m"]
+        num_input_vectors = cast("list[int]", self._params["nhw"])
+        mw = cast("int", self._params["mw"])
+        mh = cast("int", self._params["mh"])
+        sf = cast("int", self._params["sf"])
+        nf = cast("int", self._params["nf"])
+        m = cast("int", self._params["m"])
 
-        mem_mode = self._params["mem_mode"]
-        ram_style = self._params["ram_style"]
-        ram_style_thr = self._params["ram_style_thr"]
+        mem_mode = cast("str", self._params["mem_mode"])
+        ram_style = cast("str", self._params["ram_style"])
+        ram_style_thr = cast("str", self._params["ram_style_thr"])
 
-        backend = self._params["backend"]
+        backend = cast("str", self._params["backend"])
 
         output_dict = {}
 
         # convert string to FINN DataType
-        idt = DataType[idt]
-        wdt = DataType[wdt]
-        if act is not None:
-            act = DataType[act]
+        idt = DataType[idt_name]
+        wdt = DataType[wdt_name]
+        act = DataType[act_name] if act_name is not None else None
 
         # Determine and log folding
         if sf > mw or nf > mh:
@@ -300,41 +300,39 @@ class bench_mvau(bench):
             # TODO: special case of 9-bit signed input
 
         # Generate weights
-        np.random.seed(123456)  # TODO: verify or switch to modern numpy random generation
+        # NOTE: uses the legacy global numpy RNG (not np.random.Generator) so that
+        # benchmark configs stay reproducible against previously recorded results
+        np.random.seed(123456)  # noqa: NPY002
 
-        W = gen_finn_dt_tensor(wdt, (mw, mh))
+        w = gen_finn_dt_tensor(wdt, (mw, mh))
 
-        if "sparsity_type" in self._params:
-            sparsity_type = self._params["sparsity_type"]
-        else:
-            sparsity_type = "none"
+        sparsity_type = cast("str", self._params.get("sparsity_type", "none"))
 
         if sparsity_type == "none":
-            if "sparsity_amount" in self._params:
-                if self._params["sparsity_amount"] > 0:
-                    print("sparsity amount > 0 not applicable for none sparsity, skipping")
-                    return "skipped"
+            if "sparsity_amount" in self._params and self._params["sparsity_amount"] > 0:
+                print("sparsity amount > 0 not applicable for none sparsity, skipping")
+                return "skipped"
         else:
             if self._params["sparsity_amount"] == 0:
                 print("sparsity amount = 0 not applicable for selected sparsity, skipping")
                 return "skipped"
             if sparsity_type == "unstructured":
-                idx = np.random.choice(
+                idx = np.random.choice(  # noqa: NPY002
                     mw * mh, size=int(self._params["sparsity_amount"] * mw * mh), replace=False
                 )
-                W = np.reshape(W, -1)
-                W[idx] = 0.0
-                W = np.reshape(W, (mw, mh))
+                w = np.reshape(w, -1)
+                w[idx] = 0.0
+                w = np.reshape(w, (mw, mh))
             elif sparsity_type == "rows_random":
-                idx_mw = np.random.choice(
+                idx_mw = np.random.choice(  # noqa: NPY002
                     mw, size=int(self._params["sparsity_amount"] * mw), replace=False
                 )
-                W[idx_mw, :] = 0.0
+                w[idx_mw, :] = 0.0
             elif sparsity_type == "cols_random":
-                idx_mh = np.random.choice(
+                idx_mh = np.random.choice(  # noqa: NPY002
                     mh, size=int(self._params["sparsity_amount"] * mh), replace=False
                 )
-                W[:, idx_mh] = 0.0
+                w[:, idx_mh] = 0.0
             elif sparsity_type == "rows_regular":
                 if self._params["sparsity_amount"] == 0.25:
                     idx_mw = np.arange(0, mw, step=4)
@@ -351,7 +349,7 @@ class bench_mvau(bench):
                 else:
                     print("regular sparsity only applicable for amount 0.25/0.5/0.75, skipping")
                     return "skipped"
-                W[idx_mw, :] = 0.0
+                w[idx_mw, :] = 0.0
             elif sparsity_type == "cols_regular":
                 if self._params["sparsity_amount"] == 0.25:
                     idx_mh = np.arange(0, mh, step=4)
@@ -368,11 +366,11 @@ class bench_mvau(bench):
                 else:
                     print("regular sparsity only applicable for amount 0.25/0.5/0.75, skipping")
                     return "skipped"
-                W[:, idx_mh] = 0.0
+                w[:, idx_mh] = 0.0
 
             else:
                 print("ERROR: unknown sparsity type")
-                raise Exception("ERROR: unknown sparsity type")
+                raise FINNUserError("ERROR: unknown sparsity type")
 
         # TODO: implement enforce option which prevents naturally occurring sparsity
         # params["sparsity_enforce"]
@@ -381,24 +379,24 @@ class bench_mvau(bench):
 
         # log resulting sparsity statistics
         # could be higher than selected due to naturally occurring sparsity
-        num_zeros = (W == 0).sum()
-        num_ones = (W == 1).sum() + (W == -1).sum()
+        num_zeros = (w == 0).sum()
+        num_ones = (w == 1).sum() + (w == -1).sum()
         num_p2 = 0
-        for w in np.nditer(W):
-            if w != 0 and w != 1 and w != -1:
-                if w > 0:
-                    if math.log2(w).is_integer():
+        for elem in w.flat:
+            if elem != 0 and elem != 1 and elem != -1:
+                if elem > 0:
+                    if math.log2(elem).is_integer():
                         num_p2 = num_p2 + 1
                 else:
-                    if math.log2(-w).is_integer():
+                    if math.log2(-elem).is_integer():
                         num_p2 = num_p2 + 1
-        output_dict["zero_weights"] = round(num_zeros / W.size, 2)
-        output_dict["easy_weights"] = round((num_zeros + num_ones + num_p2) / W.size, 2)
+        output_dict["zero_weights"] = round(num_zeros / w.size, 2)
+        output_dict["easy_weights"] = round((num_zeros + num_ones + num_p2) / w.size, 2)
 
         # Generate thresholds
         if act is None:
             # no activation, produce accumulators
-            T = None
+            t_mat = None
             tdt = None
             if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
                 odt = DataType["UINT32"]
@@ -409,37 +407,40 @@ class bench_mvau(bench):
             # set range for threshold values according to worst-case accumulator range
             # (not weight value specific)
             # this could result in some thresholds being clipped by MinimizeAccumulatorWidth
-            # lower_range = calculate_matvec_accumulator_range(wdt.min() * np.ones_like(W), idt)
-            # upper_range = calculate_matvec_accumulator_range(wdt.max() * np.ones_like(W), idt)
+            # lower_range = calculate_matvec_accumulator_range(wdt.min() * np.ones_like(w), idt)
+            # upper_range = calculate_matvec_accumulator_range(wdt.max() * np.ones_like(w), idt)
             # acc_min = min(min(lower_range), min(upper_range))
             # acc_max = max(max(lower_range), max(upper_range))
             # set range for threshold values according to actual accumulator range
             # for the generated weights
-            (acc_min, acc_max) = calculate_matvec_accumulator_range(W, idt)
+            (acc_min, acc_max) = calculate_matvec_accumulator_range(w, idt)
             n_steps = act.get_num_possible_values() - 1
-            T = np.random.randint(acc_min, acc_max - 1, (mh, n_steps)).astype(np.float32)
+            t_mat = np.random.randint(  # noqa: NPY002
+                int(acc_min), int(acc_max) - 1, (mh, n_steps)
+            ).astype(np.float32)
             # provide non-decreasing thresholds
-            T = np.sort(T, axis=1)
+            t_mat = np.sort(t_mat, axis=1)
             # generate thresholds for activation
             if wdt == DataType["BIPOLAR"] and idt == DataType["BIPOLAR"]:
                 tdt = DataType["UINT32"]
                 # bias thresholds to be positive
-                T = np.ceil((T + mw) / 2)
-                assert (T >= 0).all()
+                t_mat = np.ceil((t_mat + mw) / 2)
+                if not (t_mat >= 0).all():
+                    raise FINNInternalError("Biased thresholds must be non-negative")
             else:
                 tdt = DataType["INT32"]
 
         # Create model
         model = self._make_single_mvau_model(
-            W,
-            numInputVectors,
+            w,
+            num_input_vectors,
             pe,
             simd,
             m,
             wdt,
             idt,
             odt,
-            T,
+            t_mat,
             tdt,
             mem_mode,
             ram_style,
@@ -451,14 +452,15 @@ class bench_mvau(bench):
         # inst = getCustomOp(node)
 
         # log additional info about the generated model (e.g. SIMD/PE or sparsity)
-        with open(self._build_inputs["build_dir"] / "report/dut_info.json", "w") as f:
+        dut_info_path = self._build_inputs["build_dir"] / "report/dut_info.json"
+        with dut_info_path.open("w") as f:
             json.dump(output_dict, f, indent=2)
 
         # TODO: also generate golden I/O pair for further verification steps
         model.save(onnx_export_path)
         return None
 
-    def _step_build_setup(self):
+    def _step_build_setup(self) -> build_cfg.DataflowBuildConfig:
         """Configure the dataflow build pipeline for MVAU microbenchmarks.
 
         This method sets up a comprehensive build configuration specifically optimized

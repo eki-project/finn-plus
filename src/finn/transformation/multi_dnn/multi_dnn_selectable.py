@@ -4,8 +4,12 @@ from onnx import GraphProto, NodeProto, TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from typing import TYPE_CHECKING, cast
 
 from finn.util.exception import FINNUserError
+
+if TYPE_CHECKING:
+    from finn.custom_op.fpgadataflow.abstract.dnncontainer import DNNContainer
 
 
 class ExtractSelectableWeights(Transformation):
@@ -14,15 +18,21 @@ class ExtractSelectableWeights(Transformation):
     def __init__(self, **kwargs: list[str]) -> None:
         """Initialize with a 'models' list of submodel names to merge."""
         super().__init__()
-        self.models = kwargs.get("models")  # First model is always the "master model"
+        models = kwargs.get("models")  # First model is always the "master model"
+        if models is None:
+            raise FINNUserError("ExtractSelectableWeights requires a 'models' kwarg")
+        self.models = models
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Extract selectable weights and restructure model into a NodeContainer."""
         if len(self.models) < 2:
             return model, False
 
-        dnn_nodes = [getCustomOp(node) for node in model.get_nodes_by_op_type("DNNContainer")]
-        dnn_nodes_and_bodies = [(op, op.get_nodeattr("body")) for op in dnn_nodes]
+        dnn_nodes = [
+            cast("DNNContainer", getCustomOp(node))
+            for node in model.get_nodes_by_op_type("DNNContainer")
+        ]
+        dnn_nodes_and_bodies = [(op, op.body) for op in dnn_nodes]
         dnn_nodes_and_bodies = [
             (op, body) for op, body in dnn_nodes_and_bodies if body.graph.name in self.models
         ]
@@ -133,7 +143,7 @@ class ExtractSelectableWeights(Transformation):
                     name="node_container_" + fm_node.name,
                     multi_dnn_type="selectable_weights",
                     bodies=num_bodies,
-                    **body_kwargs,
+                    **body_kwargs,  # type: ignore[arg-type]
                 )
 
                 # Replace fm_node in the fm graph with the NodeContainer

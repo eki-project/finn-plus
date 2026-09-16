@@ -30,28 +30,27 @@
 import numpy as np
 from onnx import helper as oh
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
+
+from finn.util.exception import FINNInternalError
 
 
 class ConvertSignToThres(Transformation):
     """Convert Sign node instances to MultiThreshold with threshold at 0."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
         graph = model.graph
         graph_modified = False
-        node_ind = 0
-        for n in graph.node:
-            node_ind += 1
+        for node_ind, n in enumerate(graph.node, start=1):
             if n.op_type == "Sign":
                 sign_in_name = n.input[0]
                 sign_out_name = n.output[0]
                 # find consumer
                 consumer = model.find_consumer(sign_out_name)
-                assert (
-                    consumer is not None
-                ), """There is no consumer of the
-                sign_out tensor."""
+                if consumer is None:
+                    raise FINNInternalError("There is no consumer of the sign_out tensor.")
                 # create thresholds
                 thres_param_name = model.make_new_valueinfo_name()
                 thres_param = np.asarray([[0]], dtype=np.float32)

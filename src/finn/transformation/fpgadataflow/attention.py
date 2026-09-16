@@ -18,6 +18,10 @@ import numpy as np
 # Utility for handling ONNX nodes and tensors
 from onnx import NodeProto
 from onnx import helper as oh
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 # QONNX datatypes
 from qonnx.core.datatype import BaseDataType, DataType
@@ -51,15 +55,26 @@ from finn.transformation.util import (
     op_types,
 )
 
+# FINN exception types replacing bare asserts
+from finn.util.exception import FINNInternalError
+
 # Output warning messages
 from finn.util.logging import log
+
+
+def _require_shape(model: ModelWrapper, tensor_name: str) -> list[int]:
+    """Return the shape of a tensor, raising if it is not known."""
+    shape = model.get_tensor_shape(tensor_name)
+    if shape is None:
+        raise FINNInternalError(f"Could not determine shape of tensor {tensor_name}")
+    return shape
 
 
 class InferScaledDotProductAttention(Transformation):
     """Convert the operator pattern corresponding to scaled dot-product attention to
     the hardware custom operator node."""
 
-    def apply(self, model: ModelWrapper):  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply the transform to a whole model graph."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
@@ -75,6 +90,11 @@ class InferScaledDotProductAttention(Transformation):
                     continue
                 # Follow both branches upstream looking for the next MatMul
                 lhs, rhs = all_upstream_to_matmul(node, model)
+                # find_upstream() is called with keep_if_not_found=True here, so
+                # it always returns a (possibly empty) list rather than None;
+                # this guard exists purely to let the type checker narrow that
+                if lhs is None or rhs is None:
+                    continue
                 # Exactly one of the branches is supposed to contain a Softmax
                 # operation
                 if ("Softmax" in op_types(lhs)) == ("Softmax" in op_types(rhs)):
@@ -94,8 +114,8 @@ class InferScaledDotProductAttention(Transformation):
                     continue
                 # Get shapes of input tensors, expect the second inputs, i.e.,
                 # the keys to be transposed
-                qh, ql, qe = model.get_tensor_shape(lhs[-1].input[0])
-                kh, ke, kl = model.get_tensor_shape(lhs[-1].input[1])
+                qh, ql, qe = _require_shape(model, lhs[-1].input[0])
+                kh, ke, kl = _require_shape(model, lhs[-1].input[1])
                 # The input shapes of the two matmul inputs must be compatible,
                 # i.e., they must have matching embedding dimension
                 if (qh, True, qe) != (kh, True, ke):
@@ -120,7 +140,7 @@ class InferScaledDotProductAttention(Transformation):
                     log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Missing Transpose near {lhs[-1].name}: "
-                        f" {op_types([transpose])[0]}"
+                        f" {transpose.op_type if transpose is not None else 'None'}"
                     )
                     # @formatter:on
                     # Skip transforming this instance
@@ -142,11 +162,11 @@ class InferScaledDotProductAttention(Transformation):
 
                 # The input shape of the transpose must match the transpose
                 # of the key matrix
-                # @formatter:off
-                assert model.get_tensor_shape(transpose.input[0]) == [
-                    kh, kl, ke
-                ]
-                # @formatter:on
+                if _require_shape(model, transpose.input[0]) != [kh, kl, ke]:
+                    raise FINNInternalError(
+                        f"Transpose {transpose.name} input shape does not match "
+                        f"the key matrix shape"
+                    )
                 # Collect the input tensors to the attention operation, i.e.,
                 # the query, key and value tensors
                 q, k, v = lhs[-1].input[0], transpose.input[0], None
@@ -160,7 +180,10 @@ class InferScaledDotProductAttention(Transformation):
                 # Validate that the values are actually consumed by the final
                 # matmul. For queries and keys this should all be given, as we
                 # just walked upwards the graph.
-                assert v is not None
+                if v is None:
+                    raise FINNInternalError(
+                        f"Could not identify the value input feeding {node.name}"
+                    )
 
                 # Get the (optional) Softmax activation function
                 act_a_softmax = lhs[0] if is_softmax(lhs[1]) else None
@@ -174,7 +197,7 @@ class InferScaledDotProductAttention(Transformation):
                     # pattern candidates
                     act_qk_matmul = None
 
-                def is_supported_activation(n: NodeProto):  # noqa: Shadows name
+                def is_supported_activation(n: NodeProto | None) -> bool:
                     """Check whether the node is a supported type of activation.
 
                     Currently, only none-type and MultiThreshold activations are supported.
@@ -183,13 +206,14 @@ class InferScaledDotProductAttention(Transformation):
 
                 # Get the (optional) output matmul activation function
                 act_av_matmul = model.find_direct_successors(node)
-                # If the final matmul is a fork node, this needs to be handled
-                # separately
-                if act_av_matmul is not None and len(act_av_matmul) > 1:
+                # If the final matmul is a fork node or has no successor at all
+                # (e.g., it directly produces a graph output), this needs to be
+                # handled separately
+                if act_av_matmul is None or len(act_av_matmul) > 1:
                     # Assume no activation in this case
                     act_av_matmul = [None]
                 # Unwrap the output activation from the list
-                act_av_matmul, = act_av_matmul
+                (act_av_matmul,) = act_av_matmul
                 # The final activation can be omitted if it is not supported as
                 # it might just be part of the next operator pattern
                 if not is_supported_activation(act_av_matmul):
@@ -227,36 +251,37 @@ class InferScaledDotProductAttention(Transformation):
                 mask, mask_mode, mask_dtype = [], 'none', DataType["BINARY"]
                 # If there is an elementwise add operation where we have
                 # expected the dequantizer, this might be an attention mask
-                if is_add(dequant_softmax):
+                if dequant_softmax is not None and is_add(dequant_softmax):
                     # Remember the candidate of the masking operation
                     maybe_mask = dequant_softmax
                     # If there is a mask candidate, the dequantizer, must be
                     # right before
-                    dequant_softmax = model.find_direct_predecessors(
+                    dequant_softmax_preds = model.find_direct_predecessors(
                         dequant_softmax
                     )
-                    # The attention mask may not have multiple producers
-                    if len(dequant_softmax) != 1:
+                    # The attention mask may not have multiple producers, nor
+                    # may it have none at all
+                    if dequant_softmax_preds is None or len(dequant_softmax_preds) != 1:
                         # Issue a warning of near match of the supported
                         # attention pattern
                         # @formatter:off
                         log.warning(
                             f"{self.__class__.__name__}: Skipping near match: "
                             f"Unsupported de-quantizer near {maybe_mask.name}: "
-                            f" {op_types(dequant_softmax)}"
+                            f" {op_types(dequant_softmax_preds or [])}"
                         )
                         # @formatter:on
                         # Skip transforming this instance
                         continue
                     # There is a single producer, which is probably the
                     # dequantizer
-                    dequant_softmax, = dequant_softmax
+                    (dequant_softmax,) = dequant_softmax_preds
 
                     # The mask can be an initializer or provided as an input. If
                     # it is given as an initializer, it can either be a causal
                     # mask or some arbitrary pattern.
 
-                    def valid_mask(tensor):
+                    def valid_mask(tensor: "npt.NDArray[Any]") -> bool:
                         """Check whether a tensor is a valid mask tensor.
 
                         Valid masks contain only two types of values: zero for not masked
@@ -266,7 +291,7 @@ class InferScaledDotProductAttention(Transformation):
                             x in {0.0, -np.inf} for x in np.unique(tensor)
                         )
 
-                    def is_causal(tensor):
+                    def is_causal(tensor: "npt.NDArray[Any]") -> bool:
                         """Check whether a tensor describes a causal attention mask.
 
                         Generates a causal mask of the same size and compares it against
@@ -275,12 +300,13 @@ class InferScaledDotProductAttention(Transformation):
                         # Generate a causal mask of the same size
                         causal = np.triu(-np.inf * np.ones_like(tensor), 1)
                         # Compare candidate against the causal mask
-                        return (tensor == causal).all()  # noqa: 'all'
+                        return bool((tensor == causal).all())
 
                     # Try to get the initializer of the masking operation
                     mask_tensor = model.get_initializer(maybe_mask.input[1])
                     # Check whether this is constant mask known at export time
                     if mask_tensor is not None:
+                        mask_tensor = cast("npt.NDArray[Any]", mask_tensor)
                         # We have a constant mask and need to validated that it
                         # only contains valid values
                         if not valid_mask(mask_tensor):
@@ -311,10 +337,10 @@ class InferScaledDotProductAttention(Transformation):
                             # Set the initializer to the binary mask still using
                             # float as the container type
                             model.set_initializer(
-                                *mask, mask_tensor.astype(np.float32)
+                                mask[0], mask_tensor.astype(np.float32)
                             )
                             # Set the quantization type annotation to binary
-                            model.set_tensor_datatype(*mask, DataType["BINARY"])
+                            model.set_tensor_datatype(mask[0], DataType["BINARY"])
                     # Dynamic input mask, cannot be validated beforehand
                     else:
                         # # Keep the input and set the corresponding mode flag
@@ -342,7 +368,7 @@ class InferScaledDotProductAttention(Transformation):
                     log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f"Unsupported de-quantizer near {lhs[1].name}: "
-                        f" {dequant_softmax.op_type}"
+                        f" {dequant_softmax.op_type if dequant_softmax is not None else 'None'}"
                     )
                     # @formatter:on
                     # Skip transforming this instance
@@ -352,7 +378,10 @@ class InferScaledDotProductAttention(Transformation):
                 # initializer to node attribute
                 if dequant_softmax is not None:
                     # Get the initializer tensor
-                    scale = model.get_initializer(dequant_softmax.input[1])
+                    scale = cast(
+                        "npt.NDArray[Any] | None",
+                        model.get_initializer(dequant_softmax.input[1]),
+                    )
                     # This must be an initializer, the attention operator
                     # currently does not handle any dynamically produced scale
                     # factors
@@ -401,7 +430,7 @@ class InferScaledDotProductAttention(Transformation):
                     act.input[1] for act in acts if act is not None
                 ]
 
-                def act_op_type_str(act):
+                def act_op_type_str(act: NodeProto | None) -> str:
                     """Convert activation function types to string representation.
 
                     Only MultiThreshold is supported currently. The attention custom op
@@ -416,7 +445,11 @@ class InferScaledDotProductAttention(Transformation):
 
                 # The value tensor shape must be compatible with the attention
                 # matrix
-                assert model.get_tensor_shape(v)[:2] == [qh, kl]
+                v_shape = _require_shape(model, v)
+                if v_shape[:2] != [qh, kl]:
+                    raise FINNInternalError(
+                        f"Value tensor {v} shape is not compatible with the attention matrix"
+                    )
 
                 # Output type of the first matmul
                 out_qk_matmul = lhs[-1].output[0]
@@ -426,7 +459,7 @@ class InferScaledDotProductAttention(Transformation):
                     # Single output tensor of the activation function
                     out_qk_matmul = act_qk_matmul.output[0]
 
-                def out_bias(act):
+                def out_bias(act: NodeProto | None) -> Any:
                     """Extract output bias of the thresholding activation functions.
 
                     Only applies to thresholding activations. Extracts via interpreting
@@ -474,14 +507,14 @@ class InferScaledDotProductAttention(Transformation):
                     # Length of the query sequence
                     "QLen": ql,
                     # Embedding dimension of the values
-                    "VDim": model.get_tensor_shape(v)[2],
+                    "VDim": v_shape[2],
                     # Length of the key and value sequence
                     "KVLen": kl,
 
                     # Folding along the embedding dimensions
                     # Note: Assume biggest folding possible fitting both
                     # embedding dimensions
-                    "EmbFold": math.gcd(qe, model.get_tensor_shape(v)[2]),
+                    "EmbFold": math.gcd(qe, v_shape[2]),
                     # Folding along the sequence dimensions
                     # Note: Assume biggest folding possible fitting both
                     # sequence dimensions
@@ -540,7 +573,7 @@ class InferScaledDotProductAttention(Transformation):
                     "BiasActASoftmax": out_bias(act_a_softmax),
                 }
 
-                def maybe_name(value):
+                def maybe_name(value: Any) -> Any:
                     """Convert QONNX datatypes to their name (as a string).
 
                     All QONNX datatypes are instances of BaseDataType. Everything else
@@ -575,7 +608,7 @@ class InferScaledDotProductAttention(Transformation):
                 # The graph has been modified
                 graph_modified = True
         # After rewiring need to re-do the shape annotations
-        model = model.transform(InferShapes())  # noqa: Shadows model
+        model = model.transform(InferShapes())
         # As attention mask datatype might have been changed, it might be
         # necessary to re-do the datatype annotations
         model = model.transform(InferDataTypes())
@@ -588,14 +621,14 @@ class AbsorbMultiThresholdIntoScaledDotProductAttention(Transformation):
     """Absorb a MultiThreshold into ScaledDotProductAttention if there is not
     already an activation included."""
 
-    def apply(self, model: ModelWrapper):  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply the transform to a whole model graph."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
         # Keep track of whether the graph has been modified
         graph_modified = False
         # Iterate all nodes in the graph keeping track of the index
-        for index, node in enumerate(graph.node):
+        for node in graph.node:
             # Any MultiThreshold is a candidate node
             if node.op_type == "MultiThreshold":
                 # Cannot be a join-node
@@ -613,7 +646,7 @@ class AbsorbMultiThresholdIntoScaledDotProductAttention(Transformation):
                 attention = attention[0]
                 # Predecessor must actually be a ScaledDotProductAttention for
                 # this transform to apply
-                if not attention.op_type == "ScaledDotProductAttention":
+                if attention.op_type != "ScaledDotProductAttention":
                     # Skip transforming this instance, probably no need to warn
                     continue
                 # The attention operation may not fork for this transformation
@@ -628,11 +661,12 @@ class AbsorbMultiThresholdIntoScaledDotProductAttention(Transformation):
                 if getCustomOp(attention).get_nodeattr("ActAVMatMul") != "none":
                     # Issue a warning to make the user aware of this mismatch
                     # pattern
+                    act_av_matmul_attr = get_by_name(attention.attribute, "ActAVMatMul")
                     # @formatter:off
                     log.warning(
                         f"{self.__class__.__name__}: Skipping near match: "
                         f" {attention.name} already has an activation:"
-                        f" {get_by_name(attention.attribute, 'ActAVMatMul').s}"
+                        f" {act_av_matmul_attr.s if act_av_matmul_attr is not None else None}"
                     )
                     # @formatter:on
                     # Skip transforming this instance
@@ -684,7 +718,7 @@ class AbsorbMultiThresholdIntoScaledDotProductAttention(Transformation):
                 # with a clean index
                 break
         # After rewiring need to re-do the shape annotations
-        model = model.transform(InferShapes())  # noqa: Shadows model
+        model = model.transform(InferShapes())
         # As attention mask datatype might have been changed, it might be
         # necessary to re-do the datatype annotations
         model = model.transform(InferDataTypes())

@@ -6,6 +6,8 @@ from rich.progress import Progress, TaskID
 from threading import Lock
 from types import TracebackType
 
+from finn.util.exception import FINNUserError
+
 log = logging.getLogger("finn_logger")
 
 # Top level console used by logger
@@ -90,8 +92,10 @@ class ThreadsafeProgressDisplay:
         self.tasks: list[str] = tasks
         self.totals: list[float | int] = totals
         self.descriptions: list[str] = descriptions
-        assert len(tasks) == len(totals)
-        assert len(totals) == len(descriptions)
+        if len(tasks) != len(totals):
+            raise FINNUserError("tasks and totals must have the same length")
+        if len(totals) != len(descriptions):
+            raise FINNUserError("totals and descriptions must have the same length")
 
     def start(self) -> None:
         """Start the display."""

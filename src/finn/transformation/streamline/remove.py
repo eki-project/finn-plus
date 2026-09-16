@@ -1,5 +1,7 @@
 # QONNX wrapper of ONNX model graphs
 """Module to remove identity operations."""
+import numpy as np
+import numpy.typing as npt
 from qonnx.core.modelwrapper import ModelWrapper
 
 # QONNX graph transformation base class
@@ -13,6 +15,7 @@ from qonnx.transformation.remove import remove_node_and_rewire
 
 # Gets items from protobuf by name
 from qonnx.util.basic import get_by_name
+from typing import Any, cast
 
 
 # Removes identity reshape operations, i.e., Reshape where input shape is the
@@ -21,14 +24,14 @@ class RemoveIdentityReshape(Transformation):
     # Applies the transform to a whole model graph
     """Transformation to remove Identity Reshape operations."""
 
-    def apply(self, model: ModelWrapper):  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # Get the model graph out of the model wrapper object
         """Apply transformation."""
         graph = model.graph
         # Keep track of whether the graph has been modified
         graph_modified = False
-        # Iterate all nodes in the graph keeping track of the index
-        for index, node in enumerate(graph.node):
+        # Iterate all nodes in the graph
+        for node in graph.node:
             # Applies to Reshape operation types
             if node.op_type == "Reshape":
                 # Currently does not handle join-nodes
@@ -40,18 +43,22 @@ class RemoveIdentityReshape(Transformation):
                 # If the initializer is present, this is a constant shape
                 # reshape which can be removed if it does not reshape
                 if shape is not None:
+                    shape = cast("npt.NDArray[Any]", shape)
                     # Get the shape of the input to the reshape
                     inp = model.get_tensor_shape(node.input[0])
+                    # Nothing to compare against if the input shape is unknown
+                    if inp is None:
+                        continue
                     # If input and target shape are the same, this is an
                     # identity operation
-                    if len(shape) == len(inp) and (shape == inp).all():
+                    if len(shape) == len(inp) and np.array_equal(shape, inp):
                         # Remove and rewire this node
                         remove_node_and_rewire(model, node)
                         # Track whether the graph has been modified, never
                         # resets to False
                         graph_modified = True
         # Need to redo the shape inference after potentially removing nodes
-        model = model.transform(InferShapes())  # noqa: Shadows from outer scope
+        model = model.transform(InferShapes())
         # Return the transformed model and indicate whether the graph actually
         # has been transformed
         return model, graph_modified
@@ -63,14 +70,14 @@ class RemoveIdentityTranspose(Transformation):
     # Applies the transform to a whole model graph
     """Transformation to remove Identity Transpose operations."""
 
-    def apply(self, model: ModelWrapper):  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # Get the model graph out of the model wrapper object
         """Apply transformation."""
         graph = model.graph
         # Keep track of whether the graph has been modified
         graph_modified = False
-        # Iterate all nodes in the graph keeping track of the index
-        for index, node in enumerate(graph.node):
+        # Iterate all nodes in the graph
+        for node in graph.node:
             # Applies to Transpose operation types
             if node.op_type == "Transpose":
                 # Currently does not handle join-nodes
@@ -86,23 +93,22 @@ class RemoveIdentityTranspose(Transformation):
                 # axes, i.e., not an identity transpose
                 if perm is not None:
                     # Convert permutation indices to list of integers
-                    perm = perm.ints
+                    perm_ints = list(perm.ints)
                     # Get the shape of the input tensor
-                    shape = model.get_tensor_shape(
-                        # fmt: off
-                        node.input[0], fix_missing_init_shape=True
-                        # fmt: on
-                    )
+                    shape = model.get_tensor_shape(node.input[0], fix_missing_init_shape=True)
+                    # Nothing to compare against if the input shape is unknown
+                    if shape is None:
+                        continue
                     # If the permutation indices cover the input shape in order,
                     # this transpose does nothing
-                    if perm == [i for i in range(len(shape))]:
+                    if perm_ints == list(range(len(shape))):
                         # Remove and rewire this node
                         remove_node_and_rewire(model, node)
                         # Track whether the graph has been modified, never
                         # resets to False
                         graph_modified = True
         # Need to redo the shape inference after potentially removing nodes
-        model = model.transform(InferShapes())  # noqa: Shadows model
+        model = model.transform(InferShapes())
         # Return the transformed model and indicate whether the graph actually
         # has been transformed
         return model, graph_modified

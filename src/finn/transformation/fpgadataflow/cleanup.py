@@ -27,29 +27,35 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
+"""Module for removing generated files produced by fpgadataflow nodes."""
 import qonnx.custom_op.registry as registry
 import shutil
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
+from typing import cast
 
+from finn.util.exception import FINNUserError
 from finn.util.fpgadataflow import is_fpgadataflow_node
 
 
 class CleanUp(Transformation):
     """Remove any generated files for fpgadataflow nodes."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize instance."""
         super().__init__()
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
+        """Remove generated PYNQ/IP-stitching projects and per-node codegen dirs."""
         # delete PYNQ project, if any
         vivado_pynq_proj_dir = model.get_metadata_prop("vivado_pynq_proj")
-        if vivado_pynq_proj_dir is not None and os.path.isdir(vivado_pynq_proj_dir):
+        if vivado_pynq_proj_dir is not None and Path(vivado_pynq_proj_dir).is_dir():
             shutil.rmtree(vivado_pynq_proj_dir)
         model.set_metadata_prop("vivado_pynq_proj", "")
         # delete IP stitching project, if any
         ipstitch_path = model.get_metadata_prop("vivado_stitch_proj")
-        if ipstitch_path is not None and os.path.isdir(ipstitch_path):
+        if ipstitch_path is not None and Path(ipstitch_path).is_dir():
             shutil.rmtree(ipstitch_path)
         model.set_metadata_prop("vivado_stitch_proj", "")
         for node in model.graph.node:
@@ -59,26 +65,28 @@ class CleanUp(Transformation):
                     # lookup op_type in registry of CustomOps
                     inst = registry.getCustomOp(node)
                     # delete code_gen_dir from cppsim
-                    code_gen_dir = inst.get_nodeattr("code_gen_dir_cppsim")
-                    if os.path.isdir(code_gen_dir):
+                    code_gen_dir = cast("str", inst.get_nodeattr("code_gen_dir_cppsim"))
+                    if Path(code_gen_dir).is_dir():
                         shutil.rmtree(code_gen_dir)
                     inst.set_nodeattr("code_gen_dir_cppsim", "")
                     inst.set_nodeattr("executable_path", "")
                     # delete code_gen_dir from ipgen and project folder
-                    code_gen_dir = inst.get_nodeattr("code_gen_dir_ipgen")
-                    ipgen_path = inst.get_nodeattr("ipgen_path")
-                    if os.path.isdir(code_gen_dir):
+                    code_gen_dir = cast("str", inst.get_nodeattr("code_gen_dir_ipgen"))
+                    ipgen_path = cast("str", inst.get_nodeattr("ipgen_path"))
+                    if Path(code_gen_dir).is_dir():
                         shutil.rmtree(code_gen_dir)
-                    if os.path.isdir(ipgen_path):
+                    if Path(ipgen_path).is_dir():
                         shutil.rmtree(ipgen_path)
                     inst.set_nodeattr("code_gen_dir_ipgen", "")
                     inst.set_nodeattr("ipgen_path", "")
                     # delete Java HotSpot Performance data log
-                    for d_name in os.listdir("/tmp/"):
-                        if "hsperfdata" in d_name:
-                            shutil.rmtree("/tmp/" + str(d_name))
+                    for d_path in Path("/tmp/").iterdir():
+                        if "hsperfdata" in d_path.name:
+                            shutil.rmtree(d_path)
 
-                except KeyError:
+                except KeyError as e:
                     # exception if op_type is not supported
-                    raise Exception("Custom op_type %s is currently not supported." % op_type)
+                    raise FINNUserError(
+                        f"Custom op_type {op_type} is currently not supported."
+                    ) from e
         return (model, False)

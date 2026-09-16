@@ -28,11 +28,20 @@ from qonnx.transformation.remove import remove_node_and_rewire
 # Gets items from protobuf by name
 from qonnx.util.basic import get_by_name, remove_by_name
 
+# For type annotations only, not evaluated at runtime
+from typing import TYPE_CHECKING, Any, cast
+
+# FINN exception types replacing bare asserts
+from finn.util.exception import FINNUserError
+
 # Import FINN logging
 from finn.util.logging import log
 
 # Small utility functions for graph transformations
 from .util import is_attention, is_threshold
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 
 class Squeeze(Transformation):
@@ -45,7 +54,7 @@ class Squeeze(Transformation):
     op-types.
     """
 
-    def apply(self, model: ModelWrapper):  # noqa
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply squeeze transformation to remove size-1 dimensions."""
         # Get the model graph out of the model wrapper object
         graph = model.graph
@@ -69,16 +78,22 @@ class Squeeze(Transformation):
                 axes = model.get_initializer(node.input[3])
                 # If this is an initializer, there are constant axes to slice
                 if axes is not None:
+                    axes = cast("npt.NDArray[Any]", axes)
                     # Get the shape of the input, assuming the input from
                     # upstream to be the 1st input
                     shape = model.get_tensor_shape(node.input[0])
+                    if shape is None:
+                        raise FINNUserError(
+                            f"Could not determine shape of tensor {node.input[0]} "
+                            f"feeding Slice node {node.name}"
+                        )
                     # Slice might operate on multiple axes
                     for axis in axes:
                         # Axis must not refer to a dimension of size 1
-                        # fmt: off
-                        assert shape[axis] > 1, \
-                            f"Slice along dimension to be squeezed: {node.name}"
-                        # fmt: on
+                        if shape[axis] <= 1:
+                            raise FINNUserError(
+                                f"Slice along dimension to be squeezed: {node.name}"
+                            )
 
             # Need to adapt reshape operations to drop dimensions of size 1
             if node.op_type == "Reshape":
@@ -87,12 +102,9 @@ class Squeeze(Transformation):
                 # If the initializer is present, this is a constant shape
                 # reshape which can be replaced by the squeezed shape
                 if shape is not None:
+                    shape = cast("npt.NDArray[Any]", shape)
                     # Squeeze the shape by removing all dimensions with size 1
-                    # fmt: off
-                    new_shape = np.asarray([
-                        size for size in shape if size != 1
-                    ])
-                    # fmt: on
+                    new_shape = np.asarray([size for size in shape if size != 1])
                     # Reassign the squeezed tensor
                     model.set_initializer(node.input[1], new_shape)
                     # Track whether the shape actually changed
@@ -110,14 +122,15 @@ class Squeeze(Transformation):
                 # dimension of size 1 from these
                 if perm is not None:
                     # Convert permutation indices to list of integers
-                    perm = perm.ints
+                    perm_ints = perm.ints
                     # Get the shape of the input tensor to seek for input
                     # dimensions of size 1
-                    shape = model.get_tensor_shape(
-                        # fmt: off
-                        node.input[0], fix_missing_init_shape=True
-                        # fmt: on
-                    )
+                    shape = model.get_tensor_shape(node.input[0], fix_missing_init_shape=True)
+                    if shape is None:
+                        raise FINNUserError(
+                            f"Could not determine shape of tensor {node.input[0]} "
+                            f"feeding Transpose node {node.name}"
+                        )
                     # Keep track of new axis enumeration, skipping dimensions of
                     # size 1
                     mapping, new_axis = {}, 0
@@ -129,13 +142,9 @@ class Squeeze(Transformation):
                         # be squeezed
                         new_axis += size > 1
                     # Filter and remap the axis enumeration of the permutation
-                    new_perm = [
-                        # fmt: off
-                        mapping[axis] for axis in perm if shape[axis] > 1
-                        # fmt: on
-                    ]
+                    new_perm = [mapping[axis] for axis in perm_ints if shape[axis] > 1]
                     # Track whether the permutations actually changed
-                    if len(new_perm) != len(perm) or new_perm != perm:
+                    if len(new_perm) != len(perm_ints) or new_perm != list(perm_ints):
                         # # Is never reset back to False during iteration
                         # graph_modified = True
                         pass
@@ -149,15 +158,15 @@ class Squeeze(Transformation):
             if node.op_type == "SplitMultiHeads":
                 # Get number of input feature maps to the merging operation
                 num_inputs = get_by_name(node.attribute, "num_inputs")
+                if num_inputs is None:
+                    raise FINNUserError(
+                        f"SplitMultiHeads node {node.name} has no num_inputs attribute"
+                    )
                 # Squeeze all dimensions of size 1
                 new_num_inputs = [size for size in num_inputs.ints if size != 1]
                 # Update the attribute by removing and reinserting
                 remove_by_name(node.attribute, "num_inputs")
-                node.attribute.append(
-                    # fmt: off
-                    oh.make_attribute("num_inputs", new_num_inputs)
-                    # fmt: on
-                )
+                node.attribute.append(oh.make_attribute("num_inputs", new_num_inputs))
                 # Track whether the number of inputs actually changed
                 if len(new_num_inputs) != len(num_inputs.ints):
                     # # Is never reset back to False during iteration
@@ -174,6 +183,11 @@ class Squeeze(Transformation):
                 axis = axis.i if axis is not None else 0
                 # Get the shape of the input tensor to the split operation
                 shape = model.get_tensor_shape(node.input[0])
+                if shape is None:
+                    raise FINNUserError(
+                        f"Could not determine shape of tensor {node.input[0]} "
+                        f"feeding Split node {node.name}"
+                    )
                 # Subtract the number of squeezed, i.e, size=1, axes before axis
                 axis = axis - sum(size == 1 for size in shape[:axis])
                 # Normalize the axis input: Turn negative counting axis to positive index
@@ -191,15 +205,15 @@ class Squeeze(Transformation):
                 node.attribute.append(oh.make_attribute("squeezed", True))
                 # Get number of input feature maps to the merging operation
                 num_inputs = get_by_name(node.attribute, "num_inputs")
+                if num_inputs is None:
+                    raise FINNUserError(
+                        f"MergeMultiHeads node {node.name} has no num_inputs attribute"
+                    )
                 # Squeeze all dimensions of size 1
                 new_num_inputs = [size for size in num_inputs.ints if size != 1]
                 # Update the attribute by removing and reinserting
                 remove_by_name(node.attribute, "num_inputs")
-                node.attribute.append(
-                    # fmt: off
-                    oh.make_attribute("num_inputs", new_num_inputs)
-                    # fmt: on
-                )
+                node.attribute.append(oh.make_attribute("num_inputs", new_num_inputs))
                 # Track whether the number of inputs actually changed
                 if len(new_num_inputs) != len(num_inputs.ints):
                     # # Is never reset back to False during iteration
@@ -217,11 +231,7 @@ class Squeeze(Transformation):
 
                 # Get the shape of the input tensor to seek for input
                 # dimensions of size 1
-                shape = model.get_tensor_shape(  # noqa: Duplicate
-                    # fmt: off
-                    node.input[0], fix_missing_init_shape=True
-                    # fmt: on
-                )
+                shape = model.get_tensor_shape(node.input[0], fix_missing_init_shape=True)
                 # Skip if there is no shape
                 if shape is None:
                     continue
@@ -247,11 +257,7 @@ class Squeeze(Transformation):
 
                 # Get the shape of the output tensor to seek for input
                 # dimensions of size 1
-                shape = model.get_tensor_shape(  # noqa: Duplicate
-                    # fmt: off
-                    node.output[0], fix_missing_init_shape=True
-                    # fmt: on
-                )
+                shape = model.get_tensor_shape(node.output[0], fix_missing_init_shape=True)
                 # Skip if there is no shape
                 if shape is None:
                     continue
@@ -289,21 +295,19 @@ class Squeeze(Transformation):
         # Iterate the graph once again to get rid of existing Squeeze/Unsqueeze
         # Note: This needs to be done after all other operations to not mess
         # with the shape annotations
-        for index, node in enumerate(graph.node):
-            # Squeeze and Unsqueeze can be handled the same
-            if node.op_type in {"Squeeze", "Unsqueeze"}:
-                # Do not touch the Unsqueeze/Squeeze surrounding the Im2Col
-                # operation
-                if "Im2Col" not in [
-                    n.op_type
-                    for n in [
-                        *model.find_direct_predecessors(node),
-                        *model.find_direct_successors(node),
-                    ]
-                ]:
-                    # Remove existing Squeeze/Unsqueeze from the graph as these
-                    # will not have any effect anymore
-                    remove_node_and_rewire(model, node)
+        for node in graph.node:
+            # Squeeze and Unsqueeze can be handled the same. Do not touch the
+            # Unsqueeze/Squeeze surrounding the Im2Col operation.
+            if node.op_type in {"Squeeze", "Unsqueeze"} and "Im2Col" not in [
+                n.op_type
+                for n in [
+                    *(model.find_direct_predecessors(node) or []),
+                    *(model.find_direct_successors(node) or []),
+                ]
+            ]:
+                # Remove existing Squeeze/Unsqueeze from the graph as these
+                # will not have any effect anymore
+                remove_node_and_rewire(model, node)
 
         # Get the names of all global input tensors to insert a Squeeze
         # operation in front
@@ -311,11 +315,7 @@ class Squeeze(Transformation):
         # Insert Squeeze operators at each global input
         for inp in global_inputs:
             # Get the shape of the tensor to seek for dimensions of size 1
-            shape = model.get_tensor_shape(  # noqa: Duplicate
-                # fmt: off
-                inp, fix_missing_init_shape=True
-                # fmt: on
-            )
+            shape = model.get_tensor_shape(inp, fix_missing_init_shape=True)
             # Skip if there is no shape and skip squeezing 0d or 1d tensors
             if shape is None or len(shape) <= 1:
                 continue
@@ -357,11 +357,7 @@ class Squeeze(Transformation):
         # Insert Unsqueeze operators at each global output
         for out in global_outputs:
             # Get the shape of the tensor to seek for dimensions of size 1
-            shape = model.get_tensor_shape(  # noqa: Duplicate
-                # fmt: off
-                out, fix_missing_init_shape=True
-                # fmt: on
-            )
+            shape = model.get_tensor_shape(out, fix_missing_init_shape=True)
             # Skip if there is no shape and skip squeezing 0d or 1d tensors
             if shape is None or len(shape) <= 1:
                 continue
@@ -386,6 +382,8 @@ class Squeeze(Transformation):
             # Connect the new unsqueeze operator to the producer of this global
             # output
             producer = model.find_producer(out)
+            if producer is None:
+                raise FINNUserError(f"Global output tensor {out} has no producer node")
             # Find the output of the producer which is the global output
             for i, p_out in enumerate(producer.output):
                 # Note: This might happen multiple times?
@@ -397,7 +395,7 @@ class Squeeze(Transformation):
             model.graph.node.insert(0, unsqueeze)
 
         # Iterate all tensors in the graph keeping track of the index
-        for index, name in enumerate(model.get_all_tensor_names()):
+        for name in model.get_all_tensor_names():
             # Skip the global inputs and outputs
             if name in [*global_inputs, *global_outputs]:
                 # Skip without warning, these are handled by explicit
@@ -405,7 +403,8 @@ class Squeeze(Transformation):
                 continue
             # Skip initializer tensors: Shape inference should actually restore
             # these shapes, but for some reason it does not work...
-            if (init := model.get_initializer(name)) is not None:
+            init = cast("npt.NDArray[Any] | None", model.get_initializer(name))
+            if init is not None:
                 # If any of the consumers of this initializer is a
                 # multi-threshold function, it should not be squeezed as the
                 # thresholding is quite sensitive to data layouts and does not
@@ -431,8 +430,11 @@ class Squeeze(Transformation):
                 model.set_tensor_shape(name, np.squeeze(init).shape)
                 # Continue with the next tensor, skipping the default case below
                 continue
-            # Just delete all existing shape annotations to redo them later
-            model.set_tensor_shape(name, None)
+            # Just delete all existing shape annotations to redo them later.
+            # Passing None (rather than an actual shape) is accepted at runtime by
+            # onnx.helper.make_tensor_value_info to mark the shape as unknown, even
+            # though this method's declared parameter type does not reflect that.
+            model.set_tensor_shape(name, cast("list[int]", None))
         # Re-do shape and data type annotations after potential changes to the
         # model graph
         model = model.transform(InferShapes())

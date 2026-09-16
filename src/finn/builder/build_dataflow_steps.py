@@ -60,7 +60,7 @@ from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.util.cleanup import cleanup_model
 from shutil import copy, move
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
@@ -293,15 +293,21 @@ def _generate_pblock_svg(report_json_path: str | Path, svg_path: str | Path) -> 
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{canvas_w}" height="{canvas_h}">',
         # Background = full device SLICE array
-        f'<rect x="{pad}" y="{pad}"'
-        f' width="{(dev_max_x + 1) * scale}" height="{(dev_max_y + 1) * scale}"'
-        f' fill="#d8d8d8" stroke="#555" stroke-width="1"/>',
+        (
+            f'<rect x="{pad}" y="{pad}"'
+            f' width="{(dev_max_x + 1) * scale}" height="{(dev_max_y + 1) * scale}"'
+            f' fill="#d8d8d8" stroke="#555" stroke-width="1"/>'
+        ),
         # Y-axis label (rotated)
-        f'<text transform="rotate(-90)" x="-{canvas_h//2}" y="{pad - 6}"'
-        f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE Y</text>',
+        (
+            f'<text transform="rotate(-90)" x="-{canvas_h//2}" y="{pad - 6}"'
+            f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE Y</text>'
+        ),
         # X-axis label
-        f'<text x="{canvas_w // 2}" y="{canvas_h - 4}"'
-        f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE X</text>',
+        (
+            f'<text x="{canvas_w // 2}" y="{canvas_h - 4}"'
+            f' text-anchor="middle" font-size="{font}" font-family="sans-serif">SLICE X</text>'
+        ),
     ]
 
     for i, (x0, y0, x1, y1, name) in enumerate(pblocks):
@@ -462,7 +468,7 @@ def verify_step(
         res_str = res_to_str[bool(res)]
         if cfg.verify_save_full_context and (rtlsim_pre_hook is None):
             verification_output_fn = verify_out_dir / f"verify_{step_name}_{b}_{res_str}.npz"
-            np.savez(verification_output_fn, **out_dict)
+            np.savez(verification_output_fn, **out_dict)  # type: ignore[arg-type]
 
             # Log tensor statistics for debugging (only output tensors, in topological order)
             tensors_to_log = ["global_in"]
@@ -808,7 +814,7 @@ def step_set_fifo_depths(
         model = model.transform(ApplyFIFODepthsFromFile(cfg.fifo_config_file))
 
     # Generate a dedicated report about final FIFO sizes before large FIFOs are split.
-    fifo_info = {
+    fifo_info: dict[str, Any] = {
         "fifo_depths": {},
         "fifo_sizes": {},
         "fifo_sizes_effective": {},
@@ -1713,7 +1719,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
             )
         )
         shutil.copytree(
-            model.get_metadata_prop("cpp_driver_dir"),
+            get_metadata_prop_path(model, "cpp_driver_dir", must_exist=True),
             str(cfg.get_driver_directory() / "cpp"),
             dirs_exist_ok=True,
             copy_function=shutil.copyfile,
@@ -1758,7 +1764,7 @@ def step_make_driver(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrap
         )
 
         shutil.copytree(
-            model.get_metadata_prop("pynq_driver_dir"),
+            get_metadata_prop_path(model, "pynq_driver_dir", must_exist=True),
             cfg.get_driver_directory(),
             dirs_exist_ok=True,
         )
@@ -1822,9 +1828,6 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
         )
     # Commonly used config variables
     part = cfg._resolve_fpga_part()
-    platform = (
-        cfg._resolve_vitis_platform() if cfg.shell_flow_type is ShellFlowType.VITIS_ALVEO else None
-    )
     clk_ns = cfg.synth_clk_period_ns
 
     # Differentiate preparation by flow type
@@ -1879,7 +1882,9 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
                 model = model.transform(
                     CreateNetworkMetadata(pc.communication_kernel, pc.verbosity)
                 )
-                model = model.transform(PrepareCommunicationKernels(platform, part, pc))
+                model = model.transform(
+                    PrepareCommunicationKernels(cfg._resolve_vitis_platform(), part, pc)
+                )
 
             # Create / package XOs for all SDPs
             model = model.transform(BuildAllXOs(part, clk_ns))
@@ -2175,6 +2180,8 @@ def step_loop_rolling(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWra
             log.info(f"Running Loop Rolling on {cfg.loop_body_hierarchy} hierarchy")
             loop_extraction = LoopExtraction(cfg.loop_body_hierarchy)
             model = model.transform(loop_extraction)
+            if loop_extraction.loop_body_template is None:
+                raise FINNInternalError("LoopExtraction did not produce a loop body template")
             model = model.transform(LoopRolling(loop_extraction.loop_body_template))
             move("loop-body-template.onnx", Path(cfg.output_dir) / "loop-body-template.onnx")
     else:

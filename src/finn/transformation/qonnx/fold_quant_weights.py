@@ -28,14 +28,23 @@
 
 """Module for fold quant weights."""
 import numpy as np
+import numpy.typing as npt
 import qonnx.core.onnx_exec as oxe
 from onnx import TensorProto, helper
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.quant_constant_folding import FoldTransposeIntoQuantInit
 from qonnx.transformation.remove import remove_node_and_rewire
 from qonnx.util.basic import get_preferred_qonnx_opset
+from typing import TYPE_CHECKING, Any, cast
+
+from finn.util.exception import FINNInternalError
+
+if TYPE_CHECKING:
+    from qonnx.custom_op.general.bipolar_quant import BipolarQuant
+    from qonnx.custom_op.general.intquant import IntQuant
 
 
 class FoldQuantWeights(Transformation):
@@ -43,18 +52,16 @@ class FoldQuantWeights(Transformation):
     of the weight tensor.
     """
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
         graph = model.graph
-        node_ind = 0
         graph_modified = False
         execution_context = model.make_empty_exec_context()
         opset_imports = model.get_opset_imports()
-        for n in graph.node:
-            node_ind += 1
+        for node_ind, n in enumerate(graph.node, start=1):
             if n.op_type == "Quant" or n.op_type == "BipolarQuant":
-                node_inp_inits = list(map(lambda x: model.get_initializer(x), n.input))
-                node_inp_dyn = list(filter(lambda x: x is None, node_inp_inits))
+                node_inp_inits = [model.get_initializer(x) for x in n.input]
+                node_inp_dyn = [x for x in node_inp_inits if x is None]
                 node_out = n.output[0]
                 is_all_constant_inputs = len(node_inp_dyn) == 0
                 ishape = model.get_tensor_shape(n.input[0])
@@ -89,6 +96,9 @@ class FoldQuantWeights(Transformation):
 
                     # Continue with constant folding the quant node
                     scale = model.get_initializer(n.input[1])
+                    if scale is None:
+                        raise FINNInternalError(f"Quant node {n.name} has no scale initializer")
+                    scale = cast("npt.NDArray[Any]", scale)
                     unity_scale = (scale.flatten() == 1.0).all()
                     # this node has no dynamic inputs, only constant ones -- so we can
                     # do constant folding.
@@ -97,7 +107,7 @@ class FoldQuantWeights(Transformation):
                     else:
                         opset_version = get_preferred_qonnx_opset()
                     oxe.execute_node(n, execution_context, graph, opset_version)
-                    q_node_output = execution_context[node_out]
+                    q_node_output = cast("npt.NDArray[Any]", execution_context[node_out])
                     # Check we can directly constant fold
                     if unity_scale:
                         # use the execution result as an initializer
@@ -128,33 +138,44 @@ class FoldQuantWeights(Transformation):
                         if (
                             target_node.op_type in ["Conv", "ConvTranspose"]
                             and len(target_node.input) > 2
+                            and n.output[0] == target_node.input[2]
                         ):
-                            assert (
-                                n.output[0] != target_node.input[2]
-                            ), f"""Can't fold {target_node.op_type} bias,
-                            please run ExtractBiasFromConv first."""
+                            raise FINNInternalError(
+                                f"Can't fold {target_node.op_type} bias, please run "
+                                f"ExtractBiasFromConv first."
+                            )
 
                         # For both mul and Add:
                         # Move the scale factor behind the next operator
                         scale = model.get_initializer(n.input[1])
+                        if scale is None:
+                            raise FINNInternalError(f"Quant node {n.name} has no scale initializer")
+                        scale = cast("npt.NDArray[Any]", scale)
                         new_initializer = q_node_output / scale
                         # Round, to correct for floating point errors
                         new_initializer = np.round(new_initializer)
                         model.set_initializer(node_out, new_initializer)
-                        q_inst = getCustomOp(n)
+                        # Both the Quant and BipolarQuant custom-op implementations behind
+                        # this registry lookup provide get_integer_datatype(), the common
+                        # CustomOp base class does not declare it
+                        q_inst = cast("IntQuant | BipolarQuant", getCustomOp(n))
                         new_dtype = q_inst.get_integer_datatype(model)
                         model.set_tensor_datatype(node_out, new_dtype)
 
                         # Reshape scale for Conv if required
                         target_output_shape = model.get_tensor_shape(target_node.output[0])
+                        if target_output_shape is None:
+                            raise FINNInternalError(
+                                f"Could not determine shape of tensor {target_node.output[0]}"
+                            )
                         if target_node.op_type == "Conv" and len(scale.shape) > 0:
                             conv_out_shape = [1] * len(target_output_shape)
                             # only support per-output channel scaling
                             # (i.e. all scale shape elems besides 0th must be 1s)
-                            if len(scale.shape) > 1:
-                                assert (
-                                    np.prod(scale.shape[1:]) == 1
-                                ), "Can't fold scale beyond per-out-channel granularity"
+                            if len(scale.shape) > 1 and np.prod(scale.shape[1:]) != 1:
+                                raise FINNInternalError(
+                                    "Can't fold scale beyond per-out-channel granularity"
+                                )
                             # collect all scaling in channels dim (since we constrain)
                             conv_out_shape[1] = -1
                             scale = scale.reshape(conv_out_shape)
@@ -164,17 +185,19 @@ class FoldQuantWeights(Transformation):
                             conv_out_shape = [1] * len(target_output_shape)
                             # only support per-output channel scaling
                             # (i.e. all scale shape elems besides 1st must be 1s)
-                            if len(scale.shape) > 1:
-                                assert (
-                                    np.prod(scale.shape[2:]) == 1 and scale.shape[0] == 1
-                                ), "Can't fold scale beyond per-out-channel granularity"
+                            if len(scale.shape) > 1 and not (
+                                np.prod(scale.shape[2:]) == 1 and scale.shape[0] == 1
+                            ):
+                                raise FINNInternalError(
+                                    "Can't fold scale beyond per-out-channel granularity"
+                                )
                             # collect all scaling in channels dim (since we constrain)
                             conv_out_shape[1] = -1
                             scale = scale.reshape(conv_out_shape)
 
                         if scale.shape == (1,):
                             scale = scale[0]
-                            mul_shape = tuple()
+                            mul_shape = ()
                         else:
                             mul_shape = scale.shape
                         mul_tensor = helper.make_tensor_value_info(
@@ -192,7 +215,8 @@ class FoldQuantWeights(Transformation):
                                 "Can only constant fold scaled Quant weights "
                                 "if a successor exists."
                             )
-                        assert len(successor) == 1, "Only implemented for a single consumer"
+                        if len(successor) != 1:
+                            raise FINNInternalError("Only implemented for a single consumer")
                         successor = successor[0]
                         succ_output_name = successor.output[0]
 

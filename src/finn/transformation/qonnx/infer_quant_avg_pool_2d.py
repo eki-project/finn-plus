@@ -30,16 +30,23 @@
 """Module for infer quant avg pool 2d."""
 import math
 import numpy as np
-from onnx import TensorProto, helper
+import numpy.typing as npt
+from onnx import NodeProto, TensorProto, helper
 from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import get_by_name
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+if TYPE_CHECKING:
+    from qonnx.custom_op.general.bipolar_quant import BipolarQuant
+    from qonnx.custom_op.general.intquant import IntQuant
 
 
-def _get_signed_from_upstream(model, trunc_node):
+def _get_signed_from_upstream(model: ModelWrapper, trunc_node: NodeProto) -> bool:
     """Find out what the sign of the input to the trunc node is,
     by looking at the upstream nodes.
     """
@@ -74,7 +81,7 @@ def _get_signed_from_upstream(model, trunc_node):
             # Special cases where the node has an internal or intrinsic datatype.
             if next_node.op_type == "MultiThreshold":
                 mt_inst = getCustomOp(next_node, onnx_opset_version=9)
-                out_dt = DataType[mt_inst.get_nodeattr("out_dtype")]
+                out_dt = DataType[cast("str", mt_inst.get_nodeattr("out_dtype"))]
                 if out_dt is not None and out_dt != DataType["FLOAT32"]:
                     signed = out_dt.signed()
                     break
@@ -82,7 +89,12 @@ def _get_signed_from_upstream(model, trunc_node):
                 signed = True
                 break
             if next_node.op_type == "Quant":
-                q_inst = getCustomOp(next_node, onnx_opset_version=9)
+                # Both the Quant and BipolarQuant custom-op implementations behind
+                # this registry lookup provide get_integer_datatype(), the common
+                # CustomOp base class does not declare it
+                q_inst = cast(
+                    "IntQuant | BipolarQuant", getCustomOp(next_node, onnx_opset_version=9)
+                )
                 out_dt = q_inst.get_integer_datatype(model)
                 if out_dt is not None and out_dt != DataType["FLOAT32"]:
                     signed = out_dt.signed()
@@ -117,7 +129,7 @@ class AvgPoolAndTruncToQuantAvgPool(Transformation):
     To the FINN op: QuantAvgPool2d.
     """
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, Literal[False]]:
         """Apply transformation."""
         opset_imports = model.get_opset_imports()
         if "qonnx.custom_op.general" in opset_imports:
@@ -141,15 +153,13 @@ class AvgPoolAndTruncToQuantAvgPool(Transformation):
 class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
     """Convert a section of nodes of the pattern:
     AveragePool -> Mul (scalar) -> Trunc (v1)
-    To the FINN op: Div -> QuantAvgPool2d -> Mul
+    To the FINN op: Div -> QuantAvgPool2d -> Mul.
     """
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
         graph = model.graph
-        node_ind = 0
-        for n in graph.node:
-            node_ind += 1
+        for node_ind, n in enumerate(graph.node, start=1):
             if n.op_type == "AveragePool":
                 mul_node = model.find_direct_successors(n)
                 if mul_node is not None and len(mul_node) == 1 and mul_node[0].op_type == "Mul":
@@ -181,20 +191,23 @@ class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
 
                         # Mul node
                         mul_val = model.get_initializer(mul_node.input[1])
-                        if mul_val is None or len(mul_val.shape) != 0 or mul_val != k_s * k_s:
-                            raise ValueError(
-                                f"The Mul node after the AveragePool node must have "
-                                f"static initialization at the second input, "
-                                f"further the initialization must be of zero dimension "
-                                f"and the value of the initialization must be "
-                                f"the quadratic value of the kernel size, "
-                                f"in this case {k_s * k_s}."
-                            )
+                        invalid_mul_val_msg = (
+                            f"The Mul node after the AveragePool node must have "
+                            f"static initialization at the second input, "
+                            f"further the initialization must be of zero dimension "
+                            f"and the value of the initialization must be "
+                            f"the quadratic value of the kernel size, "
+                            f"in this case {k_s * k_s}."
+                        )
+                        if mul_val is None:
+                            raise ValueError(invalid_mul_val_msg)
+                        mul_val = cast("npt.NDArray[Any]", mul_val)
+                        if len(mul_val.shape) != 0 or mul_val != k_s * k_s:
+                            raise ValueError(invalid_mul_val_msg)
 
                         # Trunc node
                         rounding_mode = get_by_name(t_node.attribute, "rounding_mode")
-                        normalized_mode_string = rounding_mode.s.upper()
-                        if rounding_mode is None or normalized_mode_string != b"FLOOR":
+                        if rounding_mode is None or rounding_mode.s.upper() != b"FLOOR":
                             raise ValueError(
                                 "The Trunc node must have the rounding_mode set to 'FLOOR'."
                             )
@@ -206,13 +219,18 @@ class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
                                     f"initialized. However, {inp} is not."
                                 )
                         zero_pt = model.get_initializer(t_node.input[2])
+                        zero_pt = cast("npt.NDArray[Any]", zero_pt)
                         if len(zero_pt.shape) != 0 or zero_pt != 0:
                             raise ValueError(
                                 f"Finn only supports 0 as the zero point for "
                                 f"the Trunc node, it currently is {zero_pt}."
                             )
-                        trunc_in_bits = model.get_initializer(t_node.input[3]).flatten()
-                        trunc_out_bits = model.get_initializer(t_node.input[4]).flatten()
+                        trunc_in_bits = cast(
+                            "npt.NDArray[Any]", model.get_initializer(t_node.input[3])
+                        ).flatten()
+                        trunc_out_bits = cast(
+                            "npt.NDArray[Any]", model.get_initializer(t_node.input[4])
+                        ).flatten()
                         if len(trunc_in_bits.shape) != 1 or len(trunc_out_bits.shape) != 1:
                             raise ValueError(
                                 f"Finn only supports scalar bit widths "
@@ -236,7 +254,7 @@ class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
                         data_layout = "NCHW"
 
                         # Insert scale nodes, QuantAvgPool2d node and required tensors
-                        scale = model.get_initializer(t_node.input[1])
+                        scale = cast("npt.NDArray[Any]", model.get_initializer(t_node.input[1]))
                         scale_div_tensor = helper.make_tensor_value_info(
                             model.make_new_valueinfo_name(),
                             TensorProto.FLOAT,
@@ -267,7 +285,7 @@ class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
                         )
                         graph.value_info.append(act_scale_mul_tensor)
 
-                        QuantAvgPool2d_node = helper.make_node(
+                        quant_avg_pool2d_node = helper.make_node(
                             "QuantAvgPool2d",
                             [act_scale_div_tensor.name],
                             [act_scale_mul_tensor.name],
@@ -279,7 +297,7 @@ class AvgPoolAndTruncv1ToQuantAvgPool(Transformation):
                             signed=int(signed),
                             data_layout=data_layout,
                         )
-                        graph.node.insert(running_node_index, QuantAvgPool2d_node)
+                        graph.node.insert(running_node_index, quant_avg_pool2d_node)
                         running_node_index += 1
 
                         scale_mul_tensor = helper.make_tensor_value_info(
@@ -318,12 +336,10 @@ class AvgPoolAndTruncv2ToQuantAvgPool(Transformation):
     To the FINN op: Div -> QuantAvgPool2d -> Mul.
     """
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
         graph = model.graph
-        node_ind = 0
-        for node in graph.node:
-            node_ind += 1
+        for node_ind, node in enumerate(graph.node, start=1):
             if node.op_type == "AveragePool":
                 t_node = model.find_direct_successors(node)
                 if t_node is not None and len(t_node) == 1 and t_node[0].op_type == "Trunc":
@@ -351,8 +367,7 @@ class AvgPoolAndTruncv2ToQuantAvgPool(Transformation):
 
                     # Trunc node
                     rounding_mode = get_by_name(t_node.attribute, "rounding_mode")
-                    normalized_mode_string = rounding_mode.s.upper()
-                    if rounding_mode is None or normalized_mode_string != b"FLOOR":
+                    if rounding_mode is None or rounding_mode.s.upper() != b"FLOOR":
                         raise ValueError(
                             "The Trunc node must have the rounding_mode set to 'FLOOR'."
                         )
@@ -364,16 +379,25 @@ class AvgPoolAndTruncv2ToQuantAvgPool(Transformation):
                                 f"initialized. However, {inp} is not."
                             )
                     zero_pt = model.get_initializer(t_node.input[2])
+                    zero_pt = cast("npt.NDArray[Any]", zero_pt)
                     if len(zero_pt.shape) != 0 or zero_pt != 0:
                         raise ValueError(
                             f"Finn only supports 0 as the zero point for "
                             f"the Trunc node, it currently is {zero_pt}."
                         )
-                    scale = model.get_initializer(t_node.input[1]).flatten()
-                    out_scale = model.get_initializer(t_node.input[4]).flatten()
+                    scale = cast(
+                        "npt.NDArray[Any]", model.get_initializer(t_node.input[1])
+                    ).flatten()
+                    out_scale = cast(
+                        "npt.NDArray[Any]", model.get_initializer(t_node.input[4])
+                    ).flatten()
 
-                    trunc_in_bits = model.get_initializer(t_node.input[3]).flatten()
-                    trunc_out_bits = model.get_initializer(t_node.input[5]).flatten()
+                    trunc_in_bits = cast(
+                        "npt.NDArray[Any]", model.get_initializer(t_node.input[3])
+                    ).flatten()
+                    trunc_out_bits = cast(
+                        "npt.NDArray[Any]", model.get_initializer(t_node.input[5])
+                    ).flatten()
                     if len(trunc_in_bits.shape) != 1 or len(trunc_out_bits.shape) != 1:
                         raise ValueError(
                             f"Finn only supports scalar bit widths "
@@ -404,7 +428,7 @@ class AvgPoolAndTruncv2ToQuantAvgPool(Transformation):
                     data_layout = "NCHW"
 
                     # Insert scale nodes, QuantAvgPool2d node and required tensors
-                    scale = model.get_initializer(t_node.input[1])
+                    scale = cast("npt.NDArray[Any]", model.get_initializer(t_node.input[1]))
                     # for Trunc v2 update input scale by receptive field
                     scale = (scale * k_s * k_s).astype(scale.dtype)
                     scale_div_tensor = helper.make_tensor_value_info(
@@ -436,7 +460,7 @@ class AvgPoolAndTruncv2ToQuantAvgPool(Transformation):
                         None,
                     )
                     graph.value_info.append(act_scale_mul_tensor)
-                    QuantAvgPool2d_node = helper.make_node(
+                    quant_avg_pool2d_node = helper.make_node(
                         "QuantAvgPool2d",
                         [act_scale_div_tensor.name],
                         [act_scale_mul_tensor.name],
@@ -448,7 +472,7 @@ class AvgPoolAndTruncv2ToQuantAvgPool(Transformation):
                         signed=int(signed),
                         data_layout=data_layout,
                     )
-                    graph.node.insert(running_node_index, QuantAvgPool2d_node)
+                    graph.node.insert(running_node_index, quant_avg_pool2d_node)
                     running_node_index += 1
 
                     scale_mul_tensor = helper.make_tensor_value_info(

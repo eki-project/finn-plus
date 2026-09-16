@@ -1153,7 +1153,8 @@ class RunLayerParallelSimulation(Transformation):
         access/minimize `fifo_depths` for that order. For example, NODE_ORDER would return
         [0,1,2,...] and NODE_ORDER_REVERSED [N, N-1, N-2, ..., 0].
         """
-        assert len(model.graph.node) == len(bitwidths)
+        if len(model.graph.node) != len(bitwidths):
+            raise FINNInternalError("Number of nodes does not match number of bitwidth entries")
         match min_order:
             case MinimizationOrder.NODE_ORDER:
                 return list(range(len(model.graph.node)))
@@ -1419,7 +1420,10 @@ class RunLayerParallelSimulation(Transformation):
 
         # Set the result fifo depths
         fifo_depths = self.final_depths[smallest_order]
-        assert fifo_depths is not None
+        if fifo_depths is None:
+            raise FINNInternalError(
+                f"Expected FIFO sizes for minimization order {smallest_order.name}, but found None."
+            )
 
         # Make sure that all FIFOs with depth > 256 use a full BRAM block,
         # since partial blocks are not supported by Vivado HLS

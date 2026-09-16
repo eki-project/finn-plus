@@ -22,7 +22,7 @@ from qonnx.transformation.base import Transformation
 # For more information on the git history of the file see here:
 # https://github.com/fastmachinelearning/qonnx/blob/
 # abb9eb12e0248014a805f505aacfaeb14d42409a/src/qonnx/transformation/general.py
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
 
@@ -97,11 +97,19 @@ class ApplyConfig(Transformation):
                     # set specified defaults
                     default_values = []
                     for key, value in model_config["Defaults"].items():
-                        assert len(value) % 2 == 0
+                        if len(value) % 2 != 0:
+                            raise FINNUserError(
+                                f"Defaults entry for {key!r} must be a list of "
+                                f"(value, op) pairs (even length), got {value!r}"
+                            )
                         if key not in model_config:
                             for val, op in zip(value[::2], value[1::2], strict=True):
                                 default_values.append((key, val, op))
-                                assert not (op == "all" and len(value) > 2)
+                                if op == "all" and len(value) > 2:
+                                    raise FINNUserError(
+                                        f"Defaults entry for {key!r} uses op 'all' but "
+                                        f"specifies more than one (value, op) pair: {value!r}"
+                                    )
                     default_configs = {
                         key: val
                         for key, val, op in default_values

@@ -92,7 +92,9 @@ class NodeIsolatedSimulationController(SimulationController):
 
         # Important to initialize from names. Otherwise the results are added into the dict
         # in the order in which they finished simulating. But we want to keep the model order.
-        data: dict[str, self.IsolatedSimLogData] = {name: {} for name in self.names}
+        data: dict[str, NodeIsolatedSimulationController.IsolatedSimLogData] = {
+            name: {} for name in self.names
+        }
 
         # TODO: Lock not needed; futures are not consumed just by
         # TODO: using the callback, so we can unpack them later
@@ -117,7 +119,8 @@ class NodeIsolatedSimulationController(SimulationController):
             return _f
 
         # Running the simulation threads
-        assert len(self.names) == len(self.binaries)
+        if len(self.names) != len(self.binaries):
+            raise FINNInternalError("Number of node names does not match number of binaries")
         with self.console.status(f"Running simulation on every node. Log directory: {self.logdir}"):
             start = time.time()
             with ThreadPoolExecutor(len(self.binaries)) as tpe:

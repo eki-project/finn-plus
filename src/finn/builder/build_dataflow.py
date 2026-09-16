@@ -363,14 +363,16 @@ def create_model_wrapper(model_filename: str | Path, cfg: DataflowBuildConfig) -
     return ModelWrapper(str(intermediate_model_filename))
 
 
-def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> int:
+def build_dataflow_cfg(model_filename: str | Path | None, cfg: DataflowBuildConfig) -> int:
     """Build a dataflow accelerator using the given configuration.
 
     Main entry point for building FINN dataflow accelerators. Handles step execution,
     logging, error handling, and intermediate model saving.
 
     Args:
-        model_filename: ONNX model filename to build
+        model_filename: ONNX model filename to build. Ignored (may be None) when
+            cfg.multi_dnn_config_path is set, since models are then loaded from the
+            multi-DNN config instead.
         cfg: Build configuration specifying steps and options
 
     Returns:
@@ -392,26 +394,16 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
     # Setup done, start build flow
     time_per_step: dict[str, float] = {}
     try:
-        if cfg.multi_dnn_config_path is None:
-            multidnn = False
-        else:
-            multidnn = True
-            print("Multi-DNN Mode Active")
-
-        # If start_step is specified, override the input model
-        if multidnn:
-            if cfg.start_step is not None:
-                raise FINNUserError("Multi-DNN Mode currently does not support start_step")
-            mdnn_config = MultiDNNConfig(cfg.multi_dnn_config_path)
-            mdnn = MultiDNNWrapper(
-                {name: mdnn_config.get_submodel_model(name) for name in mdnn_config.submodel_names}
-            )
-        else:
+        multi_dnn_config_path = cfg.multi_dnn_config_path
+        if multi_dnn_config_path is None:
+            if model_filename is None:
+                raise FINNUserError(
+                    "model_filename must be set unless cfg.multi_dnn_config_path is provided"
+                )
             model = create_model_wrapper(model_filename, cfg)
 
-        time_per_step = {}
-        step_num = 1
-        if multidnn is False:
+            time_per_step = {}
+            step_num = 1
             # Start processing
             build_dataflow_steps = resolve_build_steps(cfg)
 
@@ -431,7 +423,20 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
                     model.save(str(intermediate_model_dir / chkpt_name))
                 step_num += 1
         else:
+            print("Multi-DNN Mode Active")
+            # If start_step is specified, override the input model
+            if cfg.start_step is not None:
+                raise FINNUserError("Multi-DNN Mode currently does not support start_step")
+            mdnn_config = MultiDNNConfig(multi_dnn_config_path)
+            mdnn = MultiDNNWrapper(
+                {name: mdnn_config.get_submodel_model(name) for name in mdnn_config.submodel_names}
+            )
+
+            time_per_step = {}
+            step_num = 1
             steps = mdnn_config.get_steps()
+            if steps is None:
+                raise FINNUserError("Multi-DNN config must specify a 'Steps' entry")
             for step, targets in steps:
                 step_name = step
                 print(f"Running step: {step_name} [{step_num}/{len(steps)}] on targets {targets}")

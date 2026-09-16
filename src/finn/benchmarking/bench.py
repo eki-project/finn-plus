@@ -23,6 +23,7 @@ from finn.benchmarking.dut.synthetic_nonlinear import bench_synthetic_nonlinear
 
 # from finn.benchmarking.dut.transformer import bench_transformer
 from finn.benchmarking.util import delete_dir_contents
+from finn.util.exception import FINNUserError
 
 # Register custom bench subclasses that offer more control than YAML-based flow
 dut = {}
@@ -50,6 +51,14 @@ class PrefixPrinter:
         self.console.flush()
 
 
+def _require_env(name: str) -> str:
+    """Return a required environment variable, raising a clear error if unset."""
+    value = os.environ.get(name)
+    if value is None:
+        raise FINNUserError(f"Required environment variable {name} is not set")
+    return value
+
+
 def start_bench_run(config_name: str) -> int | None:
     """Start a benchmarking run with the specified configuration.
 
@@ -68,7 +77,9 @@ def start_bench_run(config_name: str) -> int | None:
     # Attempt to work around onnxruntime issue on Slurm-managed clusters:
     # See https://github.com/microsoft/onnxruntime/issues/8313
     # This seems to happen only when assigned CPU cores are not contiguous
-    _default_session_options = ort.capi._pybind_state.get_default_session_options()  # noqa: SLF001
+    # (accesses onnxruntime's undocumented internal capi module)
+    _ort_pybind_state = ort.capi._pybind_state  # type: ignore[attr-defined]  # noqa: SLF001
+    _default_session_options = _ort_pybind_state.get_default_session_options()
 
     def get_default_session_options_new() -> Any:
         """Return specific default session options for onnxruntime."""
@@ -76,30 +87,28 @@ def start_bench_run(config_name: str) -> int | None:
         _default_session_options.intra_op_num_threads = 1
         return _default_session_options
 
-    ort.capi._pybind_state.get_default_session_options = (  # noqa: SLF001
-        get_default_session_options_new
-    )
+    _ort_pybind_state.get_default_session_options = get_default_session_options_new
 
     try:
         # Launched via SLURM, expect additional CI env vars
         job_id = int(os.environ["SLURM_JOB_ID"])
         # original experiment dir (before potential copy to ramdisk):
         # experiment_dir = os.environ.get("EXPERIMENT_DIR")
-        experiment_dir = os.environ.get("CI_PROJECT_DIR")
+        experiment_dir = _require_env("CI_PROJECT_DIR")
         save_dir = str(
-            Path(os.environ.get("LOCAL_ARTIFACT_DIR"))
-            / ("CI_" + os.environ.get("CI_PIPELINE_ID") + "_" + os.environ.get("CI_PIPELINE_NAME"))
+            Path(_require_env("LOCAL_ARTIFACT_DIR"))
+            / ("CI_" + _require_env("CI_PIPELINE_ID") + "_" + _require_env("CI_PIPELINE_NAME"))
         )
         work_dir = os.environ["PATH_WORKDIR"]
 
         # Gather benchmarking configs
         if config_name == "manual":
             # First check if the repo contains a config with this name (in ci/cfg/*)
-            config_path = str(Path("ci") / "cfg" / (os.environ.get("MANUAL_CFG_PATH") + ".yml"))
+            config_path = str(Path("ci") / "cfg" / (_require_env("MANUAL_CFG_PATH") + ".yml"))
             if not Path(config_path).exists():
                 # Otherwise look in LOCAL_CFG_DIR for the filename
                 config_path = str(
-                    Path(os.environ.get("LOCAL_CFG_DIR")) / os.environ.get("MANUAL_CFG_PATH")
+                    Path(_require_env("LOCAL_CFG_DIR")) / _require_env("MANUAL_CFG_PATH")
                 )
         elif config_name == "followup":
             config_path = str(Path("followup_bench_config.json"))
