@@ -6,6 +6,15 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## Unreleased
+
+### Added
+- **Empirical QoR estimation**: regression models fitted on the CI microbenchmark database predict post-synthesis LUTs and power per layer
+    - New package `finn.qor` (database loading, model fitting/selection, evaluation) and analysis passes in `finn.analysis.fpgadataflow.empirical_qor_estimation`
+    - `step_generate_estimate_reports` writes `estimate_layer_resources_empirical.json` and `estimate_power_empirical.json` if `FINN_QOR_MODEL_DIR` points to fitted models
+    - CI scripts `ci/qor/fit_estimators.py` (refit models whenever microbenchmark results are added) and `ci/qor/end2end_report.py` (figures/tables comparing estimates with measured results)
+    - See [QoR README](src/finn/qor/README.md); new core dependencies `scikit-learn` and `matplotlib`
+
 ## 1.5.0 - 05.09.2026
 
 ### Added

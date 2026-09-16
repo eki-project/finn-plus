@@ -38,7 +38,7 @@ FINN+ incorporates all upstream FINN development while adding significant enhanc
 - **Transformer/Attention Support** - Native support for modern transformer architectures
 - **Enhanced Streamlining** - Improved optimization pipeline for better performance
 - **Smart FIFO Sizing** - Automatic folding and FIFO-sizing with better algorithms
-- **QoR Estimation (WIP)** - Empirical quality-of-result estimation for design space exploration
+- **QoR Estimation (WIP)** - Empirical quality-of-result estimation for design space exploration, see [QoR README](src/finn/qor/README.md)
 
 ### Backend Extensions
 
