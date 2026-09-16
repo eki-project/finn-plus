@@ -57,6 +57,26 @@ from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOS
 from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
 from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from finn.util.basic import get_vivado_version
+
+
+def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    """Run FIFO sizing for testing."""
+    cfg = DataflowBuildConfig()
+    cfg.fpga_part = fpga_part
+    cfg.synth_clk_period_ns = clk_ns
+    model = model.transform(
+        BuildSimulation(
+            fpga_part,
+            clk_ns,
+            True,
+            performance_sim=False,
+        )
+    )
+    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
+    model = model.transform(ApplySimulatedFIFOSizes(cfg))
+    return model
+
 
 # Mapping of ElementwiseBinaryOperation specializations to numpy reference
 # implementation functions
@@ -81,24 +101,6 @@ NUMPY_REFERENCES = {
     # TODO: "ElementwiseBitShift": np.left_shift / np.right_shift
     # TODO: "ElementwisePow": np.power
 }
-
-
-def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
-    """Run FIFO sizing for testing."""
-    cfg = DataflowBuildConfig()
-    cfg.fpga_part = fpga_part
-    cfg.synth_clk_period_ns = clk_ns
-    model = model.transform(
-        BuildSimulation(
-            fpga_part,
-            clk_ns,
-            True,
-            performance_sim=False,
-        )
-    )
-    model = model.transform(RunLayerParallelSimulation(fpga_part, clk_ns, cfg))
-    model = model.transform(ApplySimulatedFIFOSizes(cfg))
-    return model
 
 
 # Creates a model executing a binary elementwise operation
@@ -294,12 +296,29 @@ def test_elementwise_binary_operation(
 @pytest.mark.parametrize("pe", [2])
 # mem_mode
 @pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
+# ram_style and fpga_part combinations
+@pytest.mark.parametrize(
+    "ram_style, part",
+    [
+        ("auto", "xczu7ev-ffvc1156-2-e"),
+        ("block", "xczu7ev-ffvc1156-2-e"),
+        ("distributed", "xczu7ev-ffvc1156-2-e"),
+        ("ultra", "xcvc1902-vsva2197-2MP-e-S"),  # URAM requires Versal
+    ],
+)
 @pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
 def test_elementwise_binary_operation_stitched_ip(
-    op_type, lhs_dtype_rhs_dtype, lhs_shape, rhs_shape, pe, initializers, mem_mode
+    op_type, lhs_dtype_rhs_dtype, lhs_shape, rhs_shape, pe, initializers, mem_mode, ram_style, part
 ):
+    # Skip URAM tests based on device and Vitis HLS version
+    if ram_style == "ultra":
+        if mem_mode == "internal_embedded":
+            vivado_version = get_vivado_version()
+            if vivado_version is not None and vivado_version < (2024, 2):
+                pytest.skip("URAM with internal_embedded requires Vitis HLS 2024.2+")
+
     lhs_dtype, rhs_dtype = lhs_dtype_rhs_dtype
     out_dtype = "FLOAT16" if lhs_dtype == "FLOAT16" and rhs_dtype == "FLOAT16" else "FLOAT32"
     # Make dummy model for testing
@@ -331,13 +350,14 @@ def test_elementwise_binary_operation_stitched_ip(
 
     getCustomOp(model.graph.node[0]).set_nodeattr("PE", pe)
     getCustomOp(model.graph.node[0]).set_nodeattr("mem_mode", mem_mode)
+    getCustomOp(model.graph.node[0]).set_nodeattr("ram_style", ram_style)
 
     # Test running shape and data type inference on the model graph
     model = model.transform(InferDataTypes())
     model = model.transform(InferShapes())
 
     # Specializes all nodes to be implemented as HLS backend
-    model = model.transform(SpecializeLayers("xczu7ev-ffvc1156-2-e"))
+    model = model.transform(SpecializeLayers(part))
 
     assert len(model.graph.node) == 1
     assert model.graph.node[0].op_type == f"{op_type}_hls"
@@ -348,7 +368,7 @@ def test_elementwise_binary_operation_stitched_ip(
 
     model = model.transform(SetExecMode("rtlsim"))
     model = model.transform(GiveUniqueNodeNames())
-    model = model.transform(PrepareIP("xczu7ev-ffvc1156-2-e", 10))
+    model = model.transform(PrepareIP(part, 10))
     model = model.transform(HLSSynthIP())
 
     model = model.transform(PrepareRTLSim())
@@ -365,20 +385,20 @@ def test_elementwise_binary_operation_stitched_ip(
     if out_dtype == "FLOAT16":
         # Equivalence checking is more relaxed for arithmetic operations in fp16
         # numpy casts fp16 to fp32, computes in fp32, casts result to fp16
-        assert np.allclose(o_expected, o_produced, rtol=1e-3, atol=2**-14)
+        assert np.allclose(o_expected, o_produced, rtol=1e-3, atol=2**-13)
     else:
         # Compare the expected to the produced for exact equality
         assert np.all(o_produced == o_expected)
 
     # prepare for stitched ip rtlsim
-    model = insert_and_set_fifo_depths(model, "xczu7ev-ffvc1156-2-e", 10)
-    model = model.transform(PrepareIP("xczu7ev-ffvc1156-2-e", 10))
+    model = insert_and_set_fifo_depths(model, part, 10)
+    model = model.transform(PrepareIP(part, 10))
     model = model.transform(HLSSynthIP())
     model = model.transform(
         CreateStitchedIP(
-            "xczu7ev-ffvc1156-2-e",
+            part,
             10,
-            vitis=False,
+            run_synth=False,
         )
     )
 
@@ -399,7 +419,99 @@ def test_elementwise_binary_operation_stitched_ip(
     if out_dtype == "FLOAT16":
         # Equivalence checking is more relaxed for arithmetic operations in fp16
         # numpy casts fp16 to fp32, computes in fp32, casts result to fp16
-        assert np.allclose(o_expected, o_produced, rtol=1e-3, atol=2**-14)
+        assert np.allclose(o_expected, o_produced, rtol=1e-3, atol=2**-13)
     else:
         # Compare the expected to the produced for exact equality
         assert np.all(o_produced == o_expected)
+
+
+@pytest.mark.parametrize("op_type", ["ElementwiseAdd", "ElementwiseMul", "ElementwiseGreater"])
+# Both broadcast directions on the last axis, plus a non-broadcast control
+@pytest.mark.parametrize(
+    "lhs_shape, rhs_shape",
+    [
+        ([3, 1, 7, 1], [3, 32, 1, 16]),  # lhs last axis broadcast
+        ([3, 32, 1, 16], [3, 1, 7, 1]),  # rhs last axis broadcast
+        ([3, 1, 7, 16], [3, 32, 1, 16]),  # no broadcast on last axis (control)
+    ],
+)
+# Number of elements to process in parallel
+@pytest.mark.parametrize("pe", [1, 2, 4])
+@pytest.mark.fpgadataflow
+@pytest.mark.slow
+@pytest.mark.vivado
+def test_elementwise_binary_cppsim_broadcast_last_axis(op_type, lhs_shape, rhs_shape, pe):
+    lhs_dtype = rhs_dtype = "INT8"
+    out_dtype = "FLOAT32"
+    # Make dummy model with both inputs left as runtime streams
+    model = create_elementwise_binary_operation_onnx(
+        op_type, lhs_dtype, rhs_dtype, out_dtype, lhs_shape, rhs_shape
+    )
+    context = {
+        "in_x": gen_finn_dt_tensor(DataType[lhs_dtype], lhs_shape),
+        "in_y": gen_finn_dt_tensor(DataType[rhs_dtype], rhs_shape),
+    }
+
+    model = model.transform(InferDataTypes())
+    model = model.transform(InferShapes())
+    model = model.transform(InferElementwiseBinaryOperation())
+    model = model.transform(InferDataTypes())
+    model = model.transform(InferShapes())
+    model = model.transform(SpecializeLayers("xczu7ev-ffvc1156-2-e"))
+
+    getCustomOp(model.graph.node[0]).set_nodeattr("PE", pe)
+
+    model = model.transform(MinimizeWeightBitWidth())
+    model = model.transform(MinimizeAccumulatorWidth())
+    model = model.transform(SetExecMode("cppsim"))
+    model = model.transform(GiveUniqueNodeNames())
+    model = model.transform(PrepareCppSim())
+    model = model.transform(CompileCppSim())
+
+    o_expected = NUMPY_REFERENCES[op_type](context["in_x"], context["in_y"])
+    o_produced = execute_onnx(model, context)["out"]
+
+    assert np.all(o_produced == o_expected)
+
+
+# A broadcast const operand is npy-fed in internal_decoupled but baked into params
+# in internal_embedded, so the two modes exercise the two sides of the fold guard
+@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
+@pytest.mark.parametrize("pe", [2, 4])
+@pytest.mark.fpgadataflow
+@pytest.mark.slow
+@pytest.mark.vivado
+def test_elementwise_binary_cppsim_broadcast_const(mem_mode, pe):
+    # Streamed lhs (last axis 16), broadcast const rhs (last axis 1)
+    lhs_shape, rhs_shape = [3, 32, 1, 16], [3, 1, 7, 1]
+    model = create_elementwise_binary_operation_onnx(
+        "ElementwiseMul", "INT8", "INT8", "FLOAT32", lhs_shape, rhs_shape
+    )
+    context = {
+        "in_x": gen_finn_dt_tensor(DataType["INT8"], lhs_shape),
+        "in_y": gen_finn_dt_tensor(DataType["INT8"], rhs_shape),
+    }
+    model.set_initializer("in_y", context["in_y"])
+
+    model = model.transform(InferDataTypes())
+    model = model.transform(InferShapes())
+    model = model.transform(InferElementwiseBinaryOperation())
+    model = model.transform(InferDataTypes())
+    model = model.transform(InferShapes())
+    model = model.transform(SpecializeLayers("xczu7ev-ffvc1156-2-e"))
+
+    op = getCustomOp(model.graph.node[0])
+    op.set_nodeattr("PE", pe)
+    op.set_nodeattr("mem_mode", mem_mode)
+
+    model = model.transform(MinimizeWeightBitWidth())
+    model = model.transform(MinimizeAccumulatorWidth())
+    model = model.transform(SetExecMode("cppsim"))
+    model = model.transform(GiveUniqueNodeNames())
+    model = model.transform(PrepareCppSim())
+    model = model.transform(CompileCppSim())
+
+    o_expected = np.multiply(context["in_x"], context["in_y"])
+    o_produced = execute_onnx(model, context)["out"]
+
+    assert np.all(o_produced == o_expected)

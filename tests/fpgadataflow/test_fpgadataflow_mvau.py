@@ -29,7 +29,6 @@
 import pytest
 
 import numpy as np
-import os
 import qonnx.custom_op.general.xnorpopcount as xp
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
@@ -65,10 +64,11 @@ from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.general import ApplyConfig
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import is_versal
-from finn.xsi import SimEngine
+from tests.testing_util.test import make_runtime_weight_stream
 
 
-def InsertAndSetFIFODepths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
+    """Run FIFO sizing for testing."""
     cfg = DataflowBuildConfig()
     cfg.fpga_part = fpga_part
     cfg.synth_clk_period_ns = clk_ns
@@ -377,7 +377,7 @@ def test_fpgadataflow_mvau_cppsim(mem_mode, idt, wdt, act, nf, sf, mw, mh):
 
 
 # mem_mode: internal_embedded or internal_decoupled
-@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled", "external"])
+@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled", "external_mem"])
 # activation: None or DataType
 @pytest.mark.parametrize("act", [None, DataType["BIPOLAR"], DataType["INT4"]])
 # weight datatype
@@ -485,6 +485,35 @@ def test_fpgadataflow_mvau_rtlsim(mem_mode, idt, wdt, act, nf, sf, mw, mh, pumpe
     assert np.isclose(exp_cycles, cycles_rtlsim, atol=15)
     assert exp_cycles != 0
 
+    # Also exercise stitched-IP rtlsim, but only for a single representative
+    # (max-parallelism, INT4, no-activation) config per mem_mode to bound runtime.
+    # Pumped memory is only meaningful with internal_decoupled (and SIMD > 1), so
+    # cover exactly that one pumped config in addition to the non-pumped modes.
+    representative = (
+        pe == mh
+        and simd == mw
+        and act is None
+        and idt == DataType["INT4"]
+        and wdt == DataType["INT4"]
+    )
+    if pumpedMemory:
+        run_stitched = representative and mem_mode == "internal_decoupled"
+    else:
+        run_stitched = representative
+    if run_stitched:
+        part = "xczu7ev-ffvc1156-2-e"
+        model = insert_and_set_fifo_depths(model, part, 5)
+        model = model.transform(PrepareIP(part, 5))
+        model = model.transform(HLSSynthIP())
+        model = model.transform(CreateStitchedIP(part, 5))
+        model.set_metadata_prop("exec_mode", "rtlsim")
+        y_produced_stitch = oxe.execute_onnx(model, {model.get_first_global_in(): x})[
+            model.get_first_global_out()
+        ]
+        assert (
+            y_produced_stitch.reshape(y_expected.shape) == y_expected
+        ).all(), "stitched-IP rtlsim failed"
+
 
 # mem_mode: internal_embedded or internal_decoupled
 @pytest.mark.parametrize("mem_mode", ["internal_decoupled"])
@@ -512,16 +541,6 @@ def test_fpgadataflow_mvau_rtlsim(mem_mode, idt, wdt, act, nf, sf, mw, mh, pumpe
 def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
     mem_mode, idt, wdt, act, nf, sf, mw, mh, preferred_impl_style, ram_style, part
 ):
-    # TODO: bring back skipped test when solved
-    if (
-        preferred_impl_style == "rtl"
-        and part == "xczu7ev-ffvc1156-2-e"
-        and ram_style == "ultra"
-        and mw == mh == 128
-        and nf == sf == -1
-        and act is None
-    ):
-        pytest.skip("Temporarily xfail this test, because last address can't be read back.")
     if preferred_impl_style == "rtl" and act is not None:
         pytest.skip("RTL-MVAU doesn't support const mem mode or embedded activations")
     if nf == -1:
@@ -616,7 +635,7 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
     assert exp_cycles != 0
 
     # Run stitched-ip RTLsim to have memstream in the test loop
-    model = InsertAndSetFIFODepths(model, part, clk_ns)
+    model = insert_and_set_fifo_depths(model, part, clk_ns)
     model = model.transform(PrepareIP(part, clk_ns))
     model = model.transform(HLSSynthIP())
     model = model.transform(CreateStitchedIP(part, clk_ns))
@@ -632,17 +651,12 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
         node = model.get_nodes_by_op_type("MVAU_rtl")[0]
     inst = getCustomOp(node)
     weights = model.get_initializer(node.input[1])
-    inst.make_weight_file(weights, "decoupled_runtime", "weights.dat")
-    with open("weights.dat", "r") as f:
-        weight_stream = f.read().strip()
-    os.remove("weights.dat")
-    weight_stream = map(lambda x: int(x, 16), weight_stream.split("\n"))
-    weight_stream = list(weight_stream)
+    weight_stream = make_runtime_weight_stream(inst, weights)
 
     # helper functions to write or read axilite
-    def write_weights(sim: SimEngine) -> None:
+    def write_weights(sim):
         addr = 0
-        writes: list[tuple[int, str]] = []
+        writes = []
         for nw in weight_stream:
             # convert value to hex value and without '0x' prefix
             hex_val = format(nw, "x")
@@ -654,7 +668,7 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
 
     extracted_weight_stream = []
 
-    def read_weights(sim: SimEngine) -> None:
+    def read_weights(sim):
         addr = 0
         read_handles = []
         addresses = []
@@ -678,10 +692,48 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
     ).all(), "Output of ONNX model not matching output of stitched-IP RTL model!"
 
 
+# mem_mode: internal_embedded or internal_decoupled
+
+
 @pytest.mark.parametrize("mh", [18])
 @pytest.mark.parametrize("mw", [32])
-@pytest.mark.parametrize("pe", [1, 9, 18])
-@pytest.mark.parametrize("simd", [1, 16, 32])
+# (PE, SIMD, TH, mem_mode) as a jointly-valid tuple satisfying MH % PE == 0,
+# MW % SIMD == 0 and (PE * SIMD) % TH == 0. TH=1 selects the standard MVAU;
+# TH>1 selects the tiled MVAU (Versal DSP58 only, filtered below).
+#
+# TH must divide the number of input vectors (ofm_shape 3x3 -> 9), so the tiled
+# configs use TH in {3, 9}. The tiled set spreads across the integration-level
+# axes (the DSP-chain corner cases themselves are covered by the RTL testbench):
+#   - WSIMD = PE*SIMD/TH:   the =1 edge (1 weight/cycle) up to 192
+#   - CHAINLEN = (SIMD+2)/3: 1, 2, 3, 6, 11
+#   - TH:                    3 and 9 (high tiling)
+#   - mem_mode:              external_mem and internal_decoupled (tiling is
+#                            decoupled from the weight memory mode)
+@pytest.mark.parametrize(
+    "pe_simd_th_mem",
+    [
+        (1, 1, 1, "internal_decoupled"),
+        (1, 16, 1, "internal_decoupled"),
+        (1, 32, 1, "internal_decoupled"),
+        (9, 1, 1, "internal_decoupled"),
+        (9, 16, 1, "internal_decoupled"),
+        (9, 32, 1, "internal_decoupled"),
+        (18, 1, 1, "internal_decoupled"),
+        (18, 16, 1, "internal_decoupled"),
+        (18, 32, 1, "internal_decoupled"),
+        (3, 1, 3, "external_mem"),  # WSIMD=1 edge, CHAINLEN=1
+        (6, 1, 3, "external_mem"),  # IWSIMD=(PE*SIMD)/TH=2 != SIMD=1
+        (6, 1, 3, "internal_decoupled"),  # Same shape as above, but internal_decoupled
+        (6, 4, 3, "internal_decoupled"),  # CHAINLEN=2, decoupled
+        (9, 8, 9, "external_mem"),  # TH=9 high tiling, CHAINLEN=3
+        (9, 16, 3, "external_mem"),  # CHAINLEN=6
+        (18, 32, 3, "internal_decoupled"),  # max fold, CHAINLEN=11, decoupled
+        # external_mem + TH=1: standard MVAU fed by fetch_weights from external memory
+        # (PE>1 catches PE-lane swaps, SIMD=1 covers the sub-word byte-packing edge).
+        (9, 16, 1, "external_mem"),
+        (18, 1, 1, "external_mem"),
+    ],
+)
 @pytest.mark.parametrize(
     "idt_wdt", [[DataType["UINT4"], DataType["INT4"]], [DataType["UINT8"], DataType["INT8"]]]
 )
@@ -695,8 +747,10 @@ def test_fpgadataflow_mvau_large_depth_decoupled_mode_rtlsim(
 @pytest.mark.slow
 @pytest.mark.vivado
 def test_fpgadataflow_rtl_mvau(
-    mh, mw, pe, simd, idt_wdt, part, clk_ns, pumpedMemory, pumpedCompute
+    mh, mw, pe_simd_th_mem, idt_wdt, part, clk_ns, pumpedMemory, pumpedCompute
 ):
+    pe, simd, th, mem_mode = pe_simd_th_mem
+
     if part != "xcvc1902-vsva2197-2MP-e-S" and clk_ns != 1.66:
         pytest.skip(
             """Skip test for varying clk for devices other than Versal,
@@ -704,12 +758,22 @@ def test_fpgadataflow_rtl_mvau(
         )
 
     if pe == 1 and simd == 1 and pumpedMemory:
-        pytest.xfail("Skip PE=SIMD=1 with pumpedMemory=True, known weight generation bug")
-    if simd == mw and pumpedCompute:
-        pytest.xfail("Skip SIMD=MW with pumpedCompute=True, memstreamer not working in rtl sim")
+        pytest.skip("Skip PE=SIMD=1 with pumpedMemory=True, known weight generation bug")
 
     if simd == 1 and pumpedCompute:
         pytest.skip("""Clock pumping an input of SIMD=1 is not meaningful. Skipping test""")
+
+    # External memory has no on-chip weight memory to clock-pump.
+    if mem_mode == "external_mem" and pumpedMemory:
+        pytest.skip("External memory has no on-chip weight memory to clock-pump")
+
+    # Tiled MVAU (TH>1) requires DSP58 (Versal) and is not combined with clock pumping.
+    # The (PE * SIMD) % TH == 0 constraint is guaranteed by the parameter tuples above.
+    if th > 1:
+        if part != "xcvc1902-vsva2197-2MP-e-S":
+            pytest.skip("Tiled MVAU (TH>1) is only supported on Versal (DSP58)")
+        if pumpedMemory or pumpedCompute:
+            pytest.skip("Tiled MVAU (TH>1) is not exercised with clock pumping")
 
     idt, wdt = idt_wdt
     # Create test input vector (produced by SWG)
@@ -749,12 +813,20 @@ def test_fpgadataflow_rtl_mvau(
         "MVAU_rtl_0": {
             "PE": pe,
             "SIMD": simd,
+            "TH": th,
             "resType": "dsp",
+            "mem_mode": mem_mode,
             "pumpedMemory": pumpedMemory,
             "pumpedCompute": pumpedCompute,
         },
     }
     model = model.transform(ApplyConfig(folding_config))
+    # Verify the folding config was actually applied to the node
+    inst = getCustomOp(model.graph.node[0])
+    for attr, expected in folding_config["MVAU_rtl_0"].items():
+        assert (
+            inst.get_nodeattr(attr) == expected
+        ), f"Config not applied: {attr}={inst.get_nodeattr(attr)}, expected {expected}"
     model = model.transform(MinimizeWeightBitWidth())
     model = model.transform(MinimizeAccumulatorWidth())
     # make sure the changed datatypes are propagated through the network
@@ -780,7 +852,7 @@ def test_fpgadataflow_rtl_mvau(
     ).all(), "Output of ONNX model not matching output of node-by-node RTLsim!"
 
     # Run stitched-ip RTLsim
-    model = InsertAndSetFIFODepths(model, part, clk_ns)
+    model = insert_and_set_fifo_depths(model, part, clk_ns)
     model = model.transform(PrepareIP(part, clk_ns))
     model = model.transform(HLSSynthIP())
     model = model.transform(CreateStitchedIP(part, clk_ns))
@@ -891,7 +963,7 @@ def test_fpgadataflow_rtl_dynamic_mvau(mh, mw, n_vectors, pe, simd, idt_wdt, par
     ).all(), "Output of ONNX model not matching output of node-by-node RTLsim!"
 
     # Run stitched-ip RTLsim
-    model = InsertAndSetFIFODepths(model, part, clk_ns)
+    model = insert_and_set_fifo_depths(model, part, clk_ns)
     model = model.transform(SpecializeLayers(part))
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(PrepareIP(part, clk_ns))
