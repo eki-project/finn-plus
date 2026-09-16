@@ -6,13 +6,13 @@
 """Module for requant hls."""
 import numpy as np
 import os
-import warnings
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.quant import max_int, min_int
 
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
 from finn.custom_op.fpgadataflow.requant import Requant
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.util.logging import log
 
 
 class Requant_hls(Requant, HLSBackend):
@@ -282,7 +282,7 @@ static inline T clip(T const x, TLo const lo, THi const hi) {
 
         # Make sure the input has the right container datatype
         if inp_val.dtype not in [np.float32, np.float16]:
-            warnings.warn(
+            log.warning(
                 f"{node.name}: Changing input container datatype from "
                 f"{inp_val.dtype} to {np.float32}"
             )

@@ -15,12 +15,7 @@ import torch.nn.functional as F
 
 # Import constants from the ONNX custom op package (importing from the package
 # triggers registration of PWPolyFunction with QONNX's custom op registry)
-from finn.custom_op.general import (
-    CLAMP_CFG,
-    NUM_OCTAVES,
-    SUPPORTED_FUNCS,
-    _segment_boundaries,
-)
+from finn.custom_op.general import CLAMP_CFG, NUM_OCTAVES, SUPPORTED_FUNCS, _segment_boundaries
 
 # PyTorch reference functions for coefficient fitting
 REFERENCE_FUNCS = {
