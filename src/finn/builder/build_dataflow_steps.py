@@ -1532,9 +1532,9 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
     return model
 
 
-@register_build_dataflow_step()
-def step_minimize_bit_width(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
-    """Tighten the weight and accumulator bit widths for each layer."""
+def _minimize_bit_width(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Tighten the weight and accumulator bit widths for each layer and round/clip
+    the thresholds accordingly."""
     if cfg.minimize_bit_width:
         model = model.transform(MinimizeWeightBitWidth(), apply_to_subgraphs=True)
         model = model.transform(MinimizeAccumulatorWidth(), apply_to_subgraphs=True)
@@ -1549,6 +1549,25 @@ def step_minimize_bit_width(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mo
     if cfg.minimize_bit_width:
         model = model.transform(MinimizeWeightBitWidth(), apply_to_subgraphs=True)
         model = model.transform(InferDataTypes(), apply_to_subgraphs=True)
+    return model
+
+
+@register_build_dataflow_step()
+def step_minimize_bit_width_initial(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """First pass of weight and accumulator bit width minimization, run right after the
+    conversion to HW layers. Datatype inference alone leaves placeholder widths behind
+    (e.g. 32 bit results of integer MatMul/Add or the 64 bit annotations of integer
+    initializers from the ONNX passes frontend), which would otherwise be what layer
+    specialization and folding base their decisions on, such as whether a layer fits
+    the DSP datapaths of an RTL implementation. step_minimize_bit_width repeats the
+    minimization after specialization for the implementation specific adjustments."""
+    return _minimize_bit_width(model, cfg)
+
+
+@register_build_dataflow_step()
+def step_minimize_bit_width(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
+    """Tighten the weight and accumulator bit widths for each layer."""
+    model = _minimize_bit_width(model, cfg)
 
     if VerificationStepType.FOLDED_HLS_CPPSIM in cfg._resolve_verification_steps():
         # prepare cppsim

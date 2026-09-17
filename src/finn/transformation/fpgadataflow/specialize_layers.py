@@ -41,7 +41,7 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
-from finn.util.basic import get_dsp_block, is_versal
+from finn.util.basic import get_dsp_block, get_rtl_mvu_max_widths, is_versal
 from finn.util.exception import FINNUserError
 from finn.util.logging import log
 
@@ -254,8 +254,8 @@ def _mvu_rtl_possible(n, fpgapart, model):
     - DSP48E1: only supports narrow range weights
     - Activations must fit the DSP B datapath (18 bit on DSP48, 24 bit on DSP58),
       weights the A datapath (25 bit on DSP48E1, 27 bit on DSP48E2/DSP58) and the
-      accumulator the P datapath (48 bit on DSP48, 58 bit on DSP58); the weight and
-      accumulator widths are judged as they will be after bit width minimization
+      accumulator the P datapath (48 bit on DSP48, 58 bit on DSP58), see
+      get_rtl_mvu_max_widths
     - No embedded thresholding or binaryXnor mode supported
     """
     node_inst = getCustomOp(n)
@@ -288,22 +288,13 @@ def _mvu_rtl_possible(n, fpgapart, model):
 
     # if none of the above constraints have been triggered
     # we now check if input, weight and accumulator widths are in range: at least
-    # 2 bit and narrow enough for the DSP datapaths of the RTL compute core. The
-    # weights may still carry a placeholder container datatype (e.g. INT64) at this
-    # point, so weight and accumulator widths are judged as they will be after
-    # MinimizeWeightBitWidth / MinimizeAccumulatorWidth.
-    if dsp_block == "DSP58":
-        max_act_width, max_weight_width, max_acc_width = 24, 27, 58
-    elif dsp_block == "DSP48E2":
-        max_act_width, max_weight_width, max_acc_width = 18, 27, 48
-    else:
-        max_act_width, max_weight_width, max_acc_width = 18, 25, 48
+    # 2 bit and narrow enough for the DSP datapaths of the RTL compute core (the
+    # datatypes are expected to be minimized at this point, see step_minimize_bit_width)
+    max_act_width, max_weight_width, max_acc_width = get_rtl_mvu_max_widths(dsp_block)
     idt = node_inst.get_input_datatype()
     inp_width_in_range = 2 <= idt.bitwidth() <= max_act_width
-    weight_width = node_inst.get_minimal_weight_datatype(model).bitwidth()
-    weight_width_in_range = 2 <= weight_width <= max_weight_width
-    acc_width = node_inst.get_minimal_accumulator_datatype(model).bitwidth()
-    acc_width_in_range = acc_width <= max_acc_width
+    weight_width_in_range = 2 <= wdt.bitwidth() <= max_weight_width
+    acc_width_in_range = node_inst.get_accumulator_datatype().bitwidth() <= max_acc_width
 
     return inp_width_in_range and weight_width_in_range and acc_width_in_range
 

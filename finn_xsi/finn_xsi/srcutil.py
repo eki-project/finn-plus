@@ -3,11 +3,14 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import os.path
+"""Helpers for ordering RTL source files before elaboration with xelab.
 
-# these helpers live in a separate module from adapter.py so they can be
-# imported without the xsi C-extension (pulled in via sim_engine), keeping them
-# unit-testable in a checkout where finn_xsi has not been built yet
+These live in a separate module from adapter.py so they can be imported without
+the xsi C-extension (pulled in via sim_engine), keeping them unit-testable in a
+checkout where finn_xsi has not been built yet.
+"""
+
+import os.path
 
 
 def is_pkg_src(path: str) -> bool:

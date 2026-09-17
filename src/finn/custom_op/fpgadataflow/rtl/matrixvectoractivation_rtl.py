@@ -38,7 +38,7 @@ import os
 
 from finn.custom_op.fpgadataflow.matrixvectoractivation import MVAU
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
-from finn.util.basic import get_dsp_block
+from finn.util.basic import get_dsp_block, get_rtl_mvu_max_widths
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
@@ -318,8 +318,32 @@ class MVAU_rtl(MVAU, RTLBackend):
             case _:
                 return 1
 
+    def _check_dsp_datapath_widths(self, fpgapart):
+        """Raise a FINNUserError if the activation, weight or accumulator width exceeds
+        the DSP datapaths of the RTL compute core (finn-rtllib/mvu/mvu.sv): wider
+        activations would be truncated silently, a wider accumulator fails synthesis."""
+        dsp_block = get_dsp_block(fpgapart)
+        max_act, max_weight, max_acc = get_rtl_mvu_max_widths(dsp_block)
+        widths = [
+            ("activation", self.get_input_datatype(0), max_act),
+            ("weight", self.get_input_datatype(1), max_weight),
+            ("accumulator", self.get_accumulator_datatype(), max_acc),
+        ]
+        too_wide = [
+            f"{name} {dt.name} ({dt.bitwidth()} > {max_bits} bit)"
+            for name, dt, max_bits in widths
+            if dt.bitwidth() > max_bits
+        ]
+        if too_wide:
+            raise FINNUserError(
+                f"{self.onnx_node.name}: RTL MVU on {dsp_block} cannot implement "
+                f"{', '.join(too_wide)}. Use the HLS variant of this layer "
+                "(preferred_impl_style=hls) or reduce the datatype widths."
+            )
+
     def generate_hdl(self, model, fpgapart, clk):
         """Generate parameters, render the MVU wrapper template and set the codegen attributes."""
+        self._check_dsp_datapath_widths(fpgapart)
         # Generate params as part of IP preparation
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         if not self.get_nodeattr("mlo_max_iter"):

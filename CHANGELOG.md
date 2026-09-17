@@ -35,7 +35,9 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) finn-hlslib dependency bumped to `8d979e2b` (Xilinx#1588)
 - (Xilinx) Node-by-node rtlsim verification is skipped for models mixing HLS floating-point ops with RTL LayerNorm (known xsim DSP conflict) (Xilinx#1661)
 - Not pulled from upstream: the SLASH/V80 linker (`alveo_build.py`), phase-based build steps, `build_dataflow_checks`, the Jenkins CI package
-- (Xilinx) RTL MVAU is selected for datatypes wider than 8 bit as well (Xilinx#1568); FINN+ additionally bounds the selection by the DSP datapath widths (activations 18/24 bit, weights 25/27 bit, accumulator 48/58 bit on DSP48/DSP58), judged after bit width minimization. Note that this turns MVAUs in existing flows from HLS into RTL, which affects folding configs keyed by node name
+- (Xilinx) RTL MVAU is selected for datatypes wider than 8 bit as well (Xilinx#1568); FINN+ additionally bounds the selection by the DSP datapath widths (activations 18/24 bit, weights 25/27 bit, accumulator 48/58 bit on DSP48/DSP58) and `MVAU_rtl` refuses code generation for wider operands. Note that this turns MVAUs in existing flows from HLS into RTL, which affects folding configs keyed by node name
+- New build step `step_minimize_bit_width_initial` runs the bit width minimization once directly after the conversion to HW layers (default steps and benchmark DUT step lists), so that layer specialization and folding see minimized datatypes instead of the placeholders left by datatype inference (32 bit MAC results, 64 bit initializers from the ONNX passes frontend)
+- `Pool` minimizes its accumulator/output datatype (`AccPool`/`AvgPool`) and passes the input datatype through for `MaxPool` when datatypes change after conversion
 - `step_prepare_synthesis` is skipped when no bitfile is requested (in line with `step_synthesize_bitfile`)
 - `InferRequantLayer` derives the output datatype of converted `Quant` nodes from the node attributes instead of the (possibly missing) tensor annotation
 
