@@ -4,7 +4,8 @@ Used by the CI scripts in ``ci/qor/``; nothing in here is needed at build time. 
 always written to files (never shown), so the functions work headless.
 
 This module must stay importable without FINN/QONNX or scikit-learn (pandas, numpy,
-matplotlib only), because the end2end report CI job does not install scikit-learn.
+matplotlib and jinja2 for LaTeX export only), because the end2end report CI job does not
+install scikit-learn.
 """
 
 import logging
@@ -189,57 +190,6 @@ def dataframe_to_markdown(df: pd.DataFrame, float_fmt: str = "{:.1f}") -> str:
     for idx in flat.index:
         cells = [str(idx)] + [fmt(flat.at[idx, c]) for c in flat.columns]
         lines.append("| " + " | ".join(cells) + " |")
-    return "\n".join(lines) + "\n"
-
-
-def dataframe_to_latex(
-    df: pd.DataFrame, float_fmt: str = "{:.1f}", caption: str = "", label: str = ""
-) -> str:
-    """Render a DataFrame as a booktabs LaTeX table; a two-level column index becomes a
-    multicolumn header row (no jinja2 dependency, unlike ``DataFrame.to_latex``)."""
-
-    def esc(v: Any) -> str:
-        return str(v).replace("_", "\\_").replace("%", "\\%").replace("&", "\\&")
-
-    def fmt(v: Any) -> str:
-        if isinstance(v, (float, np.floating)):
-            return "--" if np.isnan(v) else float_fmt.format(v)
-        return esc(v)
-
-    n_cols = len(df.columns)
-    lines = ["\\begin{table}[htbp]", "\\centering"]
-    if caption:
-        lines.append(f"\\caption{{{caption}}}")
-    if label:
-        lines.append(f"\\label{{{label}}}")
-    lines += ["\\begin{tabular}{l" + "r" * n_cols + "}", "\\toprule"]
-    index_name = esc(df.index.name or "")
-    if isinstance(df.columns, pd.MultiIndex) and df.columns.nlevels == 2:
-        groups: list[tuple[str, int]] = []
-        for top, _ in df.columns:
-            if groups and groups[-1][0] == top:
-                groups[-1] = (top, groups[-1][1] + 1)
-            else:
-                groups.append((top, 1))
-        lines.append(
-            f"\\multirow{{2}}{{*}}{{{index_name}}} & "
-            + " & ".join(f"\\multicolumn{{{n}}}{{c}}{{{esc(g)}}}" for g, n in groups)
-            + " \\\\"
-        )
-        start, rules = 2, []
-        for _, n in groups:
-            rules.append(f"\\cmidrule(lr){{{start}-{start + n - 1}}}")
-            start += n
-        lines.append(" ".join(rules))
-        lines.append(" & " + " & ".join(esc(sub) for _, sub in df.columns) + " \\\\")
-    else:
-        lines.append(index_name + " & " + " & ".join(esc(c) for c in df.columns) + " \\\\")
-    lines.append("\\midrule")
-    for idx in df.index:
-        lines.append(
-            esc(idx) + " & " + " & ".join(fmt(df.at[idx, c]) for c in df.columns) + " \\\\"
-        )
-    lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
     return "\n".join(lines) + "\n"
 
 

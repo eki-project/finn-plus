@@ -15,7 +15,7 @@ categories, joins measured performance and power, and writes:
 With ``--persist-to``, the artifacts are additionally copied into that directory so that the
 experiment can be compared against later runs (``--compare``).
 
-Only needs pandas, numpy and matplotlib (no FINN installation), the repository's src/
+Only needs pandas, numpy, matplotlib and jinja2 (no FINN installation), the repository's src/
 directory is added to the path automatically.
 """
 
@@ -34,7 +34,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from finn.qor.evaluation import (
     RESOURCE_ESTIMATORS,
     breakdown_resources,
-    dataframe_to_latex,
     dataframe_to_markdown,
     end2end_results_table,
     mean_relative_error_by_category,
@@ -242,7 +241,15 @@ def main() -> int:
         "# End2end estimation results\n\n" + dataframe_to_markdown(table)
     )
     (out_dir / "results_table.tex").write_text(
-        dataframe_to_latex(table, caption="End2end estimation results", label="tab:qor_end2end")
+        table.to_latex(
+            float_format="%.1f",
+            na_rep="--",
+            multicolumn_format="c",
+            escape=True,
+            index_names=False,
+            caption="End2end estimation results",
+            label="tab:qor_end2end",
+        )
     )
     for res in ("LUT", "DSP", "BRAM"):
         errors = mean_relative_error_by_category(df, res)
