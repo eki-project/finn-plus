@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from finn.qor.evaluation import (
     RESOURCE_ESTIMATORS,
     breakdown_resources,
+    dataframe_to_latex,
     dataframe_to_markdown,
     end2end_results_table,
     mean_relative_error_by_category,
@@ -211,10 +212,6 @@ def unique_model_names(names: pd.Series) -> pd.Series:
     return pd.Series(result, index=names.index)
 
 
-def to_latex(table: pd.DataFrame) -> str:
-    return table.to_latex(float_format="%.1f", na_rep="-", multicolumn_format="c")
-
-
 def main() -> int:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -244,7 +241,9 @@ def main() -> int:
     (out_dir / "results_table.md").write_text(
         "# End2end estimation results\n\n" + dataframe_to_markdown(table)
     )
-    (out_dir / "results_table.tex").write_text(to_latex(table))
+    (out_dir / "results_table.tex").write_text(
+        dataframe_to_latex(table, caption="End2end estimation results", label="tab:qor_end2end")
+    )
     for res in ("LUT", "DSP", "BRAM"):
         errors = mean_relative_error_by_category(df, res)
         errors.to_csv(out_dir / f"estimation_error_{res}.csv")
