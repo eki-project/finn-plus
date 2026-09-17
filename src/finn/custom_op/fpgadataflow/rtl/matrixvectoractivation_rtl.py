@@ -370,14 +370,19 @@ class MVAU_rtl(MVAU, RTLBackend):
         template_path, code_gen_dict = self.prepare_codegen_default(fpgapart, clk)
         # determine if weights are narrow range and add parameter to code gen dict
         weights = model.get_initializer(self.onnx_node.input[1])
-        if not isinstance(weights, np.ndarray):
+        # Weights are only guaranteed to be a constant initializer for the plain,
+        # non-dynamic, single-iteration case; dynamic-weight and MLO layers load them
+        # at runtime instead, so there is nothing to inspect here for those.
+        if not (self.dynamic_input or self.mlo_max_iter > 1) and not isinstance(
+            weights, np.ndarray
+        ):
             raise FINNInternalError(
                 f"{self.onnx_node.name}: expected constant weights for HDL generation"
             )
         wdt = self.get_input_datatype(1)
         narrow_weights = (
             0
-            if np.min(weights) == wdt.min() or self.dynamic_input or (self.mlo_max_iter > 1)
+            if self.dynamic_input or (self.mlo_max_iter > 1) or np.min(weights) == wdt.min()
             else 1
         )
         code_gen_dict["$NARROW_WEIGHTS$"] = str(narrow_weights)
