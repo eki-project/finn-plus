@@ -57,6 +57,7 @@ from finn.transformation.fpgadataflow.simulation_connected import RunLayerParall
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
 from finn.util.basic import get_vivado_version, is_versal, make_build_dir
+from finn.util.exception import FINNUserError
 
 test_fpga_part = "xczu3eg-sbva484-1-e"
 target_clk_ns = 5
@@ -173,7 +174,8 @@ def make_single_multithresholding_modelwrapper(
     # Maps tensor rank to layout annotation
     rank_to_layout = {0: None, 1: "C", 2: "NC", 3: "NWC", 4: "NHWC"}
     # Lookup the layout required by this input shape
-    data_layout = rank_to_layout[len(num_input_vecs + [num_channels])]
+    # Higher ranks fall back to a channels-last annotation
+    data_layout = rank_to_layout.get(len(num_input_vecs + [num_channels]), "NHWC")
 
     Multithresholding_node = helper.make_node(
         "MultiThreshold",
@@ -630,9 +632,9 @@ def test_rtl_thresholding_unsorted_assertion():
     inst = getCustomOp(node)
     inst.set_nodeattr("PE", pe)
 
-    # Try to generate params - should raise AssertionError due to unsorted thresholds
+    # Try to generate params - should raise FINNUserError due to unsorted thresholds
     build_dir = make_build_dir("test_unsorted_thresh_")
-    with pytest.raises(AssertionError, match="sorted in ascending order"):
+    with pytest.raises(FINNUserError, match="sorted in ascending order"):
         inst.generate_params(model, build_dir)
 
 

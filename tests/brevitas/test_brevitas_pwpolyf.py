@@ -61,7 +61,8 @@ def test_brevitas_pwpolyf_mixed_export(func):
         export_path = f.name
 
     try:
-        export_qonnx(model, x, export_path)
+        # PWPolyFFunction.symbolic is only honored by the TorchScript exporter
+        export_qonnx(model, x, export_path, dynamo=False)
 
         onnx_model = ModelWrapper(export_path)
 
@@ -102,7 +103,8 @@ def test_brevitas_pwpolyf_convert_to_finn(func):
         export_path = f.name
 
     try:
-        export_qonnx(model, x, export_path)
+        # PWPolyFFunction.symbolic is only honored by the TorchScript exporter
+        export_qonnx(model, x, export_path, dynamo=False)
 
         onnx_model = ModelWrapper(export_path)
         onnx_model = onnx_model.transform(ConvertQONNXtoFINN())

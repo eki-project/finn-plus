@@ -192,7 +192,7 @@ def test_QONNX_to_FINN_threshold_precision():
     x = np.array([[[0.39990925788879395]]], dtype=np.float32)
     scale = np.array([0.2666063904762268], dtype=np.float32)
     zeropt = np.array([0.0], dtype=np.float32)
-    bitwidth = np.array([6.0], dtype=np.float32)
+    bitwidth = np.array(6.0, dtype=np.float32)
 
     ref_m = _make_single_quant_model(x, scale, zeropt, bitwidth, 1, 0, "ROUND")
     conv_m = ref_m.transform(ConvertQONNXtoFINN())

@@ -14,10 +14,10 @@ from finn.util.basic import (
 def test_liveness_threshold_default_and_estimate(monkeypatch):
     monkeypatch.delenv("LIVENESS_THRESHOLD", raising=False)
 
-    assert get_liveness_threshold_cycles() == 10000
-    assert get_watchdog_timeout_cycles() == 10000
-    assert get_watchdog_timeout_cycles(5000) == 10000
-    assert get_watchdog_timeout_cycles(20000) == 20000
+    assert get_liveness_threshold_cycles() == 1000000
+    assert get_watchdog_timeout_cycles() == 1000000
+    assert get_watchdog_timeout_cycles(5000) == 1000000
+    assert get_watchdog_timeout_cycles(2000000) == 2000000
 
 
 @pytest.mark.util

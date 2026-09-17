@@ -8,6 +8,7 @@ This module provides the ONNX graph execution layer for PWPolyF, analogous to
 how qonnx.custom_op.general provides execution for Brevitas-exported ops.
 """
 
+import math
 import numpy as np
 from onnx import helper
 from qonnx.core.datatype import DataType
@@ -78,7 +79,7 @@ def _reference_func_numpy(func_name, x):
     """
     if func_name == "gelu":
         # GELU: x * 0.5 * (1 + erf(x / sqrt(2)))
-        return x * 0.5 * (1.0 + np.vectorize(np.math.erf)(x / np.sqrt(2.0)))
+        return x * 0.5 * (1.0 + np.vectorize(math.erf)(x / np.sqrt(2.0)))
     elif func_name == "silu":
         # SiLU: x * sigmoid(x)
         return x / (1.0 + np.exp(-x))

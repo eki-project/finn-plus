@@ -103,7 +103,11 @@ def _pwpolyf_eval(x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree):
 
 
 class PWPolyFFunction(torch.autograd.Function):
-    """Emit a single PWPolyFunction ONNX node during torch.onnx export."""
+    """Emit a single PWPolyFunction ONNX node during torch.onnx export.
+
+    The ``symbolic`` hook is only honored by the TorchScript-based exporter, so
+    export with ``dynamo=False`` (the dynamo exporter traces through ``forward``
+    and emits the decomposed polynomial evaluation instead)."""
 
     @staticmethod
     def forward(ctx, x, coeffs, neg_clamp_val, pos_clamp_val, func, K, degree):

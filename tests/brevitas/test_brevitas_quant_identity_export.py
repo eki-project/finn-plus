@@ -11,7 +11,6 @@ from brevitas.export import export_qonnx
 from brevitas.nn import QuantIdentity
 from brevitas.quant.scaled_int import Int8ActPerTensorFloat, Uint8ActPerTensorFloat
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.util.basic import get_preferred_onnx_opset
 from qonnx.util.cleanup import cleanup as qonnx_cleanup
 
 import finn.core.onnx_exec as oxe
@@ -31,12 +30,7 @@ def test_brevitas_quant_identity_export(abits, ishape, narrow, quant):
     export_path = os.path.join(build_dir, "quant_identity.onnx")
     b_act = QuantIdentity(act_quant=quant, bit_width=abits, narrow_range=narrow)
 
-    export_qonnx(
-        b_act,
-        torch.randn(ishape),
-        export_path,
-        opset_version=get_preferred_onnx_opset(),
-    )
+    export_qonnx(b_act, torch.randn(ishape), export_path)
     qonnx_cleanup(export_path, out_file=export_path)
     model = ModelWrapper(export_path)
     model = model.transform(ConvertQONNXtoFINN())
@@ -91,12 +85,7 @@ def test_brevitas_quant_identity_export_per_channel(
         per_channel_broadcastable_shape=channel_shape,
     )
 
-    export_qonnx(
-        b_act,
-        torch.randn(ishape),
-        export_path,
-        opset_version=get_preferred_onnx_opset(),
-    )
+    export_qonnx(b_act, torch.randn(ishape), export_path)
     qonnx_cleanup(export_path, out_file=export_path)
     model = ModelWrapper(export_path)
     # brevitas must export the per-channel scale with the intended (broadcast)

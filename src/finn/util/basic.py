@@ -313,7 +313,7 @@ def fifo_rtl_files(abspath: bool = True, gauge: bool = False) -> list[str]:
     names = (["fifo_gauge.sv"] if gauge else []) + ["fifo.sv"]
     if not abspath:
         return names
-    rtlsrc = get_settings().finn_rtllib / "fifo" / "hdl"
+    rtlsrc = Path(get_settings().finn_rtllib) / "fifo" / "hdl"
     return [str(rtlsrc / n) for n in names]
 
 
