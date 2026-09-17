@@ -27,7 +27,7 @@ FINN Build:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 ) --open-mode=append"
     NUM_DEFAULT_WORKERS: "$BENCH_FINN_WORKERS"
   extends: .setup_full_2024_2
   script:
@@ -131,7 +131,7 @@ FINN Build (Follow-up):
       pipeline: $PARENT_PIPELINE_ID
     - job: Result Collection
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 ) --open-mode=append"
     NUM_DEFAULT_WORKERS: "$BENCH_FINN_WORKERS"
   extends: .setup_full_2024_2
   script:

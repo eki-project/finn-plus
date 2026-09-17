@@ -51,5 +51,5 @@ output = accel.execute(input_array)
 | `finn_plus_driver.overlays.live_fifo` | `FINNLiveFIFOOverlay`, live FIFO sizing experiments |
 | `finn_plus_driver.overlays.dma_instrumentation` | `FINNDMAInstrumentationOverlay`, combined DMA + instrumentation |
 | `finn_plus_driver.packing` | Data packing/unpacking between numpy and the accelerator's bit-level format |
-| `finn_plus_driver.validate` | Dataset-specific accuracy validation (MNIST, CIFAR, ImageNet, RadioML, UNSW-NB15) |
+| `finn_plus_driver.validate` | Dataset-specific accuracy validation (MNIST, CIFAR-10/100, ImageNet, RadioML, UNSW-NB15) |
 | `finn_plus_driver.cli` | Command line interface |
