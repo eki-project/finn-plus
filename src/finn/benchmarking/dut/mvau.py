@@ -335,9 +335,9 @@ class bench_mvau(bench):
                     return "skipped"
         else:
             if self._params["sparsity_amount"] == 0:
-                print("sparsity amount = 0 not applicable for selected sparsity, skipping")
-                return "skipped"
-            if sparsity_type == "unstructured":
+                # keep the dense reference point of a sparsity sweep instead of skipping it
+                pass
+            elif sparsity_type == "unstructured":
                 idx = np.random.choice(
                     mw * mh, size=int(self._params["sparsity_amount"] * mw * mh), replace=False
                 )
