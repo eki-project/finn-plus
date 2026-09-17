@@ -365,7 +365,6 @@ class FINNDMAOverlay(Overlay):
             self.idt(ind),
             reverse_endian=True,
             reverse_inner=True,
-            fast_mode=True,
         )
         return ibuf_packed
 

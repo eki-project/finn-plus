@@ -1879,6 +1879,11 @@ def step_prepare_synthesis(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
 
     Afterwards, only writing the linking configuration and running synthesis is left.
     """
+    if DataflowOutputType.BITFILE not in cfg.generate_outputs:
+        log.warning(
+            "DataflowOutputType.BITFILE not in requested outputs, skipping step_prepare_synthesis."
+        )
+        return model
     if cfg.partitioning_configuration is not None and cfg.board is None:
         raise FINNMultiFPGAUserError(
             "Cannot do Multi-FPGA without " "'board' being specified in the config!"

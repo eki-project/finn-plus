@@ -32,6 +32,7 @@ import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
@@ -673,8 +674,9 @@ def test_fpgadataflow_thresholding_data_layout(num_input_vecs, num_input_channel
 
     x = generate_edge_input_tensor(input_data_type, tuple(num_input_vecs + [num_input_channels]))
     input_dict = {model.get_first_global_in(): x}
-    # Golden reference from the MultiThreshold node before conversion
-    y_expected = oxe.execute_onnx(model, input_dict)[model.get_first_global_out()]
+    # Golden reference from the MultiThreshold kernel applied along the channels-last
+    # axis (the ONNX node's data_layout annotation only covers ranks up to 4)
+    y_expected = multithreshold(x, thresholds, out_bias=float(activation.min()), channels_last=True)
 
     # Converting to the HW Thresholding node and re-running exercises the
     # execute_node layout handling under test

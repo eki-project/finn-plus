@@ -286,10 +286,12 @@ def _mvu_rtl_possible(n, fpgapart, model):
 
     # if none of the above constraints have been triggered
     # we now check if input and weight data types are in range
-    # we only use rtl mvau if the dtypes are at least 2 bit
+    # we only use rtl mvau if the dtypes are at least 2 bit and fit the DSP
+    # compute cores (upstream allows wider dtypes since Xilinx#1568, which is
+    # not adopted here as it breaks synthesis of wide-input layers)
     idt = node_inst.get_input_datatype()
-    inp_width_in_range = 2 <= idt.bitwidth()
-    weight_width_in_range = 2 <= wdt.bitwidth()
+    inp_width_in_range = (2 <= idt.bitwidth() <= 8) or (idt.bitwidth() == 9 and idt.signed())
+    weight_width_in_range = 2 <= wdt.bitwidth() <= 8
 
     return inp_width_in_range and weight_width_in_range
 
