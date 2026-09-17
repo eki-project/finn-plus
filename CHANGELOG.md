@@ -34,8 +34,10 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) `finn.util.mlo_sim` moved to `finn.util.rtlsim`, `is_mlo` to `finn.util.fpgadataflow`; `finn-rtllib/mlo/fetch_weights*` moved to `finn-rtllib/fetch_weights/`; upstream `derive_characteristic` based FIFO sizing remains removed in FINN+
 - (Xilinx) finn-hlslib dependency bumped to `8d979e2b` (Xilinx#1588)
 - (Xilinx) Node-by-node rtlsim verification is skipped for models mixing HLS floating-point ops with RTL LayerNorm (known xsim DSP conflict) (Xilinx#1661)
-- Not pulled from upstream: the SLASH/V80 linker (`alveo_build.py`), phase-based build steps, `build_dataflow_checks`, the Jenkins CI package, RTL MVAU selection for >8 bit datatypes (Xilinx#1568)
+- Not pulled from upstream: the SLASH/V80 linker (`alveo_build.py`), phase-based build steps, `build_dataflow_checks`, the Jenkins CI package
+- (Xilinx) RTL MVAU is selected for datatypes wider than 8 bit as well (Xilinx#1568); FINN+ additionally bounds the selection by the DSP datapath widths (activations 18/24 bit, weights 25/27 bit, accumulator 48/58 bit on DSP48/DSP58), judged after bit width minimization. Note that this turns MVAUs in existing flows from HLS into RTL, which affects folding configs keyed by node name
 - `step_prepare_synthesis` is skipped when no bitfile is requested (in line with `step_synthesize_bitfile`)
+- `InferRequantLayer` derives the output datatype of converted `Quant` nodes from the node attributes instead of the (possibly missing) tensor annotation
 
 ### Removed
 - The outdated `tutorials/fpga_flow` tutorial (still documented the Docker-based flow)

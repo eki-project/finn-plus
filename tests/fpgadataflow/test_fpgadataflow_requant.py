@@ -467,10 +467,6 @@ def test_infer_requant_from_quant(channelwise, pe, need_extraction_scale, need_e
 
     model = model.transform(ConvertSubToAdd())
     model = model.transform(ConvertDivToMul())
-    # Div -> Mul by the reciprocal changes the float rounding, which can flip the
-    # quantization of inputs right at a rounding boundary. Re-baseline the golden
-    # output on the converted (still Quant-based) graph.
-    y_golden = oxe.execute_onnx(model, {model.graph.input[0].name: inp})[model.graph.output[0].name]
 
     # Convert Quant to Requant HW node
     model = model.transform(InferRequantLayer())

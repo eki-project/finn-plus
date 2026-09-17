@@ -250,10 +250,12 @@ def _dwc_determine_impl_style(node):
 def _mvu_rtl_possible(n, fpgapart, model):
     """Check whether RTL-based MVU implementation is supported for given node.
 
-    RTL-MVU constraints:
-    - DSP48: supports up to 8sx8u (8-bit signed weights x 8-bit activations)
-    - DSP58: supports up to 8sx9s
+    RTL-MVU constraints (see finn-rtllib/mvu/mvu.sv):
     - DSP48E1: only supports narrow range weights
+    - Activations must fit the DSP B datapath (18 bit on DSP48, 24 bit on DSP58),
+      weights the A datapath (25 bit on DSP48E1, 27 bit on DSP48E2/DSP58) and the
+      accumulator the P datapath (48 bit on DSP48, 58 bit on DSP58); the weight and
+      accumulator widths are judged as they will be after bit width minimization
     - No embedded thresholding or binaryXnor mode supported
     """
     node_inst = getCustomOp(n)
@@ -285,15 +287,25 @@ def _mvu_rtl_possible(n, fpgapart, model):
         return False
 
     # if none of the above constraints have been triggered
-    # we now check if input and weight data types are in range
-    # we only use rtl mvau if the dtypes are at least 2 bit and fit the DSP
-    # compute cores (upstream allows wider dtypes since Xilinx#1568, which is
-    # not adopted here as it breaks synthesis of wide-input layers)
+    # we now check if input, weight and accumulator widths are in range: at least
+    # 2 bit and narrow enough for the DSP datapaths of the RTL compute core. The
+    # weights may still carry a placeholder container datatype (e.g. INT64) at this
+    # point, so weight and accumulator widths are judged as they will be after
+    # MinimizeWeightBitWidth / MinimizeAccumulatorWidth.
+    if dsp_block == "DSP58":
+        max_act_width, max_weight_width, max_acc_width = 24, 27, 58
+    elif dsp_block == "DSP48E2":
+        max_act_width, max_weight_width, max_acc_width = 18, 27, 48
+    else:
+        max_act_width, max_weight_width, max_acc_width = 18, 25, 48
     idt = node_inst.get_input_datatype()
-    inp_width_in_range = (2 <= idt.bitwidth() <= 8) or (idt.bitwidth() == 9 and idt.signed())
-    weight_width_in_range = 2 <= wdt.bitwidth() <= 8
+    inp_width_in_range = 2 <= idt.bitwidth() <= max_act_width
+    weight_width = node_inst.get_minimal_weight_datatype(model).bitwidth()
+    weight_width_in_range = 2 <= weight_width <= max_weight_width
+    acc_width = node_inst.get_minimal_accumulator_datatype(model).bitwidth()
+    acc_width_in_range = acc_width <= max_acc_width
 
-    return inp_width_in_range and weight_width_in_range
+    return inp_width_in_range and weight_width_in_range and acc_width_in_range
 
 
 def _vvu_rtl_possible(n, fpgapart):

@@ -525,9 +525,10 @@ class MVAU(HWCustomOp):
         exp_cycles = (mh / pe) * (mw / simd) * np.prod(num_inp_vec) * th / mmv
         return int(exp_cycles)
 
-    def minimize_accumulator_width(self, model):
-        """Minimize the accumulator bit width according to the weight values,
-        input data types, and size of dot product"""
+    def get_minimal_accumulator_datatype(self, model):
+        """Return the smallest accumulator datatype that fits the dot product, derived
+        from the weight values (or the worst case of the weight datatype if the weights
+        are runtime-writeable, streamed in or absent) and the input datatype."""
         weights = model.get_initializer(self.onnx_node.input[1])
         # since in the calculation the values of the weight matrix are used,
         # for the bipolar case they need to be converted to bipolar
@@ -567,6 +568,12 @@ class MVAU(HWCustomOp):
             acc_bit_width = np.log2(_acc_max) + 1
             acc_bit_width = math.ceil(acc_bit_width)
             adt = DataType[f"INT{acc_bit_width}"]
+        return adt
+
+    def minimize_accumulator_width(self, model):
+        """Minimize the accumulator bit width according to the weight values,
+        input data types, and size of dot product"""
+        adt = self.get_minimal_accumulator_datatype(model)
 
         # Note: Thresholds may not fit in the accumulator datatype at this point.
         # They will be clipped to the accumulator range by RoundAndClipThresholds transformation.
@@ -584,27 +591,32 @@ class MVAU(HWCustomOp):
         self.set_nodeattr("accDataType", adt.name)
         return DataType[self.get_nodeattr("accDataType")]
 
+    def get_minimal_weight_datatype(self, model):
+        """Return the smallest datatype that fits the weight values, or the current
+        weight datatype if the weights are runtime-writeable, streamed in or absent."""
+        wdt = DataType[self.get_nodeattr("weightDataType")]
+        if self.get_nodeattr("runtime_writeable_weights") or self.get_nodeattr("mem_mode") in [
+            "external",
+            "external_mem",
+            "dynamic",
+        ]:
+            return wdt
+        weights = model.get_initializer(self.onnx_node.input[1])
+        if weights is None:
+            return wdt
+        w_min = weights.min()
+        w_max = weights.max()
+        if w_min < 0:
+            if abs(w_min) > w_max:
+                return DataType.get_smallest_possible(w_min)
+            return DataType.get_smallest_possible(-w_max - 1)
+        return DataType.get_smallest_possible(w_max)
+
     def minimize_weight_bit_width(self, model):
         """Minimize the bit width based on the values of the weights."""
-        if not (
-            self.get_nodeattr("runtime_writeable_weights")
-            or self.get_nodeattr("mem_mode") in ["external", "external_mem", "dynamic"]
-        ):
-            weights = model.get_initializer(self.onnx_node.input[1])
-            if weights is None:
-                return DataType[self.get_nodeattr("weightDataType")]
-            w_min = weights.min()
-            w_max = weights.max()
-            if w_min < 0:
-                if abs(w_min) > w_max:
-                    wdt = DataType.get_smallest_possible(w_min)
-                else:
-                    wdt = DataType.get_smallest_possible(-w_max - 1)
-            else:
-                wdt = DataType.get_smallest_possible(w_max)
-            self.set_nodeattr("weightDataType", wdt.name)
-
-        return DataType[self.get_nodeattr("weightDataType")]
+        wdt = self.get_minimal_weight_datatype(model)
+        self.set_nodeattr("weightDataType", wdt.name)
+        return wdt
 
     def get_hw_compatible_threshold_tensor(self, orig_thres_matrix):
         """Convert the original numpy weight matrix orig_weight_matrix into

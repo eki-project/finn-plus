@@ -257,7 +257,9 @@ class InferRequantLayer(Transformation):
                     continue
 
                 idt = model.get_tensor_datatype(inp_name)
-                odt = model.get_tensor_datatype(out_name)
+                # The output datatype follows from the Quant attributes, independent of
+                # whether InferDataTypes has annotated the output tensor yet
+                odt = node_inst.get_integer_datatype(model)
 
                 # For Quant with scale=1, zeropt=0: output = clip(round(input), min, max)
                 # This is Requant with scale=1 and bias=0
