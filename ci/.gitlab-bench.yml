@@ -264,11 +264,14 @@ QoR Model Fitting:
   needs:
     - job: Result Collection
   script:
-    - python3.10 -m pip install --user --quiet scikit-learn matplotlib pandas
+    # Isolated venv: the runner's system packages are outdated (e.g. jinja2) and the
+    # scikit-learn version must match pyproject.toml so the pickled models load in builds
+    - python3.10 -m venv qor-venv
+    - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9'
     - |
       export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
       export FINN_QOR_MODEL_DIR=$LOCAL_QOR_MODEL_DIR_STORE
-      python3.10 ci/qor/fit_estimators.py --output-dir qor_fit_artifacts
+      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_fit_artifacts
   artifacts:
     name: "qor_fit_artifacts"
     when: always
@@ -287,9 +290,10 @@ QoR End2End Report:
   needs:
     - job: Result Collection
   script:
-    - python3.10 -m pip install --user --quiet matplotlib pandas jinja2
+    - python3.10 -m venv qor-venv
+    - qor-venv/bin/pip install --quiet 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'jinja2>=3.1.2'
     - |
-      python3.10 ci/qor/end2end_report.py --output-dir qor_e2e_artifacts \
+      qor-venv/bin/python ci/qor/end2end_report.py --output-dir qor_e2e_artifacts \
         --persist-to $LOCAL_BENCHMARK_DIR_STORE/end2end_evaluation/$(date +%Y-%m-%d)_${CI_COMMIT_SHORT_SHA}_${CI_PIPELINE_ID}_${BENCH_CFG}
   artifacts:
     name: "qor_e2e_artifacts"
