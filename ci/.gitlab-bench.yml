@@ -41,7 +41,7 @@ FINN Build:
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
       # Fitted QoR models (see ci/qor/) for empirical estimate reports, path as seen from this runner
-      export FINN_QOR_MODEL_DIR=$QOR_MODEL_DIR_STORE_OTUS
+      export FINN_QOR_MODEL_DIR=$OTUS_QOR_MODEL_DIR_STORE
       finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config $BENCH_CFG
   cache:
     key:
@@ -152,7 +152,7 @@ FINN Build (Follow-up):
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
-      export FINN_QOR_MODEL_DIR=$QOR_MODEL_DIR_STORE_OTUS
+      export FINN_QOR_MODEL_DIR=$OTUS_QOR_MODEL_DIR_STORE
       finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config followup
   cache:
     key:
