@@ -36,6 +36,9 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) Node-by-node rtlsim verification is skipped for models mixing HLS floating-point ops with RTL LayerNorm (known xsim DSP conflict) (Xilinx#1661)
 - Not pulled from upstream: the SLASH/V80 linker (`alveo_build.py`), phase-based build steps, `build_dataflow_checks`, the Jenkins CI package
 
+### Removed
+- The outdated `tutorials/fpga_flow` tutorial (still documented the Docker-based flow)
+
 ## 1.5.0 - 05.09.2026
 
 ### Added
