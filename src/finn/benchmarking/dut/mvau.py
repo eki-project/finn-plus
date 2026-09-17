@@ -222,7 +222,8 @@ class bench_mvau(bench):
             - idt, wdt, act: Input, weight, and activation data types (strings)
             - nhw: Number of input vectors (list for tensor shape)
             - mw, mh: Matrix width (input features) and height (output features)
-            - sf, nf: Synapse (SIMD) and Neuron (PE) folding factors (-1 for maximum folding)
+            - sf, nf: Synapse (SIMD) and Neuron (PE) folding factors (-1 for maximum folding),
+                      alternatively simd, pe: parallelism directly
             - m: Sample-level parallelism factor (currently unused)
             - mem_mode: Weight memory mode
             - ram_style, ram_style_thr: RAM styles for weights and thresholds
@@ -243,8 +244,6 @@ class bench_mvau(bench):
         numInputVectors = self._params["nhw"]
         mw = self._params["mw"]
         mh = self._params["mh"]
-        sf = self._params["sf"]
-        nf = self._params["nf"]
         m = self._params["m"]
 
         mem_mode = self._params["mem_mode"]
@@ -261,16 +260,22 @@ class bench_mvau(bench):
         if act is not None:
             act = DataType[act]
 
-        # Determine and log folding
-        if sf > mw or nf > mh:
-            print("Invalid sf/nf configuration, skipping")
-            return "skipped"
-        if sf == -1:
-            sf = mw
-        simd = mw // sf
-        if nf == -1:
-            nf = mh
-        pe = mh // nf
+        # Determine and log folding, defined either via sf & nf or via simd & pe
+        if "sf" in self._params:
+            sf = self._params["sf"]
+            nf = self._params["nf"]
+            if sf > mw or nf > mh:
+                print("Invalid sf/nf configuration, skipping")
+                return "skipped"
+            if sf == -1:
+                sf = mw
+            simd = mw // sf
+            if nf == -1:
+                nf = mh
+            pe = mh // nf
+        else:
+            simd = self._params["simd"]
+            pe = self._params["pe"]
         if mw % simd != 0 or mh % pe != 0:
             print("Invalid simd/pe configuration, skipping")
             return "skipped"
