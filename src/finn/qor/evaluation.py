@@ -181,6 +181,7 @@ def dataframe_to_markdown(df: pd.DataFrame, float_fmt: str = "{:.1f}") -> str:
         flat.columns = [" ".join(str(x) for x in col) for col in flat.columns]
 
     def fmt(v: Any) -> str:
+        """Format floats with ``float_fmt`` (NaN as '-'), everything else via str()."""
         if isinstance(v, (float, np.floating)):
             return "-" if np.isnan(v) else float_fmt.format(v)
         return str(v)

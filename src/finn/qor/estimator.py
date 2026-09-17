@@ -144,6 +144,7 @@ class QoREstimator:
         pipeline: Optional[Pipeline] = None,
         metadata: Optional[dict[str, Any]] = None,
     ):
+        """Create an estimator for operator/target, unfitted unless ``pipeline`` is given."""
         self.operator = operator
         self.target = target
         self.spec = spec or SPECS[operator]
@@ -152,6 +153,7 @@ class QoREstimator:
 
     @property
     def feature_cols(self) -> list[str]:
+        """Feature columns of the operator spec, in the order fed to the pipeline."""
         return self.spec.feature_cols
 
     @property
@@ -198,6 +200,7 @@ class QoREstimator:
         return int(round(prediction)) if self.is_integer_target else prediction
 
     def _fit_metadata(self, df: pd.DataFrame) -> dict[str, Any]:
+        """Describe the fitted pipeline and its training data for the JSON sidecar."""
         regressor = self.pipeline.named_steps["regressor"]
         return {
             "operator": self.operator,
@@ -288,15 +291,18 @@ class SelectionResult:
 
 
 def _mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Mean absolute percentage error, with zero targets replaced by epsilon."""
     y_safe = np.where(y_true == 0, np.finfo(float).eps, y_true)
     return float(np.mean(np.abs((y_true - y_pred) / y_safe)) * 100)
 
 
 def _rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Root mean squared error."""
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
 def _sample_errors(y_true: np.ndarray, y_pred: np.ndarray) -> pd.DataFrame:
+    """Per-sample absolute and percentage errors (NaN percentage where the target is 0)."""
     abs_error = np.abs(y_pred - y_true)
     with np.errstate(divide="ignore", invalid="ignore"):
         ape = np.where(y_true != 0, abs_error / np.abs(y_true) * 100, np.nan)

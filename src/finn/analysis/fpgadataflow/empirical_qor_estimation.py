@@ -70,6 +70,7 @@ class QoRModelSet:
     """All fitted QoR estimators found in a model directory, addressable by node op_type."""
 
     def __init__(self, estimators: Optional[list[QoREstimator]] = None, model_dir: str = ""):
+        """Index the given estimators by operator name and target column."""
         self.model_dir = model_dir
         self._by_operator: dict[str, dict[str, QoREstimator]] = {}
         for est in estimators or []:
@@ -98,6 +99,7 @@ class QoRModelSet:
         return models if len(models) > 0 else None
 
     def __len__(self) -> int:
+        """Number of loaded estimators (over all operators and targets)."""
         return sum(len(targets) for targets in self._by_operator.values())
 
     def get(self, op_type: str, target: str) -> Optional[QoREstimator]:

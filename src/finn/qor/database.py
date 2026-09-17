@@ -56,6 +56,7 @@ class LoadStats:
     final: int = 0
 
     def __str__(self) -> str:
+        """One-line summary of the row counts for log output."""
         return (
             f"{self.files} files, {self.total} runs, {self.after_filters} after manual filters, "
             f"-{self.skipped} skipped, -{self.failed} failed, -{self.broken} broken, "
