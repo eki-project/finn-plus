@@ -27,22 +27,24 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Module for streamingfifo."""
-import math
+
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.basic import is_versal
 from finn.util.logging import log
+from finn.util.resource_models import _fifo_cost, _resolve
 
 
 class StreamingFIFO(HWCustomOp):
-    """Class for Streaming FIFO."""
+    """Hardware abstraction layer for a streaming FIFO buffering data between layers."""
 
     def __init__(self, onnx_node, **kwargs):
         """Initialize instance."""
         super().__init__(onnx_node, **kwargs)
 
     def get_nodeattr_types(self):
-        """Return nodeattr types."""
+        """Return node attribute types for depth, shapes, datatype and storage style."""
         my_attrs = super().get_nodeattr_types()
         my_attrs.update(
             {
@@ -54,29 +56,60 @@ class StreamingFIFO(HWCustomOp):
                 "normal_shape": ("ints", True, []),
                 # FINN DataTypes for inputs/outputs
                 "dataType": ("s", True, ""),
-                # FPGA resource type for FIFOs when impl_style is vivado
-                # auto -- let Vivado decide
-                # block -- use BRAM
-                # distributed -- use LUTRAM
-                # ultra -- use URAM (on UltraScale+)
+                # requested FPGA resource for the storage, passed to fifo.sv (with srl
+                # mapped to the RTL's "shift" token at the codegen boundary):
+                # auto (its RAM_STYLE_EFF ladder decides), srl (SRL shift register),
+                # block (BRAM), distributed (LUTRAM) or ultra (URAM, on UltraScale+/Versal)
                 "ram_style": (
                     "s",
                     False,
                     "auto",
-                    {"auto", "block", "distributed", "ultra"},
+                    {"auto", "srl", "block", "distributed", "ultra"},
                 ),
-                # whether depth monitoring is enabled (impl_style=rtl only)
+                # whether the maxcount occupancy output is exposed on the wrapper
                 "depth_monitor": ("i", False, 0),
                 # the FIFO does not need its own FIFOs
                 "inFIFODepths": ("ints", False, [0]),
                 "outFIFODepths": ("ints", False, [0]),
+                "debug_log_path": ("s", False, ""),
             }
         )
 
         return my_attrs
 
+    def resolve_ram_style(self):
+        """Predicts which of srl/distributed/block/ultra fifo.sv will elaborate.
+
+        generate_hdl() forwards ram_style to the RTL untouched, so this decides
+        nothing: it reproduces the RAM_STYLE_EFF ladder so that resource estimation,
+        the build report and the folding config describe what actually gets built.
+        The ladder is a function of depth, width and the request alone, so unlike the
+        estimators this needs no fpgapart."""
+        requested = self.get_nodeattr("ram_style")
+        depth = self.get_nodeattr("depth")
+        W = self.get_instream_width_padded()
+        style = _resolve(depth, W, requested)
+        # fifo.sv checks depth<=33 before it checks RAM_STYLE!=auto (fifo.sv:85-86), so
+        # at this depth any explicit memory request is forced to a shift register
+        # regardless. Warn for every explicit style (block/ultra/distributed alike) so
+        # the override is not silent
+        if depth <= 33 and requested not in ("auto", "srl"):
+            log.warning(
+                "%s: ram_style=%s requested but depth %d <= 33 is built as a shift "
+                "register regardless" % (self.onnx_node.name, requested, depth)
+            )
+        # srl is never auto-selected past 257, so a deeper one is an explicit
+        # ram_style=srl request, whose name does not suggest the LUT cost it carries.
+        if style == "srl" and depth > 257:
+            log.warning(
+                "%s: ram_style=srl at depth %d costs roughly %d LUTs of shift "
+                "register; consider distributed/block/ultra instead"
+                % (self.onnx_node.name, depth, _fifo_cost(depth, W, "srl").lut)
+            )
+        return style
+
     def infer_node_datatype(self, model):
-        """Infer node datatype."""
+        """Infer and set the datatype from the input tensor and propagate it to the output."""
         node = self.onnx_node
         idt = model.get_tensor_datatype(node.input[0])
         if idt != self.get_input_datatype():
@@ -90,168 +123,95 @@ class StreamingFIFO(HWCustomOp):
         # data type stays the same
         model.set_tensor_datatype(node.output[0], idt)
 
-    def get_verilog_top_module_intf_names(self):
-        """Return verilog top module intf names."""
-        ret = super().get_verilog_top_module_intf_names()
-        try:
-            is_rtl = self.get_nodeattr("impl_style") == "rtl"
-        except AttributeError:
-            raise Exception(
-                self.onnx_node.name
-                + """ is still in hw abstraction format,
-                Please run SpecializeLayers() before proceeding."""
-            )
-        is_depth_monitor = self.get_nodeattr("depth_monitor") == 1
-        if is_rtl and is_depth_monitor:
-            ret["ap_none"] = ["maxcount"]
-        return ret
-
     def get_normal_input_shape(self, ind=0):
-        """Return normal input shape."""
-        try:
-            depth = self.get_adjusted_depth()
-        except AttributeError:
-            depth = self.get_nodeattr("depth")
-        assert depth >= 1, """Depth is too low"""
-        try:
-            impl_style = self.get_nodeattr("impl_style") == "rtl"
-        except AttributeError:
-            impl_style = ""
-        if depth > 256 and impl_style == "rtl":
-            log.warning("Depth is high, set between 2 and 256 for efficient SRL implementation")
+        """Return the unfolded input shape."""
+        assert self.get_nodeattr("depth") >= 1, """Depth is too low"""
         return self.get_nodeattr("normal_shape")
 
     def get_normal_output_shape(self, ind=0):
-        """Return normal output shape."""
+        """Return the unfolded output shape (same as input)."""
         return self.get_normal_input_shape()
 
     def get_folded_input_shape(self, ind=0):
-        """Return folded input shape."""
+        """Return the folded input shape."""
         return self.get_nodeattr("folded_shape")
 
     def get_folded_output_shape(self, ind=0):
-        """Return folded output shape."""
+        """Return the folded output shape (same as input)."""
         return self.get_nodeattr("folded_shape")
 
     def get_instream_width(self, ind=0):
-        """Return instream width."""
+        """Return the width of the input stream in bits."""
         dtype = DataType[self.get_nodeattr("dataType")]
         folded_shape = self.get_nodeattr("folded_shape")
         in_width = folded_shape[-1] * dtype.bitwidth()
         return in_width
 
     def get_outstream_width(self, ind=0):
-        """Return outstream width."""
+        """Return the width of the output stream in bits."""
         dtype = DataType[self.get_nodeattr("dataType")]
         folded_shape = self.get_nodeattr("folded_shape")
         in_width = folded_shape[-1] * dtype.bitwidth()
         return in_width
 
     def get_input_datatype(self, ind=0):
-        """Return input datatype."""
+        """Return the FINN DataType of the input."""
         return DataType[self.get_nodeattr("dataType")]
 
     def get_output_datatype(self, ind=0):
-        """Return output datatype."""
+        """Return the FINN DataType of the output."""
         return DataType[self.get_nodeattr("dataType")]
 
     def execute_node(self, context, graph):
-        """Execute node."""
+        """Execute the node in Python by passing the input through unchanged."""
         node = self.onnx_node
         context[node.output[0]] = context[node.input[0]]
 
-    def bram_estimation(self):
+    def get_ram_style(self):
+        """Returns the storage style this FIFO is built with.
+
+        Derived on demand rather than stored: the style depends only on attributes this
+        node already carries, so recomputing cannot go stale the way a recorded value
+        would when set_fifo_depths changes the depth."""
+        return self.resolve_ram_style()
+
+    def get_fifo_cost(self, fpgapart):
+        """Returns the FifoCost of this node as fifo.sv implements it.
+
+        Needs the fpgapart because BRAM/URAM aspects differ on Versal."""
+        return _fifo_cost(
+            self.get_nodeattr("depth"),
+            self.get_instream_width_padded(),
+            self.get_ram_style(),
+            is_versal(fpgapart),
+        )
+
+    def bram_estimation(self, fpgapart):
         """Calculates resource estimation for BRAM"""
-        try:
-            impl = self.get_nodeattr("impl_style") == "rtl"
-        except AttributeError:
-            raise Exception(
-                self.onnx_node.name
-                + """ is still in hw abstraction format,
-                Please run SpecializeLayers() before proceeding."""
-            )
+        return self.get_fifo_cost(fpgapart).bram
 
-        ram_type = self.get_nodeattr("ram_style")
-        try:
-            depth = self.get_adjusted_depth()
-        except AttributeError:
-            depth = self.get_nodeattr("depth")
-        W = self.get_instream_width()
-
-        if impl == "rtl" or (impl == "vivado" and ram_type != "block"):
-            # Non-BRAM based implementation
-            return 0
-
-        if W == 1:
-            return math.ceil(depth / 16384)
-        if W == 2:
-            return math.ceil(depth / 8192)
-        if W <= 4:
-            return (math.ceil(depth / 4096)) * (math.ceil(W / 4))
-        if W <= 9:
-            return (math.ceil(depth / 2048)) * (math.ceil(W / 9))
-        if W <= 18 or depth > 512:
-            return (math.ceil(depth / 1024)) * (math.ceil(W / 18))
-        return (math.ceil(depth / 512)) * (math.ceil(W / 36))
-
-    def uram_estimation(self):
+    def uram_estimation(self, fpgapart):
         """Calculates resource estimation for URAM"""
-        try:
-            impl = self.get_nodeattr("impl_style") == "rtl"
-        except AttributeError:
-            raise Exception(
-                self.onnx_node.name
-                + """ is still in hw abstraction format,
-                Please run SpecializeLayers() before proceeding."""
-            )
-        ram_type = self.get_nodeattr("ram_style")
-        try:
-            depth = self.get_adjusted_depth()
-        except AttributeError:
-            depth = self.get_nodeattr("depth")
-        W = self.get_instream_width()
+        return self.get_fifo_cost(fpgapart).uram
 
-        if impl == "rtl" or (impl == "vivado" and ram_type != "ultra"):
-            # Non-BRAM based implementation
-            return 0
-        return (math.ceil(depth / 4096)) * (math.ceil(W / 72))
-
-    def bram_efficiency_estimation(self):
-        """Return bram efficiency estimation."""
-        try:
-            depth = self.get_adjusted_depth()
-        except AttributeError:
-            depth = self.get_nodeattr("depth")
-        W = self.get_instream_width()
-        bram16_est = self.bram_estimation()
-        if bram16_est == 0:
-            return 1
-        wbits = W * depth
-        bram16_est_capacity = bram16_est * 36 * 512
-        return wbits / bram16_est_capacity
-
-    def lut_estimation(self):
+    def lut_estimation(self, fpgapart):
         """Calculates resource estimations for LUTs"""
-        try:
-            impl = self.get_nodeattr("impl_style") == "rtl"
-        except AttributeError:
-            raise Exception(
-                self.onnx_node.name
-                + """ is still in hw abstraction format,
-                Please run SpecializeLayers() before proceeding."""
-            )
-        ram_type = self.get_nodeattr("ram_style")
-        try:
-            depth = self.get_adjusted_depth()
-        except AttributeError:
-            depth = self.get_nodeattr("depth")
-        W = self.get_instream_width()
+        return self.get_fifo_cost(fpgapart).lut
 
-        address_luts = 2 * math.ceil(math.log(depth, 2))
+    def bram_efficiency_estimation(self, fpgapart):
+        """Return the fraction of estimated BRAM capacity actually used by the FIFO."""
+        bram_est = self.bram_estimation(fpgapart)
+        if bram_est == 0:
+            return 1
+        wbits = self.get_instream_width_padded() * self.get_nodeattr("depth")
+        return wbits / (bram_est * 18 * 1024)
 
-        if impl == "rtl" or (impl == "vivado" and ram_type == "distributed"):
-            ram_luts = (math.ceil(depth / 32)) * (math.ceil(W / 2))
-        else:
-            ram_luts = 0
-
-        return int(address_luts + ram_luts)
+    def uram_efficiency_estimation(self, fpgapart):
+        """Return the fraction of estimated URAM capacity actually used by the FIFO."""
+        # every URAM288 aspect holds 288 Kib, so this capacity is correct on the
+        # Versal ladder too; narrow words show up as a smaller uram_estimation()
+        uram_est = self.uram_estimation(fpgapart)
+        if uram_est == 0:
+            return 1
+        wbits = self.get_instream_width_padded() * self.get_nodeattr("depth")
+        return wbits / (uram_est * 72 * 4096)

@@ -14,6 +14,7 @@ from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.inner_shuffle import InnerShuffle
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
+from finn.util.basic import fifo_rtl_files
 from finn.util.settings import get_settings
 
 
@@ -50,7 +51,7 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
         super().__init__(onnx_node, **kwargs)
 
         # check some constraints that it is a legal InnerShuffle
-        I_dim = self.get_nodeattr("in_shape")[-2]
+        I_dim = self.get_nodeattr("transpose_in_shape")[-2]
         SIMD = self.get_nodeattr("SIMD")
         if I_dim % SIMD != 0:
             new_simd = auto_size_simd(I_dim, SIMD)
@@ -87,8 +88,8 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
         simd = self.get_nodeattr("SIMD")
         code_gen_dict = {
             "TOP_MODULE_NAME": self.get_verilog_top_module_name(),
-            "I": self.get_nodeattr("in_shape")[-2],
-            "J": self.get_nodeattr("in_shape")[-1],
+            "I": self.get_nodeattr("transpose_in_shape")[-2],
+            "J": self.get_nodeattr("transpose_in_shape")[-1],
             "SIMD": simd,
             "WIDTH": dt.bitwidth(),
             "STREAM_BITS": simd * dt.bitwidth(),
@@ -127,14 +128,14 @@ class InnerShuffle_rtl(InnerShuffle, RTLBackend):
             f"{rtllib_dir}/skid.sv",
             f"{rtllib_dir}/elasticmem.sv",
             f"{code_gen_dir}{top_module}.v",
-        ]
+        ] + fifo_rtl_files(abspath)
 
     def code_generation_ipi(self):
         """Construct and returns the TCL for node instantiation in Vivado IPI."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         top_module = self.get_nodeattr("gen_top_module")
         sourcefiles = ["inner_shuffle.sv", "skid.sv", "elasticmem.sv", f"{top_module}.v"]
-        sourcefiles = [os.path.join(code_gen_dir, f) for f in sourcefiles]
+        sourcefiles = [os.path.join(code_gen_dir, f) for f in sourcefiles] + fifo_rtl_files()
 
         cmd = []
         for vf in sourcefiles:

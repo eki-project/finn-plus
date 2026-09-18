@@ -40,6 +40,7 @@ from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
+from qonnx.util.basic import get_by_name, roundup_to_integer_multiple
 from string import Template
 
 from finn.builder.build_dataflow_config import FpgaMemoryType
@@ -47,6 +48,7 @@ from finn.util.basic import get_driver_shapes, make_build_dir
 from finn.util.data_packing import to_external_tensor
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
+from finn.util.rtlsim import dat_file_to_numpy_array
 from finn.util.settings import get_settings
 
 
@@ -722,6 +724,57 @@ class MakePYNQDriver(Transformation):
 
         return external_weights_dict, runtime_weights
 
+    def _generate_mlo_weight_files(self, model):
+        """Export DDR weights of MLO (FINNLoop) accelerators into the mlo_weights/ subfolder
+        of the driver dir and return the config the driver needs to load them into DDR."""
+        pynq_driver_dir = model.get_metadata_prop("pynq_driver_dir")
+        mlo_weights_dir = pynq_driver_dir + "/mlo_weights"
+        mlo_weight_entries = []
+        mlo_total_bytes = 0
+        mlo_axilite_ips = []
+        for sdp_node in model.get_nodes_by_op_type("StreamingDataflowPartition"):
+            dataflow_model = ModelWrapper(getCustomOp(sdp_node).get_nodeattr("model"))
+            for node in dataflow_model.graph.node:
+                if node.op_type != "FINNLoop":
+                    continue
+                fl_inst = getCustomOp(node)
+                if get_by_name(node.attribute, "address_offset") is None:
+                    continue
+                fl_code_gen_dir = fl_inst.get_nodeattr("code_gen_dir_ipgen")
+                fl_body = fl_inst.get_nodeattr("body")
+                for idx, lb_inp in enumerate(fl_body.graph.input):
+                    consumer = fl_body.find_consumer(lb_inp.name)
+                    if consumer is None or not consumer.op_type.startswith("MVAU"):
+                        continue
+                    dat_src = f"{fl_code_gen_dir}/memblock_MVAU_rtl_id_{idx}.dat"
+                    if not os.path.isfile(dat_src):
+                        continue
+                    address_offset = int(getCustomOp(consumer).get_nodeattr("address_offset"))
+                    num_bytes = int(dat_file_to_numpy_array(dat_src).shape[0])
+                    dat_name = f"{node.name}_memblock_MVAU_rtl_id_{idx}.dat"
+                    os.makedirs(mlo_weights_dir, exist_ok=True)
+                    shutil.copy(dat_src, mlo_weights_dir + "/" + dat_name)
+                    mlo_weight_entries.append(
+                        {
+                            "dat_file": dat_name,
+                            "address_offset": address_offset,
+                            "num_bytes": num_bytes,
+                        }
+                    )
+                    if sdp_node.name not in mlo_axilite_ips:
+                        mlo_axilite_ips.append(sdp_node.name)
+                # full buffer size = weight regions + intermediate-frame region
+                loop_address_offset = int(fl_inst.get_nodeattr("address_offset"))
+                mlo_total_bytes = loop_address_offset + fl_inst.intermediate_frame_bytes()
+
+        if len(mlo_weight_entries) == 0:
+            return {}
+        return {
+            "total_size_bytes": int(roundup_to_integer_multiple(mlo_total_bytes, 32)),
+            "weights": mlo_weight_entries,
+            "address_config_ips": mlo_axilite_ips,
+        }
+
     def _write_fifo_widths(self, model):
         """Export FIFO widths to the settings file as well.
         At this stage, the FIFOs are already wrapped in StreamingDataflowPartitions."""
@@ -787,6 +840,9 @@ class MakePYNQDriver(Transformation):
             ] = external_weights_dict["external_weights_input_shapes"]
             driver_information["external_weights"] = external_weights_dict["external_weights"]
             driver_information["runtime_weights"] = runtime_weights
+            mlo_config = self._generate_mlo_weight_files(model)
+            if mlo_config:
+                driver_information["io_shape_dict"]["mlo_weight_config"] = mlo_config
             driver_information["platform"] = self.platform
             # TODO: also supply ext_weight_shapes_dict to driver
 

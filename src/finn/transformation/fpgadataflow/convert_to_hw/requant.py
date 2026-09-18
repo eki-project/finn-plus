@@ -114,9 +114,18 @@ class InferRequantLayer(Transformation):
     either HLS or RTL backend.
     """
 
-    def __init__(self) -> None:
-        """Initialize instance."""
+    def __init__(self, bitwidth_threshold: int | None = None) -> None:
+        """Initialize instance.
+
+        Args:
+            bitwidth_threshold: If set, only convert MultiThreshold nodes with output
+                bitwidth >= bitwidth_threshold. If None, convert all nodes with uniform
+                thresholds. This allows using Thresholding for low-bitwidth outputs (more
+                efficient) and Requant for high-bitwidth outputs. Quant nodes are always
+                converted.
+        """
         super().__init__()
+        self.bitwidth_threshold = bitwidth_threshold
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
@@ -149,6 +158,12 @@ class InferRequantLayer(Transformation):
 
                 idt = model.get_tensor_datatype(inp_name)
                 odt = model.get_tensor_datatype(out_name)
+
+                # Skip based on bitwidth threshold if set
+                # This allows using Thresholding for low-bitwidth (<threshold)
+                # and Requant for high-bitwidth (>=threshold) outputs
+                if self.bitwidth_threshold is not None and odt.bitwidth() < self.bitwidth_threshold:
+                    continue
 
                 # Only infer layers where input is integer, fixed-point, or float
                 idt_ok = (
@@ -242,7 +257,9 @@ class InferRequantLayer(Transformation):
                     continue
 
                 idt = model.get_tensor_datatype(inp_name)
-                odt = model.get_tensor_datatype(out_name)
+                # The output datatype follows from the Quant attributes, independent of
+                # whether InferDataTypes has annotated the output tensor yet
+                odt = node_inst.get_integer_datatype(model)
 
                 # For Quant with scale=1, zeropt=0: output = clip(round(input), min, max)
                 # This is Requant with scale=1 and bias=0

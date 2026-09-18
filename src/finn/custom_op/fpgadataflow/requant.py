@@ -5,11 +5,11 @@
 
 """Module for requant."""
 import numpy as np
-import warnings
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.general.quant import max_int, min_int
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class Requant(HWCustomOp):
@@ -87,7 +87,7 @@ class Requant(HWCustomOp):
                 str(self.get_input_datatype().name),
                 str(idt.name),
             )
-            warnings.warn(warn_str)
+            log.warning(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
         # set output datatype from property
         odt = self.get_output_datatype()

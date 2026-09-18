@@ -40,10 +40,10 @@ from onnx import NodeProto
 from pathlib import Path
 from qonnx.core.datatype import BaseDataType
 from qonnx.custom_op.base import CustomOp
-from qonnx.util.basic import roundup_to_integer_multiple
+from qonnx.util.basic import get_by_name, roundup_to_integer_multiple
 from typing import TYPE_CHECKING, Any, cast
 
-from finn.util.basic import get_liveness_threshold_cycles, is_versal
+from finn.util.basic import get_watchdog_timeout_cycles, is_versal
 from finn.util.exception import FINNInternalError
 from finn.util.settings import get_settings
 
@@ -122,6 +122,8 @@ class HWCustomOp(CustomOp):
             "output_hook": ("s", False, ""),
             "bodies": ("i", False, 0),
             "mlo_max_iter": ("i", False, 0),
+            # DDR byte offset of this node's (streamed) weights, see AssignMemoryOffset
+            "address_offset": ("i", False, 0),
         }
 
     def make_shape_compatible_op(self, model: "ModelWrapper") -> NodeProto:  # noqa: ARG002
@@ -216,15 +218,15 @@ class HWCustomOp(CustomOp):
     def node_res_estimation(self, fpgapart: str) -> dict[str, int | float]:
         """Return summarized resource estimation of BRAMs and LUTs of the node as a dictionary."""
         ret = {}
-        ret["BRAM_18K"] = self.bram_estimation()
-        ret["BRAM_efficiency"] = self.bram_efficiency_estimation()
-        ret["LUT"] = self.lut_estimation()
-        ret["URAM"] = self.uram_estimation()
-        ret["URAM_efficiency"] = self.uram_efficiency_estimation()
+        ret["BRAM_18K"] = self.bram_estimation(fpgapart)
+        ret["BRAM_efficiency"] = self.bram_efficiency_estimation(fpgapart)
+        ret["LUT"] = self.lut_estimation(fpgapart)
+        ret["URAM"] = self.uram_estimation(fpgapart)
+        ret["URAM_efficiency"] = self.uram_efficiency_estimation(fpgapart)
         ret["DSP"] = self.dsp_estimation(fpgapart)
         return ret
 
-    def bram_efficiency_estimation(self) -> float:
+    def bram_efficiency_estimation(self, fpgapart: str) -> float:  # noqa: ARG002
         """Estimate BRAM efficiency.
 
         Returns actual parameter storage needed divided by the allocated BRAM
@@ -233,7 +235,7 @@ class HWCustomOp(CustomOp):
         """
         return 1
 
-    def uram_efficiency_estimation(self) -> float:
+    def uram_efficiency_estimation(self, fpgapart: str) -> float:  # noqa: ARG002
         """Estimate URAM efficiency.
 
         Returns actual parameter storage needed divided by the allocated URAM
@@ -242,7 +244,7 @@ class HWCustomOp(CustomOp):
         """
         return 1
 
-    def bram_estimation(self) -> int:
+    def bram_estimation(self, fpgapart: str) -> int:  # noqa: ARG002
         """Estimate BRAM resource usage.
 
         Member function of HWCustomOp class that must be implemented by every node.
@@ -250,7 +252,7 @@ class HWCustomOp(CustomOp):
         """
         return 0
 
-    def uram_estimation(self) -> int:
+    def uram_estimation(self, fpgapart: str) -> int:  # noqa: ARG002
         """Estimate UltraRAM resource usage.
 
         Member function of HWCustomOp class that must be implemented by every node.
@@ -258,7 +260,7 @@ class HWCustomOp(CustomOp):
         """
         return 0
 
-    def lut_estimation(self) -> int:
+    def lut_estimation(self, fpgapart: str) -> int:  # noqa: ARG002
         """Estimate LUT resource usage.
 
         Member function of HWCustomOp class that must be implemented by every node.
@@ -304,16 +306,16 @@ class HWCustomOp(CustomOp):
     ) -> None:
         """Run rtlsim for this node, supports multiple i/o streams."""
         num_out_values = self.get_number_output_values()
-        # Use the larger of expected cycles or liveness threshold
+        # LIVENESS_THRESHOLD can only increase the expected cycle count.
         exp_cycles = self.get_exp_cycles()
-        liveness_threshold = get_liveness_threshold_cycles()
-        effective_threshold = max(exp_cycles, liveness_threshold)
+        effective_threshold = get_watchdog_timeout_cycles(exp_cycles)
         total_cycle_count = finnxsi.rtlsim_multi_io(
             sim,
             io_dict,
             num_out_values,
             sname=sname,
             liveness_threshold=effective_threshold,
+            liveness_estimate=exp_cycles,
         )
 
         self.set_nodeattr("cycles_rtlsim", total_cycle_count)
@@ -436,6 +438,8 @@ class HWCustomOp(CustomOp):
                 sets = bodies
             if self.onnx_node.op_type.startswith("Thresholding"):
                 depth = self.calc_tmem()
+            elif self.onnx_node.op_type.startswith("MVAU"):
+                depth = self.calc_wmem() * cast("int", self.get_nodeattr("TH"))
             else:
                 depth = self.calc_wmem()
             padded_width = self.get_instream_width_padded(1)
@@ -466,20 +470,24 @@ class HWCustomOp(CustomOp):
         else:
             pass
 
-    def generate_hdl_fetch_weights(self, fpgapart: str) -> None:  # noqa: ARG002
+    def generate_hdl_fetch_weights(self) -> None:
         """Generate verilog code for fetch_weights component.
-        Currently utilized by MVAU."""
+        Currently utilized by MVAU and Elementwise layers."""
         ops = ["MVAU_hls", "MVAU_rtl"]
         if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
-            template_path = Path(get_settings().finn_rtllib) / "mlo" / "fetch_weights_wrapper.v"
+            template_path = (
+                Path(get_settings().finn_rtllib) / "fetch_weights" / "fetch_weights_wrapper.v"
+            )
             mname = self.onnx_node.name
             wdt = self.get_input_datatype(1)
+            en_mlo = "EN_MLO" if self.get_nodeattr("mlo_max_iter") else "NO_MLO"
             if self.onnx_node.op_type in ops:
                 mw = cast("int", self.get_nodeattr("MW"))
                 mh = cast("int", self.get_nodeattr("MH"))
                 pe = cast("int", self.get_nodeattr("PE"))
                 simd = cast("int", self.get_nodeattr("SIMD"))
-                n_reps = np.prod(cast("list[int]", self.get_nodeattr("numInputVectors")))
+                theight = cast("int", self.get_nodeattr("TH"))
+                n_reps = np.prod(cast("list[int]", self.get_nodeattr("numInputVectors"))) // theight
             else:
                 # Eltwise layers only have one parallelism parameter
                 mw = 1
@@ -488,7 +496,7 @@ class HWCustomOp(CustomOp):
                 simd = 1
                 # TODO use broadcast rhs shape here
                 n_reps = np.prod(cast("list[int]", self.get_nodeattr("rhs_shape"))[:-1])
-            layer_offs = mw * mh
+                theight = 1
             # upper bound on how many layers can be supported, set to 64 for now
             n_max_layers = 64
             code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
@@ -500,16 +508,23 @@ class HWCustomOp(CustomOp):
                 "$SIMD$": [str(simd)],
                 "$N_REPS$": [str(n_reps)],
                 "$WEIGHT_WIDTH$": [str(wdt.bitwidth())],
-                "$LAYER_OFFS$": [str(layer_offs)],
                 "$N_LAYERS$": [str(n_max_layers)],
+                "$TH$": [str(theight)],
+                "$EN_MLO$": [en_mlo],
+                "$DWC_MODULE_NAME$": [mname + "_dwc"],
+                "$ADDRESS_OFFSET$": [str(self.get_nodeattr("address_offset"))],
             }
             # apply code generation to template
             with template_path.open("r") as f:
                 template_wrapper = f.read()
-            for key in code_gen_dict:
+            for key, value in code_gen_dict.items():
                 # transform list into long string separated by '\n'
-                code_gen_line = "\n".join(code_gen_dict[key])
+                code_gen_line = "\n".join(value)
                 template_wrapper = template_wrapper.replace(key, code_gen_line)
+            # DDR exposes a runtime base_address port; HBM leaves the macro undefined
+            # so the port is dropped and the streamer reads from address 0.
+            if get_by_name(self.onnx_node.attribute, "address_offset") is not None:
+                template_wrapper = "`define HAS_BASE_ADDRESS\n" + template_wrapper
             with (Path(code_gen_dir) / (mname + "_fetch_weights_wrapper.v")).open("w") as f:
                 f.write(template_wrapper)
         else:

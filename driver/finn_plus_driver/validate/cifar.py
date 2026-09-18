@@ -10,7 +10,8 @@ def validate(cls_inst, *args, **kwargs):
     report_dir = kwargs.get("report_dir")
     dataset_path = kwargs.get("dataset_path", os.path.dirname(os.path.realpath(__file__)))
     bsize = cls_inst.batch_size
-    cifar10 = kwargs.get("cifar10", True)
+    # Dataset name "cifar" selects CIFAR-10, "cifar100" selects CIFAR-100 (fine labels)
+    cifar10 = kwargs.get("validation_dataset") != "cifar100"
 
     trainx, trainy, testx, testy, valx, valy = cifar.load_cifar_data(
         dataset_path, download=True, one_hot=False, cifar10=cifar10

@@ -392,7 +392,7 @@ class VVAU(HWCustomOp):
         pe = self.get_nodeattr("PE")
         return ch // pe
 
-    def uram_estimation(self):
+    def uram_estimation(self, fpgapart):
         """Estimate UltraRAM (URAM) usage for this layer.
 
         Returns:
@@ -416,7 +416,7 @@ class VVAU(HWCustomOp):
         depth_multiplier = math.ceil(omega / 4096)
         return width_multiplier * depth_multiplier
 
-    def bram_estimation(self):
+    def bram_estimation(self, fpgapart):
         """Calculates resource estimation for BRAM"""
         # TODO add in/out FIFO contributions
         P = self.get_nodeattr("PE")
@@ -450,7 +450,7 @@ class VVAU(HWCustomOp):
             return (math.ceil(omega / 1024)) * (math.ceil(mem_width / 16))
         return (math.ceil(omega / 512)) * (math.ceil(mem_width / 32))
 
-    def bram_efficiency_estimation(self):
+    def bram_efficiency_estimation(self, fpgapart):
         """Estimate BRAM efficiency (utilization) for this layer.
 
         Returns:
@@ -460,21 +460,21 @@ class VVAU(HWCustomOp):
         wdt = self.get_input_datatype(1)
         W = wdt.bitwidth()
         omega = self.calc_wmem()
-        bram16_est = self.bram_estimation()
+        bram16_est = self.bram_estimation(fpgapart)
         if bram16_est == 0:
             return 1
         wbits = W * P * omega
         bram16_est_capacity = bram16_est * 36 * 512
         return wbits / bram16_est_capacity
 
-    def uram_efficiency_estimation(self):
+    def uram_efficiency_estimation(self, fpgapart):
         """Function for URAM efficiency estimation: actual parameter storage
         needed divided by the allocated URAM storage (from estimation)"""
         wdt = self.get_input_datatype(1)
         W = wdt.bitwidth()
         D_in = int(np.prod(self.get_nodeattr("Kernel")))
         D_out = self.get_nodeattr("Channels")
-        uram_est = self.uram_estimation()
+        uram_est = self.uram_estimation(fpgapart)
         if uram_est == 0:
             return 1
         wbits = W * D_in * D_out

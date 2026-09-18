@@ -8,24 +8,22 @@
         "verify_input_npy": ["models/transformer/finn-transformers/benchmark/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/benchmark/out.npy"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": ["None"],
+        # the previously stored folding config achieved 1526 fps (interval of 65536 cycles)
+        "target_fps": [1500],
         "auto_fifo_depths": [True],
-        "folding_config_file": ["models/transformer/finn-transformers_folding/benchmark_1000fps_fifo.json"],
     },
 
     # language model
-    # TODO: currently disabled because it crashes the build job without leaving proper logs...
-    # {
-    #     "dut": ["transformer"],
-    #     #"model_dir": ["models/transformer/finn-transformers/language"],
-    #     "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
-    #     "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
-    #     "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
-    #     "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
-    #     "target_fps": ["None"],
-    #     "auto_fifo_depths": [True],
-    #     "folding_config_file": ["models/transformer/finn-transformers_folding/language_1000fps_fifo.json"],
-    # },
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/language"],
+        "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1024],
+        "auto_fifo_depths": [True],
+    },
 
     # radioml model
     {
@@ -35,9 +33,8 @@
         "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": ["None"],
+        "target_fps": [65536],
         "auto_fifo_depths": [True],
-        "folding_config_file": ["models/transformer/finn-transformers_folding/radioml_1000fps_fifo.json"],
     },
 
     # vision model
@@ -48,8 +45,7 @@
         "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
         "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
-        "target_fps": ["None"],
+        "target_fps": [1525],
         "auto_fifo_depths": [True],
-        "folding_config_file": ["models/transformer/finn-transformers_folding/vision_1000fps_fifo.json"],
     },
 ]

@@ -34,6 +34,7 @@ pytest-html = "~4.2.0"
 pytest-html-merger = "~0.1.0"
 pytest-forked = "~1.7.5"
 pytest-rerunfailures = "~16.6"
+pytest-timeout = "~2.4.0"
 pytest-dependency = "~0.6.1"
 pytest-parallel = "~0.1.1"
 pytest-xdist = { version = "~3.8.0", extras = ["setproctitle"] }

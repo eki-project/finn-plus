@@ -46,6 +46,7 @@ from finn.util.data_packing import (
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
+from finn.util.exception import FINNUserError
 from finn.util.memutil import get_memutil_alternatives, mem_primitives_versal
 from finn.util.settings import get_settings
 
@@ -113,16 +114,20 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         odt_bits = odt.bitwidth()
         t_channels = self.get_nodeattr("NumChannels")
         cf = t_channels / pe
+        # For MLO / multi-DNN, multiply depth by number of sets (iterations / bodies)
+        sets = max(1, self.get_nodeattr("mlo_max_iter"), self.get_nodeattr("bodies"))
         is_uniform = self.get_nodeattr("uniform_thres")
         if is_uniform:
-            ret = [(odt_bits - x, cf * (2**x)) for x in range(1, odt_bits)]
+            ret = [(odt_bits - x, cf * (2**x) * sets) for x in range(1, odt_bits)]
         else:
-            ret = [(wdt_bits, (cf) * 2**x) for x in range(odt_bits)]
+            ret = [(wdt_bits, cf * (2**x) * sets) for x in range(odt_bits)]
         return ret
 
-    def get_memory_estimate(self):
-        """Return the memory estimate for this node."""
+    def _get_memory_estimate_details(self):
+        """Return resource count, used bits and allocated capacity by memory type."""
         res_dict = {}
+        used_bits = {}
+        capacity_bits = {}
         depth_trigger_bram = self.get_nodeattr("depth_trigger_bram")
         depth_trigger_uram = self.get_nodeattr("depth_trigger_uram")
         pe = self.get_nodeattr("PE")
@@ -137,25 +142,56 @@ class Thresholding_rtl(Thresholding, RTLBackend):
                     primitives = {k: v for (k, v) in mem_primitives_versal.items() if "URAM" in k}
             alts = get_memutil_alternatives(mem_cfg, primitives)
             primary_alt = alts[0]
-            res_type = primary_alt[0].split("_")[0]
+            primitive_name = primary_alt[0]
+            if primitive_name.startswith("BRAM"):
+                res_type = "BRAM"
+            else:
+                res_type = primitive_name.split("_")[0]
             res_count, eff, waste = primary_alt[1]
+            primitive_width, primitive_depth = mem_primitives_versal[primitive_name]
             res_dict[res_type] = res_dict.get(res_type, 0) + pe * res_count
+            used_bits[res_type] = used_bits.get(res_type, 0) + pe * width * depth
+            capacity_bits[res_type] = capacity_bits.get(res_type, 0) + (
+                pe * res_count * primitive_width * primitive_depth
+            )
+        return res_dict, used_bits, capacity_bits
+
+    def get_memory_estimate(self):
+        """Return the memory estimate for this node."""
+        res_dict, _, _ = self._get_memory_estimate_details()
         return res_dict
 
-    def bram_estimation(self):
+    def bram_estimation(self, fpgapart):
         """Return the number of BRAMs required for this node."""
         res_dict = self.get_memory_estimate()
         return res_dict.get("BRAM", 0)
 
-    def uram_estimation(self):
+    def uram_estimation(self, fpgapart):
         """Return the number of URAMs required for this node."""
         res_dict = self.get_memory_estimate()
         return res_dict.get("URAM", 0)
 
-    def lut_estimation(self):
+    def lut_estimation(self, fpgapart):
         """Return the number of LUTs required for this node."""
         res_dict = self.get_memory_estimate()
         return res_dict.get("LUTRAM", 0)
+
+    def bram_efficiency_estimation(self, fpgapart):
+        """Return BRAM parameter storage efficiency for this node."""
+        _, used_bits, capacity_bits = self._get_memory_estimate_details()
+        if capacity_bits.get("BRAM", 0) == 0:
+            return 1
+        return used_bits["BRAM"] / capacity_bits["BRAM"]
+
+    def uram_efficiency_estimation(self, fpgapart):
+        """Return URAM parameter storage efficiency for this node."""
+        # TODO: Versal URAM supports flexible bit widths (9/18/36/72) unlike
+        # UltraScale+ which only supports 72-bit. This could improve efficiency
+        # for narrow data types on Versal devices.
+        _, used_bits, capacity_bits = self._get_memory_estimate_details()
+        if capacity_bits.get("URAM", 0) == 0:
+            return 1
+        return used_bits["URAM"] / capacity_bits["URAM"]
 
     def get_all_meminit_filenames(self, abspath=False):
         """Return a list of all .dat memory initializer files used for this node."""
@@ -469,6 +505,16 @@ class Thresholding_rtl(Thresholding, RTLBackend):
             Directory path where parameter files will be generated
         """
         thresholds = model.get_initializer(self.onnx_node.input[1])
+
+        # RTL thresholding uses binary search, which requires sorted thresholds
+        # Check that thresholds are sorted in ascending order along the last axis
+        if not np.all(np.diff(thresholds, axis=-1) >= 0):
+            raise FINNUserError(
+                f"{self.onnx_node.name}: Thresholds must be sorted in ascending order "
+                "for RTL thresholding (uses binary search). "
+                "Sort thresholds along axis=-1 before inference."
+            )
+
         rt_weights = self.get_nodeattr("runtime_writeable_weights")
         file_name = f"{path}/memblock.dat"
         if rt_weights:
@@ -514,9 +560,13 @@ class Thresholding_rtl(Thresholding, RTLBackend):
             if thresholds.shape[0] == 1:
                 thresholds = np.broadcast_to(thresholds, (pe, expected_thresholds))
                 num_channels = pe
-            width_padded = roundup_to_integer_multiple(thresholds.shape[1], 2**o_bitwidth)
+            # Calculate width_padded to match RTL AXI address space allocation.
+            # RTL uses $clog2(N) bits for threshold addressing in the AXI interface,
+            # so the address space per channel is 2^clog2(n_thres_steps).
+            # For N=1, clog2(1)=0, so only 1 slot per channel.
+            width_padded = 1 << max(0, math.ceil(math.log2(n_thres_steps)))
             thresh_padded = np.zeros((thresholds.shape[0], width_padded))
-            thresh_padded[: thresholds.shape[0], :expected_thresholds] = thresholds
+            thresh_padded[: thresholds.shape[0], :n_thres_steps] = thresholds[:, :n_thres_steps]
             thresh_stream = []
             bw_hexdigit = roundup_to_integer_multiple(wdt.bitwidth(), 32)
             padding = np.zeros(width_padded, dtype=np.int32)

@@ -53,7 +53,12 @@ from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.templates import get_templates_folder
 from finn.transformation.fpgadataflow.replace_verilog_relpaths import ReplaceVerilogRelPaths
-from finn.util.basic import launch_process_helper, make_build_dir, wait_for_file
+from finn.util.basic import (
+    launch_process_helper,
+    make_build_dir,
+    resolve_xilinx_tool,
+    wait_for_file,
+)
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
 from finn.util.hbm_mock import HBMDummy
@@ -106,7 +111,8 @@ class CreateStitchedIP(Transformation):
         fpgapart: str,
         clk_ns: float,
         ip_name: str = "finn_design",
-        vitis: bool = False,
+        run_synth: bool = False,
+        run_pnr: bool = False,
         signature: list | None = None,
         nodecontainer: bool = False,
         functional_simulation: bool = False,
@@ -117,7 +123,10 @@ class CreateStitchedIP(Transformation):
             fpgapart: FPGA part identifier
             clk_ns: Clock period in nanoseconds
             ip_name: Name for the IP design
-            vitis: Whether to target Vitis
+            run_synth: Synthesize the stitched design (out-of-context) and package the IP
+                with the resulting DCP/stub instead of sources (required for Vitis)
+            run_pnr: Additionally run place & route on the synthesized design and write
+                out-of-context utilization/timing/power reports (implies run_synth)
             signature: Optional signature list [customer, application, version]
             nodecontainer: Whether the stitched design is a NodeContainer body, in which
                 case the AXI stream interfaces keep their original names instead of being
@@ -132,10 +141,13 @@ class CreateStitchedIP(Transformation):
         self.ip_name = ip_name
         self.is_mlo = False
         self.nodecontainer = nodecontainer
-        self.vitis = vitis
+        self.run_synth = run_synth or run_pnr  # run_pnr requires synthesis
+        self.run_pnr = run_pnr
         self.signature = signature
         self.functional_simulation = functional_simulation
         self.has_aximm = False
+        self.aximm_weight_files: dict[str, str] = {}
+        self.has_base_address = False
         self.aximm_idx = 0
         self.has_m_axis = False
         self.m_axis_idx = 0
@@ -244,94 +256,91 @@ class CreateStitchedIP(Transformation):
             ext_if_name = f"{axilite_intf_name[0]}_{len(self.intf_names['axilite'])}"
             self.intf_names["axilite"].append(ext_if_name)
 
-        if not node_inst.get_nodeattr("mlo_max_iter"):
-            if node.op_type == "FINNLoop":
-                for mm_intf_name in aximm_intf_name:
-                    if self.functional_simulation:
-                        code_gen_dir = make_build_dir(
-                            prefix="code_gen_ipgen_" + inst_name + "_" + mm_intf_name[0] + "_dummy_"
-                        )
-                        dummy = HBMDummy(
-                            inst_name + "_" + mm_intf_name[0] + "_dummy",
-                            64,
-                            256,
-                            Path(code_gen_dir),
-                        )
-                        dummy.generate_hdl()
-                        self.create_cmds.extend(dummy.code_generation_ipi())
-                        self.connect_cmds.extend(dummy.code_clk_rst())
-                        self.connect_cmds.extend(
-                            [
-                                f"connect_bd_intf_net "
-                                f"[get_bd_intf_pins {inst_name}/{mm_intf_name[0]}] "
-                                f"[get_bd_intf_pins {dummy.name}/s_axi]",
-                            ]
-                        )
-                        continue
-                    self.connect_cmds.extend(
-                        [
-                            f"make_bd_intf_pins_external "
-                            f"[get_bd_intf_pins {inst_name}/{mm_intf_name[0]}]",
-                            f"set_property name {mm_intf_name[0]} "
-                            f"[get_bd_intf_ports {mm_intf_name[0]}_0]",
-                            "assign_bd_address",
-                        ]
-                    )
-
-                    if mm_intf_name[0] == "m_axi_hbm":
-                        seg_name = f"{inst_name}/{mm_intf_name[0]}/SEG_{mm_intf_name[0]}_Reg"
-                    else:
-                        seg_name = f"{inst_name}/{mm_intf_name[0]}/SEG_{mm_intf_name[0]}_Reg"
-                    # TODO should propagate this information from the node instead of 256M
-                    self.connect_cmds.extend(
-                        [
-                            f"set_property offset 0 [get_bd_addr_segs {{{seg_name}}}]",
-                            f"set_property range 256M [get_bd_addr_segs {{{seg_name}}}]",
-                        ]
-                    )
-                    self.intf_names["aximm"].append((mm_intf_name[0], mm_intf_name[1]))
-                    self.has_aximm = True
-                    self.aximm_idx += 1
-
-            elif len(aximm_intf_name) != 0:
-                ext_if_name = f"m_axi_gmem{self.aximm_idx}"
-                seg_name = f"{inst_name}/Data_m_axi_gmem/SEG_{ext_if_name}_Reg"
-                # TODO should propagate this information from the node instead of 4G
-                self.connect_cmds.extend(
-                    [
-                        f"make_bd_intf_pins_external "
-                        f"[get_bd_intf_pins {inst_name}/{aximm_intf_name[0][0]}]",
-                        f"set_property name {ext_if_name} [get_bd_intf_ports m_axi_gmem_0]",
-                        "assign_bd_address",
-                        f"set_property offset 0 [get_bd_addr_segs {{{seg_name}}}]",
-                        f"set_property range 4G [get_bd_addr_segs {{{seg_name}}}]",
-                    ]
-                )
-                self.intf_names["aximm"].append((ext_if_name, aximm_intf_name[0][1]))
-                self.has_aximm = True
-                self.aximm_idx += 1
-        else:
+        if node_inst.get_nodeattr("mlo_max_iter"):
             self.is_mlo = True
-            for mm_intf_name in aximm_intf_name:
-                # ext_if_name = "m_axi_gmem%d" % (self.aximm_idx)
-                # ext_if_name = f"m_axi_{inst_name}"
-                idx = inputs.index(node.input[1])
-                ext_if_name = f"m_axi_MVAU_id_{idx}"
-                seg_name = f"{inst_name}/{inst_name}_fetch_weights/axi_mm/SEG_{ext_if_name}_Reg"
-                # TODO should propagate this information from the node instead of 256M
+
+        for mm_intf_name in aximm_intf_name:
+            if node.op_type == "FINNLoop" and self.functional_simulation:
+                # functional simulation: connect a dummy memory instead of exposing the port
+                code_gen_dir = make_build_dir(
+                    prefix="code_gen_ipgen_" + inst_name + "_" + mm_intf_name[0] + "_dummy_"
+                )
+                dummy = HBMDummy(
+                    inst_name + "_" + mm_intf_name[0] + "_dummy",
+                    64,
+                    256,
+                    Path(code_gen_dir),
+                )
+                dummy.generate_hdl()
+                self.create_cmds.extend(dummy.code_generation_ipi())
+                self.connect_cmds.extend(dummy.code_clk_rst())
                 self.connect_cmds.extend(
                     [
-                        f"make_bd_intf_pins_external "
-                        f"[get_bd_intf_pins {inst_name}/{mm_intf_name[0]}]",
-                        f"set_property name {ext_if_name} [get_bd_intf_ports axi_mm_0]",
-                        "assign_bd_address",
-                        f"set_property offset 0 [get_bd_addr_segs {{{seg_name}}}]",
-                        f"set_property range 256M [get_bd_addr_segs {{{seg_name}}}]",
+                        f"connect_bd_intf_net "
+                        f"[get_bd_intf_pins {inst_name}/{mm_intf_name[0]}] "
+                        f"[get_bd_intf_pins {dummy.name}/s_axi]",
                     ]
                 )
-                self.intf_names["aximm"].append((ext_if_name, mm_intf_name[1]))
-                self.has_aximm = True
-                self.aximm_idx += 1
+                continue
+
+            self.connect_cmds.append(
+                f"make_bd_intf_pins_external [get_bd_intf_pins {inst_name}/{mm_intf_name[0]}]"
+            )
+
+            # Address range for the external segment; overridden per interface below.
+            addr_range = "256M"
+
+            # Determine external interface name and address segment path
+            if node.op_type == "FINNLoop":
+                ext_if_name = mm_intf_name[0]
+                self.connect_cmds.append(
+                    f"set_property name {ext_if_name} [get_bd_intf_ports {ext_if_name}_0]"
+                )
+                seg_name = f"{inst_name}/{ext_if_name}/SEG_{ext_if_name}_Reg"
+            elif mm_intf_name[0] == "axi_mm":
+                # MVAU with external weights: the per-node fetch_weights unit
+                # streams weights over AXI-MM. Derive a unique name from the
+                # weight graph-input index when available, otherwise from the
+                # instance name.
+                if len(node.input) > 1 and node.input[1] in inputs:
+                    idx = inputs.index(node.input[1])
+                    ext_if_name = f"m_axi_MVAU_id_{idx}"
+                else:
+                    ext_if_name = f"m_axi_{inst_name}_{self.aximm_idx}"
+                self.connect_cmds.append(
+                    f"set_property name {ext_if_name} [get_bd_intf_ports axi_mm_0]"
+                )
+                seg_name = f"{inst_name}/{inst_name}_fetch_weights/axi_mm/SEG_{ext_if_name}_Reg"
+                # Track weight data files for AXI-MM simulation. Use the byte-aligned,
+                # per-SIMD packed memblock.dat (the layout fetch_weights expects in
+                # external memory, e.g. DDR/HBM) rather than input_1.npy, which is
+                # one-value-per-element.
+                code_gen_dir = node_inst.get_nodeattr("code_gen_dir_ipgen")
+                dat_path = Path(code_gen_dir) / "memblock.dat"
+                if dat_path.is_file():
+                    self.aximm_weight_files[ext_if_name] = str(dat_path)
+            else:
+                # Generic AXI-MM master accessing global memory (e.g. IODMA, Lookup).
+                ext_if_name = f"m_axi_gmem{self.aximm_idx}"
+                self.connect_cmds.append(
+                    f"set_property name {ext_if_name} [get_bd_intf_ports m_axi_gmem_0]"
+                )
+                seg_name = f"{inst_name}/Data_m_axi_gmem/SEG_{ext_if_name}_Reg"
+                addr_range = "4G"
+
+            # TODO should propagate this information from the node instead of a fixed range
+            # (currently: 256M for FINNLoop and MVAU external weights, 4G for generic
+            # AXI-MM masters like IODMA/Lookup).
+            self.connect_cmds.extend(
+                [
+                    "assign_bd_address",
+                    f"set_property offset 0 [get_bd_addr_segs {{{seg_name}}}]",
+                    f"set_property range {addr_range} [get_bd_addr_segs {{{seg_name}}}]",
+                ]
+            )
+            self.intf_names["aximm"].append((ext_if_name, mm_intf_name[1]))
+            self.has_aximm = True
+            self.aximm_idx += 1
 
     def connect_m_axis_external(self, node: "NodeProto", idx: int | None = None) -> None:
         """Make AXI Stream master interface(s) external."""
@@ -431,6 +440,9 @@ class CreateStitchedIP(Transformation):
         # make external
         for i in range(len(input_intf_names)):
             input_intf_name = input_intf_names[i]
+            # base_address is handled in connect_base_address
+            if input_intf_name == "base_address":
+                continue
             self.connect_cmds.extend(
                 [
                     f"make_bd_pins_external [get_bd_pins {inst_name}/{input_intf_name}]",
@@ -438,6 +450,48 @@ class CreateStitchedIP(Transformation):
                 ]
             )
             self.intf_names["ap_none"].append(input_intf_name)
+
+    def connect_base_address(self, node: "NodeProto") -> None:
+        """Expose a single shared base_address port for all nodes that have one (MLO DDR)."""
+        inst_name = node.name
+        node_inst = getCustomOp(node)
+        if not isinstance(node_inst, HWCustomOp):
+            raise FINNInternalError(f"Node {node.name} is not an HWCustomOp.")
+        input_intf_names = node_inst.get_verilog_top_module_intf_names()["ap_none"]
+        if "base_address" not in input_intf_names:
+            return
+        if self.has_base_address is True:
+            self.connect_cmds.append(
+                f"connect_bd_net [get_bd_ports base_address] [get_bd_pins {inst_name}/base_address]"
+            )
+            return
+        self.has_base_address = True
+        self.intf_names["ap_none"].append("base_address")
+        self.connect_cmds.extend(
+            [
+                f"make_bd_pins_external [get_bd_pins {inst_name}/base_address]",
+                "set_property name base_address [get_bd_ports base_address_0]",
+            ]
+        )
+
+    def insert_sim_ctrl(self) -> None:
+        """Add the sim_ctrl module which exposes a sim_finish port to flush simulation-only
+        logic (e.g. FIFO gauge logs) before the simulation is closed."""
+        sim_ctrl_src = "$::env(FINN_RTLLIB)/sim/hdl/sim_ctrl.v"
+        sim_ctrl_name = "sim_ctrl_0"
+        self.create_cmds.extend(
+            [
+                f"add_files -norecurse {sim_ctrl_src}",
+                f"create_bd_cell -type module -reference sim_ctrl {sim_ctrl_name}",
+            ]
+        )
+        self.connect_cmds.extend(
+            [
+                f"connect_bd_net [get_bd_ports ap_clk] [get_bd_pins {sim_ctrl_name}/ap_clk]",
+                f"make_bd_pins_external [get_bd_pins {sim_ctrl_name}/sim_finish]",
+                "set_property name sim_finish [get_bd_ports sim_finish_0]",
+            ]
+        )
 
     def insert_signature(self, checksum_count: int) -> None:
         """Insert AXI info signature component into the design."""
@@ -493,14 +547,6 @@ class CreateStitchedIP(Transformation):
                 behavior. It is strongly recommended to insert FIFOs prior to
                 calling CreateStitchedIP."""
             )
-        if model.graph.node[0].op_type == "StreamingFIFO_rtl":
-            firstfifo = getCustomOp(model.graph.node[0])
-            if firstfifo.get_nodeattr("impl_style") == "vivado":
-                log.warning(
-                    """First FIFO has impl_style=vivado, which may cause
-                    simulation glitches (e.g. dropping the first input sample
-                    after reset)."""
-                )
         for node in model.graph.node:
             # ensure that all nodes are fpgadataflow, and that IPs are generated
             if not is_hls_node(node) and not is_rtl_node(node):
@@ -543,6 +589,7 @@ class CreateStitchedIP(Transformation):
             self.create_cmds += ipi_commands
             self.connect_clk_rst(node)
             self.connect_ap_none_external(node)
+            self.connect_base_address(node)
             self.connect_axi(node, model)
             for i in range(len(node.input)):
                 if not is_external_input(model, node, i):
@@ -608,6 +655,8 @@ class CreateStitchedIP(Transformation):
             # extract number of checksum layer from graph
             checksum_layers = model.get_nodes_by_op_type("CheckSum_hls")
             self.insert_signature(len(checksum_layers))
+
+        self.insert_sim_ctrl()
 
         # create a temporary folder for the project
         prjname = "finn_vivado_stitch_proj"
@@ -691,7 +740,7 @@ class CreateStitchedIP(Transformation):
 
             model.set_metadata_prop("wrapper_filename", fifosim_wrapper_filename)
         # Synthesize to DCP and export stub, DCP and constraints
-        if self.vitis:
+        if self.run_synth:
             tcl.extend(
                 [
                     f"set_property SYNTH_CHECKPOINT_MODE Hierarchical [ get_files {bd_filename} ]",
@@ -713,12 +762,42 @@ class CreateStitchedIP(Transformation):
                 "vivado_synth_rpt",
                 f"{vivado_stitch_proj_dir}/{block_name}_partition_util.xml",
             )
+        # Optionally run place & route and extract OOC metrics
+        if self.run_pnr:
+            tcl.extend(
+                [
+                    "",
+                    "# --- Place and Route for OOC Metrics ---",
+                    f"create_clock -period {float(self.clk_ns)} [get_ports ap_clk]",
+                    "opt_design",
+                    "place_design",
+                    "route_design",
+                    "",
+                    "# Write reports to files for Python-side parsing",
+                    f'report_utilization -file "{vivado_stitch_proj_dir}/ooc_utilization.rpt"',
+                    f'report_timing_summary -file "{vivado_stitch_proj_dir}/ooc_timing.rpt"',
+                    f'report_power -file "{vivado_stitch_proj_dir}/ooc_power.rpt"',
+                    "",
+                    "# Write metadata (clock period, Vivado version) to a simple file",
+                    f'set fp [open "{vivado_stitch_proj_dir}/ooc_metadata.txt" w]',
+                    f'puts $fp "clk_period_ns={float(self.clk_ns)}"',
+                    'puts $fp "vivado_version=[version -short]"',
+                    "close $fp",
+                    "",
+                    "# Save routed checkpoint",
+                    f"write_checkpoint -force {vivado_stitch_proj_dir}/{block_name}_routed.dcp",
+                ]
+            )
         # Export block design itself as an IP core
         block_vendor = "xilinx_finn"
         block_library = "finn"
         block_vlnv = f"{block_vendor}:{block_library}:{block_name}:1.0"
         model.set_metadata_prop("vivado_stitch_vlnv", block_vlnv)
         model.set_metadata_prop("vivado_stitch_ifnames", json.dumps(self.intf_names))
+        if self.aximm_weight_files:
+            model.set_metadata_prop(
+                "vivado_stitch_aximm_weights", json.dumps(self.aximm_weight_files)
+            )
 
         # Package IP and configure properties
         tcl.extend(
@@ -727,8 +806,18 @@ class CreateStitchedIP(Transformation):
                 f"-vendor {block_vendor} -library {block_library} -taxonomy /UserIP "
                 f"-module {block_name} -import_files",
                 "set_property ipi_drc {ignore_freq_hz true} [ipx::current_core]",
-                "ipx::remove_segment -quiet m_axi_gmem0:APERTURE_0 "
-                "[ipx::get_address_spaces m_axi_gmem0 -of_objects [ipx::current_core]]",
+            ]
+        )
+        # in some cases, the IP packager seems to infer an aperture of 64K or 4G,
+        # preventing address assignment of the DDR_LOW and/or DDR_HIGH segments
+        # the following is a hotfix to remove this aperture during IODMA packaging
+        for aximm_name, _ in self.intf_names["aximm"]:
+            tcl.append(
+                f"ipx::remove_segment -quiet {aximm_name}:APERTURE_0 "
+                f"[ipx::get_address_spaces {aximm_name} -of_objects [ipx::current_core]]"
+            )
+        tcl.extend(
+            [
                 f"set_property core_revision 2 [ipx::find_open_core {block_vlnv}]",
                 f"ipx::create_xgui_files [ipx::find_open_core {block_vlnv}]",
                 "set_property value_resolve_type user [ipx::get_bus_parameters "
@@ -736,7 +825,7 @@ class CreateStitchedIP(Transformation):
             ]
         )
         # If targeting Vitis, add some properties to the IP
-        if self.vitis:
+        if self.run_synth:
             # Configure Vitis kernel properties
             tcl.extend(
                 [
@@ -878,7 +967,8 @@ close $ofile
             [
                 "set all_v_files [get_files -filter {USED_IN_SYNTHESIS == 1 "
                 "&& (FILE_TYPE == Verilog || FILE_TYPE == SystemVerilog "
-                '|| FILE_TYPE =="Verilog Header" || FILE_TYPE == XCI)}]',
+                '|| FILE_TYPE == "Verilog Header" || FILE_TYPE == VHDL '
+                "|| FILE_TYPE == XCI)}]",
                 f"set fp [open {v_file_list} w]",
                 "foreach f $all_v_files {puts $fp $f}",
                 "close $fp",
@@ -891,10 +981,11 @@ close $ofile
         # create a shell script and call Vivado
         make_project_sh = f"{vivado_stitch_proj_dir}/make_project.sh"
         working_dir = Path.cwd()
+        vivado_cmd = resolve_xilinx_tool("vivado")
         with Path(make_project_sh).open("w") as f:
             f.write("#!/bin/bash \n")
             f.write(f"cd {vivado_stitch_proj_dir}\n")
-            f.write("vivado -mode batch -source make_project.tcl\n")
+            f.write(f"{vivado_cmd} -mode batch -source make_project.tcl\n")
             f.write(f"cd {working_dir}\n")
         bash_command = ["bash", make_project_sh]
 

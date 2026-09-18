@@ -45,6 +45,14 @@ def run_doctests(num_workers: int) -> bool:
     return any(rc not in (0, 5) for rc in returncodes)
 
 
+# Per-test wall-clock limit (setup + call + teardown) for the CI variants. The slowest
+# tests of the suite take a bit over an hour, so this only ever fires for a test that
+# is genuinely stuck (e.g. a deadlocked simulation). pytest-timeout then dumps the
+# stacks of all threads and fails the test instead of the whole job idling until the
+# Slurm time limit kills it without a report.
+CI_TEST_TIMEOUT_S = 3 * 3600
+
+
 def run_test(variant: str, num_workers: str, args: str = "") -> None:
     """Run a given test variant with the given number of workers."""
     original_dir = Path.cwd()
@@ -106,6 +114,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                     f"(vivado or slow or vitis or board or bnn_pynq or end2end)' "
                     f"--junitxml={ci_project_dir}/reports/quick.xml "
                     f"--html={ci_project_dir}/reports/quick.html "
+                    f"--timeout {CI_TEST_TIMEOUT_S} "
                     f"--reruns 1 --dist worksteal -n {num_workers}",
                     posix=IS_POSIX,
                 )
@@ -197,6 +206,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                         f"{sys.executable} -m pytest -q -rf --tb=short "
                         f"--junitxml={main_xml} "
                         f"--html={main_html} "
+                        f"--timeout {CI_TEST_TIMEOUT_S} "
                         f"--reruns 1 --dist worksteal -n {num_workers}"
                     ),
                     posix=IS_POSIX,
@@ -232,6 +242,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                     f"{sys.executable} -m pytest -v "
                     f"--junitxml={shlex.quote(crash_xml)} "
                     f"--html={shlex.quote(crash_html)} "
+                    f"--timeout {CI_TEST_TIMEOUT_S} "
                     f"--reruns 3 -n 1 "
                     f"{nodeids}"
                 )
