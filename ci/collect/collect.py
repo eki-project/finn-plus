@@ -986,32 +986,44 @@ if __name__ == "__main__":
             )
 
             # post_synth_resources.json (shell synth / step_synthesize_bitfile)
-            # special handling for microbenchmarks to extract only the relevant layer
+            # special handling for microbenchmarks to extract only the DUT node: the DUT
+            # writes its node name/op_type into dut_info.json (legacy artifacts: op_type
+            # substring per DUT name)
+            synth_resources = ["LUT", "FF", "SRL", "DSP", "BRAM_18K", "BRAM_36K", "URAM"]
             report_hierarchy_level = "(top)"
-            if metadata_bench["params"]["dut"] == "mvau":
+            dut_name = metadata_bench["params"]["dut"]
+            dut_node_name = (dut_info_report or {}).get("dut_node_name")
+            dut_op_type = (dut_info_report or {}).get(
+                "dut_op_type"
+            ) or collect_fn.LEGACY_DUT_OPTYPE.get(dut_name)
+            if dut_node_name or dut_op_type:
                 resource_report = open_json_report(id, "post_synth_resources.json", args.followup)
                 if resource_report:
-                    for key in resource_report:
-                        if "MVAU" in key:
-                            report_hierarchy_level = key
-                            break
-                    if report_hierarchy_level == "(top)":
-                        print("ERROR: No MVAU found in post_synth_resources.json")
+                    found = collect_fn.find_dut_hierarchy(
+                        resource_report, dut_node_name, dut_op_type
+                    )
+                    if found is None:
+                        print(
+                            "ERROR: DUT node %s (%s) not found in post_synth_resources.json"
+                            % (dut_node_name, dut_op_type)
+                        )
                         fail = True
-            # TODO: also do this for other reports or make it optional/configurable
+                    else:
+                        report_hierarchy_level = found
+                        # everything else (expected: only the TLastMarker) is logged
+                        # separately as a detector for unexpectedly inserted nodes
+                        extra = collect_fn.sum_extra_hierarchies(
+                            resource_report, found, synth_resources
+                        )
+                        for name, value in extra.items():
+                            dvc_logger.log_metric(
+                                prefix="synth/resources_extra/", name=name, value=value
+                            )
 
             dvc_logger.log_nested_metrics_from_report(
                 "post_synth_resources.json",
                 report_hierarchy_level,
-                [
-                    "LUT",
-                    "FF",
-                    "SRL",
-                    "DSP",
-                    "BRAM_18K",
-                    "BRAM_36K",
-                    "URAM",
-                ],
+                synth_resources,
                 prefix="synth/resources/",
             )
 

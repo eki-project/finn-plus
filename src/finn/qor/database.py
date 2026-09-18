@@ -39,13 +39,12 @@ POWER_COLS: list[tuple[str, float]] = [
 POWER_TARGET_COL = "power"
 
 # Run parameters that do not influence the implementation and only add noise to the
-# params-based deduplication.
+# params-based deduplication (operator-specific loop bounds such as the number of input
+# vectors are listed in ``OperatorFeatureSpec.irrelevant_param_cols``).
 _IRRELEVANT_PARAM_COLS = [
     "params.generate_outputs",
     "params.store_results_in_dvc_experiment",
     "params.store_results_in_dvc_data",
-    # nhw (number of input vectors) is only the outer loop bound of the operator
-    "params.nhw",
 ]
 
 
@@ -181,7 +180,8 @@ def load_microbenchmark_database(
         raise ValueError(f"No runs found for operator '{operator}'")
 
     df["pipeline_id"] = df["pipeline_id"].astype(int)
-    df = df.drop(columns=[c for c in _IRRELEVANT_PARAM_COLS if c in df.columns])
+    irrelevant = _IRRELEVANT_PARAM_COLS + list(spec.irrelevant_param_cols)
+    df = df.drop(columns=[c for c in irrelevant if c in df.columns])
 
     if include_commit:
         df = df[df["commit"].str.startswith(tuple(include_commit))]

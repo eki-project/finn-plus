@@ -111,6 +111,7 @@ markers = [
     "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
     "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
     "analysis: mark tests that run analysis tests",
+    "qor: mark tests of the empirical QoR estimation and microbenchmark infrastructure",
     "multifpga: mark tests that run multifpga tests"
 ]
 norecursedirs = ["dist", "build", ".tox"]

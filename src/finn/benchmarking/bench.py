@@ -15,8 +15,8 @@ import traceback
 import yaml
 
 from finn.benchmarking.bench_base import bench
+from finn.benchmarking.dut import MICROBENCH_DUTS
 from finn.benchmarking.dut.bench_mvau_multi_dnn import bench_mvau_multi_dnn
-from finn.benchmarking.dut.mvau import bench_mvau
 from finn.benchmarking.dut.synthetic_nonlinear import bench_synthetic_nonlinear
 
 # from finn.benchmarking.dut.transformer import bench_transformer
@@ -24,7 +24,8 @@ from finn.benchmarking.util import delete_dir_contents
 
 # Register custom bench subclasses that offer more control than YAML-based flow
 dut = dict()
-dut["mvau"] = bench_mvau
+# single-operator microbenchmarks (mvau, thresholding, swg, ...), see dut/microbench_base.py
+dut.update(MICROBENCH_DUTS)
 dut["mvau_multi_dnn"] = bench_mvau_multi_dnn
 dut["synthetic_nonlinear"] = bench_synthetic_nonlinear
 

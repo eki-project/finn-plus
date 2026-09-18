@@ -1,5 +1,7 @@
 [
-    # MVAU Test
+    # Smoke test: one small configuration per microbenchmark DUT (see
+    # src/finn/benchmarking/dut/). All runs are instrumented without DMA and their results
+    # are added to the microbenchmark database ($LOCAL_BENCHMARK_DIR_STORE).
     {
         "dut": ["mvau"],
         "idt": ["INT4","INT2"],
@@ -22,10 +24,124 @@
 
         "backend": ["hls"],
 
-        "dut_duplication": [1],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
 
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["thresholding"],
+        "backend": ["hls", "rtl"],
+        "idt": ["INT8"],
+        "odt": ["UINT4"],
+        "ch": [64],
+        "pe": [8],
+        "nhw": [[1,8,8]],
+        # hls only (null for rtl): mem_mode/ram_style; rtl only (0 for hls): depth triggers
+        "mem_mode": ["internal_embedded", null],
+        "ram_style": ["distributed", null],
+        "depth_trigger_bram": [0],
+        "depth_trigger_uram": [0],
+        "instrumentation_no_dma": [true],
+        "store_results_in_dvc_data": [true],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["swg"],
+        "idt": ["UINT4"],
+        "ifm_ch": [16],
+        "ifm_dim": [[16,16]],
+        "k": [[3,3]],
+        "stride": [[1,1]],
+        "dilation": [[1,1]],
+        "simd": [4, 16],
+        "depthwise": [0],
+        "parallel_window": [0, 1],
+        "m": [1],
+        "ram_style": ["distributed"],
+        "instrumentation_no_dma": [true],
+        "store_results_in_dvc_data": [true],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["vvau"],
+        "backend": ["hls"],
+        "idt": ["INT8"],
+        "wdt": ["INT4"],
+        "act": ["UINT4"],
+        "ch": [32],
+        "dim": [[7,7]],
+        "k": [[3,3]],
+        "pe": [4],
+        "simd": [3],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["auto"],
+        "resType": ["lut"],
+        "instrumentation_no_dma": [true],
+        "store_results_in_dvc_data": [true],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["fifo"],
+        "impl_style": ["rtl", "vivado"],
+        "dtype": ["INT8"],
+        "elems": [8],
+        "n": [16],
+        "depth": [32, 1024],
+        "ram_style": [null, "block"],
+        "instrumentation_no_dma": [true],
+        "store_results_in_dvc_data": [true],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["dwc"],
+        "backend": ["hls", "rtl"],
+        "dtype": ["INT4"],
+        "in_elems": [4],
+        "out_elems": [8],
+        "ch": [32],
+        "n": [4],
+        "instrumentation_no_dma": [true],
+        "store_results_in_dvc_data": [true],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["pool"],
+        "function": ["MaxPool"],
+        "idt": ["INT8"],
+        "odt": [null],
+        "ch": [32],
+        "pe": [4],
+        "k": [[2,2]],
+        "odim": [[8,8]],
+        "instrumentation_no_dma": [true],
+        "store_results_in_dvc_data": [true],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["fmpadding"],
+        "idt": ["UINT4"],
+        "ch": [16],
+        "simd": [4],
+        "idim": [[8,8]],
+        "padding": [[1,1,1,1]],
+        "instrumentation_no_dma": [true],
+        "store_results_in_dvc_data": [true],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+    {
+        "dut": ["eltwise"],
+        "backend": ["hls"],
+        "op": ["Add"],
+        "lhs_dtype": ["INT8"],
+        "rhs_dtype": ["INT8"],
+        "shape": [[1,8,8,32]],
+        "rhs_bcast": ["channel"],
+        "pe": [4],
+        "mem_mode": ["internal_embedded"],
+        "ram_style": ["auto"],
+        "instrumentation_no_dma": [true],
+        "store_results_in_dvc_data": [true],
         "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]
     },
 ]

@@ -219,14 +219,42 @@ class QoREstimator:
         prediction = float(self.pipeline.predict(features[self.feature_cols])[0])
         return int(round(prediction)) if self.is_integer_target else prediction
 
+    def covers(self, features: pd.DataFrame) -> bool:
+        """Whether every categorical feature value of ``features`` occurred in the training
+        data (recorded in the metadata at fit time). Values outside the training categories
+        would be one-hot encoded as all-zeros, i.e. silently extrapolated; callers should
+        fall back to the analytical estimate instead. Always True for models without the
+        recorded categories (fitted with an older version)."""
+        categories = self.metadata.get("categories")
+        if not categories:
+            return True
+        for col, allowed in categories.items():
+            if col not in features.columns:
+                return False
+            value = features[col].iloc[0]
+            key = (
+                "None"
+                if value is None or (isinstance(value, float) and np.isnan(value))
+                else str(value)
+            )
+            if key not in allowed:
+                return False
+        return True
+
     def _fit_metadata(self, df: pd.DataFrame) -> dict[str, Any]:
         """Describe the fitted pipeline and its training data for the JSON sidecar."""
         regressor = self.pipeline.named_steps["regressor"]
+        categorical = self.categorical_cols(df)
         return {
             "operator": self.operator,
             "target": self.target,
             "feature_cols": self.feature_cols,
-            "categorical_cols": self.categorical_cols(df),
+            "categorical_cols": categorical,
+            # observed values per categorical column (None as "None"), see covers()
+            "categories": {
+                c: sorted({"None" if pd.isna(v) else str(v) for v in df[c].tolist()})
+                for c in categorical
+            },
             "regressor": type(regressor).__name__,
             "regressor_params": _jsonable(regressor.get_params()),
             "n_samples": int(len(df)),

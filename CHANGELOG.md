@@ -14,6 +14,10 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
     - `step_generate_estimate_reports` writes `estimate_layer_resources_empirical.json` and `estimate_power_empirical.json` if `FINN_QOR_MODEL_DIR` points to fitted models
     - CI scripts `ci/qor/fit_estimators.py` (refit models whenever microbenchmark results are added) and `ci/qor/end2end_report.py` (figures/tables comparing estimates with measured results)
     - See [QoR README](src/finn/qor/README.md); new core dependencies `scikit-learn` and `matplotlib`
+- **Microbenchmarks for more operators**: single-operator microbenchmark DUTs (`finn.benchmarking.dut.*`, base class `MicrobenchDUT`) and QoR feature specs for Thresholding, ConvolutionInputGenerator (SWG), VVAU, StreamingFIFO, StreamingDataWidthConverter, Pool, FMPadding and elementwise Add/Mul in addition to the MVAU
+    - Each DUT has a pure `validate()` and a declarative `param_space()` for random sampling; `dut_info.json` records the generated node (`dut_node_name`) so `ci/collect/collect.py` extracts per-operator post-synthesis resources generically
+    - Node feature extractors are registered per operator (`@register_node_features`); models fall back to the analytical estimate for categorical feature values not covered by the training data
+    - New pytest marker `qor` (`tests/qor/`), smoke configurations in `ci/cfg/microbenchmark_basic.yml`
 
 ## 1.5.0 - 05.09.2026
 
