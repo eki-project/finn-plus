@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import os
+import pandas as pd
 import sys
 from pathlib import Path
 
@@ -28,14 +29,14 @@ from finn.qor.database import DATABASE_ENV_VAR, load_microbenchmark_database
 from finn.qor.estimator import (
     DEFAULT_TARGETS,
     MODEL_DIR_ENV_VAR,
-    REGRESSOR_GRID,
-    REGRESSOR_GRID_QUICK,
     RESOURCE_TARGET_PREFIX,
     RESOURCE_TARGETS,
     QoREstimator,
+    available_regressor_grid,
     has_enough_signal,
     learning_curve,
     model_basename,
+    regressor_name,
     select_regressor,
     target_signal,
 )
@@ -43,7 +44,10 @@ from finn.qor.evaluation import (
     dataframe_to_markdown,
     estimation_error_table,
     plot_learning_curve,
+    plot_pareto_front,
     plot_regressor_comparison,
+    symbolic_equation_markdown,
+    write_symbolic_equation_tex,
 )
 from finn.qor.features import SPECS
 
@@ -104,6 +108,34 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--quick", action="store_true", help="use a tiny regressor grid")
     parser.add_argument(
+        "--regressors",
+        default=None,
+        help="comma-separated regressor names to evaluate (default: all available)",
+    )
+    parser.add_argument(
+        "--skip-regressors", default=None, help="comma-separated regressor names to leave out"
+    )
+    parser.add_argument(
+        "--list-regressors",
+        action="store_true",
+        help="print the available regressors and their optional dependencies, then exit",
+    )
+    parser.add_argument(
+        "--subset",
+        action="append",
+        default=[],
+        metavar="COLUMN=VALUE",
+        help="only use database rows with COLUMN == VALUE (repeatable, e.g. "
+        "params.backend=hls for a per-backend symbolic formula); implies --no-store",
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="REGRESSOR.param=JSON",
+        help="override one grid list, e.g. SymbolicRegressor.regressor__niterations=[100]",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="store the new model even if the stored one scores better",
@@ -125,9 +157,57 @@ def stored_score(model_dir: str, operator: str, target: str, scoring: str) -> fl
     return meta.get("cv_score")
 
 
+def _parse_value(text: str):
+    """Parse a CLI value as JSON, falling back to the raw string."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+def apply_grid_overrides(grid, overrides: list[str]):
+    """Apply ``REGRESSOR.param=JSON`` overrides to the grid entries (in place, returned)."""
+    for item in overrides:
+        key, _, value = item.partition("=")
+        name, _, param = key.partition(".")
+        if not param or not value:
+            raise ValueError(f"--set expects REGRESSOR.param=JSON, got {item!r}")
+        parsed = _parse_value(value)
+        if not isinstance(parsed, list):
+            parsed = [parsed]
+        matched = False
+        for reg_cls, param_grid in grid:
+            if regressor_name(reg_cls) == name:
+                param_grid[param] = parsed
+                matched = True
+        if not matched:
+            raise ValueError(f"--set: no regressor named {name!r} in the grid")
+    return grid
+
+
+def _float_or_none(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if value != value else value  # NaN -> None (JSON)
+
+
 def main() -> int:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    if args.list_regressors:
+        from finn.qor.models import dependency_status
+
+        for reg_cls, param_grid in available_regressor_grid(quick=False):
+            n_combinations = 1
+            for values in param_grid.values():
+                n_combinations *= len(values)
+            print(f"{regressor_name(reg_cls)}: {n_combinations} parameter combinations")
+        for name, reason in dependency_status().items():
+            if reason:
+                print(f"{name}: not available ({reason})")
+        return 0
     if not args.database:
         logger.error("No database given (--database or $%s)", DATABASE_ENV_VAR)
         return 2
@@ -136,7 +216,21 @@ def main() -> int:
         return 2
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    grid = REGRESSOR_GRID_QUICK if args.quick else REGRESSOR_GRID
+    include = args.regressors.split(",") if args.regressors else None
+    exclude = args.skip_regressors.split(",") if args.skip_regressors else None
+    grid = apply_grid_overrides(available_regressor_grid(args.quick, include, exclude), args.set)
+    logger.info("Regressors: %s", [regressor_name(cls) for cls, _ in grid])
+    column_filters = {}
+    for item in args.subset:
+        key, _, value = item.partition("=")
+        column_filters[key] = _parse_value(value)
+    if column_filters:
+        logger.info("Fitting on the subset %s (models are not stored)", column_filters)
+        args.no_store = True
+    subset_suffix = "".join(
+        "__" + "".join(c if c.isalnum() else "_" for c in f"{k}_{v}")
+        for k, v in column_filters.items()
+    )
     cv_kwargs = dict(cv=args.cv, n_repeats=args.n_repeats, n_jobs=args.n_jobs, grid=grid)
     summary: dict[str, dict] = {}
     failures = 0
@@ -149,6 +243,7 @@ def main() -> int:
                 args.database,
                 exclude_commit=args.exclude_commit,
                 exclude_pipeline_id=args.exclude_pipeline_id,
+                **column_filters,
             )
         except (FileNotFoundError, ValueError) as e:
             logger.warning("%s: no database entries (%s), skipping", operator, e)
@@ -178,9 +273,27 @@ def main() -> int:
                 failures += 1
                 continue
 
-            base = out_dir / model_basename(operator, target)
+            base = out_dir / (model_basename(operator, target) + subset_suffix)
             result.scores.to_csv(f"{base}_selection.csv")
             plot_regressor_comparison(result, f"{base}_regressors.png")
+            if result.cv_results:
+                pd.concat(result.cv_results.values(), ignore_index=True).to_csv(
+                    f"{base}_cv_results.csv", index=False
+                )
+            oof = pd.DataFrame({"y_true": estimator.rows_with_target(df)[target].values})
+            for reg, errors in result.sample_errors.items():
+                oof[reg] = errors["y_pred"].values
+            oof.to_csv(f"{base}_oof_predictions.csv", index=False)
+            equation = estimator.metadata.get("equation")
+            if equation is not None:
+                Path(f"{base}_equation.md").write_text(symbolic_equation_markdown(equation))
+                write_symbolic_equation_tex(equation, f"{base}_equation.tex")
+                plot_pareto_front(equation, f"{base}_pareto.png")
+            timing_cols = [
+                c
+                for c in ("fit_time_s", "search_time_s", "single_predict_ms")
+                if c in result.scores
+            ]
             entry = {
                 "status": "ok",
                 "database": str(stats),
@@ -192,7 +305,18 @@ def main() -> int:
                 "fold_mae": float(result.scores.loc[result.best_name, "fold_mae"]),
                 "zero_hit_rate": float(result.scores.loc[result.best_name, "zero_hit_rate"]),
                 "target_signal": signal,
+                "regressors": {
+                    reg: {
+                        "mean_score": _float_or_none(row.get("mean_score")),
+                        "fold_mape": _float_or_none(row.get("fold_mape")),
+                        "fold_mae": _float_or_none(row.get("fold_mae")),
+                        **{c: _float_or_none(row.get(c)) for c in timing_cols},
+                    }
+                    for reg, row in result.scores.iterrows()
+                },
             }
+            if equation is not None:
+                entry["equation"] = {k: equation[k] for k in ("sympy", "complexity", "loss")}
 
             # Compare out-of-fold predictions of the new model with the analytical estimates
             if target in REFERENCE_ESTIMATES:

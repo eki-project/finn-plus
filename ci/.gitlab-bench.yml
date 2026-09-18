@@ -285,20 +285,62 @@ QoR Model Fitting:
       when: always
   needs:
     - job: Result Collection
+  timeout: 4h
   script:
     # Isolated venv: the runner's system packages are outdated (e.g. jinja2) and the
-    # scikit-learn version must match pyproject.toml so the pickled models load in builds
+    # scikit-learn version must match pyproject.toml so the pickled models load in builds.
+    # torch (CPU wheel) enables the tabular transformer; symbolic regression (PySR/Julia)
+    # runs in the separate manual job below because of its runtime.
     - python3.10 -m venv qor-venv
-    - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9'
+    - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14'
+    - qor-venv/bin/pip install --quiet 'torch==2.12.0' --index-url https://download.pytorch.org/whl/cpu
     - |
       export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
       export FINN_QOR_MODEL_DIR=$LOCAL_QOR_MODEL_DIR_STORE
-      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_fit_artifacts
+      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_fit_artifacts --skip-regressors SymbolicRegressor
   artifacts:
     name: "qor_fit_artifacts"
     when: always
     paths:
       - qor_fit_artifacts/
+
+# Symbolic regression (PySR) of the QoR targets: interpretable formulas for the paper, not
+# stored as models. Manual because of the runtime (hours) and the Julia dependency; the Julia
+# depot is kept on the runner (LOCAL_QOR_JULIA_DEPOT) so only the first run installs it.
+QoR Symbolic Regression:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: qor
+  tags:
+    - image_build
+  rules:
+    - if: $BENCH_CFG =~ /^microbenchmark/ || $MANUAL_CFG_PATH =~ /microbenchmark/
+      when: manual
+      allow_failure: true
+  needs:
+    - job: Result Collection
+  timeout: 8h
+  script:
+    - python3.10 -m venv qor-venv
+    - qor-venv/bin/pip install --quiet 'scikit-learn~=1.7.2' 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'sympy~=1.14' 'pysr~=2.4'
+    - |
+      export FINN_MICROBENCHMARK_DATABASE=$LOCAL_BENCHMARK_DIR_STORE
+      export JULIA_DEPOT_PATH=$LOCAL_QOR_JULIA_DEPOT
+      export PYTHON_JULIAPKG_PROJECT=$LOCAL_QOR_JULIA_DEPOT/pyjuliapkg
+      export PYTHON_JULIACALL_THREADS=auto
+      mkdir -p $LOCAL_QOR_JULIA_DEPOT
+      # the first import installs Julia and SymbolicRegression.jl into the depot
+      qor-venv/bin/python -c "import pysr; print(pysr.__version__)"
+      qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_symbolic_artifacts --regressors SymbolicRegressor --no-store
+      for backend in hls rtl; do
+        qor-venv/bin/python ci/qor/fit_estimators.py --output-dir qor_symbolic_artifacts --regressors SymbolicRegressor --operators mvau --targets metrics.synth.resources.LUT --subset params.backend=$backend || true
+      done
+  artifacts:
+    name: "qor_symbolic_artifacts"
+    when: always
+    paths:
+      - qor_symbolic_artifacts/
 
 QoR End2End Report:
   id_tokens:

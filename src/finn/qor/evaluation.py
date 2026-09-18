@@ -59,8 +59,10 @@ def plot_regressor_comparison(result: "SelectionResult", out_path: str) -> None:
     scores = result.scores.dropna(subset=["mean_score"])
     names = list(scores.index)
     x = np.arange(len(names))
+    with_timing = {"fit_time_s", "single_predict_ms"} <= set(scores.columns)
 
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
+    fig, axes = plt.subplots(1, 4 if with_timing else 3, figsize=(26 if with_timing else 20, 5))
+    ax1, ax2, ax3 = axes[:3]
     best_err = [
         scores["mean_score"] - scores["min_fold_score"],
         scores["max_fold_score"] - scores["mean_score"],
@@ -95,6 +97,22 @@ def plot_regressor_comparison(result: "SelectionResult", out_path: str) -> None:
     ax3.set_title("Out-of-fold per-sample absolute error")
     ax3.tick_params(axis="x", rotation=45)
     ax3.grid(True, axis="y", alpha=0.3)
+
+    if with_timing:
+        ax4 = axes[3]
+        ax4.bar(x - 0.2, scores["fit_time_s"].clip(lower=1e-4), 0.4, label="Fit time (s)")
+        ax4.bar(
+            x + 0.2,
+            (scores["single_predict_ms"] / 1e3).clip(lower=1e-6),
+            0.4,
+            label="Single prediction (s)",
+        )
+        ax4.set_yscale("log")
+        ax4.set_xticks(x)
+        ax4.set_xticklabels(names, rotation=45, ha="right")
+        ax4.set_title("Cost (best parameter set)")
+        ax4.legend()
+        ax4.grid(True, axis="y", alpha=0.3)
 
     fig.suptitle(f"Regressor comparison, best: {result.best_name}")
     fig.tight_layout()
@@ -431,3 +449,60 @@ def end2end_results_table(
     table.columns = pd.MultiIndex.from_tuples(table.columns)
     table.index.name = "Model"
     return table
+
+
+def symbolic_equation_markdown(equation: dict[str, Any]) -> str:
+    """Markdown rendering of a symbolic regression result (as stored in the model sidecar
+    under ``equation``): variables, sympy form, LaTeX and the Pareto front."""
+    lines = [
+        "# Symbolic regression result",
+        "",
+        f"Variables: {', '.join(equation.get('variables', []))}",
+        "",
+        "Selected expression (complexity {}, loss {:.4g}):".format(
+            equation.get("complexity", "?"), float(equation.get("loss", float("nan")))
+        ),
+        "",
+        "```",
+        str(equation.get("sympy", "")),
+        "```",
+        "",
+        "$$" + str(equation.get("latex", "")) + "$$",
+        "",
+        "PySR form: `" + str(equation.get("pysr", "")) + "`",
+        "",
+    ]
+    front = equation.get("pareto_front") or []
+    if front:
+        lines += ["## Pareto front", "", dataframe_to_markdown(pd.DataFrame(front), "{:.4g}")]
+    return "\n".join(lines) + "\n"
+
+
+def write_symbolic_equation_tex(equation: dict[str, Any], out_path: str) -> None:
+    """Write the LaTeX form of a symbolic regression result (for inclusion in a paper)."""
+    with open(out_path, "w") as f:
+        f.write(str(equation.get("latex", "")) + "\n")
+
+
+def plot_pareto_front(equation: dict[str, Any], out_path: str) -> None:
+    """Loss vs. complexity of all expressions found by a symbolic regression run, with the
+    selected expression highlighted."""
+    front = pd.DataFrame(equation.get("pareto_front") or [])
+    if front.empty:
+        return
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    ax.plot(front["complexity"], front["loss"], marker="o", label="Pareto front")
+    selected = front[front["complexity"] == equation.get("complexity")]
+    if not selected.empty:
+        ax.plot(
+            selected["complexity"], selected["loss"], marker="*", ms=16, ls="", label="Selected"
+        )
+    ax.set_yscale("log")
+    ax.set_xlabel("Expression complexity")
+    ax.set_ylabel("Loss")
+    ax.set_title("Symbolic regression Pareto front")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)

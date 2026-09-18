@@ -33,6 +33,11 @@ finn build ──step_generate_estimate_reports──▶  estimate_layer_resourc
   grid, cross-validated model selection and learning-curve evaluation.
 - `evaluation.py` – plots and tables (regressor comparison, estimator accuracy, end2end
   resource breakdowns).
+- `models/` – additional scikit-learn compatible regressors: log-target gradient boosting
+  and MLP (always available), `TabTransformerRegressor` (FT-Transformer style tabular
+  transformer, needs torch) and `SymbolicRegressor` (PySR symbolic regression; needs pysr +
+  Julia to fit, only sympy to predict). `available_regressor_grid()` adds those whose
+  dependencies are importable to the base grid.
 - `finn.analysis.fpgadataflow.empirical_qor_estimation` – node-to-feature extractors
   (registered per operator with `@register_node_features`) and the analysis passes
   `empirical_res_estimation` / `empirical_power_estimation` (these are the only parts that
@@ -95,6 +100,31 @@ Versal-only backends or two-stream elementwise operations.
   hierarchy level from `post_synth_resources.json` and logs the resources of any other
   (unexpectedly inserted) nodes under `synth/resources_extra/`.
 - Stream widths are limited to 1024 bits by the instrumentation shell.
+
+## Model zoo
+
+`fit_estimators.py` evaluates every regressor of `available_regressor_grid()` by cross-validated
+grid search and records, per regressor, the score, fold-wise MAPE/MAE/RMSE, out-of-fold
+per-sample errors (`*_oof_predictions.csv`), the full `cv_results_` (`*_cv_results.csv`) and
+the cost (fit time, grid-search time, single-prediction latency), so accuracy and cost can be
+compared fairly. `--regressors`/`--skip-regressors` select models by name, `--list-regressors`
+shows what is available, `--set REGRESSOR.param=JSON` overrides a grid list.
+
+| Regressor | Dependencies | Notes |
+|---|---|---|
+| KNN, DecisionTree, RandomForest, GradientBoosting, HistGradientBoosting | scikit-learn | base grid |
+| `LogTargetHGBRegressor`, `LogTargetMLPRegressor` | scikit-learn | fitted on the sign-preserving log of the target (log-space MSE ≈ relative error); the MLP is the tuned neural baseline |
+| `TabTransformerRegressor` | torch (CPU is enough) | one token per preprocessed column, CLS pooling, early stopping; the pickle stores the weights as numpy arrays, so it is torch-version independent. `torch_threads=1` avoids oversubscription under GridSearchCV. Runs as `preferred_n_jobs=None` (process parallel). |
+| `SymbolicRegressor` | pysr + Julia (fit), sympy (predict) | PySR 2.x with `deterministic=True` (serial); numeric inputs are fed raw so the formula is in feature units, one-hot columns as 0/1 variables; `relative_weights` approximates a relative-error objective. Only the selected expression (sympy `srepr`) and the Pareto front are kept, so inference needs no Julia. The model sidecar gets an `equation` entry (variables, sympy, LaTeX, PySR form, Pareto front) and the fitting job writes `*_equation.md/.tex` and `*_pareto.png`. |
+
+Symbolic regression runs in the separate manual CI job `QoR Symbolic Regression` (hours;
+Julia depot cached on the runner in `LOCAL_QOR_JULIA_DEPOT`), overall and per backend
+(`--subset params.backend=hls`), without storing models. The regular `QoR Model Fitting` job
+installs torch (CPU) and skips the symbolic regressor.
+
+Future work: a graph neural network over the whole dataflow graph (cross-layer effects,
+shell overhead) needs graph-level ground truth beyond the handful of end2end builds and is
+not part of the per-operator zoo.
 
 ## Growing the database: random sampling and the artifact exchange
 

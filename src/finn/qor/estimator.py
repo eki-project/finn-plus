@@ -17,23 +17,19 @@ import os
 import pandas as pd
 import pickle
 import sklearn
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from sklearn.base import BaseEstimator
+from joblib import Parallel, delayed
+from sklearn.base import BaseEstimator, clone
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import (
     GradientBoostingRegressor,
     HistGradientBoostingRegressor,
     RandomForestRegressor,
 )
-from sklearn.metrics import get_scorer, make_scorer, mean_squared_error
-from sklearn.model_selection import (
-    GridSearchCV,
-    RepeatedKFold,
-    cross_val_predict,
-    cross_validate,
-    train_test_split,
-)
+from sklearn.metrics import get_scorer, mean_squared_error
+from sklearn.model_selection import GridSearchCV, RepeatedKFold, train_test_split
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -71,9 +67,10 @@ def resource_target(res_type: str) -> str:
 
 RANDOM_STATE = 42
 
-#: Regressor classes and their hyperparameter grids for model selection.
-#: Linear models, SVR and MLPs were evaluated during development and perform poorly for
-#: this use case, so they are not included.
+#: Base regressor classes and their hyperparameter grids for model selection (tree
+#: ensembles and k-NN). Linear models and SVR perform poorly for this use case. Additional
+#: models (log-target boosting/MLP, tabular transformer, symbolic regression) live in
+#: :mod:`finn.qor.models` and are added by :func:`available_regressor_grid`.
 REGRESSOR_GRID: list[tuple[type[BaseEstimator], dict[str, list[Any]]]] = [
     (
         KNeighborsRegressor,
@@ -141,6 +138,37 @@ REGRESSOR_GRID_QUICK: list[tuple[type[BaseEstimator], dict[str, list[Any]]]] = [
 ]
 
 
+GridEntry = tuple[type[BaseEstimator], dict[str, list[Any]]]
+
+
+def regressor_name(reg_cls: type) -> str:
+    """Name under which a regressor class appears in selection results and CLI options."""
+    return reg_cls.__name__
+
+
+def available_regressor_grid(
+    quick: bool = False,
+    include: Optional[list[str]] = None,
+    exclude: Optional[list[str]] = None,
+) -> list[GridEntry]:
+    """The base grid plus the additional models of :mod:`finn.qor.models` whose runtime
+    dependencies are importable, optionally filtered by regressor name (unknown names in
+    ``include``/``exclude`` raise ValueError listing the known ones)."""
+    from finn.qor.models import optional_regressor_grid  # lazy: models import this module
+
+    grid = list(REGRESSOR_GRID_QUICK if quick else REGRESSOR_GRID) + optional_regressor_grid(quick)
+    known = [regressor_name(cls) for cls, _ in grid]
+    for names in (include, exclude):
+        unknown = [n for n in (names or []) if n not in known]
+        if unknown:
+            raise ValueError(f"Unknown regressor(s) {unknown}, known: {known}")
+    if include:
+        grid = [entry for entry in grid if regressor_name(entry[0]) in include]
+    if exclude:
+        grid = [entry for entry in grid if regressor_name(entry[0]) not in exclude]
+    return grid
+
+
 def default_scoring(target: str) -> str:
     """Scoring used for model selection: R^2 for power, relative error (MAPE) for LUTs and
     absolute error (MAE) for the zero-inflated DSP/BRAM/URAM counts, where a relative error
@@ -199,8 +227,10 @@ class QoREstimator:
 
     @property
     def feature_cols(self) -> list[str]:
-        """Feature columns of the operator spec, in the order fed to the pipeline."""
-        return self.spec.feature_cols
+        """Feature columns in the order fed to the pipeline: those recorded at fit time
+        (loaded models), else the operator spec's."""
+        recorded = self.metadata.get("feature_cols")
+        return list(recorded) if recorded else self.spec.feature_cols
 
     @property
     def is_integer_target(self) -> bool:
@@ -268,6 +298,16 @@ class QoREstimator:
             return int(round(max(prediction, 0.0)))
         return prediction
 
+    def check_runtime(self) -> None:
+        """Raise ImportError if a step of the fitted pipeline needs a missing dependency
+        (e.g. torch for the tabular transformer)."""
+        if self.pipeline is None:
+            return
+        for _, step in self.pipeline.steps:
+            check = getattr(step, "check_runtime", None)
+            if check is not None:
+                check()
+
     def covers(self, features: pd.DataFrame) -> bool:
         """Whether every categorical feature value of ``features`` occurred in the training
         data (recorded in the metadata at fit time). Values outside the training categories
@@ -294,7 +334,17 @@ class QoREstimator:
         """Describe the fitted pipeline and its training data for the JSON sidecar."""
         regressor = self.pipeline.named_steps["regressor"]
         categorical = self.categorical_cols(df)
+        extra: dict[str, Any] = {}
+        fit_info = getattr(regressor, "fit_info_", None)
+        if fit_info:
+            extra["regressor_info"] = _jsonable(fit_info)
+            for key in ("torch_version", "pysr_version"):
+                if key in fit_info:
+                    extra[key] = fit_info[key]
+        if hasattr(regressor, "expr_srepr_"):
+            extra["equation"] = self._equation_metadata(regressor)
         return {
+            **extra,
             "operator": self.operator,
             "target": self.target,
             "feature_cols": self.feature_cols,
@@ -316,6 +366,35 @@ class QoREstimator:
             "database_pipeline_ids": sorted(int(x) for x in df["pipeline_id"].dropna().unique())
             if "pipeline_id" in df.columns
             else [],
+        }
+
+    def _equation_metadata(self, regressor) -> dict[str, Any]:
+        """Symbolic regression result with the pipeline's feature names substituted (and
+        standardized numeric inputs unscaled), as sympy string, LaTeX and PySR form."""
+        import sympy
+
+        from finn.qor.models.symbolic import (
+            rename_expression,
+            sanitize_feature_names,
+            unscale_expression,
+        )
+
+        preprocessor = self.pipeline.named_steps["preprocessor"]
+        names = sanitize_feature_names(preprocessor.get_feature_names_out())
+        expr = rename_expression(regressor.sympy(), names)
+        num = preprocessor.named_transformers_.get("num")
+        scaler = num if isinstance(num, StandardScaler) else None
+        if scaler is not None and getattr(scaler, "mean_", None) is not None:
+            n_num = len(scaler.mean_)
+            expr = unscale_expression(expr, names[:n_num], scaler.mean_, scaler.scale_)
+        return {
+            "variables": names,
+            "sympy": str(expr),
+            "latex": sympy.latex(expr),
+            "pysr": regressor.equation_,
+            "complexity": regressor.complexity_,
+            "loss": regressor.loss_,
+            "pareto_front": regressor.pareto_front_,
         }
 
     def save(self, model_dir: str) -> tuple[str, str]:
@@ -346,7 +425,9 @@ class QoREstimator:
                 metadata.get("sklearn_version"),
                 sklearn.__version__,
             )
-        return cls(operator, target, pipeline=pipeline, metadata=metadata)
+        estimator = cls(operator, target, pipeline=pipeline, metadata=metadata)
+        estimator.check_runtime()
+        return estimator
 
     @staticmethod
     def available_models(model_dir: str) -> list[tuple[str, str]]:
@@ -386,6 +467,8 @@ class SelectionResult:
     sample_errors: dict[str, pd.DataFrame] = field(default_factory=dict)
     #: Per regressor: fold scores of the best parameter set.
     fold_scores: dict[str, np.ndarray] = field(default_factory=dict)
+    #: Per regressor: the complete GridSearchCV ``cv_results_`` (one row per parameter set).
+    cv_results: dict[str, pd.DataFrame] = field(default_factory=dict)
 
 
 def _mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -428,6 +511,54 @@ def _sample_errors(y_true: np.ndarray, y_pred: np.ndarray) -> pd.DataFrame:
     )
 
 
+def _oof_evaluate(
+    model: Pipeline, X: pd.DataFrame, y: np.ndarray, cv_obj, n_jobs: int
+) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Fit ``model`` on every CV split and evaluate on the held-out part: returns the
+    fold-wise MAPE/MAE/MSE/RMSE and the out-of-fold prediction of every sample (averaged
+    over repeats for RepeatedKFold)."""
+
+    def one(train_idx, test_idx):
+        fitted = clone(model).fit(X.iloc[train_idx], y[train_idx])
+        pred = np.asarray(fitted.predict(X.iloc[test_idx]), dtype=float)
+        y_test = y[test_idx]
+        return (
+            test_idx,
+            pred,
+            {
+                "mape": _mape(y_test, pred),
+                "mae": _mae(y_test, pred),
+                "mse": float(mean_squared_error(y_test, pred)),
+                "rmse": _rmse(y_test, pred),
+            },
+        )
+
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(one)(train_idx, test_idx) for train_idx, test_idx in cv_obj.split(X)
+    )
+    y_pred = np.zeros(len(y))
+    counts = np.zeros(len(y))
+    folds: dict[str, list[float]] = {"mape": [], "mae": [], "mse": [], "rmse": []}
+    for test_idx, pred, metrics in results:
+        y_pred[test_idx] += pred
+        counts[test_idx] += 1
+        for key, value in metrics.items():
+            folds[key].append(value)
+    y_pred = y_pred / np.maximum(counts, 1)
+    return {k: np.array(v) for k, v in folds.items()}, y_pred
+
+
+def _single_predict_ms(model: Pipeline, X: pd.DataFrame, repeats: int = 20) -> float:
+    """Median wall time of predicting one sample (the per-node cost in a build), in ms."""
+    row = X.iloc[[0]]
+    times = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        model.predict(row)
+        times.append((time.perf_counter() - start) * 1e3)
+    return float(np.median(times))
+
+
 def select_regressor(
     estimator: QoREstimator,
     df: pd.DataFrame,
@@ -440,11 +571,13 @@ def select_regressor(
     """Grid-search all regressors in ``grid`` and pick the best one by cross-validated score.
 
     For each regressor, GridSearchCV tunes the hyperparameters with a RepeatedKFold split. The
-    best parameter set is additionally evaluated with fold-wise MAPE/MSE/RMSE and out-of-fold
-    per-sample errors, so that regressors can be compared beyond the primary score. Regressors
-    that fail are recorded with NaN scores instead of aborting the selection. The winning
-    pipeline is stored in ``estimator`` (with updated metadata) and returned. Samples without
-    a target value are ignored.
+    best parameter set is additionally evaluated with fold-wise MAPE/MAE/MSE/RMSE and
+    out-of-fold per-sample errors, so that regressors can be compared beyond the primary
+    score, and its fit/predict wall times are recorded (cost vs. accuracy). Regressors that
+    fail are recorded with NaN scores instead of aborting the selection. Regressors may set
+    ``preferred_n_jobs`` (e.g. 1 for PySR, whose Julia runtime must not be forked). The
+    winning pipeline is stored in ``estimator`` (with updated metadata) and returned. Samples
+    without a target value are ignored.
     """
     scoring = scoring or default_scoring(estimator.target)
     grid = grid if grid is not None else REGRESSOR_GRID
@@ -453,24 +586,25 @@ def select_regressor(
     y = df[estimator.target].values
     cv_obj = RepeatedKFold(n_splits=cv, n_repeats=n_repeats, random_state=RANDOM_STATE)
     n_splits = cv_obj.get_n_splits()
-    extra_scorers = {
-        "mape": make_scorer(_mape, greater_is_better=False),
-        "mae": make_scorer(_mae, greater_is_better=False),
-        "mse": make_scorer(mean_squared_error, greater_is_better=False),
-        "rmse": make_scorer(_rmse, greater_is_better=False),
-    }
 
     rows = []
     sample_errors: dict[str, pd.DataFrame] = {}
     fold_scores: dict[str, np.ndarray] = {}
+    cv_results: dict[str, pd.DataFrame] = {}
     best: Optional[tuple[float, str, Pipeline]] = None
     for reg_cls, param_grid in grid:
-        name = reg_cls.__name__
+        name = regressor_name(reg_cls)
+        n_jobs_eff = getattr(reg_cls, "preferred_n_jobs", None) or n_jobs
         try:
             pipeline = estimator.build_pipeline(reg_cls(), df)
-            search = GridSearchCV(pipeline, param_grid, cv=cv_obj, scoring=scoring, n_jobs=n_jobs)
+            search = GridSearchCV(
+                pipeline, param_grid, cv=cv_obj, scoring=scoring, n_jobs=n_jobs_eff
+            )
+            t_search = time.perf_counter()
             search.fit(X, y)
+            search_time = time.perf_counter() - t_search
             res = search.cv_results_
+            cv_results[name] = pd.DataFrame(res).assign(regressor=name)
             best_idx, worst_idx = search.best_index_, int(np.argmin(res["mean_test_score"]))
             best_folds = np.array([res[f"split{i}_test_score"][best_idx] for i in range(n_splits)])
             worst_folds = np.array(
@@ -478,8 +612,9 @@ def select_regressor(
             )
             model = search.best_estimator_
 
-            extra = cross_validate(model, X, y, cv=cv_obj, scoring=extra_scorers, n_jobs=n_jobs)
-            y_pred = cross_val_predict(model, X, y, cv=cv_obj, n_jobs=n_jobs)
+            t_oof = time.perf_counter()
+            folds, y_pred = _oof_evaluate(model, X, y, cv_obj, n_jobs_eff)
+            oof_time = time.perf_counter() - t_oof
             sample_errors[name] = _sample_errors(y, y_pred)
             fold_scores[name] = best_folds
             rows.append(
@@ -492,15 +627,22 @@ def select_regressor(
                     "worst_mean_score": res["mean_test_score"][worst_idx],
                     "worst_min_fold_score": worst_folds.min(),
                     "worst_max_fold_score": worst_folds.max(),
-                    "fold_mape": float(np.nanmean(-extra["test_mape"])),
-                    "fold_mae": float(np.mean(-extra["test_mae"])),
-                    "fold_mse": float(np.mean(-extra["test_mse"])),
-                    "fold_rmse": float(np.mean(-extra["test_rmse"])),
+                    "fold_mape": float(np.nanmean(folds["mape"])),
+                    "fold_mae": float(np.mean(folds["mae"])),
+                    "fold_mse": float(np.mean(folds["mse"])),
+                    "fold_rmse": float(np.mean(folds["rmse"])),
                     "sample_mape": float(np.nanmean(sample_errors[name]["abs_pct_error"])),
                     "sample_mae": float(np.mean(sample_errors[name]["abs_error"])),
                     "zero_hit_rate": _zero_hit_rate(y, y_pred),
                     "n_param_combinations": len(res["params"]),
                     "best_params": json.dumps(_jsonable(search.best_params_)),
+                    # cost: mean fit/score time of the best parameter set (one fold), the
+                    # whole grid search, the out-of-fold pass and a single prediction
+                    "fit_time_s": float(res["mean_fit_time"][best_idx]),
+                    "predict_time_s": float(res["mean_score_time"][best_idx]),
+                    "search_time_s": search_time,
+                    "oof_time_s": oof_time,
+                    "single_predict_ms": _single_predict_ms(model, X),
                 }
             )
             logger.info(
@@ -515,7 +657,7 @@ def select_regressor(
                 best = (search.best_score_, name, model)
         except Exception as e:  # noqa: BLE001 - one failing regressor must not abort selection
             logger.warning("%s failed: %s", name, e)
-            rows.append({"regressor": name, "mean_score": np.nan})
+            rows.append({"regressor": name, "mean_score": np.nan, "error": str(e)})
 
     if best is None:
         raise RuntimeError("All regressors failed during model selection")
@@ -533,6 +675,7 @@ def select_regressor(
         scores=pd.DataFrame(rows).set_index("regressor"),
         sample_errors=sample_errors,
         fold_scores=fold_scores,
+        cv_results=cv_results,
     )
 
 
@@ -582,11 +725,12 @@ def learning_curve(
         subset = train_df.sample(n=n_train, random_state=RANDOM_STATE)
         X_train, y_train = subset[estimator.feature_cols], subset[estimator.target].values
         for reg_cls, param_grid in grid:
-            name = reg_cls.__name__
+            name = regressor_name(reg_cls)
+            n_jobs_eff = getattr(reg_cls, "preferred_n_jobs", None) or n_jobs
             try:
                 pipeline = estimator.build_pipeline(reg_cls(), df)
                 search = GridSearchCV(
-                    pipeline, param_grid, cv=cv_obj, scoring=scoring, n_jobs=n_jobs
+                    pipeline, param_grid, cv=cv_obj, scoring=scoring, n_jobs=n_jobs_eff
                 )
                 search.fit(X_train, y_train)
                 results[frac][name] = float(scorer(search.best_estimator_, X_test, y_test))
