@@ -29,18 +29,21 @@
 """Floorplanning transformation for dataflow graphs."""
 
 import json
+from pathlib import Path
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.util.basic import get_by_name
 
 from finn.analysis.fpgadataflow.floorplan_params import floorplan_params
 from finn.transformation.general import ApplyConfig
-from finn.util.basic import make_build_dir
+from finn.util.basic import get_metadata_prop_path, make_build_dir
 from finn.util.logging import log
 
 
 class Floorplan(Transformation):
-    """Perform Floorplanning of the dataflow design:
+    """Perform Floorplanning of the dataflow design.
+
 
     floorplan: path to a JSON containing a dictionary with SLR assignments
                for each node in the ONNX graph. Must be parse-able by
@@ -53,12 +56,12 @@ class Floorplan(Transformation):
 
     """
 
-    def __init__(self, floorplan=None):
+    def __init__(self, floorplan: str | None = None) -> None:
         """Initialize the transform with an optional floorplan file."""
         super().__init__()
         self.user_floorplan = floorplan
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply floorplanning and partition assignment to the model."""
         # read in a user-specified floorplan or generate a default one
         if self.user_floorplan is None:
@@ -66,7 +69,7 @@ class Floorplan(Transformation):
             json_dir = make_build_dir(prefix="vitis_floorplan_")
             json_file = json_dir + "/floorplan.json"
             model.set_metadata_prop("floorplan_json", json_file)
-            with open(json_file, "w") as f:
+            with Path(json_file).open("w") as f:
                 json.dump(self.user_floorplan, f, indent=4)
         else:
             model.set_metadata_prop("floorplan_json", self.user_floorplan)
@@ -217,7 +220,7 @@ class Floorplan(Transformation):
 
         # save the updated floorplan
         floorplan = model.analysis(floorplan_params)
-        with open(model.get_metadata_prop("floorplan_json"), "w") as f:
+        with get_metadata_prop_path(model, "floorplan_json", False).open("w") as f:
             json.dump(floorplan, f, indent=4)
 
         return (model, False)

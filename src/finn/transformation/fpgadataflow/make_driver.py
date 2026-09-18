@@ -30,7 +30,6 @@
 
 import json
 import numpy as np
-import os
 import shlex
 import shutil
 import subprocess
@@ -92,6 +91,7 @@ class MakeCPPDriver(Transformation):
     """
 
     # TODO: Enable multiple input types! Now only assumes the first one
+    @staticmethod
     def resolve_dt_name(s: str) -> str:
         """Resolve datatype name for C++ driver code generation.
 
@@ -122,7 +122,7 @@ class MakeCPPDriver(Transformation):
         platform: str,
         version: str,
         host_mem: str,
-    ):
+    ) -> None:
         """Initialize MakeCPPDriver transformation.
 
         Args:
@@ -187,7 +187,7 @@ class MakeCPPDriver(Transformation):
                 print(result.stdout)
         except subprocess.CalledProcessError as e:
             raise FINNInternalError(
-                f"Error running command: {command}\n" f"Output:{e.stdout}; Error:{e.stderr}"
+                f"Error running command: {command}\nOutput:{e.stdout}; Error:{e.stderr}"
             ) from e
 
     def configure_cmake(
@@ -272,18 +272,18 @@ class MakeCPPDriver(Transformation):
         if result.returncode != 0:
             log.critical(f"Build failed with error:\n{result.stderr}")
             raise FINNInternalError(
-                f"Failed cmake build. Stdout: " f"{result.stdout}; stderr: {result.stderr}"
+                f"Failed cmake build. Stdout: {result.stdout}; stderr: {result.stderr}"
             )
 
     def check_finn_types(
-        self, bin_dir: Path, expectedInputType: str, expectedOutputType: str
+        self, bin_dir: Path, expected_input_type: str, expected_output_type: str
     ) -> None:
         """Verify that compiled driver's datatypes match expected types.
 
         Args:
             bin_dir: Directory containing the finnhpc executable.
-            expectedInputType: Expected input datatype string.
-            expectedOutputType: Expected output datatype string.
+            expected_input_type: Expected input datatype string.
+            expected_output_type: Expected output datatype string.
 
         Raises:
             subprocess.CalledProcessError: If the datatype check command fails.
@@ -295,17 +295,20 @@ class MakeCPPDriver(Transformation):
         )
         if result.returncode != 0:
             raise FINNInternalError(
-                f"Failed datatype check. Stdout: " f"{result.stdout}; stderr: {result.stderr}"
+                f"Failed datatype check. Stdout: {result.stdout}; stderr: {result.stderr}"
             )
         output = result.stdout
         output_lines = output.splitlines()
 
         # Verify that the compiled driver's datatypes match the expected types
         # First line contains input type, second line contains output type
-        if expectedInputType not in output_lines[0] or expectedOutputType not in output_lines[1]:
+        if (
+            expected_input_type not in output_lines[0]
+            or expected_output_type not in output_lines[1]
+        ):
             log.error(
-                f"FINN types check failed. Expected Types: {expectedInputType},\
-                    {expectedOutputType}"
+                f"FINN types check failed. Expected Types: {expected_input_type},\
+                    {expected_output_type}"
             )
             log.error(f"                           Actual Types: {output}")
             raise FINNInternalError(
@@ -529,8 +532,8 @@ class MakeCPPDriver(Transformation):
         # Verify that the driver was compiled with the correct datatypes
         self.check_finn_types(
             bin_dir=cpp_driver_dir / "build" / "bin",
-            expectedInputType=input_datatype,
-            expectedOutputType=output_datatype,
+            expected_input_type=input_datatype,
+            expected_output_type=output_datatype,
         )
 
         # TODO: Generating weight files
@@ -585,14 +588,14 @@ class MakePYNQDriver(Transformation):
 
     def __init__(
         self,
-        platform,
-        driver_type,
-        clk_period_ns=None,
-        validation_datset=None,
-        experiment_info=None,
-        board=None,
-        multidnn_mode=None,
-    ):
+        platform: str,
+        driver_type: str,
+        clk_period_ns: float | None = None,
+        validation_datset: str | None = None,
+        experiment_info: str | None = None,
+        board: str | None = None,
+        multidnn_mode: str | None = None,
+    ) -> None:
         """Initialize PYNQ driver generation.
 
         Args:
@@ -602,6 +605,8 @@ class MakePYNQDriver(Transformation):
             clk_period_ns: Clock period in nanoseconds used for performance calculations.
             validation_datset: Validation dataset path or identifier.
             experiment_info: Path to a JSON file containing experiment metadata.
+            board: Board name recorded in the experiment metadata, if not already present.
+            multidnn_mode: Multi-DNN generation mode recorded in the driver settings.
         """
         super().__init__()
         self.platform = platform
@@ -612,7 +617,7 @@ class MakePYNQDriver(Transformation):
         self.board = board
         self.multidnn_mode = multidnn_mode
 
-    def _generate_driver_files(self, model):
+    def _generate_driver_files(self, model: ModelWrapper) -> None:
         """Create the deployment directory for the generated accelerator.
 
         Only accelerator-specific artifacts are written here (``settings.json`` and, if
@@ -623,7 +628,7 @@ class MakePYNQDriver(Transformation):
         pynq_driver_dir = make_build_dir(prefix="pynq_driver_")
         model.set_metadata_prop("pynq_driver_dir", pynq_driver_dir)
 
-    def _generate_weight_files(self, model):
+    def _generate_weight_files(self, model: ModelWrapper) -> tuple[dict, bool]:
         """Generate weight files for external and runtime-writable weights."""
         pynq_driver_dir = model.get_metadata_prop("pynq_driver_dir")
 
@@ -634,15 +639,16 @@ class MakePYNQDriver(Transformation):
         # generate external weights npy files
         weights_dir = pynq_driver_dir + "/runtime_weights"
 
-        os.makedirs(weights_dir)
+        Path(weights_dir).mkdir(parents=True)
         idma_idx = 0
         ext_weight_dma_cnt = 0
         ext_weight_shapes_dict = {}
 
         for node in model.graph.node:
-            assert (
-                node.op_type == "StreamingDataflowPartition"
-            ), "CreateDataflowPartition needs to be applied before driver generation"
+            if not (node.op_type == "StreamingDataflowPartition"):
+                raise FINNInternalError(
+                    "CreateDataflowPartition needs to be applied before driver generation"
+                )
 
             if len(node.input) > 0:
                 producer = model.find_producer(node.input[0])
@@ -655,7 +661,8 @@ class MakePYNQDriver(Transformation):
                 sdp_inst = getCustomOp(node)
                 idma_name = sdp_inst.get_nodeattr("instance_name")
                 df_model = ModelWrapper(sdp_inst.get_nodeattr("model"))
-                assert df_model.graph.node[0].op_type == "IODMA_hls"
+                if not (df_model.graph.node[0].op_type == "IODMA_hls"):
+                    raise FINNInternalError("Partition must start with an input IODMA_hls node")
                 iodma_node = getCustomOp(df_model.graph.node[0])
                 if iodma_node.get_nodeattr("burstMode") == "wrap":  # input weights dma?
                     external_weights = True
@@ -683,7 +690,8 @@ class MakePYNQDriver(Transformation):
         # generate weight files for runtime-writable layers
         # TODO verify
         for sdp_ind, sdp_node in enumerate(model.graph.node):
-            assert sdp_node.op_type == "StreamingDataflowPartition"
+            if not (sdp_node.op_type == "StreamingDataflowPartition"):
+                raise FINNInternalError("Expected a StreamingDataflowPartition node")
             # get dataflow model
             sdp_node = getCustomOp(sdp_node)
             dataflow_model_filename = sdp_node.get_nodeattr("model")
@@ -696,11 +704,7 @@ class MakePYNQDriver(Transformation):
                     if is_rt_weights == 1:
                         runtime_weights = True
                         fcl_w = dataflow_model.get_initializer(node.input[1])
-                        w_filename = weights_dir + "/%d_%d_%s.dat" % (
-                            sdp_ind,
-                            rt_layer_ind,
-                            node.name,
-                        )
+                        w_filename = weights_dir + f"/{sdp_ind}_{rt_layer_ind}_{node.name}.dat"
                         node_inst.make_weight_file(fcl_w, "decoupled_runtime", w_filename)
                         rt_layer_ind += 1
                 elif node.op_type == "StreamingDataflowPartition":
@@ -718,11 +722,11 @@ class MakePYNQDriver(Transformation):
             # files (those are now provided by the separately installed finn-plus-driver
             # package rather than being written into this directory). Deleting
             # pynq_driver_dir here would make the later settings.json write in apply() fail.
-            os.rmdir(weights_dir)
+            Path(weights_dir).rmdir()
 
         return external_weights_dict, runtime_weights
 
-    def _write_fifo_widths(self, model):
+    def _write_fifo_widths(self, model: ModelWrapper) -> dict:
         """Export FIFO widths to the settings file as well.
         At this stage, the FIFOs are already wrapped in StreamingDataflowPartitions."""
         settings = {}
@@ -742,13 +746,13 @@ class MakePYNQDriver(Transformation):
         # The follow-up build must reuse it so its FIFO node names match.
         folding_path = model.get_metadata_prop("folding_config")
         if folding_path:
-            with open(folding_path) as f:
+            with Path(folding_path).open() as f:
                 folding_cfg = json.load(f)
             settings["folding_config"] = folding_cfg
 
         return settings
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply the MakePYNQDriver transformation.
 
         Creates a PYNQ Python driver package for interfacing with the generated
@@ -768,7 +772,7 @@ class MakePYNQDriver(Transformation):
 
         experiment_information = {}
         if self.experiment_info is not None:
-            with open(self.experiment_info) as f:
+            with Path(self.experiment_info).open() as f:
                 experiment_information = json.load(f)
 
         driver_information["driver_type"] = self.driver_type
@@ -799,9 +803,12 @@ class MakePYNQDriver(Transformation):
         if self.validation_datset is not None:
             driver_information["validation_dataset"] = self.validation_datset
 
-        if "global" in experiment_information:
-            if self.board is not None and "board" not in experiment_information["global"]["PAF"]:
-                experiment_information["global"]["PAF"]["board"] = self.board
+        if (
+            "global" in experiment_information
+            and self.board is not None
+            and "board" not in experiment_information["global"]["PAF"]
+        ):
+            experiment_information["global"]["PAF"]["board"] = self.board
 
         if self.multidnn_mode is not None:
             driver_information["multidnn_mode"] = self.multidnn_mode
@@ -812,7 +819,7 @@ class MakePYNQDriver(Transformation):
         }
         pynq_driver_dir = model.get_metadata_prop("pynq_driver_dir")
         settingsfile = pynq_driver_dir + "/settings.json"
-        with open(settingsfile, "w") as f:
+        with Path(settingsfile).open("w") as f:
             json.dump(settings, f, indent=2)
 
         return (model, False)

@@ -567,8 +567,10 @@ class CreateStitchedIP(Transformation):
         for graph_input in model.graph.input:
             inp_name = graph_input.name
             inp_cons = model.find_consumers(inp_name)
-            assert inp_cons != [], f"No consumer for input {inp_name}"
-            assert len(inp_cons) == 1, f"Multiple consumers for input {inp_name}"
+            if not (inp_cons != []):
+                raise FINNInternalError(f"No consumer for input {inp_name}")
+            if not (len(inp_cons) == 1):
+                raise FINNInternalError(f"Multiple consumers for input {inp_name}")
             node = inp_cons[0]
             node_inst = getCustomOp(node)
             for i in range(len(node.input)):
@@ -577,7 +579,8 @@ class CreateStitchedIP(Transformation):
         for output in model.graph.output:
             out_name = output.name
             node = model.find_producer(out_name)
-            assert node is not None, f"No producer for output {out_name}"
+            if not (node is not None):
+                raise FINNInternalError(f"No producer for output {out_name}")
             node_inst = getCustomOp(node)
             for i in range(len(node.output)):
                 if node.output[i] == out_name:
@@ -590,18 +593,17 @@ class CreateStitchedIP(Transformation):
                 node_inst = getCustomOp(node)
                 inst_name = node.name
                 s_axis_intf_names = node_inst.get_verilog_top_module_intf_names()["s_axis"]
-                for i, (intf_name, width) in enumerate(s_axis_intf_names):
+                for intf_name, width in s_axis_intf_names:
                     if intf_name == "s_axis_tap":
                         self.connect_cmds.append(
-                            "make_bd_intf_pins_external [get_bd_intf_pins %s/%s]"
-                            % (inst_name, intf_name)
+                            f"make_bd_intf_pins_external [get_bd_intf_pins {inst_name}/{intf_name}]"
                         )
                         self.has_s_axis = True
                         self.connect_cmds.append(
-                            "set_property name %s_id_%d [get_bd_intf_ports %s_0]"
-                            % (intf_name, stap_id, intf_name)
+                            f"set_property name {intf_name}_id_{stap_id} "
+                            f"[get_bd_intf_ports {intf_name}_0]"
                         )
-                        self.intf_names["s_axis"].append(("s_axis_tap_id_%d" % stap_id, width))
+                        self.intf_names["s_axis"].append((f"s_axis_tap_id_{stap_id}", width))
                         stap_id += 1
 
         if self.signature:
@@ -666,7 +668,8 @@ class CreateStitchedIP(Transformation):
 
         model.set_metadata_prop("wrapper_filename", wrapper_filename)
         num_workers = get_num_default_workers()
-        assert num_workers >= 0, "Number of workers must be nonnegative."
+        if not (num_workers >= 0):
+            raise FINNInternalError("Number of workers must be nonnegative.")
         if num_workers == 0:
             num_workers = mp.cpu_count()
 

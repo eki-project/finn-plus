@@ -106,7 +106,7 @@ class PartitionForMultiFPGA(Transformation):
         self.cfg = cfg
         if self.cfg.partitioning_configuration is None:
             raise FINNMultiFPGAConfigError(
-                "Partitioning config is None, but " "'PartitionForMultiFPGA' was called. "
+                "Partitioning config is None, but 'PartitionForMultiFPGA' was called. "
             )
         self.pcfg: PartitioningConfiguration = cfg.partitioning_configuration  # type: ignore
         self.verbosity = self.pcfg.verbosity
@@ -163,8 +163,10 @@ class PartitionForMultiFPGA(Transformation):
             raise FINNInternalError(
                 "Cannot log post-solving information before the model was solved."
             )
-        assert self.cfg.partitioning_configuration is not None
-        assert self.cfg.board is not None
+        if not (self.cfg.partitioning_configuration is not None):
+            raise FINNInternalError("No partitioning_configuration set in the build configuration")
+        if not (self.cfg.board is not None):
+            raise FINNInternalError("No board set in the build configuration")
 
         s = ""
 
@@ -239,7 +241,8 @@ class PartitionForMultiFPGA(Transformation):
         ]:
             return s
 
-        assert mapping is not None
+        if not (mapping is not None):
+            raise FINNInternalError("No node-to-device mapping was produced by the partitioner")
         s += f"\n{' Nodes per Device ':=^80}\n"
         s += "=" * 80 + "\n"
         counter = Counter(list(mapping.values()))
@@ -328,7 +331,8 @@ class PartitionForMultiFPGA(Transformation):
                 solution_found = True
                 break
 
-        assert self.partitioner is not None  # for the type checker
+        if not (self.partitioner is not None):
+            raise FINNInternalError("Partitioner has not been initialized")
 
         # Store the model definition for debugging - only store the last try
         logdir = Path(make_build_dir("partitioning_model_data_"))

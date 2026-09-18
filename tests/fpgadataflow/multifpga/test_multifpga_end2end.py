@@ -28,7 +28,8 @@ execution environment with driver testing.
 # @pytest.mark.vivado
 # @pytest.mark.multifpga
 # @pytest.mark.parametrize(
-#     "fpgas,synth_clk_period_ns,target_fps,mvau_wwidth_max,folding_two_pass,max_util,communication_kernel,topology,partition_strategy",
+#     "fpgas,synth_clk_period_ns,target_fps,mvau_wwidth_max,folding_two_pass,max_util,"
+#     "communication_kernel,topology,partition_strategy",
 #     [
 #         pytest.param(
 #             2, 10.0, 100, 412, True, 0.85, MFCommunicationKernel.AURORA, MFTopology.CHAIN,

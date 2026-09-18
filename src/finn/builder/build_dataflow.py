@@ -183,15 +183,9 @@ def resolve_build_steps(
         else:
             raise FINNConfigurationError("Could not resolve build step: " + str(transform_step))
     if partial and list_as_input is None:
-        step_names = list(map(lambda x: x.__name__, steps_as_fxns))
-        if cfg.start_step is None:
-            start_ind = 0
-        else:
-            start_ind = step_names.index(cfg.start_step)
-        if cfg.stop_step is None:
-            stop_ind = len(step_names) - 1
-        else:
-            stop_ind = step_names.index(cfg.stop_step)
+        step_names = [x.__name__ for x in steps_as_fxns]
+        start_ind = 0 if cfg.start_step is None else step_names.index(cfg.start_step)
+        stop_ind = len(step_names) - 1 if cfg.stop_step is None else step_names.index(cfg.stop_step)
         steps_as_fxns = steps_as_fxns[start_ind : (stop_ind + 1)]
 
     # Add the exception snapshot decorator if needed
@@ -406,24 +400,16 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
 
         # If start_step is specified, override the input model
         if multidnn:
-            assert cfg.start_step is None, "Multi-DNN Mode currently does not support start_step"
+            if cfg.start_step is not None:
+                raise FINNUserError("Multi-DNN Mode currently does not support start_step")
             mdnn_config = MultiDNNConfig(cfg.multi_dnn_config_path)
             mdnn = MultiDNNWrapper(
-                {
-                    name: model
-                    for name, model in zip(
-                        mdnn_config.submodel_names,
-                        [
-                            mdnn_config.get_submodel_model(name)
-                            for name in mdnn_config.submodel_names
-                        ],
-                    )
-                }
+                {name: mdnn_config.get_submodel_model(name) for name in mdnn_config.submodel_names}
             )
         else:
             model = create_model_wrapper(model_filename, cfg)
 
-        time_per_step = dict()
+        time_per_step = {}
         step_num = 1
         if multidnn is False:
             # Start processing
@@ -440,10 +426,9 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
                 time_per_step[step_name] = round(step_end - step_start)
                 chkpt_name = f"{step_name}.onnx"
                 if cfg.save_intermediate_models:
-                    intermediate_model_dir = os.path.join(cfg.output_dir, "intermediate_models")
-                    if not os.path.exists(intermediate_model_dir):
-                        os.makedirs(intermediate_model_dir)
-                    model.save(os.path.join(intermediate_model_dir, chkpt_name))
+                    intermediate_model_dir = Path(cfg.output_dir) / "intermediate_models"
+                    intermediate_model_dir.mkdir(parents=True, exist_ok=True)
+                    model.save(str(intermediate_model_dir / chkpt_name))
                 step_num += 1
         else:
             steps = mdnn_config.get_steps()
@@ -463,10 +448,9 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
                 time_per_step[step_name] = round(step_end - step_start)
                 chkpt_name = f"{'_'.join(targets)}_{step_name}.onnx"
                 if cfg.save_intermediate_models:
-                    intermediate_model_dir = os.path.join(cfg.output_dir, "intermediate_models")
-                    if not os.path.exists(intermediate_model_dir):
-                        os.makedirs(intermediate_model_dir)
-                    mdnn.multi_model.save(os.path.join(intermediate_model_dir, chkpt_name))
+                    intermediate_model_dir = Path(cfg.output_dir) / "intermediate_models"
+                    intermediate_model_dir.mkdir(parents=True, exist_ok=True)
+                    mdnn.multi_model.save(str(intermediate_model_dir / chkpt_name))
                 step_num += 1
     except KeyboardInterrupt:
         print("KeyboardInterrupt detected. Aborting...")

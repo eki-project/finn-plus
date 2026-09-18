@@ -520,7 +520,7 @@ class AuroraPartitioner(Partitioner):
 
         else:
             raise FINNMultiFPGAConfigError(
-                f"Unknown partitioning strategy: " f"{self.pcfg.partition_strategy}"
+                f"Unknown partitioning strategy: {self.pcfg.partition_strategy}"
             )
 
     def create_result(self) -> dict[str, int]:

@@ -12,7 +12,7 @@
     "depth_trigger_uram": 2147483647,
     "depth_trigger_bram": 2147483647
   },
-  "ReplicateStream_hls_0": {
+  "DuplicateStreams_hls_0": {
     "PE": 1,
     "inFIFODepths": [
       2

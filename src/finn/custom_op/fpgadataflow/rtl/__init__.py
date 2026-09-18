@@ -1,4 +1,4 @@
-# Copyright (C) 2023, Advanced Micro Devices, Inc.
+# Copyright (C) 2024, Advanced Micro Devices, Inc.
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -25,70 +25,39 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""RTLBackend specializations of HWCustomOps."""
 
-from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+"""Registry for the ``finn.custom_op.fpgadataflow.rtl`` ONNX domain.
+
+Every ``*_rtl`` module in this package decorates its op class(es) with
+``@register_custom_op``; importing the submodule (below) is enough to make the
+op resolvable via ``qonnx.custom_op.registry``. There is no hand-maintained
+list of ops."""
+
+from finn.custom_op.fpgadataflow._registry import make_registry
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 
-custom_op = dict()
+# Dictionary of registered custom-op implementations (keyed by class name) and the
+# decorator that fills it. qonnx.custom_op.registry reads ``custom_op`` to resolve
+# nodes carrying this package's name as their ONNX domain.
+custom_op, register_custom_op = make_registry(RTLBackend)
 
+# flake8: noqa: E402, F401
+# ruff: noqa: E402, F401
+# Imports below are for their registration side effects and must follow the
+# make_registry call above.
 
-# Note: This must be defined first, before importing any custom op
-# implementation to avoid "importing partially initialized module" issues.
-def register_custom_op(cls):
-    """Registers a class into the custom_op dictionary"""
-    # The class must actually implement HWCustomOp
-    assert issubclass(cls, HWCustomOp), f"{cls} must subclass {HWCustomOp}"
-    # The class must also implement the RTLBackend
-    assert issubclass(cls, RTLBackend), f"{cls} must subclass {RTLBackend}"
-    # Insert the class into the custom_op dictionary by its name
-    custom_op[cls.__name__] = cls
-    # Pass through the class unmodified
-    return cls
-
-
-# flake8: noqa
-# Disable linting from here, as all import will be flagged E402 and maybe F401
-
+import finn.custom_op.fpgadataflow.rtl.convolutioninputgenerator_rtl
+import finn.custom_op.fpgadataflow.rtl.elementwise_binary_rtl
+import finn.custom_op.fpgadataflow.rtl.finn_loop
+import finn.custom_op.fpgadataflow.rtl.fmpadding_rtl
+import finn.custom_op.fpgadataflow.rtl.inner_shuffle_rtl
+import finn.custom_op.fpgadataflow.rtl.layernorm_rtl
+import finn.custom_op.fpgadataflow.rtl.matrixvectoractivation_rtl
+import finn.custom_op.fpgadataflow.rtl.nodecontainer
+import finn.custom_op.fpgadataflow.rtl.removedatapath_rtl
+import finn.custom_op.fpgadataflow.rtl.requant_rtl
 import finn.custom_op.fpgadataflow.rtl.reshape_rtl
-from finn.custom_op.fpgadataflow.rtl.convolutioninputgenerator_rtl import (
-    ConvolutionInputGenerator_rtl,
-)
-from finn.custom_op.fpgadataflow.rtl.elementwise_binary_rtl import (
-    ElementwiseAdd_rtl,
-    ElementwiseMul_rtl,
-    ElementwiseSub_rtl,
-)
-from finn.custom_op.fpgadataflow.rtl.finn_loop import FINNLoop
-from finn.custom_op.fpgadataflow.rtl.fmpadding_rtl import FMPadding_rtl
-from finn.custom_op.fpgadataflow.rtl.inner_shuffle_rtl import InnerShuffle_rtl
-from finn.custom_op.fpgadataflow.rtl.layernorm_rtl import LayerNorm_rtl
-from finn.custom_op.fpgadataflow.rtl.matrixvectoractivation_rtl import MVAU_rtl
-from finn.custom_op.fpgadataflow.rtl.nodecontainer import NodeContainer
-from finn.custom_op.fpgadataflow.rtl.removedatapath_rtl import RemoveDataPath_rtl
-from finn.custom_op.fpgadataflow.rtl.requant_rtl import Requant_rtl
-from finn.custom_op.fpgadataflow.rtl.streamingdatawidthconverter_rtl import (
-    StreamingDataWidthConverter_rtl,
-)
-from finn.custom_op.fpgadataflow.rtl.streamingfifo_rtl import StreamingFIFO_rtl
-from finn.custom_op.fpgadataflow.rtl.thresholding_rtl import Thresholding_rtl
-from finn.custom_op.fpgadataflow.rtl.vectorvectoractivation_rtl import VVAU_rtl
-
-# make sure new HLSCustomOp subclasses are imported here so that they get
-# registered and plug in correctly into the infrastructure
-custom_op["ConvolutionInputGenerator_rtl"] = ConvolutionInputGenerator_rtl
-custom_op["ElementwiseAdd_rtl"] = ElementwiseAdd_rtl
-custom_op["ElementwiseSub_rtl"] = ElementwiseSub_rtl
-custom_op["ElementwiseMul_rtl"] = ElementwiseMul_rtl
-custom_op["FMPadding_rtl"] = FMPadding_rtl
-custom_op["LayerNorm_rtl"] = LayerNorm_rtl
-custom_op["StreamingDataWidthConverter_rtl"] = StreamingDataWidthConverter_rtl
-custom_op["StreamingFIFO_rtl"] = StreamingFIFO_rtl
-custom_op["MVAU_rtl"] = MVAU_rtl
-custom_op["VVAU_rtl"] = VVAU_rtl
-custom_op["Thresholding_rtl"] = Thresholding_rtl
-custom_op["RemoveDataPath_rtl"] = RemoveDataPath_rtl
-custom_op["InnerShuffle_rtl"] = InnerShuffle_rtl
-custom_op["Requant_rtl"] = Requant_rtl
-custom_op["NodeContainer"] = NodeContainer
-custom_op["FINNLoop"] = FINNLoop
+import finn.custom_op.fpgadataflow.rtl.streamingdatawidthconverter_rtl
+import finn.custom_op.fpgadataflow.rtl.streamingfifo_rtl
+import finn.custom_op.fpgadataflow.rtl.thresholding_rtl
+import finn.custom_op.fpgadataflow.rtl.vectorvectoractivation_rtl

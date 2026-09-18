@@ -4,7 +4,7 @@ from qonnx.core.modelwrapper import ModelWrapper
 
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.res_estimation import res_estimation
-from finn.util.exception import FINNUserError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 from finn.util.platforms import Platform
 
@@ -113,8 +113,10 @@ def _resources_per_device_per_slr(p: Platform) -> dict[int, dict[str, int]]:
     """Return the available resources as given by FINN platforms as a
     dictionary instead of nested lists. First by SLR, then by resource name.
     """
-    assert p is not None
-    assert p.compute_resources is not None
+    if not (p is not None):
+        raise FINNInternalError("No platform description found for the requested board")
+    if not (p.compute_resources is not None):
+        raise FINNInternalError("Platform description has no compute_resources")
     res = p.compute_resources
     new = {}
     for slr in range(len(res)):

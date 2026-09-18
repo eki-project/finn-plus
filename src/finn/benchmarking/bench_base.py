@@ -22,6 +22,7 @@ import finn.builder.build_dataflow_config as build_cfg
 from finn.benchmarking.util import delete_dir_contents
 from finn.builder.build_dataflow_config import AutoFIFOSizingMethod, DataflowBuildConfig
 from finn.util.basic import alveo_default_platform, alveo_part_map, part_map
+from finn.util.exception import FINNUserError
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
@@ -98,7 +99,7 @@ class bench:
         elif self._board in part_map:
             self._part = part_map[self._board]
         else:
-            raise Exception(f"No part specified for board {self._board}")
+            raise FINNUserError(f"No part specified for board {self._board}")
 
         if self._board in alveo_part_map:
             self._params["shell_flow_type"] = build_cfg.ShellFlowType.VITIS_ALVEO
@@ -304,7 +305,7 @@ class bench:
             with dut_path.open() as f:
                 return DataflowBuildConfig.from_yaml(f)
         else:
-            raise Exception("No DUT-specific YAML build definition found")
+            raise FINNUserError("No DUT-specific YAML build definition found")
 
     def run(self) -> None | Literal["skipped"]:
         """Execute the benchmark run.

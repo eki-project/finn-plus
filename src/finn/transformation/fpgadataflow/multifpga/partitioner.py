@@ -8,15 +8,12 @@ import yaml
 from abc import ABC, abstractmethod
 from mip import Model
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from finn.builder.build_dataflow_config import DataflowBuildConfig, MIPSolver, PartitioningStrategy
 from finn.util.basic import make_build_dir
-from finn.util.exception import FINNMultiFPGAError, FINNMultiFPGAUserError
+from finn.util.exception import FINNInternalError, FINNMultiFPGAError, FINNMultiFPGAUserError
 from finn.util.logging import log
-
-if TYPE_CHECKING:
-    pass
 
 
 class Partitioner(ABC):
@@ -58,7 +55,8 @@ class Partitioner(ABC):
 
     def __init__(self, cfg: DataflowBuildConfig) -> None:
         """Initialize a new partitioner. This involves creating the mip model."""
-        assert cfg.partitioning_configuration is not None
+        if not (cfg.partitioning_configuration is not None):
+            raise FINNInternalError("No partitioning_configuration set in the build configuration")
         self.cfg = cfg
         self.pcfg = cfg.partitioning_configuration
         self.verbosity = cfg.partitioning_configuration.verbosity

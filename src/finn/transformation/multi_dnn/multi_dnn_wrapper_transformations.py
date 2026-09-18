@@ -4,17 +4,20 @@ import json
 import numpy as np
 import qonnx.util.basic as util
 from onnx import NodeProto, TensorProto, ValueInfoProto, helper
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
-from finn.custom_op.fpgadataflow.dnncontainer import DNNContainer
+from finn.custom_op.fpgadataflow.abstract.dnncontainer import DNNContainer
+
+from finn.util.exception import FINNInternalError
 
 
 class MultiDNNWrapperExposeIO(Transformation):
     """Expose the IO of each DNNContainer as top-level graph inputs/outputs."""
 
     # Call this before doing any further transformations. This transformation is used to map the IO
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Map DNNContainer body IO to the top-level graph."""
         for node in model.graph.node:
             if node.op_type == "DNNContainer":
@@ -23,7 +26,8 @@ class MultiDNNWrapperExposeIO(Transformation):
                     continue
 
                 dnn_custom_op = getCustomOp(node)
-                assert isinstance(dnn_custom_op, DNNContainer)
+                if not (isinstance(dnn_custom_op, DNNContainer)):
+                    raise FINNInternalError("Expected a DNNContainer custom op")
                 body_model = dnn_custom_op.get_nodeattr("body")
                 body_graph = body_model.graph
                 graph_name = body_graph.name
@@ -68,13 +72,14 @@ class MultiDNNWrapperExposeIO(Transformation):
 class CollapseModels(Transformation):
     """Collapse all DNNContainer nodes by inlining their subgraphs into the parent graph."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Inline each DNNContainer body into the top-level graph."""
         inital_nodes = copy.deepcopy(model.graph.node)
         for node in inital_nodes:
             if node.op_type == "DNNContainer":
                 dnn_custom_op = getCustomOp(node)
-                assert isinstance(dnn_custom_op, DNNContainer)
+                if not (isinstance(dnn_custom_op, DNNContainer)):
+                    raise FINNInternalError("Expected a DNNContainer custom op")
                 body_model = dnn_custom_op.get_nodeattr("body")
                 io_map = json.loads(dnn_custom_op.get_nodeattr("io_map"))
                 model.graph.node.remove(node)
@@ -150,7 +155,7 @@ class CollapseModels(Transformation):
 class CombineInputsChannelwise(Transformation):
     """Merge all graph inputs into one tensor by concatenating along the channel dimension."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Insert a Split node and combine graph inputs channel-wise."""
         inputs = model.graph.input
         if len(inputs) < 2:
@@ -225,7 +230,7 @@ class CombineInputsChannelwise(Transformation):
 class CombineOutputsChannelwise(Transformation):
     """Merge all graph outputs into one tensor by concatenating along the channel dimension."""
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Insert a Concat node and combine graph outputs channel-wise."""
         outputs = model.graph.output
         if len(outputs) < 2:

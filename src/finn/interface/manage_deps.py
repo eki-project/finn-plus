@@ -29,6 +29,7 @@ from finn.interface.interface_utils import debug, error
 from finn.util.exception import (
     FINNConfigurationError,
     FINNDependencyInstallationError,
+    FINNInternalError,
     FINNUserError,
 )
 
@@ -127,7 +128,10 @@ class DependencyData(BaseModel):
         """Assert that all dependencies across categories have unique names.
         Raise AssertionError otherwise.
         """
-        assert self.get_dependency_count() == len(set(self.get_all_dependencies()))
+        if not (self.get_dependency_count() == len(set(self.get_all_dependencies()))):
+            raise FINNInternalError(
+                "Dependency count does not match the number of distinct dependencies"
+            )
 
     def dependency_type_str(self, package_name: str) -> str:
         """Return a string to tell which type this dependency is."""

@@ -161,7 +161,8 @@ class VitisBuild(Transformation):
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Run the build."""
         log.info("Building Vitis linking configuration...")
-        assert self.cfg.board is not None
+        if not (self.cfg.board is not None):
+            raise FINNInternalError("No board set in the build configuration")
         model = model.transform(
             BuildBasicVitisLinkConfig(
                 platform=self.cfg._resolve_vitis_platform(),  # noqa
@@ -180,8 +181,8 @@ class VitisBuild(Transformation):
                 case MFCommunicationKernel.AURORA:
                     model = model.transform(
                         AddAuroraToLinkConfig(
-                            board=self.cfg.board,
-                            fpga_part=self.cfg._resolve_fpga_part(),
+                            platform_name=self.cfg._resolve_vitis_platform(),  # noqa: SLF001
+                            fpga_part=self.cfg._resolve_fpga_part(),  # noqa: SLF001
                         )
                     )
                 case _:

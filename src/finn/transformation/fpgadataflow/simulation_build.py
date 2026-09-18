@@ -661,14 +661,16 @@ class SimulationBuilder:
         for top_inp in model.graph.input:
             iname = top_inp.name
             first_node = model.find_consumer(iname)
-            assert first_node is not None, "Failed to find consumer for " + iname
+            if not (first_node is not None):
+                raise FINNInternalError("Failed to find consumer for " + iname)
             top_ind = list(first_node.input).index(iname)
             ishape_folded = getHWCustomOp(first_node).get_folded_input_shape(ind=top_ind)
             instream_iters.append(int(np.prod(ishape_folded[:-1])))
         for top_out in model.graph.output:
             oname = top_out.name
             last_node = model.find_producer(oname)
-            assert last_node is not None, "Failed to find producer for " + oname
+            if not (last_node is not None):
+                raise FINNInternalError("Failed to find producer for " + oname)
             top_ind = list(last_node.output).index(oname)
             oshape_folded = getHWCustomOp(last_node).get_folded_output_shape(ind=top_ind)
             outstream_iters.append(int(np.prod(oshape_folded[:-1])))

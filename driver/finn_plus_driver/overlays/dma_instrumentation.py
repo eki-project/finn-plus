@@ -8,7 +8,9 @@ import re
 import time
 from finn_plus_driver.overlays.dma import FINNDMAOverlay
 from finn_plus_driver.overlays.instrumentation import FINNInstrumentationOverlay
+from pathlib import Path
 from pynq import Bitstream, allocate
+from typing import Any
 
 
 class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
@@ -18,11 +20,17 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         """Manages the DFX Controller IP for partial reconfiguration."""
 
         # Note: sockets have to ordered correctly.
-        def __init__(self, dfx_controller_inst, sockets: list[str], bitstream_folder=None):
+        def __init__(
+            self,
+            dfx_controller_inst: Any,
+            sockets: list[str],
+            bitstream_folder: str | None = None,
+        ) -> None:
             """Initialize DFXController, load bitstreams and configure the hardware."""
             self.dfx_controller_inst = dfx_controller_inst
             self.bitstream_folder = bitstream_folder
-            assert os.path.isdir(self.bitstream_folder)
+            if not Path(self.bitstream_folder).is_dir():
+                raise ValueError(f"Bitstream folder does not exist: {self.bitstream_folder}")
 
             self.socket_map = {socket: idx for idx, socket in enumerate(sockets)}
 
@@ -31,11 +39,11 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             for socket in sockets:
                 pattern = re.compile(rf"^partial_{re.escape(socket)}_(\d+)_icap\.bin$")
                 socket_files = {}
-                for fname in os.listdir(self.bitstream_folder):
-                    m = pattern.match(fname)
+                for entry in Path(self.bitstream_folder).iterdir():
+                    m = pattern.match(entry.name)
                     if m:
                         bs_id = int(m.group(1))
-                        socket_files[bs_id] = os.path.join(self.bitstream_folder, fname)
+                        socket_files[bs_id] = str(entry)
                 self.socket_dict_paths[socket] = socket_files
 
             # Allocate Pynq Buffers for every bitstream
@@ -77,13 +85,13 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             for socket in self.socket_dict_paths.keys():
                 self.restart_with_status(vsm=socket, is_full=True, rm_id=0)
 
-        def _map_socket(self, socket_name):
+        def _map_socket(self, socket_name: str | int) -> int:
             """Map a socket name or integer index to its numeric index."""
             if isinstance(socket_name, int):
                 return socket_name
             return self.socket_map[socket_name]
 
-        def _reg_addr(self, vsm, bank, reg_select):
+        def _reg_addr(self, vsm: int, bank: int, reg_select: int) -> int:
             """Compute the register address from VSM, bank and register-select fields."""
             return (
                 (vsm << self.vsm_select_shift)
@@ -91,12 +99,12 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 | (reg_select << self.reg_select_shift)
             )
 
-        def _extract_bits(self, value, high, low):
+        def _extract_bits(self, value: int, high: int, low: int) -> int:
             """Extract a bit field from value between positions high and low (inclusive)."""
             mask = (1 << (high - low + 1)) - 1
             return (value >> low) & mask
 
-        def get_status(self, vsm):
+        def get_status(self, vsm: str | int) -> dict:
             """Return a status dict for the given virtual socket manager."""
             vsm = self._map_socket(vsm)
             addr = self._reg_addr(vsm, bank=0, reg_select=0)
@@ -113,7 +121,9 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 "state": state_val,
             }
 
-        def set_control(self, cmd, vsm, byte_field=0, halfword_field=0):
+        def set_control(
+            self, cmd: int, vsm: str | int, byte_field: int = 0, halfword_field: int = 0
+        ) -> None:
             """Write a control word to the DFX controller for the given VSM."""
             vsm = self._map_socket(vsm)
             control_value = (
@@ -122,16 +132,20 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             addr = self._reg_addr(vsm, bank=0, reg_select=0)
             self.dfx_controller_inst.write(addr, control_value)
 
-        def shutdown(self, vsm):
+        def shutdown(self, vsm: str | int) -> None:
             """Shutdown the given virtual socket manager."""
             self.set_control(0, vsm=vsm)
 
-        def restart_with_status(self, vsm, is_full=False, rm_id=0):
+        def restart_with_status(
+            self, vsm: str | int, is_full: bool = False, rm_id: int = 0
+        ) -> None:
             """Restart the VSM, optionally with a full reconfiguration for a given RM."""
             byte_field = 1 if is_full else 0
             self.set_control(2, vsm=vsm, byte_field=byte_field, halfword_field=rm_id)
 
-        def set_rm_bs_index(self, rm_id, bs_index, vsm, clear_bs_index=0):
+        def set_rm_bs_index(
+            self, rm_id: int, bs_index: int, vsm: str | int, clear_bs_index: int = 0
+        ) -> None:
             """Map a reconfigurable module ID to a bitstream index in the controller."""
             vsm = self._map_socket(vsm)
             reg_sel = (rm_id << 1) | 0
@@ -141,13 +155,13 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
 
         def set_rm_control(
             self,
-            rm_id,
-            vsm,
-            shutdown_required=0,
-            startup_required=0,
-            reset_required=0,
-            reset_duration=1,
-        ):
+            rm_id: int,
+            vsm: str | int,
+            shutdown_required: int = 0,
+            startup_required: int = 0,
+            reset_required: int = 0,
+            reset_duration: int = 1,
+        ) -> None:
             """Write control flags for a reconfigurable module to the controller."""
             vsm = self._map_socket(vsm)
             reg_sel = (rm_id << 1) | 1
@@ -160,7 +174,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             )
             self.dfx_controller_inst.write(addr, value)
 
-        def set_bs_id(self, bs_row, bs_id, vsm):
+        def set_bs_id(self, bs_row: int, bs_id: int, vsm: str | int) -> None:
             """Write the bitstream ID for the given row to the controller."""
             vsm = self._map_socket(vsm)
             reg_sel = (bs_row << 2) | 0
@@ -168,21 +182,21 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             value = bs_id & 0x1
             self.dfx_controller_inst.write(addr, value)
 
-        def set_bs_address(self, bs_row, address, vsm):
+        def set_bs_address(self, bs_row: int, address: int, vsm: str | int) -> None:
             """Write the bitstream memory address for the given row to the controller."""
             vsm = self._map_socket(vsm)
             reg_sel = (bs_row << 2) | 1
             addr = self._reg_addr(vsm, bank=3, reg_select=reg_sel)
             self.dfx_controller_inst.write(addr, address)
 
-        def set_bs_size(self, bs_row, size, vsm):
+        def set_bs_size(self, bs_row: int, size: int, vsm: str | int) -> None:
             """Write the bitstream byte size for the given row to the controller."""
             vsm = self._map_socket(vsm)
             reg_sel = (bs_row << 2) | 2
             addr = self._reg_addr(vsm, bank=3, reg_select=reg_sel)
             self.dfx_controller_inst.write(addr, size)
 
-        def print_status(self, vsm):
+        def print_status(self, vsm: str | int) -> None:
             """Print the current status of the given virtual socket manager."""
             s = self.get_status(vsm=vsm)
             print(f"VSM {vsm} Status: {s['raw']}")
@@ -191,35 +205,35 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             print(f"Error: {s['error']}")
             print(f"State: {s['state']}")
 
-    def get_config_reg(self):
+    def get_config_reg(self) -> str:
         """Read and return the ZynqMP configuration register value."""
         os.system("echo 0xffca3008 > /sys/firmware/zynqmp/config_reg")
         result = os.popen("cat /sys/firmware/zynqmp/config_reg").read()
         return result.strip()
 
-    def enable_icap(self):
+    def enable_icap(self) -> None:
         """Enable ICAP as the configuration source."""
         os.system("echo 0xffca3008 0xff 0x0 > /sys/firmware/zynqmp/config_reg")
 
-    def enable_pcap(self):
+    def enable_pcap(self) -> None:
         """Enable PCAP as the configuration source."""
         os.system("echo 0xffca3008 0xff 0x1 > /sys/firmware/zynqmp/config_reg")
 
     def __init__(
         self,
-        bitfile_name,
-        io_shape_dict,
-        platform="zynq-iodma",
-        fclk_mhz=100.0,
-        device=None,
-        download=True,
-        runtime_weight_dir="runtime_weights/",
-        validation_dataset=None,
-        batch_size=1,
-        seed=1,
-        multidnn_mode=None,
-        **kwargs,
-    ):
+        bitfile_name: str,
+        io_shape_dict: dict,
+        platform: str = "zynq-iodma",
+        fclk_mhz: float = 100.0,
+        device: Any = None,
+        download: bool = True,
+        runtime_weight_dir: str = "runtime_weights/",
+        validation_dataset: str | None = None,
+        batch_size: int = 1,
+        seed: int = 1,
+        multidnn_mode: str | None = None,
+        **kwargs: Any,  # noqa: ARG002
+    ) -> None:
         """Initialize DMA instrumentation overlay."""
         super().__init__(
             bitfile_name,
@@ -235,7 +249,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
         )
         self.multidnn_mode = multidnn_mode
 
-    def set_current_mode(self, mode):
+    def set_current_mode(self, mode: str) -> None:
         """Set accelerator mode ('dma' or 'instr')."""
         if self.get_current_mode() != mode:
             self.reset_accelerator()
@@ -245,24 +259,24 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 value=val,
             )
 
-    def get_current_mode(self):
+    def get_current_mode(self) -> str:
         """Get accelerator mode."""
         val = self.axi_gpio_0.read(
             offset=self.ip_dict["axi_gpio_0"]["registers"]["GPIO2_DATA"]["address_offset"]
         )
         return "instr" if val == 1 else "dma"
 
-    def throughput_test(self, **kwargs):
+    def throughput_test(self, **kwargs: Any) -> dict:
         """Run throughput test (DMA mode)."""
         self.set_current_mode("dma")
         return super().throughput_test(**kwargs)
 
-    def execute(self, input_npy):
+    def execute(self, input_npy: np.ndarray | list[np.ndarray]) -> np.ndarray | list[np.ndarray]:
         """Execute (DMA mode)."""
         self.set_current_mode("dma")
         return super().execute(input_npy)
 
-    def experiment_instrumentation(self, **kwargs):
+    def experiment_instrumentation(self, **kwargs: Any) -> None:
         """Run instrumentation experiment (instrumentation mode)."""
         self.set_current_mode("instr")
         if self.multidnn_mode == "SelectableWeights":
@@ -271,17 +285,17 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             selector.start()
         return super().experiment_instrumentation(**kwargs)
 
-    def validate(self, *args, **kwargs):
+    def validate(self, *args: Any, **kwargs: Any) -> None:
         """Run validation in DMA mode."""
         self.set_current_mode("dma")
         return super().validate(*args, **kwargs)
 
-    def experiment_ma(self, **kwargs):
+    def experiment_ma(self, **kwargs: Any) -> int:
         """Run a multi-DNN reconfiguration experiment and save results."""
         report_dir = kwargs.get("report_dir")
-        os.makedirs(report_dir, exist_ok=True)
+        Path(report_dir).mkdir(parents=True, exist_ok=True)
         report = {}
-        pr_bitstream_folder = os.path.join(os.path.dirname(self.bitfile_name), "partial_bitstreams")
+        pr_bitstream_folder = str(Path(self.bitfile_name).parent / "partial_bitstreams")
         socket_prefix = kwargs.get("pr_bitstream_prefix", "StreamingDataflowPartition")
         instr_runtime = kwargs.get("instr_runtime", 1)
         avg_window_size = kwargs.get("avg_window_size", 64)
@@ -302,7 +316,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             (
                 overflow_err,
                 underflow_err,
-                frame,
+                _frame,
                 checksum,
                 min_latency,
                 latency,
@@ -337,15 +351,15 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 "pipeline_depth": round(latency / interval, 2) if interval != 0 else 0,
             }
             mode_tag = (self.multidnn_mode or "single").lower()
-            reportfile = os.path.join(report_dir, f"report_{mode_tag}.json")
-            with open(reportfile, "w") as f:
+            reportfile = Path(report_dir) / f"report_{mode_tag}.json"
+            with reportfile.open("w") as f:
                 json.dump(report, f, indent=2)
             return 0
 
         pattern = rf".*_{re.escape(socket_prefix)}_(\d+)_"
         socket_names = []
-        for filename in os.listdir(pr_bitstream_folder):
-            match = re.search(pattern, filename)
+        for entry in Path(pr_bitstream_folder).iterdir():
+            match = re.search(pattern, entry.name)
             if match:
                 name = f"{socket_prefix}_{match.group(1)}"
                 if name not in socket_names:
@@ -397,7 +411,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 (
                     overflow_err,
                     underflow_err,
-                    frame,
+                    _frame,
                     checksum,
                     min_latency,
                     latency,
@@ -473,11 +487,10 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
 
             full_bs = []
             full_bs_pattern = re.compile(r"^config_(\d+)\.bit$")
-            for filename in sorted(os.listdir(pr_bitstream_folder)):
-                m = full_bs_pattern.match(filename)
+            for entry in sorted(Path(pr_bitstream_folder).iterdir()):
+                m = full_bs_pattern.match(entry.name)
                 if m:
-                    path = os.path.join(pr_bitstream_folder, filename)
-                    full_bs += [path]
+                    full_bs += [str(entry)]
 
             for p in full_bs:
                 pb = Bitstream(p, None, False)
@@ -499,7 +512,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 "q1": fct[fn // 4],
                 "q3": fct[(3 * fn) // 4],
                 "max": fct[-1],
-                "bitfile_sizes_bytes": {os.path.basename(p): os.path.getsize(p) for p in full_bs},
+                "bitfile_sizes_bytes": {Path(p).name: Path(p).stat().st_size for p in full_bs},
             }
             report["full_configuration"] = full_configuration_report
 
@@ -507,18 +520,17 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             partial_bs_pattern = re.compile(
                 rf"^partial_{re.escape(socket_prefix)}_(\d+)_(\d+)\.bit$"
             )
-            for filename in sorted(os.listdir(pr_bitstream_folder)):
-                m = partial_bs_pattern.match(filename)
+            for entry in sorted(Path(pr_bitstream_folder).iterdir()):
+                m = partial_bs_pattern.match(entry.name)
                 if m:
                     socket_id = int(m.group(1))
                     rm_id = int(m.group(2))
-                    path = os.path.join(pr_bitstream_folder, filename)
-                    partial_bs_by_rm.setdefault(rm_id, []).append((socket_id, path))
+                    partial_bs_by_rm.setdefault(rm_id, []).append((socket_id, str(entry)))
             for rm_id in partial_bs_by_rm:
                 partial_bs_by_rm[rm_id].sort(key=lambda t: t[0])
 
             # Dry run
-            for rm_id, sockets in sorted(partial_bs_by_rm.items()):
+            for _rm_id, sockets in sorted(partial_bs_by_rm.items()):
                 for _, path in sockets:
                     pb = Bitstream(path, None, True)
                     pb.download()
@@ -526,7 +538,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             # Measure reconfiguration time for one full id (all sockets for a given RM id)
             partial_configuration_time = []
             for _ in range(num_measurements):
-                for rm_id, sockets in sorted(partial_bs_by_rm.items()):
+                for _rm_id, sockets in sorted(partial_bs_by_rm.items()):
                     start = time.time()
                     for _, path in sockets:
                         pb = Bitstream(path, None, True)
@@ -542,7 +554,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
                 "q3": pct[(3 * pn) // 4],
                 "max": pct[-1],
                 "bitfile_sizes_bytes": {
-                    os.path.basename(path): os.path.getsize(path)
+                    Path(path).name: Path(path).stat().st_size
                     for sockets in partial_bs_by_rm.values()
                     for _, path in sockets
                 },
@@ -550,6 +562,7 @@ class FINNDMAInstrumentationOverlay(FINNDMAOverlay, FINNInstrumentationOverlay):
             report["partial_configuration"] = partial_configuration_report
 
         report["fclk_mhz"] = self.fclk_mhz
-        reportfile = os.path.join(report_dir, "report_pr.json")
-        with open(reportfile, "w") as f:
+        reportfile = Path(report_dir) / "report_pr.json"
+        with reportfile.open("w") as f:
             json.dump(report, f, indent=2)
+        return 0

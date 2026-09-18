@@ -29,6 +29,8 @@
 """Module for convert qonnx to finn onnx."""
 import numpy as np
 import onnx.helper
+from collections.abc import Callable
+from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.extract_conv_bias import ExtractBiasFromConv
 from qonnx.transformation.gemm_to_matmul import GemmToMatMul
@@ -45,6 +47,10 @@ from finn.transformation.qonnx.quant_act_to_multithreshold import (
     default_filter_function_generator,
 )
 
+# Module-level singleton so it is not rebuilt (and not evaluated at import of every
+# caller) as a mutable default argument.
+_DEFAULT_FILTER_FUNCTION = default_filter_function_generator(max_multithreshold_bit_width=8)
+
 
 class InferMissingGemmBias(Transformation):
     """Insert an explicit zero-valued bias (C) input for Gemm nodes that were
@@ -58,17 +64,17 @@ class InferMissingGemmBias(Transformation):
     matching the output feature dimension whenever it is missing.
     """
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
         graph = model.graph
         graph_modified = False
         for n in graph.node:
             if n.op_type == "Gemm" and len(n.input) < 3:
-                transB = get_by_name(n.attribute, "transB")
+                trans_b = get_by_name(n.attribute, "transB")
                 b_shape = model.get_tensor_shape(n.input[1])
                 if b_shape is None:
                     continue
-                out_features = b_shape[0] if transB is not None and transB.i else b_shape[1]
+                out_features = b_shape[0] if trans_b is not None and trans_b.i else b_shape[1]
                 bias_name = model.make_new_valueinfo_name()
                 bias_val = np.zeros(out_features, dtype=np.float32)
                 model.set_initializer(bias_name, bias_val)
@@ -91,7 +97,7 @@ class InferMissingConvKernelShape(Transformation):
     "kernel_shape" attribute inferred from W whenever it is missing.
     """
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         """Apply transformation."""
         graph = model.graph
         graph_modified = False
@@ -130,13 +136,15 @@ class ConvertQONNXtoFINN(Transformation):
 
     def __init__(
         self,
-        filter_function=default_filter_function_generator(max_multithreshold_bit_width=8),
-    ):
+        filter_function: Callable | None = None,
+    ) -> None:
         """Initialize instance."""
         super().__init__()
-        self._filter_function = filter_function
+        self._filter_function = (
+            _DEFAULT_FILTER_FUNCTION if filter_function is None else filter_function
+        )
 
-    def apply(self, model):
+    def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
         # Extract the bias from Conv node
         """Apply transformation."""
         # Newer ONNX exporters may omit the optional Conv/ConvTranspose

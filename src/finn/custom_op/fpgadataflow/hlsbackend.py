@@ -38,9 +38,8 @@ from qonnx.core.modelwrapper import ModelWrapper
 from typing import TYPE_CHECKING, Literal, cast
 
 from finn import xsi as finnxsi
-from finn.custom_op.fpgadataflow import templates
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
-from finn.templates import get_templates_folder
+from finn.templates import get_templates_folder, load_codegen_template
 from finn.util.basic import MAX_ALLOWED_AP_INT_W, CppBuilder, launch_process_helper, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.exception import FINNInternalError, FINNUserError
@@ -137,7 +136,7 @@ class HLSBackend(HWCustomOp, ABC):
         self.pragmas()
         self.docompute()
 
-        template = templates.ipgen_template
+        template = load_codegen_template("hls_ipgen.tcl")
 
         for key in self.code_gen_dict:
             # transform list into long string separated by '\n'
@@ -168,7 +167,7 @@ class HLSBackend(HWCustomOp, ABC):
             str(get_settings().finn_deps / "attention-hlslib")
         ]
 
-        template = templates.ipgentcl_template
+        template = load_codegen_template("hls_ipgen_project.tcl")
 
         for key in self.code_gen_dict:
             # transform list into long string separated by '\n'
@@ -265,9 +264,9 @@ class HLSBackend(HWCustomOp, ABC):
             self.timeout_value()
             self.timeout_condition()
             self.timeout_read_stream()
-            template = templates.docompute_template_timeout
+            template = load_codegen_template("execute_single_node_timeout.cpp")
         else:
-            template = templates.docompute_template
+            template = load_codegen_template("execute_single_node.cpp")
 
         for key in self.code_gen_dict:
             # transform list into long string separated by '\n'
@@ -338,7 +337,7 @@ compilation transformations?
     # TODO: Should have been removed by refactoring (PR #1318)
     # However, it is still used by some CustomOps, namely:
     # SplitMultiHeads, MergeMultiHeads, ScaledDotProductAttention,
-    # ReplicateStream, StreamingConcat
+    # StreamingConcat
     def hls_sname(self) -> Literal["V"]:
         """Get the naming convention used by Vitis HLS for stream signals
         Example: the TDATA for a stream called "out" would be out_V_TDATA.
@@ -382,7 +381,11 @@ compilation transformations?
                 # Convert the input to floating point representation as the
                 # container datatype
                 inp_val = inp_val.astype(np.float32)
-            assert inp_val.shape == exp_ishape, "Input shape doesn't match expected shape."
+            if inp_val.shape != exp_ishape:
+                raise FINNInternalError(
+                    f"{node.name}: input {i} shape {inp_val.shape} does not match "
+                    f"expected shape {exp_ishape}"
+                )
             export_idt = self.get_input_datatype(i)
 
             if export_idt == DataType["BIPOLAR"]:
@@ -405,9 +408,11 @@ compilation transformations?
             self.npy_to_dynamic_output(context)
             for o, outp in enumerate(node.output):
                 exp_oshape = tuple(self.get_normal_output_shape(o))
-                assert (
-                    context[outp].shape == exp_oshape
-                ), "cppsim did not produce expected output shape"
+                if context[outp].shape != exp_oshape:
+                    raise FINNInternalError(
+                        f"{node.name}: cppsim output {o} shape {context[outp].shape} "
+                        f"does not match expected shape {exp_oshape}"
+                    )
                 # binary -> bipolar if needed
                 if self.get_output_datatype(o) == DataType["BIPOLAR"]:
                     out = context[outp]
@@ -440,12 +445,14 @@ compilation transformations?
                 output = np.asarray([output], dtype=np.float32).reshape(*exp_oshape)
                 context[outp] = output
 
-                assert (
-                    context[outp].shape == exp_oshape
-                ), "Output shape doesn't match expected shape."
+                if context[outp].shape != exp_oshape:
+                    raise FINNInternalError(
+                        f"{node.name}: rtlsim output {o} shape {context[outp].shape} "
+                        f"does not match expected shape {exp_oshape}"
+                    )
 
         else:
-            raise Exception(
+            raise FINNInternalError(
                 f"""Invalid value for attribute exec_mode! Is currently set to: {mode}
             has to be set to one of the following value ("cppsim", "rtlsim")"""
             )

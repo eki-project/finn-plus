@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from onnx import NodeProto
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveUniqueNodeNames
@@ -16,6 +15,7 @@ from finn.util.fpgadataflow import get_device_id, get_submodel, set_device_id
 from finn.util.logging import log
 
 if TYPE_CHECKING:
+    from onnx import NodeProto
     from pathlib import Path
     from qonnx.core.modelwrapper import ModelWrapper
 
@@ -121,7 +121,7 @@ class ResolveCircularPartitionIDs(Transformation):
         self.part = partition_attribute
 
     def get_id(self, node: NodeProto) -> int:
-        """Utility."""
+        """Return the partition id stored on the given node."""
         return cast("int", getCustomOp(node).get_nodeattr(self.part))
 
     def get_successors_with_id(
@@ -287,6 +287,7 @@ class CreateMultiFPGAStreamingDataflowPartition(Transformation):
         # Set the SDP's device_id
         for node in model.graph.node:
             device_id = get_device_id(get_submodel(node)[0].graph.node[0])
-            assert device_id is not None
+            if not (device_id is not None):
+                raise FINNInternalError("Node is missing the device_id attribute")
             set_device_id(node, device_id)
         return model, False

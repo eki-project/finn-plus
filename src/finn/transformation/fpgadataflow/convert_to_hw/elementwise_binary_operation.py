@@ -38,7 +38,7 @@ from qonnx.transformation.infer_shapes import InferShapes
 from typing import TYPE_CHECKING, cast
 
 # Module containing specializations of elementwise binary operations
-import finn.custom_op.fpgadataflow.elementwise_binary as elementwise_binary
+import finn.custom_op.fpgadataflow.base.elementwise_binary as elementwise_binary
 from finn.util.exception import FINNInternalError, FINNUserError
 
 if TYPE_CHECKING:

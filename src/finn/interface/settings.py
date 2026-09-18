@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, PrivateAttr, ValidationError, computed_fi
 from typing import Any
 
 from finn.interface.interface_utils import resolve_module_path
-from finn.util.exception import FINNUserError, FINNValidationError
+from finn.util.exception import FINNInternalError, FINNUserError, FINNValidationError
 
 
 # Modify yaml globally to convert paths to strings
@@ -237,9 +237,12 @@ class FINNSettings(BaseModel):
             FINNSettings
         """
         # Sanity check
-        assert list(FINNSettings.model_fields.keys()) == [
-            k.lower() for k in FINNSettings.model_fields.keys()
-        ], "All FINNSettings fields must be lowercase due to implementation details."
+        if not (
+            list(FINNSettings.model_fields.keys()) == [k.lower() for k in FINNSettings.model_fields]
+        ):
+            raise FINNInternalError(
+                "All FINNSettings fields must be lowercase due to implementation details."
+            )
 
         # Resolve settings path
         settings_path = FINNSettings.resolve_settings_file(override_settings_path)

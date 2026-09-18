@@ -86,12 +86,12 @@ def get_submodel(node: NodeProto) -> tuple[ModelWrapper, Path]:
     p = getCustomOp(node).get_nodeattr("model")
     if p is None:
         raise FINNInternalError(
-            f"SDP node {node.name} has no 'model' metadata prop. " f"Cannot get model."
+            f"SDP node {node.name} has no 'model' metadata prop. Cannot get model."
         )
     p = Path(str(p))
     if not p.exists():
         raise FINNInternalError(
-            f"Cannot open model of SDP node {node.name}: " f"No file found at path: {p}"
+            f"Cannot open model of SDP node {node.name}: No file found at path: {p}"
         )
     return ModelWrapper(str(p)), p
 

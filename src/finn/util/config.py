@@ -16,11 +16,11 @@
 import contextlib
 import json
 import onnx
+from collections.abc import Sequence
 from numpy import typing as npt
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp, is_custom_op
-from typing import Sequence
 
 from finn.util.exception import FINNInternalError
 
