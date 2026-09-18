@@ -1,7 +1,14 @@
 """Validation script for the UNSW-NB15 intrusion detection dataset."""
-import json
+
 import numpy as np
 import os
+
+from finn_plus_driver.validate.common import ArrayDataset, run_validation, validation_kwargs
+
+
+def to_bipolar(x):
+    """Map {0, 1} data to bipolar {-1, +1} float32 values as expected by the accelerator."""
+    return 2 * x.astype(np.float32) - 1
 
 
 # From finn examples
@@ -12,38 +19,11 @@ def validate(cls_inst, *args, **kwargs):
         "dataset_path", os.path.join(os.environ["DATASET_DIR"], "unsw_nb15_binarized.npz")
     )
     unsw_nb15_data = np.load(dataset_path)["test"][:82000]
-    batch_size = cls_inst.batch_size
 
     test_imgs = unsw_nb15_data[:, :-1]
     test_imgs = np.pad(test_imgs, [(0, 0), [0, 7]], mode="constant")
-    test_labels = unsw_nb15_data[:, -1]
-    n_batches = int(test_imgs.shape[0] / batch_size)
-    test_imgs = test_imgs.reshape(n_batches, batch_size, -1)
-    test_labels = test_labels.reshape(n_batches, batch_size)
+    # labels are bipolar as well, so they compare directly with the accelerator output
+    test_labels = to_bipolar(unsw_nb15_data[:, -1]).astype(np.int64)
 
-    ok = 0
-    nok = 0
-    n_batches = test_imgs.shape[0]
-    total = batch_size * n_batches
-
-    for i in range(n_batches):
-        inp = test_imgs[i].astype(np.float32)
-        exp = test_labels[i].astype(np.float32)
-        inp = 2 * inp - 1
-        exp = 2 * exp - 1
-        out = cls_inst.execute(inp)
-        matches = np.count_nonzero(out.flatten() == exp.flatten())
-        nok += batch_size - matches
-        ok += matches
-        print("batch %d / %d : total OK %d NOK %d" % (i + 1, n_batches, ok, nok))
-
-    acc = 100.0 * ok / (total)
-    print(f"Final accuracy: {acc:.2f}%")
-
-    # write report to file
-    report = {
-        "top-1_accuracy": acc,
-    }
-    reportfile = os.path.join(report_dir, "report_dma_validate.json")
-    with open(reportfile, "w") as f:
-        json.dump(report, f, indent=2)
+    dataset = ArrayDataset(test_imgs, test_labels, transform=to_bipolar)
+    run_validation(cls_inst, dataset, report_dir, **validation_kwargs(kwargs))

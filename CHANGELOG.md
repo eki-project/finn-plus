@@ -6,6 +6,15 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## Unreleased
+
+### Added
+- Node-wise verification report (`verify_nodewise_report` build option): the simulation-based verification steps (`folded_hls_cppsim`, `node_by_node_rtlsim`) additionally execute the folded graph with the Python reference implementation of every layer and write a per-node deviation table that pinpoints the first node whose simulated output deviates
+- Multi-pass dataset validation in the Pynq driver (`passes` kwarg of `validate`): predictions of every sample are stored next to the report (`validate_predictions.npz`), samples whose prediction differs between passes are re-run and listed in `report_dma_validate.json`; the CI validates every regression model in two passes to detect non-deterministic accelerators
+
+### Fixed
+- The instrumentation `checksum` metric was not collected by the CI due to a typo
+
 ## 1.5.0 - 05.09.2026
 
 ### Added

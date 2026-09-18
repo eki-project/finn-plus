@@ -8,7 +8,7 @@ Metrics:
   report_experiment_instrumentation.json:
     - error:
       - fn : anytrue
-    - chechksum
+    - checksum
     - min_latency_cycles
     - latency_cycles
     - interval_cycles
@@ -24,6 +24,18 @@ Metrics:
 
   report_dma_validate.json:
     - top-1_accuracy
+    - num_passes
+    - top-1_accuracy_min:
+        - fn : min
+    - top-1_accuracy_max:
+        - fn : max
+    # Samples whose prediction differs between the validation passes (same bitfile), and how many
+    # of them still produce differing predictions when re-run: nonzero values indicate a
+    # non-deterministic accelerator/driver/board, see driver/finn_plus_driver/validate/common.py
+    - num_prediction_mismatches:
+        - fn : max
+    - num_mismatches_reproduced:
+        - fn : max
 
   report_experiment_fifosizing.json:
     - error
@@ -47,6 +59,10 @@ Compare:
       required: true
       plot: true
       allowed_uncertainty: 0.00
+
+    measurement/report_dma_validate/num_prediction_mismatches:
+      required: false
+      plot: true
 
     measurement/report_experiment_instrumentation/throughput_fps:
       required: true
