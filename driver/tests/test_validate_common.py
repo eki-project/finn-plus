@@ -3,15 +3,25 @@
 Run from the driver directory with: python -m pytest tests
 """
 
+import pytest
+
 import json
 import numpy as np
 import os
+import queue
+
+try:  # only installed where the driver actually runs (PYNQ board image, CI test venv)
+    import dataset_loading
+    from PIL import Image
+except ImportError:  # pragma: no cover - exercised by the skip below
+    dataset_loading = None
 
 from finn_plus_driver.validate.common import (
     PREDICTIONS_NAME,
     REPORT_NAME,
     ArrayDataset,
     run_validation,
+    shutdown_loaders,
     validation_kwargs,
 )
 
@@ -137,3 +147,172 @@ def test_partial_batch_dataset_restores_batch_size(tmp_path):
 def test_validation_kwargs_filters_unknown_keys():
     kwargs = {"report_dir": "x", "passes": 3, "max_reruns": 2, "validation_dataset": "cifar"}
     assert validation_kwargs(kwargs) == {"passes": 3, "max_reruns": 2}
+
+
+class KillLoadersQueue:
+    """Stand-in for dataset_loading 0.0.4, whose ImgQueue offers kill_loaders()."""
+
+    def __init__(self, fail=False):
+        self.calls = []
+        self.fail = fail
+
+    def kill_loaders(self):
+        self.calls.append("kill_loaders")
+        if self.fail:
+            raise RuntimeError("loader shutdown failed")
+
+
+class JoinQueue(queue.Queue):
+    """Stand-in for finn-dataset-loading 0.0.5, whose ImgQueue overrides queue.Queue.join()."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def join(self):
+        self.calls.append("join")
+
+
+class BothApisQueue(KillLoadersQueue):
+    """A queue offering both methods: kill_loaders() must win."""
+
+    def join(self):
+        self.calls.append("join")
+
+
+def test_shutdown_loaders_prefers_kill_loaders():
+    """dataset_loading 0.0.4 exposes kill_loaders(), which must be preferred over join()."""
+    q = BothApisQueue()
+    shutdown_loaders(q)
+    assert q.calls == ["kill_loaders"]
+
+
+def test_shutdown_loaders_uses_overridden_join():
+    """finn-dataset-loading 0.0.5, installed on the board, renamed the method to join()."""
+    q = JoinQueue()
+    shutdown_loaders(q)
+    assert q.calls == ["join"]
+
+
+def test_shutdown_loaders_ignores_inherited_queue_join():
+    """queue.Queue.join() waits for task_done() on every item and would block forever."""
+
+    class PlainQueue(queue.Queue):
+        pass
+
+    q = PlainQueue()
+    q.put(("img", 0))  # an unfinished task: queue.Queue.join() would never return
+    shutdown_loaders(q)  # must return immediately instead of calling join()
+
+
+def test_shutdown_loaders_survives_failure():
+    """A failing shutdown must not abort a completed validation pass."""
+    q = KillLoadersQueue(fail=True)
+    shutdown_loaders(q)
+    assert q.calls == ["kill_loaders"]
+
+
+def test_results_are_saved_after_every_pass(tmp_path):
+    """A crash in a later pass must not discard the results already measured."""
+
+    class FailingAccelerator(FakeAccelerator):
+        def execute(self, inputs):
+            if self.calls >= 4:  # fails at the start of the second pass
+                raise RuntimeError("board fell over")
+            return super().execute(inputs)
+
+    dataset = make_dataset(40, 5)
+    accel = FailingAccelerator(10, 5)
+    with pytest.raises(RuntimeError):
+        run_validation(accel, dataset, str(tmp_path), passes=2)
+
+    with open(os.path.join(str(tmp_path), REPORT_NAME)) as f:
+        report = json.load(f)
+    assert report["num_passes"] == 1
+    assert report["num_passes_requested"] == 2
+    assert report["top-1_accuracy"] == report["top-1_accuracy_per_pass"][0]
+    dump = np.load(os.path.join(str(tmp_path), PREDICTIONS_NAME))
+    assert dump["predictions"].shape == (1, 40)
+
+
+def test_rerun_failure_keeps_accuracies(tmp_path):
+    """If the diagnostic re-runs fail, the measured accuracies are still reported."""
+
+    class FailingRerunDataset(ArrayDataset):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.passes_done = 0
+
+        def iter_batches(self, cls_inst):
+            yield from super().iter_batches(cls_inst)
+            self.passes_done += 1
+
+        def load(self, cls_inst, indices):
+            if self.passes_done >= 2:  # only fail during the re-runs
+                raise RuntimeError("cannot reload sample")
+            return super().load(cls_inst, indices)
+
+    base = make_dataset(40, 5)
+    dataset = FailingRerunDataset(base.inputs, base.labels)
+    accel = FakeAccelerator(10, 5, glitches={5: 3})
+    report = run_validation(accel, dataset, str(tmp_path), passes=2)
+    assert report["num_prediction_mismatches"] == 1
+    assert report["mismatches"] == []
+    assert report["num_mismatches_reproduced"] == 0
+    assert len(report["top-1_accuracy_per_pass"]) == 2
+
+
+@pytest.mark.skipif(dataset_loading is None, reason="dataset_loading is not installed")
+def test_imagenet_dataset_with_real_loader(tmp_path):
+    """Drive ImageNetDataset through the real (multi-threaded) dataset_loading package.
+
+    The loader delivers images in non-deterministic order, so this checks that every sample is
+    processed exactly once per pass and that image, index and label stay together. It also
+    exercises the loader shutdown, whose API differs between the installed package versions.
+    """
+    from finn_plus_driver.validate.imagenet import ImageNetDataset
+
+    num_images = 12
+    batch_size = 4
+    # solid-color images whose gray value encodes the sample index, so that a prediction
+    # derived from the pixels reveals a mixed-up index/image association
+    for i in range(num_images):
+        value = 10 * (i + 1)
+        Image.fromarray(np.full((240, 320, 3), value, dtype=np.uint8)).save(
+            tmp_path / f"ILSVRC2012_val_{i + 1:08d}.JPEG", quality=100
+        )
+    label_file = tmp_path / "val.txt"
+    label_file.write_text(
+        "".join(f"ILSVRC2012_val_{i + 1:08d}.JPEG {i % 3}\n" for i in range(num_images))
+    )
+
+    class PixelAccelerator(FakeAccelerator):
+        """Returns the index encoded in the image (as the hardware returns the top-1 class)."""
+
+        def ishape_normal(self, ind=0):
+            return (self._batch_size, 224, 224, 3)
+
+        def execute(self, inputs):
+            assert inputs.shape == self.ishape_normal()
+            means = inputs.reshape(self._batch_size, -1).mean(axis=1)
+            self.calls += 1
+            return np.round(means / 10.0 - 1).reshape(self._batch_size, 1)
+
+    dataset = ImageNetDataset(str(tmp_path), str(label_file), n_images=num_images, num_threads=3)
+    assert len(dataset) == num_images
+    assert dataset.sample_id(0) == "ILSVRC2012_val_00000001.JPEG"
+
+    accel = PixelAccelerator(batch_size, 3)
+    report = run_validation(accel, dataset, str(tmp_path / "report"), passes=2)
+
+    dump = np.load(os.path.join(str(tmp_path / "report"), PREDICTIONS_NAME))
+    # every sample seen exactly once per pass, despite the non-deterministic loader order
+    for p in range(2):
+        assert sorted(dump["order"][p].tolist()) == list(range(num_images))
+    # the prediction read from the image equals the sample index: nothing got mixed up
+    assert (dump["predictions"] == np.arange(num_images)).all()
+    assert (dump["labels"] == np.arange(num_images) % 3).all()
+    assert report["num_prediction_mismatches"] == 0
+    assert report["num_passes"] == 2
+    # samples 0, 1 and 2 predict their own index, which is also their label (i % 3)
+    assert report["top-1_accuracy"] == 100.0 * 3 / num_images

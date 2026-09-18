@@ -3,7 +3,12 @@
 import numpy as np
 import os
 from dataset_loading import FileQueue, ImgQueue
-from finn_plus_driver.validate.common import ValidationDataset, run_validation, validation_kwargs
+from finn_plus_driver.validate.common import (
+    ValidationDataset,
+    run_validation,
+    shutdown_loaders,
+    validation_kwargs,
+)
 from PIL import Image
 
 
@@ -82,7 +87,7 @@ class ImageNetDataset(ValidationDataset):
                 inputs = np.array(imgs).reshape(cls_inst.ishape_normal())
                 yield lbls[:, 0], inputs, lbls[:, 1]
         finally:
-            img_queue.kill_loaders()
+            shutdown_loaders(img_queue)
 
     def load(self, cls_inst, indices):
         imgs = [load_image(os.path.join(self.dataset_path, self.files[i])) for i in indices]

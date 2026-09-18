@@ -13,11 +13,38 @@ next to the report (``validate_predictions.npz``) and the mismatches are listed 
 import json
 import numpy as np
 import os
+import queue
 
 #: Name of the report written by run_validation() into the report directory
 REPORT_NAME = "report_dma_validate.json"
 #: Name of the per-sample prediction dump written next to the report
 PREDICTIONS_NAME = "validate_predictions.npz"
+
+
+def shutdown_loaders(img_queue):
+    """Stop the loader threads/processes filling a dataset_loading ImgQueue, best effort.
+
+    The shutdown method differs between the loader versions in use: ``dataset_loading`` 0.0.4
+    (multiprocessing-based) offers ``kill_loaders()``, while ``finn-dataset-loading`` 0.0.5
+    (thread-based), which is installed on the PYNQ board images, renamed it to ``join()``.
+
+    Only an overridden ``join()`` is called: the inherited ``queue.Queue.join()`` waits for
+    ``task_done()`` on every item and would block forever. Failures are reported but never
+    raised, because the loaders also terminate on their own once the file queue is exhausted
+    (the queues are loaded with ``max_epochs=1``), and losing a completed validation pass to a
+    cleanup error would defeat the purpose of the measurement.
+    """
+    if hasattr(img_queue, "kill_loaders"):
+        method_name = "kill_loaders"
+    elif getattr(type(img_queue), "join", None) not in (None, queue.Queue.join):
+        method_name = "join"
+    else:
+        print("WARNING: image loaders offer no known shutdown method, letting them finish")
+        return
+    try:
+        getattr(img_queue, method_name)()
+    except Exception as e:
+        print(f"WARNING: could not stop the image loaders via {method_name}(): {e}")
 
 
 class ValidationDataset:
@@ -102,6 +129,41 @@ def _as_index_array(values):
     return np.asarray(values, dtype=np.int64).flatten()
 
 
+def _build_report(accuracies, num_samples, passes, mismatch_indices, mismatches, num_reproduced):
+    """Assemble the report dict. ``num_passes`` is the number of passes actually completed."""
+    return {
+        # accuracy of the first pass, i.e. what a single-pass validation reports
+        "top-1_accuracy": accuracies[0] if accuracies else 0.0,
+        "num_samples": num_samples,
+        "num_passes": len(accuracies),
+        "num_passes_requested": passes,
+        "top-1_accuracy_min": min(accuracies) if accuracies else 0.0,
+        "top-1_accuracy_max": max(accuracies) if accuracies else 0.0,
+        "top-1_accuracy_per_pass": accuracies,
+        "num_prediction_mismatches": int(len(mismatch_indices)),
+        "num_mismatches_reproduced": num_reproduced,
+        "mismatches": mismatches,
+    }
+
+
+def _save_results(report_dir, report, labels, predictions, order, mismatch_indices):
+    """Write the report and the per-sample prediction dump.
+
+    Called after every pass so that a failure in a later pass (or in the re-run analysis)
+    cannot discard the results that were already measured.
+    """
+    os.makedirs(report_dir, exist_ok=True)
+    np.savez_compressed(
+        os.path.join(report_dir, PREDICTIONS_NAME),
+        labels=labels,
+        predictions=predictions,
+        order=order,
+        mismatch_indices=mismatch_indices,
+    )
+    with open(os.path.join(report_dir, REPORT_NAME), "w") as f:
+        json.dump(report, f, indent=2)
+
+
 def _rerun_batches(cls_inst, dataset, index, order, batch_size):
     """Re-run the batches (one per pass) in which the sample was processed, keeping the batch
     composition of the pass. Returns one prediction per pass, None where the batch could not be
@@ -183,6 +245,15 @@ def run_validation(cls_inst, dataset, report_dir, passes=1, rerun_repeats=3, max
         acc = 100.0 * ok / num_samples
         accuracies.append(acc)
         print("Final top-1 accuracy (pass %d/%d): %f%%" % (p + 1, passes, acc))
+        # persist after every pass, a later pass must not be able to discard these results
+        _save_results(
+            report_dir,
+            _build_report(accuracies, num_samples, passes, [], [], 0),
+            labels,
+            predictions[: p + 1],
+            order[: p + 1],
+            np.zeros(0, dtype=np.int64),
+        )
     if cls_inst.batch_size != batch_size:
         cls_inst.batch_size = batch_size
 
@@ -197,33 +268,47 @@ def run_validation(cls_inst, dataset, report_dir, passes=1, rerun_repeats=3, max
             % (len(mismatch_indices), num_samples, passes)
         )
 
+    mismatches, num_reproduced = _analyze_mismatches(
+        cls_inst,
+        dataset,
+        mismatch_indices[:max_reruns],
+        labels,
+        predictions,
+        order,
+        batch_size,
+        rerun_repeats,
+    )
+
+    report = _build_report(
+        accuracies, num_samples, passes, mismatch_indices, mismatches, num_reproduced
+    )
+    _save_results(report_dir, report, labels, predictions, order, mismatch_indices)
+    return report
+
+
+def _analyze_mismatches(
+    cls_inst, dataset, mismatch_indices, labels, predictions, order, batch_size, rerun_repeats
+):
+    """Re-run the samples whose prediction differed between passes.
+
+    Each sample is re-run twice: once in the batch composition of every pass, and once in a
+    batch consisting only of copies of the sample. Returns the per-sample findings and how
+    many of them produced differing predictions again.
+
+    Re-running exercises the accelerator, so a failure here is caught: the measured accuracies
+    are the primary result and must survive a problem in the diagnostic re-runs.
+    """
     mismatches = []
     num_reproduced = 0
-    for index in mismatch_indices[:max_reruns]:
+    for index in mismatch_indices:
         index = int(index)
-        entry = {
-            "index": index,
-            "id": dataset.sample_id(index),
-            "label": int(labels[index]),
-            "predictions_per_pass": predictions[:, index].tolist(),
-        }
-        # (a) re-run the batches the sample was part of, with the batch composition of each pass
-        entry["batch_rerun_predictions"] = _rerun_batches(
-            cls_inst, dataset, index, order, batch_size
-        )
-        # (b) re-run the sample in isolation: a batch consisting only of copies of the sample
-        inputs = dataset.load(cls_inst, np.full(batch_size, index))
-        isolated = [
-            _as_index_array(dataset.predict(cls_inst.execute(inputs), batch_size))
-            for _ in range(max(0, int(rerun_repeats)))
-        ]
-        isolated = np.stack(isolated) if isolated else np.zeros((0, batch_size), dtype=np.int64)
-        isolated_values, isolated_counts = np.unique(isolated, return_counts=True)
-        entry["isolated_rerun_predictions"] = {
-            str(int(v)): int(c) for v, c in zip(isolated_values, isolated_counts)
-        }
-        batch_values = {v for v in entry["batch_rerun_predictions"] if v is not None}
-        entry["reproduced"] = bool(len(isolated_values) > 1 or len(batch_values) > 1)
+        try:
+            entry = _rerun_mismatch(
+                cls_inst, dataset, index, labels, predictions, order, batch_size, rerun_repeats
+            )
+        except Exception as e:
+            print(f"WARNING: could not re-run sample {index}: {e}")
+            continue
         num_reproduced += int(entry["reproduced"])
         mismatches.append(entry)
         print(
@@ -238,30 +323,35 @@ def run_validation(cls_inst, dataset, report_dir, passes=1, rerun_repeats=3, max
                 entry["isolated_rerun_predictions"],
             )
         )
+    return mismatches, num_reproduced
 
-    os.makedirs(report_dir, exist_ok=True)
-    np.savez_compressed(
-        os.path.join(report_dir, PREDICTIONS_NAME),
-        labels=labels,
-        predictions=predictions,
-        order=order,
-        mismatch_indices=mismatch_indices,
-    )
-    report = {
-        # accuracy of the first pass, i.e. what a single-pass validation reports
-        "top-1_accuracy": accuracies[0],
-        "num_samples": num_samples,
-        "num_passes": passes,
-        "top-1_accuracy_min": min(accuracies),
-        "top-1_accuracy_max": max(accuracies),
-        "top-1_accuracy_per_pass": accuracies,
-        "num_prediction_mismatches": int(len(mismatch_indices)),
-        "num_mismatches_reproduced": num_reproduced,
-        "mismatches": mismatches,
+
+def _rerun_mismatch(
+    cls_inst, dataset, index, labels, predictions, order, batch_size, rerun_repeats
+):
+    """Collect the re-run predictions of a single mismatching sample."""
+    entry = {
+        "index": index,
+        "id": dataset.sample_id(index),
+        "label": int(labels[index]),
+        "predictions_per_pass": predictions[:, index].tolist(),
     }
-    with open(os.path.join(report_dir, REPORT_NAME), "w") as f:
-        json.dump(report, f, indent=2)
-    return report
+    # (a) re-run the batches the sample was part of, with the batch composition of each pass
+    entry["batch_rerun_predictions"] = _rerun_batches(cls_inst, dataset, index, order, batch_size)
+    # (b) re-run the sample in isolation: a batch consisting only of copies of the sample
+    inputs = dataset.load(cls_inst, np.full(batch_size, index))
+    isolated = [
+        _as_index_array(dataset.predict(cls_inst.execute(inputs), batch_size))
+        for _ in range(max(0, int(rerun_repeats)))
+    ]
+    isolated = np.stack(isolated) if isolated else np.zeros((0, batch_size), dtype=np.int64)
+    isolated_values, isolated_counts = np.unique(isolated, return_counts=True)
+    entry["isolated_rerun_predictions"] = {
+        str(int(v)): int(c) for v, c in zip(isolated_values, isolated_counts)
+    }
+    batch_values = {v for v in entry["batch_rerun_predictions"] if v is not None}
+    entry["reproduced"] = bool(len(isolated_values) > 1 or len(batch_values) > 1)
+    return entry
 
 
 def validation_kwargs(kwargs):
