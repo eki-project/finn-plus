@@ -6,6 +6,15 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## Unreleased
+
+### Added
+- **IP caching**: code generation and HLS synthesis results of individual layers are stored in a cache directory and re-used by later builds (eki-project#99)
+    - Configured via the new `FINN_IP_CACHE` setting (`settings.yaml`, environment variable or `finn build --ip-cache-path`), defaults to `FINN_IP_CACHE` in the FINN+ root; set it to `none` to disable
+    - New `DataflowBuildConfig` option `use_ip_cache` (default `True`) switches the cache on or off per build
+    - Cache entries are keyed by the FINN+ version/commit (including local modifications), HLS library commits, Xilinx tool version, FPGA part, HLS clock, node type/name/attributes, tensor shapes/datatypes and initializer contents
+    - The test suite (`finn test`) runs with IP caching disabled unless `--ip-cache-path` is given
+
 ## 1.5.0 - 05.09.2026
 
 ### Added
