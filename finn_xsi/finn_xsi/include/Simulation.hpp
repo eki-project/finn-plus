@@ -440,6 +440,21 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         return utilizations;
     }
 
+    /// Diagnostic snapshot of the last node's output interval tracking:
+    /// per output stream {raw last interval, EMA of intervals, stable count}.
+    /// Only meaningful on the last node; intended for progress logging while running.
+    std::array<std::array<std::size_t, 3>, OStreamsSize> getOStreamIntervalDiagnostics() const noexcept {
+        std::array<std::array<std::size_t, 3>, OStreamsSize> diag{};
+        if constexpr (LastNode) {
+            for (std::size_t i = 0; i < OStreamsSize; ++i) {
+                diag[i][0] = this->ostreams[i].interval;
+                diag[i][1] = static_cast<std::size_t>(std::round(this->ostreams[i].stableState.get_ema()));
+                diag[i][2] = this->ostreams[i].stableState.get_stable_count();
+            }
+        }
+        return diag;
+    }
+
     /// Get the current Ostream stable state intervals.
     /// Returns the rounded EMA of observed output intervals so that a single noisy
     /// measurement at the boundary of stability does not cause _check_performance to

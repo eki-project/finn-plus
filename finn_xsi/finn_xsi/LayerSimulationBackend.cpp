@@ -155,6 +155,22 @@ class SimulationController {
                 status["state"] = "running";
                 status["cycles"] = sim.getCyclesRun();
                 status["samples"] = sim.getCompletedMaps();
+                // DIAGNOSTIC (test branch): expose progress details while running. These are
+                // read concurrently with the simulation thread and may be slightly stale.
+                {
+                    auto utilizations = sim.getFIFOUtilization();
+                    json fifo_util = json::array();
+                    for (size_t i = 0; i < utilizations.size(); ++i) {
+                        fifo_util.push_back(utilizations[i]);
+                    }
+                    status["fifo_utilization"] = fifo_util;
+                    auto diag = sim.getOStreamIntervalDiagnostics();
+                    json interval_diag = json::array();
+                    for (size_t i = 0; i < diag.size(); ++i) {
+                        interval_diag.push_back({diag[i][0], diag[i][1], diag[i][2]});
+                    }
+                    status["interval_diag"] = interval_diag;
+                }
                 break;
             case SimulationState::FINISHED:
                 status["state"] = "finished";

@@ -767,6 +767,16 @@ class NodeConnectedSimulationController(SimulationController):
                 fifo_cycles_until_first_valid: list[int] = []
                 latency_cycles: list[int] = []
 
+                # DIAGNOSTIC (test branch): periodically print simulation progress to stdout so
+                # it shows up in the live CI trace. Every node reports cycles and peak FIFO
+                # utilization; the last node additionally reports completed samples and the
+                # state of its output-interval stability tracker (last interval, EMA, stable
+                # count), which decides when the initial (unbounded) simulation terminates.
+                progress_period_s = float(os.environ.get("FIFOSIM_PROGRESS_PERIOD_S", "120"))
+                sim_start_time = time.time()
+                last_progress_time = sim_start_time
+                last_progress_samples = -1
+
                 # Poll for status updates
                 while True:
                     # Check if we should stop early
@@ -835,6 +845,25 @@ class NodeConnectedSimulationController(SimulationController):
                     if state == "running":
                         # Update progress if available
                         cycles = response.get("cycles", 0)
+                        now = time.time()
+                        run_samples = response.get("samples", 0)
+                        if (now - last_progress_time >= progress_period_s) or (
+                            is_last_node and run_samples != last_progress_samples
+                        ):
+                            last_progress_time = now
+                            last_progress_samples = run_samples
+                            msg = (
+                                f"[fifosim-progress] t={now - sim_start_time:.0f}s "
+                                f"{name} cycles={cycles} "
+                                f"fifo_util={response.get('fifo_utilization', [])}"
+                            )
+                            if is_last_node:
+                                msg += (
+                                    f" samples={run_samples} "
+                                    f"interval_diag(last,ema,stable)="
+                                    f"{response.get('interval_diag', [])}"
+                                )
+                            print(msg)
 
                     if state == "error":
                         error_msg = response.get("message", "Unknown error")
