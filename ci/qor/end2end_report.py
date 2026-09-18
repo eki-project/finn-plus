@@ -31,6 +31,8 @@ from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from finn.benchmarking import exchange  # noqa: E402
+
 from finn.qor.evaluation import (
     RESOURCE_ESTIMATORS,
     breakdown_resources,
@@ -76,8 +78,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
         "--artifacts-dir",
-        default=".",
-        help="directory containing build_artifacts/ and measurement_artifacts/ (default: cwd)",
+        default=None,
+        help="directory containing build_artifacts/ and measurement_artifacts/ (default: the "
+        "pipeline's exchange directory if FINN_BENCH_EXCHANGE_DIR is set, else cwd)",
     )
     parser.add_argument(
         "--followup", action="store_true", help="use the *_followup artifact directories"
@@ -214,7 +217,7 @@ def unique_model_names(names: pd.Series) -> pd.Series:
 def main() -> int:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    artifacts_dir = Path(args.artifacts_dir).resolve()
+    artifacts_dir = Path(args.artifacts_dir or exchange.pipeline_exchange_dir() or ".").resolve()
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -271,7 +274,12 @@ def main() -> int:
         for name in (f"build_artifacts{suffix}", f"measurement_artifacts{suffix}"):
             src = artifacts_dir / name
             if src.is_dir():
-                shutil.copytree(src, target / name.removesuffix("_followup"), dirs_exist_ok=True)
+                shutil.copytree(
+                    src,
+                    target / name.removesuffix("_followup"),
+                    dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("deploy.zip", "DONE", "*.lock"),
+                )
         shutil.copytree(out_dir, target / "report", dirs_exist_ok=True)
         logger.info("Persisted artifacts and report to %s", target)
     return 0

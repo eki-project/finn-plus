@@ -52,6 +52,18 @@ variables:
   MANUAL_CFG_PATH:
     description: "Name (in ci/cfg/) or path (relative to LOCAL_CFG_DIR) of benchmarking config to run"
     value: ""
+  SAMPLE_COUNT:
+    description: "Override the number of samples of every 'mode: sample' entry of the benchmarking config (empty = as configured)"
+    value: ""
+  SAMPLE_SEED:
+    description: "Override the random seed of sampled benchmarking configs (empty = pipeline id)"
+    value: ""
+  EXCHANGE_RETENTION_DAYS:
+    description: "Delete exchange directories (per-run artifacts on the cluster share) of pipelines older than this many days"
+    value: "14"
+  KEEP_EXCHANGE_DEPLOY:
+    description: "Set to 1 to keep this pipeline's deployment packages (bitstreams) on the exchange share"
+    value: ""
 
 workflow:
   name: '$PIPELINE_NAME'

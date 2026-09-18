@@ -11,3 +11,5 @@ per-file-ignores =
      tests/*: F401
      # CI scripts add src/ to sys.path before importing finn.qor
      ci/qor/*: E402
+     ci/*.py: E402
+     ci/collect/collect.py: E402

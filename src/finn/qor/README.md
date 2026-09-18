@@ -82,6 +82,53 @@ Versal-only backends or two-stream elementwise operations.
   (unexpectedly inserted) nodes under `synth/resources_extra/`.
 - Stream widths are limited to 1024 bits by the instrumentation shell.
 
+## Growing the database: random sampling and the artifact exchange
+
+**Sampling.** Instead of enumerating parameter grids, a config entry with `mode: sample` draws
+`num_samples` configurations at random from the DUT's declarative parameter space
+(`MicrobenchDUT.param_space()`, see `finn.benchmarking.param_space`), rejects invalid ones via
+`validate()` and, with `skip_existing: true`, skips configurations that are already in the
+database (`$FINN_MICROBENCHMARK_DATABASE`, key = the run's parameter set, shared with the
+database deduplication in `finn.qor.params_key`). See `ci/cfg/microbenchmark_sample_*.yml`;
+`space:` overrides individual dimensions, other keys fix parameters:
+
+```yaml
+- mode: sample
+  dut: mvau
+  num_samples: 200
+  seed: 1234              # default: $SAMPLE_SEED, else the CI pipeline id
+  skip_existing: true     # false | true (runs with status ok) | "all"
+  space: {mw: {type: pow2, lo: 16, hi: 1024}, idt: {type: choice, values: [INT2, INT4]}}
+  board: RFSoC2x2
+```
+
+The expansion is deterministic per seed; on the cluster the first SLURM array task publishes
+its expansion in the exchange directory and the others follow it. `sampling_stats.json`
+(build artifact) reports attempts and rejection reasons. Locally: `finn bench --sample mvau:20`.
+In CI, launch the manual bench pipeline with `MANUAL_CFG_PATH=microbenchmark_sample_<dut>`;
+`SAMPLE_COUNT` / `SAMPLE_SEED` override the config.
+
+**Artifact exchange.** Per-run artifacts (reports, `deploy.zip` bitstream packages) are
+exchanged between the build (cluster), measurement (board) and collection runners through a
+directory on the cluster fileshare instead of GitLab artifacts (`finn.benchmarking.exchange`,
+stdlib only). Each job exports `FINN_BENCH_EXCHANGE_DIR` from its runner-specific project
+variable (`OTUS_EXCHANGE_DIR`, `BOARD_EXCHANGE_DIR`, `LOCAL_EXCHANGE_DIR`); the build job also
+reads the database via `OTUS_BENCHMARK_DIR_STORE`. Layout:
+
+```
+<exchange>/CI_<pipeline id>/CREATED
+    build_artifacts[_followup]/runs_output/run_<id>/{reports/, deploy.zip, DONE}, TASK_<k>_DONE
+    measurement_artifacts[_followup]/runs_output/run_<id>/{reports/, DONE}
+```
+
+`DONE` markers signal completed runs; GitLab artifacts only carry configs, summaries and
+`run_index.json`. If the variable is unset, everything falls back to `build_artifacts/` in the
+working directory as before. The `Exchange Cleanup` job deletes the pipeline's bitstreams
+(unless `KEEP_EXCHANGE_DEPLOY=1`) and pipeline directories older than
+`EXCHANGE_RETENTION_DAYS` (default 14). Prerequisite on the share: a common group with the
+setgid bit on the exchange root, and write access for root on the board (NFS root_squash).
+`ci/exchange_cleanup.py --dry-run` previews what would be removed.
+
 ## Adding an operator
 
 1. Add an `OperatorFeatureSpec` in `features.py` (feature columns, derived columns via the

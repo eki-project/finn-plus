@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from finn.qor.features import SPECS, OperatorFeatureSpec
+from finn.qor.params_key import irrelevant_param_cols, params_key
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +40,9 @@ POWER_COLS: list[tuple[str, float]] = [
 POWER_TARGET_COL = "power"
 
 # Run parameters that do not influence the implementation and only add noise to the
-# params-based deduplication (operator-specific loop bounds such as the number of input
-# vectors are listed in ``OperatorFeatureSpec.irrelevant_param_cols``).
-_IRRELEVANT_PARAM_COLS = [
-    "params.generate_outputs",
-    "params.store_results_in_dvc_experiment",
-    "params.store_results_in_dvc_data",
-]
+# params-based deduplication (shared with the sampler, see finn.qor.params_key;
+# operator-specific loop bounds are listed in ``OperatorFeatureSpec.irrelevant_param_cols``).
+_IRRELEVANT_PARAM_COLS = irrelevant_param_cols()
 
 
 @dataclass
@@ -78,15 +75,6 @@ def resolve_database_path(database_path: Optional[str] = None) -> str:
     if not os.path.isdir(path):
         raise FileNotFoundError(f"Database path does not exist: {path}")
     return path
-
-
-def make_hashable(obj: Any) -> Any:
-    """Recursively convert lists/dicts to tuples so the result is hashable."""
-    if isinstance(obj, (list, tuple)):
-        return tuple(make_hashable(e) for e in obj)
-    if isinstance(obj, dict):
-        return tuple(sorted((k, make_hashable(v)) for k, v in obj.items()))
-    return obj
 
 
 def read_operator_runs(database_path: str, operator: str) -> tuple[pd.DataFrame, int]:
@@ -209,7 +197,11 @@ def load_microbenchmark_database(
     n_before = len(df)
     params_cols = sorted(c for c in df.columns if c.startswith("params."))
     if params_cols and "date" in df.columns:
-        key = df[params_cols].apply(lambda row: tuple(make_hashable(v) for v in row), axis=1)
+        # same key function as the random sampler (finn.qor.params_key)
+        names = [c[len("params.") :] for c in params_cols]
+        key = df[params_cols].apply(
+            lambda row: params_key(dict(zip(names, row)), names, ignore=()), axis=1
+        )
         df = df.assign(_params_key=key)
         df = df.sort_values(["date", "_params_key"], ascending=[False, True])
         df = df.drop_duplicates(subset=["_params_key"], keep="first").drop(columns="_params_key")

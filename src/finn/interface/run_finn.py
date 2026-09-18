@@ -988,14 +988,21 @@ def settings_wizard() -> None:
 
 
 @click.command(help="Run a given benchmark configuration.")
-@click.option("--bench_config", help="Name or path of experiment configuration file", required=True)
+@click.option("--bench_config", help="Name or path of experiment configuration file", default=None)
+@click.option(
+    "--sample",
+    default=None,
+    help="Instead of a configuration file, sample N new microbenchmark configurations for a "
+    "DUT (see finn.benchmarking.sampling): DUT:N[:SEED], e.g. mvau:100",
+)
 @finn_deps
 @finn_deps_definitions
 @finn_build_dir
 @num_default_workers
 @batch
 def bench(
-    bench_config: str,
+    bench_config: str | None,
+    sample: str | None,
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     num_default_workers: int,
@@ -1003,6 +1010,18 @@ def bench(
     batch: bool,
 ) -> None:
     """Run a benchmark."""
+    if bench_config is None and sample is None:
+        raise click.UsageError("Either --bench_config or --sample is required")
+    inline_config = None
+    if sample is not None:
+        parts = sample.split(":")
+        if len(parts) not in (2, 3):
+            raise click.UsageError("--sample expects DUT:N[:SEED]")
+        entry: dict = {"mode": "sample", "dut": parts[0], "num_samples": int(parts[1])}
+        if len(parts) == 3:
+            entry["seed"] = int(parts[2])
+        inline_config = [entry]
+        bench_config = bench_config or "sample"
     if finn_build_dir is not None:
         finn_build_dir = finn_build_dir.expanduser().absolute()
         finn_build_dir.mkdir(parents=True, exist_ok=True)
@@ -1024,7 +1043,7 @@ def bench(
     # Late import because we need prepare_finn to setup remaining dependencies first
     from finn.benchmarking.bench import start_bench_run
 
-    exit_code = start_bench_run(str(bench_config))
+    exit_code = start_bench_run(str(bench_config), config=inline_config)
     sys.exit(exit_code)
 
 

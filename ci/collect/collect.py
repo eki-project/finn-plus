@@ -10,8 +10,12 @@ import subprocess
 import sys
 import yaml
 from datetime import date
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src"))
 from dvc.repo import Repo
 from dvclive import Live
+
+from finn.benchmarking import exchange  # noqa: E402
 
 
 def delete_dir_contents(dir):
@@ -27,34 +31,20 @@ def delete_dir_contents(dir):
             print("Failed to delete %s. Reason: %s" % (file_path, e))
 
 
+def artifact_reports_dir(kind, id, is_followup=False):
+    """Reports directory of one run in the build or measurement artifacts (see
+    finn.benchmarking.exchange for where these live)."""
+    return exchange.run_dir(kind, id, is_followup) / "reports"
+
+
 def open_json_report(id, report_name, is_followup=False):
     """Open JSON report from build or measurement artifacts."""
-    # TODO: handle followup setting better
-    # look in both, build & measurement, artifacts
-    if is_followup:
-        path1 = os.path.join(
-            "build_artifacts_followup", "runs_output", "run_%d" % (id), "reports", report_name
-        )
-        path2 = os.path.join(
-            "measurement_artifacts_followup", "runs_output", "run_%d" % (id), "reports", report_name
-        )
-    else:
-        path1 = os.path.join(
-            "build_artifacts", "runs_output", "run_%d" % (id), "reports", report_name
-        )
-        path2 = os.path.join(
-            "measurement_artifacts", "runs_output", "run_%d" % (id), "reports", report_name
-        )
-    if os.path.isfile(path1):
-        with open(path1, "r") as f:
-            report = json.load(f)
-        return report
-    elif os.path.isfile(path2):
-        with open(path2, "r") as f:
-            report = json.load(f)
-        return report
-    else:
-        return None
+    for kind in ("build", "measurement"):
+        path = artifact_reports_dir(kind, id, is_followup) / report_name
+        if path.is_file():
+            with open(path, "r") as f:
+                return json.load(f)
+    return None
 
 
 def classify_run(params):
@@ -754,22 +744,18 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if args.followup:
-        run_dir_list = os.listdir(os.path.join("build_artifacts_followup", "runs_output"))
-    else:
-        run_dir_list = os.listdir(os.path.join("build_artifacts", "runs_output"))
-    print("Looking for runs in build artifacts")
-    run_ids = []
-    for run_dir in run_dir_list:
-        if run_dir.startswith("run_"):
-            run_id = int(run_dir[4:])
-            run_ids.append(run_id)
-    run_ids.sort()
+    print(exchange.describe())
+    print(
+        "Looking for runs in build artifacts (%s)" % exchange.artifacts_dir("build", args.followup)
+    )
+    # only runs the build job marked as complete (old trees without markers: all runs)
+    run_ids = exchange.list_run_ids("build", args.followup)
     print("Found %d runs" % len(run_ids))
 
     follow_up_bench_cfg = list()
     microbench_result_data = dict()
     metric_reports = dict()
+    run_index = dict()
     fail = False
     fail_missing_comparison = False
 
@@ -832,6 +818,13 @@ if __name__ == "__main__":
                     if status_builder == "failed":
                         status = "failed"
             dvc_logger.log_metric("", "status", status)
+            run_index["run_%d" % id] = {
+                "status": status,
+                "dut": metadata_bench["params"].get("dut"),
+                "build_dir": str(exchange.run_dir("build", id, args.followup)),
+                "measurement_dir": str(exchange.run_dir("measurement", id, args.followup)),
+                "measured": exchange.is_done(exchange.run_dir("measurement", id, args.followup)),
+            }
 
             # verification steps
             if "output" in metadata_bench:
@@ -1036,12 +1029,7 @@ if __name__ == "__main__":
             )
 
             # power measurement
-            experiment_reports_path = os.path.join(
-                "measurement_artifacts_followup" if args.followup else "measurement_artifacts",
-                "runs_output",
-                "run_%d" % (id),
-                "reports",
-            )
+            experiment_reports_path = str(artifact_reports_dir("measurement", id, args.followup))
             power = generate_power_report(
                 ["0V85_power", "3V3_power", "total_power"], experiment_reports_path
             )
@@ -1064,20 +1052,8 @@ if __name__ == "__main__":
             # ARTIFACTS
             # Log build reports as they come from GitLab artifacts,
             # but copy them to a central dir first so all runs share the same path
-            if args.followup:
-                run_report_dir1 = os.path.join(
-                    "build_artifacts_followup", "runs_output", "run_%d" % (id), "reports"
-                )
-                run_report_dir2 = os.path.join(
-                    "measurement_artifacts_followup", "runs_output", "run_%d" % (id), "reports"
-                )
-            else:
-                run_report_dir1 = os.path.join(
-                    "build_artifacts", "runs_output", "run_%d" % (id), "reports"
-                )
-                run_report_dir2 = os.path.join(
-                    "measurement_artifacts", "runs_output", "run_%d" % (id), "reports"
-                )
+            run_report_dir1 = str(artifact_reports_dir("build", id, args.followup))
+            run_report_dir2 = str(artifact_reports_dir("measurement", id, args.followup))
             dvc_report_dir = "reports"
             os.makedirs(dvc_report_dir, exist_ok=True)
             delete_dir_contents(dvc_report_dir)
@@ -1098,12 +1074,7 @@ if __name__ == "__main__":
         if run_kind == "live_fifo":
             # Choose the search order with the lowest fifo_size_total_kB
             lfs_base_dir = os.path.join(
-                "measurement_artifacts",
-                "runs_output",
-                "run_%d" % (id),
-                "reports",
-                "experiment_fifosizing",
-                "exp_itr_1",
+                str(artifact_reports_dir("measurement", id)), "experiment_fifosizing", "exp_itr_1"
             )
             best_search_order = None
             best_fifo_size = float("inf")
@@ -1130,11 +1101,19 @@ if __name__ == "__main__":
                     "Selecting search order '%s' with fifo_size_total_kB=%.2f"
                     % (best_search_order, best_fifo_size)
                 )
-                folding_config_path = os.path.join(
-                    lfs_base_dir, best_search_order, "both", "folding_config.json"
+                # copy the selected configs into a small GitLab artifact so the follow-up
+                # build (on another runner) does not depend on the exchange path layout
+                followup_inputs_dir = os.path.join("followup_inputs", "run_%d" % (id))
+                os.makedirs(followup_inputs_dir, exist_ok=True)
+                folding_config_path = os.path.join(followup_inputs_dir, "folding_config.json")
+                fifo_config_path = os.path.join(followup_inputs_dir, "fifo_config.json")
+                shutil.copy(
+                    os.path.join(lfs_base_dir, best_search_order, "both", "folding_config.json"),
+                    folding_config_path,
                 )
-                fifo_config_path = os.path.join(
-                    lfs_base_dir, best_search_order, "both", "fifo_config.json"
+                shutil.copy(
+                    os.path.join(lfs_base_dir, best_search_order, "both", "fifo_config.json"),
+                    fifo_config_path,
                 )
                 print(
                     "Creating follow-up experiment config using folding config %s "
@@ -1224,6 +1203,10 @@ if __name__ == "__main__":
         print("Saving follow-up bench config as artifact: %s" % followup_artifact_path)
         with open(followup_artifact_path, "w") as f:
             json.dump(follow_up_bench_cfg, f, indent=2)
+
+    # Save an index of all runs (status and where their artifacts live) as artifact
+    with open("run_index%s.json" % ("_followup" if args.followup else ""), "w") as f:
+        json.dump(run_index, f, indent=2)
 
     # Save metric comparison report as JSON
     report_name = "metric_report.json" if not args.followup else "metric_report_followup.json"

@@ -18,6 +18,8 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
     - Each DUT has a pure `validate()` and a declarative `param_space()` for random sampling; `dut_info.json` records the generated node (`dut_node_name`) so `ci/collect/collect.py` extracts per-operator post-synthesis resources generically
     - Node feature extractors are registered per operator (`@register_node_features`); models fall back to the analytical estimate for categorical feature values not covered by the training data
     - New pytest marker `qor` (`tests/qor/`), smoke configurations in `ci/cfg/microbenchmark_basic.yml`
+- **Random sampling of microbenchmark configurations**: `mode: sample` config entries (and `finn bench --sample DUT:N`) draw new configurations from each DUT's parameter space and skip those already in the result database (`finn.benchmarking.sampling`, `finn.qor.params_key`); `ci/cfg/microbenchmark_sample_*.yml`, pipeline variables `SAMPLE_COUNT`/`SAMPLE_SEED`
+- **Benchmark artifact exchange via the cluster fileshare**: per-run reports and bitstreams are exchanged between the build, measurement and collection runners through `FINN_BENCH_EXCHANGE_DIR` (`finn.benchmarking.exchange`) instead of GitLab artifacts; new `Exchange Cleanup` CI job with `EXCHANGE_RETENTION_DAYS`/`KEEP_EXCHANGE_DEPLOY`
 
 ## 1.5.0 - 05.09.2026
 

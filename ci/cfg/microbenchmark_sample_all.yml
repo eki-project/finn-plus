@@ -1,0 +1,14 @@
+# Randomly sampled microbenchmark configurations for all supported operators (see
+# src/finn/benchmarking/sampling.py). SAMPLE_COUNT / SAMPLE_SEED override the per-entry
+# num_samples / seed; configurations already in the database are skipped.
+[
+    {"mode": "sample", "dut": "mvau", "num_samples": 20, "skip_existing": true},
+    {"mode": "sample", "dut": "thresholding", "num_samples": 20, "skip_existing": true},
+    {"mode": "sample", "dut": "swg", "num_samples": 20, "skip_existing": true},
+    {"mode": "sample", "dut": "vvau", "num_samples": 20, "skip_existing": true},
+    {"mode": "sample", "dut": "fifo", "num_samples": 20, "skip_existing": true},
+    {"mode": "sample", "dut": "dwc", "num_samples": 20, "skip_existing": true},
+    {"mode": "sample", "dut": "pool", "num_samples": 20, "skip_existing": true},
+    {"mode": "sample", "dut": "fmpadding", "num_samples": 20, "skip_existing": true},
+    {"mode": "sample", "dut": "eltwise", "num_samples": 20, "skip_existing": true},
+]

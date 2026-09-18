@@ -8,6 +8,13 @@ stages:
   - measure_followup
   - collect_followup
   - qor
+  - cleanup
+
+# Large per-run artifacts (reports, bitstreams) are exchanged between the runners through a
+# directory on the cluster fileshare instead of GitLab artifacts (see
+# src/finn/benchmarking/exchange.py). Every job exports FINN_BENCH_EXCHANGE_DIR from the
+# runner-specific project variable (OTUS_EXCHANGE_DIR, BOARD_EXCHANGE_DIR, LOCAL_EXCHANGE_DIR);
+# the GitLab artifacts only carry small summaries.
 
 variables:
   BENCH_CFG:
@@ -42,6 +49,10 @@ FINN Build:
       dvc pull
       # Fitted QoR models (see ci/qor/) for empirical estimate reports, path as seen from this runner
       export FINN_QOR_MODEL_DIR=$OTUS_QOR_MODEL_DIR_STORE
+      # Exchange directory for per-run artifacts and the microbenchmark database (for the
+      # novelty check of randomly sampled configurations), paths as seen from this runner
+      export FINN_BENCH_EXCHANGE_DIR=$OTUS_EXCHANGE_DIR
+      export FINN_MICROBENCHMARK_DATABASE=$OTUS_BENCHMARK_DIR_STORE
       finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config $BENCH_CFG
   cache:
     key:
@@ -73,11 +84,14 @@ Measurement:
     # Install dependencies for FINN driver
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && chmod +x scripts/driver_install_dependencies.sh && scripts/driver_install_dependencies.sh"
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
-    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && python ci/measure.py"
+    # (environment variables have to be forwarded through sudo explicitly)
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && export FINN_BENCH_EXCHANGE_DIR=$BOARD_EXCHANGE_DIR && export CI_PIPELINE_ID=$CI_PIPELINE_ID && python ci/measure.py"
   artifacts:
     name: "measurement_artifacts"
     when: always
     paths:
+      - measurement_summary.json
+      # only populated if no exchange directory is configured
       - measurement_artifacts/
 
 Result Collection:
@@ -99,6 +113,7 @@ Result Collection:
       collect_status=0
       push_status=0
 
+      export FINN_BENCH_EXCHANGE_DIR=$LOCAL_EXCHANGE_DIR
       python3.10 ci/collect/collect.py || collect_status=$?
       dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
 
@@ -113,6 +128,8 @@ Result Collection:
       - build_artifacts/
       - measurement_artifacts/
       - followup_bench_config.json
+      - followup_inputs/
+      - run_index.json
       - metric_report_plots.png
       - metric_report.json
 
@@ -153,6 +170,8 @@ FINN Build (Follow-up):
       dvc config cache.dir $CI_DVC_CACHE_DIR
       dvc pull
       export FINN_QOR_MODEL_DIR=$OTUS_QOR_MODEL_DIR_STORE
+      export FINN_BENCH_EXCHANGE_DIR=$OTUS_EXCHANGE_DIR
+      export FINN_MICROBENCHMARK_DATABASE=$OTUS_BENCHMARK_DIR_STORE
       finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config followup
   cache:
     key:
@@ -180,23 +199,19 @@ Measurement (Follow-up):
   tags:
     - board
   script:
-    # Check if follow-up build artifacts exist, exit gracefully if not
-    - |
-      if [ ! -d build_artifacts_followup ]; then
-        echo "No follow-up build artifacts found, skipping follow-up measurement"
-        exit 0
-      fi
+    # (measure.py exits gracefully if no follow-up build artifacts exist)
     # Build power measurement driver (TODO: support other boards)
     - make -C ci/power_measurement/boards/rfsoc2x2 shared
     - make -C ci/power_measurement/boards/rfsoc4x2 shared
     # Install dependencies for FINN driver
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && chmod +x scripts/driver_install_dependencies.sh && scripts/driver_install_dependencies.sh"
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
-    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && python ci/measure.py --followup"
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && export FINN_BENCH_EXCHANGE_DIR=$BOARD_EXCHANGE_DIR && export CI_PIPELINE_ID=$CI_PIPELINE_ID && python ci/measure.py --followup"
   artifacts:
     name: "measurement_artifacts_followup"
     when: always
     paths:
+      - measurement_summary_followup.json
       - measurement_artifacts_followup/
 
 Result Collection (Follow-up):
@@ -228,6 +243,7 @@ Result Collection (Follow-up):
       collect_status=0
       push_status=0
 
+      export FINN_BENCH_EXCHANGE_DIR=$LOCAL_EXCHANGE_DIR
       python3.10 ci/collect/collect.py --followup || collect_status=$?
       dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
 
@@ -242,8 +258,11 @@ Result Collection (Follow-up):
       - build_artifacts/
       - measurement_artifacts/
       - followup_bench_config.json
+      - followup_inputs/
+      - run_index.json
       - build_artifacts_followup/
       - measurement_artifacts_followup/
+      - run_index_followup.json
       - metric_report_plots_followup.png
       - metric_report_followup.json
 
@@ -299,6 +318,7 @@ QoR End2End Report:
     - python3.10 -m venv qor-venv
     - qor-venv/bin/pip install --quiet 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'jinja2>=3.1.2'
     - |
+      export FINN_BENCH_EXCHANGE_DIR=$LOCAL_EXCHANGE_DIR
       qor-venv/bin/python ci/qor/end2end_report.py --output-dir qor_e2e_artifacts \
         --persist-to $LOCAL_BENCHMARK_DIR_STORE/end2end_evaluation/$(date +%Y-%m-%d)_${CI_COMMIT_SHORT_SHA}_${CI_PIPELINE_ID}_${MANUAL_CFG_PATH:-$BENCH_CFG}
   artifacts:
@@ -306,3 +326,21 @@ QoR End2End Report:
     when: always
     paths:
       - qor_e2e_artifacts/
+
+# Retention for the exchange directory: remove this pipeline's deployment packages (the
+# reports are kept) and pipeline directories older than EXCHANGE_RETENTION_DAYS. Runs as the
+# cluster user, which owns the large files.
+Exchange Cleanup:
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  stage: cleanup
+  tags:
+    - otus_login
+  rules:
+    - when: always
+  extends: .n2_setup_general
+  script:
+    - |
+      export FINN_BENCH_EXCHANGE_DIR=$OTUS_EXCHANGE_DIR
+      python3 ci/exchange_cleanup.py --pipeline --stale-days ${EXCHANGE_RETENTION_DAYS:-14}

@@ -1,0 +1,13 @@
+# Randomly sampled microbenchmark configurations for the 'pool' operator (see
+# src/finn/benchmarking/sampling.py). Every run yields a new datapoint for the QoR
+# estimation database; configurations already present in the database are skipped.
+# Launch via the manual bench pipeline (MANUAL_CFG_PATH=microbenchmark_sample_pool);
+# SAMPLE_COUNT / SAMPLE_SEED override num_samples / seed.
+[
+    {
+        "mode": "sample",
+        "dut": "pool",
+        "num_samples": 50,
+        "skip_existing": true
+    },
+]

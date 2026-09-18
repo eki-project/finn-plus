@@ -5,7 +5,6 @@ both SLURM-based cluster execution and local testing. It handles configuration
 expansion, job distribution, and result collection.
 """
 
-import itertools
 import json
 import onnxruntime as ort
 import os
@@ -14,10 +13,12 @@ import time
 import traceback
 import yaml
 
+from finn.benchmarking import exchange
 from finn.benchmarking.bench_base import bench
 from finn.benchmarking.dut import MICROBENCH_DUTS
 from finn.benchmarking.dut.bench_mvau_multi_dnn import bench_mvau_multi_dnn
 from finn.benchmarking.dut.synthetic_nonlinear import bench_synthetic_nonlinear
+from finn.benchmarking.sampling import expand_config, pop_sampling_info, publish_expanded
 
 # from finn.benchmarking.dut.transformer import bench_transformer
 from finn.benchmarking.util import delete_dir_contents
@@ -49,15 +50,18 @@ class PrefixPrinter:
         self.console.flush()
 
 
-def start_bench_run(config_name):
+def start_bench_run(config_name, config=None):
     """Start a benchmarking run with the specified configuration.
 
     This function handles both SLURM cluster execution and local testing,
-    loading configuration files, expanding parameter combinations, and
+    loading configuration files, expanding parameter combinations (Cartesian
+    product and/or random sampling, see finn.benchmarking.sampling), and
     distributing work across available tasks.
 
     Args:
         config_name (str): Name of configuration file or path to config file
+        config (list, optional): Inline configuration (list of entries) used instead of
+            loading ``config_name`` from a file, e.g. built by ``finn bench --sample``
 
     Returns:
         int: Exit code (0 for success, 1 for failure)
@@ -135,11 +139,20 @@ def start_bench_run(config_name):
         task_count = 1
         print("Launched as single job")
 
-    # Prepare result directory
-    artifacts_dir = os.path.join(experiment_dir, "build_artifacts")
+    # Prepare result directories: small summaries (configs, task summaries) go to the GitLab
+    # artifact directory in the working tree, the per-run artifacts (reports, deployment
+    # packages) to the exchange directory on the shared filesystem if configured (see
+    # finn.benchmarking.exchange), else to the same tree as before
+    summary_dir = os.path.join(experiment_dir, "build_artifacts")
     if is_followup:
-        artifacts_dir = artifacts_dir + "_followup"
-    os.makedirs(artifacts_dir, exist_ok=True)
+        summary_dir = summary_dir + "_followup"
+    os.makedirs(summary_dir, exist_ok=True)
+    print(exchange.describe())
+    exchange.set_shared_umask()
+    exchange.pipeline_exchange_dir(create=True)
+    artifacts_dir = str(exchange.artifacts_dir("build", is_followup, base=experiment_dir))
+    exchange.ensure_dir(artifacts_dir)
+    exchange.check_writable(artifacts_dir)
     print("Collecting results in path: %s" % artifacts_dir)
 
     # Prepare local save dir for large artifacts (e.g., build output, tmp dir dump for debugging)
@@ -147,28 +160,34 @@ def start_bench_run(config_name):
     print("Saving additional artifacts in path: %s" % save_dir)
 
     # Load config
-    print("Loading config %s" % (config_path))
-    if os.path.exists(config_path):
-        with open(config_path) as f:
-            config = yaml.load(f, Loader=yaml.SafeLoader)
+    if config is not None:
+        print("Using inline config: %s" % json.dumps(config))
     else:
-        print("ERROR: config file not found")
-        return None
+        print("Loading config %s" % (config_path))
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                config = yaml.load(f, Loader=yaml.SafeLoader)
+        else:
+            print("ERROR: config file not found")
+            return None
 
-    # Expand all specified config combinations (gridsearch)
-    config_expanded = []
-    for param_set in config:
-        param_set_expanded = list(
-            dict(zip(param_set.keys(), x)) for x in itertools.product(*param_set.values())
-        )
-        config_expanded.extend(param_set_expanded)
+    # Expand all specified config combinations (gridsearch and/or random sampling)
+    database_path = os.environ.get("FINN_MICROBENCHMARK_DATABASE")
+    config_expanded, sampling_stats = expand_config(config, dut, database_path)
+    if sampling_stats and os.path.abspath(artifacts_dir) != os.path.abspath(summary_dir):
+        # all array tasks must work on the same expansion even if the database changes
+        # between their starts: the first task publishes it, the others follow
+        config_expanded = publish_expanded(artifacts_dir, config_expanded)
 
     # Save config (only first job of array) for logging purposes
     if task_id == 0:
-        with open(os.path.join(artifacts_dir, "bench_config.json"), "w") as f:
+        with open(os.path.join(summary_dir, "bench_config.json"), "w") as f:
             json.dump(config, f, indent=2)
-        with open(os.path.join(artifacts_dir, "bench_config_exp.json"), "w") as f:
+        with open(os.path.join(summary_dir, "bench_config_exp.json"), "w") as f:
             json.dump(config_expanded, f, indent=2)
+        if sampling_stats:
+            with open(os.path.join(summary_dir, "sampling_stats.json"), "w") as f:
+                json.dump([stats.to_dict() for stats in sampling_stats], f, indent=2)
 
     # Determine which runs this job will work on
     total_runs = len(config_expanded)
@@ -198,10 +217,13 @@ def start_bench_run(config_name):
             % (run + 1, len(selected_runs), run_id, total_runs)
         )
 
-        params = config_expanded[run_id]
+        params = dict(config_expanded[run_id])
+        sampling_info = pop_sampling_info(params)
         print("RUN %d PARAMETERS: %s" % (run_id, str(params)))
 
         log_dict = {"run_id": run_id, "task_id": task_id, "params": params}
+        if sampling_info is not None:
+            log_dict["sampling"] = sampling_info
 
         # Make experiments_config path relative to config file path if not absolute
         if "experiments_config" in params:
@@ -270,13 +292,32 @@ def start_bench_run(config_name):
         with open(log_path, "w") as f:
             json.dump(log_dict, f, indent=2)
 
-        # save GitLab artifacts of this run (e.g., reports and deployment package)
+        # save per-run artifacts (e.g., reports and deployment package) to the exchange
         bench_object.save_artifacts_collection()
         # save local artifacts of this run (e.g., full build dir, detailed debug info)
         bench_object.save_local_artifacts_collection()
+        # signal completion to the measurement/collection jobs
+        exchange.mark_done(
+            os.path.join(artifacts_dir, "runs_output", "run_%d" % run_id),
+            log_dict["status"],
+            task_id=task_id,
+            run_id=run_id,
+        )
 
     print("STOPPING JOB %d (of %d total jobs)" % (task_id, task_count))
     print("JOB %d SUCCESSFUL RUNS: %s" % (task_id, successful_runs))
     print("JOB %d SKIPPED RUNS: %s" % (task_id, skipped_runs))
     print("JOB %d FAILED RUNS: %s" % (task_id, failed_runs))
+    task_summary = {
+        "task_id": task_id,
+        "task_count": task_count,
+        "selected_runs": selected_runs,
+        "successful_runs": successful_runs,
+        "skipped_runs": skipped_runs,
+        "failed_runs": failed_runs,
+    }
+    with open(os.path.join(summary_dir, "task_%d_summary.json" % task_id), "w") as f:
+        json.dump(task_summary, f, indent=2)
+    with open(os.path.join(artifacts_dir, "TASK_%d_DONE" % task_id), "w") as f:
+        json.dump(task_summary, f, indent=2)
     return exit_code

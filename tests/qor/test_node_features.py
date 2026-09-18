@@ -19,6 +19,7 @@ from finn.analysis.fpgadataflow.empirical_qor_estimation import (
 from finn.benchmarking.dut import MICROBENCH_DUTS
 from finn.benchmarking.dut.microbench_base import backend_of, resolve_part
 from finn.benchmarking.param_space import sample_params
+from finn.benchmarking.sampling import expand_config, pop_sampling_info
 from finn.qor.features import COMMON_DUT_INFO_KEYS, SPECS
 from finn.util.basic import getHWCustomOp
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
@@ -334,3 +335,24 @@ def test_sampled_configs_build(dut):
         if built == 3:
             break
     assert built == 3
+
+
+def test_expand_config_with_real_duts(monkeypatch):
+    monkeypatch.delenv("SAMPLE_COUNT", raising=False)
+    monkeypatch.delenv("SAMPLE_SEED", raising=False)
+    monkeypatch.delenv("CI_PIPELINE_ID", raising=False)
+    config = [
+        {"mode": "sample", "dut": dut, "num_samples": 5, "seed": 3, "skip_existing": False}
+        for dut in sorted(MICROBENCH_DUTS)
+    ]
+    expanded, stats = expand_config(config, MICROBENCH_DUTS, None)
+    assert [s.produced for s in stats] == [5] * len(MICROBENCH_DUTS)
+    assert len(expanded) == 5 * len(MICROBENCH_DUTS)
+    for params in expanded:
+        pop_sampling_info(params)
+        cls = MICROBENCH_DUTS[params["dut"]]
+        assert cls.validate(params) is None
+        # the fixed defaults every CI run needs are attached
+        assert params["instrumentation_no_dma"] is True
+        assert params["store_results_in_dvc_data"] is True
+        assert "bitfile" in params["generate_outputs"]
