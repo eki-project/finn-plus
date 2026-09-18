@@ -382,7 +382,10 @@ class MVAU_rtl(MVAU, RTLBackend):
         wdt = self.get_input_datatype(1)
         narrow_weights = (
             0
-            if self.dynamic_input or (self.mlo_max_iter > 1) or np.min(weights) == wdt.min()
+            if self.dynamic_input or (self.mlo_max_iter > 1)
+            # Guaranteed ndarray here by the isinstance check above (only reached
+            # when neither dynamic_input nor mlo_max_iter > 1 held there either).
+            or np.min(cast("np.ndarray", weights)) == wdt.min()
             else 1
         )
         code_gen_dict["$NARROW_WEIGHTS$"] = str(narrow_weights)
