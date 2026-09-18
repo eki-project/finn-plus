@@ -385,9 +385,11 @@ def end2end_results_table(
     estimators: Optional[dict[str, str]] = None,
     measured_power_col: str = "measured_power.avg_total_power",
     estimated_power_col: str = "estimate_power_empirical.Total.power",
+    power_unit: str = "mW",
 ) -> pd.DataFrame:
     """Per-model summary: measured resource and relative error of each estimator for the given
-    categories, plus measured and estimated power. Two-level columns ``(group, quantity)``."""
+    categories, plus measured and estimated power (in the unit of the measurement reports).
+    Two-level columns ``(group, quantity)``."""
     estimators = estimators or RESOURCE_ESTIMATORS
     rows = []
     for _, row in df.iterrows():
@@ -400,8 +402,8 @@ def end2end_results_table(
                 est = row.get(f"{prefix}.{cat}.{resource}", np.nan)
                 err = (est - actual) / actual * 100 if actual and pd.notna(est) else np.nan
                 entry[(group, f"{label} err. %")] = err
-        entry[("Power [W]", "Measured")] = row.get(measured_power_col, np.nan)
-        entry[("Power [W]", "Estimated")] = row.get(estimated_power_col, np.nan)
+        entry[(f"Power [{power_unit}]", "Measured")] = row.get(measured_power_col, np.nan)
+        entry[(f"Power [{power_unit}]", "Estimated")] = row.get(estimated_power_col, np.nan)
         rows.append(pd.Series(entry, name=row.get("model_name")))
     table = pd.DataFrame(rows)
     table.columns = pd.MultiIndex.from_tuples(table.columns)

@@ -143,8 +143,9 @@ def empirical_res_estimation(
 def empirical_power_estimation(
     model: ModelWrapper, models: QoRModelSet
 ) -> dict[str, dict[str, float]]:
-    """Estimate the (dynamic) power in W of every hardware node using the fitted QoR models.
+    """Estimate the (dynamic) power of every hardware node using the fitted QoR models.
 
+    The unit is that of the measurements in the microbenchmark database (mW for the CI boards).
     Nodes without a power model are reported as 0.0 (there is no analytical fallback); the
     number of such nodes is logged so that the coverage of the total is visible.
     """
@@ -164,6 +165,6 @@ def empirical_power_estimation(
         }
     if unsupported:
         logger.info(
-            "No power model for %d of %d nodes (reported as 0 W)", len(unsupported), len(res_dict)
+            "No power model for %d of %d nodes (reported as 0)", len(unsupported), len(res_dict)
         )
     return res_dict

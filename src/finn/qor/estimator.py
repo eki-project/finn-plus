@@ -179,8 +179,28 @@ class QoREstimator:
         )
         return Pipeline([("preprocessor", preprocessor), ("regressor", regressor)])
 
+    def rows_with_target(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Rows of ``df`` that have a value for the target (e.g. runs without a power
+        measurement have NaN there and cannot be used for fitting)."""
+        if self.target not in df.columns:
+            raise KeyError(f"Target column '{self.target}' not in data")
+        valid = df.dropna(subset=[self.target])
+        if len(valid) < len(df):
+            logger.info(
+                "%s/%s: ignoring %d of %d samples without a target value",
+                self.operator,
+                self.target,
+                len(df) - len(valid),
+                len(df),
+            )
+        if valid.empty:
+            raise ValueError(f"No samples with a value for target '{self.target}'")
+        return valid
+
     def fit(self, df: pd.DataFrame, regressor: Optional[BaseEstimator] = None) -> "QoREstimator":
-        """Fit ``regressor`` (default: :class:`KNeighborsRegressor`) on all rows of ``df``."""
+        """Fit ``regressor`` (default: :class:`KNeighborsRegressor`) on all rows of ``df``
+        that have a target value."""
+        df = self.rows_with_target(df)
         pipeline = self.build_pipeline(regressor or KNeighborsRegressor(), df)
         pipeline.fit(df[self.feature_cols], df[self.target].values)
         self.pipeline = pipeline
@@ -326,10 +346,12 @@ def select_regressor(
     best parameter set is additionally evaluated with fold-wise MAPE/MSE/RMSE and out-of-fold
     per-sample errors, so that regressors can be compared beyond the primary score. Regressors
     that fail are recorded with NaN scores instead of aborting the selection. The winning
-    pipeline is stored in ``estimator`` (with updated metadata) and returned.
+    pipeline is stored in ``estimator`` (with updated metadata) and returned. Samples without
+    a target value are ignored.
     """
     scoring = scoring or default_scoring(estimator.target)
     grid = grid if grid is not None else REGRESSOR_GRID
+    df = estimator.rows_with_target(df)
     X = df[estimator.feature_cols]
     y = df[estimator.target].values
     cv_obj = RepeatedKFold(n_splits=cv, n_repeats=n_repeats, random_state=RANDOM_STATE)
@@ -440,6 +462,7 @@ def learning_curve(
     scoring = scoring or default_scoring(estimator.target)
     grid = grid if grid is not None else REGRESSOR_GRID
     scorer = get_scorer(scoring)
+    df = estimator.rows_with_target(df)
 
     if evaluation == "holdout":
         train_df, test_df = train_test_split(df, test_size=test_size, random_state=RANDOM_STATE)

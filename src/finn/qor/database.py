@@ -110,16 +110,23 @@ def derive_power_target(
 
     The smallest measured value is treated as the static/baseline power of the platform; a
     small offset keeps the target strictly positive so relative error metrics stay defined.
-    If ``power_col`` is missing, the DataFrame is returned unchanged with a warning.
+    The unit is that of the database column (mW for the CI measurement boards). Runs without
+    a measurement keep NaN in the target column and are ignored when fitting. If
+    ``power_col`` is missing, the DataFrame is returned unchanged with a warning.
     """
     if power_col not in df.columns:
         logger.warning("Power column '%s' not in database, no power target derived", power_col)
         return df
     df = df.copy()
-    baseline = df[power_col].min() - 0.01
-    df[out_col] = df[power_col] - baseline
+    measured = df[power_col]
+    baseline = measured.min() - 0.01
+    df[out_col] = measured - baseline
     logger.info(
-        "Power baseline (min observed - 0.01 W): %.3f W, shifted into '%s'", baseline, out_col
+        "Power baseline (min observed - 0.01): %.3f, shifted into '%s' (%d of %d runs measured)",
+        baseline,
+        out_col,
+        int(measured.notna().sum()),
+        len(df),
     )
     return df
 
