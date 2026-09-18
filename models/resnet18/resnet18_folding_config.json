@@ -504,7 +504,7 @@
   },
   "MVAU_rtl_13": {
     "PE": 1,
-    "SIMD": 288,
+    "SIMD": 384,
     "ram_style": "ultra",
     "resType": "dsp",
     "mem_mode": "internal_decoupled",
@@ -526,7 +526,7 @@
   },
   "MVAU_rtl_14": {
     "PE": 1,
-    "SIMD": 288,
+    "SIMD": 384,
     "ram_style": "ultra",
     "resType": "dsp",
     "mem_mode": "internal_decoupled",
