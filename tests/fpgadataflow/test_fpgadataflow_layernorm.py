@@ -13,9 +13,9 @@
 import pytest
 
 import json
+import logging
 import numpy as np
 import os
-import warnings
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
@@ -423,7 +423,7 @@ def create_mul_layernorm_model(idt, ishape, mul_param_shape):
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 @pytest.mark.slow
-def test_hls_rtl_dsp_conflict_detection():
+def test_hls_rtl_dsp_conflict_detection(caplog: pytest.LogCaptureFixture):
     """
     Test that HLS+RTL DSP conflict is detected and verification is skipped.
 
@@ -506,18 +506,16 @@ def test_hls_rtl_dsp_conflict_detection():
         ],
     )
 
-    # Capture warnings during build
-    with warnings.catch_warnings(record=True) as caught_warnings:
-        warnings.simplefilter("always")
+    # Capture log warnings during build
+    with caplog.at_level(logging.WARNING):
         build.build_dataflow_cfg(tmp_output_dir + "/model.onnx", cfg)
 
     # Check that DSP conflict warning was issued
-    dsp_conflict_warnings = [
-        w for w in caught_warnings if "HLS+RTL DSP CONFLICT DETECTED" in str(w.message)
-    ]
+    warning_messages = [record.getMessage() for record in caplog.records]
+    dsp_conflict_warnings = [m for m in warning_messages if "HLS+RTL DSP conflict detected" in m]
     assert len(dsp_conflict_warnings) > 0, (
         "Expected DSP conflict warning to be issued. "
-        f"Found warnings: {[str(w.message)[:100] for w in caught_warnings]}"
+        f"Found warnings: {[m[:100] for m in warning_messages]}"
     )
 
     # Verify cppsim still passed (not affected by DSP conflict)
@@ -640,7 +638,7 @@ def create_layernorm_threshold_mul_model(ishape):
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.fpgadataflow
-def test_integer_hls_elementwise_no_dsp_conflict():
+def test_integer_hls_elementwise_no_dsp_conflict(caplog: pytest.LogCaptureFixture):
     """
     Test that integer-only HLS Elementwise ops do NOT trigger DSP conflict detection.
 
@@ -720,9 +718,8 @@ def test_integer_hls_elementwise_no_dsp_conflict():
         ],
     )
 
-    # Capture warnings during build
-    with warnings.catch_warnings(record=True) as caught_warnings:
-        warnings.simplefilter("always")
+    # Capture log warnings during build
+    with caplog.at_level(logging.WARNING):
         build.build_dataflow_cfg(tmp_output_dir + "/model.onnx", cfg)
 
     # Check that layers were specialized as expected:
@@ -753,11 +750,13 @@ def test_integer_hls_elementwise_no_dsp_conflict():
 
     # Check that NO DSP conflict warning was issued
     dsp_conflict_warnings = [
-        w for w in caught_warnings if "HLS+RTL DSP CONFLICT DETECTED" in str(w.message)
+        record.getMessage()
+        for record in caplog.records
+        if "HLS+RTL DSP conflict detected" in record.getMessage()
     ]
     assert len(dsp_conflict_warnings) == 0, (
         f"No DSP conflict warning should be issued for integer HLS Elementwise. "
-        f"Found warnings: {[str(w.message)[:100] for w in dsp_conflict_warnings]}"
+        f"Found warnings: {[m[:100] for m in dsp_conflict_warnings]}"
     )
 
     # Verify that stitched_ip_rtlsim ran successfully (was NOT skipped)

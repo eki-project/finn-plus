@@ -314,7 +314,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
             all_verilog_srcs = f.read().split()
         top_module_file_name = os.path.basename(os.path.realpath(self.get_nodeattr("ipgen_path")))
         top_module_name = top_module_file_name.strip(".v")
-        single_src_dir = make_build_dir("rtlsim_" + top_module_name + "_")
+        single_src_dir = Path(make_build_dir("rtlsim_" + top_module_name + "_"))
         trace_file = self.get_nodeattr("rtlsim_trace")
         debug = not (trace_file is None or trace_file == "")
         rtlsim_so = finnxsi.compile_sim_obj(
@@ -322,7 +322,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         )
         # save generated lib filename in attribute
         sim_base, sim_rel = rtlsim_so
-        self.set_nodeattr("rtlsim_so", sim_base + "/" + sim_rel)
+        self.set_nodeattr("rtlsim_so", str(sim_base / sim_rel))
 
     def execute_node(self, context, graph):
         """Execute the loop via rtlsim or by running the body model once per iteration in Python."""

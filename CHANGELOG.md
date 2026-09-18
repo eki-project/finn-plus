@@ -38,6 +38,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - (Xilinx) RTL MVAU is selected for datatypes wider than 8 bit as well (Xilinx#1568); FINN+ additionally bounds the selection by the DSP datapath widths (activations 18/24 bit, weights 25/27 bit, accumulator 48/58 bit on DSP48/DSP58) and `MVAU_rtl` refuses code generation for wider operands. Note that this turns MVAUs in existing flows from HLS into RTL, which affects folding configs keyed by node name
 - New build step `step_minimize_bit_width_initial` runs the bit width minimization once directly after the conversion to HW layers (default steps and benchmark DUT step lists), so that layer specialization and folding see minimized datatypes instead of the placeholders left by datatype inference (32 bit MAC results, 64 bit initializers from the ONNX passes frontend)
 - `Pool` minimizes its accumulator/output datatype (`AccPool`/`AvgPool`) and passes the input datatype through for `MaxPool` when datatypes change after conversion
+- CI test suite variants (`quicktest_ci`, `full_ci`) abort a single test after 3 hours via `pytest-timeout` (stack dump + failure) instead of letting a hung test idle the whole job into the Slurm time limit
 - `step_prepare_synthesis` is skipped when no bitfile is requested (in line with `step_synthesize_bitfile`)
 - `InferRequantLayer` derives the output datatype of converted `Quant` nodes from the node attributes instead of the (possibly missing) tensor annotation
 
