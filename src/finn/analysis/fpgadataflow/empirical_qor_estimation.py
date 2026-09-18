@@ -22,7 +22,7 @@ from typing import Callable, Optional
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.qor.database import POWER_TARGET_COL
-from finn.qor.estimator import MODEL_DIR_ENV_VAR, RESOURCE_TARGET_PREFIX, QoREstimator
+from finn.qor.estimator import MODEL_DIR_ENV_VAR, QoREstimator, resource_target
 from finn.qor.features import SPECS, broadcast_kind, datatype_features, spec_for_op_type
 from finn.util.basic import getHWCustomOp
 from finn.util.fpgadataflow import is_hls_node, is_rtl_node
@@ -329,9 +329,7 @@ def empirical_res_estimation(
             continue
         inst = getHWCustomOp(node)
         analytical = inst.node_res_estimation(fpgapart)
-        estimates = {
-            res: models.get(node.op_type, RESOURCE_TARGET_PREFIX + res) for res in RESOURCE_TYPES
-        }
+        estimates = {res: models.get(node.op_type, resource_target(res)) for res in RESOURCE_TYPES}
         if not any(estimates.values()):
             res_dict[node.name] = analytical
             continue

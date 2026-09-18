@@ -24,15 +24,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from finn.qor.database import DATABASE_ENV_VAR, POWER_TARGET_COL, load_microbenchmark_database
+from finn.qor.database import DATABASE_ENV_VAR, load_microbenchmark_database
 from finn.qor.estimator import (
+    DEFAULT_TARGETS,
     MODEL_DIR_ENV_VAR,
     REGRESSOR_GRID,
     REGRESSOR_GRID_QUICK,
+    RESOURCE_TARGET_PREFIX,
+    RESOURCE_TARGETS,
     QoREstimator,
+    has_enough_signal,
     learning_curve,
     model_basename,
     select_regressor,
+    target_signal,
 )
 from finn.qor.evaluation import (
     dataframe_to_markdown,
@@ -40,16 +45,28 @@ from finn.qor.evaluation import (
     plot_learning_curve,
     plot_regressor_comparison,
 )
+from finn.qor.features import SPECS
 
 logger = logging.getLogger("fit_estimators")
 
-DEFAULT_TARGETS = ["metrics.synth.resources.LUT", POWER_TARGET_COL]
-
 # Columns of the analytical estimates in the database, compared against the new model
+# (the HLS DSP column is coalesced from DSP48E/DSP58E by the database loader)
 REFERENCE_ESTIMATES = {
-    "metrics.synth.resources.LUT": {
+    RESOURCE_TARGETS["LUT"]: {
         "FINN": "metrics.estimate.resources.LUT",
         "HLS": "metrics.hls_estimate.resources.LUT",
+    },
+    RESOURCE_TARGETS["DSP"]: {
+        "FINN": "metrics.estimate.resources.DSP",
+        "HLS": "metrics.hls_estimate.resources.DSP",
+    },
+    RESOURCE_TARGETS["BRAM_18K"]: {
+        "FINN": "metrics.estimate.resources.BRAM_18K",
+        "HLS": "metrics.hls_estimate.resources.BRAM_18K",
+    },
+    RESOURCE_TARGETS["URAM"]: {
+        "FINN": "metrics.estimate.resources.URAM",
+        "HLS": "metrics.hls_estimate.resources.URAM",
     },
 }
 
@@ -65,7 +82,11 @@ def parse_args() -> argparse.Namespace:
         help=f"default: ${MODEL_DIR_ENV_VAR}",
     )
     parser.add_argument("--output-dir", default="qor_fit_artifacts")
-    parser.add_argument("--operators", default="mvau", help="comma-separated operator names")
+    parser.add_argument(
+        "--operators",
+        default="all",
+        help="comma-separated operator names (default: all with a feature spec)",
+    )
     parser.add_argument(
         "--targets",
         default=",".join(DEFAULT_TARGETS),
@@ -120,18 +141,33 @@ def main() -> int:
     summary: dict[str, dict] = {}
     failures = 0
 
-    for operator in args.operators.split(","):
-        df, stats = load_microbenchmark_database(
-            operator,
-            args.database,
-            exclude_commit=args.exclude_commit,
-            exclude_pipeline_id=args.exclude_pipeline_id,
-        )
+    operators = list(SPECS) if args.operators == "all" else args.operators.split(",")
+    for operator in operators:
+        try:
+            df, stats = load_microbenchmark_database(
+                operator,
+                args.database,
+                exclude_commit=args.exclude_commit,
+                exclude_pipeline_id=args.exclude_pipeline_id,
+            )
+        except (FileNotFoundError, ValueError) as e:
+            logger.warning("%s: no database entries (%s), skipping", operator, e)
+            summary[operator] = {"status": "skipped", "reason": str(e)}
+            continue
         for target in args.targets.split(","):
             name = f"{operator}/{target}"
             if target not in df.columns:
                 logger.warning("%s: target column not in database, skipping", name)
                 summary[name] = {"status": "skipped", "reason": "target column missing"}
+                continue
+            signal = target_signal(df[target].values)
+            if target.startswith(RESOURCE_TARGET_PREFIX) and not has_enough_signal(
+                df[target].values
+            ):
+                # e.g. URAM is zero for almost every configuration: keep the analytical
+                # estimate (and a previously stored model) instead of fitting on noise
+                logger.warning("%s: not enough signal to fit a model (%s), skipping", name, signal)
+                summary[name] = {"status": "skipped", "reason": "not enough signal", **signal}
                 continue
             try:
                 estimator = QoREstimator(operator, target)
@@ -153,6 +189,9 @@ def main() -> int:
                 "best_regressor": result.best_name,
                 "cv_score": result.best_score,
                 "fold_mape": float(result.scores.loc[result.best_name, "fold_mape"]),
+                "fold_mae": float(result.scores.loc[result.best_name, "fold_mae"]),
+                "zero_hit_rate": float(result.scores.loc[result.best_name, "zero_hit_rate"]),
+                "target_signal": signal,
             }
 
             # Compare out-of-fold predictions of the new model with the analytical estimates
@@ -168,6 +207,7 @@ def main() -> int:
                     f"# {name}: estimator comparison\n\n{dataframe_to_markdown(table)}"
                 )
                 entry["comparison_mape"] = {k: float(v) for k, v in table[("All", "MAPE")].items()}
+                entry["comparison_mae"] = {k: float(v) for k, v in table[("All", "MAE")].items()}
 
             if args.learning_curve:
                 curve = learning_curve(estimator, df, [0.1, 0.2, 0.4, 0.6, 0.8, 1.0], **cv_kwargs)

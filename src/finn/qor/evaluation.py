@@ -54,12 +54,13 @@ MEASURED_RESOURCES = "post_synth_resources"
 
 def plot_regressor_comparison(result: "SelectionResult", out_path: str) -> None:
     """Bar chart of the cross-validated scores (best vs. worst parameter set, error bars =
-    min/max fold) and box plot of the out-of-fold per-sample absolute percentage errors."""
+    min/max fold) and box plots of the out-of-fold per-sample absolute percentage and absolute
+    errors (the latter is the readable one for zero-inflated targets such as DSP/BRAM/URAM)."""
     scores = result.scores.dropna(subset=["mean_score"])
     names = list(scores.index)
     x = np.arange(len(names))
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
     best_err = [
         scores["mean_score"] - scores["min_fold_score"],
         scores["max_fold_score"] - scores["mean_score"],
@@ -86,6 +87,14 @@ def plot_regressor_comparison(result: "SelectionResult", out_path: str) -> None:
     ax2.set_title("Out-of-fold per-sample error")
     ax2.tick_params(axis="x", rotation=45)
     ax2.grid(True, axis="y", alpha=0.3)
+
+    abs_data = [result.sample_errors[n]["abs_error"].dropna().values for n in names]
+    ax3.boxplot(abs_data, tick_labels=names, showmeans=True, whis=1.5)
+    ax3.set_yscale("symlog")
+    ax3.set_ylabel("Absolute error")
+    ax3.set_title("Out-of-fold per-sample absolute error")
+    ax3.tick_params(axis="x", rotation=45)
+    ax3.grid(True, axis="y", alpha=0.3)
 
     fig.suptitle(f"Regressor comparison, best: {result.best_name}")
     fig.tight_layout()
@@ -119,19 +128,31 @@ def plot_learning_curve(curve: pd.DataFrame, out_path: str) -> None:
 # ---------------------------------------------------------------------------------------------
 
 
+#: Metrics reported by :func:`error_metrics`, in table order
+ERROR_METRICS = ("RMSE", "MAE", "MAPE", "n", "n_zero")
+
+
 def error_metrics(actual: pd.Series, predicted: pd.Series) -> dict[str, float]:
-    """RMSE, MAPE (excluding actual == 0) and sample count over the jointly valid entries."""
+    """RMSE, MAE, MAPE (excluding actual == 0), sample count and number of zero targets over
+    the jointly valid entries. MAPE is NaN if no target is nonzero (zero-inflated resources
+    such as DSP/URAM), so MAE is the metric to look at there."""
     valid = ~(actual.isna() | predicted.isna())
     a, p = actual[valid].astype(float), predicted[valid].astype(float)
     if len(a) == 0:
-        return {"RMSE": np.nan, "MAPE": np.nan, "n": 0}
+        return {"RMSE": np.nan, "MAE": np.nan, "MAPE": np.nan, "n": 0, "n_zero": 0}
     nonzero = a != 0
     mape = (
         float(np.mean(np.abs((p[nonzero] - a[nonzero]) / a[nonzero])) * 100)
         if nonzero.any()
         else np.nan
     )
-    return {"RMSE": float(np.sqrt(np.mean((p - a) ** 2))), "MAPE": mape, "n": int(len(a))}
+    return {
+        "RMSE": float(np.sqrt(np.mean((p - a) ** 2))),
+        "MAE": float(np.mean(np.abs(p - a))),
+        "MAPE": mape,
+        "n": int(len(a)),
+        "n_zero": int((~nonzero).sum()),
+    }
 
 
 def estimation_error_table(
@@ -140,7 +161,7 @@ def estimation_error_table(
     estimate_cols: dict[str, str],
     subsets: Optional[dict[str, pd.Series]] = None,
 ) -> pd.DataFrame:
-    """Compare estimators (rows) on data subsets (columns) by RMSE and MAPE.
+    """Compare estimators (rows) on data subsets (columns) by RMSE, MAE and MAPE.
 
     Args:
         df: Samples with actual and estimated values as columns.
@@ -159,7 +180,7 @@ def estimation_error_table(
             subsets["RTL"] = df["params.backend"] == "rtl"
         if "params.sparsity_type" in df.columns:
             subsets["Sparse"] = df["params.sparsity_type"] == "unstructured"
-    columns = pd.MultiIndex.from_product([subsets.keys(), ["RMSE", "MAPE", "n"]])
+    columns = pd.MultiIndex.from_product([subsets.keys(), list(ERROR_METRICS)])
     table = pd.DataFrame(index=list(estimate_cols.keys()), columns=columns, dtype=float)
     for label, col in estimate_cols.items():
         for subset, mask in subsets.items():
@@ -170,7 +191,8 @@ def estimation_error_table(
             for k, v in error_metrics(sub[actual_col], sub[col]).items():
                 table.loc[label, (subset, k)] = v
     for subset in subsets:
-        table[(subset, "n")] = table[(subset, "n")].fillna(0).astype(int)
+        for count in ("n", "n_zero"):
+            table[(subset, count)] = table[(subset, count)].fillna(0).astype(int)
     return table
 
 

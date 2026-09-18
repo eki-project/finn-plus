@@ -39,6 +39,11 @@ POWER_COLS: list[tuple[str, float]] = [
 #: Name of the derived power target column.
 POWER_TARGET_COL = "power"
 
+#: Derived BRAM target in 18K-block equivalents (BRAM_18K + 2 * BRAM_36K), see
+#: :func:`derive_resource_targets`.
+BRAM_TARGET_COL = "metrics.synth.resources.BRAM_18K_equiv"
+_HLS_ESTIMATE_PREFIX = "metrics.hls_estimate.resources."
+
 # Run parameters that do not influence the implementation and only add noise to the
 # params-based deduplication (shared with the sampler, see finn.qor.params_key;
 # operator-specific loop bounds are listed in ``OperatorFeatureSpec.irrelevant_param_cols``).
@@ -135,6 +140,29 @@ def derive_power_target(
     return df
 
 
+def derive_resource_targets(df: pd.DataFrame) -> pd.DataFrame:
+    """Add derived resource columns: the BRAM count in 18K-block equivalents
+    (:data:`BRAM_TARGET_COL` = BRAM_18K + 2 * BRAM_36K, NaN where neither was logged) and the
+    HLS DSP estimate coalesced from the device-specific ``DSP48E``/``DSP58E`` keys into
+    ``metrics.hls_estimate.resources.DSP``. Applied at load time so historic runs are covered.
+    """
+    df = df.copy()
+    b18_col, b36_col = "metrics.synth.resources.BRAM_18K", "metrics.synth.resources.BRAM_36K"
+    if b18_col in df.columns or b36_col in df.columns:
+        b18 = pd.to_numeric(df.get(b18_col, np.nan), errors="coerce")
+        b36 = pd.to_numeric(df.get(b36_col, np.nan), errors="coerce")
+        b18 = pd.Series(b18, index=df.index) if not isinstance(b18, pd.Series) else b18
+        b36 = pd.Series(b36, index=df.index) if not isinstance(b36, pd.Series) else b36
+        equiv = b18.fillna(0) + 2 * b36.fillna(0)
+        equiv[b18.isna() & b36.isna()] = np.nan
+        df[BRAM_TARGET_COL] = equiv
+    dsp_cols = [_HLS_ESTIMATE_PREFIX + k for k in ("DSP", "DSP48E", "DSP58E")]
+    present = [c for c in dsp_cols if c in df.columns]
+    if present:
+        df[dsp_cols[0]] = df[present].apply(pd.to_numeric, errors="coerce").bfill(axis=1).iloc[:, 0]
+    return df
+
+
 def load_microbenchmark_database(
     operator: str,
     database_path: Optional[str] = None,
@@ -155,7 +183,8 @@ def load_microbenchmark_database(
            hashes work) and arbitrary ``column == value`` filters from ``column_filters``,
         4. drop skipped/failed runs and runs the operator spec marks as broken,
         5. keep only the newest run for each unique combination of all ``params.*`` columns,
-        6. derive the feature columns of the spec and (if ``derive_power``) the power target,
+        6. derive the feature columns of the spec, the resource targets
+           (:func:`derive_resource_targets`) and (if ``derive_power``) the power target,
            see :func:`derive_power_target`.
 
     Returns the DataFrame (index reset) and the :class:`LoadStats` of the run.
@@ -208,6 +237,7 @@ def load_microbenchmark_database(
     stats.duplicates = n_before - len(df)
 
     df = spec.derive_db_columns(df)
+    df = derive_resource_targets(df)
     if derive_power:
         df = derive_power_target(df)
     df = df.reset_index(drop=True)

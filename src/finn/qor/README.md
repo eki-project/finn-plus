@@ -57,8 +57,22 @@ CI scripts run outside the FINN environment (`ci/qor/*.py` add `src/` to `sys.pa
 | `fmpadding` | `FMPadding_rtl` | `dut/fmpadding.py` | |
 | `eltwise` | `ElementwiseAdd_hls/_rtl`, `ElementwiseMul_hls/_rtl` | `dut/eltwise.py` | constant (rhs) operand only; RTL variant requires Versal + FLOAT32 |
 
-Targets: `metrics.synth.resources.LUT` and `power` (measured PL/PS rail power minus baseline,
-in mW; old and new measurement report schemas are combined, see `POWER_COLS`).
+Targets (one model per operator and target, `RESOURCE_TARGETS` in `estimator.py`):
+
+| Target column | Meaning | Selection scoring |
+|---|---|---|
+| `metrics.synth.resources.LUT` | post-synthesis LUTs of the operator | MAPE |
+| `metrics.synth.resources.DSP` | post-synthesis DSP slices | MAE |
+| `metrics.synth.resources.BRAM_18K_equiv` | BRAM in 18K-block equivalents (`BRAM_18K + 2 * BRAM_36K`, derived at load time; maps onto the analytical `BRAM_18K`) | MAE |
+| `metrics.synth.resources.URAM` | post-synthesis URAMs | MAE |
+| `power` | measured PL/PS rail power minus baseline, in mW (old and new measurement report schemas are combined, see `POWER_COLS`) | R² |
+
+DSP/BRAM/URAM are zero for most configurations, so their models are selected by the mean
+absolute error (a relative error is undefined for zero targets; MAPE is reported over the
+nonzero samples only) and are only fitted if the target has enough signal
+(`has_enough_signal`: at least 10 nonzero and 3 distinct values); otherwise the analytical
+estimate (and a previously stored model) is kept. Resource predictions are clipped at zero
+and rounded.
 
 Resource types and nodes without a fitted model fall back to the analytical
 `node_res_estimation`; nodes without a power model are reported as 0. A node whose

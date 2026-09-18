@@ -40,7 +40,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.tree import DecisionTreeRegressor
 from typing import Any, Optional
 
-from finn.qor.database import POWER_TARGET_COL
+from finn.qor.database import BRAM_TARGET_COL, POWER_TARGET_COL
 from finn.qor.features import SPECS, OperatorFeatureSpec
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,24 @@ MODEL_DIR_ENV_VAR = "FINN_QOR_MODEL_DIR"
 
 #: Target column for post-synthesis resource counts, per resource type.
 RESOURCE_TARGET_PREFIX = "metrics.synth.resources."
+
+#: Resource type (as reported by the analytical estimate) -> target column of the model.
+#: BRAMs are modelled in 18K-block equivalents (BRAM_36K counts twice) so that the
+#: prediction maps onto the analytical ``BRAM_18K`` key.
+RESOURCE_TARGETS: dict[str, str] = {
+    "LUT": RESOURCE_TARGET_PREFIX + "LUT",
+    "DSP": RESOURCE_TARGET_PREFIX + "DSP",
+    "BRAM_18K": BRAM_TARGET_COL,
+    "URAM": RESOURCE_TARGET_PREFIX + "URAM",
+}
+#: Default targets to fit, resources first
+DEFAULT_TARGETS: list[str] = [*RESOURCE_TARGETS.values(), POWER_TARGET_COL]
+
+
+def resource_target(res_type: str) -> str:
+    """Target column of a resource type (``LUT``, ``DSP``, ``BRAM_18K``, ``URAM``)."""
+    return RESOURCE_TARGETS.get(res_type, RESOURCE_TARGET_PREFIX + res_type)
+
 
 RANDOM_STATE = 42
 
@@ -124,8 +142,36 @@ REGRESSOR_GRID_QUICK: list[tuple[type[BaseEstimator], dict[str, list[Any]]]] = [
 
 
 def default_scoring(target: str) -> str:
-    """Scoring used for model selection: relative error for resources, R^2 for power."""
-    return "r2" if target == POWER_TARGET_COL else "neg_mean_absolute_percentage_error"
+    """Scoring used for model selection: R^2 for power, relative error (MAPE) for LUTs and
+    absolute error (MAE) for the zero-inflated DSP/BRAM/URAM counts, where a relative error
+    is undefined for most samples."""
+    if target == POWER_TARGET_COL:
+        return "r2"
+    if target == RESOURCE_TARGETS["LUT"]:
+        return "neg_mean_absolute_percentage_error"
+    if target.startswith(RESOURCE_TARGET_PREFIX):
+        return "neg_mean_absolute_error"
+    return "neg_mean_absolute_percentage_error"
+
+
+def target_signal(y: np.ndarray) -> dict[str, float]:
+    """Summary of a target vector: sample count, nonzero count, distinct values and the
+    fraction of zeros (used to decide whether a model is worth fitting)."""
+    y = np.asarray(y, dtype=float)
+    y = y[~np.isnan(y)]
+    return {
+        "n": int(len(y)),
+        "n_nonzero": int(np.count_nonzero(y)),
+        "n_distinct": int(len(np.unique(y))),
+        "zero_fraction": float(np.mean(y == 0)) if len(y) else float("nan"),
+    }
+
+
+def has_enough_signal(y: np.ndarray, min_nonzero: int = 10, min_distinct: int = 3) -> bool:
+    """Whether a target has enough nonzero and distinct values to fit a regression model on
+    (otherwise the analytical estimate remains the better choice)."""
+    signal = target_signal(y)
+    return signal["n_nonzero"] >= min_nonzero and signal["n_distinct"] >= min_distinct
 
 
 def model_basename(operator: str, target: str) -> str:
@@ -217,7 +263,10 @@ class QoREstimator:
         if len(features) != 1:
             raise ValueError("predict() expects exactly one sample")
         prediction = float(self.pipeline.predict(features[self.feature_cols])[0])
-        return int(round(prediction)) if self.is_integer_target else prediction
+        if self.is_integer_target:
+            # resource counts are non-negative integers
+            return int(round(max(prediction, 0.0)))
+        return prediction
 
     def covers(self, features: pd.DataFrame) -> bool:
         """Whether every categorical feature value of ``features`` occurred in the training
@@ -258,6 +307,7 @@ class QoREstimator:
             "regressor": type(regressor).__name__,
             "regressor_params": _jsonable(regressor.get_params()),
             "n_samples": int(len(df)),
+            "target_signal": target_signal(df[self.target].values),
             "fitted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "sklearn_version": sklearn.__version__,
             "database_commits": sorted(df["commit"].dropna().unique().tolist())
@@ -339,9 +389,28 @@ class SelectionResult:
 
 
 def _mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """Mean absolute percentage error, with zero targets replaced by epsilon."""
-    y_safe = np.where(y_true == 0, np.finfo(float).eps, y_true)
-    return float(np.mean(np.abs((y_true - y_pred) / y_safe)) * 100)
+    """Mean absolute percentage error over the samples with a nonzero target (NaN if none),
+    consistent with :func:`finn.qor.evaluation.error_metrics`."""
+    y_true, y_pred = np.asarray(y_true, dtype=float), np.asarray(y_pred, dtype=float)
+    nonzero = y_true != 0
+    if not nonzero.any():
+        return float("nan")
+    return float(np.mean(np.abs((y_true[nonzero] - y_pred[nonzero]) / y_true[nonzero])) * 100)
+
+
+def _mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Mean absolute error."""
+    return float(np.mean(np.abs(np.asarray(y_true, dtype=float) - np.asarray(y_pred, dtype=float))))
+
+
+def _zero_hit_rate(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Fraction of zero targets that are predicted as zero after rounding (NaN if the target
+    has no zeros); relevant for zero-inflated resource counts (DSP, BRAM, URAM)."""
+    y_true, y_pred = np.asarray(y_true, dtype=float), np.asarray(y_pred, dtype=float)
+    zeros = y_true == 0
+    if not zeros.any():
+        return float("nan")
+    return float(np.mean(np.round(np.maximum(y_pred[zeros], 0.0)) == 0))
 
 
 def _rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -386,6 +455,7 @@ def select_regressor(
     n_splits = cv_obj.get_n_splits()
     extra_scorers = {
         "mape": make_scorer(_mape, greater_is_better=False),
+        "mae": make_scorer(_mae, greater_is_better=False),
         "mse": make_scorer(mean_squared_error, greater_is_better=False),
         "rmse": make_scorer(_rmse, greater_is_better=False),
     }
@@ -422,10 +492,13 @@ def select_regressor(
                     "worst_mean_score": res["mean_test_score"][worst_idx],
                     "worst_min_fold_score": worst_folds.min(),
                     "worst_max_fold_score": worst_folds.max(),
-                    "fold_mape": float(np.mean(-extra["test_mape"])),
+                    "fold_mape": float(np.nanmean(-extra["test_mape"])),
+                    "fold_mae": float(np.mean(-extra["test_mae"])),
                     "fold_mse": float(np.mean(-extra["test_mse"])),
                     "fold_rmse": float(np.mean(-extra["test_rmse"])),
                     "sample_mape": float(np.nanmean(sample_errors[name]["abs_pct_error"])),
+                    "sample_mae": float(np.mean(sample_errors[name]["abs_error"])),
+                    "zero_hit_rate": _zero_hit_rate(y, y_pred),
                     "n_param_combinations": len(res["params"]),
                     "best_params": json.dumps(_jsonable(search.best_params_)),
                 }
