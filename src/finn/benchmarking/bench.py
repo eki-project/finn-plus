@@ -115,9 +115,9 @@ def start_bench_run(config_name: str) -> int | None:
     except KeyError:
         # Launched without SLURM, assume test run on local machine
         job_id = 0
-        experiment_dir = "bench_output/" + time.strftime("%d_%H_%M")
-        save_dir = "bench_save/" + time.strftime("%d_%H_%M")
-        work_dir = "bench_work"
+        experiment_dir = os.path.abspath("bench_output/" + time.strftime("%d_%H_%M"))
+        save_dir = os.path.abspath("bench_save/" + time.strftime("%d_%H_%M"))
+        work_dir = os.path.abspath("bench_work")
         Path(work_dir).mkdir(parents=True, exist_ok=True)
         delete_dir_contents(work_dir)
         config_path = config_name  # expect caller to provide direct path to a single config file
