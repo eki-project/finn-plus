@@ -24,12 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from finn.qor.database import (
-    DATABASE_ENV_VAR,
-    DEFAULT_POWER_COL,
-    POWER_TARGET_COL,
-    load_microbenchmark_database,
-)
+from finn.qor.database import DATABASE_ENV_VAR, POWER_TARGET_COL, load_microbenchmark_database
 from finn.qor.estimator import (
     MODEL_DIR_ENV_VAR,
     REGRESSOR_GRID,
@@ -75,11 +70,6 @@ def parse_args() -> argparse.Namespace:
         "--targets",
         default=",".join(DEFAULT_TARGETS),
         help="comma-separated target columns (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--power-col",
-        default=DEFAULT_POWER_COL,
-        help="measured power column the 'power' target is derived from (default: %(default)s)",
     )
     parser.add_argument("--exclude-commit", nargs="*", default=None, help="commit hash prefixes")
     parser.add_argument("--exclude-pipeline-id", nargs="*", type=int, default=None)
@@ -136,7 +126,6 @@ def main() -> int:
             args.database,
             exclude_commit=args.exclude_commit,
             exclude_pipeline_id=args.exclude_pipeline_id,
-            power_col=args.power_col,
         )
         for target in args.targets.split(","):
             name = f"{operator}/{target}"
@@ -159,7 +148,7 @@ def main() -> int:
             entry = {
                 "status": "ok",
                 "database": str(stats),
-                "n_samples": int(len(df)),
+                "n_samples": estimator.metadata["n_samples"],
                 "scoring": result.scoring,
                 "best_regressor": result.best_name,
                 "cv_score": result.best_score,
@@ -168,7 +157,9 @@ def main() -> int:
 
             # Compare out-of-fold predictions of the new model with the analytical estimates
             if target in REFERENCE_ESTIMATES:
-                oof = df.assign(_oof=result.sample_errors[result.best_name]["y_pred"].values)
+                oof = estimator.rows_with_target(df).assign(
+                    _oof=result.sample_errors[result.best_name]["y_pred"].values
+                )
                 table = estimation_error_table(
                     oof, target, {**REFERENCE_ESTIMATES[target], "Empirical (out-of-fold)": "_oof"}
                 )

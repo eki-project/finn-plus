@@ -12,6 +12,7 @@ that fits the models runs outside of the FINN environment.
 
 import json
 import logging
+import numpy as np
 import os
 import pandas as pd
 from dataclasses import dataclass
@@ -24,9 +25,17 @@ logger = logging.getLogger(__name__)
 #: Environment variable pointing to the microbenchmark database directory.
 DATABASE_ENV_VAR = "FINN_MICROBENCHMARK_DATABASE"
 
-#: Default measured power column used to derive the power target (collect.py logs the
-#: average over all measurement iterations of the total board power as avg_total_power).
-DEFAULT_POWER_COL = "metrics.measurement.power.avg_total_power"
+#: Measured power columns the power target is derived from, as (column, scale to mW). The
+#: schema of the measurement reports changed over time, so for every run the first column
+#: with a value is used: collect.py currently logs the average of the total board power over
+#: all iterations in mW (avg_total_power, earlier total_power), older runs stored the same
+#: quantity in W (power_total_load). The PL/PS rail alone would be avg_0V85_power resp.
+#: power_pl_ps_load.
+POWER_COLS: list[tuple[str, float]] = [
+    ("metrics.measurement.power.avg_total_power", 1.0),
+    ("metrics.measurement.power.total_power", 1.0),
+    ("metrics.measurement.power.power_total_load", 1000.0),
+]
 
 #: Name of the derived power target column.
 POWER_TARGET_COL = "power"
@@ -104,25 +113,35 @@ def read_operator_runs(database_path: str, operator: str) -> tuple[pd.DataFrame,
 
 
 def derive_power_target(
-    df: pd.DataFrame, power_col: str = DEFAULT_POWER_COL, out_col: str = POWER_TARGET_COL
+    df: pd.DataFrame,
+    power_cols: Optional[list[tuple[str, float]]] = None,
+    out_col: str = POWER_TARGET_COL,
 ) -> pd.DataFrame:
-    """Add a power target column: measured power minus the (minimum observed) baseline.
+    """Add a power target column in mW: measured power minus the (minimum observed) baseline.
 
-    The smallest measured value is treated as the static/baseline power of the platform; a
-    small offset keeps the target strictly positive so relative error metrics stay defined.
-    The unit is that of the database column (mW for the CI measurement boards). Runs without
-    a measurement keep NaN in the target column and are ignored when fitting. If
-    ``power_col`` is missing, the DataFrame is returned unchanged with a warning.
+    For every run the first of ``power_cols`` (default :data:`POWER_COLS`) that has a value is
+    used, scaled to mW, so that runs recorded with different report schemas are combined. The
+    smallest measured value is treated as the static/baseline power of the platform; a small
+    offset keeps the target strictly positive so relative error metrics stay defined. Runs
+    without any measurement keep NaN in the target column and are ignored when fitting. If
+    none of the columns exists, the DataFrame is returned unchanged with a warning.
     """
-    if power_col not in df.columns:
-        logger.warning("Power column '%s' not in database, no power target derived", power_col)
+    power_cols = POWER_COLS if power_cols is None else power_cols
+    available = [(col, scale) for col, scale in power_cols if col in df.columns]
+    if not available:
+        logger.warning("None of the power columns %s in database", [c for c, _ in power_cols])
         return df
     df = df.copy()
-    measured = df[power_col]
+    measured = pd.Series(np.nan, index=df.index, dtype=float)
+    for col, scale in available:
+        use = measured.isna() & df[col].notna()
+        measured[use] = df.loc[use, col].astype(float) * scale
+        logger.info("Power target: %d runs from '%s' (x%g)", int(use.sum()), col, scale)
     baseline = measured.min() - 0.01
     df[out_col] = measured - baseline
     logger.info(
-        "Power baseline (min observed - 0.01): %.3f, shifted into '%s' (%d of %d runs measured)",
+        "Power baseline (min observed - 0.01 mW): %.3f mW, shifted into '%s' "
+        "(%d of %d runs measured)",
         baseline,
         out_col,
         int(measured.notna().sum()),
@@ -138,7 +157,7 @@ def load_microbenchmark_database(
     exclude_commit: Optional[list[str]] = None,
     include_pipeline_id: Optional[list[int]] = None,
     exclude_pipeline_id: Optional[list[int]] = None,
-    power_col: Optional[str] = DEFAULT_POWER_COL,
+    derive_power: bool = True,
     spec: Optional[OperatorFeatureSpec] = None,
     **column_filters: Any,
 ) -> tuple[pd.DataFrame, LoadStats]:
@@ -151,7 +170,8 @@ def load_microbenchmark_database(
            hashes work) and arbitrary ``column == value`` filters from ``column_filters``,
         4. drop skipped/failed runs and runs the operator spec marks as broken,
         5. keep only the newest run for each unique combination of all ``params.*`` columns,
-        6. derive the feature columns of the spec and the power target.
+        6. derive the feature columns of the spec and (if ``derive_power``) the power target,
+           see :func:`derive_power_target`.
 
     Returns the DataFrame (index reset) and the :class:`LoadStats` of the run.
     """
@@ -198,8 +218,8 @@ def load_microbenchmark_database(
     stats.duplicates = n_before - len(df)
 
     df = spec.derive_db_columns(df)
-    if power_col:
-        df = derive_power_target(df, power_col)
+    if derive_power:
+        df = derive_power_target(df)
     df = df.reset_index(drop=True)
     stats.final = len(df)
     logger.info("Loaded microbenchmark database for '%s': %s", operator, stats)

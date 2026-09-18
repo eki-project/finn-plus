@@ -43,7 +43,7 @@ CI scripts run outside the FINN environment (`ci/qor/*.py` add `src/` to `sys.pa
 
 | Operator | Node types             | Targets                                        |
 |----------|------------------------|------------------------------------------------|
-| `mvau`   | `MVAU_hls`, `MVAU_rtl` | `metrics.synth.resources.LUT`, `power` (measured total power minus baseline, in the unit of the database, i.e. mW) |
+| `mvau`   | `MVAU_hls`, `MVAU_rtl` | `metrics.synth.resources.LUT`, `power` (measured total board power minus baseline, in mW; old and new measurement report schemas are combined, see `POWER_COLS`) |
 
 Resource types and nodes without a fitted model fall back to the analytical
 `node_res_estimation`; nodes without a power model are reported as 0.
