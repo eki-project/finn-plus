@@ -469,10 +469,10 @@
   "MVAU_rtl_12": {
     "PE": 1,
     "SIMD": 288,
-    "ram_style": "distributed",
+    "ram_style": "ultra",
     "resType": "dsp",
     "mem_mode": "internal_decoupled",
-    "runtime_writeable_weights": 0
+    "runtime_writeable_weights": 1
   },
   "Thresholding_rtl_24": {
     "PE": 1,
@@ -505,10 +505,10 @@
   "MVAU_rtl_13": {
     "PE": 1,
     "SIMD": 288,
-    "ram_style": "distributed",
+    "ram_style": "ultra",
     "resType": "dsp",
     "mem_mode": "internal_decoupled",
-    "runtime_writeable_weights": 0
+    "runtime_writeable_weights": 1
   },
   "Thresholding_rtl_26": {
     "PE": 1,
@@ -527,10 +527,10 @@
   "MVAU_rtl_14": {
     "PE": 1,
     "SIMD": 288,
-    "ram_style": "distributed",
+    "ram_style": "ultra",
     "resType": "dsp",
     "mem_mode": "internal_decoupled",
-    "runtime_writeable_weights": 0
+    "runtime_writeable_weights": 1
   },
   "Thresholding_rtl_27": {
     "PE": 1,
