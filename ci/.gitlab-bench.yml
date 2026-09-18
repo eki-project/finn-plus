@@ -259,8 +259,11 @@ QoR Model Fitting:
   tags:
     - image_build
   rules:
-    # Only microbenchmark runs add training data to the database
-    - if: $BENCH_CFG =~ /^microbenchmark/
+    # Only microbenchmark runs add training data to the database.
+    # Manual launches use BENCH_CFG="manual" and carry the config name in MANUAL_CFG_PATH.
+    # Also run if previous jobs failed: the database may still have received new entries.
+    - if: $BENCH_CFG =~ /^microbenchmark/ || $MANUAL_CFG_PATH =~ /microbenchmark/
+      when: always
   needs:
     - job: Result Collection
   script:
@@ -286,7 +289,10 @@ QoR End2End Report:
   tags:
     - image_build
   rules:
-    - if: $BENCH_CFG =~ /^regression/
+    # Also run if previous jobs failed to report partial results (the script exits
+    # gracefully if no artifacts are found)
+    - if: $BENCH_CFG =~ /^regression/ || $MANUAL_CFG_PATH =~ /regression/
+      when: always
   needs:
     - job: Result Collection
   script:
@@ -294,7 +300,7 @@ QoR End2End Report:
     - qor-venv/bin/pip install --quiet 'pandas~=2.3.1' 'matplotlib~=3.10.9' 'jinja2>=3.1.2'
     - |
       qor-venv/bin/python ci/qor/end2end_report.py --output-dir qor_e2e_artifacts \
-        --persist-to $LOCAL_BENCHMARK_DIR_STORE/end2end_evaluation/$(date +%Y-%m-%d)_${CI_COMMIT_SHORT_SHA}_${CI_PIPELINE_ID}_${BENCH_CFG}
+        --persist-to $LOCAL_BENCHMARK_DIR_STORE/end2end_evaluation/$(date +%Y-%m-%d)_${CI_COMMIT_SHORT_SHA}_${CI_PIPELINE_ID}_${MANUAL_CFG_PATH:-$BENCH_CFG}
   artifacts:
     name: "qor_e2e_artifacts"
     when: always

@@ -222,8 +222,9 @@ def main() -> int:
     frames += [load_experiment(Path(d).resolve()) for d in args.compare]
     df = pd.concat(frames, ignore_index=True)
     if df.empty:
-        logger.error("No runs found in %s", artifacts_dir)
-        return 1
+        # e.g. the build or collection jobs failed before producing artifacts; nothing to do
+        logger.warning("No runs found in %s, nothing to report", artifacts_dir)
+        return 0
     df["model_name"] = unique_model_names(df["model_name"])
     if args.names_json:
         names = json.loads(Path(args.names_json).read_text())
