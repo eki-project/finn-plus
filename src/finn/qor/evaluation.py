@@ -383,7 +383,7 @@ def end2end_results_table(
     categories: tuple[str, ...] = ("Total", "MVAU"),
     resource: str = "LUT",
     estimators: Optional[dict[str, str]] = None,
-    measured_power_col: str = "measured_power.avg_total_power",
+    measured_power_col: str = "measured_power.avg_0V85_power",
     estimated_power_col: str = "estimate_power_empirical.Total.power",
     power_unit: str = "mW",
 ) -> pd.DataFrame:

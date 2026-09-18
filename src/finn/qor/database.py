@@ -27,14 +27,12 @@ DATABASE_ENV_VAR = "FINN_MICROBENCHMARK_DATABASE"
 
 #: Measured power columns the power target is derived from, as (column, scale to mW). The
 #: schema of the measurement reports changed over time, so for every run the first column
-#: with a value is used: collect.py currently logs the average of the total board power over
-#: all iterations in mW (avg_total_power, earlier total_power), older runs stored the same
-#: quantity in W (power_total_load). The PL/PS rail alone would be avg_0V85_power resp.
-#: power_pl_ps_load.
+#: with a value is used. The target is the PL/PS core rail (0V85): collect.py currently logs
+#: its average over all iterations in mW (avg_0V85_power), older runs stored it in W
+#: (power_pl_ps_load). The total board power would be avg_total_power resp. power_total_load.
 POWER_COLS: list[tuple[str, float]] = [
-    ("metrics.measurement.power.avg_total_power", 1.0),
-    ("metrics.measurement.power.total_power", 1.0),
-    ("metrics.measurement.power.power_total_load", 1000.0),
+    ("metrics.measurement.power.avg_0V85_power", 1.0),
+    ("metrics.measurement.power.power_pl_ps_load", 1000.0),
 ]
 
 #: Name of the derived power target column.
