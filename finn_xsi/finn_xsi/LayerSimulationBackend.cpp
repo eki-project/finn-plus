@@ -170,6 +170,18 @@ class SimulationController {
                         interval_diag.push_back({diag[i][0], diag[i][1], diag[i][2]});
                     }
                     status["interval_diag"] = interval_diag;
+                    auto in_diag = sim.getInputTxnDiagnostics();
+                    json in_txn = json::array();
+                    for (size_t i = 0; i < in_diag.size(); ++i) {
+                        in_txn.push_back({in_diag[i][0], in_diag[i][1]});
+                    }
+                    status["in_txns"] = in_txn;
+                    auto out_diag = sim.getOutputTxnDiagnostics();
+                    json out_txn = json::array();
+                    for (size_t i = 0; i < out_diag.size(); ++i) {
+                        out_txn.push_back({out_diag[i][0], out_diag[i][1]});
+                    }
+                    status["out_txns"] = out_txn;
                 }
                 break;
             case SimulationState::FINISHED:

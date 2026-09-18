@@ -855,7 +855,9 @@ class NodeConnectedSimulationController(SimulationController):
                             msg = (
                                 f"[fifosim-progress] t={now - sim_start_time:.0f}s "
                                 f"{name} cycles={cycles} "
-                                f"fifo_util={response.get('fifo_utilization', [])}"
+                                f"fifo_util={response.get('fifo_utilization', [])} "
+                                f"in_txns(n,last_cycle)={response.get('in_txns', [])} "
+                                f"out_txns(n,last_cycle)={response.get('out_txns', [])}"
                             )
                             if is_last_node:
                                 msg += (
@@ -1259,7 +1261,16 @@ class RunLayerParallelSimulation(Transformation):
 
         # Running the initial simulation
         log.info("Running initial node-connected simulation.")
-        initial_fifo_depths, _ = sim.simulate()
+        # DIAGNOSTIC (test branch): optionally bound the (otherwise unbounded) initial
+        # simulation so a non-terminating network stops after a known number of cycles.
+        initial_max_cycles_env = os.environ.get("FIFOSIM_INITIAL_MAX_CYCLES", "8000000")
+        initial_max_cycles = int(initial_max_cycles_env) if initial_max_cycles_env else None
+        initial_fifo_depths, initial_timeout = sim.simulate(max_cycles=initial_max_cycles)
+        if initial_timeout:
+            raise FINNUserError(
+                f"Initial node-connected simulation did not finish within "
+                f"{initial_max_cycles} cycles (FIFOSIM_INITIAL_MAX_CYCLES)."
+            )
 
         # Store the initial sizes as a report
         initial_sizes_path = work_folder / "initial_fifo_sizes_sim_connected.json"

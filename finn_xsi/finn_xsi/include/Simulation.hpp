@@ -146,6 +146,16 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     std::size_t completedMaps = 0;
     std::array<FIFO, OStreamsSize> fifo;
 
+    // DIAGNOSTIC (test branch): per-stream transaction accounting. A transaction happens at
+    // the clock edge of a cycle iff the RTL's handshake signal read at the start of the cycle
+    // and the counterpart value applied in the previous cycle are both asserted.
+    std::array<std::size_t, IStreamsSize> in_txns{};
+    std::array<std::size_t, IStreamsSize> in_last_txn_cycle{};
+    std::array<bool, IStreamsSize> prev_in_valid{};
+    std::array<std::size_t, OStreamsSize> out_txns{};
+    std::array<std::size_t, OStreamsSize> out_last_txn_cycle{};
+    std::array<bool, OStreamsSize> prev_out_ready{};
+
     static bool _send_request(ConsumingChannel& ch, bool ready, std::stop_token stoken) {
         return std::visit([&](auto& c) { return c.send_request(CommData{ready}, stoken).data; }, ch);
     }
@@ -188,14 +198,32 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
                 // Interface SHM <-> sim
                 bool istreamReady = this->istreams[i].getInputReady();
+                if (istreamReady && prev_in_valid[i]) {
+                    ++in_txns[i];
+                    in_last_txn_cycle[i] = cyclesRun;
+                }
                 bool fifoValid = _send_request(fromProducerInterface[i], istreamReady, stoken);
                 this->istreams[i].setValid(fifoValid);  // deferred
+                prev_in_valid[i] = fifoValid;
+            }
+        } else {
+            for (std::size_t i = 0; i < IStreamsSize; ++i) {
+                // First node: input valid is permanently asserted
+                if (this->istreams[i].getInputReady()) {
+                    ++in_txns[i];
+                    in_last_txn_cycle[i] = cyclesRun;
+                }
             }
         }
         if constexpr (!LastNode) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
+                bool ostreamValid = this->ostreams[i].getOutputValid();
+                if (ostreamValid && prev_out_ready[i]) {
+                    ++out_txns[i];
+                    out_last_txn_cycle[i] = cyclesRun;
+                }
                 // Interface sim -valid-> FIFO
-                this->fifo[i].setInputValid(this->ostreams[i].getOutputValid(), stoken);
+                this->fifo[i].setInputValid(ostreamValid, stoken);
                 // Interface FIFO <-> SHM
                 this->fifo[i].setOutputReady(_receive_request(toConsumerInterface[i], stoken), stoken);
 
@@ -204,7 +232,17 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
                 bool fifoValid = this->fifo[i].getOutputValid();
                 _send_response(toConsumerInterface[i], fifoValid, stoken);
                 // FIFO -ready-> sim
-                this->ostreams[i].setReady(this->fifo[i].getInputReady());
+                bool fifoReady = this->fifo[i].getInputReady();
+                this->ostreams[i].setReady(fifoReady);
+                prev_out_ready[i] = fifoReady;
+            }
+        } else {
+            for (std::size_t i = 0; i < OStreamsSize; ++i) {
+                // Last node: output ready is permanently asserted
+                if (this->ostreams[i].getOutputValid()) {
+                    ++out_txns[i];
+                    out_last_txn_cycle[i] = cyclesRun;
+                }
             }
         }
         if constexpr (LastNode) {
@@ -438,6 +476,23 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             utilizations[i] = fifo[i].getMaxUtil();
         }
         return utilizations;
+    }
+
+    /// Diagnostic transaction counters: {in_txns, in_last_txn_cycle} per input stream and
+    /// {out_txns, out_last_txn_cycle} per output stream.
+    std::array<std::array<std::size_t, 2>, IStreamsSize> getInputTxnDiagnostics() const noexcept {
+        std::array<std::array<std::size_t, 2>, IStreamsSize> d{};
+        for (std::size_t i = 0; i < IStreamsSize; ++i) {
+            d[i] = {in_txns[i], in_last_txn_cycle[i]};
+        }
+        return d;
+    }
+    std::array<std::array<std::size_t, 2>, OStreamsSize> getOutputTxnDiagnostics() const noexcept {
+        std::array<std::array<std::size_t, 2>, OStreamsSize> d{};
+        for (std::size_t i = 0; i < OStreamsSize; ++i) {
+            d[i] = {out_txns[i], out_last_txn_cycle[i]};
+        }
+        return d;
     }
 
     /// Diagnostic snapshot of the last node's output interval tracking:
