@@ -9,13 +9,12 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Added
-- Node-wise verification report (`verify_nodewise_report` build option): the simulation-based verification steps (`folded_hls_cppsim`, `node_by_node_rtlsim`) additionally execute the folded graph with the Python reference implementation of every layer and write a per-node deviation table that pinpoints the first node whose simulated output deviates
-- Multi-pass dataset validation in the Pynq driver (`passes` kwarg of `validate`): predictions of every sample are stored next to the report (`validate_predictions.npz`), samples whose prediction differs between passes are re-run and listed in `report_dma_validate.json`. The CI keeps a single pass by default; set `"passes": N` on the `validate` function in the experiments config to check an accelerator for non-deterministic predictions
-- The driver's own unit tests (`driver/tests`) are run on the board at the start of every CI measurement, so driver bugs that only appear with the board's package versions surface in seconds instead of hours
+- `verify_nodewise_report` build option: the `folded_hls_cppsim` and `node_by_node_rtlsim` verification steps also execute the folded graph with the Python implementation of every layer and report the first node whose simulated output deviates
+- Multi-pass dataset validation in the Pynq driver (`passes` kwarg of `validate`): per-sample predictions are saved next to the report and samples with differing predictions between passes are re-run and listed
+- The driver's unit tests (`driver/tests`) run on the board at the start of every CI measurement
 
 ### Fixed
-- The ImageNet validation of the Pynq driver reported a top-1 accuracy that varied by one or two images between runs of the same bitfile (MobileNet-V1: 70.406 / 70.404 / 70.402 %). The image loader was queued with an unlimited number of epochs, so its threads started on the first images of a second epoch right after the last image of the first; whenever a last image decoded more slowly than those, a first image was counted in its place. The validation now queues exactly one epoch and maps every image back to its index
-- The instrumentation `checksum` metric was not collected by the CI due to a typo
+- ImageNet validation in the Pynq driver could count a first image in place of a last one at the end of a pass, making the reported top-1 accuracy vary by single images between runs of the same bitfile
 
 ## 1.5.0 - 05.09.2026
 

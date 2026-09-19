@@ -48,6 +48,7 @@ def batch_context(order_row, index, batch_size, predictions_row):
 
 
 def main():
+    """Parse the command line, compare the dumps and print the differing samples."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("dumps", nargs="+", help="validate_predictions.npz files to compare")
     parser.add_argument(

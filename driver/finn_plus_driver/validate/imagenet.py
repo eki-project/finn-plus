@@ -54,6 +54,7 @@ class ImageNetDataset(ValidationDataset):
     """The ILSVRC2012 validation set, streamed from JPEG files by dataset_loading."""
 
     def __init__(self, dataset_path, label_file_path, n_images=50000, num_threads=4):
+        """Index the validation images and read their labels from the label file."""
         self.dataset_path = dataset_path
         self.files = [f"ILSVRC2012_val_{i:08d}.JPEG" for i in range(1, n_images + 1)]
         self.labels = np.loadtxt(label_file_path, dtype=int, usecols=1)[:n_images]
@@ -61,12 +62,15 @@ class ImageNetDataset(ValidationDataset):
         self.num_threads = num_threads
 
     def __len__(self):
+        """Number of validation images."""
         return len(self.files)
 
     def sample_id(self, index):
+        """File name of the image."""
         return self.files[index]
 
     def iter_batches(self, cls_inst):
+        """Stream one pass over the images with the multi-threaded loader, batch by batch."""
         batch_size = cls_inst.batch_size
         # The loader threads deliver images in non-deterministic order, so every file is queued
         # together with its (index, label) pair to map the batches back to the samples.
@@ -94,10 +98,12 @@ class ImageNetDataset(ValidationDataset):
             shutdown_loaders(img_queue)
 
     def load(self, cls_inst, indices):
+        """Load and pre-process the given images into one accelerator input batch."""
         imgs = [load_image(os.path.join(self.dataset_path, self.files[i])) for i in indices]
         return np.array(imgs).reshape(cls_inst.ishape_normal())
 
     def predict(self, obuf, batch_size):
+        """Top-1 class per sample, as returned by the accelerator's TopK layer."""
         # the accelerator returns the top-1 class index (TopK / LabelSelect layer in hardware)
         return obuf.reshape(batch_size, -1)[:, 0]
 

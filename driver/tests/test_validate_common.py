@@ -34,6 +34,7 @@ class FakeAccelerator:
     """
 
     def __init__(self, batch_size, num_classes, glitches=None):
+        """Set up the fake with a batch size, class count and optional glitch schedule."""
         self._batch_size = batch_size
         self.num_classes = num_classes
         self.glitches = glitches or {}
@@ -42,16 +43,20 @@ class FakeAccelerator:
 
     @property
     def batch_size(self):
+        """Current batch size."""
         return self._batch_size
 
     @batch_size.setter
     def batch_size(self, value):
+        """Set the batch size (the real driver reallocates buffers here)."""
         self._batch_size = value
 
     def ishape_normal(self, ind=0):
+        """Input shape for the current batch size."""
         return (self._batch_size, self.num_classes)
 
     def execute(self, inputs):
+        """Predict the argmax of every input, corrupting one position if a glitch is scheduled."""
         assert inputs.shape == self.ishape_normal()
         self.batch_sizes_seen.append(self._batch_size)
         pred = np.argmax(inputs, axis=1).astype(np.float32).reshape(self._batch_size, 1)
@@ -63,6 +68,7 @@ class FakeAccelerator:
 
 
 def make_dataset(num_samples, num_classes, seed=0):
+    """Random inputs whose argmax is the label, except every seventh sample which is relabeled."""
     rng = np.random.default_rng(seed)
     inputs = rng.random((num_samples, num_classes)).astype(np.float32)
     labels = np.argmax(inputs, axis=1)
@@ -129,7 +135,10 @@ def test_reproduced_mismatch_is_flagged(tmp_path):
 
 def test_partial_batch_dataset_restores_batch_size(tmp_path):
     class ShrinkingDataset(ArrayDataset):
+        """Dataset whose last batch is smaller than the driver batch size."""
+
         def iter_batches(self, cls_inst):
+            """Yield batches of ten, shrinking the driver batch size for the remainder."""
             for start in range(0, len(self), 10):
                 indices = np.arange(start, min(start + 10, len(self)))
                 cls_inst.batch_size = len(indices)
@@ -153,10 +162,12 @@ class KillLoadersQueue:
     """Stand-in for dataset_loading 0.0.4, whose ImgQueue offers kill_loaders()."""
 
     def __init__(self, fail=False):
+        """Optionally make the shutdown call fail."""
         self.calls = []
         self.fail = fail
 
     def kill_loaders(self):
+        """Record the call and optionally fail."""
         self.calls.append("kill_loaders")
         if self.fail:
             raise RuntimeError("loader shutdown failed")
@@ -166,10 +177,12 @@ class JoinQueue(queue.Queue):
     """Stand-in for finn-dataset-loading 0.0.5, whose ImgQueue overrides queue.Queue.join()."""
 
     def __init__(self):
+        """Create the queue and the call log."""
         super().__init__()
         self.calls = []
 
     def join(self):
+        """Record the call."""
         self.calls.append("join")
 
 
@@ -177,6 +190,7 @@ class BothApisQueue(KillLoadersQueue):
     """A queue offering both methods: kill_loaders() must win."""
 
     def join(self):
+        """Record the call."""
         self.calls.append("join")
 
 
@@ -198,7 +212,7 @@ def test_shutdown_loaders_ignores_inherited_queue_join():
     """queue.Queue.join() waits for task_done() on every item and would block forever."""
 
     class PlainQueue(queue.Queue):
-        pass
+        """A queue that does not override join()."""
 
     q = PlainQueue()
     q.put(("img", 0))  # an unfinished task: queue.Queue.join() would never return
@@ -216,7 +230,10 @@ def test_results_are_saved_after_every_pass(tmp_path):
     """A crash in a later pass must not discard the results already measured."""
 
     class FailingAccelerator(FakeAccelerator):
+        """Fake accelerator that fails from the fifth execute() call on."""
+
         def execute(self, inputs):
+            """Fail from the fifth call on, otherwise predict normally."""
             if self.calls >= 4:  # fails at the start of the second pass
                 raise RuntimeError("board fell over")
             return super().execute(inputs)
@@ -239,15 +256,20 @@ def test_rerun_failure_keeps_accuracies(tmp_path):
     """If the diagnostic re-runs fail, the measured accuracies are still reported."""
 
     class FailingRerunDataset(ArrayDataset):
+        """Dataset whose load() fails once both validation passes are done."""
+
         def __init__(self, *args, **kwargs):
+            """Track the number of completed passes."""
             super().__init__(*args, **kwargs)
             self.passes_done = 0
 
         def iter_batches(self, cls_inst):
+            """Yield the batches and count the completed passes."""
             yield from super().iter_batches(cls_inst)
             self.passes_done += 1
 
         def load(self, cls_inst, indices):
+            """Fail during the re-runs, otherwise load normally."""
             if self.passes_done >= 2:  # only fail during the re-runs
                 raise RuntimeError("cannot reload sample")
             return super().load(cls_inst, indices)
@@ -290,9 +312,11 @@ def test_imagenet_dataset_with_real_loader(tmp_path):
         """Returns the index encoded in the image (as the hardware returns the top-1 class)."""
 
         def ishape_normal(self, ind=0):
+            """Input shape of the image accelerator."""
             return (self._batch_size, 224, 224, 3)
 
         def execute(self, inputs):
+            """Return the index encoded in the pixel values of every image."""
             assert inputs.shape == self.ishape_normal()
             means = inputs.reshape(self._batch_size, -1).mean(axis=1)
             self.calls += 1
@@ -344,10 +368,14 @@ def test_imagenet_dataset_epoch_boundary(tmp_path):
     )
 
     class Accelerator:
+        """Minimal driver stand-in providing batch size and input shape."""
+
         def __init__(self):
+            """Set the batch size."""
             self.batch_size = batch_size
 
         def ishape_normal(self, ind=0):
+            """Input shape of the image accelerator."""
             return (batch_size, 224, 224, 3)
 
     dataset = ImageNetDataset(str(tmp_path), str(label_file), n_images=num_images, num_threads=4)

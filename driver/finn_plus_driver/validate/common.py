@@ -91,15 +91,18 @@ class ArrayDataset(ValidationDataset):
     """
 
     def __init__(self, inputs, labels, transform=None):
+        """Store the input and label arrays and the optional input transform."""
         assert inputs.shape[0] == labels.shape[0], "Number of inputs and labels differ"
         self.inputs = inputs
         self.labels = np.asarray(labels).flatten()
         self.transform = transform
 
     def __len__(self):
+        """Number of samples."""
         return self.inputs.shape[0]
 
     def iter_batches(self, cls_inst):
+        """Yield the samples in full batches of the driver's batch size, in index order."""
         batch_size = cls_inst.batch_size
         n_batches = len(self) // batch_size
         if n_batches * batch_size != len(self):
@@ -112,12 +115,14 @@ class ArrayDataset(ValidationDataset):
             yield indices, self.load(cls_inst, indices), self.labels[indices]
 
     def load(self, cls_inst, indices):
+        """Load and transform the given samples into one accelerator input batch."""
         batch = self.inputs[np.asarray(indices)]
         if self.transform is not None:
             batch = self.transform(batch)
         return batch.reshape(cls_inst.ishape_normal())
 
     def predict(self, obuf, batch_size):
+        """Top-1 class per sample: argmax over scores, or the value itself for a single output."""
         obuf = obuf.reshape(batch_size, -1)
         if obuf.shape[1] > 1:
             # accelerator returns logits/scores: pick the top-1 class
@@ -126,6 +131,7 @@ class ArrayDataset(ValidationDataset):
 
 
 def _as_index_array(values):
+    """Flatten to a 1D int64 array."""
     return np.asarray(values, dtype=np.int64).flatten()
 
 

@@ -43,18 +43,22 @@ class RadioMLDataset(ValidationDataset):
     """High-SNR test samples of RadioML 2018.01A, read on demand from the HDF5 file."""
 
     def __init__(self, dataset_path):
+        """Open the HDF5 file and select the test sample indices."""
         self.h5_file = h5py.File(dataset_path, "r", locking=False)
         self.data_h5 = self.h5_file["X"]
         self.label_mod = np.argmax(self.h5_file["Y"], axis=1)  # comes in one-hot encoding
         self.test_indices = np.array(select_test_indices())
 
     def __len__(self):
+        """Number of test samples."""
         return len(self.test_indices)
 
     def sample_id(self, index):
+        """Index of the sample in the HDF5 file."""
         return str(int(self.test_indices[index]))
 
     def iter_batches(self, cls_inst):
+        """Yield the test samples in batches, shrinking the driver batch size for the last one."""
         total = len(self)
         batch_size = cls_inst.batch_size
         for i_batch in range(math.ceil(total / batch_size)):
@@ -67,6 +71,7 @@ class RadioMLDataset(ValidationDataset):
             yield indices, self.load(cls_inst, indices), self.label_mod[self.test_indices[indices]]
 
     def load(self, cls_inst, indices):
+        """Read and quantize the given samples into one accelerator input batch."""
         h5_indices = self.test_indices[np.asarray(indices)]
         # h5py fancy indexing requires increasing, unique indices
         unique, inverse = np.unique(h5_indices, return_inverse=True)
@@ -74,6 +79,7 @@ class RadioMLDataset(ValidationDataset):
         return quantize(data).reshape(cls_inst.ishape_normal(0))
 
     def predict(self, obuf, batch_size):
+        """Predicted modulation class per sample."""
         return obuf.reshape(batch_size).astype(int)
 
 
