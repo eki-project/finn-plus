@@ -72,6 +72,10 @@ class ImageNetDataset(ValidationDataset):
         # together with its (index, label) pair to map the batches back to the samples.
         items = list(zip(self.files, zip(range(len(self.files)), self.labels.tolist())))
         file_queue = FileQueue()
+        # Exactly one epoch: with the (default) unlimited epochs the loader threads start on the
+        # first images of the next epoch right after the last image of this one, and a slow last
+        # image then gets replaced in the last batch by a first image counted a second time.
+        # That was the source of the top-1 accuracy varying by single images between runs.
         file_queue.load_epochs(items, shuffle=False, max_epochs=1)
         img_queue = ImgQueue(maxsize=batch_size)
         img_queue.start_loaders(

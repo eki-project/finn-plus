@@ -14,6 +14,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - The driver's own unit tests (`driver/tests`) are run on the board at the start of every CI measurement, so driver bugs that only appear with the board's package versions surface in seconds instead of hours
 
 ### Fixed
+- The ImageNet validation of the Pynq driver reported a top-1 accuracy that varied by one or two images between runs of the same bitfile (MobileNet-V1: 70.406 / 70.404 / 70.402 %). The image loader was queued with an unlimited number of epochs, so its threads started on the first images of a second epoch right after the last image of the first; whenever a last image decoded more slowly than those, a first image was counted in its place. The validation now queues exactly one epoch and maps every image back to its index
 - The instrumentation `checksum` metric was not collected by the CI due to a typo
 
 ## 1.5.0 - 05.09.2026

@@ -316,3 +316,45 @@ def test_imagenet_dataset_with_real_loader(tmp_path):
     assert report["num_passes"] == 2
     # samples 0, 1 and 2 predict their own index, which is also their label (i % 3)
     assert report["top-1_accuracy"] == 100.0 * 3 / num_images
+
+
+@pytest.mark.skipif(dataset_loading is None, reason="dataset_loading is not installed")
+def test_imagenet_dataset_epoch_boundary(tmp_path):
+    """Regression test for the flaky ImageNet top-1 accuracy (70.406 / 70.404 / 70.402 %).
+
+    The original validation loop queued the file names with an unlimited number of epochs,
+    so after the last file the loader threads immediately started on the first files of the
+    next epoch. If the last image of the epoch decoded more slowly than those, one of the
+    first images was counted in its place, i.e. once too often, and the last image was
+    dropped. With a slow last image and small first images this is reproduced reliably; the
+    dataset must nevertheless deliver every image exactly once per pass.
+    """
+    from finn_plus_driver.validate.imagenet import ImageNetDataset
+
+    num_images = 12
+    batch_size = 4
+    for i in range(1, num_images + 1):
+        size = (1600, 1600) if i == num_images else (8, 8)  # slow last image, fast others
+        Image.fromarray(np.full((*size, 3), 10 * i, dtype=np.uint8)).save(
+            tmp_path / f"ILSVRC2012_val_{i:08d}.JPEG"
+        )
+    label_file = tmp_path / "val.txt"
+    label_file.write_text(
+        "".join(f"ILSVRC2012_val_{i:08d}.JPEG {i}\n" for i in range(1, num_images + 1))
+    )
+
+    class Accelerator:
+        def __init__(self):
+            self.batch_size = batch_size
+
+        def ishape_normal(self, ind=0):
+            return (batch_size, 224, 224, 3)
+
+    dataset = ImageNetDataset(str(tmp_path), str(label_file), n_images=num_images, num_threads=4)
+    for _ in range(3):
+        seen = []
+        for indices, inputs, labels in dataset.iter_batches(Accelerator()):
+            # the label travels with its image: index i carries label i + 1
+            assert list(labels) == [i + 1 for i in indices]
+            seen += list(indices)
+        assert sorted(seen) == list(range(num_images)), seen
