@@ -1263,7 +1263,7 @@ class RunLayerParallelSimulation(Transformation):
         log.info("Running initial node-connected simulation.")
         # DIAGNOSTIC (test branch): optionally bound the (otherwise unbounded) initial
         # simulation so a non-terminating network stops after a known number of cycles.
-        initial_max_cycles_env = os.environ.get("FIFOSIM_INITIAL_MAX_CYCLES", "8000000")
+        initial_max_cycles_env = os.environ.get("FIFOSIM_INITIAL_MAX_CYCLES", "700000")
         initial_max_cycles = int(initial_max_cycles_env) if initial_max_cycles_env else None
         initial_fifo_depths, initial_timeout = sim.simulate(max_cycles=initial_max_cycles)
         if initial_timeout:

@@ -6,6 +6,7 @@ import onnx
 import os
 import psutil
 import random
+import re
 import shlex
 import string
 import subprocess
@@ -636,6 +637,10 @@ class SimulationBuilder:
         node_model.set_metadata_prop("output_node", str(output_node).lower())
 
         rtlsim_trace_str = self.model.get_metadata_prop("rtlsim_trace")
+        # DIAGNOSTIC (test branch): only trace nodes whose name matches FIFOSIM_TRACE_NODES
+        trace_node_regex = os.environ.get("FIFOSIM_TRACE_NODES", "ConvolutionInputGenerator_rtl_20")
+        if rtlsim_trace_str is not None and not re.search(trace_node_regex, target_node.name):
+            rtlsim_trace_str = None
         if rtlsim_trace_str is not None:
             rtlsim_trace_path = Path(rtlsim_trace_str)
             # Add suffix to name depending on node name
