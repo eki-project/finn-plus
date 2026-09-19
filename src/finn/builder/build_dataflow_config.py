@@ -850,6 +850,8 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     cpp_driver_version: str = "latest"
 
     #: (Optional) Specify validation dataset to be used for deployment of the PYNQ driver.
+    #: Supported: "mnist", "cifar" (CIFAR-10), "cifar100", "imagenet", "radioml", "unswnb15".
+    #: Any other value makes the driver skip validation with a warning at runtime.
     validation_dataset: Optional[str] = None
 
     #: (Only relevant if step_vivado_power_estimation is run)
