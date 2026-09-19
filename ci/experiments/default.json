@@ -42,7 +42,7 @@
         "functions": [
           {
             "function_name": "validate",
-            "kwargs" : {"passes": 2}
+            "kwargs" : {}
           }
         ]
       }

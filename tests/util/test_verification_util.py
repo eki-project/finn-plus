@@ -7,6 +7,7 @@ from onnx import TensorProto, helper
 from pathlib import Path
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
@@ -102,6 +103,52 @@ def test_despecialize_model_restores_python_execution(impl_style: str) -> None:
     despec_ctx = execute_onnx(despec_model, {"global_in": inp}, return_full_exec_context=True)
     for tensor in ["MVAU_0_out0", "global_out"]:
         assert (despec_ctx[tensor] == ref_ctx[tensor]).all()
+
+
+def test_despecialize_model_resets_exec_mode() -> None:
+    """Ops that dispatch on exec_mode must execute in Python after de-specialization.
+
+    ReplicateStream keeps the simulation mode otherwise and fails on the missing cppsim
+    code generation directory (seen on the transformer benchmark model).
+    """
+    node = helper.make_node(
+        "ReplicateStream_hls",
+        ["inp"],
+        ["out0", "out1"],
+        domain="finn.custom_op.fpgadataflow.hls",
+        backend="fpgadataflow",
+        num=2,
+        dtype="UINT4",
+        num_elems=8,
+        PE=1,
+        num_inputs=[1],
+        exec_mode="cppsim",
+    )
+    shape = [1, 8]
+    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, shape)
+    outs = [helper.make_tensor_value_info(o, TensorProto.FLOAT, shape) for o in ("out0", "out1")]
+    graph = helper.make_graph([node], "replicate", inputs=[inp], outputs=outs)
+    model = ModelWrapper(qonnx_make_model(graph, producer_name="test"))
+    for tensor in ("inp", "out0", "out1"):
+        model.set_tensor_datatype(tensor, DataType["UINT4"])
+    model = model.transform(GiveUniqueNodeNames())
+    model = model.transform(GiveReadableTensorNames())
+
+    despec = despecialize_model(model)
+    assert despec.graph.node[0].op_type == "ReplicateStream"
+    assert getCustomOp(despec.graph.node[0]).get_nodeattr("exec_mode") == "python"
+    x = gen_finn_dt_tensor(DataType["UINT4"], (1, 8))
+    ctx = execute_onnx(despec, {despec.graph.input[0].name: x}, return_full_exec_context=True)
+    for out in despec.graph.output:
+        assert (ctx[out.name] == x).all()
+
+    # ops without a Python mode (MVAU) get the attribute cleared instead
+    hw_model, _ = make_two_layer_mvau_model(np.random.default_rng(0))
+    spec = hw_model.transform(SpecializeLayers("xc7z020clg400-1"))
+    for n in spec.graph.node:
+        getCustomOp(n).set_nodeattr("exec_mode", "cppsim")
+    despec = despecialize_model(spec)
+    assert all(getCustomOp(n).get_nodeattr("exec_mode") == "" for n in despec.graph.node)
 
 
 def test_despecialize_model_rejects_unknown_ops() -> None:

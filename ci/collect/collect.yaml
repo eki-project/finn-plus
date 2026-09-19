@@ -31,7 +31,8 @@ Metrics:
         - fn : max
     # Samples whose prediction differs between the validation passes (same bitfile), and how many
     # of them still produce differing predictions when re-run: nonzero values indicate a
-    # non-deterministic accelerator/driver/board, see driver/finn_plus_driver/validate/common.py
+    # non-deterministic accelerator/driver/board, see driver/finn_plus_driver/validate/common.py.
+    # Only meaningful when the experiments config requests more than one pass ("passes": N).
     - num_prediction_mismatches:
         - fn : max
     - num_mismatches_reproduced:

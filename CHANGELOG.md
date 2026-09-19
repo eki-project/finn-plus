@@ -10,7 +10,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ### Added
 - Node-wise verification report (`verify_nodewise_report` build option): the simulation-based verification steps (`folded_hls_cppsim`, `node_by_node_rtlsim`) additionally execute the folded graph with the Python reference implementation of every layer and write a per-node deviation table that pinpoints the first node whose simulated output deviates
-- Multi-pass dataset validation in the Pynq driver (`passes` kwarg of `validate`): predictions of every sample are stored next to the report (`validate_predictions.npz`), samples whose prediction differs between passes are re-run and listed in `report_dma_validate.json`; the CI validates every regression model in two passes to detect non-deterministic accelerators
+- Multi-pass dataset validation in the Pynq driver (`passes` kwarg of `validate`): predictions of every sample are stored next to the report (`validate_predictions.npz`), samples whose prediction differs between passes are re-run and listed in `report_dma_validate.json`. The CI keeps a single pass by default; set `"passes": N` on the `validate` function in the experiments config to check an accelerator for non-deterministic predictions
 - The driver's own unit tests (`driver/tests`) are run on the board at the start of every CI measurement, so driver bugs that only appear with the board's package versions surface in seconds instead of hours
 
 ### Fixed

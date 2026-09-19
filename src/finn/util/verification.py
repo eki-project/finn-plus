@@ -33,6 +33,8 @@ def despecialize_model(model: ModelWrapper) -> ModelWrapper:
     Raises:
         FINNUserError: if a specialized node has no abstraction layer counterpart.
     """
+    from qonnx.custom_op.registry import getCustomOp
+
     from finn.custom_op.fpgadataflow import custom_op as hw_custom_ops
 
     model = deepcopy(model)
@@ -49,6 +51,19 @@ def despecialize_model(model: ModelWrapper) -> ModelWrapper:
             )
         node.op_type = base_op_type
         node.domain = HW_DOMAIN
+        # The node-level exec_mode ("cppsim"/"rtlsim") was set for the simulation and is kept
+        # by the attribute copy. Ops whose execute_node dispatches on it (ReplicateStream,
+        # attention, ...) would then simulate instead of executing in Python, or fail on
+        # missing code generation directories: select the Python mode where the op offers
+        # one, and clear the attribute otherwise (those ops always execute in Python).
+        inst = getCustomOp(node)
+        allowed_modes = inst.get_nodeattr_types().get("exec_mode", (None, None, None, set()))[3]
+        if "python" in allowed_modes:
+            inst.set_nodeattr("exec_mode", "python")
+        else:
+            for attr in list(node.attribute):
+                if attr.name == "exec_mode":
+                    node.attribute.remove(attr)
     return model
 
 
