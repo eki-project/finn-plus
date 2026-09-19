@@ -615,6 +615,14 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: By default, waveforms won't be saved.
     verify_save_rtlsim_waveforms: bool = False
 
+    #: (Only relevant if verify_steps is set)
+    #: For the simulation-based verification steps (folded_hls_cppsim, node_by_node_rtlsim),
+    #: additionally execute the same folded graph with the Python reference implementation of
+    #: every layer and write a per-node deviation table
+    #: (verification_output/verify_<step>_<input>_nodewise.txt) that pinpoints the first node
+    #: whose simulated output deviates from the reference. Uses verification_atol/rtol.
+    verify_nodewise_report: bool = False
+
     #: Set verification tolerance: absolute error per output element.
     verification_atol: float = 1e-3
 

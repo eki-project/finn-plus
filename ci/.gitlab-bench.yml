@@ -69,6 +69,10 @@ Measurement:
     - make -C ci/power_measurement/boards/rfsoc4x2 shared
     # Install dependencies for FINN driver
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && chmod +x scripts/driver_install_dependencies.sh && scripts/driver_install_dependencies.sh"
+    # Run the driver unit tests in the board environment before measuring (a few seconds). They
+    # need no accelerator, but they do catch driver bugs that only show on the board's package
+    # versions, which would otherwise surface hours into a measurement.
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && python -m pytest driver/tests -q"
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && python ci/measure.py"
   artifacts:
