@@ -413,6 +413,7 @@ class bench:
         cfg.split_large_fifos = True
         cfg.save_intermediate_models = True  # Save the intermediate model graphs
         cfg.verify_save_full_context = True  # Output full context dump for verification steps
+        cfg.verify_nodewise_report = True  # Per-node deviation report for simulation steps
         cfg.enable_instrumentation = True
         # rtlsim_use_vivado_comps # TODO ?
         # cfg.default_swg_exception

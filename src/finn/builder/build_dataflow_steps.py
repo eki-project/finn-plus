@@ -205,6 +205,7 @@ from finn.util.execution import execute_parent
 from finn.util.logging import log
 from finn.util.mlo_sim import is_mlo, mlo_prehook_func_factory
 from finn.util.slurmutil import detect_slurm_hosts, get_local_cores, parse_hosts
+from finn.util.verification import nodewise_verification
 from finn.xsi import SimEngine
 
 if TYPE_CHECKING:
@@ -416,6 +417,37 @@ def verify_step(
                 execute_parent(parent_model_fn, child_model_fn, in_npy, return_full_ctx=True),
             )
             out_npy = out_dict[out_tensor_name]
+            if cfg.verify_nodewise_report:
+                # Compare every node of the simulated child model against a Python reference
+                # execution of the same graph to locate where a deviation originates.
+                if model.get_metadata_prop("exec_mode") == "rtlsim":
+                    log.info(
+                        "Node-wise verification report is not available for stitched-IP rtlsim"
+                    )
+                else:
+                    sdp_node = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
+                    child_inputs = {
+                        child_inp.name: out_dict[sdp_node.input[i]]
+                        for i, child_inp in enumerate(model.graph.input)
+                        if model.get_initializer(child_inp.name) is None
+                    }
+                    # child outputs are stored under the parent's tensor names, not prefixed
+                    child_outputs = {
+                        child_out.name: sdp_node.output[i]
+                        for i, child_out in enumerate(model.graph.output)
+                    }
+                    nodewise_verification(
+                        model,
+                        child_inputs,
+                        out_dict,
+                        sdp_node.name + "_",
+                        verify_out_dir / f"verify_{step_name}_{b}_nodewise.txt",
+                        cfg.verification_atol,
+                        cfg.verification_rtol,
+                        header=f"Node-wise comparison of {step_name} against the Python "
+                        f"reference execution, verification input {b}\n",
+                        sim_name_map=child_outputs,
+                    )
         else:
             inp_tensor_name = model.get_first_global_in()
             out_tensor_name = model.get_first_global_out()
