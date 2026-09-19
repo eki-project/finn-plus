@@ -46,7 +46,7 @@ Compare:
     measurement/report_dma_validate/top-1_accuracy:
       required: true
       plot: true
-      allowed_uncertainty: 0.00005
+      allowed_uncertainty: 0.00
 
     measurement/report_experiment_instrumentation/throughput_fps:
       required: true
