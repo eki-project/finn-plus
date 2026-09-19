@@ -156,6 +156,13 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
     std::array<std::size_t, OStreamsSize> out_last_txn_cycle{};
     std::array<bool, OStreamsSize> prev_out_ready{};
 
+    // DIAGNOSTIC (test branch): optional per-cycle port-level handshake log. Records, on every
+    // change, the values the RTL sees at the clock edge: for inputs the applied TVALID and the
+    // TREADY read back, for outputs the TVALID read back and the applied TREADY.
+    std::ofstream portLog;
+    std::array<std::uint8_t, IStreamsSize> lastInState{};
+    std::array<std::uint8_t, OStreamsSize> lastOutState{};
+
     static bool _send_request(ConsumingChannel& ch, bool ready, std::stop_token stoken) {
         return std::visit([&](auto& c) { return c.send_request(CommData{ready}, stoken).data; }, ch);
     }
@@ -198,6 +205,13 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             for (std::size_t i = 0; i < IStreamsSize; ++i) {
                 // Interface SHM <-> sim
                 bool istreamReady = this->istreams[i].getInputReady();
+                if (portLog.is_open()) {
+                    std::uint8_t st = static_cast<std::uint8_t>((prev_in_valid[i] << 1) | istreamReady) | 0x80;
+                    if (st != lastInState[i]) {
+                        lastInState[i] = st;
+                        portLog << cyclesRun << " I" << i << " v" << prev_in_valid[i] << " r" << istreamReady << '\n';
+                    }
+                }
                 if (istreamReady && prev_in_valid[i]) {
                     ++in_txns[i];
                     in_last_txn_cycle[i] = cyclesRun;
@@ -218,6 +232,13 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
         if constexpr (!LastNode) {
             for (std::size_t i = 0; i < OStreamsSize; ++i) {
                 bool ostreamValid = this->ostreams[i].getOutputValid();
+                if (portLog.is_open()) {
+                    std::uint8_t st = static_cast<std::uint8_t>((ostreamValid << 1) | prev_out_ready[i]) | 0x80;
+                    if (st != lastOutState[i]) {
+                        lastOutState[i] = st;
+                        portLog << cyclesRun << " O" << i << " v" << ostreamValid << " r" << prev_out_ready[i] << '\n';
+                    }
+                }
                 if (ostreamValid && prev_out_ready[i]) {
                     ++out_txns[i];
                     out_last_txn_cycle[i] = cyclesRun;
@@ -476,6 +497,19 @@ class SingleNodeSimulation : public Simulation<IStreamsSize, OStreamsSize, Loggi
             utilizations[i] = fifo[i].getMaxUtil();
         }
         return utilizations;
+    }
+
+    /// Diagnostic: open (or close, for an empty path) the per-cycle port handshake log.
+    void setPortLog(const std::string& path) {
+        if (portLog.is_open()) {
+            portLog.close();
+        }
+        lastInState.fill(0);
+        lastOutState.fill(0);
+        if (!path.empty()) {
+            portLog.open(path, std::ios::app);
+            portLog << "# configure: cycles reset\n";
+        }
     }
 
     /// Diagnostic transaction counters: {in_txns, in_last_txn_cycle} per input stream and

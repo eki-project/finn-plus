@@ -4,6 +4,7 @@ import json
 import math
 import os
 import pandas as pd
+import re
 import shlex
 import signal
 import socket
@@ -732,6 +733,13 @@ class NodeConnectedSimulationController(SimulationController):
                     config_payload["max_cycles"] = max_cycles
                 if not is_last_node and fifo_first_valid_cycles is not None:
                     config_payload["fifo_first_valid_cycles"] = fifo_first_valid_cycles
+                # DIAGNOSTIC (test branch): per-cycle port handshake log for selected nodes
+                port_log_dir = os.environ.get("FIFOSIM_PORTLOG_DIR")
+                port_log_nodes = os.environ.get(
+                    "FIFOSIM_PORTLOG_NODES", "ConvolutionInputGenerator_rtl_20|Thresholding_rtl_28"
+                )
+                if port_log_dir and re.search(port_log_nodes, name):
+                    config_payload["port_log"] = f"{port_log_dir}/{name}_ports.log"
 
                 response = self._send_and_receive(proc_idx, "configure", config_payload)
 
@@ -1258,6 +1266,9 @@ class RunLayerParallelSimulation(Transformation):
                     df_data[node.name][-1][f"out_final_depth_{min_order.name}"] = -1
                     df_data[node.name][-1][f"simulation_time_{min_order.name}"] = -1
                     df_data[node.name][-1][f"minimization_iterations_{min_order.name}"] = -1
+
+        # DIAGNOSTIC (test branch): port logs go to the report directory (-> CI artifacts)
+        os.environ.setdefault("FIFOSIM_PORTLOG_DIR", str(self.cfg.get_report_directory().resolve()))
 
         # Running the initial simulation
         log.info("Running initial node-connected simulation.")

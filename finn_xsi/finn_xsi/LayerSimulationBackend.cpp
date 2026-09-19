@@ -60,7 +60,8 @@ class SimulationController {
                                                        RTLSimConfig::IsInputNode, RTLSimConfig::IsOutputNode, RTLSimConfig::preciseTimeout>& simulation)
         : sim(simulation) {}
 
-    void configure(const std::vector<std::size_t>& depths, const std::vector<std::size_t>& expected_first_valid_cycles, std::size_t maxCycles) {
+    void configure(const std::vector<std::size_t>& depths, const std::vector<std::size_t>& expected_first_valid_cycles, std::size_t maxCycles,
+                   const std::string& portLogPath = "") {
         std::lock_guard<std::mutex> lock(state_mutex);
         if (state != SimulationState::IDLE && state != SimulationState::FINISHED) {
             throw std::runtime_error("Cannot configure while simulation is running");
@@ -73,6 +74,7 @@ class SimulationController {
 
         // Reset simulation first
         sim.reset();
+        sim.setPortLog(portLogPath);
 
         // Configure FIFO depths AFTER reset
         std::size_t num_fifos = sim.getFIFOCount();
@@ -307,7 +309,12 @@ void process_command(const json& request, json& response, SimulationController& 
                 max_cycles = payload["max_cycles"].get<std::size_t>();
             }
 
-            controller.configure(fifo_depths, expected_first_valid_cycles, max_cycles);
+            std::string port_log_path;
+            if (payload.contains("port_log")) {
+                port_log_path = payload["port_log"].get<std::string>();
+            }
+
+            controller.configure(fifo_depths, expected_first_valid_cycles, max_cycles, port_log_path);
             response["status"] = "success";
             response["message"] = "Configuration successful";
         } else if (command == "start") {
