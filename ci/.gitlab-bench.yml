@@ -118,7 +118,22 @@ Result Collection:
       - metric_report.json
 
 # Follow-up stages for live FIFO sizing experiments
-# These stages re-run experiments with the FIFO sizes determined during measurement
+# These stages re-run experiments with the FIFO sizes determined during measurement.
+# They only make sense for a config that uses live FIFO sizing, and since GitLab evaluates
+# rules when the pipeline is created - long before Result Collection writes the follow-up
+# config - the decision has to be made from the config name: "live_fifo" in $BENCH_CFG, or in
+# $MANUAL_CFG_PATH for manual runs, where $BENCH_CFG is just "manual". For a config that uses
+# live FIFO sizing without saying so in its name, set RUN_FOLLOWUP to "true" when starting the
+# pipeline. Configs without live FIFO sizing do not get these jobs at all.
+.live_fifo_only:
+  rules:
+    # Also run on failure of previous tasks to process partial results
+    - if: $RUN_FOLLOWUP == "true"
+      when: always
+    - if: $BENCH_CFG =~ /live_fifo/
+      when: always
+    - if: $BENCH_CFG == "manual" && $MANUAL_CFG_PATH =~ /live_fifo/
+      when: always
 
 FINN Build (Follow-up):
   id_tokens:
@@ -127,9 +142,7 @@ FINN Build (Follow-up):
   stage: build_followup
   tags:
     - otus
-  rules:
-    # Also run on failure of previous tasks to measure partial results
-    - when: always
+  rules: !reference [.live_fifo_only, rules]
   needs:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
@@ -172,9 +185,7 @@ Measurement (Follow-up):
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: measure_followup
-  rules:
-    # Also run on failure of previous tasks to measure partial results
-    - when: always
+  rules: !reference [.live_fifo_only, rules]
   needs:
     - job: FINN Build (Follow-up)
   tags:
@@ -204,9 +215,7 @@ Result Collection (Follow-up):
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: collect_followup
-  rules:
-    # Also run on failure of previous tasks to measure partial results
-    - when: always
+  rules: !reference [.live_fifo_only, rules]
   needs:
     - job: Result Collection
     - job: FINN Build (Follow-up)
