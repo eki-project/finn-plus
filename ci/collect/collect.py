@@ -516,7 +516,7 @@ class ExperimentComparator:
     # config (the follow-up build even points at generated files that no reference can match),
     # drops target_fps and estimate reports, and skips verification. Everything that identifies
     # the DUT itself (dut, model_path, specialize_layers_config_file, validation_dataset, board,
-    # microbenchmark params, ...) must still match.
+    # synth_clk_period_ns, microbenchmark params, ...) must still match.
     _LIVE_FIFO_IGNORED_PARAM_KEYS = {
         "auto_fifo_depths",
         "auto_fifo_strategy",
@@ -525,7 +525,6 @@ class ExperimentComparator:
         "target_fps",
         "generate_outputs",
         "verify_steps",
-        "synth_clk_period_ns",
     }
 
     def __init__(self, dvc_logger, collect_cfg_path):
@@ -676,7 +675,7 @@ class ExperimentComparator:
 
         if extra_ignored_keys:
             # Make it visible which of the relaxed params the chosen reference actually
-            # differs in, since some of them (e.g. synth_clk_period_ns) affect the metrics.
+            # differs in, e.g. the derived folding config of a follow-up build.
             current_raw = (current_params or {}).get("params", {}) or {}
             compare_raw = (newest_exp[1].get("params") or {}).get("params", {}) or {}
             unset = "<unset>"
