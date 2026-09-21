@@ -25,6 +25,7 @@ class FINNDMAOverlay(Overlay):
         device=None,
         download=True,
         runtime_weight_dir="runtime_weights/",
+        runtime_weights=False,
         validation_dataset=None,
         **kwargs,
     ):
@@ -47,10 +48,19 @@ class FINNDMAOverlay(Overlay):
         download: bool
             Whether to flash the bitstream.
         runtime_weight_dir: str
-            Path to runtime weights folder.
+            Path to the folder with the external/runtime-writable weight files that the build
+            flow generated next to ``settings.json`` (``runtime_weights/`` of the deployment
+            package). Relative paths are interpreted from the current working directory, so
+            launchers must pass an absolute path unless they run from the driver directory.
+        runtime_weights: bool
+            Whether the accelerator contains runtime-writable weights (``runtime_weights`` in the
+            ``driver_information`` of ``settings.json``). If so, the weight files must be found
+            and written before the accelerator can compute anything meaningful, so a missing
+            directory is an error instead of being skipped silently.
         """
         super().__init__(bitfile_name, download=download, device=device)
         self.runtime_weight_dir = runtime_weight_dir
+        self.runtime_weights_expected = bool(runtime_weights)
         self.io_shape_dict = io_shape_dict
         self.ibuf_packed_device = None
         self.obuf_packed_device = None
@@ -155,6 +165,17 @@ class FINNDMAOverlay(Overlay):
         """
         w_filenames = []
         if not os.path.isdir(self.runtime_weight_dir):
+            if self.runtime_weights_expected:
+                # Layers with runtime-writable weights (e.g. URAM weight memories, which cannot
+                # be initialized from the bitstream) compute garbage until their weights are
+                # written, so silently skipping the load would only surface as a mysterious
+                # accuracy collapse later.
+                raise FileNotFoundError(
+                    "The accelerator has runtime-writable weights, but the runtime weight "
+                    "directory '%s' does not exist (working directory: '%s'). Pass the "
+                    "'runtime_weights' directory of the deployment package as "
+                    "runtime_weight_dir." % (self.runtime_weight_dir, os.getcwd())
+                )
             return
         for dirpath, dirnames, filenames in os.walk(self.runtime_weight_dir):
             w_filenames.extend(filenames)
@@ -169,9 +190,16 @@ class FINNDMAOverlay(Overlay):
             sdp_ind = int(w_filename.split("_")[0])
             layer_ind = int(w_filename.split("_")[1])
             rt_weight_dict[(sdp_ind, layer_ind)] = layer_w
+        if self.runtime_weights_expected and len(rt_weight_dict) == 0:
+            raise FileNotFoundError(
+                "The accelerator has runtime-writable weights, but no .dat weight files were "
+                "found in '%s'." % self.runtime_weight_dir
+            )
+        num_written = 0
         for sdp_ind, layer_ind in rt_weight_dict.keys():
             cand_if_name = "StreamingDataflowPartition_%d" % sdp_ind
             if cand_if_name in self.ip_dict.keys():
+                num_written += 1
                 layer_mmio = getattr(self, "StreamingDataflowPartition_%d" % sdp_ind).mmio
                 layer_w = rt_weight_dict[(sdp_ind, layer_ind)]
                 layer_mmio.write_mm(0, layer_w.tobytes())
@@ -189,6 +217,17 @@ class FINNDMAOverlay(Overlay):
                     else:
                         new_w = np.copy(layer_mmio.array[: layer_w.shape[0]])
                     assert (layer_w == new_w).all()
+        if num_written != len(rt_weight_dict):
+            raise RuntimeError(
+                "Found %d runtime weight files in '%s' but wrote only %d of them: no matching "
+                "StreamingDataflowPartition_<n> with an AXI-lite interface in the overlay for "
+                "the others." % (len(rt_weight_dict), self.runtime_weight_dir, num_written)
+            )
+        if num_written > 0:
+            print(
+                "Wrote runtime weights of %d layer(s) from %s"
+                % (num_written, self.runtime_weight_dir)
+            )
         if flush_accel:
             # run accelerator to flush any stale weights from weight streamer FIFOs
             self.execute_on_buffers()
