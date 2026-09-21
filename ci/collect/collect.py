@@ -510,20 +510,40 @@ class ExperimentComparator:
         "store_results_in_dvc_data",
     }
 
+    # Additional params ignored when matching a live FIFO-sizing run (or its follow-up) against
+    # a standard reference. Live FIFO-sizing intentionally differs from the regression build of
+    # the same DUT in exactly these: it selects the sizing flow, derives its own folding/FIFO
+    # config (the follow-up build even points at generated files that no reference can match),
+    # drops target_fps and estimate reports, and skips verification. Everything that identifies
+    # the DUT itself (dut, model_path, specialize_layers_config_file, validation_dataset, board,
+    # microbenchmark params, ...) must still match.
+    _LIVE_FIFO_IGNORED_PARAM_KEYS = {
+        "auto_fifo_depths",
+        "auto_fifo_strategy",
+        "fifo_config_file",
+        "folding_config_file",
+        "target_fps",
+        "generate_outputs",
+        "verify_steps",
+        "synth_clk_period_ns",
+    }
+
     def __init__(self, dvc_logger, collect_cfg_path):
         self.dvc_logger = dvc_logger
         with open(collect_cfg_path, "r") as f:
             self.collect_cfg = yaml.safe_load(f)
 
-    def _normalize_params(self, metadata):
+    def _normalize_params(self, metadata, extra_ignored_keys=frozenset()):
         """Return the bench params of a run, stripped of keys irrelevant to matching.
 
         Used to compare the full DUT configuration (e.g. idt/wdt/nhw/... for microbenchmarks
         like "mvau"), not just the DUT name, so that e.g. two "mvau" runs with different data
         types are never mistaken for one another when picking a comparison reference.
+
+        extra_ignored_keys relaxes the match further, see _LIVE_FIFO_IGNORED_PARAM_KEYS.
         """
         params = dict((metadata or {}).get("params", {}) or {})
-        for key in self._IGNORED_PARAM_KEYS:
+        for key in set(self._IGNORED_PARAM_KEYS) | set(extra_ignored_keys):
             params.pop(key, None)
         return params
 
@@ -572,16 +592,21 @@ class ExperimentComparator:
                 if not (v.get("metrics", {}).get("status") == "failed")
             }
 
-        # Live FIFO-sizing runs build a surrogate design and their follow-up runs use an
-        # externally supplied FIFO config, so neither is a valid regression reference.
-        filtered = {}
-        for name, data in exp_data.items():
-            kind = classify_run(data.get("params", {}).get("params", {}))
-            if kind != "standard" or "_followup_" in name:
-                continue
-            filtered[name] = data
+        return {
+            name: data for name, data in exp_data.items() if self._is_valid_reference(name, data)
+        }
 
-        return filtered
+    @staticmethod
+    def _is_valid_reference(exp_name, exp_data):
+        """Return whether an experiment of the compare tag may serve as comparison reference.
+
+        Live FIFO-sizing runs size their FIFOs from a live measurement and their follow-up runs
+        build from the generated config, so their results are not a regression baseline for any
+        run - not even for another live FIFO-sizing run, which is compared against the standard
+        build of the same DUT instead.
+        """
+        kind = classify_run((exp_data.get("params") or {}).get("params", {}) or {})
+        return kind == "standard" and "_followup_" not in exp_name
 
     def _flatten_metrics_dict(self, d, prefix=""):
         # DVC nests metrics on '/', undo that to get the keys used in the "Compare" config section
@@ -602,7 +627,19 @@ class ExperimentComparator:
 
         matching_exps = {}
         current_model_name = self.extract_model_name(current_params)
-        current_full_params = self._normalize_params(current_params)
+        # Live FIFO-sizing runs and their follow-ups are compared against the standard
+        # regression build of the same DUT (the reference pool contains standard runs only),
+        # so the params that the sizing flow changes by design must not block the match.
+        current_run_kind = classify_run((current_params or {}).get("params", {}) or {})
+        extra_ignored_keys = (
+            self._LIVE_FIFO_IGNORED_PARAM_KEYS if current_run_kind != "standard" else frozenset()
+        )
+        if extra_ignored_keys:
+            print(
+                "Run kind '%s': relaxing param matching, ignoring %s"
+                % (current_run_kind, ", ".join(sorted(extra_ignored_keys)))
+            )
+        current_full_params = self._normalize_params(current_params, extra_ignored_keys)
 
         for exp_name, exp_data in experiment_data.items():
             exp_model_name = self.extract_model_name(exp_data.get("params"))
@@ -611,7 +648,9 @@ class ExperimentComparator:
             # The model_name alone is not specific enough to disambiguate microbenchmark
             # configs that share the same DUT but differ in other params (e.g. "mvau" runs
             # with different idt/wdt/nhw/...), so compare the full param set as well.
-            if self._normalize_params(exp_data.get("params")) != current_full_params:
+            if self._normalize_params(exp_data.get("params"), extra_ignored_keys) != (
+                current_full_params
+            ):
                 continue
             matching_exps[exp_name] = exp_data
 
@@ -625,11 +664,35 @@ class ExperimentComparator:
                     newest_date = exp_date
                     newest_exp = (exp_name, exp_data)
         else:
+            # Only standard runs enforce the comparison, so do not cry ERROR for the others
             print(
-                "ERROR: No matching experiments found with model_name %s and matching params"
-                % current_model_name
+                "%s: No matching experiments found with model_name %s and matching params"
+                % (
+                    "ERROR" if current_run_kind == "standard" else "WARNING",
+                    current_model_name,
+                )
             )
             return None
+
+        if extra_ignored_keys:
+            # Make it visible which of the relaxed params the chosen reference actually
+            # differs in, since some of them (e.g. synth_clk_period_ns) affect the metrics.
+            current_raw = (current_params or {}).get("params", {}) or {}
+            compare_raw = (newest_exp[1].get("params") or {}).get("params", {}) or {}
+            unset = "<unset>"
+            differing = {
+                key: (current_raw.get(key, unset), compare_raw.get(key, unset))
+                for key in sorted(extra_ignored_keys)
+                if current_raw.get(key, unset) != compare_raw.get(key, unset)
+            }
+            if differing:
+                print(
+                    "Comparing against '%s' despite differing params (current vs reference): %s"
+                    % (
+                        newest_exp[0],
+                        ", ".join("%s: %r vs %r" % (k, v[0], v[1]) for k, v in differing.items()),
+                    )
+                )
 
         compare = {
             "name": "Comparison",
