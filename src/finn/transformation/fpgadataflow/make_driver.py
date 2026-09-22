@@ -618,7 +618,8 @@ class MakePYNQDriver(Transformation):
         """Create the deployment directory for the generated accelerator.
 
         Only accelerator-specific artifacts are written here (``settings.json`` and, if
-        applicable, ``runtime_weights/``). The driver code itself is no longer copied: it is
+        applicable, ``runtime_weights/`` and ``mlo_weights/``). The driver code itself is no
+        longer copied: it is
         published separately as the ``finn-plus-driver`` package and installed on the target
         board.
         """

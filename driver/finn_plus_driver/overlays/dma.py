@@ -54,8 +54,10 @@ class FINNDMAOverlay(Overlay):
             package). Relative paths are interpreted from the current working directory, so
             launchers must pass an absolute path unless they run from the driver directory.
         mlo_weight_dir: str
-            Path to the MLO (DDR) weights folder, only loaded if ``io_shape_dict``
-            contains an ``mlo_weight_config`` entry.
+            Path to the folder with the MLO (DDR) weight files that the build flow generated
+            next to ``settings.json`` (``mlo_weights/`` of the deployment package), resolved
+            like ``runtime_weight_dir``. Only loaded if ``io_shape_dict`` contains an
+            ``mlo_weight_config`` entry, in which case a missing directory is an error.
         runtime_weights: bool
             Whether the accelerator contains runtime-writable weights (``runtime_weights`` in the
             ``driver_information`` of ``settings.json``). If so, the weight files must be found
@@ -163,6 +165,16 @@ class FINNDMAOverlay(Overlay):
         mlo_cfg = self.io_shape_dict.get("mlo_weight_config")
         if not mlo_cfg:
             return
+        if not os.path.isdir(self.mlo_weight_dir):
+            # The DDR weights of an MLO accelerator are never part of the bitstream, so it
+            # computes garbage without them - report the missing directory instead of failing
+            # on the first .dat file with a bare FileNotFoundError.
+            raise FileNotFoundError(
+                "The accelerator streams its weights from DDR, but the MLO weight directory "
+                "'%s' does not exist (working directory: '%s'). Pass the 'mlo_weights' "
+                "directory of the deployment package as mlo_weight_dir."
+                % (self.mlo_weight_dir, os.getcwd())
+            )
         total_size = mlo_cfg["total_size_bytes"]
         # allocate one big contiguous buffer for all MLO weights
         weight_buf = allocate(shape=(total_size,), dtype=np.uint8)
