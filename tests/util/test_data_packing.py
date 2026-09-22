@@ -210,8 +210,12 @@ def test_driver_pack_unpack(dtype, reverse_inner, reverse_endian, simd):
     folded_shape = (10, 8 // simd, simd)  # N H W FOLD SIMD
     input = gen_finn_dt_tensor(dtype, folded_shape)
     input_packed = finnpy_to_packed_bytearray(input, dtype, reverse_inner, reverse_endian)
+
+    # The packer may return a (negative-stride) view; the accelerator output buffer on the
+    # board is a contiguous array, so unpack from a contiguous copy to mirror the driver.
+    input_packed = np.ascontiguousarray(input_packed)
     input_unpacked = packed_bytearray_to_finnpy(
-        np.ascontiguousarray(input_packed), dtype, folded_shape, reverse_inner, reverse_endian
+        input_packed, dtype, folded_shape, reverse_inner, reverse_endian
     )
 
     assert input_unpacked.dtype == np.float32

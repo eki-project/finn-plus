@@ -678,7 +678,7 @@ class MakePYNQDriver(Transformation):
 
         external_weights_dict = {
             "external_weights": external_weights,
-            "number_of_external_weights": str(ext_weight_dma_cnt),
+            "number_of_external_weights": ext_weight_dma_cnt,
             "external_weights_input_shapes": ext_weight_shapes_dict,
         }
 

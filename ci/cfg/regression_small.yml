@@ -1,4 +1,20 @@
+# Regression experiments that build on a standard node (see BENCH_CPU_CORES /
+# BENCH_FINN_WORKERS / MEM_BENCH for "regression_small" in .gitlab-ci.yml).
+# Keep the number of experiments in sync with PARALLEL_JOBS of that config, so that
+# every experiment gets a Slurm array task of its own.
 [
+    # VGG-10 (1D CNN) (RadioML)
+    {
+        "dut": ["vgg10"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+
+    # Cybersecurity (MLP)
+    {
+        "dut": ["cybsec"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+
     ### BNN-PYNQ ###
     # cnv-w1a1
     {
@@ -9,6 +25,7 @@
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "validation_dataset" : ["cifar"],
     },
+
     # cnv-w1a2
     {
         "dut": ["bnn-pynq"],
@@ -18,6 +35,7 @@
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "validation_dataset" : ["cifar"],
     },
+
     # cnv-w2a2
     {
         "dut": ["bnn-pynq"],
@@ -27,6 +45,7 @@
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "validation_dataset" : ["cifar"],
     },
+
     # tfc-w1a1
     {
         "dut": ["bnn-pynq"],
@@ -36,6 +55,7 @@
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "validation_dataset" : ["mnist"],
     },
+
     # tfc-w1a2
     {
         "dut": ["bnn-pynq"],
@@ -45,6 +65,7 @@
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
         "validation_dataset" : ["mnist"],
     },
+
     # tfc-w2a2
     {
         "dut": ["bnn-pynq"],
@@ -65,5 +86,42 @@
     {
         "dut": ["kws"],
         "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+
+    # Transformer: benchmark model ("dummy")
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/benchmark"],
+        "model_path": ["models/transformer/finn-transformers/benchmark/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/benchmark/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/benchmark/out.npy"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        # the previously stored folding config achieved 1526 fps (interval of 65536 cycles)
+        "target_fps": [1500],
+        "auto_fifo_depths": [True],
+    },
+
+    # Transformer: radioml model
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/radioml"],
+        "model_path": ["models/transformer/finn-transformers/radioml/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/radioml/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/radioml/out.npy"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [65536],
+        "auto_fifo_depths": [True],
+    },
+
+    # Transformer: vision model
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/vision"],
+        "model_path": ["models/transformer/finn-transformers/vision/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/vision/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/vision/out.npy"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1525],
+        "auto_fifo_depths": [True],
     },
 ]

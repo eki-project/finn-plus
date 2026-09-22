@@ -64,6 +64,11 @@ from typing import TYPE_CHECKING, cast
 
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
+from finn.analysis.fpgadataflow.empirical_qor_estimation import (
+    QoRModelSet,
+    empirical_power_estimation,
+    empirical_res_estimation,
+)
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.op_and_param_counts import aggregate_dict_keys, op_and_param_counts
@@ -209,6 +214,7 @@ from finn.util.execution import execute_parent
 from finn.util.fpgadataflow import is_mlo, warn_hls_rtl_dsp_conflict
 from finn.util.logging import log
 from finn.util.slurmutil import detect_slurm_hosts, get_local_cores, parse_hosts
+from finn.util.verification import nodewise_verification
 from finn.xsi import SimEngine
 
 if TYPE_CHECKING:
@@ -422,6 +428,37 @@ def verify_step(
                 execute_parent(parent_model_fn, child_model_fn, in_npy, return_full_ctx=True),
             )
             out_npy = out_dict[out_tensor_name]
+            if cfg.verify_nodewise_report:
+                # Compare every node of the simulated child model against a Python reference
+                # execution of the same graph to locate where a deviation originates.
+                if model.get_metadata_prop("exec_mode") == "rtlsim":
+                    log.info(
+                        "Node-wise verification report is not available for stitched-IP rtlsim"
+                    )
+                else:
+                    sdp_node = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
+                    child_inputs = {
+                        child_inp.name: out_dict[sdp_node.input[i]]
+                        for i, child_inp in enumerate(model.graph.input)
+                        if model.get_initializer(child_inp.name) is None
+                    }
+                    # child outputs are stored under the parent's tensor names, not prefixed
+                    child_outputs = {
+                        child_out.name: sdp_node.output[i]
+                        for i, child_out in enumerate(model.graph.output)
+                    }
+                    nodewise_verification(
+                        model,
+                        child_inputs,
+                        out_dict,
+                        sdp_node.name + "_",
+                        verify_out_dir / f"verify_{step_name}_{b}_nodewise.txt",
+                        cfg.verification_atol,
+                        cfg.verification_rtol,
+                        header=f"Node-wise comparison of {step_name} against the Python "
+                        f"reference execution, verification input {b}\n",
+                        sim_name_map=child_outputs,
+                    )
         else:
             inp_tensor_name = model.get_first_global_in()
             out_tensor_name = model.get_first_global_out()
@@ -720,7 +757,7 @@ def step_set_fifo_depths(
                     if parent_node is not None
                     else "fifosim_trace.wdb"
                 )
-                model.set_metadata_prop("rtlsim_trace", str(report_dir.absolute()) + tracefile)
+                model.set_metadata_prop("rtlsim_trace", str(report_dir.absolute() / tracefile))
 
             model = model.transform(
                 BuildSimulation(
@@ -1450,6 +1487,30 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
     return model
 
 
+def generate_empirical_estimate_reports(
+    model: ModelWrapper, cfg: DataflowBuildConfig, report_dir: Path, suffix: str = ""
+) -> None:
+    """Write empirical (learned) resource and power estimate reports next to the analytical
+    ones, if fitted QoR models are available via the FINN_QOR_MODEL_DIR environment variable.
+    """
+    models = QoRModelSet.load_from_env()
+    if models is None:
+        log.info("No empirical QoR models available (FINN_QOR_MODEL_DIR), skipping")
+        return
+    resources: dict[str, dict[str, int | float]] = model.analysis(
+        partial(empirical_res_estimation, fpgapart=cfg._resolve_fpga_part(), models=models)
+    )
+    resources["total"] = aggregate_dict_keys(resources)
+    with (report_dir / f"estimate_layer_resources_empirical{suffix}.json").open("w") as f:
+        json.dump(resources, f, indent=2)
+    power: dict[str, dict[str, float]] = model.analysis(
+        partial(empirical_power_estimation, models=models)
+    )
+    power["total"] = aggregate_dict_keys(power)
+    with (report_dir / f"estimate_power_empirical{suffix}.json").open("w") as f:
+        json.dump(power, f, indent=2)
+
+
 @register_build_dataflow_step()
 def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Generate per-layer resource and cycle estimates using analytical models."""
@@ -1474,7 +1535,7 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
         )
         with (report_dir / "estimate_layer_config_alternatives.json").open("w") as f:
             json.dump(estimate_layer_resources_complete, f, indent=2)
-        # need to call AnnotateCycles before dataflow_performance
+        generate_empirical_estimate_reports(model, cfg, report_dir)
 
         # generate reports for MLO nodes
         loop_nodes = model.get_nodes_by_op_type("FINNLoop")
@@ -1500,6 +1561,7 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
                 "w"
             ) as f:
                 json.dump(estimate_layer_resources_complete, f, indent=2)
+            generate_empirical_estimate_reports(loop_model, cfg, report_dir, f"_{node.name}")
 
         if not is_mlo(model):
             # need to call AnnotateCycles before dataflow_performance

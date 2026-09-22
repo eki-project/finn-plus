@@ -9,6 +9,15 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Added
+- **Empirical QoR estimation**: regression models fitted on the CI microbenchmark database predict post-synthesis LUTs and power per layer
+    - *Corresponding poster @ FPT'25: ["Empirical QoR Estimation Flow for Fast Design Space Exploration of DNN Dataflow Accelerators"](https://doi.org/10.1109/ICFPT67023.2025.00044)*
+    - New package `finn.qor` (database loading, model fitting/selection, evaluation) and analysis passes in `finn.analysis.fpgadataflow.empirical_qor_estimation`
+    - `step_generate_estimate_reports` writes `estimate_layer_resources_empirical.json` and `estimate_power_empirical.json` if `FINN_QOR_MODEL_DIR` points to fitted models
+    - CI scripts `ci/qor/fit_estimators.py` (refit models whenever microbenchmark results are added) and `ci/qor/end2end_report.py` (figures/tables comparing estimates with measured results)
+    - See [QoR README](src/finn/qor/README.md); new core dependencies `scikit-learn` and `matplotlib`
+- `verify_nodewise_report` build option: the `folded_hls_cppsim` and `node_by_node_rtlsim` verification steps also execute the folded graph with the Python implementation of every layer and report the first node whose simulated output deviates
+- Multi-pass dataset validation in the Pynq driver (`passes` kwarg of `validate`): per-sample predictions are saved next to the report and samples with differing predictions between passes are re-run and listed
+- The driver's unit tests (`driver/tests`) run on the board at the start of every CI measurement
 - (Xilinx) **Upstream sync with FINN v1.0.0-alpha** (Xilinx#1687): pulls in all upstream `dev` changes since April 2026, see the sections below for the user-facing ones
 - (Xilinx) New hardware operators: `PWPolyF` (piecewise-polynomial GELU/SiLU/Sigmoid/Tanh, RTL, Versal only) with a `PWPolyFunction` QONNX op and PyTorch export modules in `finn.util.torch_hw_modules` (Xilinx#1573), `HWWhere` (Xilinx#1579), `Pad1D` (1D padding / CLS token insertion) (Xilinx#1620), `SelectToken` and `Crop_rtl` (Xilinx#1639), `HWSoftmax_rtl` (Xilinx#1624)
     - New conversion transformations in the `convert_to_hw` package: `InferPWPolyFLayer`, `InferWhereLayer`, `InferPad1DLayer`, `InferSelectTokenLayer`
@@ -42,6 +51,11 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - `step_prepare_synthesis` is skipped when no bitfile is requested (in line with `step_synthesize_bitfile`)
 - `InferRequantLayer` derives the output datatype of converted `Quant` nodes from the node attributes instead of the (possibly missing) tensor annotation
 
+### Fixed
+- ImageNet validation in the Pynq driver could count a first image in place of a last one at the end of a pass, making the reported top-1 accuracy vary by single images between runs of the same bitfile
+- Runtime-writable weights were never written on the CI board because the driver looked for `runtime_weights/` relative to the working directory and skipped the load silently when it was missing; the weight directory is now resolved next to `settings.json` and a missing directory is an error for accelerators with runtime-writable weights
+- The CIFAR-100 validation in the Pynq driver fed raw pixel values into the float input of the ResNet-18 accelerator; the CIFAR validator now normalizes the inputs (`normalize`, `norm_mean`, `norm_std` kwargs of `validate`)
+
 ### Removed
 - The outdated `tutorials/fpga_flow` tutorial (still documented the Docker-based flow)
 
@@ -49,7 +63,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ### Added
 - **New distributed simulation infrastructure** for search-based FIFO sizing and performance simulation (eki-project#187)
-    - *To be presented as a Poster @ FPL'26*
+    - *To be presented as a poster @ FPL'26 and full paper @ H2RC (SC'26)*
 - **Multi-FPGA inference support** (eki-project#23)
     - *Corresponding paper @ HEART'25: ["AuroraFlow, an Easy-to-Use, Low-Latency FPGA Communication Solution Demonstrated on Multi-FPGA Neural Network Inference"](https://doi.org/10.1145/3728179.3728190)*
     - Initial communication backend: [AuroraFlow](https://github.com/pc2/AuroraFlow) (new dependency)
