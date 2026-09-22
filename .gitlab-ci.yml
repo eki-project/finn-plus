@@ -128,7 +128,7 @@ Build:
       source .venv/bin/activate
       finn deps update --dependency-path ./deps --accept-defaults
       dvc config cache.dir $CI_DVC_CACHE_DIR
-      dvc pull
+      bash ci/retry.sh -n 4 -d 15 -- dvc pull
   artifacts:
     name: "finn-plus_package"
     paths:
@@ -182,7 +182,7 @@ FINN Test Suite 2024.2:
     - |
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
-      dvc pull
+      bash ci/retry.sh -n 4 -d 15 -- dvc pull
       finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-test-workers $PYTEST_WORKERS -n $PYTEST_FINN_WORKERS
   artifacts:
     name: "test_reports"

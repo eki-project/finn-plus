@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import yaml
 from datetime import date
 from dvc.repo import Repo
@@ -25,6 +26,23 @@ def delete_dir_contents(dir):
                 shutil.rmtree(file_path)
         except Exception as e:
             print("Failed to delete %s. Reason: %s" % (file_path, e))
+
+
+def retry(fn, description, attempts=4, base_delay=10):
+    """Call fn() and retry with exponential backoff if it raises (transient network errors)."""
+    delay = base_delay
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt >= attempts:
+                raise
+            print(
+                "WARNING: %s failed (attempt %d/%d): %s, retrying in %ds"
+                % (description, attempt, attempts, e, delay)
+            )
+            time.sleep(delay)
+            delay *= 2
 
 
 def open_json_report(id, report_name, is_followup=False):
@@ -564,7 +582,10 @@ class ExperimentComparator:
         git_remote = "git@github.com:eki-project/finn-plus.git"
 
         with Repo(".") as repo:
-            remote_exp_map = repo.experiments.ls(git_remote=git_remote, rev=tag)
+            remote_exp_map = retry(
+                lambda: repo.experiments.ls(git_remote=git_remote, rev=tag),
+                "listing experiments on %s" % git_remote,
+            )
             remote_exps = set()
             for _, exps in remote_exp_map.items():
                 remote_exps.update(a for a, b in exps)
