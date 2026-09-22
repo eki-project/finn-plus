@@ -709,7 +709,7 @@ def step_set_fifo_depths(
                     if parent_node is not None
                     else "fifosim_trace.wdb"
                 )
-                model.set_metadata_prop("rtlsim_trace", str(report_dir.absolute()) + tracefile)
+                model.set_metadata_prop("rtlsim_trace", str(report_dir.absolute() / tracefile))
 
             model = model.transform(
                 BuildSimulation(
