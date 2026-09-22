@@ -47,10 +47,18 @@ def run_doctests(num_workers: int) -> bool:
 
 # Per-test wall-clock limit (setup + call + teardown) for the CI variants. The slowest
 # tests of the suite take a bit over an hour, so this only ever fires for a test that
-# is genuinely stuck (e.g. a deadlocked simulation). pytest-timeout then dumps the
-# stacks of all threads and fails the test instead of the whole job idling until the
-# Slurm time limit kills it without a report.
+# is genuinely stuck (e.g. a deadlocked simulation), instead of the whole job idling
+# until the Slurm time limit kills it without a report.
 CI_TEST_TIMEOUT_S = 3 * 3600
+
+# The "thread" method is required, not a preference: pytest-timeout's default ("signal")
+# raises the timeout from a SIGALRM handler, which the interpreter only runs between
+# bytecodes. A test blocked inside a C extension - which is where our hangs are, xsim
+# simulation via XSI - never returns to the interpreter, so the alarm is never handled
+# and the test hangs anyway. The timer thread dumps the stacks of all threads and kills
+# the process; under pytest-xdist that surfaces as a crashed worker, which the crash
+# rerun below picks up.
+CI_TEST_TIMEOUT_ARGS = f"--timeout {CI_TEST_TIMEOUT_S} --timeout-method=thread"
 
 
 def run_test(variant: str, num_workers: str, args: str = "") -> None:
@@ -114,7 +122,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                     f"(vivado or slow or vitis or board or bnn_pynq or end2end)' "
                     f"--junitxml={ci_project_dir}/reports/quick.xml "
                     f"--html={ci_project_dir}/reports/quick.html "
-                    f"--timeout {CI_TEST_TIMEOUT_S} "
+                    f"{CI_TEST_TIMEOUT_ARGS} "
                     f"--reruns 1 --dist worksteal -n {num_workers}",
                     posix=IS_POSIX,
                 )
@@ -206,7 +214,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                         f"{sys.executable} -m pytest -q -rf --tb=short "
                         f"--junitxml={main_xml} "
                         f"--html={main_html} "
-                        f"--timeout {CI_TEST_TIMEOUT_S} "
+                        f"{CI_TEST_TIMEOUT_ARGS} "
                         f"--reruns 1 --dist worksteal -n {num_workers}"
                     ),
                     posix=IS_POSIX,
@@ -242,7 +250,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                     f"{sys.executable} -m pytest -v "
                     f"--junitxml={shlex.quote(crash_xml)} "
                     f"--html={shlex.quote(crash_html)} "
-                    f"--timeout {CI_TEST_TIMEOUT_S} "
+                    f"{CI_TEST_TIMEOUT_ARGS} "
                     f"--reruns 3 -n 1 "
                     f"{nodeids}"
                 )
