@@ -51,3 +51,9 @@ direct_download_deps:
         url: "https://dpoauwgwqsy2x.cloudfront.net/Download/pynq-z2.zip"
         do_unzip: True
         target_directory: "board_files"
+    # Sources of the JSON library used by the RTL simulation backend (finn_xsi). Pre-fetching
+    # them here keeps CMake from downloading at configure time in the middle of a build.
+    nlohmann-json:
+        url: "https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz"
+        do_unzip: True
+        target_directory: "nlohmann_json"

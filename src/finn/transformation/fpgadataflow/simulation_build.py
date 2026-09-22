@@ -49,6 +49,24 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+# The nlohmann/json sources the simulation backend's CMake build needs. They are a direct download
+# dependency in external_dependencies.yaml, so `finn deps update` provides them and CMake does not
+# have to download anything when configuring in the middle of a build.
+NLOHMANN_JSON_DEP_SUBDIR = Path("nlohmann_json") / "json"
+
+
+def nlohmann_json_cmake_flag() -> str:
+    """Return the CMake flag pointing the simulation backend build to the pre-fetched
+    nlohmann/json sources. Raise a FINNUserError if they are not installed."""
+    json_dir = get_settings().finn_deps / NLOHMANN_JSON_DEP_SUBDIR
+    if not (json_dir / "CMakeLists.txt").exists():
+        raise FINNUserError(
+            f"The nlohmann/json sources required by the RTL simulation backend were not found "
+            f"at {json_dir}. Run 'finn deps update' to fetch the external dependencies."
+        )
+    return f"-DFINN_NLOHMANN_JSON_DIR={json_dir}"
+
+
 class SimulationType(str, Enum):
     """Type of simulation."""
 
@@ -759,7 +777,10 @@ class SimulationBuilder:
         finnxsi_dir = get_settings().finn_xsi
 
         # Running CMake first
-        cmake_call = f"{sys.executable} -m cmake -S {finnxsi_dir} -B {sim_base}"
+        cmake_call = (
+            f"{sys.executable} -m cmake -S {finnxsi_dir} -B {sim_base} "
+            f"{shlex.quote(nlohmann_json_cmake_flag())}"
+        )
         if enable_mpi:
             cmake_call += " -DFIFOSIM_ENABLE_MPI=ON"
         log.debug(f"Running cmake on RTLSIM Wrapper in {sim_base}")
@@ -1395,9 +1416,11 @@ class BuildSimulation(Transformation):
             )
         else:
             # Run only compilation again, and avoid repeating building of the stitched IPs
+            json_flag = shlex.quote(nlohmann_json_cmake_flag())
+
             def _compile(binary: Path) -> None:
                 """Compile binary in path binary."""
-                cmake_cmd = "cmake"
+                cmake_cmd = f"cmake {json_flag}"
                 if enable_mpi:
                     cmake_cmd += " -DFIFOSIM_ENABLE_MPI=ON"
                 result = subprocess.run(

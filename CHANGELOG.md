@@ -14,6 +14,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - The driver's unit tests (`driver/tests`) run on the board at the start of every CI measurement
 
 ### Fixed
+- The CMake build of the distributed RTL simulation backend (FIFO sizing, performance simulation) downloaded nlohmann/json from GitHub at configure time, so a network hiccup in the middle of a long build job failed it; the sources are now a regular external dependency (`nlohmann-json` in `external_dependencies.yaml`) fetched by `finn deps update` at the start of a job and cached in the dependency directory
 - ImageNet validation in the Pynq driver could count a first image in place of a last one at the end of a pass, making the reported top-1 accuracy vary by single images between runs of the same bitfile
 - Runtime-writable weights were never written on the CI board because the driver looked for `runtime_weights/` relative to the working directory and skipped the load silently when it was missing; the weight directory is now resolved next to `settings.json` and a missing directory is an error for accelerators with runtime-writable weights
 - The CIFAR-100 validation in the Pynq driver fed raw pixel values into the float input of the ResNet-18 accelerator; the CIFAR validator now normalizes the inputs (`normalize`, `norm_mean`, `norm_std` kwargs of `validate`)

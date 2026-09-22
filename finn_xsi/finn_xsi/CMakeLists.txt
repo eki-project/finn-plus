@@ -109,8 +109,26 @@ list(POP_BACK CMAKE_MESSAGE_INDENT)    #indent -1
 # Collect source files
 file(GLOB_RECURSE CORE_SRC src/*.cpp)
 
-# For JSON writing
+# For JSON writing. The nlohmann/json sources are a FINN+ dependency (see
+# src/finn/interface/external_dependencies.yaml) that `finn deps update` fetches into
+# <FINN_DEPS>/nlohmann_json/json, so configuring needs no network access. FINN+ passes that
+# directory as FINN_NLOHMANN_JSON_DIR; without it, it is derived from the FINN_DEPS environment
+# variable. Only if no pre-fetched copy is found is the release tarball downloaded at configure
+# time. Keep the version of the URL and the dependency definition in sync.
 include(FetchContent)
+set(FINN_NLOHMANN_JSON_DIR "" CACHE PATH "Pre-fetched nlohmann/json source directory")
+if(NOT FINN_NLOHMANN_JSON_DIR AND DEFINED ENV{FINN_DEPS})
+  set(FINN_NLOHMANN_JSON_DIR "$ENV{FINN_DEPS}/nlohmann_json/json")
+endif()
+if(FINN_NLOHMANN_JSON_DIR AND EXISTS "${FINN_NLOHMANN_JSON_DIR}/CMakeLists.txt")
+  message(STATUS "Using pre-fetched nlohmann/json from ${FINN_NLOHMANN_JSON_DIR}")
+  set(FETCHCONTENT_SOURCE_DIR_JSON "${FINN_NLOHMANN_JSON_DIR}")
+else()
+  message(WARNING
+    "No pre-fetched nlohmann/json found (FINN_NLOHMANN_JSON_DIR='${FINN_NLOHMANN_JSON_DIR}'). "
+    "Downloading it at configure time instead, which requires network access. "
+    "Run 'finn deps update' to fetch it in advance.")
+endif()
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
 FetchContent_MakeAvailable(json)
 
