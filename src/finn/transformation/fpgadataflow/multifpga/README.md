@@ -59,4 +59,4 @@ At this point, depending on which communication methodology is used, custom prep
 After everything is done, the SDPs are packaged into XOs as well (Vitis flow only) and the linker configuration is created. For Multi-FPGA, an additional transformation will be executed. This additional transformation modifies the linker configuration to, for example, instantiate the communication kernel and connect its stream interface with the compute kernel.
 
 ## Backend: AuroraFlow
-(AuroraFlow)[https://github.com/pc2/AuroraFlow] is a backend developed at PC2, wrapping AMDs Aurora IP core for ease-of-use and readiness for usage in v++ linking. It furthermore adds introspection as well as flow-control capabilities. For a full list of features check out the repository.
+[AuroraFlow](https://github.com/pc2/AuroraFlow) is a backend developed at PC2, wrapping AMDs Aurora IP core for ease-of-use and readiness for usage in v++ linking. It furthermore adds introspection as well as flow-control capabilities. For a full list of features check out the repository.
