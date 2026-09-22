@@ -10,6 +10,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ### Added
 - **Empirical QoR estimation**: regression models fitted on the CI microbenchmark database predict post-synthesis LUTs and power per layer
+    - *Corresponding poster @ FPT'25: ["Empirical QoR Estimation Flow for Fast Design Space Exploration of DNN Dataflow Accelerators"](https://doi.org/10.1109/ICFPT67023.2025.00044)*
     - New package `finn.qor` (database loading, model fitting/selection, evaluation) and analysis passes in `finn.analysis.fpgadataflow.empirical_qor_estimation`
     - `step_generate_estimate_reports` writes `estimate_layer_resources_empirical.json` and `estimate_power_empirical.json` if `FINN_QOR_MODEL_DIR` points to fitted models
     - CI scripts `ci/qor/fit_estimators.py` (refit models whenever microbenchmark results are added) and `ci/qor/end2end_report.py` (figures/tables comparing estimates with measured results)
@@ -22,12 +23,20 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - **Empirical DSP/BRAM/URAM estimation**: models for `metrics.synth.resources.{DSP,URAM}` and BRAM in 18K-block equivalents next to LUTs and power; zero-inflated targets are selected by MAE, only fitted with enough signal, and reported with MAE/zero hit rate in the fitting artifacts
 - **Advanced QoR models** (`finn.qor.models`): log-target gradient boosting/MLP, an FT-Transformer style tabular transformer (torch) and PySR symbolic regression with Julia-free inference (sympy); model selection records fit/predict cost next to accuracy, `fit_estimators.py` gains `--regressors`/`--skip-regressors`/`--list-regressors`/`--subset`/`--set` and writes CV results, out-of-fold predictions and symbolic equations (Markdown/LaTeX/Pareto plot); new manual CI job `QoR Symbolic Regression`; new dependency `sympy`, optional extra `qor-symbolic` (`pysr`)
 - **Benchmark artifact exchange via the cluster fileshare**: per-run reports and bitstreams are exchanged between the build, measurement and collection runners through `FINN_BENCH_EXCHANGE_DIR` (`finn.benchmarking.exchange`) instead of GitLab artifacts; new `Exchange Cleanup` CI job with `EXCHANGE_RETENTION_DAYS`/`KEEP_EXCHANGE_DEPLOY`
+- `verify_nodewise_report` build option: the `folded_hls_cppsim` and `node_by_node_rtlsim` verification steps also execute the folded graph with the Python implementation of every layer and report the first node whose simulated output deviates
+- Multi-pass dataset validation in the Pynq driver (`passes` kwarg of `validate`): per-sample predictions are saved next to the report and samples with differing predictions between passes are re-run and listed
+- The driver's unit tests (`driver/tests`) run on the board at the start of every CI measurement
+
+### Fixed
+- ImageNet validation in the Pynq driver could count a first image in place of a last one at the end of a pass, making the reported top-1 accuracy vary by single images between runs of the same bitfile
+- Runtime-writable weights were never written on the CI board because the driver looked for `runtime_weights/` relative to the working directory and skipped the load silently when it was missing; the weight directory is now resolved next to `settings.json` and a missing directory is an error for accelerators with runtime-writable weights
+- The CIFAR-100 validation in the Pynq driver fed raw pixel values into the float input of the ResNet-18 accelerator; the CIFAR validator now normalizes the inputs (`normalize`, `norm_mean`, `norm_std` kwargs of `validate`)
 
 ## 1.5.0 - 05.09.2026
 
 ### Added
 - **New distributed simulation infrastructure** for search-based FIFO sizing and performance simulation (eki-project#187)
-    - *To be presented as a Poster @ FPL'26*
+    - *To be presented as a poster @ FPL'26 and full paper @ H2RC (SC'26)*
 - **Multi-FPGA inference support** (eki-project#23)
     - *Corresponding paper @ HEART'25: ["AuroraFlow, an Easy-to-Use, Low-Latency FPGA Communication Solution Demonstrated on Multi-FPGA Neural Network Inference"](https://doi.org/10.1145/3728179.3728190)*
     - Initial communication backend: [AuroraFlow](https://github.com/pc2/AuroraFlow) (new dependency)

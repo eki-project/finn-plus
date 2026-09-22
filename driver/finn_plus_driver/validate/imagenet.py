@@ -1,8 +1,14 @@
 """Validation script for the ImageNet (ILSVRC2012) dataset."""
-import json
+
 import numpy as np
 import os
 from dataset_loading import FileQueue, ImgQueue
+from finn_plus_driver.validate.common import (
+    ValidationDataset,
+    run_validation,
+    shutdown_loaders,
+    validation_kwargs,
+)
 from PIL import Image
 
 
@@ -38,15 +44,68 @@ def pre_process(img_np):
     return img
 
 
-def setup_dataloader(val_path, label_file_path=None, batch_size=100, n_images=50000):
-    """Create an image queue for streaming ImageNet validation images."""
-    files = [f"ILSVRC2012_val_{i:08d}.JPEG" for i in range(1, n_images + 1)]
-    labels = np.loadtxt(label_file_path, dtype=int, usecols=1)
-    file_queue = FileQueue()
-    file_queue.load_epochs(list(zip(files, labels)), shuffle=False)
-    img_queue = ImgQueue(maxsize=batch_size)
-    img_queue.start_loaders(file_queue, num_threads=4, img_dir=val_path, transform=pre_process)
-    return img_queue
+def load_image(path):
+    """Load and pre-process a single image exactly like the ImgQueue loader threads do."""
+    img = Image.open(path).convert(mode="RGB")
+    return pre_process(np.array(img).astype(np.float32))
+
+
+class ImageNetDataset(ValidationDataset):
+    """The ILSVRC2012 validation set, streamed from JPEG files by dataset_loading."""
+
+    def __init__(self, dataset_path, label_file_path, n_images=50000, num_threads=4):
+        """Index the validation images and read their labels from the label file."""
+        self.dataset_path = dataset_path
+        self.files = [f"ILSVRC2012_val_{i:08d}.JPEG" for i in range(1, n_images + 1)]
+        self.labels = np.loadtxt(label_file_path, dtype=int, usecols=1)[:n_images]
+        assert len(self.labels) == n_images, "Label file has fewer entries than images"
+        self.num_threads = num_threads
+
+    def __len__(self):
+        """Number of validation images."""
+        return len(self.files)
+
+    def sample_id(self, index):
+        """File name of the image."""
+        return self.files[index]
+
+    def iter_batches(self, cls_inst):
+        """Stream one pass over the images with the multi-threaded loader, batch by batch."""
+        batch_size = cls_inst.batch_size
+        # The loader threads deliver images in non-deterministic order, so every file is queued
+        # together with its (index, label) pair to map the batches back to the samples.
+        items = list(zip(self.files, zip(range(len(self.files)), self.labels.tolist())))
+        file_queue = FileQueue()
+        # Exactly one epoch: with the (default) unlimited epochs the loader threads start on the
+        # first images of the next epoch right after the last image of this one, and a slow last
+        # image then gets replaced in the last batch by a first image counted a second time.
+        # That was the source of the top-1 accuracy varying by single images between runs.
+        file_queue.load_epochs(items, shuffle=False, max_epochs=1)
+        img_queue = ImgQueue(maxsize=batch_size)
+        img_queue.start_loaders(
+            file_queue,
+            num_threads=self.num_threads,
+            img_dir=self.dataset_path,
+            transform=pre_process,
+        )
+        try:
+            while not img_queue.last_batch:
+                imgs, lbls = img_queue.get_batch(batch_size, timeout=None)
+                lbls = np.array(lbls, dtype=np.int64)
+                inputs = np.array(imgs).reshape(cls_inst.ishape_normal())
+                yield lbls[:, 0], inputs, lbls[:, 1]
+        finally:
+            shutdown_loaders(img_queue)
+
+    def load(self, cls_inst, indices):
+        """Load and pre-process the given images into one accelerator input batch."""
+        imgs = [load_image(os.path.join(self.dataset_path, self.files[i])) for i in indices]
+        return np.array(imgs).reshape(cls_inst.ishape_normal())
+
+    def predict(self, obuf, batch_size):
+        """Top-1 class per sample, as returned by the accelerator's TopK layer."""
+        # the accelerator returns the top-1 class index (TopK / LabelSelect layer in hardware)
+        return obuf.reshape(batch_size, -1)[:, 0]
 
 
 def validate(cls_inst, *args, **kwargs):
@@ -56,35 +115,5 @@ def validate(cls_inst, *args, **kwargs):
         "dataset_path",
         os.path.join(os.environ["DATASET_DIR"], "ImageNet2012", "ILSVRC2012_img_val"),
     )
-    batch_size = cls_inst.batch_size
-    img_queue = setup_dataloader(dataset_path, os.path.join(dataset_path, "../val.txt"), batch_size)
-
-    ok = 0
-    nok = 0
-    i = 0
-
-    while not img_queue.last_batch:
-        imgs, lbls = img_queue.get_batch(batch_size, timeout=None)
-        imgs = np.array(imgs)
-        exp = np.array(lbls)
-
-        ibuf_normal = imgs.reshape(cls_inst.ishape_normal())
-        obuf_normal = cls_inst.execute(ibuf_normal)
-        obuf_normal = obuf_normal.reshape(batch_size, -1)[:, 0]
-        ret = np.bincount(obuf_normal.flatten() == exp.flatten())
-        nok += ret[0]
-        ok += ret[1]
-        i += 1
-        print("batch %d : total OK %d NOK %d" % (i, ok, nok))
-
-    total = 50000
-    acc = 100.0 * ok / (total)
-    print(f"Final top-1 accuracy: {acc}%")
-
-    # write report to file
-    report = {
-        "top-1_accuracy": acc,
-    }
-    reportfile = os.path.join(report_dir, "report_dma_validate.json")
-    with open(reportfile, "w") as f:
-        json.dump(report, f, indent=2)
+    dataset = ImageNetDataset(dataset_path, os.path.join(dataset_path, "../val.txt"))
+    run_validation(cls_inst, dataset, report_dir, **validation_kwargs(kwargs))

@@ -45,14 +45,19 @@ SPARSITY_TYPES = (
 
 
 def resolve_folding(params: dict) -> Optional[tuple[int, int]]:
-    """(simd, pe) from the sf/nf folding factors (-1 = maximum folding), None if invalid."""
-    mw, mh, sf, nf = int(params["mw"]), int(params["mh"]), int(params["sf"]), int(params["nf"])
-    if sf > mw or nf > mh or sf == 0 or nf == 0:
-        return None
-    sf = mw if sf == -1 else sf
-    nf = mh if nf == -1 else nf
-    simd, pe = mw // sf, mh // nf
-    if mw % simd != 0 or mh % pe != 0:
+    """(simd, pe) from the sf/nf folding factors (-1 = maximum folding) or, if ``sf`` is not
+    given, directly from ``simd``/``pe``; None if the folding is invalid."""
+    mw, mh = int(params["mw"]), int(params["mh"])
+    if params.get("sf") is not None:
+        sf, nf = int(params["sf"]), int(params["nf"])
+        if sf > mw or nf > mh or sf == 0 or nf == 0:
+            return None
+        sf = mw if sf == -1 else sf
+        nf = mh if nf == -1 else nf
+        simd, pe = mw // sf, mh // nf
+    else:
+        simd, pe = int(params["simd"]), int(params["pe"])
+    if simd < 1 or pe < 1 or mw % simd != 0 or mh % pe != 0:
         return None
     return simd, pe
 
@@ -87,6 +92,8 @@ class bench_mvau(MicrobenchDUT):
         "mh": "matrix height (output channels)",
         "sf": "synapse folding factor: simd = mw // sf (-1 = mw, i.e. simd = 1)",
         "nf": "neuron folding factor: pe = mh // nf (-1 = mh, i.e. pe = 1)",
+        "simd": "alternatively to sf/nf: input channel parallelism directly",
+        "pe": "alternatively to sf/nf: output channel parallelism directly",
         "m": "sample-level parallelism (only 1 supported unless fully unrolled)",
         "sparsity_type": "none, unstructured, rows_random, cols_random, rows_regular, cols_regular",
         "sparsity_amount": "fraction of weights forced to zero (0 for none)",
@@ -120,15 +127,23 @@ class bench_mvau(MicrobenchDUT):
                 return "MVAU_rtl supports 4..8 bit inputs"
             if wdt.bitwidth() < 4 or wdt.bitwidth() > 8:
                 return "MVAU_rtl supports 4..8 bit weights"
+        if backend == "hls" and params["mem_mode"] == "internal_decoupled":
+            # weight stream width limitation of the HLS MVAU
+            if simd * pe * wdt.bitwidth() > 8191:
+                return "HLS MVAU weight stream too wide (> 8191)"
+        if backend == "hls" and params["mem_mode"] == "internal_embedded":
+            # ram_style has no effect for embedded weights (always LUTs), so only the
+            # explicit value is benchmarked to avoid confusing microbenchmark results
+            if params["ram_style"] != "distributed":
+                return "ram_style has no effect for internal_embedded (use distributed)"
         sparsity_type = params.get("sparsity_type", "none")
         amount = params.get("sparsity_amount", 0) or 0
         if sparsity_type not in SPARSITY_TYPES:
             return f"unknown sparsity type {sparsity_type}"
         if sparsity_type == "none" and amount > 0:
             return "sparsity amount > 0 not applicable for none sparsity"
-        if sparsity_type != "none" and amount == 0:
-            return "sparsity amount = 0 not applicable for selected sparsity"
-        if sparsity_type.endswith("_regular") and amount not in (0.25, 0.5, 0.75):
+        # amount 0 with a sparsity type is the dense reference point of a sparsity sweep
+        if sparsity_type.endswith("_regular") and amount not in (0, 0.25, 0.5, 0.75):
             return "regular sparsity only applicable for amount 0.25/0.5/0.75"
         odt_bits = DataType[act].bitwidth() if act is not None else 32
         if not stream_width_ok(idt.bitwidth() * simd) or not stream_width_ok(odt_bits * pe):
@@ -184,7 +199,11 @@ class bench_mvau(MicrobenchDUT):
                 {"rtl": Fixed("internal_decoupled")},
                 Choice(["internal_embedded", "internal_decoupled"]),
             ),
-            "ram_style": Choice(["auto", "block", "distributed", "ultra"]),
+            "ram_style": Conditional(
+                "mem_mode",
+                {"internal_embedded": Fixed("distributed")},
+                Choice(["auto", "block", "distributed", "ultra"]),
+            ),
             "ram_style_thr": Conditional(
                 "act", {None: Fixed("auto")}, Choice(["auto", "distributed", "block"])
             ),
@@ -310,7 +329,8 @@ class bench_mvau(MicrobenchDUT):
     @staticmethod
     def _apply_sparsity(W: np.ndarray, sparsity_type: str, amount: float) -> np.ndarray:
         mw, mh = W.shape
-        if sparsity_type == "none":
+        if sparsity_type == "none" or amount == 0:
+            # keep the dense reference point of a sparsity sweep instead of skipping it
             return W
         if sparsity_type == "unstructured":
             idx = np.random.choice(mw * mh, size=int(amount * mw * mh), replace=False)
