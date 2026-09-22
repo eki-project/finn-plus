@@ -2,6 +2,7 @@
 
 import click
 import json
+import os
 
 from finn_plus_driver import get_driver_class
 
@@ -79,6 +80,11 @@ def driver_cli(bitfile_name, settings, function, ckwarg, fkwarg):
     """
     with open(settings, encoding="utf-8") as f:
         driver_settings = json.load(f)["driver_information"]
+    # the build flow places the runtime weight files next to settings.json
+    driver_settings.setdefault(
+        "runtime_weight_dir",
+        os.path.join(os.path.dirname(os.path.abspath(settings)), "runtime_weights"),
+    )
 
     if ckwarg is None:
         ckwarg = {}

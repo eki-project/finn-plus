@@ -5,10 +5,12 @@ from typing import Any
 
 #: Supported validation datasets, mapped to the module implementing their ``validate``
 #: function. Modules are imported lazily so that a missing optional dataset dependency only
-#: affects the dataset that needs it.
+#: affects the dataset that needs it. ``cifar`` selects CIFAR-10, ``cifar100`` selects CIFAR-100;
+#: both are served by the same module, which switches on the selected dataset name.
 VALIDATION_DATASETS: dict[str, str] = {
     "mnist": "finn_plus_driver.validate.mnist",
     "cifar": "finn_plus_driver.validate.cifar",
+    "cifar100": "finn_plus_driver.validate.cifar",
     "imagenet": "finn_plus_driver.validate.imagenet",
     "radioml": "finn_plus_driver.validate.radioml",
     "unswnb15": "finn_plus_driver.validate.unswnb15",
@@ -24,7 +26,9 @@ def run_validate(validation_dataset: str, cls_inst: Any, *args: Any, **kwargs: A
         validation_dataset: Name of the dataset to validate against.
         cls_inst: Driver instance used to run inference on the accelerator.
         *args: Positional arguments forwarded to the dataset's validate function.
-        **kwargs: Keyword arguments forwarded to the dataset's validate function.
+        **kwargs: Keyword arguments forwarded to the dataset's validate function. The selected
+            dataset name is forwarded as ``validation_dataset`` so that modules serving multiple
+            datasets can tell which one was selected.
     """
     print(f"Running validation with Dataset: {validation_dataset}")
     print(f"Report directory: {kwargs.get('report_dir')}")
@@ -33,5 +37,6 @@ def run_validate(validation_dataset: str, cls_inst: Any, *args: Any, **kwargs: A
         print(f"WARNING: SKIPPING VALIDATION FOR UNKNOWN DATASET: {validation_dataset}")
         return
 
+    kwargs["validation_dataset"] = validation_dataset
     module = import_module(VALIDATION_DATASETS[validation_dataset])
     module.validate(cls_inst, *args, **kwargs)

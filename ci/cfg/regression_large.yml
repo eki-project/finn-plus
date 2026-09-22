@@ -1,0 +1,36 @@
+# Regression experiments that build on a large node (see BENCH_CPU_CORES /
+# BENCH_FINN_WORKERS / MEM_BENCH for "regression_large" in .gitlab-ci.yml).
+# Keep the number of experiments in sync with PARALLEL_JOBS of that config, so that
+# every experiment gets a Slurm array task of its own.
+[
+    # MobileNetV1 (ImageNet)
+    {
+        "dut": ["mobilenetv1"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]]
+    },
+
+    # ResNet-18 (CIFAR100)
+    {
+        "dut": ["resnet18"],
+        "model_path": [models/resnet18/resnet18_w3a3_cifar100.onnx],
+        "folding_config_file": [models/resnet18/resnet18_folding_config.json],
+        "specialize_layers_config_file": [models/resnet18/resnet18_specialize_layers.json],
+        "auto_fifo_depths": [True],
+        "generate_outputs": [["estimate_reports","bitfile", "pynq_driver", "deployment_package"]],
+        "synth_clk_period_ns": [10],
+        "validation_dataset" : ["cifar100"],
+    },
+
+    # Transformer: language model
+    {
+        "dut": ["transformer"],
+        #"model_dir": ["models/transformer/finn-transformers/language"],
+        "model_path": ["models/transformer/finn-transformers/language/streamlined.onnx"],
+        "verify_input_npy": ["models/transformer/finn-transformers/language/inp.npy"],
+        "verify_expected_output_npy": ["models/transformer/finn-transformers/language/out.npy"],
+        "generate_outputs": [["estimate_reports", "bitfile", "pynq_driver", "deployment_package"]],
+        "target_fps": [1024],
+        "auto_fifo_depths": [True],
+        #"folding_config_file": ["models/transformer/finn-transformers_folding/language_1000fps_fifo.json"],
+    },
+]

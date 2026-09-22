@@ -1,6 +1,5 @@
 """Build FINN Simulations."""
 
-import contextlib
 import math
 import numpy as np
 import onnx
@@ -1383,9 +1382,10 @@ class BuildSimulation(Transformation):
             self.builder = SimulationBuilder(
                 self.model, self.fpgapart, self.clk_ns, self.shm_prefix, self.performance_sim
             )
-            with contextlib.suppress(AttributeError):
-                sys.stdout = sys.stdout.console  # type: ignore
-
+            # NOTE: sys.stdout used to be unwrapped here (sys.stdout = sys.stdout.console),
+            # presumably for a rich live display, which is disabled below anyway. The
+            # unwrap permanently removed the builder's PrintLogger for the rest of the
+            # build, dropping console timestamps and print() output from build_dataflow.log.
             self.binaries = self.builder.build_simulation(
                 with_live_display=False,
                 functional_sim=self.functional_sim,
