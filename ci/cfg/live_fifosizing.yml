@@ -28,6 +28,7 @@
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "synth_clk_period_ns": [10],
+        "validation_dataset" : ["mnist"],
     },
     # tfc-w2a2
     {
@@ -39,6 +40,7 @@
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "synth_clk_period_ns": [10],
+        "validation_dataset" : ["mnist"],
     },
     # cnv-w1a1
     {
@@ -50,6 +52,7 @@
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "synth_clk_period_ns": [10],
+        "validation_dataset" : ["cifar"],
     },
     # cnv-w2a2
     {
@@ -61,6 +64,7 @@
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "synth_clk_period_ns": [10],
+        "validation_dataset" : ["cifar"],
     },
 
     # GTSRB (cnv-w1a1)
@@ -90,26 +94,18 @@
         "synth_clk_period_ns": [10],
     },
 
-    # ResNet-50 (ImageNet)
+    # ResNet-18 (CIFAR100)
     {
-        "dut": ["resnet50"],
+        "dut": ["resnet18"],
+        "model_path": [models/resnet18/resnet18_w3a3_cifar100.onnx],
+        "folding_config_file": [models/resnet18/resnet18_folding_config.json],
+        "specialize_layers_config_file": [models/resnet18/resnet18_specialize_layers.json],
         "auto_fifo_depths": [True],
         "auto_fifo_strategy": ["live_fifo"],
         "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
         "synth_clk_period_ns": [10],
+        "validation_dataset" : ["cifar100"],
     },
-
-    # ResNet-18 (CIFAR100)
-    # {
-    #     "dut": ["resnet18"],
-    #     "model_path": [models/resnet18/resnet18_w3a3_cifar100.onnx],
-    #     "folding_config_file": [models/resnet18/resnet18_folding_config.json],
-    #     "specialize_layers_config_file": [models/resnet18/resnet18_specialize_layers.json],
-    #     "auto_fifo_depths": [True],
-    #     "auto_fifo_strategy": ["live_fifo"],
-    #     "generate_outputs": [["bitfile", "pynq_driver", "deployment_package"]],
-    #     "synth_clk_period_ns": [10],
-    # },
 
     ### NEW Transformer models (dvc-imported from finn-transformers repo):
     # radioml model

@@ -28,7 +28,7 @@ FINN Build:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 ) --open-mode=append"
     NUM_DEFAULT_WORKERS: "$BENCH_FINN_WORKERS"
   extends: .setup_full_2024_2
   script:
@@ -72,6 +72,10 @@ Measurement:
     - make -C ci/power_measurement/boards/rfsoc4x2 shared
     # Install dependencies for FINN driver
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && chmod +x scripts/driver_install_dependencies.sh && scripts/driver_install_dependencies.sh"
+    # Run the driver unit tests in the board environment before measuring (a few seconds). They
+    # need no accelerator, but they do catch driver bugs that only show on the board's package
+    # versions, which would otherwise surface hours into a measurement.
+    - sudo bash -c "source /etc/profile.d/pynq_venv.sh && python -m pytest driver/tests -q"
     # Run as root and activate the PYNQ venv manually to use PYNQ outside of the typical Jupyter environment
     - sudo bash -c "source /etc/profile.d/pynq_venv.sh && export DATASET_DIR=$DATASET_DIR && export XILINX_XRT=/usr && python ci/measure.py"
   artifacts:
@@ -117,7 +121,22 @@ Result Collection:
       - metric_report.json
 
 # Follow-up stages for live FIFO sizing experiments
-# These stages re-run experiments with the FIFO sizes determined during measurement
+# These stages re-run experiments with the FIFO sizes determined during measurement.
+# They only make sense for a config that uses live FIFO sizing, and since GitLab evaluates
+# rules when the pipeline is created - long before Result Collection writes the follow-up
+# config - the decision has to be made from the config name: "live_fifo" in $BENCH_CFG, or in
+# $MANUAL_CFG_PATH for manual runs, where $BENCH_CFG is just "manual". For a config that uses
+# live FIFO sizing without saying so in its name, set RUN_FOLLOWUP to "true" when starting the
+# pipeline. Configs without live FIFO sizing do not get these jobs at all.
+.live_fifo_only:
+  rules:
+    # Also run on failure of previous tasks to process partial results
+    - if: $RUN_FOLLOWUP == "true"
+      when: always
+    - if: $BENCH_CFG =~ /live_fifo/
+      when: always
+    - if: $BENCH_CFG == "manual" && $MANUAL_CFG_PATH =~ /live_fifo/
+      when: always
 
 FINN Build (Follow-up):
   id_tokens:
@@ -126,15 +145,13 @@ FINN Build (Follow-up):
   stage: build_followup
   tags:
     - otus
-  rules:
-    # Also run on failure of previous tasks to measure partial results
-    - when: always
+  rules: !reference [.live_fifo_only, rules]
   needs:
     - job: Build
       pipeline: $PARENT_PIPELINE_ID
     - job: Result Collection
   variables:
-    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 )"
+    SCHEDULER_PARAMETERS: "-A $PROJECT_ACCOUNT -p $BENCH_SLURM_PARTITION -t $SLURM_TIMEOUT $SLURM_QOS --nodes 1 --ntasks 1 --exclude $SLURM_EXCLUDE_NODES --cpus-per-task $BENCH_CPU_CORES --mem $MEM_BENCH --array 0-$( expr $PARALLEL_JOBS - 1 ) --open-mode=append"
     NUM_DEFAULT_WORKERS: "$BENCH_FINN_WORKERS"
   extends: .setup_full_2024_2
   script:
@@ -172,9 +189,7 @@ Measurement (Follow-up):
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: measure_followup
-  rules:
-    # Also run on failure of previous tasks to measure partial results
-    - when: always
+  rules: !reference [.live_fifo_only, rules]
   needs:
     - job: FINN Build (Follow-up)
   tags:
@@ -204,9 +219,7 @@ Result Collection (Follow-up):
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: collect_followup
-  rules:
-    # Also run on failure of previous tasks to measure partial results
-    - when: always
+  rules: !reference [.live_fifo_only, rules]
   needs:
     - job: Result Collection
     - job: FINN Build (Follow-up)
