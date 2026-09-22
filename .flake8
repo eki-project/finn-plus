@@ -9,3 +9,5 @@ exclude =
 per-file-ignores =
      src/finn/transformation/streamline/streamline_plus.py: F405, F403
      tests/*: F401
+     # CI scripts add src/ to sys.path before importing finn.qor
+     ci/qor/*: E402

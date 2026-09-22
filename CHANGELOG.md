@@ -9,6 +9,12 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## Unreleased
 
 ### Added
+- **Empirical QoR estimation**: regression models fitted on the CI microbenchmark database predict post-synthesis LUTs and power per layer
+    - *Corresponding poster @ FPT'25: ["Empirical QoR Estimation Flow for Fast Design Space Exploration of DNN Dataflow Accelerators"](https://doi.org/10.1109/ICFPT67023.2025.00044)*
+    - New package `finn.qor` (database loading, model fitting/selection, evaluation) and analysis passes in `finn.analysis.fpgadataflow.empirical_qor_estimation`
+    - `step_generate_estimate_reports` writes `estimate_layer_resources_empirical.json` and `estimate_power_empirical.json` if `FINN_QOR_MODEL_DIR` points to fitted models
+    - CI scripts `ci/qor/fit_estimators.py` (refit models whenever microbenchmark results are added) and `ci/qor/end2end_report.py` (figures/tables comparing estimates with measured results)
+    - See [QoR README](src/finn/qor/README.md); new core dependencies `scikit-learn` and `matplotlib`
 - `verify_nodewise_report` build option: the `folded_hls_cppsim` and `node_by_node_rtlsim` verification steps also execute the folded graph with the Python implementation of every layer and report the first node whose simulated output deviates
 - Multi-pass dataset validation in the Pynq driver (`passes` kwarg of `validate`): per-sample predictions are saved next to the report and samples with differing predictions between passes are re-run and listed
 - The driver's unit tests (`driver/tests`) run on the board at the start of every CI measurement
@@ -22,7 +28,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ### Added
 - **New distributed simulation infrastructure** for search-based FIFO sizing and performance simulation (eki-project#187)
-    - *To be presented as a Poster @ FPL'26*
+    - *To be presented as a poster @ FPL'26 and full paper @ H2RC (SC'26)*
 - **Multi-FPGA inference support** (eki-project#23)
     - *Corresponding paper @ HEART'25: ["AuroraFlow, an Easy-to-Use, Low-Latency FPGA Communication Solution Demonstrated on Multi-FPGA Neural Network Inference"](https://doi.org/10.1145/3728179.3728190)*
     - Initial communication backend: [AuroraFlow](https://github.com/pc2/AuroraFlow) (new dependency)
