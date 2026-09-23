@@ -238,14 +238,19 @@ class Partitioner(ABC):
         release_mip_model(getattr(self, "model", None))
 
     def __enter__(self) -> Partitioner:
+        """Enter a ``with`` block that releases the solver at its end."""
         return self
 
     def __exit__(self, *exc_info: object) -> None:
+        """Release the solver when the ``with`` block ends."""
         self.close()
 
     def __del__(self) -> None:
-        # The partitioner is not part of a reference cycle, so this runs as soon as the last
-        # reference is dropped and returns the Gurobi license token right away.
+        """Release the solver once the partitioner is dropped.
+
+        The partitioner is not part of a reference cycle, so this runs as soon as the last
+        reference is dropped and returns the Gurobi license token right away.
+        """
         try:
             self.close()
         except Exception:  # noqa: BLE001, S110 - never raise from __del__
