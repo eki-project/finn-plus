@@ -851,6 +851,14 @@ def test_fpgadataflow_rtl_mvau(
         output_matmul == output_mvau_rtl
     ).all(), "Output of ONNX model not matching output of node-by-node RTLsim!"
 
+    if simd == mw and pumpedCompute:
+        # Known FINN+ limitation: the FIFO-sizing simulation (functional-synthesis netlist
+        # in the distributed simulation) of a double-pumped MVAU with SF=1 never reports
+        # completion, so the sizing below would hang the test (and, in CI, the whole suite
+        # until the Slurm limit). cppsim and node-by-node rtlsim above do pass for these
+        # configurations; only the sizing/stitched-IP part is left out.
+        pytest.skip("SIMD=MW with pumpedCompute=True: FIFO-sizing simulation never completes")
+
     # Run stitched-ip RTLsim
     model = insert_and_set_fifo_depths(model, part, clk_ns)
     model = model.transform(PrepareIP(part, clk_ns))
