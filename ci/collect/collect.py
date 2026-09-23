@@ -983,6 +983,26 @@ if __name__ == "__main__":
                 prefix="hls_estimate/resources/",
             )
 
+            # estimate_layer_resources_empirical.json / estimate_power_empirical.json
+            # (only present if fitted QoR models were available during the build)
+            dvc_logger.log_nested_metrics_from_report(
+                "estimate_layer_resources_empirical.json",
+                "total",
+                [
+                    "LUT",
+                    "DSP",
+                    "BRAM_18K",
+                    "URAM",
+                ],
+                prefix="empirical_estimate/resources/",
+            )
+            dvc_logger.log_nested_metrics_from_report(
+                "estimate_power_empirical.json",
+                "total",
+                ["power"],
+                prefix="empirical_estimate/power/",
+            )
+
             # estimate_network_performance.json
             dvc_logger.log_metrics_from_report(
                 "estimate_network_performance.json",

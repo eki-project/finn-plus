@@ -64,6 +64,11 @@ from typing import TYPE_CHECKING, cast
 
 import finn.transformation.streamline.absorb as absorb
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
+from finn.analysis.fpgadataflow.empirical_qor_estimation import (
+    QoRModelSet,
+    empirical_power_estimation,
+    empirical_res_estimation,
+)
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 from finn.analysis.fpgadataflow.op_and_param_counts import aggregate_dict_keys, op_and_param_counts
@@ -1407,6 +1412,30 @@ def step_apply_folding_config(model: ModelWrapper, cfg: DataflowBuildConfig) -> 
     return model
 
 
+def generate_empirical_estimate_reports(
+    model: ModelWrapper, cfg: DataflowBuildConfig, report_dir: Path, suffix: str = ""
+) -> None:
+    """Write empirical (learned) resource and power estimate reports next to the analytical
+    ones, if fitted QoR models are available via the FINN_QOR_MODEL_DIR environment variable.
+    """
+    models = QoRModelSet.load_from_env()
+    if models is None:
+        log.info("No empirical QoR models available (FINN_QOR_MODEL_DIR), skipping")
+        return
+    resources: dict[str, dict[str, int | float]] = model.analysis(
+        partial(empirical_res_estimation, fpgapart=cfg._resolve_fpga_part(), models=models)
+    )
+    resources["total"] = aggregate_dict_keys(resources)
+    with (report_dir / f"estimate_layer_resources_empirical{suffix}.json").open("w") as f:
+        json.dump(resources, f, indent=2)
+    power: dict[str, dict[str, float]] = model.analysis(
+        partial(empirical_power_estimation, models=models)
+    )
+    power["total"] = aggregate_dict_keys(power)
+    with (report_dir / f"estimate_power_empirical{suffix}.json").open("w") as f:
+        json.dump(power, f, indent=2)
+
+
 @register_build_dataflow_step()
 def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Generate per-layer resource and cycle estimates using analytical models."""
@@ -1431,7 +1460,7 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
         )
         with (report_dir / "estimate_layer_config_alternatives.json").open("w") as f:
             json.dump(estimate_layer_resources_complete, f, indent=2)
-        # need to call AnnotateCycles before dataflow_performance
+        generate_empirical_estimate_reports(model, cfg, report_dir)
 
         # generate reports for MLO nodes
         loop_nodes = model.get_nodes_by_op_type("FINNLoop")
@@ -1457,6 +1486,7 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
                 "w"
             ) as f:
                 json.dump(estimate_layer_resources_complete, f, indent=2)
+            generate_empirical_estimate_reports(loop_model, cfg, report_dir, f"_{node.name}")
 
         if not is_mlo(model):
             # need to call AnnotateCycles before dataflow_performance
