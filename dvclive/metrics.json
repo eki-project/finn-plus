@@ -1,0 +1,57 @@
+{
+    "status": "failed",
+    "estimate": {
+        "resources": {
+            "LUT": 50224.0,
+            "DSP": 3137.0,
+            "BRAM_18K": 776.0,
+            "URAM": 72.0
+        },
+        "performance": {
+            "critical_path_cycles": 5498374,
+            "max_cycles": 196608,
+            "max_cycles_node_name": "MVAU_rtl_6",
+            "estimated_throughput_fps": 508.6263020833333,
+            "estimated_latency_ns": 54983740.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 47150.0,
+            "FF": 8974.0,
+            "DSP": 5.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 1.0,
+            "URAM": 0.0
+        }
+    },
+    "empirical_estimate": {
+        "resources": {
+            "LUT": 129535.0,
+            "DSP": 3137.0,
+            "BRAM_18K": 776.0,
+            "URAM": 72.0
+        },
+        "power": {
+            "power": 8208.505324475645
+        }
+    },
+    "time": {
+        "step_qonnx_to_finn": 4,
+        "step_tidy_up": 0,
+        "step_resnet_tidy": 7,
+        "step_resnet_streamline": 90,
+        "step_convert_to_hw": 2,
+        "step_resnet_convert_to_hw": 1,
+        "step_minimize_bit_width_initial": 2,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_target_fps_parallelization": 0,
+        "step_apply_folding_config": 0,
+        "step_minimize_bit_width": 2,
+        "step_generate_estimate_reports": 0,
+        "step_generate_hardware": 7018,
+        "step_create_stitched_ip": 50,
+        "total_build_time": 7176
+    }
+}
