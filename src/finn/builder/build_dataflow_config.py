@@ -104,6 +104,16 @@ class AutoFIFOSizingMethod(str, Enum):
     FORCE_MINIMAL_FIFOS = "force_minimal_fifos"
 
 
+class LargeFIFOMemStyle(str, Enum):
+    """Memory resource for the large (memory-backed) FIFOs of a build."""
+
+    #: Let fifo.sv choose by depth and width: BRAM up to 2028 entries, URAM beyond
+    AUTO = "auto"
+    BRAM = "block"
+    LUTRAM = "distributed"
+    URAM = "ultra"
+
+
 class FifosimCommMode(str, Enum):
     """Communication backend mode for the distributed (MPI-based) FIFO-sizing /
     performance simulation.
@@ -696,6 +706,14 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Note that AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS does not size the FIFOs at all,
     #: it just inserts them with their minimal (default) depth.
     auto_fifo_strategy: AutoFIFOSizingMethod = AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION
+
+    #: Memory resource for the large FIFOs, i.e. those that fifo.sv would back with block
+    #: RAM or URAM (deeper than 257 entries at 5 bit or more). Shallower FIFOs keep the
+    #: shift register / LUTRAM the RTL selects for them. AUTO leaves the choice to the RTL,
+    #: which takes URAM for every FIFO deeper than 2028 entries; set BRAM on devices whose
+    #: URAM is needed for weight memories. Applied to all FIFO sizing strategies, and
+    #: recorded in the fifo_sizing.json report / fifo_config_file per FIFO.
+    large_fifo_mem_style: LargeFIFOMemStyle = LargeFIFOMemStyle.AUTO
 
     #: Enable saving waveforms from simulation-based FIFO sizing.
     fifosim_save_waveform: bool = False

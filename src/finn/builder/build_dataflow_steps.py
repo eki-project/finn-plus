@@ -79,6 +79,7 @@ from finn.builder.build_dataflow_config import (
     AutoFIFOSizingMethod,
     DataflowBuildConfig,
     DataflowOutputType,
+    LargeFIFOMemStyle,
     ShellFlowType,
     VerificationStepType,
 )
@@ -882,6 +883,17 @@ def step_set_fifo_depths(
         model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
         model = model.transform(GiveReadableTensorNames())
         model = model.transform(ApplyFIFODepthsFromFile(cfg.fifo_config_file))
+
+    # Pin the memory style of the large FIFOs now that all depths are final. Only FIFOs the
+    # RTL would back with BRAM/URAM at their depth are touched, and only if they were left
+    # at "auto" (an explicit ram_style from a fifo_config_file or folding config wins).
+    if cfg.large_fifo_mem_style != LargeFIFOMemStyle.AUTO:
+        for node in model.get_nodes_by_op_type("StreamingFIFO_rtl"):
+            node_inst = getHWCustomOp(node)
+            if node_inst.get_nodeattr("ram_style") != "auto":
+                continue
+            if node_inst.resolve_ram_style() in ("block", "ultra"):
+                node_inst.set_nodeattr("ram_style", cfg.large_fifo_mem_style.value)
 
     # Generate a dedicated report about final FIFO sizes.
     fifo_info = {

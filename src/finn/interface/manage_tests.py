@@ -58,7 +58,14 @@ CI_TEST_TIMEOUT_S = 3 * 3600
 # and the test hangs anyway. The timer thread dumps the stacks of all threads and kills
 # the process; under pytest-xdist that surfaces as a crashed worker, which the crash
 # rerun below picks up.
-CI_TEST_TIMEOUT_ARGS = f"--timeout {CI_TEST_TIMEOUT_S} --timeout-method=thread"
+# The stack dump pytest-timeout prints on the way out goes to the worker's captured
+# stderr and never reaches the job log under xdist, so pytest's own faulthandler
+# plugin dumps all threads a minute earlier through the C-level faulthandler on the
+# real stderr fd, which does show up in the log (and works inside C extensions too).
+CI_TEST_TIMEOUT_ARGS = (
+    f"-o faulthandler_timeout={CI_TEST_TIMEOUT_S - 60} "
+    f"--timeout {CI_TEST_TIMEOUT_S} --timeout-method=thread"
+)
 
 
 def run_test(variant: str, num_workers: str, args: str = "") -> None:

@@ -13,7 +13,6 @@
 import pytest
 
 import json
-import logging
 import numpy as np
 import os
 from onnx import TensorProto, helper
@@ -52,6 +51,12 @@ from finn.util.basic import make_build_dir
 
 test_fpga_part = "xcvc1902-vsva2197-2MP-e-S"
 target_clk_ns = 5
+
+
+def read_build_warnings(output_dir):
+    """Return the WARNING lines of a build's build_dataflow.log (one message per line)."""
+    with open(os.path.join(output_dir, "build_dataflow.log")) as f:
+        return [line.rstrip("\n") for line in f if "]WARNING:" in line]
 
 
 def insert_and_set_fifo_depths(model: ModelWrapper, fpga_part: str, clk_ns: float) -> ModelWrapper:
@@ -423,7 +428,7 @@ def create_mul_layernorm_model(idt, ishape, mul_param_shape):
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 @pytest.mark.slow
-def test_hls_rtl_dsp_conflict_detection(caplog: pytest.LogCaptureFixture):
+def test_hls_rtl_dsp_conflict_detection():
     """
     Test that HLS+RTL DSP conflict is detected and verification is skipped.
 
@@ -506,12 +511,12 @@ def test_hls_rtl_dsp_conflict_detection(caplog: pytest.LogCaptureFixture):
         ],
     )
 
-    # Capture log warnings during build
-    with caplog.at_level(logging.WARNING):
-        build.build_dataflow_cfg(tmp_output_dir + "/model.onnx", cfg)
+    build.build_dataflow_cfg(tmp_output_dir + "/model.onnx", cfg)
 
-    # Check that DSP conflict warning was issued
-    warning_messages = [record.getMessage() for record in caplog.records]
+    # Check that DSP conflict warning was issued. The builder reconfigures the root logger
+    # (logging.basicConfig(force=True)) and thereby drops pytest's caplog handler, so the
+    # build log file is the record of what was logged.
+    warning_messages = read_build_warnings(tmp_output_dir)
     dsp_conflict_warnings = [m for m in warning_messages if "HLS+RTL DSP conflict detected" in m]
     assert len(dsp_conflict_warnings) > 0, (
         "Expected DSP conflict warning to be issued. "
@@ -638,7 +643,7 @@ def create_layernorm_threshold_mul_model(ishape):
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.fpgadataflow
-def test_integer_hls_elementwise_no_dsp_conflict(caplog: pytest.LogCaptureFixture):
+def test_integer_hls_elementwise_no_dsp_conflict():
     """
     Test that integer-only HLS Elementwise ops do NOT trigger DSP conflict detection.
 
@@ -718,9 +723,7 @@ def test_integer_hls_elementwise_no_dsp_conflict(caplog: pytest.LogCaptureFixtur
         ],
     )
 
-    # Capture log warnings during build
-    with caplog.at_level(logging.WARNING):
-        build.build_dataflow_cfg(tmp_output_dir + "/model.onnx", cfg)
+    build.build_dataflow_cfg(tmp_output_dir + "/model.onnx", cfg)
 
     # Check that layers were specialized as expected:
     intermediate_model_path = tmp_output_dir + "/intermediate_models/step_specialize_layers.onnx"
@@ -748,11 +751,9 @@ def test_integer_hls_elementwise_no_dsp_conflict(caplog: pytest.LogCaptureFixtur
         len(mul_hls_nodes) == 1
     ), f"Expected exactly 1 ElementwiseMul_hls, found {len(mul_hls_nodes)}. Op types: {op_types}"
 
-    # Check that NO DSP conflict warning was issued
+    # Check that NO DSP conflict warning was issued (see read_build_warnings)
     dsp_conflict_warnings = [
-        record.getMessage()
-        for record in caplog.records
-        if "HLS+RTL DSP conflict detected" in record.getMessage()
+        m for m in read_build_warnings(tmp_output_dir) if "HLS+RTL DSP conflict detected" in m
     ]
     assert len(dsp_conflict_warnings) == 0, (
         f"No DSP conflict warning should be issued for integer HLS Elementwise. "

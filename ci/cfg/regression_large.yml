@@ -16,6 +16,10 @@
         "folding_config_file": [models/resnet18/resnet18_folding_config.json],
         "specialize_layers_config_file": [models/resnet18/resnet18_specialize_layers.json],
         "auto_fifo_depths": [True],
+        # the 80 URAMs of the RFSoC2x2 are spoken for by the weight memories of the three
+        # widest MVAUs (72), so the deep FIFOs must not take the rest (fifo.sv would put
+        # every FIFO deeper than 2028 entries into URAM: 96 in total)
+        "large_fifo_mem_style": ["block"],
         "generate_outputs": [["estimate_reports","bitfile", "pynq_driver", "deployment_package"]],
         "synth_clk_period_ns": [10],
         "validation_dataset" : ["cifar100"],
