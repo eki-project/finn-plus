@@ -560,10 +560,19 @@ class SimulationBuilder:
                 f"{succ_count} outputs have been handled."
             )
 
-        # Copy the target node and create a new model with the target node and dummy nodes
+        # Copy the target node and create a new model with the target node and dummy nodes.
+        # Only the attributes the node actually carries are copied: rebuilding it from every
+        # declared attribute type would materialize their defaults, and some code generation
+        # is gated on the presence of an attribute rather than its value. address_offset in
+        # particular marks a DDR base address that AssignMemoryOffset assigned; a copy carrying
+        # address_offset=0 builds an address_config block against a loop body that has no
+        # base_address pin, and the FINNLoop IP generation fails.
+        present_attrs = {attr.name for attr in target_node.attribute}
         target_op_attrs = target_op.get_nodeattr_types()
         params = {}
         for attr in target_op_attrs.keys():
+            if attr not in present_attrs:
+                continue
             attr_val = target_op.get_nodeattr(attr)
             if (
                 (isinstance(attr_val, np.ndarray) and attr_val.size == 0)

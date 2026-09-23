@@ -1281,7 +1281,20 @@ class FINNLoop(RTLBackend, HWCustomOp):
         bash_command = ["bash", make_project_sh]
         process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
         process_compile.communicate()
-        assert os.path.isfile(wrapper_filename), "IPGen failed: %s not found" % (wrapper_filename)
+        if not os.path.isfile(wrapper_filename):
+            # Vivado's own log is the only record of why the block design was not built;
+            # quote its errors so that a failure is diagnosable from the exception alone
+            # (e.g. from a CI job log, whose build directory is gone afterwards).
+            vivado_log = os.path.join(vivado_stitch_proj_dir, "vivado.log")
+            vivado_errors = ""
+            if os.path.isfile(vivado_log):
+                with open(vivado_log) as f:
+                    error_lines = [ln.rstrip() for ln in f if ln.startswith(("ERROR", "CRITICAL"))]
+                vivado_errors = "\n".join(error_lines[-20:])
+            raise FINNInternalError(
+                "IPGen failed: %s not found. Vivado log: %s\n%s"
+                % (wrapper_filename, vivado_log, vivado_errors)
+            )
         self.set_nodeattr("ipgen_path", wrapper_filename)
         self.set_nodeattr("ip_path", vivado_stitch_proj_dir + "/ip")
         self.set_nodeattr("gen_top_module", "%s_bd_design_wrapper" % block_name)
