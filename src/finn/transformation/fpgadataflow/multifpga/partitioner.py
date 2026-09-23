@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import locale
 import mip
+import os
+import random
+import time
 import yaml
 from abc import ABC, abstractmethod
 from mip import Model
@@ -17,6 +20,130 @@ from finn.util.logging import log
 
 if TYPE_CHECKING:
     pass
+
+# Gurobi hands out one floating license token per environment and asks its token server for
+# it every time an environment is created. In a highly parallel setting (the CI test suite
+# runs dozens of pytest workers that all create partitioners) this fails now and then because
+# the token server is momentarily out of tokens or does not answer in time. Gurobi's own
+# recommendation for this case is to retry after a short delay, which is what
+# `create_mip_model` does. Both knobs can be overridden through the environment.
+MIP_SOLVER_MAX_ATTEMPTS_ENV = "FINN_MIP_SOLVER_MAX_ATTEMPTS"
+MIP_SOLVER_RETRY_DELAY_ENV = "FINN_MIP_SOLVER_RETRY_DELAY"
+MIP_SOLVER_MAX_ATTEMPTS_DEFAULT = 6
+MIP_SOLVER_RETRY_DELAY_DEFAULT = 5.0  # seconds, doubled after every failed attempt
+MIP_SOLVER_RETRY_DELAY_MAX = 60.0  # seconds
+
+# The Gurobi diagnostics below are declared lazily and only once per process.
+_gurobi_diagnostics_declared = False
+
+
+def _retry_settings() -> tuple[int, float]:
+    """Return the (max_attempts, initial_delay) to use when creating a mip model."""
+    try:
+        max_attempts = max(1, int(os.environ.get(MIP_SOLVER_MAX_ATTEMPTS_ENV, "")))
+    except ValueError:
+        max_attempts = MIP_SOLVER_MAX_ATTEMPTS_DEFAULT
+    try:
+        delay = max(0.0, float(os.environ.get(MIP_SOLVER_RETRY_DELAY_ENV, "")))
+    except ValueError:
+        delay = MIP_SOLVER_RETRY_DELAY_DEFAULT
+    return max_attempts, delay
+
+
+def is_transient_solver_error(error: mip.exceptions.InterfacingError) -> bool:
+    """Tell whether an ``InterfacingError`` raised while creating a mip model is one that can
+    disappear on retry. Only a failed Gurobi environment creation qualifies: everything else
+    (missing solver library, failed model creation) is a persistent setup problem.
+    """
+    return "environment could not be loaded" in str(error)
+
+
+def describe_gurobi_environment_error() -> str | None:
+    """Ask Gurobi why creating an environment currently fails.
+
+    python-mip reports every failed environment creation as "check your license", which hides
+    the real reason (out of tokens, token server unreachable, expired license, ...). This
+    creates an empty environment through the same cffi binding python-mip uses, starts it, and
+    returns Gurobi's own error message with its error code. Returns ``None`` if the environment
+    starts fine (the failure was transient and is already gone) or if the diagnostics cannot be
+    collected at all.
+    """
+    global _gurobi_diagnostics_declared
+    try:
+        from mip import gurobi as mip_gurobi
+
+        if not mip_gurobi.has_gurobi:
+            return None
+        ffi = mip_gurobi.ffi
+        lib = mip_gurobi.grblib
+        if not _gurobi_diagnostics_declared:
+            ffi.cdef(
+                """
+                int GRBemptyenv(GRBenv **envP);
+                int GRBstartenv(GRBenv *env);
+                const char *GRBgeterrormsg(GRBenv *env);
+                """
+            )
+            _gurobi_diagnostics_declared = True
+        env_ptr = ffi.new("GRBenv **")
+        status = lib.GRBemptyenv(env_ptr)
+        if status != 0:
+            return f"Gurobi error {status} while creating an empty environment"
+        env = env_ptr[0]
+        try:
+            # A failed GRBstartenv leaves the environment as it was, so the error message can
+            # be read from it and it must still be freed.
+            status = lib.GRBstartenv(env)
+            if status == 0:
+                return None
+            message = ffi.string(lib.GRBgeterrormsg(env)).decode("utf-8", errors="replace")
+            return f"Gurobi error {status}: {message.strip()}"
+        finally:
+            lib.GRBfreeenv(env)
+    except Exception as e:  # noqa: BLE001 - diagnostics must never mask the original error
+        log.debug(f"Could not collect Gurobi diagnostics: {e}")
+        return None
+
+
+def create_mip_model(solver_name: str, name: str = "finn_partition") -> mip.Model:
+    """Create a ``mip.Model`` for the given solver, retrying transient failures.
+
+    Creating the model fails transiently for Gurobi when its floating license token server is
+    out of tokens or unreachable (see the module comment). Such failures are retried with an
+    exponential backoff and a bit of jitter so that many parallel processes do not all hit the
+    server again at the same moment. Any other failure, and a transient failure that persists
+    for all attempts, raises a ``FINNMultiFPGAUserError`` that includes Gurobi's own reason
+    when it can be determined.
+    """
+    max_attempts, delay = _retry_settings()
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return Model(name=name, solver_name=solver_name)
+        except mip.exceptions.InterfacingError as e:
+            if not is_transient_solver_error(e):
+                raise FINNMultiFPGAUserError(
+                    f"Cannot create mip solver of type {solver_name}. Original error: {e}"
+                ) from e
+            reason = None
+            if solver_name == mip.GUROBI:
+                reason = describe_gurobi_environment_error()
+            details = f" ({reason})" if reason else ""
+            if attempt >= max_attempts:
+                raise FINNMultiFPGAUserError(
+                    f"Cannot create mip solver of type {solver_name} after {attempt} "
+                    f"attempt(s). Original error: {e}{details}. If this is a floating license, "
+                    f"the token server may be out of tokens or unreachable; the number of "
+                    f"attempts and the initial delay can be tuned with "
+                    f"{MIP_SOLVER_MAX_ATTEMPTS_ENV} and {MIP_SOLVER_RETRY_DELAY_ENV}."
+                ) from e
+            log.warning(
+                f"Creating the {solver_name} solver environment failed (attempt "
+                f"{attempt}/{max_attempts}): {e}{details}. Retrying in {delay:.1f}s."
+            )
+            time.sleep(delay)
+            # Exponential backoff with +-25% jitter, capped.
+            delay = min(delay * 2, MIP_SOLVER_RETRY_DELAY_MAX) * random.uniform(0.75, 1.25)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 class Partitioner(ABC):
@@ -49,12 +176,7 @@ class Partitioner(ABC):
                 )
                 return Model(name="finn_partition", solver_name=mip.CBC)
         else:
-            try:
-                return Model(name="finn_partition", solver_name=solver.value)
-            except mip.exceptions.InterfacingError as e:
-                raise FINNMultiFPGAUserError(
-                    f"Cannot create mip solver of type {solver.value}. Original error: {e}"
-                ) from e
+            return create_mip_model(solver.value)
 
     def __init__(self, cfg: DataflowBuildConfig) -> None:
         """Initialize a new partitioner. This involves creating the mip model."""
