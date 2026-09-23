@@ -840,8 +840,7 @@ class ElementwiseBinaryOperation_hls(
         list
             List of TCL commands for IP integration.
         """
-        source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
-        cmd = ["file mkdir %s" % source_target]
+        cmd = []
         # add streamer if needed
         mem_mode = self.get_nodeattr("mem_mode")
         mlo = self.get_nodeattr("mlo_max_iter")
@@ -896,7 +895,7 @@ class ElementwiseBinaryOperation_hls(
                 ms_rtllib_dir + "memstream.sv",
             ]
             for f in sourcefiles:
-                cmd += ["add_files -copy_to %s -norecurse %s" % (source_target, f)]
+                cmd += ["add_files -norecurse %s" % f]
             strm_inst = node_name + "_wstrm"
             cmd.append(
                 "create_bd_cell -type hier -reference %s /%s/%s"

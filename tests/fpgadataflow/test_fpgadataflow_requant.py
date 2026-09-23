@@ -20,7 +20,7 @@ import os
 import torch
 from brevitas.core.scaling import ScalingImplType
 from brevitas.export import export_qonnx
-from brevitas.nn import QuantReLU
+from brevitas.nn import QuantIdentity, QuantReLU
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
@@ -41,6 +41,7 @@ from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation
     InferElementwiseBinaryOperation,
 )
 from finn.transformation.fpgadataflow.convert_to_hw.requant import InferRequantLayer
+from finn.transformation.fpgadataflow.convert_to_hw.shuffle import InferShuffle
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
@@ -51,8 +52,13 @@ from finn.transformation.fpgadataflow.set_fifo_depths import ApplySimulatedFIFOS
 from finn.transformation.fpgadataflow.simulation_build import BuildSimulation
 from finn.transformation.fpgadataflow.simulation_connected import RunLayerParallelSimulation
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
+from finn.transformation.fpgadataflow.transpose_decomposition import (
+    InferInnerOuterShuffles,
+    ShuffleDecomposition,
+)
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.qonnx.quant_act_to_multithreshold import default_filter_function_generator
+from finn.transformation.streamline.absorb import AbsorbScalarBiasIntoMultiThreshold
 from finn.util.basic import make_build_dir, pynq_part_map
 
 
@@ -119,6 +125,48 @@ def create_requant_model(abits, max_val, ishape, per_channel):
     return model
 
 
+def create_signed_requant_model(abits, max_val, ishape, per_channel):
+    """Create a model with QuantIdentity (signed output) that will be converted to Requant."""
+    num_channels = ishape[1]
+
+    if per_channel:
+        b_act = QuantIdentity(
+            bit_width=abits,
+            max_val=max_val,
+            min_val=-max_val,
+            scaling_impl_type=ScalingImplType.CONST,
+            scaling_per_output_channel=True,
+            per_channel_broadcastable_shape=(1, num_channels) + (1,) * (len(ishape) - 2),
+        )
+    else:
+        b_act = QuantIdentity(
+            bit_width=abits,
+            max_val=max_val,
+            min_val=-max_val,
+            scaling_impl_type=ScalingImplType.CONST,
+        )
+
+    # Export to QONNX
+    build_dir = make_build_dir(prefix="test_requant_signed_")
+    m_path = os.path.join(build_dir, "model.onnx")
+    export_qonnx(b_act, torch.randn(ishape), m_path)
+    qonnx_cleanup(m_path, out_file=m_path)
+
+    # Convert to FINN format (creates MultiThreshold)
+    # Use filter function to allow higher bit widths (default is 8)
+    model = ModelWrapper(m_path)
+    model = model.transform(
+        ConvertQONNXtoFINN(
+            filter_function=default_filter_function_generator(max_multithreshold_bit_width=abits)
+        )
+    )
+    model = model.transform(InferShapes())
+    model = model.transform(InferDataTypes())
+    model = model.transform(InferDataLayouts())
+
+    return model
+
+
 # =============================================================================
 # RTL Backend Test - tests different devices/DSP variants
 # =============================================================================
@@ -131,11 +179,13 @@ def create_requant_model(abits, max_val, ishape, per_channel):
     "part", ["xcvc1902-vsva2197-2MP-e-S", "xczu7ev-ffvc1156-2-e", "xc7z020clg400-1"]
 )
 @pytest.mark.parametrize("pe", [1, 16])
-@pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim"])
+@pytest.mark.parametrize("sim_style", ["cppsim", "node_by_node", "stitched_ip"])
+@pytest.mark.parametrize("mem_mode", ["internal_embedded", "internal_decoupled"])
+@pytest.mark.parametrize("signed_out", [False, True])
 @pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
-def test_requant_rtl(abits, ishape, per_channel, part, pe, exec_mode):
+def test_requant_rtl(abits, ishape, per_channel, part, pe, sim_style, mem_mode, signed_out):
     """Test Requant RTL backend with different devices (DSP variants).
 
     Tests integer input which uses the RTL backend.
@@ -152,7 +202,11 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, exec_mode):
     if num_channels % pe != 0:
         pytest.skip(f"PE={pe} does not divide num_channels={num_channels}")
 
-    model = create_requant_model(abits, max_val, ishape, per_channel)
+    # Use QuantIdentity (signed) or QuantReLU (unsigned) based on signed_out parameter
+    if signed_out:
+        model = create_signed_requant_model(abits, max_val, ishape, per_channel)
+    else:
+        model = create_requant_model(abits, max_val, ishape, per_channel)
 
     # Set input datatype to INT8 for RTL backend
     model.set_tensor_datatype(model.graph.input[0].name, DataType[input_dtype])
@@ -162,6 +216,10 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, exec_mode):
     inp = gen_finn_dt_tensor(DataType[input_dtype], ishape)
     input_dict = {model.graph.input[0].name: inp}
     y_golden = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
+
+    # Absorb Add into MultiThreshold before InferRequantLayer
+    # This is needed for signed outputs where the Add contains the signed offset
+    model = model.transform(AbsorbScalarBiasIntoMultiThreshold())
 
     # Apply InferRequantLayer
     model = model.transform(InferRequantLayer())
@@ -185,29 +243,51 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, exec_mode):
     requant_rtl_nodes = model.get_nodes_by_op_type("Requant_rtl")
     assert len(requant_rtl_nodes) == 1, "Expected Requant_rtl for INT8 input"
     getCustomOp(requant_rtl_nodes[0]).set_nodeattr("PE", pe)
+    getCustomOp(requant_rtl_nodes[0]).set_nodeattr("mem_mode", mem_mode)
 
     # Prepare and run simulation
-    model = model.transform(SetExecMode(exec_mode))
-
-    if exec_mode == "cppsim":
+    #  - cppsim / node_by_node feed the decomposed scale/bias words directly into
+    #    the core, so they exercise the datapath + param decomposition/packing.
+    #  - stitched_ip instantiates the two memstreams and free-runs them from the
+    #    generated .dat files, which is the only path that exercises the
+    #    memstreamers (and their fold-address cycling when CF > 1).
+    if sim_style == "cppsim":
+        model = model.transform(SetExecMode("cppsim"))
         model = model.transform(PrepareCppSim())
         model = model.transform(CompileCppSim())
-        y_sim = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
-        assert np.allclose(
-            y_golden, y_sim, atol=quant_step
-        ), f"cppsim mismatch: max diff = {np.max(np.abs(y_golden - y_sim))}"
-    else:
-        # Node-by-node rtlsim
+    elif sim_style == "node_by_node":
+        model = model.transform(SetExecMode("rtlsim"))
         model = model.transform(PrepareIP(part, target_clk_ns))
         model = model.transform(HLSSynthIP())
         model = model.transform(PrepareRTLSim())
+    elif sim_style == "stitched_ip":
+        # Convert any remaining Mul nodes to HW for stitched IP
+        model = model.transform(InferElementwiseBinaryOperation())
+        # 4D inputs carry a layout Transpose (NCHW<->NHWC) with no HW op yet.
+        # Only when such a Transpose is present, convert it to a HW Shuffle and
+        # decompose it into inner/outer shuffles so the whole graph becomes
+        # fpgadataflow. _filter=lambda *_: True also converts a leading input
+        # transpose (the default filter skips graph.node[0]).
+        if len(model.get_nodes_by_op_type("Transpose")) > 0:
+            model = model.transform(InferShuffle(_filter=lambda *_: True))
+            model = model.transform(SpecializeLayers(part))
+            model = model.transform(ShuffleDecomposition())
+            model = model.transform(InferInnerOuterShuffles())
+        model = model.transform(SpecializeLayers(part))
+        model = model.transform(GiveUniqueNodeNames())
+        model = insert_and_set_fifo_depths(model, part, target_clk_ns)
+        model = model.transform(PrepareIP(part, target_clk_ns))
+        model = model.transform(HLSSynthIP())
+        model = model.transform(CreateStitchedIP(part, target_clk_ns))
+        model.set_metadata_prop("exec_mode", "rtlsim")
 
-        y_sim = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
-        assert np.allclose(
-            y_golden, y_sim, atol=quant_step
-        ), f"rtlsim mismatch: max diff = {np.max(np.abs(y_golden - y_sim))}"
+    y_sim = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
+    assert np.allclose(
+        y_golden, y_sim, atol=quant_step
+    ), f"{sim_style} mismatch: max diff = {np.max(np.abs(y_golden - y_sim))}"
 
-        # Verify cycle estimation
+    # Verify cycle estimation (node-by-node rtlsim only)
+    if sim_style == "node_by_node":
         node = model.get_nodes_by_op_type("Requant_rtl")[0]
         inst = getCustomOp(node)
         cycles_rtlsim = inst.get_nodeattr("cycles_rtlsim")
@@ -251,13 +331,15 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, exec_mode):
 @pytest.mark.parametrize("input_dtype", ["FLOAT32", "INT8"])
 @pytest.mark.parametrize("pe", [1, 16])
 @pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim"])
+@pytest.mark.parametrize("signed_out", [False, True])
 @pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
-def test_requant_hls(abits, ishape, per_channel, input_dtype, pe, exec_mode):
+def test_requant_hls(abits, ishape, per_channel, input_dtype, pe, exec_mode, signed_out):
     """Test Requant HLS backend.
 
     Tests float input (naturally uses HLS) and integer input with forced HLS.
+    Tests both unsigned output (QuantReLU) and signed output (QuantIdentity).
     """
     num_channels = ishape[1]
     max_val = 1.0
@@ -266,7 +348,11 @@ def test_requant_hls(abits, ishape, per_channel, input_dtype, pe, exec_mode):
     if num_channels % pe != 0:
         pytest.skip(f"PE={pe} does not divide num_channels={num_channels}")
 
-    model = create_requant_model(abits, max_val, ishape, per_channel)
+    # Use QuantIdentity (signed) or QuantReLU (unsigned) based on signed_out parameter
+    if signed_out:
+        model = create_signed_requant_model(abits, max_val, ishape, per_channel)
+    else:
+        model = create_requant_model(abits, max_val, ishape, per_channel)
 
     # Set input datatype
     model.set_tensor_datatype(model.graph.input[0].name, DataType[input_dtype])
@@ -276,6 +362,10 @@ def test_requant_hls(abits, ishape, per_channel, input_dtype, pe, exec_mode):
     inp = gen_finn_dt_tensor(DataType[input_dtype], ishape)
     input_dict = {model.graph.input[0].name: inp}
     y_golden = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
+
+    # Absorb Add into MultiThreshold before InferRequantLayer
+    # This is needed for signed outputs where the Add contains the signed offset
+    model = model.transform(AbsorbScalarBiasIntoMultiThreshold())
 
     # Apply InferRequantLayer
     model = model.transform(InferRequantLayer())

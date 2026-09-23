@@ -35,7 +35,6 @@ for quantization and activation functions in FPGA dataflow architectures.
 import math
 import numpy as np
 import os
-import shutil
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import roundup_to_integer_multiple
 
@@ -346,7 +345,6 @@ class Thresholding_rtl(Thresholding, RTLBackend):
         # Set the 'gen_top_module' attribute for use later
         # by xsi and IPI generation
         self.set_nodeattr("gen_top_module", code_gen_dict["$TOP_MODULE$"][0])
-        axi_dir = os.path.join(get_settings().finn_rtllib, "axi/hdl/")
         rtlsrc = os.path.join(get_settings().finn_rtllib, "thresholding/hdl")
         template_path = rtlsrc + "/thresholding_template_wrapper.v"
         with open(template_path) as f:
@@ -360,11 +358,6 @@ class Thresholding_rtl(Thresholding, RTLBackend):
             "w",
         ) as f:
             f.write(template_wrapper)
-
-        sv_files = ["thresholding.sv", "thresholding_axi.sv"]
-        for sv_file in sv_files:
-            shutil.copy(rtlsrc + "/" + sv_file, code_gen_dir)
-        shutil.copy(axi_dir + "axilite.sv", code_gen_dir)
 
         # set ipgen_path and ip_path so that HLS-Synth transformation
         # and stich_ip transformation do not complain
@@ -457,26 +450,15 @@ class Thresholding_rtl(Thresholding, RTLBackend):
             )
 
     def code_generation_ipi(self):
-        """Construct and returns the TCL commands for node instantiation as an RTL
-        block.
-        """
-        rtl_file_list = self.get_rtl_file_list()
-        code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
-        cmd = ["file mkdir %s" % source_target]
-
-        for rtl_file in rtl_file_list:
-            cmd.append(
-                "add_files -copy_to %s -norecurse %s"
-                % (source_target, os.path.join(code_gen_dir, rtl_file))
-            )
-
-        # Create an RTL block, not an IP core (-type ip)
+        """Constructs and returns the TCL commands for node instantiation as an RTL
+        block."""
+        cmd = []
+        for f in self.get_rtl_file_list(abspath=True):
+            cmd.append("add_files -norecurse %s" % f)
         cmd.append(
             "create_bd_cell -type module -reference %s %s"
             % (self.get_nodeattr("gen_top_module"), self.onnx_node.name)
         )
-
         return cmd
 
     def get_verilog_top_module_intf_names(self):
@@ -625,15 +607,20 @@ class Thresholding_rtl(Thresholding, RTLBackend):
                         for val in threshs:
                             f.write(val + "\n")
 
-    def minimize_weight_bit_width(self, model):
+    def minimize_weight_bit_width(self, model, datatype_only=False):
         """Minimize threshold datatype, with RTL-specific adjustments.
 
         The RTL implementation saturates inputs to the threshold datatype range
         when the threshold datatype is narrower than the input datatype. To ensure
         correct comparisons at saturation boundaries, the threshold datatype must
-        be able to represent [min_threshold - 1 : max_threshold]."""
-        # First, call the base class implementation
-        tdt = super().minimize_weight_bit_width(model)
+        be able to represent [min_threshold - 1 : max_threshold].
+
+        Parameters
+        ----------
+        datatype_only : bool
+            If True, skip value-based minimization. See base class.
+        """
+        tdt = super().minimize_weight_bit_width(model, datatype_only=datatype_only)
 
         # Check if we need RTL-specific adjustments
         idt = self.get_input_datatype(0)

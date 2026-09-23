@@ -9,7 +9,6 @@
 """RTL backend implementations of elementwise binary operations (Add, Sub, Mul)."""
 import numpy as np
 import os
-import shutil
 from qonnx.core.datatype import DataType
 from qonnx.util.basic import roundup_to_integer_multiple
 
@@ -184,9 +183,6 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         if has_const or mlo:
             self.generate_hdl_memstream(fpgapart)
 
-        sv_files = ["eltwise.sv", "binopf.sv", "binopi.sv", "int_to_fp32.sv"]
-        for sv_file in sv_files:
-            shutil.copy(f"{rtlsrc}/{sv_file}", code_gen_dir)
         self.set_nodeattr("ipgen_path", code_gen_dir)
         self.set_nodeattr("ip_path", code_gen_dir)
 
@@ -243,9 +239,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
 
     def code_generation_ipi(self):
         """Constructs and returns the TCL for node instantiation in Vivado IPI."""
-        source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
-        cmd = ["file mkdir %s" % source_target]
-
+        cmd = []
         node_name = self.onnx_node.name
         intf = self.get_verilog_top_module_intf_names()
         clk_name = intf["clk"][0]
@@ -328,7 +322,7 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
                 ms_rtllib_dir + "memstream.sv",
             ]
             for f in sourcefiles:
-                cmd += ["add_files -copy_to %s -norecurse %s" % (source_target, f)]
+                cmd.append("add_files -norecurse %s" % f)
             strm_inst = node_name + "_wstrm"
             cmd.append(
                 "create_bd_cell -type hier -reference %s /%s/%s"
@@ -376,12 +370,9 @@ class ElementwiseBinary_rtl(ElementwiseBinaryOperation, RTLBackend):
         """Append Vivado IPI commands that add the RTL sources and instantiate the core."""
         node_name = self.onnx_node.name
         top_module = self.get_nodeattr("gen_top_module")
-        source_target = "./ip/verilog/rtl_ops/%s" % node_name
 
-        sourcefiles = self.get_rtl_file_list(abspath=True)
-
-        for f in sourcefiles:
-            cmd.append("add_files -copy_to %s -norecurse %s" % (source_target, f))
+        for f in self.get_rtl_file_list(abspath=True):
+            cmd.append("add_files -norecurse %s" % f)
 
         # Always create the core inside the hierarchical wrapper
         cmd.append(

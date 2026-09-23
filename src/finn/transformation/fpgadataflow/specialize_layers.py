@@ -41,7 +41,7 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
-from finn.util.basic import get_dsp_block, get_rtl_mvu_max_widths, is_versal
+from finn.util.basic import get_dsp_block, get_dsp_datapath_limits, is_versal
 from finn.util.exception import FINNUserError
 from finn.util.logging import log
 
@@ -65,8 +65,6 @@ def _determine_impl_style(node, fpgapart, model):
     # if impl_style not set, for "simple" layers always try
     # to use rtl variant if available
     if impl_style == "":
-        if optype == "StreamingDataWidthConverter":
-            return _dwc_determine_impl_style(node)
         if rtl_variant:
             if optype == "MVAU":
                 idt = node_inst.get_input_datatype(0)
@@ -128,23 +126,13 @@ def _determine_impl_style(node, fpgapart, model):
             )
             log.warning(warn_str)
             return "rtl"
-        raise Exception(
-            f"""Node {node.name} with optype {optype} has no hw implementation variant)"""
-        )
-    if impl_style == "rtl":
-        # rtl dwc does not support every inWidth to outWidth ratio
-        if optype == "StreamingDataWidthConverter":
-            if _dwc_determine_impl_style(node) != "rtl":
-                warn_str = """RTL implementation of DWC requires
-                            stream widths that are integer width ratios
-                            from each other. Node %s will automatically be
-                            set to HLS variant.""" % (
-                    node.name,
+        else:
+            raise Exception(
+                """Node {} with optype {} has no hw implementation variant)""".format(
+                    node.name, optype
                 )
-                log.warning(warn_str)
-                return "hls"
-            # user setting can be fulfilled
-            return "rtl"
+            )
+    elif impl_style == "rtl":
         if optype == "MVAU":
             if _mvu_rtl_possible(node, fpgapart, model):
                 return "rtl"
@@ -206,7 +194,7 @@ def _determine_impl_style(node, fpgapart, model):
                 return "rtl"
             warn_str = """There is no RTL variant for %s. The node will automatically be
                         set to HLS variant. The RTL Requant layers currently only supports
-                        integer inputs, unsigned outputs and non-narrow quantization.""" % (
+                        integer inputs and non-narrow quantization.""" % (
                 node.name,
             )
             log.warning(warn_str)
@@ -231,33 +219,14 @@ def _determine_impl_style(node, fpgapart, model):
     )
 
 
-def _dwc_determine_impl_style(node):
-    """Determine implementation style for StreamingDataWidthConverter nodes.
-
-    When possible, uses RTL variant based on width ratio compatibility.
-    """
-    dwc = getCustomOp(node)
-    dwc_in_width = dwc.get_nodeattr("inWidth")
-    dwc_out_width = dwc.get_nodeattr("outWidth")
-    # check if rtl variant can be used
-    iwidth_d = dwc_in_width % dwc_out_width == 0
-    owidth_d = dwc_out_width % dwc_in_width == 0
-    if iwidth_d or owidth_d:
-        return "rtl"
-    return "hls"
-
-
 def _mvu_rtl_possible(n, fpgapart, model):
-    """Check whether RTL-based MVU implementation is supported for given node.
-
-    RTL-MVU constraints (see finn-rtllib/mvu/mvu.sv):
-    - DSP48E1: only supports narrow range weights
-    - Activations must fit the DSP B datapath (18 bit on DSP48, 24 bit on DSP58),
-      weights the A datapath (25 bit on DSP48E1, 27 bit on DSP48E2/DSP58) and the
-      accumulator the P datapath (48 bit on DSP48, 58 bit on DSP58), see
-      get_rtl_mvu_max_widths
-    - No embedded thresholding or binaryXnor mode supported
-    """
+    # Checks whether RTL-based MVU is supported
+    # Currently, for DSP48 we only support computations up to
+    # 8sx8u (8-bit signed weights x 8-bit (un)signed activations)
+    # and for DSP58 we support up to 8sx9s.
+    # Please note, DSP48E1 does only support narrow range for weights
+    # Next to that, embedded thresholding functionality is not supported
+    # and neither binaryxnormode computation.
     node_inst = getCustomOp(n)
     # first check if no Activation or binary xnor mode and return False
     # immediately if one of them is True
@@ -287,16 +256,24 @@ def _mvu_rtl_possible(n, fpgapart, model):
         return False
 
     # if none of the above constraints have been triggered
-    # we now check if input, weight and accumulator widths are in range: at least
-    # 2 bit and narrow enough for the DSP datapaths of the RTL compute core (the
-    # datatypes are expected to be minimized at this point, see step_minimize_bit_width)
-    max_act_width, max_weight_width, max_acc_width = get_rtl_mvu_max_widths(dsp_block)
+    # we now check if input and weight data types are in range
+    # we only use rtl mvau if the dtypes are at least 2 bit
     idt = node_inst.get_input_datatype()
-    inp_width_in_range = 2 <= idt.bitwidth() <= max_act_width
-    weight_width_in_range = 2 <= wdt.bitwidth() <= max_weight_width
-    acc_width_in_range = node_inst.get_accumulator_datatype().bitwidth() <= max_acc_width
+    inp_width_in_range = 2 <= idt.bitwidth()
+    weight_width_in_range = 2 <= wdt.bitwidth()
 
-    return inp_width_in_range and weight_width_in_range and acc_width_in_range
+    # the DSP-based RTL MVU also has an upper bound on the activation, weight and
+    # accumulator widths given by the target DSP datapath; widths beyond that would
+    # be silently truncated, so fall back to the (unbounded) HLS MVU instead
+    max_act, max_weight, max_acc = get_dsp_datapath_limits(dsp_block)
+    acc_width = node_inst.get_output_datatype().bitwidth()
+    # activations sit in the signed B datapath; unsigned activations cost one extra
+    # bit, so the effective width must stay strictly below the B datapath width
+    signed_act = 1 if idt.signed() else 0
+    act_fits = (idt.bitwidth() - signed_act) < max_act
+    widths_in_range = act_fits and wdt.bitwidth() <= max_weight and acc_width <= max_acc
+
+    return inp_width_in_range and weight_width_in_range and widths_in_range
 
 
 def _vvu_rtl_possible(n, fpgapart):
@@ -405,14 +382,12 @@ def _requant_rtl_possible(n, fpgapart):
     """Check whether RTL-based Requant is supported
     RTL Requant requires:
     - Integer input (not float)
-    - Unsigned output (RTL clips to [0, 2^N-1])
     - Full range (narrow=0)."""
     node_inst = getCustomOp(n)
     idt = node_inst.get_input_datatype(0)
-    odt = node_inst.get_output_datatype(0)
     narrow = node_inst.get_nodeattr("narrow")
-    # RTL backend works with integer inputs, unsigned outputs, and full range
-    return idt.is_integer() and not odt.signed() and narrow == 0
+    # RTL backend works with integer inputs and full range
+    return idt.is_integer() and narrow == 0
 
 
 class SpecializeLayers(Transformation):

@@ -1606,6 +1606,24 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
     return model
 
 
+@register_build_dataflow_step()
+def step_minimize_bit_width_datatype_only(
+    model: ModelWrapper, cfg: DataflowBuildConfig
+) -> ModelWrapper:
+    """Datatype-based bit width minimization, upstream's first pass (Xilinx#1700): uses
+    the worst-case bounds of the annotated datatypes instead of the actual values.
+
+    The FINN+ default step sequence runs step_minimize_bit_width_initial (value-based)
+    at this point instead: the onnx-passes frontend annotates integer initializers with
+    an INT64 placeholder that a datatype-only pass leaves in place, so specialization
+    would still see the inflated widths. This step is kept for configurations ported
+    from upstream."""
+    model = model.transform(MinimizeWeightBitWidth(datatype_only=True), apply_to_subgraphs=True)
+    model = model.transform(MinimizeAccumulatorWidth(datatype_only=True), apply_to_subgraphs=True)
+    model = model.transform(InferDataTypes(), apply_to_subgraphs=True)
+    return model
+
+
 def _minimize_bit_width(model: ModelWrapper, cfg: DataflowBuildConfig) -> ModelWrapper:
     """Tighten the weight and accumulator bit widths for each layer and round/clip
     the thresholds accordingly."""

@@ -41,25 +41,28 @@ def minimize_bit_widths(model):
     return model.transform(InferDataTypes())
 
 
-# The RTL MVU computes on the DSP datapaths: activations on B (18/24 bit), weights
-# on A (27 bit) and the accumulator on P (48/58 bit). Wider configurations must fall
-# back to HLS. The widths are judged after bit width minimization, so an oversized
-# container weight datatype (such as the INT64 placeholder of the ONNX passes
-# frontend) does not matter.
+# The RTL MVU computes on the DSP datapaths: activations on the signed B port (18/24 bit,
+# so unsigned activations get one bit less), weights on A (27 bit) and the accumulator on
+# P (48/58 bit). Wider configurations must fall back to HLS. The widths are judged after
+# bit width minimization, so an oversized container weight datatype (such as the INT64
+# placeholder of the ONNX passes frontend) does not matter.
 # (part, input dtype, weight value range, weight container dtype, MW, expected variant)
 @pytest.mark.parametrize(
     "part, idt, wvals, wdt, mw, expected",
     [
         pytest.param(DSP48E2_PART, "UINT8", "INT8", "INT8", 64, "rtl", id="dsp48-8x8"),
         pytest.param(DSP48E2_PART, "UINT8", "INT8", "INT64", 64, "rtl", id="dsp48-placeholder-wdt"),
-        pytest.param(DSP48E2_PART, "UINT18", "INT8", "INT8", 64, "rtl", id="dsp48-act-fits-b"),
-        pytest.param(DSP48E2_PART, "UINT19", "INT8", "INT8", 64, "hls", id="dsp48-act-exceeds-b"),
-        pytest.param(DSP48E2_PART, "UINT18", "INT24", "INT64", 64, "rtl", id="dsp48-acc-fits-p"),
+        pytest.param(DSP48E2_PART, "UINT17", "INT8", "INT8", 64, "rtl", id="dsp48-act-fits-b"),
+        pytest.param(DSP48E2_PART, "UINT18", "INT8", "INT8", 64, "hls", id="dsp48-act-exceeds-b"),
         pytest.param(
-            DSP48E2_PART, "UINT18", "INT24", "INT64", 256, "hls", id="dsp48-acc-exceeds-p"
+            DSP48E2_PART, "INT18", "INT8", "INT8", 64, "rtl", id="dsp48-signed-act-fits-b"
         ),
-        pytest.param(DSP58_PART, "UINT24", "INT8", "INT8", 64, "rtl", id="dsp58-act-fits-b"),
-        pytest.param(DSP58_PART, "UINT25", "INT8", "INT8", 64, "hls", id="dsp58-act-exceeds-b"),
+        pytest.param(DSP48E2_PART, "UINT17", "INT24", "INT64", 64, "rtl", id="dsp48-acc-fits-p"),
+        pytest.param(
+            DSP48E2_PART, "UINT17", "INT24", "INT64", 256, "hls", id="dsp48-acc-exceeds-p"
+        ),
+        pytest.param(DSP58_PART, "UINT23", "INT8", "INT8", 64, "rtl", id="dsp58-act-fits-b"),
+        pytest.param(DSP58_PART, "UINT24", "INT8", "INT8", 64, "hls", id="dsp58-act-exceeds-b"),
     ],
 )
 @pytest.mark.fpgadataflow
@@ -79,5 +82,5 @@ def test_mvau_rtl_codegen_rejects_wide_operands():
     # force the RTL variant regardless of the specialization check
     model.graph.node[0].op_type = "MVAU_rtl"
     model.graph.node[0].domain = "finn.custom_op.fpgadataflow.rtl"
-    with pytest.raises(FINNUserError, match="RTL MVU on DSP48E2 cannot implement"):
+    with pytest.raises(FINNUserError, match="exceeds the .* activation datapath limit"):
         model.transform(PrepareIP(DSP48E2_PART, 10.0))

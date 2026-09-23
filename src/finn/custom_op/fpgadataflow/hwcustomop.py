@@ -325,8 +325,12 @@ class HWCustomOp(CustomOp):
         are there and that particular attributes are set correctly. Can also
         check if the number of inputs is equal to the expected number."""
 
-    def generate_params(self, model: "ModelWrapper", path: str | Path) -> None:
-        """Generate parameters (i.e. weights and thresholds).
+    def generate_params(
+        self, model: "ModelWrapper", path: str | Path, fpgapart: str | None = None
+    ) -> None:
+        """Generate parameters (i.e. weights and thresholds). ``fpgapart`` is only
+        consumed by nodes whose parameter layout depends on the target device (e.g.
+        Requant, which resolves the DSP version from it).
 
         Member function of HWCustomOp class that must be implemented by every node
         that needs to generate parameters.
@@ -417,10 +421,26 @@ class HWCustomOp(CustomOp):
         """Calculate and returns the WMEM."""
         raise NotImplementedError()
 
-    def generate_hdl_memstream(self, fpgapart: str, pumped_memory: int = 0) -> None:
-        """Generate verilog code for memstream component.
-        Currently utilized by MVAU, VVAU and HLS Thresholding layer."""
-        ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls"]
+    def generate_hdl_memstream(
+        self,
+        fpgapart: str,
+        pumped_memory: int = 0,
+        name: str | None = None,
+        depth: int | None = None,
+        width: int | None = None,
+        init_file: str | None = None,
+        ram_style: str | None = None,
+    ) -> None:
+        """Helper function to generate verilog code for memstream component.
+        Currently utilized by MVAU, VVAU, HLS Thresholding and RTL Requant layer.
+
+        By default a single memstream wrapper named after the node is emitted,
+        with depth/width/init_file/ram_style derived from the node. Callers that
+        need more than one memstreamer (e.g. RTL Requant streams scale and bias
+        separately) can pass explicit ``name``, ``depth``, ``width``,
+        ``init_file`` and ``ram_style`` to emit a named streamer without relying
+        on the op-specific defaults."""
+        ops = ["MVAU_hls", "MVAU_rtl", "VVAU_hls", "VVAU_rtl", "Thresholding_hls", "Requant_rtl"]
         if self.onnx_node.op_type in ops or self.onnx_node.op_type.startswith("Elementwise"):
             template_path = (
                 Path(get_settings().finn_rtllib)
@@ -428,7 +448,7 @@ class HWCustomOp(CustomOp):
                 / "hdl"
                 / "memstream_wrapper_template.v"
             )
-            mname = self.onnx_node.name
+            mname = name if name is not None else self.onnx_node.name
             sets = 1
             mlo_max_iter = self.get_nodeattr("mlo_max_iter")
             bodies = self.get_nodeattr("bodies")
@@ -436,24 +456,27 @@ class HWCustomOp(CustomOp):
                 sets = mlo_max_iter
             elif bodies:
                 sets = bodies
-            if self.onnx_node.op_type.startswith("Thresholding"):
-                depth = self.calc_tmem()
-            elif self.onnx_node.op_type.startswith("MVAU"):
-                depth = self.calc_wmem() * cast("int", self.get_nodeattr("TH"))
-            else:
-                depth = self.calc_wmem()
-            padded_width = self.get_instream_width_padded(1)
             code_gen_dir = cast("str", self.get_nodeattr("code_gen_dir_ipgen"))
-
-            ram_style = cast("str", self.get_nodeattr("ram_style"))
-            init_file = code_gen_dir + "/memblock.dat"
+            if depth is None:
+                if self.onnx_node.op_type.startswith("Thresholding"):
+                    depth = self.calc_tmem()
+                elif self.onnx_node.op_type.startswith("MVAU"):
+                    depth = self.calc_wmem() * cast("int", self.get_nodeattr("TH"))
+                else:
+                    depth = self.calc_wmem()
+            if width is None:
+                width = self.get_instream_width_padded(1)
+            if ram_style is None:
+                ram_style = cast("str", self.get_nodeattr("ram_style"))
+            if init_file is None:
+                init_file = code_gen_dir + "/memblock.dat"
             if ram_style == "ultra" and not is_versal(fpgapart):
                 init_file = ""
             code_gen_dict = {
                 "$MODULE_NAME$": [mname],
                 "$SETS$": [str(sets)],
                 "$DEPTH$": [str(depth)],
-                "$WIDTH$": [str(padded_width)],
+                "$WIDTH$": [str(width)],
                 "$INIT_FILE$": [init_file],
                 "$RAM_STYLE$": [ram_style],
                 "$PUMPED_MEMORY$": [str(pumped_memory)],
@@ -511,7 +534,6 @@ class HWCustomOp(CustomOp):
                 "$N_LAYERS$": [str(n_max_layers)],
                 "$TH$": [str(theight)],
                 "$EN_MLO$": [en_mlo],
-                "$DWC_MODULE_NAME$": [mname + "_dwc"],
                 "$ADDRESS_OFFSET$": [str(self.get_nodeattr("address_offset"))],
             }
             # apply code generation to template

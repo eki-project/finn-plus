@@ -361,7 +361,7 @@ class ElementwiseBinaryOperation(HWCustomOp):
 
     # Minimizes the width of the accumulator data type, 'accumulator width' here
     # due to convention, it is actually the output data type
-    def minimize_accumulator_width(self, model: ModelWrapper):
+    def minimize_accumulator_width(self, model: ModelWrapper, datatype_only: bool = False):
         """Minimize output bit-width when possible."""
         # If any of the inputs is not an integer, the bit-width cannot be
         # minimized
@@ -395,8 +395,11 @@ class ElementwiseBinaryOperation(HWCustomOp):
 
     # Minimizes the width of the weight data type, 'weight' here due to
     # convention, it actually applies to any constant initializer input
-    def minimize_weight_bit_width(self, model: ModelWrapper):
+    def minimize_weight_bit_width(self, model: ModelWrapper, datatype_only: bool = False):
         """Minimize constant input bit-widths when possible."""
+        if datatype_only:
+            return
+
         # Check for an initializer providing the left hand side input
         lhs = model.get_initializer(self.onnx_node.input[0])
         # If the left hand side input is provided as initializer, minimize the
@@ -1051,8 +1054,11 @@ class ElementwiseMax(ElementwiseBinaryOperation):
         return None
 
     # Override minimize_weight_bit_width to prevent type incompatibility
-    def minimize_weight_bit_width(self, model: ModelWrapper):
+    def minimize_weight_bit_width(self, model: ModelWrapper, datatype_only: bool = False):
         """Skip minimization when float comparisons would be incompatible."""
+        if datatype_only:
+            return
+
         # For comparison operations like max/min, both operands must have
         # compatible types. Don't minimize if one side is float and the
         # minimized constant would become integer.

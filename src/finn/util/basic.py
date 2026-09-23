@@ -626,28 +626,21 @@ def get_dsp_block(fpgapart: str) -> str:
     return "DSP48E2"
 
 
-def get_rtl_mvu_max_widths(dsp_block: str) -> tuple[int, int, int]:
-    """Return the maximum (activation, weight, accumulator) bitwidths the RTL MVU
-    compute core (finn-rtllib/mvu/mvu.sv) supports on the given DSP block type,
-    i.e. the widths of the DSP B, A and P datapaths.
-
-    Args:
-        dsp_block (str): DSP block type as returned by get_dsp_block
-
-    Returns:
-        tuple[int, int, int]: (max activation width, max weight width, max accumulator width)
-    """
-    match dsp_block:
-        case "DSP58":
-            return (24, 27, 58)
-        case "DSP48E2":
-            return (18, 27, 48)
-        case _:
-            return (18, 25, 48)
+def get_dsp_datapath_limits(dsp_block):
+    """Return the maximum (activation, weight, accumulator) operand widths in bits
+    that fit the datapath of the given DSP block. These correspond to the DSP B, A
+    and P ports respectively. Widths exceeding these limits would be silently
+    truncated (or fail synthesis) if mapped onto the DSP-based RTL MVU."""
+    if dsp_block == "DSP58":
+        max_act_width, max_weight_width, max_acc_width = 24, 27, 58
+    elif dsp_block == "DSP48E2":
+        max_act_width, max_weight_width, max_acc_width = 18, 27, 48
+    else:  # DSP48E1
+        max_act_width, max_weight_width, max_acc_width = 18, 25, 48
+    return max_act_width, max_weight_width, max_acc_width
 
 
 def get_driver_shapes(model: ModelWrapper) -> dict:
-    """Get all the IO shapes for the driver."""
     idt = []
     idma_names = []
     ishape_normal = []

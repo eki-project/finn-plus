@@ -30,6 +30,7 @@
 import json
 import numpy as np
 from collections.abc import Callable
+from onnx import NodeProto
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -46,6 +47,18 @@ if TYPE_CHECKING:
 from ast import literal_eval
 
 from finn.util.exception import FINNUserError
+
+
+def has_s_axis_port(node_onnx: NodeProto, node_inp_ind: int) -> bool:
+    """Whether input ``node_inp_ind`` of ``node_onnx`` is backed by an s_axis port.
+
+    Mirrors the skip rule in CreateStitchedIP.connect_s_axis_external: an input
+    beyond the node's declared s_axis interfaces gets no external port and does
+    not consume an s_axis_<n> index. Requant_rtl in MLO mode is such a case, as
+    it packs its bias (input[2]) into the input[1] parameter memstream.
+    """
+    s_axis_names = getHWCustomOp(node_onnx).get_verilog_top_module_intf_names()["s_axis"]
+    return node_inp_ind < len(s_axis_names)
 
 
 def prep_rtlsim_io_dict(
@@ -71,7 +84,9 @@ def prep_rtlsim_io_dict(
     batchsize = None
     first_node = None
     if_name = None
-    for i, i_vi in enumerate(model.graph.input):
+    # inputs without an s_axis port are skipped so that the rest stay aligned with if_dict
+    i = -1
+    for i_vi in model.graph.input:
         i_name = i_vi.name
         i_tensor = execution_context[i_name]
         i_dt = model.get_tensor_datatype(i_name)
@@ -83,6 +98,9 @@ def prep_rtlsim_io_dict(
             )
         first_node = getHWCustomOp(first_node_onnx)
         node_inp_ind = list(first_node_onnx.input).index(i_name)
+        if not has_s_axis_port(first_node_onnx, node_inp_ind):
+            continue
+        i += 1
         if node_inp_ind == 0:
             # default node input (input 0)
             i_stream_w = first_node.get_instream_width()
