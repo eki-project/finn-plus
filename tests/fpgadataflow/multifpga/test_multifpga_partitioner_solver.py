@@ -3,14 +3,18 @@
 import pytest
 
 import mip
+import mip.gurobi
+from types import SimpleNamespace
 from typing import Any
 
 import finn.transformation.fpgadataflow.multifpga.partitioner as partitioner
 from finn.transformation.fpgadataflow.multifpga.partitioner import (
     MIP_SOLVER_MAX_ATTEMPTS_ENV,
     MIP_SOLVER_RETRY_DELAY_ENV,
+    Partitioner,
     create_mip_model,
     is_transient_solver_error,
+    release_mip_model,
 )
 from finn.util.exception import FINNMultiFPGAUserError
 
@@ -146,3 +150,86 @@ def test_describe_gurobi_environment_error_without_gurobi(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(mip.gurobi, "has_gurobi", False)
     assert partitioner.describe_gurobi_environment_error() is None
+
+
+class FakeGurobiLibrary:
+    """Records the free calls python-mip would forward to libgurobi."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.freed_models: list[Any] = []
+        self.freed_envs: list[Any] = []
+        monkeypatch.setattr(mip.gurobi, "has_gurobi", True)
+        monkeypatch.setattr(mip.gurobi, "GRBfreemodel", self.freed_models.append, raising=False)
+        monkeypatch.setattr(mip.gurobi, "GRBfreeenv", self.freed_envs.append, raising=False)
+
+    @staticmethod
+    def solver(owns_model: bool = True) -> mip.gurobi.SolverGurobi:
+        solver = mip.gurobi.SolverGurobi.__new__(mip.gurobi.SolverGurobi)
+        solver._ownsModel = owns_model  # noqa: SLF001
+        solver._model = "model-handle"  # noqa: SLF001
+        solver._env = "env-handle"  # noqa: SLF001
+        solver._venv_loaded = True  # noqa: SLF001
+        return solver
+
+
+@pytest.mark.multifpga
+def test_release_mip_model_frees_gurobi_model_and_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lib = FakeGurobiLibrary(monkeypatch)
+    solver = lib.solver()
+    model = SimpleNamespace(solver=solver)
+
+    release_mip_model(model)
+    assert lib.freed_models == ["model-handle"]
+    assert lib.freed_envs == ["env-handle"]
+    # The handles are cleared so that neither a second release nor python-mip's own
+    # SolverGurobi.__del__ frees them again.
+    assert not solver._model and not solver._env  # noqa: SLF001
+    release_mip_model(model)
+    assert len(lib.freed_models) == 1 and len(lib.freed_envs) == 1
+
+
+@pytest.mark.multifpga
+def test_release_mip_model_leaves_foreign_resources_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    lib = FakeGurobiLibrary(monkeypatch)
+    # A solver wrapping a model it does not own, a non-Gurobi solver and no model at all.
+    release_mip_model(SimpleNamespace(solver=lib.solver(owns_model=False)))
+    release_mip_model(SimpleNamespace(solver=object()))
+    release_mip_model(None)
+    assert lib.freed_models == [] and lib.freed_envs == []
+
+
+class MinimalPartitioner(Partitioner):
+    """Concrete enough to be instantiated; only the resource handling of the base is tested."""
+
+
+# ABCMeta computes the abstract set on class creation, so clear it afterwards.
+MinimalPartitioner.__abstractmethods__ = frozenset()
+
+
+@pytest.mark.multifpga
+def test_partitioner_releases_solver_on_close_and_when_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    released: list[Any] = []
+    monkeypatch.setattr(partitioner, "release_mip_model", released.append)
+
+    # Bypass __init__, which needs a full build configuration and a solver.
+    part = MinimalPartitioner.__new__(MinimalPartitioner)
+    part.model = "the-model"
+    with part as entered:
+        assert entered is part
+    assert released == ["the-model"]
+
+    part.close()
+    assert released == ["the-model"] * 2
+
+    del entered, part  # last references gone -> __del__ runs right away (refcount, no GC)
+    assert released == ["the-model"] * 3
+
+    # A partitioner whose __init__ failed before creating the model does not blow up.
+    del released[:]
+    broken = MinimalPartitioner.__new__(MinimalPartitioner)
+    del broken
+    assert released == [None]

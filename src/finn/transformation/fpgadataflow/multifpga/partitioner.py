@@ -146,6 +146,38 @@ def create_mip_model(solver_name: str, name: str = "finn_partition") -> mip.Mode
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+def release_mip_model(model: mip.Model | None) -> None:
+    """Free the solver resources behind a ``mip.Model`` right away.
+
+    python-mip frees them in the solver's ``__del__``, but ``Model`` and its solver reference
+    each other, so that only runs once the cyclic garbage collector gets around to them. In a
+    long-lived process with a large heap (a pytest worker of the CI suite) this happens rarely,
+    and every Gurobi environment that is still alive keeps its floating license token: a running
+    test suite was observed holding several hundred tokens at once. Freeing explicitly returns
+    the token as soon as the partitioner is done. Safe to call more than once. The model must
+    not be used any more afterwards.
+    """
+    solver = getattr(model, "solver", None)
+    if solver is None:
+        return
+    try:
+        from mip import gurobi as mip_gurobi
+
+        if not (mip_gurobi.has_gurobi and isinstance(solver, mip_gurobi.SolverGurobi)):
+            return
+        if not solver._ownsModel:  # noqa: SLF001
+            return
+        # Mirrors SolverGurobi.__del__, which then finds nothing left to free.
+        if solver._model:  # noqa: SLF001
+            mip_gurobi.GRBfreemodel(solver._model)  # noqa: SLF001
+            solver._model = mip_gurobi.ffi.NULL  # noqa: SLF001
+        if solver._env and solver._venv_loaded:  # noqa: SLF001
+            mip_gurobi.GRBfreeenv(solver._env)  # noqa: SLF001
+            solver._env = mip_gurobi.ffi.NULL  # noqa: SLF001
+    except Exception as e:  # noqa: BLE001 - never fail because cleanup failed
+        log.debug(f"Could not release the mip solver: {e}")
+
+
 class Partitioner(ABC):
     """Models a linear problem that can be used to solve Multi-FPGA partitioning. The idea to solve
     this in general using an LP was first devised by the AMD team for Elastic-DF and implemented as
@@ -197,6 +229,27 @@ class Partitioner(ABC):
 
         # Restore locale, as mentioned above.
         locale.setlocale(locale.LC_CTYPE, current_locale)
+
+    def close(self) -> None:
+        """Release the solver behind this partitioner (see ``release_mip_model``). Results can
+        no longer be read from the mip model afterwards. Also happens automatically once the
+        partitioner object is dropped.
+        """
+        release_mip_model(getattr(self, "model", None))
+
+    def __enter__(self) -> Partitioner:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        # The partitioner is not part of a reference cycle, so this runs as soon as the last
+        # reference is dropped and returns the Gurobi license token right away.
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001, S110 - never raise from __del__
+            pass
 
     @abstractmethod
     def create_result(self) -> dict[str, int]:
