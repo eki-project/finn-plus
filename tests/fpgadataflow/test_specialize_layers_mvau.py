@@ -59,7 +59,7 @@ def minimize_bit_widths(model):
         ),
         pytest.param(DSP48E2_PART, "UINT17", "INT24", "INT64", 64, "rtl", id="dsp48-acc-fits-p"),
         pytest.param(
-            DSP48E2_PART, "UINT17", "INT24", "INT64", 256, "hls", id="dsp48-acc-exceeds-p"
+            DSP48E2_PART, "UINT17", "INT24", "INT64", 1024, "hls", id="dsp48-acc-exceeds-p"
         ),
         pytest.param(DSP58_PART, "UINT23", "INT8", "INT8", 64, "rtl", id="dsp58-act-fits-b"),
         pytest.param(DSP58_PART, "UINT24", "INT8", "INT8", 64, "hls", id="dsp58-act-exceeds-b"),

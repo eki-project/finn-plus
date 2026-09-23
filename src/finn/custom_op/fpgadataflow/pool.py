@@ -199,15 +199,19 @@ class Pool(HWCustomOp):
         uses the datatype bounds."""
         fxn = self.get_nodeattr("Function")
         if fxn not in ["AccPool", "AvgPool", "QuantAvgPool"]:
-            return self.get_output_datatype()
+            # MaxPool has no accumulator: nothing to minimize
+            return None
         if not self.get_input_datatype().is_integer():
-            return self.get_output_datatype()
+            return None
         adt = self._get_accumulator_datatype()
         self.set_nodeattr("AccumBits", adt.bitwidth())
+        if fxn == "QuantAvgPool":
+            # the output datatype is a property of the quantized average, not of the sum
+            return adt
         if fxn == "AccPool":
             # the accumulated sum is the output
             self.set_nodeattr("OutputDataType", adt.name)
-        elif fxn == "AvgPool":
+        else:
             # the average fits the input datatype again
             self.set_nodeattr("OutputDataType", self.get_input_datatype().name)
         odt = self.get_output_datatype()

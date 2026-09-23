@@ -10,12 +10,12 @@
 import pytest
 
 import json
+import logging
 import numpy as np
 import os
 import tempfile
 import torch
 import torch.onnx
-import warnings
 from brevitas.export import export_qonnx
 from pathlib import Path
 from qonnx.core.datatype import DataType
@@ -738,7 +738,7 @@ def test_shuffle_config_consolidation():
 
 
 @pytest.mark.fpgadataflow
-def test_outer_shuffle_exp_cycles_without_vivado(monkeypatch):
+def test_outer_shuffle_exp_cycles_without_vivado(monkeypatch, caplog):
     """get_exp_cycles must work for estimate-only builds with no Vivado configured.
 
     With no XILINX_VIVADO the estimate assumes the recommended Vivado 2024.2+
@@ -764,14 +764,16 @@ def test_outer_shuffle_exp_cycles_without_vivado(monkeypatch):
     assert len(outer_nodes) > 0, "expected at least one OuterShuffle_hls node"
 
     monkeypatch.setenv("XILINX_VIVADO", "/tools/Xilinx/Vivado/2024.2")
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
+    with caplog.at_level(logging.WARNING):
         expected_cycles = [getCustomOp(n).get_exp_cycles() for n in outer_nodes]
+    assert not any("assuming Vivado" in r.getMessage() for r in caplog.records)
 
     monkeypatch.delenv("XILINX_VIVADO", raising=False)
     for node, expected in zip(outer_nodes, expected_cycles):
-        with pytest.warns(UserWarning, match="assuming Vivado 2024.2 or newer"):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
             cycles = getCustomOp(node).get_exp_cycles()
+        assert any("assuming Vivado 2024.2 or newer" in r.getMessage() for r in caplog.records)
         assert isinstance(cycles, int)
         assert cycles > 0
         assert cycles == expected
