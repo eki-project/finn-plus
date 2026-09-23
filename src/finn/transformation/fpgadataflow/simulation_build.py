@@ -18,6 +18,7 @@ from enum import Enum
 from jinja2 import Environment
 from onnx import NodeProto, TensorProto, ValueInfoProto
 from pathlib import Path
+from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
@@ -506,6 +507,15 @@ class SimulationBuilder:
                 f"{num_succs} successor nodes. This is not supported for isolation."
             )
 
+        # onnx.helper.make_graph() below creates a graph without quantization annotations,
+        # so every tensor of the isolated model would default to FLOAT32. Custom ops derive
+        # some code-generation parameters from tensor annotations rather than node
+        # attributes (e.g. the MVAU/VVAU threshold datatype), which then silently degrade
+        # to float and can wreck the synthesized IP (float threshold comparisons let
+        # Vitis HLS collapse the MVAU pipeline to II>1). Collect the datatype of every
+        # tensor of the isolated graph here and re-annotate the model after creation.
+        tensor_datatypes: dict[str, DataType] = {}
+
         # Process each input exactly once: either keep as initializer input or isolate via dummy
         pred_count = 0
         converted_initializer_input_indices: list[int] = []
@@ -532,6 +542,7 @@ class SimulationBuilder:
                 value_info_protos.append(val_info)
                 inputs_node.append(val_info)
                 converted_initializer_input_indices.append(i)
+                tensor_datatypes[val_info.name] = self.model.get_tensor_datatype(inp_name)
                 continue
 
             pred_count += 1
@@ -549,6 +560,9 @@ class SimulationBuilder:
             inputs_graph.append(new_input_info)
             inputs_node.append(new_input_dummy_info)
             nodes_graph.append(dummy_node)
+            input_dt = target_op.get_input_datatype(i)
+            tensor_datatypes[new_input_info.name] = input_dt
+            tensor_datatypes[new_input_dummy_info.name] = input_dt
 
         if pred_count != num_preds:
             raise FINNInternalError(
@@ -571,6 +585,9 @@ class SimulationBuilder:
             outputs_graph.append(new_output_info)
             outputs_node.append(new_output_dummy_info)
             nodes_graph.append(dummy_node)
+            output_dt = target_op.get_output_datatype(i)
+            tensor_datatypes[new_output_info.name] = output_dt
+            tensor_datatypes[new_output_dummy_info.name] = output_dt
 
         if succ_count != num_succs:
             raise FINNInternalError(
@@ -647,6 +664,10 @@ class SimulationBuilder:
 
         node_model = onnx.helper.make_model(graph)
         node_model = ModelWrapper(node_model)
+
+        # Restore the tensor datatype annotations (see comment above)
+        for tensor_name, tensor_dt in tensor_datatypes.items():
+            node_model.set_tensor_datatype(tensor_name, tensor_dt)
 
         node_model.set_metadata_prop("predecessors", str([pred.name for pred in inputs_graph]))
         node_model.set_metadata_prop("successors", str([succ.name for succ in outputs_graph]))

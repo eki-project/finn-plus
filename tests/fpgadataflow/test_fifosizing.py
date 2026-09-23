@@ -184,7 +184,10 @@ def test_fifosizing_linear(topology: Literal["tfc", "cnv"]) -> None:
                 "StreamingFIFO_rtl_0": 2,
                 "StreamingFIFO_rtl_1": 32,
                 "StreamingFIFO_rtl_2": 32,
-                "StreamingFIFO_rtl_3": 32,
+                # DWC -> MVAU_hls_0 (SIMD=7): the MVAU reads its whole 112-word input vector
+                # in the first 112 cycles of a 7168-cycle frame, so it needs the next vector
+                # buffered up front to run at full rate.
+                "StreamingFIFO_rtl_3": 160,
                 "StreamingFIFO_rtl_4": 32,
                 "StreamingFIFO_rtl_5": 32,
                 "StreamingFIFO_rtl_6": 32,
@@ -196,7 +199,7 @@ def test_fifosizing_linear(topology: Literal["tfc", "cnv"]) -> None:
                 "StreamingFIFO_rtl_0": 1024,
                 "StreamingFIFO_rtl_1": 1024,
                 "StreamingFIFO_rtl_2": 64,
-                "StreamingFIFO_rtl_3": 448,
+                "StreamingFIFO_rtl_3": 2240,
                 "StreamingFIFO_rtl_4": 64,
                 "StreamingFIFO_rtl_5": 64,
                 "StreamingFIFO_rtl_6": 64,
@@ -228,7 +231,7 @@ def test_fifosizing_linear(topology: Literal["tfc", "cnv"]) -> None:
                 "StreamingFIFO_rtl_8": "block",
                 "StreamingFIFO_rtl_9": "block",
             },
-            "total_fifo_size_kiB": 0.6171875,
+            "total_fifo_size_kiB": 0.8359375,
         }
     else:
         expected_fifos = {
