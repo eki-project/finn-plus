@@ -1,0 +1,86 @@
+{
+    "status": "ok",
+    "verification": "success",
+    "estimate": {
+        "resources": {
+            "LUT": 28010.0,
+            "DSP": 0.0,
+            "BRAM_18K": 27.0,
+            "URAM": 0.0
+        },
+        "performance": {
+            "critical_path_cycles": 206301,
+            "max_cycles": 16384,
+            "max_cycles_node_name": "MVAU_hls_0",
+            "estimated_throughput_fps": 6103.515625,
+            "estimated_latency_ns": 2063010.0
+        }
+    },
+    "hls_estimate": {
+        "resources": {
+            "LUT": 52824.0,
+            "FF": 25087.0,
+            "DSP": 60.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 144.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 66698,
+            "FF": 56883,
+            "SRL": 5023,
+            "DSP": 60,
+            "BRAM_18K": 46,
+            "BRAM_36K": 18,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 2145.15,
+            "avg_3V3_power": 944.0625,
+            "avg_total_power": 3089.2125,
+            "min_0V85_power": 2145.15,
+            "min_3V3_power": 944.0625,
+            "min_total_power": 3089.2125,
+            "max_0V85_power": 2145.15,
+            "max_3V3_power": 944.0625,
+            "max_total_power": 3089.2125
+        },
+        "report_experiment_instrumentation": {
+            "pipeline_depth": 2.76,
+            "error": false,
+            "interval_cycles": 20480,
+            "latency_cycles": 56619,
+            "latency_ms": 0.56619,
+            "min_pipeline_depth": 2.34,
+            "min_latency_cycles": 47835,
+            "min_latency_ms": 0.47835,
+            "checksum": 10196,
+            "throughput_fps": 4883,
+            "frequency_mhz": 100
+        }
+    },
+    "time": {
+        "export": 1,
+        "step_qonnx_to_finn": 0,
+        "step_tidy_up": 1,
+        "step_streamline": 5,
+        "step_convert_to_hw": 1,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_set_folding": 0,
+        "step_minimize_bit_width": 14,
+        "step_generate_estimate_reports": 0,
+        "step_generate_hardware": 2019,
+        "step_create_stitched_ip": 43,
+        "step_measure_rtlsim_performance": 0,
+        "step_out_of_context_synthesis": 0,
+        "step_synthesize_bitfile": 968,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 3052
+    }
+}
