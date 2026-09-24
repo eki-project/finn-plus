@@ -116,6 +116,7 @@ class CreateStitchedIP(Transformation):
         signature: list | None = None,
         nodecontainer: bool = False,
         functional_simulation: bool = False,
+        synth_jobs: int | None = None,
     ) -> None:
         """Initialize CreateStitchedIP transformation.
 
@@ -132,6 +133,11 @@ class CreateStitchedIP(Transformation):
                 case the AXI stream interfaces keep their original names instead of being
                 renamed to the m_axis_<n>/s_axis_<n> scheme
             functional_simulation: Whether to generate functional simulation wrapper
+            synth_jobs: Number of Vivado synthesis jobs (``launch_runs -jobs``) for the
+                functional-simulation and OOC synthesis runs; defaults to the FINN worker
+                count. The per-node projects of the FIFO-sizing simulation pass a small value,
+                since their handful of runs would otherwise all synthesize at once and multiply
+                the memory footprint of every parallel node build.
         """
         if signature is None:
             signature = []
@@ -145,6 +151,7 @@ class CreateStitchedIP(Transformation):
         self.run_pnr = run_pnr
         self.signature = signature
         self.functional_simulation = functional_simulation
+        self.synth_jobs = synth_jobs
         self.has_aximm = False
         self.aximm_weight_files: dict[str, str] = {}
         self.has_base_address = False
@@ -718,6 +725,8 @@ class CreateStitchedIP(Transformation):
         assert num_workers >= 0, "Number of workers must be nonnegative."
         if num_workers == 0:
             num_workers = mp.cpu_count()
+        if self.synth_jobs is not None:
+            num_workers = max(1, self.synth_jobs)
 
         fifosim_wrapper_filename = None
         if self.functional_simulation:

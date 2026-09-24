@@ -68,6 +68,16 @@ def nlohmann_json_cmake_flag() -> str:
     return f"-DFINN_NLOHMANN_JSON_DIR={json_dir}"
 
 
+# Vivado synthesis jobs per isolated-node project of the functional simulation. Each such
+# project holds the node, its dummies, the memstreamers and sim_ctrl, i.e. a handful of
+# out-of-context runs. Launching them all at once (the default: one job per FINN worker)
+# runs several synth_design processes of ~2.5 GB next to the ~2 GB session per parallel
+# node build, which exceeds the 10 GB per build that the Slurm worker cap budgets
+# (get_slurm_mem_workers) and gets the runs OOM-killed. Two jobs keep the peak within
+# the budget; the dummies and sim_ctrl synthesize in seconds anyway.
+FUNC_SYNTH_JOBS_PER_NODE = 2
+
+
 class SimulationType(str, Enum):
     """Type of simulation."""
 
@@ -1146,7 +1156,12 @@ class SimulationBuilder:
             nodemodel = nodemodel.transform(PrepareIP(self.fpgapart, self.clk_ns))
             nodemodel = nodemodel.transform(HLSSynthIP(self.fpgapart))
             nodemodel = nodemodel.transform(
-                CreateStitchedIP(self.fpgapart, self.clk_ns, functional_simulation=functional_sim)
+                CreateStitchedIP(
+                    self.fpgapart,
+                    self.clk_ns,
+                    functional_simulation=functional_sim,
+                    synth_jobs=FUNC_SYNTH_JOBS_PER_NODE,
+                )
             )
             input_interface_names = nodemodel.get_metadata_prop("predecessors")
             if input_interface_names is not None:
