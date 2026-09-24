@@ -38,6 +38,7 @@ from qonnx.util.basic import qonnx_make_model
 from finn.analysis.fpgadataflow.teg.patterns import StallPattern
 from finn.util.basic import getHWCustomOp
 from tests.fpgadataflow.teg.stall_injection import (
+    is_prepared,
     prepare_node_rtlsim,
     run_abstract,
     run_xsi,
@@ -90,7 +91,7 @@ _PREPARED: dict[tuple, ModelWrapper] = {}
 
 def prepared_model(cfg: tuple) -> ModelWrapper:
     """Prepare (and cache per configuration) the XSI library of the node."""
-    if cfg not in _PREPARED:
+    if not is_prepared(_PREPARED, cfg):
         _PREPARED[cfg] = prepare_node_rtlsim(make_dup_model(*cfg), TEST_FPGA_PART, TARGET_CLK_NS)
     return _PREPARED[cfg]
 

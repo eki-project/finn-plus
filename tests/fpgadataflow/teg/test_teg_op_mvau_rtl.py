@@ -39,6 +39,7 @@ from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 from finn.analysis.fpgadataflow.teg.templates.mvau_rtl import wrapper_params
 from finn.util.basic import getHWCustomOp
 from tests.fpgadataflow.teg.stall_injection import (
+    is_prepared,
     prepare_node_rtlsim,
     run_abstract,
     run_xsi,
@@ -103,7 +104,7 @@ _PREPARED: dict[tuple, ModelWrapper] = {}
 
 def prepared_model(cfg: tuple) -> ModelWrapper:
     """Prepare (and cache per configuration) the XSI library of the node (HLS synthesis)."""
-    if cfg not in _PREPARED:
+    if not is_prepared(_PREPARED, cfg):
         mw, mh, simd, pe, vecs, mem_mode = cfg
         prepared = prepare_node_rtlsim(
             make_mvau_model(mw, mh, simd, pe, list(vecs), mem_mode), TEST_FPGA_PART, TARGET_CLK_NS

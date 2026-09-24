@@ -41,6 +41,7 @@ from qonnx.util.basic import qonnx_make_model
 
 from finn.util.basic import getHWCustomOp
 from tests.fpgadataflow.teg.stall_injection import (
+    is_prepared,
     prepare_node_rtlsim,
     run_abstract,
     run_xsi,
@@ -108,7 +109,7 @@ _PREPARED: dict[tuple, ModelWrapper] = {}
 def prepared_model(cfg: tuple, impl_style: str) -> ModelWrapper:
     """Prepare (and cache per configuration) the XSI library of the node."""
     key = (*cfg, impl_style)
-    if key not in _PREPARED:
+    if not is_prepared(_PREPARED, key):
         num_channels, pe, num_steps, vecs = cfg
         model = make_thresholding_model(num_channels, pe, num_steps, list(vecs), impl_style)
         _PREPARED[key] = prepare_node_rtlsim(model, TEST_FPGA_PART, TARGET_CLK_NS)

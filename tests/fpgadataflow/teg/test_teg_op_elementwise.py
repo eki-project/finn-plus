@@ -44,6 +44,7 @@ from finn.transformation.fpgadataflow.convert_to_hw.elementwise_binary_operation
 )
 from finn.util.basic import getHWCustomOp
 from tests.fpgadataflow.teg.stall_injection import (
+    is_prepared,
     prepare_node_rtlsim,
     run_abstract,
     run_xsi,
@@ -96,7 +97,7 @@ _PREPARED: dict[tuple, ModelWrapper] = {}
 
 def prepared_model(cfg: tuple) -> ModelWrapper:
     """Prepare (and cache per configuration) the XSI library of the node."""
-    if cfg not in _PREPARED:
+    if not is_prepared(_PREPARED, cfg):
         op, lhs, rhs, pe, const = cfg
         _PREPARED[cfg] = prepare_node_rtlsim(
             make_elementwise_model(op, list(lhs), list(rhs), pe, const),

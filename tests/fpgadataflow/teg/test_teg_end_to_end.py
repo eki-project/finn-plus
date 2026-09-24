@@ -42,6 +42,7 @@ import pytest
 
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -56,9 +57,29 @@ pytestmark = [
     pytest.mark.slow,
 ]
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-MODELS = REPO_ROOT / "models"
 BASELINES = Path(__file__).resolve().parent / "baselines"
+
+
+def models_root() -> Path:
+    """Directory holding the DVC-managed ``models/`` tree of the checkout.
+
+    The tests may run from the installed ``finn-plus-tests`` wheel (CI), where the
+    repository is only available through ``CI_PROJECT_DIR``; ``FINN_MODELS_DIR`` overrides.
+    """
+    candidates = [
+        os.environ.get("FINN_MODELS_DIR"),
+        (os.environ.get("CI_PROJECT_DIR") or "")
+        and str(Path(os.environ["CI_PROJECT_DIR"]) / "models"),
+        str(Path(__file__).resolve().parents[3] / "models"),
+        str(Path.cwd() / "models"),
+    ]
+    for c in candidates:
+        if c and (Path(c) / "bnn-pynq").is_dir():
+            return Path(c)
+    return Path(candidates[2])
+
+
+MODELS = models_root()
 SRL_BLOCK = 32
 MAX_QSRL_DEPTH = 256
 
@@ -154,7 +175,10 @@ def build_with_strategy(name: str, strategy: str) -> tuple[dict[str, int], dict,
     dut = DUTS[name]
     model_path = Path(dut["model"])
     if not model_path.is_file():
-        pytest.skip(f"{model_path} not available (dvc pull)")
+        pytest.skip(
+            f"{model_path} not available (dvc pull in the checkout; FINN_MODELS_DIR or "
+            "CI_PROJECT_DIR must point at it when the tests run from the installed wheel)"
+        )
     out_dir = Path(make_build_dir(f"teg_e2e_{name}_{strategy}_"))
     cfg = build_cfg.DataflowBuildConfig(
         output_dir=str(out_dir),

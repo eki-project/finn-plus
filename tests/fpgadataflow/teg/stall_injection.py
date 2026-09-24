@@ -44,6 +44,7 @@ from __future__ import annotations
 import numpy as np
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from typing import TYPE_CHECKING
 
@@ -168,6 +169,20 @@ def prepare_node_rtlsim(model: ModelWrapper, fpga_part: str, clk_ns: float) -> M
     model = model.transform(HLSSynthIP())
     model = model.transform(PrepareRTLSim())
     return model
+
+
+def is_prepared(cache: dict, key: object) -> bool:
+    """Return True when ``cache[key]`` holds a prepared model whose XSI library exists.
+
+    The CI runs every test in its own build directory and may delete it afterwards
+    (``FINN_TESTS_CLEANUP_BUILD_DIRS``); a model prepared by an earlier test of the same
+    worker must then be prepared again.
+    """
+    model = cache.get(key)
+    if model is None:
+        return False
+    so = getHWCustomOp(model.graph.node[0]).get_nodeattr("rtlsim_so")
+    return bool(so) and Path(str(so)).is_file()
 
 
 def tokens_in(node: HWCustomOp, ind: int = 0) -> int:
