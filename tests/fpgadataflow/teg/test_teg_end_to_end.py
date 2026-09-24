@@ -80,6 +80,28 @@ def models_root() -> Path:
 
 
 MODELS = models_root()
+
+
+def describe_missing(path: Path) -> str:
+    """Explain why a DVC-managed model file is not usable (for the skip message)."""
+    parts = []
+    try:
+        parts.append(f"lexists={os.path.lexists(path)}")
+        if os.path.islink(path):
+            target = os.readlink(path)
+            parts.append(f"symlink -> {target} (target exists: {Path(target).exists()})")
+        os.stat(path)
+    except OSError as exc:
+        parts.append(f"stat: {exc}")
+    try:
+        parts.append(f"dir: {sorted(os.listdir(path.parent))[:24]}")
+    except OSError as exc:
+        parts.append(f"listdir: {exc}")
+    for var in ("FINN_MODELS_DIR", "CI_PROJECT_DIR", "CI_DVC_CACHE_DIR"):
+        parts.append(f"{var}={os.environ.get(var)!r}")
+    return "; ".join(parts)
+
+
 SRL_BLOCK = 32
 MAX_QSRL_DEPTH = 256
 
@@ -175,10 +197,7 @@ def build_with_strategy(name: str, strategy: str) -> tuple[dict[str, int], dict,
     dut = DUTS[name]
     model_path = Path(dut["model"])
     if not model_path.is_file():
-        pytest.skip(
-            f"{model_path} not available (dvc pull in the checkout; FINN_MODELS_DIR or "
-            "CI_PROJECT_DIR must point at it when the tests run from the installed wheel)"
-        )
+        pytest.skip(f"{model_path} not available: {describe_missing(model_path)}")
     out_dir = Path(make_build_dir(f"teg_e2e_{name}_{strategy}_"))
     cfg = build_cfg.DataflowBuildConfig(
         output_dir=str(out_dir),
