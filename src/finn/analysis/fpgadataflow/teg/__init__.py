@@ -36,6 +36,8 @@ paper notes). Operators are described by *event chains* (``model.Chain``), FIFOs
 * ``model``: the graph description shared by all analyses.
 * ``patterns``: deterministic stall patterns for the environment (source / sink) chains.
 * ``simulate``: event-driven self-timed execution (least fixed point) of a model.
+* ``native``: the same simulator compiled from C++ (``native/teg_sim.cpp``) for large graphs;
+  ``simulate(backend=...)`` selects it.
 * ``milp``: exact periodic-schedule MILP formulation, instance-size report and solver.
 * ``search``: per-FIFO monotone minimisation (SimFIFO's algorithm) on the simulator.
 * ``templates``: operator control-path templates instantiated from ONNX node attributes.

@@ -26,15 +26,16 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Differential test of the RTL ConvolutionInputGenerator (default template) against XSI."""
+"""Differential test of the HLS VVAU template (depthwise convolution) against XSI."""
 
 import pytest
 
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.custom_op.general.im2col import compute_conv_output_dim
-from qonnx.util.basic import qonnx_make_model
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 from finn.util.basic import getHWCustomOp
 from tests.fpgadataflow.teg.stall_injection import (
@@ -58,39 +59,43 @@ pytestmark = [
 ]
 
 
-def make_swg_model(
-    ifm_dim: int, k: int, stride: int, ifm_ch: int, simd: int, depthwise: int = 0
+def make_vvau_model(
+    k: int, channels: int, dim: int, pe: int, simd: int, mem_mode: str
 ) -> ModelWrapper:
-    """Single ``ConvolutionInputGenerator`` node (RTL, default template)."""
-    dt = DataType["UINT4"]
-    ofm_dim = compute_conv_output_dim(ifm_dim, k, stride, 0, 1)
-    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [1, ifm_dim, ifm_dim, ifm_ch])
-    outp = helper.make_tensor_value_info(
-        "outp", TensorProto.FLOAT, [1, ofm_dim, ofm_dim, k * k * ifm_ch]
-    )
+    """Single ``VVAU`` node without activation (``noActivation = 1``)."""
+    idt, wdt, odt = DataType["UINT4"], DataType["INT4"], DataType["INT16"]
+    in_shape = [1, dim, dim, k * k * channels]
+    out_shape = [1, dim, dim, channels]
+    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, in_shape)
+    outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, out_shape)
     node = helper.make_node(
-        "ConvolutionInputGenerator",
-        ["inp"],
+        "VVAU",
+        ["inp", "weights"],
         ["outp"],
         domain="finn.custom_op.fpgadataflow",
         backend="fpgadataflow",
-        ConvKernelDim=[k, k],
-        IFMChannels=ifm_ch,
-        IFMDim=[ifm_dim, ifm_dim],
-        OFMDim=[ofm_dim, ofm_dim],
+        PE=pe,
         SIMD=simd,
-        Stride=[stride, stride],
-        Dilation=[1, 1],
-        inputDataType=dt.name,
-        outputDataType=dt.name,
-        depthwise=depthwise,
-        parallel_window=0,
-        preferred_impl_style="rtl",
+        Dim=[dim, dim],
+        Channels=channels,
+        Kernel=[k, k],
+        resType="lut",
+        ActVal=0,
+        inputDataType=idt.name,
+        weightDataType=wdt.name,
+        outputDataType=odt.name,
+        noActivation=1,
+        mem_mode=mem_mode,
+        preferred_impl_style="hls",
     )
-    graph = helper.make_graph(nodes=[node], name="swg_graph", inputs=[inp], outputs=[outp])
-    model = ModelWrapper(qonnx_make_model(graph, producer_name="teg-swg"))
-    model.set_tensor_datatype("inp", dt)
-    model.set_tensor_datatype("outp", dt)
+    graph = helper.make_graph(nodes=[node], name="vvau", inputs=[inp], outputs=[outp])
+    model = ModelWrapper(qonnx_make_model(graph, producer_name="teg-vvau"))
+    model.set_tensor_datatype("inp", idt)
+    model.set_tensor_datatype("outp", odt)
+    model.set_tensor_datatype("weights", wdt)
+    model.set_initializer("weights", gen_finn_dt_tensor(wdt, (channels, 1, k, k)))
+    model = model.transform(InferShapes())
+    model = model.transform(InferDataTypes())
     return model
 
 
@@ -100,43 +105,54 @@ _PREPARED: dict[tuple, ModelWrapper] = {}
 def prepared_model(cfg: tuple) -> ModelWrapper:
     """Prepare (and cache per configuration) the XSI library of the node."""
     if cfg not in _PREPARED:
-        _PREPARED[cfg] = prepare_node_rtlsim(make_swg_model(*cfg), TEST_FPGA_PART, TARGET_CLK_NS)
+        _PREPARED[cfg] = prepare_node_rtlsim(make_vvau_model(*cfg), TEST_FPGA_PART, TARGET_CLK_NS)
     return _PREPARED[cfg]
 
 
 CONFIGS = [
-    # (IFMDim, k, stride, IFMChannels, SIMD, depthwise)
-    (6, 3, 1, 1, 1, 0),
-    (6, 3, 1, 4, 2, 0),
-    (7, 3, 2, 2, 2, 0),
-    (6, 3, 1, 4, 2, 1),  # depthwise, cf = 2 (rearranged loop nest)
-    (6, 2, 2, 6, 2, 1),  # depthwise pooling window, cf = 3
-    (8, 3, 2, 2, 2, 0),  # imperfect stride: one skipped row and column
-    (8, 3, 2, 4, 2, 1),  # imperfect stride, depthwise, cf = 2
-    (7, 7, 7, 4, 2, 1),  # global pooling window (MobileNet: one window per channel fold)
-    # parallel template (1x1 kernels, ResNet downsampling)
-    (6, 1, 1, 4, 2, 0),
-    (7, 1, 2, 2, 1, 0),
-    (8, 1, 2, 4, 2, 0),  # imperfect stride
+    # (kernel, channels, dim, PE, SIMD, mem_mode)
+    (3, 4, 2, 2, 1, "internal_embedded"),  # SF = 9, NF = 2
+    (3, 4, 2, 4, 1, "internal_decoupled"),  # MobileNet style: PE = channels, SIMD = 1
+    (2, 4, 3, 2, 2, "internal_embedded"),  # SIMD > 1
 ]
 
 
 def _cfg_id(c: tuple) -> str:
-    style = "_par" if c[1] == 1 else ""
-    return f"D{c[0]}_k{c[1]}_s{c[2]}_C{c[3]}_SIMD{c[4]}{'_dw' if c[5] else ''}{style}"
+    return f"k{c[0]}_C{c[1]}_D{c[2]}_PE{c[3]}_SIMD{c[4]}_{c[5].split('_')[1]}"
+
+
+#: like the HLS MVAU: the flp pipeline shows bubbles under back-pressure that a fixed TEG
+#: does not reproduce (1-3 cycles); with streamed weights also after a plain output stall
+KNOWN_DEVIATIONS = {"both_bernoulli", "both_bursty"}
+KNOWN_DEVIATIONS_DECOUPLED = KNOWN_DEVIATIONS | {"out_single_stall", "out_bernoulli"}
 
 
 @pytest.mark.parametrize("cfg", CONFIGS, ids=_cfg_id)
 @pytest.mark.parametrize("kind", list(stall_kinds(0)))
-def test_teg_op_swg(cfg: tuple, kind: str, finn_test_seed: int) -> None:
+def test_teg_op_vvau_hls(
+    cfg: tuple, kind: str, finn_test_seed: int, request: pytest.FixtureRequest
+) -> None:
     """XSI and the abstract model must produce identical handshake traces."""
+    deviations = KNOWN_DEVIATIONS_DECOUPLED if cfg[5] == "internal_decoupled" else KNOWN_DEVIATIONS
+    if kind in deviations:
+        request.applymarker(
+            pytest.mark.xfail(
+                strict=False, reason="flp pipeline: bubbles under back-pressure (not a fixed TEG)"
+            )
+        )
     model = prepared_model(cfg)
     in_pat, out_pat = stall_kinds(finn_test_seed)[kind]
     frames = 2
-    xsi = run_xsi(model, frames, in_pat, out_pat)
+    inst = getHWCustomOp(model.graph.node[0])
+    extra = {}
+    if cfg[5] == "internal_decoupled":
+        # weight stream of the memstream: one PE x SIMD word per loop iteration, i.e. SF
+        # words per output token (vvau.hpp:110-157)
+        sf = cfg[0] * cfg[0] // cfg[4]
+        extra = {"in1_V": tokens_out(inst) * sf}
+    xsi = run_xsi(model, frames, in_pat, out_pat, extra_inputs=extra)
     model_in, model_out = run_abstract(model, frames, in_pat, out_pat)
     xsi_in, xsi_out = xsi.relative()
-    inst = getHWCustomOp(model.graph.node[0])
     n_in, n_out = tokens_in(inst) * frames, tokens_out(inst) * frames
     assert len(xsi_in["in0"]) == n_in and len(xsi_out["out0"]) == n_out
     print(
@@ -146,4 +162,4 @@ def test_teg_op_swg(cfg: tuple, kind: str, finn_test_seed: int) -> None:
         f"{xsi_out['out0'][-1]} (model {model_in['in0'][-1]}/{model_out['out0'][-1]})"
     )
     diffs = compare_traces(xsi_in, xsi_out, model_in, model_out)
-    assert_traces_equal(diffs, f"SWG {_cfg_id(cfg)} stall={kind} in={in_pat!r} out={out_pat!r}")
+    assert_traces_equal(diffs, f"VVAU {_cfg_id(cfg)} stall={kind}")

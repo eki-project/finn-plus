@@ -25,7 +25,8 @@ include = [
     {path = "src/finn/util/vivado_scripts/*.sh", format = ["sdist", "wheel"]},
     {path = "src/finn/util/vivado_scripts/*.tcl", format = ["sdist", "wheel"]},
     {path = "src/finn/util/vivado_scripts/*.xdc", format = ["sdist", "wheel"]},
-    {path = "src/finn/interface/external_dependencies.yaml", format = ["sdist", "wheel"]}
+    {path = "src/finn/interface/external_dependencies.yaml", format = ["sdist", "wheel"]},
+    {path = "src/finn/analysis/fpgadataflow/teg/native/*.cpp", format = ["sdist", "wheel"]}
 ]
 version = "0.0.0"
 

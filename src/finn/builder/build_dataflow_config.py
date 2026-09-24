@@ -763,6 +763,12 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: Write the timed-event-graph model as JSON into the report directory.
     teg_dump_model: bool = False
 
+    #: (Only relevant when auto_fifo_strategy == abstract_sim or milp)
+    #: Simulator backend: "native" (C++ core compiled on first use with the system
+    #: compiler, 30-50x faster), "python", or "auto" (native when available). The
+    #: environment variable FINN_TEG_SIM_BACKEND applies when this is None.
+    teg_sim_backend: Optional[str] = None
+
     #: (Only relevant when auto_fifo_strategy == milp)
     #: Largest MILP (number of constraint rows) that is actually solved; larger instances
     #: only produce the size report.

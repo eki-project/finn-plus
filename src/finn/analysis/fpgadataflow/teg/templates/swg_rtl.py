@@ -61,8 +61,28 @@ advances by 1 after each fold except the last (``swg_common.sv:73-75``,
 ``tail_incr_inner_condition``), where ``TAIL_INCR_W/H/LAST`` are reduced by ``cf - 1`` so
 that the register lands on the next window's base.
 
-Restrictions of this transcription (raise for anything else): dilation 1,
-``mmv_in = mmv_out = 1``, no imperfect-stride skipped rows/columns.
+Imperfect strides (``skip_rows``/``skip_columns`` in ``prepare_codegen_default``) leave
+trailing input rows and columns that are read but never fetched: the window positions are
+unchanged, ``LAST_WRITE_ELEM`` stops the fetches after the last window and ``Fetching_done``
+lifts the slot-reuse guard for the remaining reads (``:140``).
+
+Restrictions of this transcription (raise for anything else): dilation 1, ``M = 1``.
+
+Parallel template (``swg_template_parallel.sv``, selected for 1x1 kernels and
+``parallel_window = 1``): the buffer is a shift register, the window is read from fixed taps
+and there is no output register (class C: ``in0_V_V_TREADY = read_ok`` is combinational in
+``TVALID``). Two chains, ``R_k`` (``read_ok``, ``:135``) and ``W_j`` (``write_ok``, ``:126``),
+where ``c(j)`` is the newest input element of window ``j`` (``Current_elem``):
+
+* ``W_j >= R_{c(j)} + 1``: ``write_cmd`` needs ``Current_elem <= Newest_buffered_elem`` (``:124``;
+  registered, ``:157``).
+* ``R_k >= W_{J(k)} + d``: ``read_cmd`` needs ``Newest_buffered_elem <= Current_elem`` (``:131``),
+  i.e. every window with ``c(j) < k - 1`` written in an earlier cycle (``J(k)`` the last such
+  window, ``d = 1``); when ``c(J(k)) = k - 1`` the read is additionally blocked while that
+  window's write is pending (``!write_blocked``, ``:134``), so the write may be in the same cycle
+  (``d = 0``). After the last write ``Writing_done`` frees the reads (``:131``).
+* ``R_0^{n+1} >= W_last^n + 1``: counters reset at the later of the last read and the last write
+  (``:158-181``).
 """
 
 from __future__ import annotations
@@ -91,8 +111,6 @@ def swg_default_trajectory(
     """
     out_h = (h - kh) // sh + 1
     out_w = (w - kw) // sw + 1
-    if (h - kh) % sh or (w - kw) % sw:
-        raise FINNUserError("SWG template: imperfect stride (skipped rows/columns) not supported")
     buffer_min_size = ((kh - 1) * w + (kw - 1) + 1) * cf  # prepare_codegen_default:405
     n_in = h * w * cf  # LAST_READ_ELEM + 1
     dw = depthwise and cf > 1  # IS_DEPTHWISE (prepare_codegen_default:466-478)
@@ -233,17 +251,89 @@ def swg_default(
     )
 
 
+def swg_parallel_trajectory(
+    h: int, w: int, kh: int, kw: int, sh: int, sw: int, cf: int
+) -> tuple[list[int], int]:
+    """Return ``(c, n_in)`` of the parallel SWG: ``c[j]`` is the newest input element of
+    window ``j`` (``Current_elem``: ``FIRST_WRITE_ELEM = buffer_min_size - 1`` plus the
+    controller's ``HEAD_INCR_KH/W/H`` per write, ``prepare_codegen_parallel:604-667``); the
+    channel folds of one window are consecutive."""
+    out_h = (h - kh) // sh + 1
+    out_w = (w - kw) // sw + 1
+    buffer_min_size = ((kh - 1) * w + (kw - 1)) * cf + 1  # prepare_codegen_parallel:585
+    c: list[int] = []
+    for oy in range(out_h):
+        for ox in range(out_w):
+            base = (oy * sh * w + ox * sw) * cf + buffer_min_size - 1
+            c.extend(base + s for s in range(cf))
+    return c, h * w * cf
+
+
+def swg_parallel(
+    prefix: str,
+    in_edge: str,
+    out_edge: str,
+    h: int,
+    w: int,
+    k: int | tuple[int, int],
+    stride: int | tuple[int, int],
+    cf: int,
+) -> OpModel:
+    """Build the chains of one parallel-template SWG instance (see the module docstring)."""
+    kh, kw = k if isinstance(k, tuple) else (k, k)
+    sh, sw = stride if isinstance(stride, tuple) else (stride, stride)
+    c, n_in = swg_parallel_trajectory(h, w, kh, kw, sh, sw, cf)
+    n_out = len(c)
+    r = Chain(f"{prefix}.R")
+    wch = Chain(f"{prefix}.W")
+    restart = f"{prefix}.restart"
+    r.event(1, reads=[in_edge, restart])
+    r.events(n_in - 1, 1, reads=[in_edge])
+    wch.events(n_out - 1, 1, writes=[out_edge])
+    wch.event(1, writes=[out_edge, restart])
+    # W_j >= R_{c(j)} + 1 (swg_template_parallel.sv:124, :157)
+    for j in range(n_out):
+        wch.add_arc(j, Arc(r.name, c[j], 0, 1))
+    # R_k >= W_{J(k)} + d, J(k) = max{j : c(j) <= k - 1} (:131, :134)
+    j = -1
+    for kk in range(n_in):
+        while j + 1 < n_out and c[j + 1] <= kk - 1:
+            j += 1
+        if j >= 0:
+            r.add_arc(kk, Arc(wch.name, j, 0, 0 if c[j] == kk - 1 else 1))
+    # R may run ahead of W_j up to element c(j+1) (+1); W ahead of R_k up to J(k) + 1
+    max_incr = max((c[i + 1] - c[i] for i in range(n_out - 1)), default=1)
+    r.history_window = max_incr + 4
+    wch.history_window = 4
+    edges = [FIFOEdge(restart, wch.name, r.name, depth=None, lf=1, lb=1, initial_tokens=1)]
+    return OpModel(
+        chains=[r, wch],
+        internal_edges=edges,
+        inputs=[r.name],
+        outputs=[wch.name],
+        notes={
+            "template": "parallel",
+            "n_in": n_in,
+            "n_out": n_out,
+            "out_dim": ((h - kh) // sh + 1, (w - kw) // sw + 1),
+        },
+    )
+
+
 @register("ConvolutionInputGenerator", "rtl")
 def swg_rtl(node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]) -> OpModel:
-    """Build the default-template model of a ``ConvolutionInputGenerator_rtl`` node."""
+    """Build the model of a ``ConvolutionInputGenerator_rtl`` node (default or parallel
+    template, ``select_impl_style``)."""
     if tuple(node.get_nodeattr("Dilation")) != (1, 1):
         raise FINNUserError("SWG template: dilation not supported yet")
-    if node.select_impl_style() != "default":
-        raise FINNUserError("SWG template: only the default (non-parallel) template is modelled")
+    if node.get_nodeattr("M") != 1:
+        raise FINNUserError("SWG template: M > 1 (multiple input pixels per cycle) not supported")
     h, w = node.get_nodeattr("IFMDim")
     kh, kw = node.get_nodeattr("ConvKernelDim")
     sh, sw = node.get_nodeattr("Stride")
     cf = node.get_nodeattr("IFMChannels") // node.get_nodeattr("SIMD")
+    if node.select_impl_style() == "parallel":
+        return swg_parallel(prefix, in_edges[0], out_edges[0], h, w, (kh, kw), (sh, sw), cf)
     return swg_default(
         prefix,
         in_edges[0],

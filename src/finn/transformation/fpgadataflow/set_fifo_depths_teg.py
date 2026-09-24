@@ -53,7 +53,7 @@ from finn.analysis.fpgadataflow.teg.search import (
     measure_peak_occupancy,
     minimize_depths,
 )
-from finn.analysis.fpgadataflow.teg.simulate import simulate
+from finn.analysis.fpgadataflow.teg.simulate import Backend, simulate
 from finn.transformation.fpgadataflow.fifo_depth_search import (
     MinimizationOrder,
     candidate_depths,
@@ -86,6 +86,16 @@ def _orders(cfg: DataflowBuildConfig) -> list[MinimizationOrder]:
             f"Unknown teg_minimization_orders entry {exc}; valid: "
             + ", ".join(o.name for o in MinimizationOrder)
         ) from exc
+
+
+def _backend(cfg: DataflowBuildConfig) -> Backend | None:
+    """Return the simulator backend of ``cfg.teg_sim_backend`` (None: environment / auto)."""
+    value = cfg.teg_sim_backend
+    if value is None:
+        return None
+    if value not in ("auto", "python", "native"):
+        raise FINNUserError(f"teg_sim_backend must be auto, python or native, not {value!r}")
+    return cast("Backend", value)
 
 
 def _write_fifo_data(model: ModelWrapper, teg: TEGModel, depths: dict[str, int]) -> Path:
@@ -131,6 +141,7 @@ class RunAbstractSimFIFOSizing(Transformation):
             max_qsrl_depth=self.max_qsrl_depth,
             max_frames=int(self.cfg.teg_max_frames),
             target_interval=self.cfg.teg_target_interval,
+            backend=_backend(self.cfg),
         )
         _write_fifo_data(model, teg, res.depths)
         report = {
@@ -191,12 +202,13 @@ class RunMILPFIFOSizing(Transformation):
         _dump_model(cfg, teg, "teg_model")
         widths = edge_widths(teg)
         max_frames = int(cfg.teg_max_frames)
-        base = measure_bottleneck(teg, max_frames=max_frames)
+        backend = _backend(cfg)
+        base = measure_bottleneck(teg, max_frames=max_frames, backend=backend)
         interval = (
             float(cfg.teg_target_interval) if cfg.teg_target_interval is not None else base.interval
         )
         target = math.ceil(interval)
-        paced = measure_peak_occupancy(teg, target, max_frames=max_frames)
+        paced = measure_peak_occupancy(teg, target, max_frames=max_frames, backend=backend)
         upper = {
             e: safe_bram_starting_depth(paced.max_occupancy[e], self.max_qsrl_depth)
             for e in teg.external_edges
@@ -257,7 +269,10 @@ class RunMILPFIFOSizing(Transformation):
             finish({"solver_status": res.status, "solver_message": res.message})
             raise FINNUserError(f"MILP solver failed: {res.message} (report at {report_path})")
         check = simulate(
-            teg, capacities_for(res.depths, self.max_qsrl_depth), max_frames=max_frames
+            teg,
+            capacities_for(res.depths, self.max_qsrl_depth),
+            max_frames=max_frames,
+            backend=backend,
         )
         verified = check.ok and check.interval <= target
         finish(

@@ -79,6 +79,9 @@ class HLSLoopParams:
     #: True when the loop is in the top function (inlined); a loop in a non-inlined
     #: sub-function enters one cycle later after reset (the call from the top FSM)
     top_level: bool = True
+    #: True when the top function is a ``#pragma HLS dataflow`` region: its processes run
+    #: continuously (no per-frame invocation, no output drain between frames)
+    dataflow: bool = False
     #: where the values came from ("report", "default")
     source: str = "default"
 
@@ -244,6 +247,7 @@ def hls_loop_params(node: HWCustomOp) -> HLSLoopParams:
     ptype, delay = parse_pipeline_type(xml)
     params.rewind = "auto-rewind" in ptype
     params.rewind_delay = delay
+    params.dataflow = "dataflow" in ptype
     params.interval = parse_interval(xml)
     loops = parse_loop_latencies(xml)
     if not loops:
@@ -258,6 +262,10 @@ def hls_loop_params(node: HWCustomOp) -> HLSLoopParams:
                 sub_type, sub_delay = parse_pipeline_type(other)
                 if "auto-rewind" in sub_type and not params.rewind:
                     params.rewind_delay = sub_delay
+                    if params.dataflow:
+                        # a dataflow process rewinds its loop by itself: the next frame
+                        # follows after the rewind delay, not after the region's interval
+                        params.rewind = True
                 break
     depths = [d["PipelineDepth"] for d in loops.values() if "PipelineDepth" in d]
     trips = [d["TripCount"] for d in loops.values() if "TripCount" in d]
@@ -272,7 +280,7 @@ def hls_loop_params(node: HWCustomOp) -> HLSLoopParams:
                 target = params.read_stage if op == "read" else params.write_stage
                 if port not in target:
                     target[port] = stage
-    if not params.rewind:
+    if not params.rewind and not params.dataflow:
         log.warning(
             f"HLS node {node.onnx_node.name}: top-level pipeline type '{ptype}' is not "
             "auto-rewind; the loop model assumes an idle gap of interval - trip count between "

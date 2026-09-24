@@ -29,11 +29,13 @@
 """End-to-end FIFO sizing of the regression models with the TEG strategies.
 
 The models, folding and specialisation configs are the ones of the CI regression benchmark
-(``ci/cfg/regression_small.yml``: ``models/bnn-pynq/*``, DVC-managed). The reference depths
-are the ``fifo_sizing.json`` reports of the ``distributed_sim`` strategy from a past regression
-pipeline (``baselines/``), so this test does not re-run the RTL-based sizing. The build runs
-the flow up to and including ``step_generate_hardware`` (HLS synthesis of every node plus the
-sizing) and compares the resulting ``fifo_sizing.json``.
+(``ci/cfg/regression_small.yml``: ``models/bnn-pynq/*``; ``regression_large.yml``:
+``models/mobilenetv1``, ``models/resnet18``; DVC-managed; build recipes from
+``src/finn/benchmarking/dut/*.yml``). The reference depths are the ``fifo_sizing.json`` reports
+of the ``distributed_sim`` strategy from a past regression pipeline (``baselines/``), so this
+test does not re-run the RTL-based sizing. The build runs the flow up to and including
+``step_generate_hardware`` (HLS synthesis of every node plus the sizing) and compares the
+resulting ``fifo_sizing.json``.
 """
 
 import pytest
@@ -55,10 +57,83 @@ pytestmark = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-MODELS = REPO_ROOT / "models" / "bnn-pynq"
+MODELS = REPO_ROOT / "models"
 BASELINES = Path(__file__).resolve().parent / "baselines"
 SRL_BLOCK = 32
 MAX_QSRL_DEPTH = 256
+
+BNN_PYNQ_STEPS = [
+    "finn.builder.custom_step_library.general.add_preproc_divide_by_255",
+    "finn.builder.custom_step_library.general.add_postproc_top1",
+    "step_qonnx_to_finn",
+    "step_tidy_up",
+    "step_streamline",
+    "step_convert_to_hw",
+    "step_create_dataflow_partition",
+    "step_specialize_layers",
+    "step_target_fps_parallelization",
+    "step_apply_folding_config",
+    "step_minimize_bit_width",
+    "step_generate_estimate_reports",
+    "step_generate_hardware",
+]
+MOBILENET_STEPS = [  # dut/mobilenetv1.yml
+    "finn.builder.custom_step_library.mobilenet.step_mobilenet_streamline",
+    "finn.builder.custom_step_library.mobilenet.step_mobilenet_lower_convs",
+    "finn.builder.custom_step_library.mobilenet.step_mobilenet_convert_to_hw_layers_separate_th",
+    "step_create_dataflow_partition",
+    "step_specialize_layers",
+    "step_apply_folding_config",
+    "step_minimize_bit_width",
+    "step_generate_estimate_reports",
+    "step_generate_hardware",
+]
+RESNET_STEPS = [  # dut/resnet18.yml
+    "step_qonnx_to_finn",
+    "step_tidy_up",
+    "finn.builder.custom_step_library.resnet.step_resnet_tidy",
+    "finn.builder.custom_step_library.resnet.step_resnet_streamline",
+    "step_convert_to_hw",
+    "finn.builder.custom_step_library.resnet.step_resnet_convert_to_hw",
+    "step_create_dataflow_partition",
+    "step_specialize_layers",
+    "step_target_fps_parallelization",
+    "step_apply_folding_config",
+    "step_minimize_bit_width",
+    "step_generate_estimate_reports",
+    "step_generate_hardware",
+]
+
+
+def _bnn_pynq(name: str) -> dict:
+    return {
+        "model": MODELS / "bnn-pynq" / f"{name}_qonnx.onnx",
+        "folding": MODELS / "bnn-pynq" / f"{name}_folding_config.json",
+        "specialize": MODELS / "bnn-pynq" / f"{name}_specialize_layers.json",
+        "steps": BNN_PYNQ_STEPS,
+        "extra": {},
+    }
+
+
+#: build recipes of the regression models (board and clock: the CI defaults, RFSoC2x2 / 10 ns)
+DUTS: dict[str, dict] = {
+    "tfc-w1a1": _bnn_pynq("tfc-w1a1"),
+    "cnv-w1a1": _bnn_pynq("cnv-w1a1"),
+    "mobilenetv1": {
+        "model": MODELS / "mobilenetv1" / "mobilenetv1-w4a4_pre_post_tidy_opset-11.onnx",
+        "folding": MODELS / "mobilenetv1" / "ZCU102_folding_config_live_fifo.json",
+        "specialize": MODELS / "mobilenetv1" / "ZCU102_specialize_layers.json",
+        "steps": MOBILENET_STEPS,
+        "extra": {},
+    },
+    "resnet18": {
+        "model": MODELS / "resnet18" / "resnet18_w3a3_cifar100.onnx",
+        "folding": MODELS / "resnet18" / "resnet18_folding_config.json",
+        "specialize": MODELS / "resnet18" / "resnet18_specialize_layers.json",
+        "steps": RESNET_STEPS,
+        "extra": {"standalone_thresholds": True},
+    },
+}
 
 
 def load_baseline(name: str) -> dict[str, int]:
@@ -76,7 +151,8 @@ def depth_class(depth: int) -> int:
 
 def build_with_strategy(name: str, strategy: str) -> tuple[dict[str, int], dict, float]:
     """Run the build flow up to hardware generation and return (depths, sizing report, time)."""
-    model_path = MODELS / f"{name}_qonnx.onnx"
+    dut = DUTS[name]
+    model_path = Path(dut["model"])
     if not model_path.is_file():
         pytest.skip(f"{model_path} not available (dvc pull)")
     out_dir = Path(make_build_dir(f"teg_e2e_{name}_{strategy}_"))
@@ -84,28 +160,15 @@ def build_with_strategy(name: str, strategy: str) -> tuple[dict[str, int], dict,
         output_dir=str(out_dir),
         board="RFSoC2x2",
         synth_clk_period_ns=10.0,
-        folding_config_file=MODELS / f"{name}_folding_config.json",
-        specialize_layers_config_file=MODELS / f"{name}_specialize_layers.json",
+        folding_config_file=str(dut["folding"]),
+        specialize_layers_config_file=str(dut["specialize"]),
         auto_fifo_depths=True,
         auto_fifo_strategy=build_cfg.AutoFIFOSizingMethod(strategy),
         split_large_fifos=True,
         teg_milp_fallback_to_abstract_sim=False,
         generate_outputs=[build_cfg.DataflowOutputType.ESTIMATE_REPORTS],
-        steps=[
-            "finn.builder.custom_step_library.general.add_preproc_divide_by_255",
-            "finn.builder.custom_step_library.general.add_postproc_top1",
-            "step_qonnx_to_finn",
-            "step_tidy_up",
-            "step_streamline",
-            "step_convert_to_hw",
-            "step_create_dataflow_partition",
-            "step_specialize_layers",
-            "step_target_fps_parallelization",
-            "step_apply_folding_config",
-            "step_minimize_bit_width",
-            "step_generate_estimate_reports",
-            "step_generate_hardware",
-        ],
+        steps=dut["steps"],
+        **dut["extra"],
     )
     t0 = time.time()
     build.build_dataflow_cfg(str(model_path), cfg)
@@ -151,7 +214,7 @@ def compare_to_baseline(name: str, depths: dict[str, int], baseline: dict[str, i
     return table
 
 
-@pytest.mark.parametrize("name", ["tfc-w1a1", "cnv-w1a1"])
+@pytest.mark.parametrize("name", ["tfc-w1a1", "cnv-w1a1", "mobilenetv1", "resnet18"])
 def test_teg_abstract_sim_end_to_end(name: str) -> None:
     """``abstract_sim`` reproduces the ``distributed_sim`` depths up to block granularity."""
     baseline = load_baseline(name)
@@ -164,7 +227,7 @@ def test_teg_abstract_sim_end_to_end(name: str) -> None:
     compare_to_baseline(name, depths, baseline)
 
 
-@pytest.mark.parametrize("name", ["tfc-w1a1"])
+@pytest.mark.parametrize("name", ["tfc-w1a1", "cnv-w1a1", "mobilenetv1", "resnet18"])
 def test_teg_milp_report_end_to_end(name: str) -> None:
     """``milp`` produces the instance-size report; it solves only when the instance is small."""
     cfg_strategy = "milp"

@@ -56,13 +56,15 @@ the mean of the second half of the intervals as a fallback estimate.
 from __future__ import annotations
 
 import math
+import os
 from collections import deque
 from dataclasses import dataclass, field
 from heapq import heappop, heappush
 from itertools import pairwise
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNInternalError, FINNUserError
+from finn.util.logging import log
 
 if TYPE_CHECKING:
     from finn.analysis.fpgadataflow.teg.model import TEGModel
@@ -225,7 +227,11 @@ class _Simulator:
         lf, lb, depth, gate = self.lf, self.lb, self.depth, self.gate
         src_direct = self.src_direct
         group, freezer, until_empty = self.group, self.freezer, self.until_empty
-        frozen_by = [-1] * self.ngroups  # chain currently freezing the group, or -1
+        # freeze bookkeeping: number of freezer chains currently blocking each group, the
+        # chains that count, and the pipeline chains waiting for the group to thaw
+        freeze_count = [0] * self.ngroups
+        freezing = [False] * nc
+        group_waiters: list[list[int]] = [[] for _ in range(self.ngroups)]
 
         # ---- mutable state
         idx = [0] * nc  # next event index within the frame
@@ -317,9 +323,10 @@ class _Simulator:
                 heappush(heap, (tmin, prio[c], c))
                 continue
             grp = group[c]
-            if grp >= 0 and frozen_by[grp] >= 0 and frozen_by[grp] != c:
-                # the pipeline is frozen: retry when the freezing chain fires
-                waiters[frozen_by[grp]].append(c)
+            if grp >= 0 and freeze_count[grp] > 0 and not freezer[c]:
+                # the pipeline is frozen: retry when the last freezing port has handed on its
+                # token (the ports themselves sit outside the pipeline and are never frozen)
+                group_waiters[grp].append(c)
                 continue
             tneed = t
             blocked = False
@@ -349,8 +356,9 @@ class _Simulator:
                         if ts > tneed:
                             tneed = ts
             if blocked:
-                if data_ready and freezer[c]:
-                    frozen_by[grp] = c
+                if data_ready and freezer[c] and not freezing[c]:
+                    freezing[c] = True
+                    freeze_count[grp] += 1
                 continue
             # ---- index-mapped arcs
             for s, si, q, dly in arcs[c][i]:
@@ -382,19 +390,21 @@ class _Simulator:
                 if g is not None:
                     tneed = g.next_true(tneed)
             if tneed > t:
-                if data_ready and freezer[c]:
-                    frozen_by[grp] = c
+                if data_ready and freezer[c] and not freezing[c]:
+                    freezing[c] = True
+                    freeze_count[grp] += 1
                 heappush(heap, (tneed, prio[c], c))
                 continue
             # a freeze-until-empty freezer keeps the group frozen while more than one token
             # is still queued on its input edges (after this one is taken)
-            if (
-                grp >= 0
-                and freezer[c]
-                and frozen_by[grp] == c
-                and (not until_empty[c] or all(wc[e] - rc[e] <= 2 for e in rd[c][i]))
-            ):
-                frozen_by[grp] = -1
+            if freezing[c] and (not until_empty[c] or all(wc[e] - rc[e] <= 2 for e in rd[c][i])):
+                freezing[c] = False
+                freeze_count[grp] -= 1
+                if freeze_count[grp] == 0:
+                    gw = group_waiters[grp]
+                    for w in gw:
+                        heappush(heap, (t, prio[w], w))
+                    gw.clear()
             # ---- fire at t
             for e in rd[c][i]:
                 wq[e].popleft()
@@ -522,6 +532,21 @@ class _Simulator:
         )
 
 
+#: simulator backends: ``python`` (this module), ``native`` (``native.py``: the same
+#: algorithm compiled from C++), ``auto`` (native when it compiles and no recording is
+#: requested, else python); overridden by the environment variable ``FINN_TEG_SIM_BACKEND``
+Backend = Literal["auto", "python", "native"]
+_FALLBACK_WARNED = False
+
+
+def default_backend() -> Backend:
+    """Backend selected by ``FINN_TEG_SIM_BACKEND`` (default ``auto``)."""
+    value = os.environ.get("FINN_TEG_SIM_BACKEND", "auto").strip().lower()
+    if value not in ("auto", "python", "native"):
+        raise FINNUserError(f"FINN_TEG_SIM_BACKEND must be auto, python or native, not {value}")
+    return value  # type: ignore[return-value]
+
+
 def simulate(
     model: TEGModel,
     depths: dict[str, int | None] | None = None,
@@ -533,6 +558,7 @@ def simulate(
     stable_occupancy: bool = True,
     record_events: bool = False,
     record_edges: set[str] | None = None,
+    backend: Backend | None = None,
 ) -> SimResult:
     """Run the self-timed execution of ``model``.
 
@@ -548,7 +574,32 @@ def simulate(
             sources run free into unbounded FIFOs, where occupancy grows forever).
         record_events: keep all event times per chain (memory!).
         record_edges: keep write/read handshake cycles for these edges.
+        backend: ``python``, ``native`` or ``auto`` (default: :func:`default_backend`).
     """
+    global _FALLBACK_WARNED
+    chosen = backend or default_backend()
+    recording = record_events or bool(record_edges)
+    if chosen != "python" and not recording:
+        from finn.analysis.fpgadataflow.teg import native
+
+        if chosen == "native" or native.available():
+            return native.run(
+                model,
+                depths,
+                max_frames,
+                min_frames,
+                max_cycles,
+                stop_when_stable,
+                stable_occupancy,
+            )
+        if not _FALLBACK_WARNED:
+            _FALLBACK_WARNED = True
+            log.warning(
+                "The native TEG simulator is not available (no C++ compiler?); using the "
+                "Python simulator, which is 30-50x slower on large graphs"
+            )
+    elif chosen == "native" and recording:
+        raise FINNUserError("The native TEG simulator does not support event/handshake recording")
     sim = _Simulator(model, depths, record_events, record_edges)
     return sim.run(max_frames, min_frames, max_cycles, stop_when_stable, stable_occupancy)
 

@@ -108,6 +108,7 @@ def flp_loop(
     out_regslices: bool | None = None,
     capacity: int | None = None,
     back_latency: int | None = None,
+    drain: bool | None = None,
 ) -> OpModel:
     """Build the model of one flp loop with its port register slices.
 
@@ -119,22 +120,38 @@ def flp_loop(
         latency: read-to-write latency override; defaults to the stage difference of the
             first output write and the first input read, else :data:`DEFAULT_LATENCY`.
         frame_gap: gap between the last iteration of a frame and the first of the next;
-            defaults to ``1 + rewind_delay`` (auto-rewind) or ``1 + interval - trip count``.
+            defaults to 1 for inlined top-level loops, ``1 + rewind_delay`` for loops of
+            dataflow processes and ``interval - trip count`` for non-inlined functions.
         regslices: insert the port register slices (False for bare loops in unit tests).
         in_regslices: override ``regslices`` for the input ports.
         out_regslices: override ``regslices`` for the output ports.
         capacity: override the capacity of the read-to-write edge (experiments).
         back_latency: override its backward latency (experiments).
+        drain: a non-inlined function is invoked once per frame and the next invocation
+            waits until its output slices drained (``ap_done`` gating); False for a
+            process inside a dataflow region, which runs continuously and whose output
+            ports stall the pipeline like the ports of an inlined loop (``params.dataflow``).
+            Defaults to ``not params.top_level and not params.dataflow``.
     """
     params = params or HLSLoopParams()
-    in_edges = sorted({e for reads, _ in iterations for e in reads})
-    out_edges = sorted({e for _, writes in iterations for e in writes})
+    # port order = order of first appearance in the iterations (the builders list the reads
+    # and writes of an iteration in the node's stream order); ``OpModel.inputs/outputs``
+    # must follow the node's stream order
+    in_edges = list(dict.fromkeys(e for reads, _ in iterations for e in reads))
+    out_edges = list(dict.fromkeys(e for _, writes in iterations for e in writes))
     if latency is None:
         rs = [params.read_stage[p] for p in params.read_stage]
         ws = [params.write_stage[p] for p in params.write_stage]
         latency = (max(ws) - min(rs)) if rs and ws else DEFAULT_LATENCY
     if frame_gap is None:
-        if params.rewind or params.interval is None or params.trip_count is None:
+        if params.top_level:
+            # inlined top-level loop under ap_ctrl_none: the loop rewinds without a bubble
+            # even when the report lists a rewind delay (measured on a 9-iteration
+            # ElementwiseAdd nest reported as "auto-rewind flp (delay=1)")
+            frame_gap = 1
+        elif params.rewind or params.interval is None or params.trip_count is None:
+            # dataflow process: the loop rewinds by itself after the reported delay
+            # (measured on Pool_batch, delay=1: one idle cycle between frames)
             frame_gap = 1 + params.rewind_delay
         else:
             # non-inlined loop: one invocation per frame; the top-level interval is the
@@ -154,6 +171,8 @@ def flp_loop(
     # iteration 0 enters stage 0 in the cycle after reset (-1 on the harness time base) for a
     # top-level loop and one cycle later when the loop is called as a sub-function
     entry = -1 if params.top_level else 0
+    if drain is None:
+        drain = not params.top_level and not params.dataflow
     rs_list = list(params.read_stage.values())
     ws_list = list(params.write_stage.values())
     r_start = entry + (min(rs_list) if rs_list else 0)
@@ -184,10 +203,13 @@ def flp_loop(
         for e in out_edges:
             slice_edge = f"{prefix}.outslice.{e}"
             n = sum(1 for _, writes in iterations if e in writes)
-            if params.top_level:
+            if params.top_level or not drain:
+                # inlined loop (apdone_blk) or dataflow process: one output entry, a blocked
+                # handshake stalls the whole stage in the same cycle (all writes of the
+                # stage wait: dup.hpp's "blocking write to all outputs"), the next write may
+                # follow in the cycle of the handshake
                 port = Chain(f"{prefix}.PO.{e}", freeze_group=group, freezer=True)
                 port.events(n, 1, reads=[slice_edge], writes=[e])
-                # apdone_blk: one entry, the next write may follow in the cycle of the handshake
                 edges.append(FIFOEdge(slice_edge, w.name, port.name, depth=1, lf=1, lb=0))
             else:
                 port = Chain(f"{prefix}.PO.{e}")
@@ -427,6 +449,97 @@ def globalaccpool_hls(
         its += [((in_edges[0],), ())] * (n_in // reps)
         its += [((), (out_edges[0],))] * (n_out // reps)
     return flp_loop(prefix, its, loop_params(node))
+
+
+# ---------------------------------------------------------------------------- ReplicateStream
+@register("ReplicateStream", "hls")
+def replicate_stream_hls(
+    node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]
+) -> OpModel:
+    """``replicate_stream_hls.py::docompute``: one flp loop over all folded elements, one read
+    and one blocking write to every replica per iteration (zero skew tolerance between the
+    outputs, see the inventory: class A2)."""
+    n = int(np.prod(node.get_folded_output_shape()[:-1]))
+    its: list[Iteration] = [((in_edges[0],), tuple(out_edges))] * n
+    return flp_loop(prefix, its, loop_params(node))
+
+
+# ---------------------------------------------------------------------------- DuplicateStreams
+@register("DuplicateStreams", "hls")
+def duplicatestreams_hls(
+    node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]
+) -> OpModel:
+    """``StreamingDup`` (``dup.hpp:28-33``): a free-running flp function inside a dataflow
+    region (``duplicatestreams_hls.py::pragmas``): non-blocking read when the input is not
+    empty, blocking writes to every output. One iteration per input token, no frame gap."""
+    n = int(np.prod(node.get_folded_input_shape()[:-1]))
+    its: list[Iteration] = [((in_edges[0],), tuple(out_edges))] * n
+    params = loop_params(node)
+    params.top_level = False
+    params.dataflow = True
+    return flp_loop(prefix, its, params, frame_gap=1, drain=False)
+
+
+# ---------------------------------------------------------------------------- ElementwiseBinary
+def broadcast_read_schedule(in_shape: Sequence[int], out_shape: Sequence[int]) -> list[bool]:
+    """Per output element (row-major over ``out_shape``) whether the operand is read.
+
+    Transcribes ``elementwise_binary_hls.py::read_stream_condition``: a dimension of size 1
+    in the operand but larger in the output is broadcast, and the operand is read only when
+    that index wraps to 0 (all broadcast indices at once).
+    """
+    padded = (len(out_shape) - len(in_shape)) * (1,) + tuple(in_shape)
+    bdims = [d for d, (si, so) in enumerate(zip(padded, out_shape, strict=True)) if si == 1 != so]
+    return [all(idx[d] == 0 for d in bdims) for idx in np.ndindex(*out_shape)]
+
+
+def elementwise_binary_hls(
+    node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]
+) -> OpModel:
+    """``ElementwiseBinaryOperation_hls`` (``elementwise_binary_hls.py::docompute``): a perfect
+    flp loop nest over the folded output shape; every streamed operand is read on its
+    broadcast schedule, one write per iteration. A constant operand is either embedded
+    (no stream) or fed by an always-ready memstream (``internal_decoupled``), which is not
+    modelled, like the weight stream of a decoupled MVAU."""
+    out_shape = tuple(int(d) for d in node.get_folded_output_shape()[:-1])
+    styles = (node.get_nodeattr("lhs_style"), node.get_nodeattr("rhs_style"))
+    edges = iter(in_edges)
+    schedules: list[tuple[str, list[bool]]] = []
+    for ind, style in enumerate(styles):
+        if style != "input":
+            continue
+        edge = next(edges)
+        in_shape = tuple(int(d) for d in node.get_folded_input_shape(ind)[:-1])
+        schedules.append((edge, broadcast_read_schedule(in_shape, out_shape)))
+    its: list[Iteration] = []
+    for i in range(int(np.prod(out_shape))):
+        its.append((tuple(e for e, sched in schedules if sched[i]), (out_edges[0],)))
+    return flp_loop(prefix, its, loop_params(node))
+
+
+#: op types derived from ``ElementwiseBinaryOperation`` (``elementwise_binary.py``)
+ELEMENTWISE_BINARY_OPS = (
+    "Add",
+    "Sub",
+    "AbsDiff",
+    "Mul",
+    "Div",
+    "And",
+    "Or",
+    "Xor",
+    "Equal",
+    "Less",
+    "LessOrEqual",
+    "Greater",
+    "GreaterOrEqual",
+    "BitwiseAnd",
+    "BitwiseOr",
+    "BitwiseXor",
+    "BitShift",
+    "Max",
+)
+for _op in ELEMENTWISE_BINARY_OPS:
+    register(f"Elementwise{_op}", "hls")(elementwise_binary_hls)
 
 
 def clog2(n: int) -> int:

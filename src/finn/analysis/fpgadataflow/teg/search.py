@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from finn.analysis.fpgadataflow.teg.model import TEGModel
-from finn.analysis.fpgadataflow.teg.simulate import SimResult, simulate
+from finn.analysis.fpgadataflow.teg.simulate import Backend, SimResult, simulate
 from finn.transformation.fpgadataflow.fifo_depth_search import (
     MinimizationOrder,
     effective_capacity,
@@ -121,12 +121,20 @@ def order_edges(model: TEGModel, order: MinimizationOrder, widths: dict[str, int
 
 
 def measure_bottleneck(
-    model: TEGModel, max_frames: int = 64, max_cycles: int | None = None
+    model: TEGModel,
+    max_frames: int = 64,
+    max_cycles: int | None = None,
+    backend: Backend | None = None,
 ) -> SimResult:
     """Phase 1: interval with unbounded external FIFOs and free-running sources."""
     depths: dict[str, int | None] = dict.fromkeys(model.external_edges, None)
     res = simulate(
-        model, depths, max_frames=max_frames, max_cycles=max_cycles, stable_occupancy=False
+        model,
+        depths,
+        max_frames=max_frames,
+        max_cycles=max_cycles,
+        stable_occupancy=False,
+        backend=backend,
     )
     if res.deadlock:
         raise FINNUserError(
@@ -142,7 +150,11 @@ def measure_bottleneck(
 
 
 def measure_peak_occupancy(
-    model: TEGModel, interval: int, max_frames: int = 64, max_cycles: int | None = None
+    model: TEGModel,
+    interval: int,
+    max_frames: int = 64,
+    max_cycles: int | None = None,
+    backend: Backend | None = None,
 ) -> SimResult:
     """Phase 2: sources paced at ``interval``, unbounded FIFOs; occupancy is the safe bound."""
     paced = TEGModel(chains=dict(model.chains), edges=model.edges, meta=model.meta)
@@ -162,7 +174,7 @@ def measure_peak_occupancy(
         c2.gaps, c2.reads, c2.writes, c2.arcs = c.gaps, c.reads, c.writes, c.arcs
         paced.chains[name] = c2
     depths: dict[str, int | None] = dict.fromkeys(model.external_edges, None)
-    res = simulate(paced, depths, max_frames=max_frames, max_cycles=max_cycles)
+    res = simulate(paced, depths, max_frames=max_frames, max_cycles=max_cycles, backend=backend)
     if res.deadlock:
         raise FINNInternalError("Paced simulation with unbounded FIFOs deadlocked")
     if not res.stable:
@@ -183,6 +195,7 @@ def minimize_depths(
     target_interval: float | None = None,
     starting_depths: dict[str, int] | None = None,
     progress: Callable[[str, int, int], None] | None = None,
+    backend: Backend | None = None,
 ) -> SearchResult:
     """Run the full abstract-simulation FIFO sizing and return nominal depths.
 
@@ -195,6 +208,7 @@ def minimize_depths(
         target_interval: override the measured bottleneck interval (e.g. a relaxed target).
         starting_depths: override the safe starting depths.
         progress: optional callback ``(edge, done, total)``.
+        backend: simulator backend (``simulate.default_backend()`` when None).
     """
     ext = model.external_edges
     if not ext:
@@ -203,13 +217,13 @@ def minimize_depths(
     simulations = 0
 
     # ---- phase 1/2
-    base = measure_bottleneck(model, max_frames=max_frames)
+    base = measure_bottleneck(model, max_frames=max_frames, backend=backend)
     simulations += 1
     interval = float(target_interval) if target_interval is not None else base.interval
     if not math.isfinite(interval):
         raise FINNUserError("Could not determine a finite bottleneck interval")
     target = math.ceil(interval)
-    paced = measure_peak_occupancy(model, target, max_frames=max_frames)
+    paced = measure_peak_occupancy(model, target, max_frames=max_frames, backend=backend)
     simulations += 1
     peak = {e: paced.max_occupancy[e] for e in ext}
     first_valid = {e: paced.first_valid[e] for e in ext}
@@ -233,6 +247,7 @@ def minimize_depths(
                 capacities_for(trial, max_qsrl_depth),
                 max_frames=max_frames,
                 max_cycles=max_cycles,
+                backend=backend,
             )
             simulations += 1
             if res.timeout or res.deadlock:
@@ -280,6 +295,7 @@ def minimize_depths(
         capacities_for(depths, max_qsrl_depth),
         max_frames=max_frames,
         max_cycles=max_cycles,
+        backend=backend,
     )
     simulations += 1
     if final.deadlock or final.timeout or final.interval > target:

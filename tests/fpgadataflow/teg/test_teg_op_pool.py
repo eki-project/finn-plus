@@ -26,14 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Differential test of the RTL ConvolutionInputGenerator (default template) against XSI."""
+"""Differential tests of the HLS Pool and LabelSelect templates against XSI."""
 
 import pytest
 
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.util.basic import qonnx_make_model
 
 from finn.util.basic import getHWCustomOp
@@ -58,39 +57,60 @@ pytestmark = [
 ]
 
 
-def make_swg_model(
-    ifm_dim: int, k: int, stride: int, ifm_ch: int, simd: int, depthwise: int = 0
-) -> ModelWrapper:
-    """Single ``ConvolutionInputGenerator`` node (RTL, default template)."""
+def make_pool_model(ch: int, pe: int, k: int, odim: int, function: str) -> ModelWrapper:
+    """Single ``Pool`` node fed with pre-generated windows (as after the SWG)."""
     dt = DataType["UINT4"]
-    ofm_dim = compute_conv_output_dim(ifm_dim, k, stride, 0, 1)
-    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [1, ifm_dim, ifm_dim, ifm_ch])
-    outp = helper.make_tensor_value_info(
-        "outp", TensorProto.FLOAT, [1, ofm_dim, ofm_dim, k * k * ifm_ch]
-    )
+    in_shape = [1, odim, odim, k * k * ch]
+    out_shape = [1, odim, odim, ch]
+    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, in_shape)
+    outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, out_shape)
     node = helper.make_node(
-        "ConvolutionInputGenerator",
+        "Pool",
         ["inp"],
         ["outp"],
         domain="finn.custom_op.fpgadataflow",
         backend="fpgadataflow",
-        ConvKernelDim=[k, k],
-        IFMChannels=ifm_ch,
-        IFMDim=[ifm_dim, ifm_dim],
-        OFMDim=[ofm_dim, ofm_dim],
-        SIMD=simd,
-        Stride=[stride, stride],
-        Dilation=[1, 1],
-        inputDataType=dt.name,
-        outputDataType=dt.name,
-        depthwise=depthwise,
-        parallel_window=0,
-        preferred_impl_style="rtl",
+        Channels=ch,
+        PE=pe,
+        KernelSize=[k, k],
+        Function=function,
+        OutImgDims=[odim, odim],
+        InputDataType=dt.name,
+        OutputDataType=dt.name,
+        # QuantAvgPool: accumulator of k*k UINT4 values, shifted right by Size bits
+        AccumBits=(dt.bitwidth() + (k * k - 1).bit_length()) if function == "QuantAvgPool" else 0,
+        Size=(k * k).bit_length() - 1 if function == "QuantAvgPool" else 0,
+        BatchSize=1,
+        preferred_impl_style="hls",
     )
-    graph = helper.make_graph(nodes=[node], name="swg_graph", inputs=[inp], outputs=[outp])
-    model = ModelWrapper(qonnx_make_model(graph, producer_name="teg-swg"))
+    graph = helper.make_graph(nodes=[node], name="pool", inputs=[inp], outputs=[outp])
+    model = ModelWrapper(qonnx_make_model(graph, producer_name="teg-pool"))
     model.set_tensor_datatype("inp", dt)
     model.set_tensor_datatype("outp", dt)
+    return model
+
+
+def make_labelselect_model(labels: int, pe: int, k: int) -> ModelWrapper:
+    """Single ``LabelSelect`` node (top-``k`` of one vector)."""
+    dt = DataType["INT8"]
+    inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [1, labels])
+    outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [1, k])
+    node = helper.make_node(
+        "LabelSelect",
+        ["inp"],
+        ["outp"],
+        domain="finn.custom_op.fpgadataflow",
+        backend="fpgadataflow",
+        Labels=labels,
+        PE=pe,
+        K=k,
+        inputDataType=dt.name,
+        numInputVectors=[1],
+        preferred_impl_style="hls",
+    )
+    graph = helper.make_graph(nodes=[node], name="labelselect", inputs=[inp], outputs=[outp])
+    model = ModelWrapper(qonnx_make_model(graph, producer_name="teg-labelselect"))
+    model.set_tensor_datatype("inp", dt)
     return model
 
 
@@ -100,39 +120,45 @@ _PREPARED: dict[tuple, ModelWrapper] = {}
 def prepared_model(cfg: tuple) -> ModelWrapper:
     """Prepare (and cache per configuration) the XSI library of the node."""
     if cfg not in _PREPARED:
-        _PREPARED[cfg] = prepare_node_rtlsim(make_swg_model(*cfg), TEST_FPGA_PART, TARGET_CLK_NS)
+        maker = make_labelselect_model if cfg[0] == "LabelSelect" else make_pool_model
+        _PREPARED[cfg] = prepare_node_rtlsim(maker(*cfg[1:]), TEST_FPGA_PART, TARGET_CLK_NS)
     return _PREPARED[cfg]
 
 
 CONFIGS = [
-    # (IFMDim, k, stride, IFMChannels, SIMD, depthwise)
-    (6, 3, 1, 1, 1, 0),
-    (6, 3, 1, 4, 2, 0),
-    (7, 3, 2, 2, 2, 0),
-    (6, 3, 1, 4, 2, 1),  # depthwise, cf = 2 (rearranged loop nest)
-    (6, 2, 2, 6, 2, 1),  # depthwise pooling window, cf = 3
-    (8, 3, 2, 2, 2, 0),  # imperfect stride: one skipped row and column
-    (8, 3, 2, 4, 2, 1),  # imperfect stride, depthwise, cf = 2
-    (7, 7, 7, 4, 2, 1),  # global pooling window (MobileNet: one window per channel fold)
-    # parallel template (1x1 kernels, ResNet downsampling)
-    (6, 1, 1, 4, 2, 0),
-    (7, 1, 2, 2, 1, 0),
-    (8, 1, 2, 4, 2, 0),  # imperfect stride
+    # ("Pool", channels, PE, kernel, output dim, function)
+    ("Pool", 4, 2, 2, 3, "MaxPool"),
+    ("Pool", 8, 8, 3, 2, "MaxPool"),  # MobileNet/ResNet global pooling: PE = channels
+    ("Pool", 6, 2, 2, 2, "QuantAvgPool"),
+    # ("LabelSelect", labels, PE, K)
+    ("LabelSelect", 10, 1, 1),
+    ("LabelSelect", 16, 4, 3),
 ]
 
 
 def _cfg_id(c: tuple) -> str:
-    style = "_par" if c[1] == 1 else ""
-    return f"D{c[0]}_k{c[1]}_s{c[2]}_C{c[3]}_SIMD{c[4]}{'_dw' if c[5] else ''}{style}"
+    return "_".join(str(x) for x in c)
 
 
 @pytest.mark.parametrize("cfg", CONFIGS, ids=_cfg_id)
 @pytest.mark.parametrize("kind", list(stall_kinds(0)))
-def test_teg_op_swg(cfg: tuple, kind: str, finn_test_seed: int) -> None:
+def test_teg_op_pool_hls(
+    cfg: tuple, kind: str, finn_test_seed: int, request: pytest.FixtureRequest
+) -> None:
     """XSI and the abstract model must produce identical handshake traces."""
+    if cfg[0] == "LabelSelect":
+        request.node.add_marker(
+            pytest.mark.xfail(
+                reason="LabelSelect_Batch: the top-level FSM calls an outlined pipelined read "
+                "loop and runs the NumTop writes unpipelined; the per-frame offsets (first "
+                "read 1-2 cycles after entry, writes 2-5 cycles after the last read, period = "
+                "top latency - 1) are not derived from the reports yet",
+                strict=False,
+            )
+        )
     model = prepared_model(cfg)
     in_pat, out_pat = stall_kinds(finn_test_seed)[kind]
-    frames = 2
+    frames = 3
     xsi = run_xsi(model, frames, in_pat, out_pat)
     model_in, model_out = run_abstract(model, frames, in_pat, out_pat)
     xsi_in, xsi_out = xsi.relative()
@@ -146,4 +172,4 @@ def test_teg_op_swg(cfg: tuple, kind: str, finn_test_seed: int) -> None:
         f"{xsi_out['out0'][-1]} (model {model_in['in0'][-1]}/{model_out['out0'][-1]})"
     )
     diffs = compare_traces(xsi_in, xsi_out, model_in, model_out)
-    assert_traces_equal(diffs, f"SWG {_cfg_id(cfg)} stall={kind} in={in_pat!r} out={out_pat!r}")
+    assert_traces_equal(diffs, f"{_cfg_id(cfg)} stall={kind}")

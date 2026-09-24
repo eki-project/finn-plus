@@ -494,3 +494,141 @@ def test_simulator_throughput() -> None:
     rate = events / dt
     print(f"\nsimulator throughput: {events} events in {dt:.2f}s = {rate:.0f} events/s")
     assert rate > 2e4
+
+
+# --------------------------------------------------------------------------- native backend
+def _backend_models() -> list[tuple[str, TEGModel, dict[str, int | None], dict[str, object]]]:
+    """Models and simulation options that exercise every feature of the simulator."""
+    cases: list[tuple[str, TEGModel, dict[str, int | None], dict[str, object]]] = []
+    m = chain_graph()
+    cases.append(("chain unbounded", m, dict.fromkeys(m.external_edges, None), {}))
+    cases.append(("chain bounded", chain_graph(), {"e0": 2, "e1": 9, "e2": 3}, {}))
+    cases.append(("chain timeout", chain_graph(), {"e0": 2, "e1": 5, "e2": 1}, {"max_cycles": 50}))
+    m = chain_graph()
+    m.chains["sink"].pattern = StallPattern.periodic(4)
+    cases.append(("periodic sink", m, dict.fromkeys(m.external_edges, None), {}))
+    m = chain_graph()
+    m.chains["src"].pattern = StallPattern.bernoulli(0.5, seed=3)
+    m.chains["sink"].pattern = StallPattern.bursty(3, 2, phase=1)
+    cases.append(
+        (
+            "random source, bursty sink",
+            m,
+            dict.fromkeys(m.external_edges, None),
+            {"max_frames": 16, "stop_when_stable": False},
+        )
+    )
+    m = chain_graph()
+    m.chains["src"].period = 200
+    m.chains["sink"].pattern = StallPattern.single_stall(40, 30)
+    cases.append(("paced source, single stall", m, dict.fromkeys(m.external_edges, None), {}))
+    m = forkjoin_graph()
+    cases.append(("forkjoin deadlock", m, dict.fromkeys(m.external_edges, 1), {}))
+    cases.append(
+        (
+            "forkjoin ok",
+            forkjoin_graph(),
+            {"e0": 2, "ea": 2, "eb": 8, "ea2": 8, "eb2": 2, "e3": 2},
+            {},
+        )
+    )
+    for mode in ("flp", "rigid"):
+        m = _flp_system(mode)
+        cases.append((f"{mode} system", m, dict.fromkeys(m.external_edges, 2), {}))
+    m, _info = _swg_example()
+    cases.append(
+        ("swg example", m, dict.fromkeys(m.external_edges, None), {"stable_occupancy": False})
+    )
+    m, _info = _swg_example()
+    cases.append(("swg example bounded", m, dict.fromkeys(m.external_edges, 32), {}))
+    return cases
+
+
+def _freeze_model(ports: int = 1) -> TEGModel:
+    """Two-chain flp pipeline with ``ports`` freezer output ports (the first with a
+    freeze-until-empty lock), negative start offsets, initial tokens and direct sink edges
+    (the single-node harness)."""
+    m = TEGModel()
+    src = Chain("src", kind="source", pattern=StallPattern.bernoulli(0.3, seed=11))
+    src.events(12, 1, writes=["in"])
+    slices = [f"slice{j}" for j in range(ports)]
+    r = Chain("R", freeze_group="p", start=-1)
+    r.event(1, reads=["in", "restart"], writes=["pipe"])
+    r.events(11, 1, reads=["in"], writes=["pipe"])
+    w = Chain("W", freeze_group="p", start=2)
+    w.events(11, 1, reads=["pipe"], writes=slices)
+    w.event(1, reads=["pipe"], writes=[*slices, "restart"])
+    for c in (src, r, w):
+        m.add_chain(c)
+    m.new_edge("in", "src", "R", depth=2, external=False, direct=True)
+    m.new_edge("pipe", "R", "W", depth=3, lf=3, lb=0)
+    m.new_edge("restart", "W", "R", depth=None, lf=1, lb=1, initial_tokens=1)
+    for j, sl in enumerate(slices):
+        po = Chain(f"PO{j}", freeze_group="p", freezer=True, freeze_until_empty=j == 0)
+        po.events(12, 1, reads=[sl], writes=[f"out{j}"])
+        sink = Chain(f"sink{j}", kind="sink", pattern=StallPattern.bursty(2, 3, phase=2 * j))
+        sink.events(12, 1, reads=[f"out{j}"])
+        m.add_chain(po)
+        m.add_chain(sink)
+        m.new_edge(sl, "W", po.name, depth=2 if j == 0 else 1, lf=1, lb=1 if j == 0 else 0)
+        m.new_edge(f"out{j}", po.name, sink.name, depth=1, external=False, direct=True)
+    m.validate()
+    return m
+
+
+def _assert_same_result(a: object, b: object, what: str) -> None:
+    for field_name in (
+        "interval",
+        "latency",
+        "frames",
+        "cycles",
+        "stable",
+        "deadlock",
+        "timeout",
+        "max_occupancy",
+        "first_valid",
+        "frame_end_times",
+        "frame_start_times",
+    ):
+        va, vb = getattr(a, field_name), getattr(b, field_name)
+        assert va == vb, f"{what}: {field_name} differs: python {va} vs native {vb}"
+
+
+def test_native_backend_matches_python() -> None:
+    """The compiled simulator reproduces the Python simulator field by field."""
+    from finn.analysis.fpgadataflow.teg import native
+
+    if not native.available():
+        pytest.skip("no C++ compiler for the native TEG simulator")
+    cases = [
+        *_backend_models(),
+        ("freeze model", _freeze_model(), {}, {}),
+        ("freeze model, three ports", _freeze_model(3), {}, {}),
+    ]
+    for what, m, depths, kw in cases:
+        py = simulate(m, depths, backend="python", **kw)  # type: ignore[arg-type]
+        nat = simulate(m, depths, backend="native", **kw)  # type: ignore[arg-type]
+        _assert_same_result(py, nat, what)
+        # a second run of the native backend reuses the cached flat model
+        again = simulate(m, depths, backend="native", **kw)  # type: ignore[arg-type]
+        _assert_same_result(py, again, what)
+
+
+def test_native_backend_speed() -> None:
+    """The native backend is at least 5x faster than the Python one on a synthetic graph."""
+    from finn.analysis.fpgadataflow.teg import native
+
+    if not native.available():
+        pytest.skip("no C++ compiler for the native TEG simulator")
+    m = chain_graph(n=20000, burst=8)
+    depths = {"e0": 16, "e1": 64, "e2": 4}
+    t0 = time.perf_counter()
+    py = simulate(m, depths, backend="python", max_frames=6, min_frames=6, stop_when_stable=False)
+    t_py = time.perf_counter() - t0
+    native.flatten(m)  # exclude the one-off flattening from the timing
+    t0 = time.perf_counter()
+    nat = simulate(m, depths, backend="native", max_frames=6, min_frames=6, stop_when_stable=False)
+    t_nat = time.perf_counter() - t0
+    _assert_same_result(py, nat, "speed model")
+    print(f"\npython {t_py:.2f} s, native {t_nat:.3f} s, speedup {t_py / max(t_nat, 1e-9):.0f}x")
+    assert t_nat * 5 < t_py
