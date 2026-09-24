@@ -829,7 +829,6 @@ def test_finnloop_end2end_mlo(
         # MLO pins folding via mvau_pe/mvau_simd on the nodes at creation time, so the
         # folding_missing check (which assumes creation-time PE=1/SIMD=1) is a false
         # positive here; target_fps would instead override the deliberate folding.
-        mute_config_assertions=True,
         generate_outputs=[
             build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
             build_cfg.DataflowOutputType.STITCHED_IP,
@@ -1081,7 +1080,6 @@ def test_finnloop_end2end_mlo_ddr(
         # MLO pins folding via mvau_pe/mvau_simd on the nodes at creation time, so the
         # folding_missing check (which assumes creation-time PE=1/SIMD=1) is a false
         # positive here; target_fps would instead override the deliberate folding.
-        mute_config_assertions=True,
         generate_outputs=[
             build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
             build_cfg.DataflowOutputType.STITCHED_IP,
