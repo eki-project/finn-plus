@@ -16,7 +16,7 @@ git_deps:
         install_editable: False
     AuroraFlow:
         url: "https://github.com/pc2/AuroraFlow.git"
-        commit: "6438de8eb91ffa3fbbbaabe8fe75e419871d4a25"
+        commit: "e4b7633c0b289ec24a6e0bc402ea07a4345b0db9"
         pip_install: False
         install_editable: False
 

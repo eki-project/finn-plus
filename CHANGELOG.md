@@ -5,6 +5,9 @@ The latest current work-in-progress version resides in `dev`, with `main` contai
 The changelog lists mostly user-facing changes. For more detailed information please check out the pull requests or the wiki.
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
+## Unreleased
+### Changed
+- Updated to AuroraFlow v0.4 as the default MultiFPGA communication backend
 
 ## Unreleased
 
