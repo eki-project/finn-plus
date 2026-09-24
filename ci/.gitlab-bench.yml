@@ -39,7 +39,7 @@ FINN Build:
     - |
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
-      dvc pull
+      bash ci/retry.sh -n 4 -d 15 -- dvc pull
       # Fitted QoR models (see ci/qor/) for empirical estimate reports, path as seen from this runner
       export FINN_QOR_MODEL_DIR=$OTUS_QOR_MODEL_DIR_STORE
       finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config $BENCH_CFG
@@ -89,6 +89,7 @@ Result Collection:
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: collect
+  extends: .retry_on_infra_failure
   tags:
     - image_build
   rules:
@@ -96,15 +97,18 @@ Result Collection:
     - when: always
   script:
     # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
-    - dvc pull
-    - git fetch origin +refs/tags/*:refs/tags/*
-    - git fetch git@github.com:eki-project/finn-plus.git +refs/exps/*:refs/exps/*
+    # All network operations are retried with backoff (ci/retry.sh) to ride out transient errors
+    - bash ci/retry.sh -n 4 -d 15 -- dvc pull
+    - bash ci/retry.sh -n 4 -d 10 -- git fetch origin +refs/tags/*:refs/tags/*
+    - bash ci/retry.sh -n 4 -d 10 -- git fetch git@github.com:eki-project/finn-plus.git +refs/exps/*:refs/exps/*
     - |
       collect_status=0
       push_status=0
 
       python3.10 ci/collect/collect.py || collect_status=$?
-      dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
+      # Re-running the push is safe: experiments already on the Git remote are reported as
+      # up to date and only cache objects still missing on the DVC remote are uploaded again
+      bash ci/retry.sh -n 5 -d 30 -- dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
 
       if [ "$collect_status" -ne 0 ]; then
         exit "$collect_status"
@@ -168,7 +172,7 @@ FINN Build (Follow-up):
     - |
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
-      dvc pull
+      bash ci/retry.sh -n 4 -d 15 -- dvc pull
       export FINN_QOR_MODEL_DIR=$OTUS_QOR_MODEL_DIR_STORE
       finn bench --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-default-workers $BENCH_FINN_WORKERS --bench_config followup
   cache:
@@ -219,6 +223,7 @@ Result Collection (Follow-up):
     CI_JOB_JWT:
       aud: https://git.uni-paderborn.de
   stage: collect_followup
+  extends: .retry_on_infra_failure
   rules: !reference [.live_fifo_only, rules]
   needs:
     - job: Result Collection
@@ -234,15 +239,18 @@ Result Collection (Follow-up):
         exit 0
       fi
     # pulling models seems to be needed for dvclive to save experiments, even though they are not used or modified
-    - dvc pull
-    - git fetch origin +refs/tags/*:refs/tags/*
-    - git fetch git@github.com:eki-project/finn-plus.git +refs/exps/*:refs/exps/*
+    # All network operations are retried with backoff (ci/retry.sh) to ride out transient errors
+    - bash ci/retry.sh -n 4 -d 15 -- dvc pull
+    - bash ci/retry.sh -n 4 -d 10 -- git fetch origin +refs/tags/*:refs/tags/*
+    - bash ci/retry.sh -n 4 -d 10 -- git fetch git@github.com:eki-project/finn-plus.git +refs/exps/*:refs/exps/*
     - |
       collect_status=0
       push_status=0
 
       python3.10 ci/collect/collect.py --followup || collect_status=$?
-      dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
+      # Re-running the push is safe: experiments already on the Git remote are reported as
+      # up to date and only cache objects still missing on the DVC remote are uploaded again
+      bash ci/retry.sh -n 5 -d 30 -- dvc exp push -f -j 4 -r push git@github.com:eki-project/finn-plus.git || push_status=$?
 
       if [ "$collect_status" -ne 0 ]; then
         exit "$collect_status"

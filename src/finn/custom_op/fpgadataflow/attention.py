@@ -626,7 +626,8 @@ class ScaledDotProductAttention(HWCustomOp):
         return elems * o_bits
 
     # Minimize the accumulator bit width
-    def minimize_accumulator_width(self, model):  # noqa: model is unused
+    def minimize_accumulator_width(self, model, datatype_only=False):  # noqa: unused args
+        # datatype_only: the attention accumulator is always derived from the datatype bounds
         # Get the query, key, value and attention weights type
         QType = DataType[self.get_nodeattr("QType")]  # noqa
         KType = DataType[self.get_nodeattr("KType")]  # noqa

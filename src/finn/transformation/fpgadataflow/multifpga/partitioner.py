@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import locale
 import mip
+import os
+import random
+import time
 import yaml
 from abc import ABC, abstractmethod
 from mip import Model
@@ -17,6 +20,16 @@ from finn.util.logging import log
 
 if TYPE_CHECKING:
     pass
+
+# Gurobi hands out one floating license token per environment and asks its token server for it
+# every time an environment is created. In a highly parallel setting (the CI test suite runs
+# dozens of pytest workers that all create partitioners) this fails now and then because the
+# token server is momentarily out of tokens or does not answer in time. Gurobi's own
+# recommendation for this case is to retry after a short delay, see Partitioner.create_model.
+MIP_SOLVER_MAX_ATTEMPTS_ENV = "FINN_MIP_SOLVER_MAX_ATTEMPTS"  # overrides the default below
+MIP_SOLVER_MAX_ATTEMPTS = 6
+MIP_SOLVER_RETRY_DELAY = 5.0  # seconds before the 2nd attempt, doubled after each further one
+MIP_SOLVER_RETRY_DELAY_MAX = 60.0  # seconds
 
 
 class Partitioner(ABC):
@@ -49,12 +62,109 @@ class Partitioner(ABC):
                 )
                 return Model(name="finn_partition", solver_name=mip.CBC)
         else:
+            return self.create_model(solver.value)
+
+    @staticmethod
+    def create_model(solver_name: str, name: str = "finn_partition") -> mip.Model:
+        """Create the ``mip.Model`` for the given solver, retrying transient failures.
+
+        Creating the model fails transiently for Gurobi when its floating license token server
+        is out of tokens or unreachable (see the module comment). Such failures are retried with
+        an exponential backoff and a bit of jitter so that many parallel processes do not all hit
+        the server again at the same moment. Any other failure, and a transient failure that
+        persists for all attempts, raises a ``FINNMultiFPGAUserError`` that includes Gurobi's
+        own reason when it can be determined.
+        """
+        try:
+            max_attempts = max(1, int(os.environ.get(MIP_SOLVER_MAX_ATTEMPTS_ENV, "")))
+        except ValueError:
+            max_attempts = MIP_SOLVER_MAX_ATTEMPTS
+        delay = MIP_SOLVER_RETRY_DELAY
+        for attempt in range(1, max_attempts + 1):
             try:
-                return Model(name="finn_partition", solver_name=solver.value)
+                return Model(name=name, solver_name=solver_name)
             except mip.exceptions.InterfacingError as e:
-                raise FINNMultiFPGAUserError(
-                    f"Cannot create mip solver of type {solver.value}. Original error: {e}"
-                ) from e
+                # Only a failed Gurobi environment creation can disappear on retry (no token or
+                # no answer from the token server right now). A missing solver library or a
+                # failed model creation is a persistent setup problem.
+                transient = "environment could not be loaded" in str(e)
+                if transient and attempt < max_attempts:
+                    log.warning(
+                        f"Creating the {solver_name} solver environment failed (attempt "
+                        f"{attempt}/{max_attempts}): {e} Retrying in {delay:.1f}s."
+                    )
+                    time.sleep(delay)
+                    # Exponential backoff with +-25% jitter, capped.
+                    delay = min(delay * 2, MIP_SOLVER_RETRY_DELAY_MAX) * random.uniform(0.75, 1.25)
+                    continue
+                message = f"Cannot create mip solver of type {solver_name}"
+                if transient:
+                    # Now that we give up anyway, ask Gurobi once for the actual reason.
+                    reason = None
+                    if solver_name == mip.GUROBI:
+                        reason = Partitioner._gurobi_environment_error()
+                    details = f" ({reason})" if reason else ""
+                    message += (
+                        f" after {attempt} attempt(s). Original error: {e}{details} If this "
+                        f"is a floating license, the token server may be out of tokens or "
+                        f"unreachable; the number of attempts can be set with "
+                        f"{MIP_SOLVER_MAX_ATTEMPTS_ENV}."
+                    )
+                else:
+                    message += f". Original error: {e}"
+                raise FINNMultiFPGAUserError(message) from e
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    # The extra Gurobi functions used by _gurobi_environment_error are declared in python-mip's
+    # cffi binding once per process.
+    _gurobi_diagnostics_declared = False
+
+    @staticmethod
+    def _gurobi_environment_error() -> str | None:
+        """Ask Gurobi why creating an environment currently fails.
+
+        python-mip reports every failed environment creation as "check your license", which
+        hides the real reason (out of tokens, token server unreachable, expired license, ...).
+        This creates an empty environment through the same cffi binding python-mip uses, starts
+        it, and returns Gurobi's own error message with its error code. Starting the environment
+        requests a token like any other attempt, which is why this is only done once, when
+        giving up. Returns ``None`` if the environment starts fine (the failure was transient and
+        is already gone) or if the diagnostics cannot be collected at all.
+        """
+        try:
+            from mip import gurobi as mip_gurobi
+
+            if not mip_gurobi.has_gurobi:
+                return None
+            ffi = mip_gurobi.ffi
+            lib = mip_gurobi.grblib
+            if not Partitioner._gurobi_diagnostics_declared:
+                ffi.cdef(
+                    """
+                    int GRBemptyenv(GRBenv **envP);
+                    int GRBstartenv(GRBenv *env);
+                    const char *GRBgeterrormsg(GRBenv *env);
+                    """
+                )
+                Partitioner._gurobi_diagnostics_declared = True
+            env_ptr = ffi.new("GRBenv **")
+            status = lib.GRBemptyenv(env_ptr)
+            if status != 0:
+                return f"Gurobi error {status} while creating an empty environment"
+            env = env_ptr[0]
+            try:
+                # A failed GRBstartenv leaves the environment as it was, so the error message
+                # can be read from it and it must still be freed.
+                status = lib.GRBstartenv(env)
+                if status == 0:
+                    return None
+                message = ffi.string(lib.GRBgeterrormsg(env)).decode("utf-8", errors="replace")
+                return f"Gurobi error {status}: {message.strip()}"
+            finally:
+                lib.GRBfreeenv(env)
+        except Exception as e:  # noqa: BLE001 - diagnostics must never mask the original error
+            log.debug(f"Could not collect Gurobi diagnostics: {e}")
+            return None
 
     def __init__(self, cfg: DataflowBuildConfig) -> None:
         """Initialize a new partitioner. This involves creating the mip model."""
@@ -68,13 +178,67 @@ class Partitioner(ABC):
         # IO errors later on.
         current_locale = locale.getlocale(locale.LC_CTYPE)
 
-        # Initialize the model
-        self.status: mip.OptimizationStatus | None
+        # Initialize the model. The solution values are cached by solve() so that they remain
+        # available after the solver was released by close().
+        self.status: mip.OptimizationStatus | None = None
+        self.objective_value: float | None = None
+        self._resource_use_relative_cache: dict[int, dict[str, Any]] | None = None
         self.model = self.init_model(cfg.partitioning_configuration.partition_solver)
         self.model.emphasis = cfg.partitioning_configuration.partition_solver_emphasis
 
         # Restore locale, as mentioned above.
         locale.setlocale(locale.LC_CTYPE, current_locale)
+
+    def close(self) -> None:
+        """Release the solver behind this partitioner right away, returning its license token.
+
+        python-mip frees the Gurobi model and environment in the solver's ``__del__``, but
+        ``Model`` and its solver reference each other, so that only runs once the cyclic garbage
+        collector gets around to them. In a long-lived process with a large heap (a pytest worker
+        of the CI suite) this happens rarely, and every Gurobi environment that is still alive
+        keeps its floating license token: a running test suite was observed holding several
+        hundred tokens at once. Safe to call more than once; also happens when the partitioner is
+        used as a context manager or dropped. Afterwards the mip model must not be used any more,
+        only the values cached by ``solve()`` (status, objective value, resource use) remain.
+        """
+        solver = getattr(getattr(self, "model", None), "solver", None)
+        if solver is None:
+            return
+        try:
+            from mip import gurobi as mip_gurobi
+
+            if not (mip_gurobi.has_gurobi and isinstance(solver, mip_gurobi.SolverGurobi)):
+                return
+            if not solver._ownsModel:  # noqa: SLF001
+                return
+            # Mirrors SolverGurobi.__del__, which then finds nothing left to free.
+            if solver._model:  # noqa: SLF001
+                mip_gurobi.GRBfreemodel(solver._model)  # noqa: SLF001
+                solver._model = mip_gurobi.ffi.NULL  # noqa: SLF001
+            if solver._env and solver._venv_loaded:  # noqa: SLF001
+                mip_gurobi.GRBfreeenv(solver._env)  # noqa: SLF001
+                solver._env = mip_gurobi.ffi.NULL  # noqa: SLF001
+        except Exception as e:  # noqa: BLE001 - never fail because cleanup failed
+            log.debug(f"Could not release the mip solver: {e}")
+
+    def __enter__(self) -> Partitioner:
+        """Enter a ``with`` block that releases the solver at its end."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Release the solver when the ``with`` block ends."""
+        self.close()
+
+    def __del__(self) -> None:
+        """Release the solver once the partitioner is dropped.
+
+        The partitioner is not part of a reference cycle, so this runs as soon as the last
+        reference is dropped and returns the Gurobi license token right away.
+        """
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001, S110 - never raise from __del__
+            pass
 
     @abstractmethod
     def create_result(self) -> dict[str, int]:
@@ -113,7 +277,11 @@ class Partitioner(ABC):
             mip.OptimizationStatus.NO_SOLUTION_FOUND,
         ]:
             return None
-        return self.create_result()
+        result = self.create_result()
+        # Cache what is reported after solving, so that the solver can be released early.
+        self.objective_value = self.model.objective_value
+        self.get_resource_use_relative()
+        return result
 
     def write_results(self, p: Path) -> None:
         """Write the partition results as a YAML to the given directory."""
@@ -134,5 +302,7 @@ class Partitioner(ABC):
         Actual implementation is left to the subclasses.
         """
         if self.pcfg.partition_strategy == PartitioningStrategy.RESOURCE_UTILIZATION:
-            return self._get_resource_use_relative()
+            if self._resource_use_relative_cache is None:
+                self._resource_use_relative_cache = self._get_resource_use_relative()
+            return self._resource_use_relative_cache
         return None
