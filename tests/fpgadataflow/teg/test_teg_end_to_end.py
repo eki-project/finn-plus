@@ -1,0 +1,180 @@
+# Copyright (C) 2026, Paderborn University
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of FINN nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+"""End-to-end FIFO sizing of the regression models with the TEG strategies.
+
+The models, folding and specialisation configs are the ones of the CI regression benchmark
+(``ci/cfg/regression_small.yml``: ``models/bnn-pynq/*``, DVC-managed). The reference depths
+are the ``fifo_sizing.json`` reports of the ``distributed_sim`` strategy from a past regression
+pipeline (``baselines/``), so this test does not re-run the RTL-based sizing. The build runs
+the flow up to and including ``step_generate_hardware`` (HLS synthesis of every node plus the
+sizing) and compares the resulting ``fifo_sizing.json``.
+"""
+
+import pytest
+
+import json
+import math
+import time
+from pathlib import Path
+
+import finn.builder.build_dataflow as build
+import finn.builder.build_dataflow_config as build_cfg
+from finn.util.basic import make_build_dir
+
+pytestmark = [
+    pytest.mark.fpgadataflow,
+    pytest.mark.fifo_model,
+    pytest.mark.vivado,
+    pytest.mark.slow,
+]
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+MODELS = REPO_ROOT / "models" / "bnn-pynq"
+BASELINES = Path(__file__).resolve().parent / "baselines"
+SRL_BLOCK = 32
+MAX_QSRL_DEPTH = 256
+
+
+def load_baseline(name: str) -> dict[str, int]:
+    """FIFO depths of the distributed_sim baseline report."""
+    with (BASELINES / f"{name}_fifo_sizing_distributed_sim.json").open() as f:
+        return {k: int(v) for k, v in json.load(f)["fifo_depths"].items()}
+
+
+def depth_class(depth: int) -> int:
+    """Block-granular class of a depth: SRL blocks of 32 up to 256, one class per BRAM step."""
+    if depth <= MAX_QSRL_DEPTH:
+        return math.ceil(depth / SRL_BLOCK)
+    return MAX_QSRL_DEPTH // SRL_BLOCK + math.ceil(math.log2(depth / MAX_QSRL_DEPTH))
+
+
+def build_with_strategy(name: str, strategy: str) -> tuple[dict[str, int], dict, float]:
+    """Run the build flow up to hardware generation and return (depths, sizing report, time)."""
+    model_path = MODELS / f"{name}_qonnx.onnx"
+    if not model_path.is_file():
+        pytest.skip(f"{model_path} not available (dvc pull)")
+    out_dir = Path(make_build_dir(f"teg_e2e_{name}_{strategy}_"))
+    cfg = build_cfg.DataflowBuildConfig(
+        output_dir=str(out_dir),
+        board="RFSoC2x2",
+        synth_clk_period_ns=10.0,
+        folding_config_file=MODELS / f"{name}_folding_config.json",
+        specialize_layers_config_file=MODELS / f"{name}_specialize_layers.json",
+        auto_fifo_depths=True,
+        auto_fifo_strategy=build_cfg.AutoFIFOSizingMethod(strategy),
+        split_large_fifos=True,
+        teg_milp_fallback_to_abstract_sim=False,
+        generate_outputs=[build_cfg.DataflowOutputType.ESTIMATE_REPORTS],
+        steps=[
+            "finn.builder.custom_step_library.general.add_preproc_divide_by_255",
+            "finn.builder.custom_step_library.general.add_postproc_top1",
+            "step_qonnx_to_finn",
+            "step_tidy_up",
+            "step_streamline",
+            "step_convert_to_hw",
+            "step_create_dataflow_partition",
+            "step_specialize_layers",
+            "step_target_fps_parallelization",
+            "step_apply_folding_config",
+            "step_minimize_bit_width",
+            "step_generate_estimate_reports",
+            "step_generate_hardware",
+        ],
+    )
+    t0 = time.time()
+    build.build_dataflow_cfg(str(model_path), cfg)
+    dt = time.time() - t0
+    with (out_dir / "report" / "fifo_sizing.json").open() as f:
+        depths = {k: int(v) for k, v in json.load(f)["fifo_depths"].items()}
+    report_name = {"abstract_sim": "fifo_sizing_abstract_sim.json", "milp": "fifo_sizing_milp.json"}
+    with (out_dir / "report" / report_name[strategy]).open() as f:
+        report = json.load(f)
+    return depths, report, dt
+
+
+def compare_to_baseline(name: str, depths: dict[str, int], baseline: dict[str, int]) -> str:
+    """Tabulate both depth sets and assert the block-granular agreement."""
+    assert set(depths) == set(baseline), (
+        f"{name}: FIFO set differs from baseline: only in result {set(depths) - set(baseline)}, "
+        f"only in baseline {set(baseline) - set(depths)}"
+    )
+    lines = [f"{'FIFO':28s} {'baseline':>9s} {'teg':>7s} {'class_b':>8s} {'class_t':>8s}"]
+    smaller: list[str] = []
+    larger: list[str] = []
+    for k in baseline:
+        cb, ct = depth_class(baseline[k]), depth_class(depths[k])
+        lines.append(f"{k:28s} {baseline[k]:9d} {depths[k]:7d} {cb:8d} {ct:8d}")
+        if ct < cb:
+            smaller.append(f"{k}: {depths[k]} < {baseline[k]}")
+        if ct > cb + 1:
+            larger.append(f"{k}: {depths[k]} >> {baseline[k]}")
+    table = "\n".join(lines)
+    print(f"\n{name}:\n{table}")
+    assert not smaller, (
+        f"{name}: TEG sizing is smaller than the RTL-simulated baseline (optimistic model) for:\n"
+        + "\n".join(smaller)
+        + "\n"
+        + table
+    )
+    assert not larger, (
+        f"{name}: TEG sizing is more than one block larger than the baseline for:\n"
+        + "\n".join(larger)
+        + "\n"
+        + table
+    )
+    return table
+
+
+@pytest.mark.parametrize("name", ["tfc-w1a1", "cnv-w1a1"])
+def test_teg_abstract_sim_end_to_end(name: str) -> None:
+    """``abstract_sim`` reproduces the ``distributed_sim`` depths up to block granularity."""
+    baseline = load_baseline(name)
+    depths, report, dt = build_with_strategy(name, "abstract_sim")
+    print(
+        f"\n{name} abstract_sim: {report['simulations']} simulations, search "
+        f"{report['search_time_s']:.1f} s, build {dt:.0f} s, "
+        f"interval {report['final_interval_cycles']} cycles"
+    )
+    compare_to_baseline(name, depths, baseline)
+
+
+@pytest.mark.parametrize("name", ["tfc-w1a1"])
+def test_teg_milp_report_end_to_end(name: str) -> None:
+    """``milp`` produces the instance-size report; it solves only when the instance is small."""
+    cfg_strategy = "milp"
+    try:
+        depths, report, _dt = build_with_strategy(name, cfg_strategy)
+    except Exception as exc:  # the size report is the deliverable even on abort
+        msg = str(exc)
+        assert "MILP instance too large" in msg, msg
+        pytest.skip(f"{name}: MILP too large, size report only: {msg[:200]}")
+        return
+    print(f"\n{name} milp: {json.dumps(report['instance'])}, solve {report.get('solve_time_s')} s")
+    assert report["solved"] and report["verified"]
+    compare_to_baseline(name, depths, load_baseline(name))

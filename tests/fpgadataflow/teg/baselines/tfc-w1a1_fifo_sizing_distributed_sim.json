@@ -1,0 +1,69 @@
+{
+  "fifo_depths": {
+    "StreamingFIFO_rtl_0": 2,
+    "StreamingFIFO_rtl_1": 32,
+    "StreamingFIFO_rtl_2": 32,
+    "StreamingFIFO_rtl_3": 32,
+    "StreamingFIFO_rtl_4": 32,
+    "StreamingFIFO_rtl_5": 32,
+    "StreamingFIFO_rtl_6": 32,
+    "StreamingFIFO_rtl_7": 32,
+    "StreamingFIFO_rtl_8": 32,
+    "StreamingFIFO_rtl_9": 32,
+    "StreamingFIFO_rtl_10": 32
+  },
+  "fifo_sizes": {
+    "StreamingFIFO_rtl_0": 448,
+    "StreamingFIFO_rtl_1": 7168,
+    "StreamingFIFO_rtl_2": 896,
+    "StreamingFIFO_rtl_3": 1568,
+    "StreamingFIFO_rtl_4": 512,
+    "StreamingFIFO_rtl_5": 256,
+    "StreamingFIFO_rtl_6": 256,
+    "StreamingFIFO_rtl_7": 256,
+    "StreamingFIFO_rtl_8": 2240,
+    "StreamingFIFO_rtl_9": 224,
+    "StreamingFIFO_rtl_10": 256
+  },
+  "fifo_sizes_effective": {
+    "StreamingFIFO_rtl_0": 7168,
+    "StreamingFIFO_rtl_1": 7168,
+    "StreamingFIFO_rtl_2": 896,
+    "StreamingFIFO_rtl_3": 1568,
+    "StreamingFIFO_rtl_4": 512,
+    "StreamingFIFO_rtl_5": 256,
+    "StreamingFIFO_rtl_6": 256,
+    "StreamingFIFO_rtl_7": 256,
+    "StreamingFIFO_rtl_8": 2240,
+    "StreamingFIFO_rtl_9": 224,
+    "StreamingFIFO_rtl_10": 256
+  },
+  "impl_style": {
+    "StreamingFIFO_rtl_0": "rtl",
+    "StreamingFIFO_rtl_1": "rtl",
+    "StreamingFIFO_rtl_2": "rtl",
+    "StreamingFIFO_rtl_3": "rtl",
+    "StreamingFIFO_rtl_4": "rtl",
+    "StreamingFIFO_rtl_5": "rtl",
+    "StreamingFIFO_rtl_6": "rtl",
+    "StreamingFIFO_rtl_7": "rtl",
+    "StreamingFIFO_rtl_8": "rtl",
+    "StreamingFIFO_rtl_9": "rtl",
+    "StreamingFIFO_rtl_10": "rtl"
+  },
+  "ram_style": {
+    "StreamingFIFO_rtl_0": "block",
+    "StreamingFIFO_rtl_1": "block",
+    "StreamingFIFO_rtl_2": "block",
+    "StreamingFIFO_rtl_3": "block",
+    "StreamingFIFO_rtl_4": "block",
+    "StreamingFIFO_rtl_5": "block",
+    "StreamingFIFO_rtl_6": "block",
+    "StreamingFIFO_rtl_7": "block",
+    "StreamingFIFO_rtl_8": "block",
+    "StreamingFIFO_rtl_9": "block",
+    "StreamingFIFO_rtl_10": "block"
+  },
+  "total_fifo_size_kiB": 1.71875,
+  "total_fifo_size_effective_kiB": 2.5390625
+}

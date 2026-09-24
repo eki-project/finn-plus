@@ -110,6 +110,20 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                     posix=IS_POSIX,
                 )
             )
+        case "fifo_model_ci":
+            # Only the TEG-based FIFO sizing tests (marker fifo_model): model core, per-operator
+            # differential tests against XSI and the end-to-end comparisons against recorded
+            # baselines. Used by the dedicated CI test suite to iterate on the operator
+            # templates without running the rest of the suite.
+            subprocess.run(
+                shlex.split(
+                    f"{sys.executable} -m pytest -q -rf --tb=short -m 'fifo_model' "
+                    f"--junitxml={ci_project_dir}/reports/fifo_model.xml "
+                    f"--html={ci_project_dir}/reports/fifo_model.html "
+                    f"--reruns 1 --dist worksteal -n {num_workers}",
+                    posix=IS_POSIX,
+                )
+            )
         case "full_ci":
             main_xml = f"{ci_project_dir}/reports/main.xml"
             main_html = f"{ci_project_dir}/reports/main.html"

@@ -10,12 +10,13 @@ variables:
     description: "Optional name to better identify this pipeline"
     value: ""
   TEST_SUITE:
-    description: "Select test suite to run"
+    description: "Select test suite to run (fifo_model_ci runs only the TEG FIFO-sizing tests and skips all bench jobs)"
     value: "full_ci"
     options:
       - "none"
       - "quicktest_ci"
       - "full_ci"
+      - "fifo_model_ci"
   PYTEST_WORKERS:
     description: "Select number PyTest workers"
     value: "64"
@@ -198,6 +199,9 @@ Bench (Manual):
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
+    # The FIFO-model test suite is a targeted unit-test run; no regression builds
+    - if: $TEST_SUITE == "fifo_model_ci"
+      when: never
     - if: $MANUAL_CFG_PATH != ""
   trigger:
     include: ci/.gitlab-bench.yml
@@ -213,6 +217,9 @@ Bench (Basic):
   rules:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # The FIFO-model test suite is a targeted unit-test run; no regression builds
+    - if: $TEST_SUITE == "fifo_model_ci"
       when: never
     - if: $MANUAL_CFG_PATH == ""
   trigger:
@@ -240,6 +247,9 @@ Bench (Extended):
   rules:
     # Do not run on a schedule
     - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # The FIFO-model test suite is a targeted unit-test run; no regression builds
+    - if: $TEST_SUITE == "fifo_model_ci"
       when: never
     # Do not run for PRs to dev (run only for pushes)
     - if: $CI_PIPELINE_SOURCE == "external_pull_request_event" && $CI_EXTERNAL_PULL_REQUEST_TARGET_BRANCH_NAME == "dev"

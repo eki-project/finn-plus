@@ -1040,12 +1040,12 @@ def bench(
     "--variant",
     "-v",
     help=(
-        "Which test to execute (quick, quicktest_ci, full_ci, doctest, custom)."
+        "Which test to execute (quick, quicktest_ci, full_ci, fifo_model_ci, doctest, custom)."
         "'custom' ignores all parameters expect for --args ..."
     ),
     default="quick",
     show_default=True,
-    type=click.Choice(["quick", "quicktest_ci", "full_ci", "custom", "doctest", "doctest"]),
+    type=click.Choice(["quick", "quicktest_ci", "full_ci", "fifo_model_ci", "custom", "doctest"]),
 )
 @click.option(
     "--args",
