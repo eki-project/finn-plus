@@ -86,15 +86,15 @@ def describe_missing(path: Path) -> str:
     """Explain why a DVC-managed model file is not usable (for the skip message)."""
     parts = []
     try:
-        parts.append(f"lexists={os.path.lexists(path)}")
-        if os.path.islink(path):
-            target = os.readlink(path)
-            parts.append(f"symlink -> {target} (target exists: {Path(target).exists()})")
-        os.stat(path)
+        parts.append(f"lexists={path.is_symlink() or path.exists()}")
+        if path.is_symlink():
+            target = path.readlink()
+            parts.append(f"symlink -> {target} (target exists: {target.exists()})")
+        path.stat()
     except OSError as exc:
         parts.append(f"stat: {exc}")
     try:
-        parts.append(f"dir: {sorted(os.listdir(path.parent))[:24]}")
+        parts.append(f"dir: {sorted(q.name for q in path.parent.iterdir())[:24]}")
     except OSError as exc:
         parts.append(f"listdir: {exc}")
     for var in ("FINN_MODELS_DIR", "CI_PROJECT_DIR", "CI_DVC_CACHE_DIR"):
