@@ -98,6 +98,12 @@ class AutoFIFOSizingMethod(str, Enum):
 
     LIVE_FIFO = "live_fifo"
     DISTRIBUTED_SIMULATION = "distributed_sim"
+    #: SimFIFO's per-FIFO minimisation with the RTL simulators replaced by an abstract
+    #: (timed-event-graph) simulation of the operator control paths: no synthesis, no XSI.
+    ABSTRACT_SIM = "abstract_sim"
+    #: Exact minimum-cost sizing as a mixed-integer linear program on the same model. Always
+    #: reports the instance size; solves only small instances (see teg_milp_max_constraints).
+    MILP = "milp"
     #: Skip any sizing simulation and keep all inserted FIFOs at their minimal
     #: (default) depth. Useful for designs that are known to work without deeper
     #: FIFOs and avoids having to maintain a fifo_config_file.
@@ -735,6 +741,44 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: this explicitly to override auto-detection, e.g. outside SLURM or to use only a
     #: subset of the allocation.
     fifosim_mpi_hosts: Optional[str] = None
+
+    #: (Only relevant when auto_fifo_strategy == abstract_sim or milp)
+    #: Search orders of the per-FIFO minimisation (names of
+    #: finn.transformation.fpgadataflow.fifo_depth_search.MinimizationOrder); the cheapest
+    #: result (total FIFO bits) is used.
+    teg_minimization_orders: list[str] = field(default_factory=lambda: ["NODE_ORDER"])
+
+    #: (Only relevant when auto_fifo_strategy == abstract_sim or milp)
+    #: Maximum number of frames per abstract simulation before the interval is estimated
+    #: from the mean of the second half (the simulation normally stops earlier, as soon
+    #: as the execution is detected to be periodic).
+    teg_max_frames: int = 64
+
+    #: (Only relevant when auto_fifo_strategy == abstract_sim or milp)
+    #: Target frame interval in cycles; defaults to the bottleneck interval measured with
+    #: unbounded FIFOs.
+    teg_target_interval: Optional[int] = None
+
+    #: (Only relevant when auto_fifo_strategy == abstract_sim or milp)
+    #: Write the timed-event-graph model as JSON into the report directory.
+    teg_dump_model: bool = False
+
+    #: (Only relevant when auto_fifo_strategy == milp)
+    #: Largest MILP (number of constraint rows) that is actually solved; larger instances
+    #: only produce the size report.
+    teg_milp_max_constraints: int = 200000
+
+    #: (Only relevant when auto_fifo_strategy == milp) Solver time limit in seconds.
+    teg_milp_time_limit: float = 600.0
+
+    #: (Only relevant when auto_fifo_strategy == milp)
+    #: Also offer the depths 2, 4, 8 and 16 below the 32-entry floor of the block-granular
+    #: search as candidates, so that the MILP reports the true minimum.
+    teg_milp_fine_candidates: bool = True
+
+    #: (Only relevant when auto_fifo_strategy == milp)
+    #: Fall back to abstract_sim instead of failing when the MILP is too large.
+    teg_milp_fallback_to_abstract_sim: bool = False
 
     #: (Optional) Target clock frequency (in nanoseconds) for Vitis HLS synthesis.
     #: e.g. `hls_clk_period_ns=5.0` will target a 200 MHz clock.

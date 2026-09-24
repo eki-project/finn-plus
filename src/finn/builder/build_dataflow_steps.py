@@ -160,6 +160,10 @@ from finn.transformation.fpgadataflow.set_fifo_depths import (
     ApplySimulatedFIFOSizes,
     SplitLargeFIFOs,
 )
+from finn.transformation.fpgadataflow.set_fifo_depths_teg import (
+    RunAbstractSimFIFOSizing,
+    RunMILPFIFOSizing,
+)
 from finn.transformation.fpgadataflow.set_folding import SetFolding
 from finn.transformation.fpgadataflow.set_loop_boundary import SetLoopBoundary
 from finn.transformation.fpgadataflow.simulation_build import (
@@ -810,6 +814,21 @@ def step_set_fifo_depths(
                 node_inst.set_nodeattr("impl_style", "virtual")
                 node_inst.set_nodeattr("fifo_id", idf)
 
+        elif cfg.auto_fifo_strategy in (
+            AutoFIFOSizingMethod.ABSTRACT_SIM,
+            AutoFIFOSizingMethod.MILP,
+        ):
+            # Same graph preparation as BuildSimulation._prepare_model: DWCs, specialised
+            # layers and stable names, so that fifo_data matches the node order.
+            model = model.transform(InsertDWC())
+            model = model.transform(SpecializeLayers(cfg._resolve_fpga_part()))
+            model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
+            model = model.transform(GiveReadableTensorNames())
+            if cfg.auto_fifo_strategy == AutoFIFOSizingMethod.ABSTRACT_SIM:
+                model = model.transform(RunAbstractSimFIFOSizing(cfg))
+            else:
+                model = model.transform(RunMILPFIFOSizing(cfg))
+            model = model.transform(ApplySimulatedFIFOSizes(cfg))
         elif cfg.auto_fifo_strategy == AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS:
             # Insert all FIFOs (and DWCs) but keep them at their minimal default depth,
             # i.e. no sizing simulation is run at all.
