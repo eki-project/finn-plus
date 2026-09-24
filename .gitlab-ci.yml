@@ -53,6 +53,9 @@ variables:
   MANUAL_CFG_PATH:
     description: "Name (in ci/cfg/) or path (relative to LOCAL_CFG_DIR) of benchmarking config to run"
     value: ""
+  BENCH_PARAM_OVERRIDES:
+    description: "Optional JSON object of build parameters applied to every run of every bench job, e.g. {\"auto_fifo_depths\": true, \"auto_fifo_strategy\": \"abstract_sim\"} to run the regression suite with the TEG-based FIFO sizing"
+    value: ""
 
 workflow:
   name: '$PIPELINE_NAME'

@@ -101,41 +101,52 @@ def mvu_rtl(
 ) -> OpModel:
     """Build the replay-buffer / core / output-queue model of one RTL MVU."""
     rb, core = f"{prefix}.replay", f"{prefix}.core"
-    rin = Chain(f"{prefix}.in")
-    rin.events(n_vectors * sf, 1, reads=[in_edge], writes=[rb])
     c = Chain(f"{prefix}.core", freeze_group=f"{prefix}.olock")
     wout = Chain(
         f"{prefix}.out", freeze_group=f"{prefix}.olock", freezer=True, freeze_until_empty=True
     )
-    replay_lf = 2 if nf > 1 else 0
-    for v in range(n_vectors):
-        for nf_i in range(nf):
+    chains: list[Chain] = []
+    edges: list[FIFOEdge] = []
+    if nf == 1:
+        # REP == 1: the replay buffer is a wire (replay_buffer.sv:84-90, ``irdy = ordy``,
+        # ``ovld = ivld``); the core reads the input stream directly
+        for _v in range(n_vectors):
             for sf_i in range(sf):
-                last_rep = nf_i == nf - 1
-                arcs = []
-                if not last_rep:
-                    # the word arrived at input event v*sf + sf_i (replay_buffer.sv:106-110)
-                    arcs.append(Arc(rin.name, v * sf + sf_i, 0, replay_lf))
-                c.event(
-                    1,
-                    reads=[rb] if last_rep else [],
-                    writes=[core] if sf_i == sf - 1 else [],
-                    arcs=arcs,
-                )
+                c.event(1, reads=[in_edge], writes=[core] if sf_i == sf - 1 else [])
+        first = c
+    else:
+        rin = Chain(f"{prefix}.in")
+        rin.events(n_vectors * sf, 1, reads=[in_edge], writes=[rb])
+        chains.append(rin)
+        replay_lf = 2
+        for v in range(n_vectors):
+            for nf_i in range(nf):
+                for sf_i in range(sf):
+                    last_rep = nf_i == nf - 1
+                    arcs = []
+                    if not last_rep:
+                        # the word arrived at input event v*sf + sf_i (replay_buffer.sv:106-110)
+                        arcs.append(Arc(rin.name, v * sf + sf_i, 0, replay_lf))
+                    c.event(
+                        1,
+                        reads=[rb] if last_rep else [],
+                        writes=[core] if sf_i == sf - 1 else [],
+                        arcs=arcs,
+                    )
+        cap_rb = 1 << max(1, clog2(sf))
+        # replay_buffer.sv:99-125
+        edges.append(FIFOEdge(rb, rin.name, c.name, depth=cap_rb, lf=replay_lf, lb=0))
+        first = rin
     wout.events(n_vectors * nf, 1, reads=[core], writes=[out_edge])
-    cap_rb = 1 if nf == 1 else 1 << max(1, clog2(sf))
-    edges = [
-        FIFOEdge(rb, rin.name, c.name, depth=cap_rb, lf=replay_lf, lb=0),  # replay_buffer.sv:99-125
-        FIFOEdge(
-            core, c.name, wout.name, depth=depth + 2, lf=depth + 2, lb=1
-        ),  # mvu_vvu_axi.sv:348-389
-    ]
+    edges.append(
+        FIFOEdge(core, c.name, wout.name, depth=depth + 2, lf=depth + 2, lb=1)
+    )  # mvu_vvu_axi.sv:348-389
     return OpModel(
-        [rin, c, wout],
+        [*chains, c, wout],
         edges,
-        [rin.name],
+        [first.name],
         [wout.name],
-        {"core_depth": depth, "replay_capacity": cap_rb, "SF": sf, "NF": nf},
+        {"core_depth": depth, "replay_capacity": 0 if nf == 1 else cap_rb, "SF": sf, "NF": nf},
     )
 
 

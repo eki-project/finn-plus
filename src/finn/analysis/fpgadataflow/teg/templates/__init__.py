@@ -129,5 +129,6 @@ def _load_all() -> None:
         "dwc_rtl",
         "fmpadding_rtl",
         "mvau_rtl",
+        "attention_hls",
     ):
         importlib.import_module(f"{__name__}.{mod}")

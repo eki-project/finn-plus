@@ -88,6 +88,9 @@ REGSLICE_DEPTH = 2
 
 #: one loop iteration: (edges read, edges written)
 Iteration = tuple[Sequence[str], Sequence[str]]
+#: per-token invocations (StreamingSplit/Concat): cycles from the port handshake of the write
+#: to the read of the next invocation (measured)
+INVOCATION_CREDIT = 2
 
 
 def loop_params(node: HWCustomOp) -> HLSLoopParams:
@@ -104,11 +107,15 @@ def flp_loop(
     latency: int | None = None,
     frame_gap: int | None = None,
     regslices: bool = True,
-    in_regslices: bool | None = None,
-    out_regslices: bool | None = None,
+    in_regslices: bool | set[str] | None = None,
+    out_regslices: bool | set[str] | None = None,
     capacity: int | None = None,
     back_latency: int | None = None,
     drain: bool | None = None,
+    iteration_gap: int = 1,
+    internal_outputs: set[str] | None = None,
+    entry: int | None = None,
+    invocation_credit: int | None = None,
 ) -> OpModel:
     """Build the model of one flp loop with its port register slices.
 
@@ -123,8 +130,19 @@ def flp_loop(
             defaults to 1 for inlined top-level loops, ``1 + rewind_delay`` for loops of
             dataflow processes and ``interval - trip count`` for non-inlined functions.
         regslices: insert the port register slices (False for bare loops in unit tests).
-        in_regslices: override ``regslices`` for the input ports.
-        out_regslices: override ``regslices`` for the output ports.
+        in_regslices: override ``regslices`` for the input ports (a bool, or the set of
+            input edges that are top-level AXI-Stream ports; the others are internal
+            ``hls::stream`` FIFOs read directly).
+        out_regslices: override ``regslices`` for the output ports (bool or set, as above).
+        iteration_gap: cycles between consecutive iterations (1 for a pipelined loop; the
+            top-level interval for a function that is invoked once per token).
+        internal_outputs: output edges that are internal ``hls::stream`` FIFOs of a dataflow
+            region: written without a register slice, but a full FIFO stalls the stage in
+            the same cycle (a zero-latency freezer port).
+        entry: cycle in which iteration 0 enters stage 0 (override of the -1 / 0 default).
+        invocation_credit: for a top function invoked once per token: the next invocation's
+            read may start this many cycles after the port handshake of the previous write
+            (one invocation in flight).
         capacity: override the capacity of the read-to-write edge (experiments).
         back_latency: override its backward latency (experiments).
         drain: a non-inlined function is invoked once per frame and the next invocation
@@ -164,13 +182,16 @@ def flp_loop(
         cap = capacity
     if back_latency is not None:
         lb = back_latency
-    in_rs = regslices if in_regslices is None else in_regslices
-    out_rs = regslices if out_regslices is None else out_regslices
+    in_rs_set = _slice_set(in_edges, regslices if in_regslices is None else in_regslices)
+    out_rs_set = _slice_set(out_edges, regslices if out_regslices is None else out_regslices)
+    internal = set(internal_outputs or ())
+    out_rs_set -= internal
     group = f"{prefix}.pipeline"
     merged = lat == 0 and capacity is None and back_latency is None
     # iteration 0 enters stage 0 in the cycle after reset (-1 on the harness time base) for a
     # top-level loop and one cycle later when the loop is called as a sub-function
-    entry = -1 if params.top_level else 0
+    if entry is None:
+        entry = -1 if params.top_level else 0
     if drain is None:
         drain = not params.top_level and not params.dataflow
     rs_list = list(params.read_stage.values())
@@ -188,8 +209,8 @@ def flp_loop(
     outputs: dict[str, str] = {}
     rename_in: dict[str, str] = {}
     rename_out: dict[str, str] = {}
-    if in_rs:
-        for e in in_edges:
+    for e in in_edges:
+        if e in in_rs_set:
             slice_edge = f"{prefix}.inslice.{e}"
             port = Chain(f"{prefix}.PI.{e}")
             n = sum(1 for reads, _ in iterations if e in reads)
@@ -199,8 +220,25 @@ def flp_loop(
             rename_in[e] = slice_edge
             inputs[e] = port.name
     drain_edges: list[str] = []
-    if out_rs:
-        for e in out_edges:
+    # per-token invocations: iteration k reads the credit of the output written by iteration
+    # k - 1 (cyclic over the frame), granted invocation_credit cycles after its port handshake
+    credit_edges: dict[str, str] = (
+        {e: f"{prefix}.credit.{e}" for e in out_edges} if invocation_credit is not None else {}
+    )
+    for e in out_edges:
+        if e in internal:
+            # internal FIFO of a dataflow region: the stage's write completes in the cycle
+            # of the FIFO push; a full FIFO freezes the pipeline immediately
+            slice_edge = f"{prefix}.outslice.{e}"
+            n = sum(1 for _, writes in iterations if e in writes)
+            port = Chain(f"{prefix}.PO.{e}", freeze_group=group, freezer=True)
+            port.events(n, 1, reads=[slice_edge], writes=[e])
+            edges.append(FIFOEdge(slice_edge, w.name, port.name, depth=1, lf=0, lb=1))
+            chains.append(port)
+            rename_out[e] = slice_edge
+            outputs[e] = port.name
+            continue
+        if e in out_rs_set:
             slice_edge = f"{prefix}.outslice.{e}"
             n = sum(1 for _, writes in iterations if e in writes)
             if params.top_level or not drain:
@@ -209,7 +247,12 @@ def flp_loop(
                 # stage wait: dup.hpp's "blocking write to all outputs"), the next write may
                 # follow in the cycle of the handshake
                 port = Chain(f"{prefix}.PO.{e}", freeze_group=group, freezer=True)
-                port.events(n, 1, reads=[slice_edge], writes=[e])
+                port.events(
+                    n,
+                    1,
+                    reads=[slice_edge],
+                    writes=[e, credit_edges[e]] if e in credit_edges else [e],
+                )
                 edges.append(FIFOEdge(slice_edge, w.name, port.name, depth=1, lf=1, lb=0))
             else:
                 port = Chain(f"{prefix}.PO.{e}")
@@ -227,10 +270,30 @@ def flp_loop(
             chains.append(port)
             rename_out[e] = slice_edge
             outputs[e] = port.name
+    if credit_edges:
+        last_out = iterations[-1][1]
+        if any(len(writes) != 1 for _, writes in iterations):
+            raise FINNUserError("invocation_credit needs exactly one write per iteration")
+        for e, name in credit_edges.items():
+            edges.append(
+                FIFOEdge(
+                    name,
+                    outputs[e],
+                    r.name,
+                    depth=None,
+                    lf=invocation_credit,
+                    lb=0,
+                    initial_tokens=1 if e == last_out[0] else 0,
+                )
+            )
     first = True
+    prev_out: str | None = iterations[-1][1][0] if credit_edges else None
     for reads, writes in iterations:
-        gap = frame_gap if first else 1
+        gap = frame_gap if first else iteration_gap
         rd = [rename_in.get(e, e) for e in reads] + (drain_edges if first else [])
+        if credit_edges:
+            rd.append(credit_edges[prev_out])
+            prev_out = writes[0]
         wrt = [rename_out.get(e, e) for e in writes]
         if merged:
             r.event(gap, reads=rd, writes=wrt)
@@ -255,6 +318,13 @@ def flp_loop(
             "source": params.source,
         },
     )
+
+
+def _slice_set(edges: list[str], spec: bool | set[str]) -> set[str]:
+    """Edges that get a register slice: all/none for a bool, else the given subset."""
+    if isinstance(spec, bool):
+        return set(edges) if spec else set()
+    return set(spec) & set(edges)
 
 
 def _stage_latency(params: HLSLoopParams, in_port: str | None, out_port: str | None) -> int | None:
@@ -462,6 +532,117 @@ def replicate_stream_hls(
     n = int(np.prod(node.get_folded_output_shape()[:-1]))
     its: list[Iteration] = [((in_edges[0],), tuple(out_edges))] * n
     return flp_loop(prefix, its, loop_params(node))
+
+
+# ---------------------------------------------------------------------------- 1:1 loops
+def _one_to_one(
+    node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]
+) -> OpModel:
+    """One read and one write per iteration over all folded output elements."""
+    n = int(np.prod(node.get_folded_output_shape()[:-1]))
+    its: list[Iteration] = [((in_edges[0],), (out_edges[0],))] * n
+    return flp_loop(prefix, its, loop_params(node))
+
+
+@register("Squeeze", "hls")
+def squeeze_hls(
+    node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]
+) -> OpModel:
+    """``squeeze_hls.py::docompute``: flp loop, ``out0_V.write(in0_V.read())``."""
+    return _one_to_one(node, prefix, in_edges, out_edges)
+
+
+@register("Unsqueeze", "hls")
+def unsqueeze_hls(
+    node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]
+) -> OpModel:
+    """``unsqueeze_hls.py::docompute``: flp loop, ``out0_V.write(in0_V.read())``."""
+    return _one_to_one(node, prefix, in_edges, out_edges)
+
+
+@register("Requant", "hls")
+def requant_hls(
+    node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]
+) -> OpModel:
+    """``requant_hls.py::docompute``: one pipelined loop over ``TOTAL_FOLD``, one read and one
+    write per fold."""
+    return _one_to_one(node, prefix, in_edges, out_edges)
+
+
+@register("Lookup", "hls")
+def lookup_hls(node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]) -> OpModel:
+    """``StreamingLookup`` (``custom_hls/lookup.hpp:47-58``, ``internal_embedded``): one
+    pipelined loop over ``NumInputs`` with one read and one write per iteration (``II=1``,
+    default pipeline style). The ``external`` mode (AXI-MM burst per input) is not modelled."""
+    if node.get_nodeattr("mem_mode") != "internal_embedded":
+        raise FINNUserError("Lookup template: only mem_mode internal_embedded is modelled")
+    return _one_to_one(node, prefix, in_edges, out_edges)
+
+
+# ---------------------------------------------------------------------------- Split / Concat
+@register("StreamingSplit", "hls")
+def split_hls(node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]) -> OpModel:
+    """``StreamingSplit`` (``split.hpp:83-110``): a pipelined function (``II=1``, flp) invoked
+    once per input token; the token is written to output ``sel``, which advances after the
+    ``C_k = ChannelsPerStream[k] / SIMD`` tokens of that output; the outputs are served in
+    order for every input vector."""
+    simd = node.get_nodeattr("SIMD")
+    folds = [int(ch) // simd for ch in node.get_nodeattr("ChannelsPerStream")]
+    vecs = int(np.prod(node.get_nodeattr("numInputVectors")))
+    its: list[Iteration] = []
+    for _ in range(vecs):
+        for k, fold in enumerate(folds):
+            its += [((in_edges[0],), (out_edges[k],))] * fold
+    params, gap = _per_token_invocation(node)
+    # the next invocation starts 2 cycles after the port handshake of the previous write
+    return flp_loop(
+        prefix,
+        its,
+        params,
+        frame_gap=gap,
+        iteration_gap=gap,
+        entry=gap - 1,
+        invocation_credit=INVOCATION_CREDIT,
+    )
+
+
+@register("StreamingConcat", "hls")
+def concat_hls(node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]) -> OpModel:
+    """``StreamingConcat`` (``concat.hpp:142-170``): a pipelined function invoked once per
+    output token; a non-blocking read from input ``sel`` (a bubble when it is empty) and one
+    write; ``sel`` advances after ``C_k = ChannelsPerStream[k] / SIMD`` tokens."""
+    simd = node.get_nodeattr("SIMD")
+    folds = [int(ch) // simd for ch in node.get_nodeattr("ChannelsPerStream")]
+    vecs = int(np.prod(node.get_nodeattr("numInputVectors")))
+    its: list[Iteration] = []
+    for _ in range(vecs):
+        for k, fold in enumerate(folds):
+            its += [((in_edges[k],), (out_edges[0],))] * fold
+    params, gap = _per_token_invocation(node)
+    # the next invocation starts 2 cycles after the port handshake of the previous write
+    return flp_loop(
+        prefix,
+        its,
+        params,
+        frame_gap=gap,
+        iteration_gap=gap,
+        entry=gap - 1,
+        invocation_credit=INVOCATION_CREDIT,
+    )
+
+
+def _per_token_invocation(node: HWCustomOp) -> tuple[HLSLoopParams, int]:
+    """Parameters of a top function without a loop that calls a pipelined hlslib function
+    once per token: the top function is not pipelined, so one token is transferred per
+    top-level interval (``Interval-min`` of the top report, e.g. 5 cycles for
+    ``StreamingSplit``/``StreamingConcat``); the call sits in the last state of the top FSM,
+    so the first read happens ``interval - 1`` cycles after reset (measured)."""
+    params = loop_params(node)
+    params.top_level = True
+    params.rewind = True
+    params.rewind_delay = 0
+    gap = params.interval if params.interval else 1
+    return params, gap
 
 
 # ---------------------------------------------------------------------------- DuplicateStreams

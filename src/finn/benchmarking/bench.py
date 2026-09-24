@@ -162,6 +162,18 @@ def start_bench_run(config_name):
         )
         config_expanded.extend(param_set_expanded)
 
+    # Optional parameter overrides for every run of this job (JSON object in the environment,
+    # e.g. the BENCH_PARAM_OVERRIDES pipeline variable): run an existing config such as the
+    # regression suite with a different FIFO sizing method without editing the config file
+    overrides = os.environ.get("BENCH_PARAM_OVERRIDES", "").strip()
+    if overrides:
+        overrides_dict = json.loads(overrides)
+        if not isinstance(overrides_dict, dict):
+            raise ValueError("BENCH_PARAM_OVERRIDES must be a JSON object")
+        print("Applying parameter overrides to every run: %s" % overrides_dict)
+        for run_params in config_expanded:
+            run_params.update(overrides_dict)
+
     # Save config (only first job of array) for logging purposes
     if task_id == 0:
         with open(os.path.join(artifacts_dir, "bench_config.json"), "w") as f:
