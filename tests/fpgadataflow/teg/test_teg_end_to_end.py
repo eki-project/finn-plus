@@ -40,9 +40,12 @@ resulting ``fifo_sizing.json``.
 
 import pytest
 
+import fcntl
 import json
 import math
 import os
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -80,6 +83,34 @@ def models_root() -> Path:
 
 
 MODELS = models_root()
+
+
+def ensure_model(path: Path) -> str:
+    """Pull a missing DVC-managed model into the checkout (``dvc pull <file>.dvc``).
+
+    Returns the DVC output (empty when nothing was attempted). Concurrent test workers
+    serialise on a lock file next to the model.
+    """
+    dvc_file = path.with_name(path.name + ".dvc")
+    dvc = shutil.which("dvc")
+    if path.is_file() or not dvc_file.is_file() or dvc is None:
+        return ""
+    repo_root = next((p for p in path.parents if (p / ".dvc").is_dir()), None)
+    if repo_root is None:
+        return "no .dvc directory above the model"
+    lock = path.with_name(path.name + ".teg.lock")
+    with lock.open("w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        if path.is_file():
+            return ""
+        proc = subprocess.run(
+            [dvc, "pull", str(dvc_file.relative_to(repo_root))],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    return f"dvc pull rc={proc.returncode}: {(proc.stdout + proc.stderr).strip()[-400:]}"
 
 
 def describe_missing(path: Path) -> str:
@@ -196,8 +227,9 @@ def build_with_strategy(name: str, strategy: str) -> tuple[dict[str, int], dict,
     """Run the build flow up to hardware generation and return (depths, sizing report, time)."""
     dut = DUTS[name]
     model_path = Path(dut["model"])
+    pulled = ensure_model(model_path)
     if not model_path.is_file():
-        pytest.skip(f"{model_path} not available: {describe_missing(model_path)}")
+        pytest.skip(f"{model_path} not available: {describe_missing(model_path)}; {pulled}")
     out_dir = Path(make_build_dir(f"teg_e2e_{name}_{strategy}_"))
     cfg = build_cfg.DataflowBuildConfig(
         output_dir=str(out_dir),
