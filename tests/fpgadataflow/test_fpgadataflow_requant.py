@@ -231,7 +231,9 @@ def test_requant_rtl(abits, ishape, per_channel, part, pe, sim_style, mem_mode, 
     assert len(model.get_nodes_by_op_type("Requant")) == 1
 
     # Verify functional correctness before specialization
-    quant_step = max_val / (2**abits - 1)
+    # one LSB of the quantizer: the signed models (QuantIdentity over [-max_val, max_val])
+    # use a step of max_val / 2^(abits-1), the unsigned ones max_val / (2^abits - 1)
+    quant_step = max_val / (2 ** (abits - 1)) if signed_out else max_val / (2**abits - 1)
     y_requant = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
     assert np.allclose(y_golden, y_requant, atol=quant_step)
 
@@ -381,7 +383,9 @@ def test_requant_hls(abits, ishape, per_channel, input_dtype, pe, exec_mode, sig
     getCustomOp(requant_node).set_nodeattr("preferred_impl_style", "hls")
 
     # Verify functional correctness before specialization
-    quant_step = max_val / (2**abits - 1)
+    # one LSB of the quantizer: the signed models (QuantIdentity over [-max_val, max_val])
+    # use a step of max_val / 2^(abits-1), the unsigned ones max_val / (2^abits - 1)
+    quant_step = max_val / (2 ** (abits - 1)) if signed_out else max_val / (2**abits - 1)
     y_requant = oxe.execute_onnx(model, input_dict)[model.graph.output[0].name]
     assert np.allclose(y_golden, y_requant, atol=quant_step)
 
