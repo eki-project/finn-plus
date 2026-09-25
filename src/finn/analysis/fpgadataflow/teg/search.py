@@ -242,11 +242,15 @@ def minimize_depths(
             nonlocal simulations
             trial = dict(current)
             trial[edge] = depth
+            # interval stability only: with bounded FIFOs and free-running sources the
+            # occupancies keep growing until the FIFOs are full, which would defer the
+            # stable-state stop and turn the cycle budget into a false failure
             res = simulate(
                 model,
                 capacities_for(trial, max_qsrl_depth),
                 max_frames=max_frames,
                 max_cycles=max_cycles,
+                stable_occupancy=False,
                 backend=backend,
             )
             simulations += 1
@@ -289,19 +293,22 @@ def minimize_depths(
     best_order = min(results, key=lambda o: sum(results[o][0][e] * widths[e] for e in ext))
     depths, iterations, times = results[best_order]
 
-    # ---- phase 4: validation
+    # ---- phase 4: validation (a generous cycle budget: this run only has to confirm the
+    # interval, it is not an oracle whose timeout means "too slow")
     final = simulate(
         model,
         capacities_for(depths, max_qsrl_depth),
         max_frames=max_frames,
-        max_cycles=max_cycles,
+        max_cycles=4 * max_cycles + max_frames * target,
+        stable_occupancy=False,
         backend=backend,
     )
     simulations += 1
     if final.deadlock or final.timeout or final.interval > target:
         raise FINNUserError(
             "Final validation with the jointly-minimised FIFO depths failed "
-            f"(interval {final.interval} vs target {target}, deadlock={final.deadlock})."
+            f"(interval {final.interval} vs target {target}, deadlock={final.deadlock}, "
+            f"timeout={final.timeout}, frames={final.frames})."
         )
     return SearchResult(
         depths=depths,

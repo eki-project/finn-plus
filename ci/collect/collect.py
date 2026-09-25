@@ -76,7 +76,10 @@ def open_json_report(id, report_name, is_followup=False):
 
 
 def classify_run(params):
-    """Classify a run as a standard build, a live FIFO-sizing build or its follow-up build."""
+    """Classify a run as a standard build, a live FIFO-sizing build or its follow-up build, or
+    a build with one of the model-based FIFO sizing strategies (abstract_sim, milp)."""
+    if params.get("auto_fifo_strategy") in ("abstract_sim", "milp"):
+        return "model_fifo"
     if params.get("auto_fifo_strategy") != "live_fifo":
         return "standard"
     # The follow-up build reuses the params of the live FIFO-sizing run with sizing disabled
@@ -545,6 +548,14 @@ class ExperimentComparator:
         "verify_steps",
     }
 
+    # A build with a model-based FIFO sizing strategy (e.g. the regression suite run with
+    # BENCH_PARAM_OVERRIDES selecting abstract_sim) differs from its standard reference only
+    # in the sizing method; it is compared against that reference.
+    _MODEL_FIFO_IGNORED_PARAM_KEYS = {
+        "auto_fifo_depths",
+        "auto_fifo_strategy",
+    }
+
     def __init__(self, dvc_logger, collect_cfg_path):
         self.dvc_logger = dvc_logger
         with open(collect_cfg_path, "r") as f:
@@ -651,9 +662,12 @@ class ExperimentComparator:
         # regression build of the same DUT (the reference pool contains standard runs only),
         # so the params that the sizing flow changes by design must not block the match.
         current_run_kind = classify_run((current_params or {}).get("params", {}) or {})
-        extra_ignored_keys = (
-            self._LIVE_FIFO_IGNORED_PARAM_KEYS if current_run_kind != "standard" else frozenset()
-        )
+        if current_run_kind == "standard":
+            extra_ignored_keys = frozenset()
+        elif current_run_kind == "model_fifo":
+            extra_ignored_keys = self._MODEL_FIFO_IGNORED_PARAM_KEYS
+        else:
+            extra_ignored_keys = self._LIVE_FIFO_IGNORED_PARAM_KEYS
         if extra_ignored_keys:
             print(
                 "Run kind '%s': relaxing param matching, ignoring %s"
@@ -688,7 +702,7 @@ class ExperimentComparator:
             print(
                 "%s: No matching experiments found with model_name %s and matching params"
                 % (
-                    "ERROR" if current_run_kind == "standard" else "WARNING",
+                    "ERROR" if current_run_kind in ("standard", "model_fifo") else "WARNING",
                     current_model_name,
                 )
             )
@@ -906,7 +920,9 @@ if __name__ == "__main__":
         params = {"params": metadata_bench["params"]}
         run_kind = "live_fifo_followup" if args.followup else classify_run(metadata_bench["params"])
         # Only standard builds are held against the regression tolerances of the compare tag
-        enforce_comparison = run_kind == "standard"
+        # standard builds and builds with a model-based FIFO sizing are regression-checked
+        # against the standard reference; live FIFO-sizing runs are informational
+        enforce_comparison = run_kind in ("standard", "model_fifo")
         print(
             "Run %d classified as '%s' (enforce_comparison=%s)" % (id, run_kind, enforce_comparison)
         )

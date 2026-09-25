@@ -115,7 +115,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
             # differential tests against XSI and the end-to-end comparisons against recorded
             # baselines. Used by the dedicated CI test suite to iterate on the operator
             # templates without running the rest of the suite.
-            subprocess.run(
+            fifo_model_rc = subprocess.run(
                 shlex.split(
                     f"{sys.executable} -m pytest -q -rf --tb=short -m 'fifo_model' "
                     f"--junitxml={ci_project_dir}/reports/fifo_model.xml "
@@ -123,7 +123,10 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                     f"--reruns 1 --dist worksteal -n {num_workers}",
                     posix=IS_POSIX,
                 )
-            )
+            ).returncode
+            # pytest exit code 5 means "no tests collected", not a failure
+            if fifo_model_rc not in (0, 5):
+                sys.exit(1)
         case "full_ci":
             main_xml = f"{ci_project_dir}/reports/main.xml"
             main_html = f"{ci_project_dir}/reports/main.html"
