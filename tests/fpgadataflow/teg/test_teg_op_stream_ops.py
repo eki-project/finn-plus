@@ -231,6 +231,12 @@ KNOWN_DEVIATIONS = {
     # Requant: 24-stage float pipeline, flp bubbles under back-pressure (up to 7 cycles)
     ("Requant", "both_bernoulli"),
     ("Requant", "both_bursty"),
+    # Split/Concat as dataflow processes (finn-plus PR #274): 2-cycle bubbles under combined
+    # input starvation and output back-pressure; exact for the unpipelined variant
+    ("Split", "both_bernoulli"),
+    ("Split", "both_bursty"),
+    ("Concat", "both_bernoulli"),
+    ("Concat", "both_bursty"),
 }
 
 

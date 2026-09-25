@@ -593,17 +593,7 @@ def split_hls(node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: lis
     for _ in range(vecs):
         for k, fold in enumerate(folds):
             its += [((in_edges[0],), (out_edges[k],))] * fold
-    params, gap = _per_token_invocation(node)
-    # the next invocation starts 2 cycles after the port handshake of the previous write
-    return flp_loop(
-        prefix,
-        its,
-        params,
-        frame_gap=gap,
-        iteration_gap=gap,
-        entry=gap - 1,
-        invocation_credit=INVOCATION_CREDIT,
-    )
+    return _per_token_loop(node, prefix, its)
 
 
 @register("StreamingConcat", "hls")
@@ -618,8 +608,23 @@ def concat_hls(node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: li
     for _ in range(vecs):
         for k, fold in enumerate(folds):
             its += [((in_edges[k],), (out_edges[0],))] * fold
+    return _per_token_loop(node, prefix, its)
+
+
+def _per_token_loop(node: HWCustomOp, prefix: str, its: list[Iteration]) -> OpModel:
+    """Model of a top function that calls a pipelined hlslib function once per token.
+
+    With ``#pragma HLS dataflow`` on the top function (finn-plus PR #274) the call is a
+    free-running process at one token per cycle, modelled like ``StreamingDup``; without it
+    the unpipelined top function executes the call sequentially at its full latency (one
+    token per top-level interval, 5 cycles), and the next invocation's read follows the
+    port handshake of the previous write by ``INVOCATION_CREDIT`` cycles.
+    """
+    params = loop_params(node)
+    if params.dataflow:
+        params.top_level = False
+        return flp_loop(prefix, its, params, frame_gap=1, drain=False)
     params, gap = _per_token_invocation(node)
-    # the next invocation starts 2 cycles after the port handshake of the previous write
     return flp_loop(
         prefix,
         its,
