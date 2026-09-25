@@ -505,6 +505,11 @@ def test_hls_rtl_dsp_conflict_detection():
         verify_steps=verif_steps,
         verify_input_npy=tmp_output_dir + "/input.npy",
         verify_expected_output_npy=tmp_output_dir + "/expected_output.npy",
+        # LayerNorm_rtl approximates in float (see the tolerance of the LayerNorm tests
+        # above); FINN+'s default verification_atol of 1e-3 is tighter than upstream's
+        # 1e-1 that these tests were written against
+        verification_atol=2**-4,
+        verification_rtol=1e-3,
         generate_outputs=[
             build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
             build_cfg.DataflowOutputType.STITCHED_IP,
@@ -717,6 +722,11 @@ def test_integer_hls_elementwise_no_dsp_conflict():
         verify_steps=verif_steps,
         verify_input_npy=tmp_output_dir + "/input.npy",
         verify_expected_output_npy=tmp_output_dir + "/expected_output.npy",
+        # LayerNorm_rtl approximates in float (see the tolerance of the LayerNorm tests
+        # above); FINN+'s default verification_atol of 1e-3 is tighter than upstream's
+        # 1e-1 that these tests were written against
+        verification_atol=2**-4,
+        verification_rtol=1e-3,
         generate_outputs=[
             build_cfg.DataflowOutputType.ESTIMATE_REPORTS,
             build_cfg.DataflowOutputType.STITCHED_IP,
