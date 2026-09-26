@@ -757,6 +757,13 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: If not specified it will default to synth_clk_period_ns
     hls_clk_period_ns: Optional[float] = None
 
+    #: Whether to use the IP cache: IPs (code generation and HLS synthesis results) of previous
+    #: builds are restored from the cache instead of being generated again, and newly generated
+    #: IPs are added to the cache. The cache directory is configured globally via the
+    #: FINN_IP_CACHE setting (settings.yaml, environment variable or `finn build --ip-cache-path`),
+    #: if no cache directory is configured this option has no effect.
+    use_ip_cache: bool = True
+
     #: (Optional, only relevant when shell_flow_type = VITIS_ALVEO)
     #: Which Vitis platform will be used, e.g. "xilinx_u250_xdma_201830_2".
     #: If not specified but "board" is specified, will use the FINN

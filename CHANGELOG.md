@@ -9,6 +9,11 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 ## 1.6.0 - 28.09.2026
 
 ### Added
+- **IP caching**: code generation and HLS synthesis results of individual layers are stored in a cache directory and re-used by later builds (eki-project#99)
+    - Configured via the new `FINN_IP_CACHE` setting (`settings.yaml`, environment variable or `finn build --ip-cache-path`), defaults to `FINN_IP_CACHE` in the FINN+ root; set it to `none` to disable
+    - New `DataflowBuildConfig` option `use_ip_cache` (default `True`) switches the cache on or off per build
+    - Cache entries are keyed by the FINN+ version/commit (including local modifications), HLS library commits, Xilinx tool version, FPGA part, HLS clock, node type/name/attributes, tensor shapes/datatypes and initializer contents
+    - The test suite (`finn test`) runs with IP caching disabled unless `--ip-cache-path` is given
 - **Sync with upstream `dev` branch, including FINN v1.0.0-alpha** (Xilinx#1687, up to Xilinx#1703): pulls in all upstream `dev` changes since April 2026, see the sections below for the user-facing ones (eki-project#259)
 - **Empirical QoR estimation**: regression models fitted on the CI microbenchmark database predict post-synthesis LUTs and power per layer (eki-project#260)
     - *Corresponding poster @ FPT'25: ["Empirical QoR Estimation Flow for Fast Design Space Exploration of DNN Dataflow Accelerators"](https://doi.org/10.1109/ICFPT67023.2025.00044)*

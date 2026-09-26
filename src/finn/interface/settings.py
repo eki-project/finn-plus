@@ -62,6 +62,9 @@ def _get_finn_root() -> Path:
 
 FINN_ROOT = _get_finn_root()
 
+#: Values (case-insensitive) of the FINN_IP_CACHE setting that disable IP caching.
+IP_CACHE_DISABLED_VALUES: frozenset[str] = frozenset({"", "none", "off", "disabled"})
+
 
 def resolve_relative(path: Path | str, to: Path | str | None) -> Path:
     """If `path` is absolute, return it. If relative, return the combined absolute path.
@@ -84,6 +87,7 @@ class FINNSettings(BaseModel):
     _finn_build_dir: str = PrivateAttr("FINN_TMP")
     _finn_deps: str = PrivateAttr("finn_deps")
     _finn_deps_definitions: str = PrivateAttr("external_dependencies.yaml")
+    _finn_ip_cache: str = PrivateAttr("FINN_IP_CACHE")
     _num_default_workers: int = PrivateAttr(-1)
     automatic_dependency_updates: bool = True
     deps_git_timeout: int = 100
@@ -169,11 +173,30 @@ class FINNSettings(BaseModel):
         if self._auto_set_envvars:
             os.environ["FINN_DEPS_DEFINITIONS"] = str(self.finn_deps_definitions)
 
+    @computed_field
+    @property
+    def finn_ip_cache(self) -> Path | None:
+        """Absolute path to the FINN_IP_CACHE dir, or None if IP caching is disabled."""
+        if self._finn_ip_cache.strip().lower() in IP_CACHE_DISABLED_VALUES:
+            return None
+        return resolve_relative(self._finn_ip_cache, FINN_ROOT)
+
+    @finn_ip_cache.setter
+    def finn_ip_cache(self, new_path: str | Path | None) -> None:
+        """Set the FINN_IP_CACHE dir. None or one of IP_CACHE_DISABLED_VALUES disables caching."""
+        if new_path is None or str(new_path).strip().lower() in IP_CACHE_DISABLED_VALUES:
+            self._finn_ip_cache = ""
+        else:
+            self._finn_ip_cache = str(Path(new_path).expanduser())
+        if self._auto_set_envvars:
+            os.environ["FINN_IP_CACHE"] = str(self.finn_ip_cache or "")
+
     def update_environment(self) -> None:
         """Update the environment variables according to field values."""
         os.environ["FINN_BUILD_DIR"] = str(self.finn_build_dir)
         os.environ["FINN_DEPS"] = str(self.finn_deps)
         os.environ["FINN_DEPS_DEFINITIONS"] = str(self.finn_deps_definitions)
+        os.environ["FINN_IP_CACHE"] = str(self.finn_ip_cache or "")
         os.environ["NUM_DEFAULT_WORKERS"] = str(self.num_default_workers)
 
     @staticmethod
@@ -340,6 +363,7 @@ class FINNSettings(BaseModel):
         data["finn_build_dir"] = self._finn_build_dir
         data["finn_deps"] = self._finn_deps
         data["finn_deps_definitions"] = self._finn_deps_definitions
+        data["finn_ip_cache"] = self._finn_ip_cache
         if installation_independent:
             del data["finn_rtllib"]
             del data["finn_custom_hls"]

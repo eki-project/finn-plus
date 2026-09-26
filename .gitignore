@@ -71,6 +71,7 @@ finn_xsi/finn_xsi/unittests/Makefile
 finn_xsi/finn_xsi/VERSION
 
 settings.yaml
+FINN_IP_CACHE/
 */.cache/*
 
 # Package files
