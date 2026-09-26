@@ -182,6 +182,19 @@ def resolve_build_steps(
             steps_as_fxns.append(transform_step)
         else:
             raise FINNConfigurationError("Could not resolve build step: " + str(transform_step))
+
+    # Inject user-provided steps before/after named steps (cfg.inject_steps_before/after)
+    if list_as_input is None and (cfg.inject_steps_before or cfg.inject_steps_after):
+        expanded: list[BuildStep] = []
+        for step_fn in steps_as_fxns:
+            step_name = getattr(step_fn, "__name__", None)
+            before = cfg.inject_steps_before.get(step_name, []) if step_name else []
+            after = cfg.inject_steps_after.get(step_name, []) if step_name else []
+            expanded += resolve_build_steps(cfg, partial=False, list_as_input=list(before))
+            expanded.append(step_fn)
+            expanded += resolve_build_steps(cfg, partial=False, list_as_input=list(after))
+        steps_as_fxns = expanded
+
     if partial and list_as_input is None:
         step_names = list(map(lambda x: x.__name__, steps_as_fxns))
         if cfg.start_step is None:
@@ -394,6 +407,13 @@ def build_dataflow_cfg(model_filename: str | Path, cfg: DataflowBuildConfig) -> 
     print(f"Intermediate outputs will be generated in {get_settings().finn_build_dir}")
     print(f"Final outputs will be generated in {cfg.output_dir}")
     print(f"Build log is at {logfile}")
+
+    if cfg.debug_fifo and not cfg.verify_rtlsim_behavioral:
+        log.info(
+            "[debug_fifo] forcing verify_rtlsim_behavioral=True so that "
+            "the verify step uses fifo_gauge and produces per-FIFO logs."
+        )
+        cfg.verify_rtlsim_behavioral = True
 
     # Setup done, start build flow
     time_per_step: dict[str, float] = {}

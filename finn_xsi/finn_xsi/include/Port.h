@@ -52,6 +52,8 @@ namespace xsi {
         unsigned as_unsigned() const noexcept;
         std::string as_binstr() const;
         std::string as_hexstr() const;
+        /// Like as_hexstr(), but X/Z bits are rendered by their 2-state value (aVal) instead of x/z/?
+        std::string as_hexstr_2state() const;
 
         // Manipulation
         Port& clear();

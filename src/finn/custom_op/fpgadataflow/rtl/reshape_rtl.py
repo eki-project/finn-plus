@@ -80,7 +80,7 @@ class Reshape_rtl(Reshape, RTLBackend):
         # Copy implementation files from the library into the instance code
         # generation dictionary
         # shutil.copy(os.path.join(rtlsrc, "passthru_axi.sv"), code_gen_dir)
-        shutil.copy(os.path.join(rtlsrc, "dwc.sv"), code_gen_dir)
+        shutil.copy(os.path.join(rtlsrc, "vpc.sv"), code_gen_dir)
         shutil.copy(os.path.join(rtlsrc, "dwc_axi.sv"), code_gen_dir)
 
         # Set ipgen_path and ip_path so that HLS-Synth transformation and
@@ -118,7 +118,7 @@ class Reshape_rtl(Reshape, RTLBackend):
 
         return [
             # os.path.join(code_gen_dir, "passthru_axi.sv"),
-            os.path.join(code_gen_dir, "dwc.sv"),
+            os.path.join(code_gen_dir, "vpc.sv"),
             os.path.join(code_gen_dir, "dwc_axi.sv"),
             os.path.join(code_gen_dir, f"{top_name}.v"),
         ]

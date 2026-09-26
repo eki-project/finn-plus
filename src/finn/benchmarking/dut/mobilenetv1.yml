@@ -6,6 +6,7 @@ steps:
   - finn.builder.custom_step_library.mobilenet.step_mobilenet_streamline # Custom step
   - finn.builder.custom_step_library.mobilenet.step_mobilenet_lower_convs # Custom step
   - finn.builder.custom_step_library.mobilenet.step_mobilenet_convert_to_hw_layers_separate_th # Custom step
+  - step_minimize_bit_width_initial
   - step_create_dataflow_partition
   - step_specialize_layers
   - step_apply_folding_config

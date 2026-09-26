@@ -59,7 +59,7 @@ from mashumaro.mixins.yaml import DataClassYAMLMixin
 from pathlib import Path, PosixPath, PurePath
 from typing import Any, Literal, Optional, cast
 
-from finn.util.basic import alveo_default_platform, part_map
+from finn.util.basic import alveo_default_platform, hbm_boards, part_map
 from finn.util.exception import FINNConfigurationError
 
 
@@ -102,6 +102,16 @@ class AutoFIFOSizingMethod(str, Enum):
     #: (default) depth. Useful for designs that are known to work without deeper
     #: FIFOs and avoids having to maintain a fifo_config_file.
     FORCE_MINIMAL_FIFOS = "force_minimal_fifos"
+
+
+class LargeFIFOMemStyle(str, Enum):
+    """Memory resource for the large (memory-backed) FIFOs of a build."""
+
+    #: Let fifo.sv choose by depth and width: BRAM up to 2028 entries, URAM beyond
+    AUTO = "auto"
+    BRAM = "block"
+    LUTRAM = "distributed"
+    URAM = "ultra"
 
 
 class FifosimCommMode(str, Enum):
@@ -157,15 +167,6 @@ class FpgaMemoryType(str, Enum):
 
     DEFAULT = "default"
     HOST_MEM = "host_memory"
-
-
-class LargeFIFOMemStyle(str, Enum):
-    """Type of memory resource to use for large FIFOs."""
-
-    AUTO = "auto"
-    BRAM = "block"
-    LUTRAM = "distributed"
-    URAM = "ultra"
 
 
 class VerificationStepType(str, Enum):
@@ -340,6 +341,7 @@ default_build_dataflow_steps = [
     "step_tidy_up",
     "step_streamline",
     "step_convert_to_hw",
+    "step_minimize_bit_width_initial",
     "step_create_dataflow_partition",
     "step_specialize_layers",
     "step_target_fps_parallelization",
@@ -347,6 +349,7 @@ default_build_dataflow_steps = [
     "step_minimize_bit_width",
     "step_transpose_decomposition",
     "step_generate_estimate_reports",
+    "step_assign_ddr_weight_offsets",
     "step_generate_hardware",
     "step_create_stitched_ip",
     "step_measure_rtlsim_performance",
@@ -363,6 +366,7 @@ estimate_only_dataflow_steps = [
     "step_tidy_up",
     "step_streamline",
     "step_convert_to_hw",
+    "step_minimize_bit_width_initial",
     "step_create_dataflow_partition",
     "step_specialize_layers",
     "step_target_fps_parallelization",
@@ -657,6 +661,13 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: flexibility, and makes it possible to have runtime-writable thresholds.
     standalone_thresholds: bool = False
 
+    #: (Optional) Bitwidth threshold for choosing between Requant and Thresholding
+    #: for MultiThreshold nodes. When output bitwidth >= this threshold, Requant is
+    #: preferred (if thresholds are uniform). When output bitwidth < threshold,
+    #: Thresholding is used. Requant is more efficient for high bitwidths.
+    #: Default is 9 (use Requant for 9+ bit outputs, Thresholding for 8-bit and below).
+    requant_bitwidth_threshold: Optional[int] = 9
+
     #: Whether optimizations that minimize the bit width of the
     #: weights and accumulator will be applied. Because this optimization relies
     #: on the the values of the weights, it will only be applied if runtime-
@@ -690,22 +701,27 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: to synthesize, but results in much faster simulations.
     functional_simulation: bool = True
 
-    #: Whether FIFO nodes with depth larger than 32768 will be split.
-    #: Allow to configure very large FIFOs in the fifo_config_file.
-    split_large_fifos: bool = True
-
     #: (Only relevant when auto_fifo_depths is enabled)
     #: Select which method will be used for setting the FIFO sizes.
     #: Note that AutoFIFOSizingMethod.FORCE_MINIMAL_FIFOS does not size the FIFOs at all,
     #: it just inserts them with their minimal (default) depth.
     auto_fifo_strategy: AutoFIFOSizingMethod = AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION
 
-    #: (Only relevant when auto_fifo_depths is enabled)
-    #: Memory resource type for large FIFOs.
+    #: Memory resource for the large FIFOs, i.e. those that fifo.sv would back with block
+    #: RAM or URAM (deeper than 257 entries at 5 bit or more). Shallower FIFOs keep the
+    #: shift register / LUTRAM the RTL selects for them. AUTO leaves the choice to the RTL,
+    #: which takes URAM for every FIFO deeper than 2028 entries; set BRAM on devices whose
+    #: URAM is needed for weight memories. Applied to all FIFO sizing strategies, and
+    #: recorded in the fifo_sizing.json report / fifo_config_file per FIFO.
     large_fifo_mem_style: LargeFIFOMemStyle = LargeFIFOMemStyle.AUTO
 
     #: Enable saving waveforms from simulation-based FIFO sizing.
     fifosim_save_waveform: bool = False
+
+    #: Enable FIFO debugging: the rtlsim verification steps use the fifo_gauge (behavioral
+    #: FIFO model, implies verify_rtlsim_behavioral=True) which then writes per-FIFO
+    #: transaction logs into <output_dir>/debug/fifo_logs.
+    debug_fifo: bool = False
 
     #: (Only relevant when auto_fifo_strategy == AutoFIFOSizingMethod.DISTRIBUTED_SIMULATION)
     #: Communication backend mode for the distributed simulation. "shm" uses local shared
@@ -825,6 +841,23 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
     #: MultiThreshold nodes and a warning is raised instead.
     max_multithreshold_bit_width: int = 8
 
+    #: Use behavioral simulation for rtlsim verification steps.
+    #: When True, passes -define FINN_SIMULATION to xelab, enabling faster
+    #: behavioral models for DSP-heavy modules (MVU, LayerNorm, Elementwise)
+    #: and fifo_gauge (with debug capabilities) instead of the synthesizable fifo.sv.
+    #: Does not affect FIFO sizing which always uses behavioral simulation.
+    verify_rtlsim_behavioral: bool = False
+
+    #: Inject custom steps after named steps. Dict mapping step names to a list of steps
+    #: (callables or importable step names, see `steps`) to run after that step.
+    #: Example: inject_steps_after={"step_tidy_up": [my_custom_verification]}
+    inject_steps_after: dict[str, list[Any]] = field(default_factory=dict)
+
+    #: Inject custom steps before named steps. Dict mapping step names to a list of steps
+    #: (callables or importable step names, see `steps`) to run before that step.
+    #: Example: inject_steps_before={"step_convert_to_hw": [my_custom_analysis]}
+    inject_steps_before: dict[str, list[Any]] = field(default_factory=dict)
+
     #: Configuration that provides parameters for Multi-FPGA partitioning.
     #: If set to something other than None, we assume the Multi-FPGA case
     partitioning_configuration: Optional[PartitioningConfiguration] = None
@@ -899,6 +932,12 @@ class DataflowBuildConfig(DataClassJSONMixin, DataClassYAMLMixin):
         raise FINNConfigurationError(
             "Couldn't resolve driver platform for " + str(self.shell_flow_type)
         )
+
+    def _resolve_mem_type(self) -> str:
+        """Resolve the memory type used to stream weights from the memories
+        available on the target board. When a board exposes more than one memory
+        type, HBM takes precedence over DDR."""
+        return "HBM" if self.board in hbm_boards else "DDR"
 
     def _resolve_fpga_part(self) -> str:
         """Resolve the FPGA part identifier.

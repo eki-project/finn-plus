@@ -158,7 +158,7 @@ class InferQuantizedMatrixVectorActivation(Transformation):
                             noActivation=0,
                             numInputVectors=list(mm_in_shape[:-1]),
                             name="MVAU_" + n.name,
-                            dynamic_input=w is None,
+                            mem_mode="dynamic" if w is None else "internal_decoupled",
                             inFIFODepths=[2, 2] if w is None else [2],
                         )
                         graph.node.insert(node_ind, new_node)
@@ -190,7 +190,7 @@ class InferQuantizedMatrixVectorActivation(Transformation):
                             noActivation=1,
                             numInputVectors=list(mm_in_shape[:-1]),
                             name="MVAU_" + n.name,
-                            dynamic_input=w is None,
+                            mem_mode="dynamic" if w is None else "internal_decoupled",
                             inFIFODepths=[2, 2] if w is None else [2],
                         )
                         graph.node.insert(node_ind, new_node)
