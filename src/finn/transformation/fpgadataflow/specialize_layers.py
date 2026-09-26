@@ -41,7 +41,8 @@ from qonnx.transformation.general import GiveUniqueNodeNames
 
 from finn.custom_op.fpgadataflow.hls import custom_op as hls_variants
 from finn.custom_op.fpgadataflow.rtl import custom_op as rtl_variants
-from finn.util.basic import get_dsp_block, is_versal
+from finn.util.basic import get_dsp_block, get_dsp_datapath_limits, is_versal
+from finn.util.exception import FINNUserError
 from finn.util.logging import log
 
 
@@ -64,8 +65,6 @@ def _determine_impl_style(node, fpgapart, model):
     # if impl_style not set, for "simple" layers always try
     # to use rtl variant if available
     if impl_style == "":
-        if optype == "StreamingDataWidthConverter":
-            return _dwc_determine_impl_style(node)
         if rtl_variant:
             if optype == "MVAU":
                 idt = node_inst.get_input_datatype(0)
@@ -91,6 +90,13 @@ def _determine_impl_style(node, fpgapart, model):
                 if _layernorm_rtl_possible(node, fpgapart):
                     return "rtl"
                 return "hls"
+            if optype == "PWPolyF":
+                _pwpolyf_rtl_possible(node, fpgapart)
+                return "rtl"
+            if optype == "HWSoftmax":
+                if _softmax_rtl_possible(node, fpgapart):
+                    return "rtl"
+                return "hls"
             if optype == "Requant":
                 if _requant_rtl_possible(node, fpgapart):
                     return "rtl"
@@ -111,6 +117,8 @@ def _determine_impl_style(node, fpgapart, model):
         if hls_variant:
             return "hls"
         if rtl_variant:
+            if optype == "PWPolyF":
+                _pwpolyf_rtl_possible(node, fpgapart)
             warn_str = """There is no HLS variant of %s. Node %s will automatically be
                         set to RTL variant.""" % (
                 node.op_type,
@@ -118,23 +126,13 @@ def _determine_impl_style(node, fpgapart, model):
             )
             log.warning(warn_str)
             return "rtl"
-        raise Exception(
-            f"""Node {node.name} with optype {optype} has no hw implementation variant)"""
-        )
-    if impl_style == "rtl":
-        # rtl dwc does not support every inWidth to outWidth ratio
-        if optype == "StreamingDataWidthConverter":
-            if _dwc_determine_impl_style(node) != "rtl":
-                warn_str = """RTL implementation of DWC requires
-                            stream widths that are integer width ratios
-                            from each other. Node %s will automatically be
-                            set to HLS variant.""" % (
-                    node.name,
+        else:
+            raise Exception(
+                """Node {} with optype {} has no hw implementation variant)""".format(
+                    node.name, optype
                 )
-                log.warning(warn_str)
-                return "hls"
-            # user setting can be fulfilled
-            return "rtl"
+            )
+    elif impl_style == "rtl":
         if optype == "MVAU":
             if _mvu_rtl_possible(node, fpgapart, model):
                 return "rtl"
@@ -157,6 +155,9 @@ def _determine_impl_style(node, fpgapart, model):
             log.warning(warn_str)
             return "hls"
 
+        if optype == "PWPolyF":
+            _pwpolyf_rtl_possible(node, fpgapart)
+            return "rtl"
         if optype == "LayerNorm":
             if _layernorm_rtl_possible(node, fpgapart):
                 return "rtl"
@@ -167,12 +168,23 @@ def _determine_impl_style(node, fpgapart, model):
             )
             log.warning(warn_str)
             return "hls"
+        if optype == "HWSoftmax":
+            if _softmax_rtl_possible(node, fpgapart):
+                return "rtl"
+            warn_str = """There is no RTL variant for %s. The node will automatically be
+                        set to HLS variant. The RTL SoftMax layer uses DSPFP32, so only
+                        versal devices are supported.""" % (
+                node.name,
+            )
+            log.warning(warn_str)
+            return "hls"
         if optype in ["ElementwiseAdd", "ElementwiseSub", "ElementwiseMul"]:
             if _elementwise_rtl_possible(node, fpgapart):
                 return "rtl"
             warn_str = """There is no RTL variant for %s. The node will automatically be
-                        set to HLS variant. The RTL Elementwise layers currently only supports
-                        float32 inputs and use DSP58, so only versal devices supported.""" % (
+                        set to HLS variant. The RTL Elementwise layers use DSP58 and require
+                        Versal devices. For int/int, both operand widths and signedness must
+                        match, and MUL width is limited by DSP58 capacity.""" % (
                 node.name,
             )
             log.warning(warn_str)
@@ -182,7 +194,7 @@ def _determine_impl_style(node, fpgapart, model):
                 return "rtl"
             warn_str = """There is no RTL variant for %s. The node will automatically be
                         set to HLS variant. The RTL Requant layers currently only supports
-                        integer inputs, unsigned outputs and non-narrow quantization.""" % (
+                        integer inputs and non-narrow quantization.""" % (
                 node.name,
             )
             log.warning(warn_str)
@@ -207,30 +219,15 @@ def _determine_impl_style(node, fpgapart, model):
     )
 
 
-def _dwc_determine_impl_style(node):
-    """Determine implementation style for StreamingDataWidthConverter nodes.
-
-    When possible, uses RTL variant based on width ratio compatibility.
-    """
-    dwc = getCustomOp(node)
-    dwc_in_width = dwc.get_nodeattr("inWidth")
-    dwc_out_width = dwc.get_nodeattr("outWidth")
-    # check if rtl variant can be used
-    iwidth_d = dwc_in_width % dwc_out_width == 0
-    owidth_d = dwc_out_width % dwc_in_width == 0
-    if iwidth_d or owidth_d:
-        return "rtl"
-    return "hls"
-
-
 def _mvu_rtl_possible(n, fpgapart, model):
-    """Check whether RTL-based MVU implementation is supported for given node.
+    """Check whether the RTL-based MVU implementation is supported for given node.
 
     RTL-MVU constraints:
-    - DSP48: supports up to 8sx8u (8-bit signed weights x 8-bit activations)
-    - DSP58: supports up to 8sx9s
-    - DSP48E1: only supports narrow range weights
-    - No embedded thresholding or binaryXnor mode supported
+    - No embedded thresholding and no binary XNOR mode
+    - Signed weights of at least 2 bit; DSP48E1 additionally requires narrow-range weights
+    - Activations of at least 2 bit
+    - Activation, weight and accumulator widths must fit the DSP datapath of the
+      target FPGA part (see get_dsp_datapath_limits), otherwise the HLS MVU is used
     """
     node_inst = getCustomOp(n)
     # first check if no Activation or binary xnor mode and return False
@@ -264,10 +261,21 @@ def _mvu_rtl_possible(n, fpgapart, model):
     # we now check if input and weight data types are in range
     # we only use rtl mvau if the dtypes are at least 2 bit
     idt = node_inst.get_input_datatype()
-    inp_width_in_range = (2 <= idt.bitwidth() <= 8) or (idt.bitwidth() == 9 and idt.signed())
-    weight_width_in_range = 2 <= wdt.bitwidth() <= 8
+    inp_width_in_range = 2 <= idt.bitwidth()
+    weight_width_in_range = 2 <= wdt.bitwidth()
 
-    return inp_width_in_range and weight_width_in_range
+    # the DSP-based RTL MVU also has an upper bound on the activation, weight and
+    # accumulator widths given by the target DSP datapath; widths beyond that would
+    # be silently truncated, so fall back to the (unbounded) HLS MVU instead
+    max_act, max_weight, max_acc = get_dsp_datapath_limits(dsp_block)
+    acc_width = node_inst.get_output_datatype().bitwidth()
+    # activations sit in the signed B datapath; unsigned activations cost one extra
+    # bit, so the effective width must stay strictly below the B datapath width
+    signed_act = 1 if idt.signed() else 0
+    act_fits = (idt.bitwidth() - signed_act) < max_act
+    widths_in_range = act_fits and wdt.bitwidth() <= max_weight and acc_width <= max_acc
+
+    return inp_width_in_range and weight_width_in_range and widths_in_range
 
 
 def _vvu_rtl_possible(n, fpgapart):
@@ -294,38 +302,52 @@ def _vvu_rtl_possible(n, fpgapart):
 
 
 def _elementwise_rtl_possible(n, fpgapart):
-    """Check whether RTL-based ElementwiseOp is possible
-    Currently, we only support float32 inputs, versal fabric,
-    the rhs needs to be a const input while the lhs is the dynamic data input
-    and no broadcasting support."""
+    """Check whether RTL-based ElementwiseOp is possible.
+    Only supports float/float and int/float paths on Versal.
+    Int/int uses HLS to avoid bitwidth mismatch issues after MinimizeBitWidth."""
     if not is_versal(fpgapart):
         return False
 
     node_inst = getCustomOp(n)
     lhs_dtype = node_inst.get_input_datatype(0)
     rhs_dtype = node_inst.get_input_datatype(1)
-    out_dtype = node_inst.get_output_datatype(0)
 
-    if not all([dt == "FLOAT32" for dt in [lhs_dtype, rhs_dtype, out_dtype]]):
+    lhs_float = lhs_dtype == "FLOAT32"
+    rhs_float = rhs_dtype == "FLOAT32"
+
+    # Only use RTL for float/float or int/float scenarios
+    # Int/int defaults to HLS to avoid bitwidth mismatch after MinimizeBitWidth
+    if not lhs_float and not rhs_float:
+        return False
+
+    # Float inputs must be FLOAT32 (not FLOAT16 etc.)
+    if lhs_float and lhs_dtype != "FLOAT32":
+        return False
+    if rhs_float and rhs_dtype != "FLOAT32":
         return False
 
     lhs_style = node_inst.get_nodeattr("lhs_style")
     rhs_style = node_inst.get_nodeattr("rhs_style")
 
-    if lhs_style == "input" and rhs_style == "const":
-        lhs_shape = node_inst.get_nodeattr("lhs_shape")
+    # Both const makes no sense for streaming
+    if lhs_style == "const" and rhs_style == "const":
+        return False
+
+    # Check shape constraints for input/const mode
+    lhs_shape = node_inst.get_nodeattr("lhs_shape")
+    out_shape = node_inst.get_nodeattr("out_shape")
+    if lhs_style == "input" and list(lhs_shape) != list(out_shape):
+        return False
+
+    # Broadcasting check for const side
+    if rhs_style == "const":
         rhs_shape = node_inst.get_nodeattr("rhs_shape")
-        out_shape = node_inst.get_nodeattr("out_shape")
-        # check if data input shape matches output shape
-        if list(lhs_shape) != list(out_shape):
-            return False
-        # check if broadcasting is required
         if len(rhs_shape) != len(out_shape) and len(rhs_shape) != len(out_shape) - 1:
             for dim_c, dim_o in zip(rhs_shape, out_shape[-len(rhs_shape) :]):
                 if dim_c != 1 and dim_c != dim_o:
                     return False
-        return True
-    return False
+
+    return True
 
 
 def _layernorm_rtl_possible(n, fpgapart):
@@ -340,18 +362,34 @@ def _layernorm_rtl_possible(n, fpgapart):
     return True
 
 
+def _pwpolyf_rtl_possible(n, fpgapart):
+    """Check whether the PWPolyF node can be specialized: PWPolyF uses the Versal DSPFP32
+    primitive, so only Versal devices are supported (raises otherwise)."""
+    if not is_versal(fpgapart):
+        raise FINNUserError(
+            f"PWPolyF node {n.name} cannot be specialized for FPGA part {fpgapart}. "
+            "PWPolyF_rtl uses the Versal DSPFP32 primitive and is only supported "
+            "on Versal devices."
+        )
+    return True
+
+
+def _softmax_rtl_possible(n, fpgapart):
+    """Check whether RTL-based SoftMax is supported.
+    The RTL softmax core uses DSPFP32, so only Versal devices are supported."""
+    return is_versal(fpgapart)
+
+
 def _requant_rtl_possible(n, fpgapart):
     """Check whether RTL-based Requant is supported
     RTL Requant requires:
     - Integer input (not float)
-    - Unsigned output (RTL clips to [0, 2^N-1])
     - Full range (narrow=0)."""
     node_inst = getCustomOp(n)
     idt = node_inst.get_input_datatype(0)
-    odt = node_inst.get_output_datatype(0)
     narrow = node_inst.get_nodeattr("narrow")
-    # RTL backend works with integer inputs, unsigned outputs, and full range
-    return idt.is_integer() and not odt.signed() and narrow == 0
+    # RTL backend works with integer inputs and full range
+    return idt.is_integer() and narrow == 0
 
 
 class SpecializeLayers(Transformation):

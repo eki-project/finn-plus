@@ -306,7 +306,9 @@ class PartitionForMultiFPGA(Transformation):
             # Set the device count
             self.cfg.partitioning_configuration.num_fpgas = device_count
 
-            # Create the partitioner
+            # Create the partitioner, releasing the solver of the previous attempt first
+            if self.partitioner is not None:
+                self.partitioner.close()
             self.partitioner = self.partitioner_type(self.cfg, model)
 
             # Solve the model (timed)
@@ -329,35 +331,38 @@ class PartitionForMultiFPGA(Transformation):
                 break
 
         assert self.partitioner is not None  # for the type checker
+        # Everything below still reads the solution from the solver. Leaving the block releases
+        # the solver (and its Gurobi license token) whether partitioning succeeded or raised;
+        # the status, objective value and resource use stay available on the partitioner.
+        with self.partitioner:
+            # Store the model definition for debugging - only store the last try
+            logdir = Path(make_build_dir("partitioning_model_data_"))
+            model_definition_file = logdir / "model.lp"
+            self.partitioner.model.write(str(model_definition_file))
 
-        # Store the model definition for debugging - only store the last try
-        logdir = Path(make_build_dir("partitioning_model_data_"))
-        model_definition_file = logdir / "model.lp"
-        self.partitioner.model.write(str(model_definition_file))
+            # Generate report, regardless of whether partitioning was successful
+            report = self.generate_partitioning_report(model, self.mapping, int(elapsed_seconds))
 
-        # Generate report, regardless of whether partitioning was successful
-        report = self.generate_partitioning_report(model, self.mapping, int(elapsed_seconds))
+            # Display / save report
+            if self.verbosity.value == self.verbosity.EXTRA_HIGH.value:
+                log.info("\n" + report, extra={"highlighter": None, "markup": False})
+            report_path = self.cfg.get_report_directory() / "partitioning_report.txt"
+            report_path.write_text(report)
 
-        # Display / save report
-        if self.verbosity.value == self.verbosity.EXTRA_HIGH.value:
-            log.info("\n" + report, extra={"highlighter": None, "markup": False})
-        report_path = self.cfg.get_report_directory() / "partitioning_report.txt"
-        report_path.write_text(report)
+            # If partitioning failed, return now
+            if self.mapping is None or not solution_found:
+                raise FINNMultiFPGAPartitionerError(
+                    f"Partitioning failed. Status: "
+                    f"{self.partitioner.model.status.name}.\n"
+                    f"A detailed report can be viewed at: {report_path.absolute()}\n"
+                    f"The model definition can be found at: {model_definition_file.absolute()}"
+                )
 
-        # If partitioning failed, return now
-        if self.mapping is None or not solution_found:
-            raise FINNMultiFPGAPartitionerError(
-                f"Partitioning failed. Status: "
-                f"{self.partitioner.model.status.name}.\n"
-                f"A detailed report can be viewed at: {report_path.absolute()}\n"
-                f"The model definition can be found at: {model_definition_file.absolute()}"
-            )
+            # Apply results back to the model
+            model = model.transform(ApplyPartitioning(self.mapping))
+            log.info("Partitioning successful.")
 
-        # Apply results back to the model
-        model = model.transform(ApplyPartitioning(self.mapping))
-        log.info("Partitioning successful.")
-
-        # Write results to build dir and log dir
-        self.partitioner.write_results(logdir / "partitioning.yaml")
-        self.partitioner.write_results(self.cfg.get_report_directory() / "partitioning.yaml")
-        return model, False
+            # Write results to build dir and log dir
+            self.partitioner.write_results(logdir / "partitioning.yaml")
+            self.partitioner.write_results(self.cfg.get_report_directory() / "partitioning.yaml")
+            return model, False

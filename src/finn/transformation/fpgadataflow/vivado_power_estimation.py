@@ -1,6 +1,5 @@
 """Module for vivado power estimation."""
 import json
-import os
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
 
@@ -8,7 +7,7 @@ from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.benchmarking.util import power_xml_to_dict
 from finn.transformation.fpgadataflow.templates import (
     template_switching_simulation_tb,
-    template_vivado_open,
+    template_vivado_open_checkpoint,
     template_vivado_power_fixed,
     template_vivado_power_simulated,
 )
@@ -37,8 +36,8 @@ class VivadoPowerEstimation(Transformation):
     def apply(self, model):
         """Apply transformation."""
         ooc_res_dict = eval(model.get_metadata_prop("res_total_ooc_synth"))
-        vivado_proj_folder = ooc_res_dict["vivado_proj_folder"]
-        project_path = os.path.join(vivado_proj_folder, "vivadocompile", "vivadocompile.xpr")
+        # the routed out-of-context design checkpoint written by SynthOutOfContext
+        routed_dcp = ooc_res_dict["routed_dcp"]
         tmp_dir = make_build_dir("vivado_power_estimation_")
 
         power_summary_dict = dict()
@@ -61,8 +60,7 @@ class VivadoPowerEstimation(Transformation):
             # TODO: infer top module name instead of hardcoding "finn_design_wrapper"
             # top_module_name = model.get_metadata_prop("wrapper_filename")
             # top_module_name = file_to_basename(top_module_name).strip(".v")
-            script = template_vivado_open.replace("$PROJ_PATH$", project_path)
-            script = script.replace("$RUN$", "impl_1")
+            script = template_vivado_open_checkpoint.replace("$DCP_PATH$", routed_dcp)
             script = script + template_vivado_power_simulated
             script = script.replace("$TB_FILE_PATH$", tmp_dir + "/switching_simulation_tb.v")
             script = script.replace("$SAIF_FILE_PATH$", tmp_dir + "/switching.saif")
@@ -114,9 +112,7 @@ class VivadoPowerEstimation(Transformation):
         # TODO: make configurable and more fine-grained (per cell type)
         activity_settings = [(12.5, 0.5), (25, 0.5), (50, 0.5), (75, 0.5), (100, 0.5)]
         # Prepare tcl script
-        script = template_vivado_open.replace("$PROJ_PATH$", project_path)
-        # script = script.replace("$PERIOD$", period)
-        script = script.replace("$RUN$", "impl_1")
+        script = template_vivado_open_checkpoint.replace("$DCP_PATH$", routed_dcp)
         for toggle_rate, static_prob in activity_settings:
             script = script + template_vivado_power_fixed
             script = script.replace("$TOGGLE_RATE$", str(toggle_rate))

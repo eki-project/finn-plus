@@ -164,6 +164,7 @@ class SetFolding(Transformation):
         pe_ops = [
             "DuplicateStreams_hls",
             "GlobalAccPool_hls",
+            "PWPolyF_rtl",
             "Thresholding_hls",
             "Thresholding_rtl",
             "ReplicateStream_hls",

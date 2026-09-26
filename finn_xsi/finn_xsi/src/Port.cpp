@@ -77,6 +77,28 @@ std::string Port::as_hexstr() const {
     return res;
 }
 
+std::string Port::as_hexstr_2state() const {
+    // 2-state view: only the aVal plane is rendered, so X/Z bits read as 0/1 (Vivado
+    // reports undriven byte lanes of AXI-Lite write data as X, which must still parse)
+    unsigned l = (width() + 3) / 4;
+    std::string res(l, '0');
+    auto buffer_iter = buffer.cbegin();
+    auto res_iter = res.rbegin();
+
+    while (l > 0) {
+        uint32_t a = buffer_iter->aVal;
+        ++buffer_iter;
+
+        unsigned m = std::min(8u, l);
+        l -= m;
+        for (unsigned i = 0; i < m; ++i) {
+            *res_iter++ = HEX[a & 0xF];
+            a >>= 4;
+        }
+    }
+    return res;
+}
+
 Port& Port::clear() {
     std::fill(buffer.begin(), buffer.end(), s_xsi_vlog_logicval{.aVal = 0u, .bVal = 0u});
     return *this;

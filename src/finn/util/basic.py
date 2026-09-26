@@ -44,6 +44,8 @@ basic system operations, hardware abstraction, and build tool integration.
 import contextlib
 import errno
 import os
+import re
+import shutil
 import signal
 import stat as statmod
 import subprocess
@@ -56,7 +58,7 @@ from qonnx.util.basic import gen_finn_dt_tensor
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from finn.util.data_packing import finnpy_to_packed_bytearray
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 from finn.util.settings import get_settings
 
@@ -127,6 +129,11 @@ part_map: dict[str, str] = {**pynq_part_map, **alveo_part_map}
 part_map["VEK280"] = "xcve2802-vsvh1760-2MP-e-S"
 part_map["VCK190"] = "xcvc1902-vsva2197-2MP-e-S"
 part_map["V80"] = "xcv80-lsva4737-2MHP-e-s"
+
+# Boards that expose HBM. Note that U50 has only HBM (no DDR), while the other
+# entries have HBM in addition to DDR. All boards not listed here are assumed to
+# be DDR-only (this includes U200/U250/U280 and all Zynq/RFSoC boards).
+hbm_boards: Final[set[str]] = {"U50", "U55C", "V80"}
 
 
 def get_metadata_prop_safe(model: ModelWrapper, key: str, custom_error: str | None = None) -> Any:
@@ -262,10 +269,52 @@ def get_vivado_root() -> str:
         ) from None
 
 
+def get_vivado_version() -> tuple[int, int] | None:
+    """Extract Vivado version as (year, minor) tuple from XILINX_VIVADO."""
+    path = os.environ.get("XILINX_VIVADO", "")
+    match = re.search(r"\b(20\d{2})\.(1|2)\b", path)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
 def get_liveness_threshold_cycles() -> int:
-    """Return the number of no-output cycles rtlsim will wait before assuming
-    the simulation is not finishing and throwing an exception."""
+    """Return the ``LIVENESS_THRESHOLD`` environment override (in cycles) for the
+    rtlsim watchdog. Defaults to 1000000 if unset."""
     return int(os.getenv("LIVENESS_THRESHOLD", 1000000))
+
+
+def get_watchdog_timeout_cycles(cycles_estimate: int | float | None = None) -> int:
+    """Return the effective number of no-output cycles rtlsim will wait before
+    assuming the simulation is not finishing and throwing an exception. This is
+    the derived cycle estimate raised to at least the ``LIVENESS_THRESHOLD``
+    override; with no estimate, the override alone is used."""
+    override = get_liveness_threshold_cycles()
+    if cycles_estimate is None:
+        return override
+    return max(int(cycles_estimate), override)
+
+
+def get_rtlsim_timeout_error_message(
+    threshold: int | float, cycles_estimate: int | float | None = None
+) -> str:
+    """Return an actionable RTL simulation timeout error message."""
+    message = f"RTL simulation timed out after {int(threshold)} cycles"
+    if cycles_estimate is not None:
+        message += f" (derived estimate: {int(cycles_estimate)})"
+    return (
+        message
+        + ". If your model requires more cycles, set LIVENESS_THRESHOLD "
+        + "to a higher value."
+    )
+
+
+def fifo_rtl_files(abspath: bool = True, gauge: bool = False) -> list[str]:
+    """Return the shared FIFO RTL sources, referenced in place so that the flat
+    elaboration namespace only ever sees one declaration of module fifo."""
+    names = (["fifo_gauge.sv"] if gauge else []) + ["fifo.sv"]
+    if not abspath:
+        return names
+    rtlsrc = Path(get_settings().finn_rtllib) / "fifo" / "hdl"
+    return [str(rtlsrc / n) for n in names]
 
 
 def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path:
@@ -286,6 +335,29 @@ def make_build_dir(prefix: str = "", return_as_path: bool = False) -> str | Path
     if return_as_path:
         return tmpdir
     return str(tmpdir)
+
+
+def robust_rmtree(
+    path: str | Path | None, retries: int = 6, initial_delay: float = 0.1, backoff: float = 2.0
+) -> None:
+    """Remove a directory tree with retries for transient NFS cleanup races.
+    Retries ``ENOTEMPTY``/``EBUSY``. Other errors propagate immediately.
+    """
+    if not path or not Path(path).exists():
+        return
+    delay = initial_delay
+    for attempt in range(retries):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            transient = exc.errno in (errno.ENOTEMPTY, errno.EBUSY)
+            if not transient or attempt == retries - 1:
+                raise
+            time.sleep(delay)
+            delay *= backoff
 
 
 class VerboseCalledProcessError(subprocess.CalledProcessError):
@@ -327,7 +399,8 @@ def launch_process_helper(
             capture_output=True,
             env=proc_env,
             cwd=cwd,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
         cmd_out = process.stdout.strip()
@@ -340,7 +413,8 @@ def launch_process_helper(
             stderr=subprocess.PIPE,
             env=proc_env,
             cwd=cwd,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             start_new_session=True,
         )
         try:
@@ -429,6 +503,36 @@ def which(program: str | Path) -> str | Path | None:
                 return exe_file
 
     return None
+
+
+_XILINX_TOOL_DIR_ENV: Final[str] = "FINN_TOOL_DIR_OVERRIDE"
+
+
+def resolve_xilinx_tool(tool_name: str) -> str:
+    """Resolve the command used to invoke a Xilinx tool. Update the following
+    list if new tools use this resolver.
+
+    Default names:
+    - vivado
+    - vitis_hls
+    - vitis-run
+    - v++
+    - xelab
+
+    With FINN_TOOL_DIR_OVERRIDE set, the command resolves to
+    <override>/<tool_name>, otherwise the bare tool_name is used.
+    The single directory override is all a tool-wrapping site (e.g. an LSF
+    bsub dispatcher) needs: point it at a shim dir whose filenames match the
+    bare tool names. Raises FileNotFoundError when the resolved command is
+    not found, so all the default names must have a corresponding shim filename.
+    """
+    dir_override = os.environ.get(_XILINX_TOOL_DIR_ENV)
+    tool = str(Path(dir_override) / tool_name) if dir_override else tool_name
+    if which(tool) is None:
+        if dir_override:
+            raise FileNotFoundError(f"{tool} not found ({_XILINX_TOOL_DIR_ENV}={dir_override!r})")
+        raise FileNotFoundError(f"{tool} not found in PATH")
+    return tool
 
 
 class CppBuilder:
@@ -522,8 +626,33 @@ def get_dsp_block(fpgapart: str) -> str:
     return "DSP48E2"
 
 
+def get_dsp_datapath_limits(dsp_block):
+    """Return the maximum (activation, weight, accumulator) operand widths in bits
+    that fit the datapath of the given DSP block. These correspond to the DSP B, A
+    and P ports respectively. Widths exceeding these limits would be silently
+    truncated (or fail synthesis) if mapped onto the DSP-based RTL MVU."""
+    if dsp_block == "DSP58":
+        max_act_width, max_weight_width, max_acc_width = 24, 27, 58
+    elif dsp_block == "DSP48E2":
+        max_act_width, max_weight_width, max_acc_width = 18, 27, 48
+    else:  # DSP48E1
+        max_act_width, max_weight_width, max_acc_width = 18, 25, 48
+    return max_act_width, max_weight_width, max_acc_width
+
+
 def get_driver_shapes(model: ModelWrapper) -> dict:
-    """Get all the IO shapes for the driver."""
+    """Collect the I/O tensor information the generated driver needs from a
+    partitioned model: datatypes, normal/folded/packed shapes and the IODMA
+    instance names of all graph inputs and outputs.
+
+    Follows each graph input/output into its StreamingDataflowPartition and the
+    neighbouring partition to derive the folded shape from the first/last
+    dataflow node, and packs a dummy tensor to obtain the packed byte shape.
+
+    :param model: Parent model after CreateDataflowPartition (and IODMA insertion)
+    :return: Dictionary with keys ``idt``, ``idma_names``, ``ishape_normal``,
+        ``ishape_folded``, ``ishape_packed`` and their ``o*`` counterparts
+    """
     idt = []
     idma_names = []
     ishape_normal = []
@@ -653,3 +782,38 @@ def get_driver_shapes(model: ModelWrapper) -> dict:
         "oshape_folded": oshape_folded,
         "oshape_packed": oshape_packed,
     }
+
+
+def resolve_resize_param_input(model: ModelWrapper, node: "NodeProto") -> tuple[int, bool]:
+    """Identify which input of an ONNX Resize node carries the resampling
+    parameter, across the different opset input signatures, and whether that
+    parameter is a target output size (``sizes``) rather than ``scales``.
+
+    Returns a ``(param_index, is_sizes)`` tuple where ``param_index`` is the
+    index into ``node.input`` and ``is_sizes`` is True if the parameter is a
+    ``sizes`` input. Handles:
+
+    * ``(X, scales)`` (Resize-10)                  -> ``(1, False)``
+    * ``(X, roi, scales)`` (Resize-11+, no sizes)  -> ``(2, False)``
+    * ``(X, roi, scales, sizes)`` (Resize-11+)     -> ``(2, False)`` or ``(3, True)``
+    """
+    num_inputs = len(node.input)
+    if num_inputs == 2:
+        # Resize-10: (X, scales)
+        return 1, False
+    if num_inputs == 3:
+        # Resize-11+: (X, roi, scales), no sizes input
+        return 2, False
+    if num_inputs == 4:
+        # Resize-11+: (X, roi, scales, sizes); exactly one of scales/sizes is set
+        scales_init = model.get_initializer(node.input[2])
+        sizes_init = model.get_initializer(node.input[3])
+        scales_exists = scales_init is not None and len(scales_init) != 0
+        sizes_exists = sizes_init is not None and len(sizes_init) != 0
+        if not (scales_exists ^ sizes_exists):
+            raise FINNUserError(
+                f"{node.name}: Either scales or the target output size must be specified. "
+                "Specifying both is prohibited."
+            )
+        return (2, False) if scales_exists else (3, True)
+    raise FINNUserError(f"{node.name}: Unsupported number of Resize inputs ({num_inputs}).")

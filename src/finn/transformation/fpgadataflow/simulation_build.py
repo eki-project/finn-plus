@@ -18,6 +18,7 @@ from enum import Enum
 from jinja2 import Environment
 from onnx import NodeProto, TensorProto, ValueInfoProto
 from pathlib import Path
+from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.transformation.base import Transformation
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
@@ -47,6 +48,34 @@ from finn.util.slurmutil import get_slurm_cpus, get_slurm_mem_workers, parse_hos
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+
+# The nlohmann/json sources the simulation backend's CMake build needs. They are a direct download
+# dependency in external_dependencies.yaml, so `finn deps update` provides them and CMake does not
+# have to download anything when configuring in the middle of a build.
+NLOHMANN_JSON_DEP_SUBDIR = Path("nlohmann_json") / "json"
+
+
+def nlohmann_json_cmake_flag() -> str:
+    """Return the CMake flag pointing the simulation backend build to the pre-fetched
+    nlohmann/json sources. Raise a FINNUserError if they are not installed."""
+    json_dir = get_settings().finn_deps / NLOHMANN_JSON_DEP_SUBDIR
+    if not (json_dir / "CMakeLists.txt").exists():
+        raise FINNUserError(
+            f"The nlohmann/json sources required by the RTL simulation backend were not found "
+            f"at {json_dir}. Run 'finn deps update' to fetch the external dependencies."
+        )
+    return f"-DFINN_NLOHMANN_JSON_DIR={json_dir}"
+
+
+# Vivado synthesis jobs per isolated-node project of the functional simulation. Each such
+# project holds the node, its dummies, the memstreamers and sim_ctrl, i.e. a handful of
+# out-of-context runs. Launching them all at once (the default: one job per FINN worker)
+# runs several synth_design processes of ~2.5 GB next to the ~2 GB session per parallel
+# node build, which exceeds the 10 GB per build that the Slurm worker cap budgets
+# (get_slurm_mem_workers) and gets the runs OOM-killed. Two jobs keep the peak within
+# the budget; the dummies and sim_ctrl synthesize in seconds anyway.
+FUNC_SYNTH_JOBS_PER_NODE = 2
 
 
 class SimulationType(str, Enum):
@@ -488,6 +517,15 @@ class SimulationBuilder:
                 f"{num_succs} successor nodes. This is not supported for isolation."
             )
 
+        # onnx.helper.make_graph() below creates a graph without quantization annotations,
+        # so every tensor of the isolated model would default to FLOAT32. Custom ops derive
+        # some code-generation parameters from tensor annotations rather than node
+        # attributes (e.g. the MVAU/VVAU threshold datatype), which then silently degrade
+        # to float and can wreck the synthesized IP (float threshold comparisons let
+        # Vitis HLS collapse the MVAU pipeline to II>1). Collect the datatype of every
+        # tensor of the isolated graph here and re-annotate the model after creation.
+        tensor_datatypes: dict[str, DataType] = {}
+
         # Process each input exactly once: either keep as initializer input or isolate via dummy
         pred_count = 0
         converted_initializer_input_indices: list[int] = []
@@ -514,6 +552,7 @@ class SimulationBuilder:
                 value_info_protos.append(val_info)
                 inputs_node.append(val_info)
                 converted_initializer_input_indices.append(i)
+                tensor_datatypes[val_info.name] = self.model.get_tensor_datatype(inp_name)
                 continue
 
             pred_count += 1
@@ -531,6 +570,9 @@ class SimulationBuilder:
             inputs_graph.append(new_input_info)
             inputs_node.append(new_input_dummy_info)
             nodes_graph.append(dummy_node)
+            input_dt = target_op.get_input_datatype(i)
+            tensor_datatypes[new_input_info.name] = input_dt
+            tensor_datatypes[new_input_dummy_info.name] = input_dt
 
         if pred_count != num_preds:
             raise FINNInternalError(
@@ -553,6 +595,9 @@ class SimulationBuilder:
             outputs_graph.append(new_output_info)
             outputs_node.append(new_output_dummy_info)
             nodes_graph.append(dummy_node)
+            output_dt = target_op.get_output_datatype(i)
+            tensor_datatypes[new_output_info.name] = output_dt
+            tensor_datatypes[new_output_dummy_info.name] = output_dt
 
         if succ_count != num_succs:
             raise FINNInternalError(
@@ -560,10 +605,19 @@ class SimulationBuilder:
                 f"{succ_count} outputs have been handled."
             )
 
-        # Copy the target node and create a new model with the target node and dummy nodes
+        # Copy the target node and create a new model with the target node and dummy nodes.
+        # Only the attributes the node actually carries are copied: rebuilding it from every
+        # declared attribute type would materialize their defaults, and some code generation
+        # is gated on the presence of an attribute rather than its value. address_offset in
+        # particular marks a DDR base address that AssignMemoryOffset assigned; a copy carrying
+        # address_offset=0 builds an address_config block against a loop body that has no
+        # base_address pin, and the FINNLoop IP generation fails.
+        present_attrs = {attr.name for attr in target_node.attribute}
         target_op_attrs = target_op.get_nodeattr_types()
         params = {}
         for attr in target_op_attrs.keys():
+            if attr not in present_attrs:
+                continue
             attr_val = target_op.get_nodeattr(attr)
             if (
                 (isinstance(attr_val, np.ndarray) and attr_val.size == 0)
@@ -629,6 +683,10 @@ class SimulationBuilder:
 
         node_model = onnx.helper.make_model(graph)
         node_model = ModelWrapper(node_model)
+
+        # Restore the tensor datatype annotations (see comment above)
+        for tensor_name, tensor_dt in tensor_datatypes.items():
+            node_model.set_tensor_datatype(tensor_name, tensor_dt)
 
         node_model.set_metadata_prop("predecessors", str([pred.name for pred in inputs_graph]))
         node_model.set_metadata_prop("successors", str([succ.name for succ in outputs_graph]))
@@ -759,7 +817,10 @@ class SimulationBuilder:
         finnxsi_dir = get_settings().finn_xsi
 
         # Running CMake first
-        cmake_call = f"{sys.executable} -m cmake -S {finnxsi_dir} -B {sim_base}"
+        cmake_call = (
+            f"{sys.executable} -m cmake -S {finnxsi_dir} -B {sim_base} "
+            f"{shlex.quote(nlohmann_json_cmake_flag())}"
+        )
         if enable_mpi:
             cmake_call += " -DFIFOSIM_ENABLE_MPI=ON"
         log.debug(f"Running cmake on RTLSIM Wrapper in {sim_base}")
@@ -1095,7 +1156,12 @@ class SimulationBuilder:
             nodemodel = nodemodel.transform(PrepareIP(self.fpgapart, self.clk_ns))
             nodemodel = nodemodel.transform(HLSSynthIP(self.fpgapart))
             nodemodel = nodemodel.transform(
-                CreateStitchedIP(self.fpgapart, self.clk_ns, functional_simulation=functional_sim)
+                CreateStitchedIP(
+                    self.fpgapart,
+                    self.clk_ns,
+                    functional_simulation=functional_sim,
+                    synth_jobs=FUNC_SYNTH_JOBS_PER_NODE,
+                )
             )
             input_interface_names = nodemodel.get_metadata_prop("predecessors")
             if input_interface_names is not None:
@@ -1395,9 +1461,11 @@ class BuildSimulation(Transformation):
             )
         else:
             # Run only compilation again, and avoid repeating building of the stitched IPs
+            json_flag = shlex.quote(nlohmann_json_cmake_flag())
+
             def _compile(binary: Path) -> None:
                 """Compile binary in path binary."""
-                cmake_cmd = "cmake"
+                cmake_cmd = f"cmake {json_flag}"
                 if enable_mpi:
                     cmake_cmd += " -DFIFOSIM_ENABLE_MPI=ON"
                 result = subprocess.run(

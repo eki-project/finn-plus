@@ -43,12 +43,14 @@ import finn.custom_op.fpgadataflow.elementwise_binary as elementwise_binary
 from finn.custom_op.fpgadataflow.elementwise_binary import ElementwiseBinaryOperation
 from finn.custom_op.fpgadataflow.hls import register_custom_op
 from finn.custom_op.fpgadataflow.hlsbackend import HLSBackend
+from finn.util.basic import get_vivado_version, is_versal
 from finn.util.data_packing import (
     npy_to_rtlsim_input,
     numpy_to_hls_code,
     pack_innermost_dim_as_hex_string,
     rtlsim_output_to_npy,
 )
+from finn.util.exception import FINNUserError
 from finn.util.settings import get_settings
 
 # Mapping of memory resource attributes to the corresponding C++ HLS
@@ -123,10 +125,48 @@ class ElementwiseBinaryOperation_hls(
             if self.lhs_style == "const":
                 self.set_nodeattr("lhs_style", "input")
 
+    def _has_embedded_initializer(self, model: ModelWrapper) -> bool:
+        """Return whether a constant operand is embedded into the HLS code (internal_embedded)."""
+        mem_mode = self.get_nodeattr("mem_mode")
+        if mem_mode != "internal_embedded":
+            return False
+        mlo = self.get_nodeattr("mlo_max_iter")
+        lhs_embedded = model.get_initializer(self.onnx_node.input[0]) is not None
+        rhs_embedded = model.get_initializer(self.onnx_node.input[1]) is not None and not mlo
+        return lhs_embedded or rhs_embedded
+
+    def _check_uram_codegen_support(self, model: ModelWrapper, fpgapart: str) -> None:
+        """Check that ram_style=ultra is supported for the target and memory mode."""
+        if self.get_nodeattr("ram_style") != "ultra":
+            return
+        mem_mode = self.get_nodeattr("mem_mode")
+        mlo = self.get_nodeattr("mlo_max_iter")
+        if mem_mode == "internal_embedded" and self._has_embedded_initializer(model):
+            if not is_versal(fpgapart):
+                raise FINNUserError(
+                    "ElementwiseBinaryOperation_hls with internal_embedded URAM constants "
+                    "requires a Versal target. Use internal_decoupled memory mode or a "
+                    "non-URAM ram_style for non-Versal targets."
+                )
+            vivado_version = get_vivado_version()
+            if vivado_version is not None and vivado_version < (2024, 2):
+                raise FINNUserError(
+                    "ElementwiseBinaryOperation_hls with internal_embedded URAM constants "
+                    "requires Vitis HLS 2024.2 or newer because older versions cannot "
+                    "initialize URAM-backed arrays."
+                )
+        elif (mem_mode == "internal_decoupled" or mlo) and not is_versal(fpgapart):
+            raise FINNUserError(
+                "ElementwiseBinaryOperation_hls with internal_decoupled URAM requires "
+                "a Versal target, as URAM cannot be initialized from bitfile on non-Versal "
+                "devices and runtime-writeable weights are not supported for this layer."
+            )
+
     # Note: End of shape and datatype utilities
 
     def code_generation_ipgen(self, model, fpgapart, clk) -> None:
         """Generate c++ code and tcl script for ip generation."""
+        self._check_uram_codegen_support(model, fpgapart)
         super().code_generation_ipgen(model, fpgapart, clk)
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_decoupled" or self.get_nodeattr("mlo_max_iter"):
@@ -161,6 +201,7 @@ class ElementwiseBinaryOperation_hls(
         out_shape = self.get_folded_output_shape(ind=0)
         # Type of memory to use for storing constant parameters
         ram_style = RAM_STYLES[self.get_nodeattr("ram_style")]
+        storage_type = "RAM_S2P" if ram_style == "URAM" else "ROM_2P"
 
         # Check whether there are already pragmas in the code generation
         # dictionary
@@ -201,7 +242,7 @@ class ElementwiseBinaryOperation_hls(
                 # Add pragma configuring the storage type to use for the parameter
                 # tensors: This is a constant parameter implemented as dual-port ROM
                 self.code_gen_dict["$PRAGMAS$"].append(
-                    f"#pragma HLS BIND_STORAGE variable=lhs type=ROM_2P impl={ram_style}"
+                    f"#pragma HLS BIND_STORAGE variable=lhs type={storage_type} impl={ram_style}"
                 )
                 # Add pragma to partition the parameter tensor along the last
                 # dimensions, i.e., the PE dimension for parallel access
@@ -243,7 +284,7 @@ class ElementwiseBinaryOperation_hls(
                 # Add pragma configuring the storage type to use for the parameter
                 # tensors: This is a constant parameter implemented as dual-port ROM
                 self.code_gen_dict["$PRAGMAS$"].append(
-                    f"#pragma HLS BIND_STORAGE variable=rhs type=ROM_2P impl={ram_style}"
+                    f"#pragma HLS BIND_STORAGE variable=rhs type={storage_type} impl={ram_style}"
                 )
                 # Add pragma to partition the parameter tensor along the last
                 # dimensions, i.e., the PE dimension for parallel access
@@ -336,7 +377,7 @@ class ElementwiseBinaryOperation_hls(
             self.code_gen_dict["$READNPYDATA$"] += [
                 # Generate function call reading from file into the input stream
                 #   Note: Inputs can be represented as numpy floats or halfs
-                f"npy2apintstream<LhsPacked, LhsType, LhsWidth, {npy_type}>(",
+                f"npy2apintstream<LhsPacked, LhsType, {npy_type}>(",
                 f'"{code_gen_dir}/input_0.npy", in0_V, false',
                 ");",
             ]
@@ -350,7 +391,7 @@ class ElementwiseBinaryOperation_hls(
             self.code_gen_dict["$READNPYDATA$"] += [
                 # Generate function call reading from file into the input stream
                 #   Note: Inputs can be represented as numpy floats or halfs
-                f"npy2apintstream<RhsPacked, RhsType, RhsWidth, {npy_type}>(",
+                f"npy2apintstream<RhsPacked, RhsType, {npy_type}>(",
                 f'"{code_gen_dir}/input_1.npy", in1_V, false',
                 ");",
             ]
@@ -678,7 +719,7 @@ class ElementwiseBinaryOperation_hls(
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
             # Generate function call reading from stream into the output file
             #   Note: Outputs can be numpy floats or halfs
-            f"apintstream2npy<OutPacked, OutType, OutWidth, {npy_type}>(",
+            f"apintstream2npy<OutPacked, OutType, {npy_type}>(",
             f'out0_V, {shape}, "{code_gen_dir}/output_0.npy", false',
             ");",
         ]
@@ -799,8 +840,7 @@ class ElementwiseBinaryOperation_hls(
         list
             List of TCL commands for IP integration.
         """
-        source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
-        cmd = ["file mkdir %s" % source_target]
+        cmd = []
         # add streamer if needed
         mem_mode = self.get_nodeattr("mem_mode")
         mlo = self.get_nodeattr("mlo_max_iter")
@@ -855,7 +895,7 @@ class ElementwiseBinaryOperation_hls(
                 ms_rtllib_dir + "memstream.sv",
             ]
             for f in sourcefiles:
-                cmd += ["add_files -copy_to %s -norecurse %s" % (source_target, f)]
+                cmd += ["add_files -norecurse %s" % f]
             strm_inst = node_name + "_wstrm"
             cmd.append(
                 "create_bd_cell -type hier -reference %s /%s/%s"
@@ -907,6 +947,27 @@ class ElementwiseBinaryOperation_hls(
             # base class impl sufficient
             return super().code_generation_ipi()
         return cmd
+
+    def fold_input_for_npy(self, inp_val: np.ndarray, ind: int) -> np.ndarray:
+        """Lay out an input for the cppsim npy file, widening broadcast operands.
+
+        A broadcast operand's folded inner axis is 1 but its stream word is PE
+        wide, so the cppsim feeder over-reads the scalar npy. Widen it to the
+        stream word, but only for an npy-fed operand (runtime input or
+        internal_decoupled const). An embedded const is read from params, not
+        the npy, so there is nothing to widen.
+        """
+        folded = super().fold_input_for_npy(inp_val, ind)
+        style = [self.lhs_style, self.rhs_style][ind]
+        stream_fed = style == "input" or (
+            style == "const" and self.get_nodeattr("mem_mode") == "internal_decoupled"
+        )
+        if not stream_fed:
+            return folded
+        elems = self.get_instream_width(ind) // self.get_input_datatype(ind).bitwidth()
+        if folded.shape[-1] == 1 and elems > 1:
+            folded = np.broadcast_to(folded, folded.shape[:-1] + (elems,))
+        return folded
 
     def execute_node(self, context, graph) -> None:
         """Execute this node in the given context.

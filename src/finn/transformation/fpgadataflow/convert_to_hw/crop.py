@@ -45,8 +45,7 @@ def elements_are_consecutive(indices: "np.ndarray") -> bool:
     """Are elements consecutive (max diff. 1 between all adjacent elements)?."""
     if indices.size == 1:
         return True
-    indices.sort()
-    return bool(np.all(np.diff(indices) == 1))
+    return bool(np.all(np.diff(np.sort(indices)) == 1))
 
 
 class InferCrop(Transformation):

@@ -26,40 +26,33 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Transformation for out-of-context Vivado synthesis on stitched IP designs."""
+"""Transformation for out-of-context place & route of stitched IP designs."""
 
-from onnx import NodeProto
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
-from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.base import Transformation
-from shutil import copy2
 
-from finn.util.basic import make_build_dir
 from finn.util.exception import FINNInternalError
-from finn.util.fpgadataflow import is_hls_node
-from finn.util.vivado import out_of_context_synth
-
-
-def is_hls_float_op(node: NodeProto, model: ModelWrapper) -> bool:
-    """Check if a node is an HLS operator with floating-point inputs."""
-    if is_hls_node(node):
-        for inp in node.input:
-            if model.get_tensor_datatype(inp).name.startswith("FLOAT"):
-                return True
-    return False
+from finn.util.vivado import parse_ooc_synth_results, run_ooc_pnr
 
 
 class SynthOutOfContext(Transformation):
-    """Run out-of-context Vivado synthesis on a stitched IP design."""
+    """Run out-of-context synthesis and place & route on the stitched IP design.
+
+    Operates directly on the Vivado project created by ``CreateStitchedIP``
+    (metadata ``vivado_stitch_proj``): synthesizes the design out-of-context if
+    not done already, runs opt/place/route and writes utilization, timing and
+    power reports which are parsed into the ``res_total_ooc_synth`` metadata
+    property (see :func:`finn.util.vivado.parse_ooc_synth_results`).
+    """
 
     def __init__(self, part: str, clk_period_ns: float, clk_name: str = "ap_clk") -> None:
         """Initialize the SynthOutOfContext transformation.
 
         Args:
-            part: Target FPGA part for synthesis
+            part: Target FPGA part (informational, the project already targets it)
             clk_period_ns: Clock period in nanoseconds
-            clk_name: Clock signal name (default: "ap_clk")
+            clk_name: Clock port name of the stitched design (default: "ap_clk")
         """
         super().__init__()
         self.part = part
@@ -67,36 +60,28 @@ class SynthOutOfContext(Transformation):
         self.clk_name = clk_name
 
     def apply(self, model: ModelWrapper) -> tuple[ModelWrapper, bool]:
-        """Apply out-of-context synthesis transformation to the model."""
-
-        def file_to_basename(x: str | Path) -> str:
-            """Extract basename from a file path."""
-            return Path(x).resolve().name
-
+        """Apply out-of-context synthesis and P&R to the stitched IP project."""
         vivado_stitch_proj_dir = model.get_metadata_prop("vivado_stitch_proj")
-        top_module_name = model.get_metadata_prop("wrapper_filename")
-        if vivado_stitch_proj_dir is None or top_module_name is None:
-            raise FINNInternalError("Need stitched IP and wrapper filename metadata to be set.")
-        top_module_name = file_to_basename(top_module_name).strip(".v")
-        build_dir = make_build_dir("synth_out_of_context_")
-        verilog_extensions = [".v", ".sv", ".vh"]
-        with Path(vivado_stitch_proj_dir + "/all_verilog_srcs.txt").open() as f:
-            all_verilog_srcs = f.read().split()
-        for file in all_verilog_srcs:
-            if any(file.endswith(x) for x in verilog_extensions):
-                copy2(file, build_dir)
-        # extract additional tcl commands to set up floating-point ips correctly
-        float_ip_tcl = []
-        for node in model.graph.node:
-            if is_hls_float_op(node, model):
-                code_gen_dir = getCustomOp(node).get_nodeattr("code_gen_dir_ipgen")
-                verilog_path = Path(f"{code_gen_dir}/project_{node.name}/sol1/impl/verilog/")
-                file_suffix = ".tcl"
-                for fname in verilog_path.iterdir():
-                    if fname.name.endswith(file_suffix):
-                        float_ip_tcl.append(str(fname))
-        ret = out_of_context_synth(
-            build_dir, top_module_name, float_ip_tcl, self.part, self.clk_name, self.clk_period_ns
+        block_vlnv = model.get_metadata_prop("vivado_stitch_vlnv")
+        if vivado_stitch_proj_dir is None or block_vlnv is None:
+            raise FINNInternalError("Need stitched IP project and VLNV metadata to be set.")
+        block_name = block_vlnv.split(":")[2]
+        xpr_files = list(Path(vivado_stitch_proj_dir).glob("*.xpr"))
+        if len(xpr_files) != 1:
+            raise FINNInternalError(
+                f"Expected exactly one Vivado project in {vivado_stitch_proj_dir}, "
+                f"found {len(xpr_files)}."
+            )
+        prjname = xpr_files[0].stem
+        report_dir = run_ooc_pnr(
+            vivado_stitch_proj_dir, prjname, block_name, self.clk_period_ns, self.clk_name
         )
+        ret = parse_ooc_synth_results(report_dir)
+        if ret is None:
+            raise FINNInternalError(
+                f"Out-of-context P&R did not produce report files in {report_dir}."
+            )
+        ret["vivado_proj_folder"] = str(report_dir)
+        ret["routed_dcp"] = str(Path(report_dir) / f"{block_name}_routed.dcp")
         model.set_metadata_prop("res_total_ooc_synth", str(ret))
         return (model, False)
