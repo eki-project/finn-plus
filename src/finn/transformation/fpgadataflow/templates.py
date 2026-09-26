@@ -521,13 +521,27 @@ report_utilization -hierarchical -hierarchical_depth 5 -file $VITIS_PROJ_PATH$/s
 # Initially based on code from Lucas Reuter
 # Modified by Felix Jentzsch
 
-template_vivado_open = """
-open_project  $PROJ_PATH$
-open_run $RUN$
-"""
-
 template_vivado_open_checkpoint = """
 open_checkpoint $DCP_PATH$
+"""
+
+# Export a post-implementation simulation netlist from the routed OOC checkpoint.
+# The out-of-context flow only produces a checkpoint (no Vivado project with an
+# implementation run), so the switching activity simulation is run on this netlist
+# instead of via launch_simulation -mode post-implementation.
+template_vivado_write_funcsim_netlist = """
+open_checkpoint $DCP_PATH$
+write_verilog -force -mode funcsim -file $NETLIST_PATH$
+close_project
+"""
+
+# SDF annotation is requested via the xelab options of the simulation script instead of the
+# $sdf_annotate task, whose path would only resolve relative to the simulation directory
+template_vivado_write_timesim_netlist = """
+open_checkpoint $DCP_PATH$
+write_verilog -force -mode timesim -sdf_anno false -file $NETLIST_PATH$
+write_sdf -force -file $SDF_PATH$
+close_project
 """
 
 template_vivado_power_fixed = """
@@ -547,34 +561,32 @@ report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
 #reset_switching_activity -hier -type register [get_cells -r finn_design_i/.*]
 """
 
-template_vivado_power_simulated = """
-# disable multi-threading in an attempt to increase stability
-set_param general.maxThreads 1
-set_property SOURCE_SET sources_1 [get_filesets sim_1]
-import_files -fileset sim_1 -norecurse $TB_FILE_PATH$
-set_property top switching_simulation_tb [get_filesets sim_1]
-update_compile_order -fileset sim_1
-set_property XELAB.MT_LEVEL off [get_filesets sim_1]
+# Simulate the post-implementation netlist to record the switching activity of the design
+# into a SAIF file. xsim is driven directly instead of through Vivado's launch_simulation,
+# which is only available in project mode, while the out-of-context flow leaves just a
+# routed checkpoint behind.
+template_switching_simulation_sh = """#!/bin/bash
+set -e
+# the netlist written by write_verilog also defines the glbl module
+xvlog $NETLIST_PATH$ $TB_FILE_PATH$
+# multi-threading is disabled in an attempt to increase stability
+xelab --relax --debug typical --mt off $XELAB_OPTIONS$ \\
+    -s switching_simulation work.switching_simulation_tb work.glbl
+xsim switching_simulation -tclbatch $SIM_TCL_PATH$
+"""
 
-launch_simulation -mode post-implementation -type $SIM_TYPE$
-after 1000
-restart
-after 1000
+template_switching_simulation_xsim_tcl = """
 open_saif $SAIF_FILE_PATH$
-after 1000
 log_saif [get_objects -r *]
-after 1000
 run $SIM_DURATION_NS$ ns
-after 1000
 close_saif
-after 1000
-close_sim -force
-after 1000
+quit
+"""
 
+# Read the simulated switching activity back into the routed design and report power
+template_vivado_power_from_saif = """
 read_saif $SAIF_FILE_PATH$
-after 1000
 report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
-after 1000
 close_project
 """
 
