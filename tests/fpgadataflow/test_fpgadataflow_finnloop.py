@@ -619,23 +619,64 @@ def assert_finnloop_cycle_estimate(build_dir, x, rtol=0.35, atol=50):
 # TH=1 selects the standard MVAU; TH>1 selects the tiled MVAU (Versal DSP58).
 # The dimensions must satisfy the tiling constraints: MW % SIMD == 0, MH % PE == 0
 # and (PE * SIMD) % TH == 0, so pe/simd/th cannot be stacked independently.
+# Every case of this end-to-end test builds, sizes and simulates a complete MLO design
+# and takes one to two and a half hours. Only a representative subset runs by default;
+# the remaining combinations of the grid are marked xslow, which the CI test variants
+# deselect (finn test ... --variant full_ci), and can be run explicitly with
+# ``pytest -m xslow``.
+_MLO_DEFAULT_CASES = {
+    # the two cases dev used to run: standard MVAU, HLS eltwise, scalar INT8 parameter,
+    # with and without non-MLO head/tail nodes around the loop
+    ((16, 2, 2, 1, 2), "ElementwiseMul_hls", 1, "INT8", False),
+    ((16, 2, 2, 1, 2), "ElementwiseMul_hls", 1, "INT8", True),
+    # tiled MVAU (TH=3), RTL eltwise, vector FLOAT32 parameter
+    ((12, 6, 3, 3, 6), "ElementwiseAdd_rtl", 16, "FLOAT32", False),
+}
+
+
+def _mlo_cases():
+    """The full grid of test_finnloop_end2end_mlo, with all but _MLO_DEFAULT_CASES marked xslow."""
+    cases = []
+    for mvau_cfg in [(16, 2, 2, 1, 2), (12, 6, 3, 3, 6)]:
+        for elemwise_optype in ["ElementwiseMul_hls", "ElementwiseAdd_rtl"]:
+            for rhs_shape in [[1], [16]]:
+                for eltw_param_dtype in ["INT8", "FLOAT32"]:
+                    for non_mlo_nodes in [False, True]:
+                        key = (
+                            mvau_cfg,
+                            elemwise_optype,
+                            rhs_shape[0],
+                            eltw_param_dtype,
+                            non_mlo_nodes,
+                        )
+                        marks = [] if key in _MLO_DEFAULT_CASES else [pytest.mark.xslow]
+                        cases.append(
+                            pytest.param(
+                                mvau_cfg,
+                                3,
+                                elemwise_optype,
+                                rhs_shape,
+                                eltw_param_dtype,
+                                non_mlo_nodes,
+                                marks=marks,
+                                id=f"{non_mlo_nodes}-{eltw_param_dtype}-rhs{rhs_shape[0]}-"
+                                f"{elemwise_optype}-3-th{mvau_cfg[3]}",
+                            )
+                        )
+    return cases
+
+
+# mvau_cfg: MVAU folding as a jointly-valid tuple (dim, mvau_pe, mvau_simd, mvau_th,
+# helper_pe). TH=1 selects the standard MVAU; TH>1 selects the tiled MVAU (Versal DSP58).
+# The dimensions must satisfy the tiling constraints: MW % SIMD == 0, MH % PE == 0 and
+# (PE * SIMD) % TH == 0, so pe/simd/th cannot be stacked independently.
+# iteration: number of models chained together. elemwise_optype/rhs_shape/eltw_param_dtype:
+# the elementwise operation, its parameter shape and datatype. non_mlo_nodes: insert
+# non-MLO head/tail nodes (and a non-HW parent node) around the FINNLoop.
 @pytest.mark.parametrize(
-    "mvau_cfg",
-    [
-        (16, 2, 2, 1, 2),
-        (12, 6, 3, 3, 6),
-    ],
+    "mvau_cfg, iteration, elemwise_optype, rhs_shape, eltw_param_dtype, non_mlo_nodes",
+    _mlo_cases(),
 )
-# iteration count, number of models chained together
-@pytest.mark.parametrize("iteration", [3])
-# elementwise operation
-@pytest.mark.parametrize("elemwise_optype", ["ElementwiseMul_hls", "ElementwiseAdd_rtl"])
-# elementwise shape
-@pytest.mark.parametrize("rhs_shape", [[1], [16]])
-# eltwise param dtype
-@pytest.mark.parametrize("eltw_param_dtype", ["INT8", "FLOAT32"])
-# insert non-MLO head/tail nodes (and a non-HW parent node) around the FINNLoop
-@pytest.mark.parametrize("non_mlo_nodes", [False, True])
 @pytest.mark.fpgadataflow
 @pytest.mark.vivado
 @pytest.mark.slow
@@ -940,9 +981,10 @@ def test_finnloop_end2end_mlo(
     "dim, simd, pe, bitwidth, weight_bitwidth",
     [
         # Coverage matrix over {folding} x {256-divisibility of the element widths}.
-        (16, 1, 1, 8, 8),  # unfolded, divisor (8|256): baseline PASS
-        (8, 8, 4, 4, 4),  # folded, divisor (4|256, DMA_PE=64): guards word-aligned image
-        #   stays byte-identical for divisors at the real folding
+        # (each case takes about two hours; the first two are xslow, see test_finnloop_end2end_mlo)
+        pytest.param(16, 1, 1, 8, 8, marks=pytest.mark.xslow),  # unfolded, divisor (8|256)
+        pytest.param(8, 8, 4, 4, 4, marks=pytest.mark.xslow),  # folded, divisor (4|256, DMA_PE=64):
+        #   guards word-aligned image stays byte-identical for divisors at the real folding
         (8, 8, 4, 3, 3),  # folded, non-divisor (3 wasted bits/word): exercises the
         #   DMA-word-aligned fix on both the activation and weight paths
     ],

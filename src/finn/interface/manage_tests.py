@@ -117,7 +117,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
             subprocess.run(
                 shlex.split(
                     f"{sys.executable} -m pytest -v -m 'not "
-                    f"(vivado or slow or vitis or board or bnn_pynq or end2end)' "
+                    f"(vivado or slow or vitis or board or bnn_pynq or end2end or xslow)' "
                     f"--dist=loadfile -n {num_workers}",
                     posix=IS_POSIX,
                 )
@@ -126,7 +126,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
             subprocess.run(
                 shlex.split(
                     f"{sys.executable} -m pytest -q -rf --tb=short -m 'not "
-                    f"(vivado or slow or vitis or board or bnn_pynq or end2end)' "
+                    f"(vivado or slow or vitis or board or bnn_pynq or end2end or xslow)' "
                     f"--junitxml={ci_project_dir}/reports/quick.xml "
                     f"--html={ci_project_dir}/reports/quick.html "
                     f"{CI_TEST_TIMEOUT_ARGS} "
@@ -218,7 +218,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
             test_1_process = subprocess.Popen(
                 shlex.split(
                     (
-                        f"{sys.executable} -m pytest -q -rf --tb=short "
+                        f"{sys.executable} -m pytest -q -rf --tb=short -m 'not xslow' "
                         f"--junitxml={main_xml} "
                         f"--html={main_html} "
                         f"{CI_TEST_TIMEOUT_ARGS} "

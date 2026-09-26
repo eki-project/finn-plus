@@ -93,6 +93,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 addopts = ["--verbose"]
 markers = [
     "slow: marks tests as slow",
+    "xslow: marks tests that take hours each and are not run by the CI test variants",
     "infrastructure: marks tests that refer to infrastructure functionality",
     "vivado: mark tests that require Vivado or Vivado HLS",
     "vitis: mark tests that require Vitis",
