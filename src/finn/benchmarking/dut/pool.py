@@ -9,6 +9,7 @@ from typing import Optional
 
 from finn.benchmarking.dut.microbench_base import MicrobenchDUT, check_foreign, stream_width_ok
 from finn.benchmarking.param_space import Choice, Conditional, Divisor, Fixed, ParamSpace, Pow2Range
+from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 
 
 def _is_int_type(name: str) -> bool:
@@ -121,11 +122,14 @@ class bench_pool(MicrobenchDUT):
         model = ModelWrapper(qonnx_make_model(graph, producer_name="pool-model"))
         model.set_tensor_datatype("inp", idt)
         model.set_tensor_datatype("outp", odt)
+        # the build's bit width minimization tightens AccumBits from the input datatype;
+        # apply it here so dut_info describes the node that gets built
+        model = model.transform(MinimizeAccumulatorWidth())
         inst = getCustomOp(model.graph.node[0])
         info = {
-            "odt": odt.name,
+            "odt": inst.get_nodeattr("OutputDataType"),
             "in_width": int(inst.get_instream_width()),
-            "accum_bits": accum_bits,
+            "accum_bits": int(inst.get_nodeattr("AccumBits")),
             "size": size,
         }
         return model, info

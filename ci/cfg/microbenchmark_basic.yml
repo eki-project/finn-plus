@@ -83,12 +83,11 @@
     },
     {
         "dut": ["fifo"],
-        "impl_style": ["rtl", "vivado"],
         "dtype": ["INT8"],
         "elems": [8],
         "n": [16],
         "depth": [32, 1024],
-        "ram_style": [null, "block"],
+        "ram_style": ["auto", "block"],
         "instrumentation_no_dma": [true],
         "store_results_in_dvc_data": [true],
         "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth", "bitfile", "pynq_driver", "deployment_package"]]

@@ -47,7 +47,7 @@ class bench_eltwise(MicrobenchDUT):
         "ElementwiseMul_rtl",
     )
     PARAMS = {
-        "backend": "hls or rtl (rtl: Versal, FLOAT32 and internal_decoupled only)",
+        "backend": "hls or rtl (rtl: Versal, at least one FLOAT32 operand, internal_decoupled)",
         "op": "Add or Mul",
         "lhs_dtype": "datatype of the streamed operand (INT/UINT or FLOAT32)",
         "rhs_dtype": "datatype of the constant operand (INT/UINT or FLOAT32)",
@@ -83,8 +83,8 @@ class bench_eltwise(MicrobenchDUT):
         if backend == "rtl":
             if not is_versal(resolve_part(params)):
                 return "Elementwise_rtl requires a Versal part"
-            if lhs != "FLOAT32" or rhs != "FLOAT32":
-                return "Elementwise_rtl requires FLOAT32 operands"
+            if lhs != "FLOAT32" and rhs != "FLOAT32":
+                return "Elementwise_rtl requires at least one FLOAT32 operand (int/int uses HLS)"
             if params["mem_mode"] != "internal_decoupled":
                 return "Elementwise_rtl requires internal_decoupled"
         lhs_bits = DataType[lhs].bitwidth()
@@ -105,7 +105,7 @@ class bench_eltwise(MicrobenchDUT):
             ),
             "rhs_dtype": Conditional(
                 "backend",
-                {"rtl": Fixed("FLOAT32")},
+                {"rtl": Choice(["FLOAT32", "INT8", "UINT4"])},
                 Choice(["UINT4", "INT4", "UINT8", "INT8", "INT16", "FLOAT32"]),
             ),
             "shape": Choice(

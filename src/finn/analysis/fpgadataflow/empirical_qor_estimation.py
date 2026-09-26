@@ -174,16 +174,14 @@ def _vvau_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> di
 
 @register_node_features("fifo")
 def _fifo_features(model: ModelWrapper, node: NodeProto, inst: HWCustomOp) -> dict:
-    impl_style = inst.get_nodeattr("impl_style")
     width = inst.get_instream_width()
-    depth_adjusted = int(inst.get_adjusted_depth())
+    depth = inst.get_nodeattr("depth")
     return {
-        "params.impl_style": impl_style,
-        "params.ram_style": inst.get_nodeattr("ram_style") if impl_style == "vivado" else None,
+        "params.ram_style": inst.get_nodeattr("ram_style"),
+        "dut_info.ram_style_eff": inst.resolve_ram_style(),
         "dut_info.width_bits": width,
-        "params.depth": inst.get_nodeattr("depth"),
-        "dut_info.depth_adjusted": depth_adjusted,
-        "dut_info.capacity_bits": width * depth_adjusted,
+        "params.depth": depth,
+        "dut_info.capacity_bits": width * depth,
     }
 
 

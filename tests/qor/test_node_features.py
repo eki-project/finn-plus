@@ -85,7 +85,7 @@ _VVAU = {
     "ram_style": "auto",
     "resType": "lut",
 }
-_FIFO = {"impl_style": "rtl", "dtype": "INT8", "elems": 8, "n": 16, "depth": 32, "ram_style": None}
+_FIFO = {"dtype": "INT8", "elems": 8, "n": 16, "depth": 32, "ram_style": "auto"}
 _DWC = {"backend": "hls", "dtype": "INT4", "in_elems": 6, "out_elems": 4, "ch": 24, "n": 4}
 _POOL = {
     "function": "MaxPool",
@@ -169,13 +169,15 @@ CASES = [
         "VVAU_rtl",
     ),
     ("fifo", _FIFO, RFSOC, "StreamingFIFO_rtl"),
+    ("fifo", {**_FIFO, "depth": 1024, "ram_style": "block"}, RFSOC, "StreamingFIFO_rtl"),
     (
         "fifo",
-        {**_FIFO, "impl_style": "vivado", "depth": 1000, "ram_style": "block"},
+        {**_FIFO, "depth": 4096, "elems": 16, "ram_style": "ultra"},
         RFSOC,
         "StreamingFIFO_rtl",
     ),
     ("dwc", _DWC, RFSOC, "StreamingDataWidthConverter_hls"),
+    ("dwc", {**_DWC, "backend": "rtl"}, RFSOC, "StreamingDataWidthConverter_rtl"),
     (
         "dwc",
         {**_DWC, "backend": "rtl", "in_elems": 4, "out_elems": 8, "ch": 32},
@@ -218,6 +220,20 @@ CASES = [
         VERSAL,
         "ElementwiseMul_rtl",
     ),
+    (
+        "eltwise",
+        {
+            **_ELT,
+            "backend": "rtl",
+            "op": "Add",
+            "lhs_dtype": "FLOAT32",
+            "rhs_dtype": "INT8",
+            "mem_mode": "internal_decoupled",
+            "board": "VCK190",
+        },
+        VERSAL,
+        "ElementwiseAdd_rtl",
+    ),
 ]
 
 INVALID = [
@@ -228,9 +244,9 @@ INVALID = [
     ("swg", {**_SWG, "k": [17, 17]}),
     ("swg", {**_SWG, "parallel_window": 1}),  # simd != ifm_ch
     ("vvau", {**_VVAU, "backend": "rtl", "act": None, "resType": None}),  # not Versal
-    ("fifo", {**_FIFO, "ram_style": "block"}),
-    ("fifo", {**_FIFO, "impl_style": "vivado", "depth": 8, "ram_style": "block"}),
-    ("dwc", {**_DWC, "backend": "rtl"}),  # non-integer ratio
+    ("fifo", {**_FIFO, "ram_style": "vivado"}),
+    ("fifo", {**_FIFO, "depth": 1}),
+    ("dwc", {**_DWC, "in_elems": 5}),  # does not divide ch
     ("pool", {**_POOL, "odt": "INT4"}),
     ("fmpadding", {**_FMP, "padding": [0, 0, 0, 0]}),
     ("eltwise", {**_ELT, "pe": 3}),

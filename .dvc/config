@@ -3,7 +3,9 @@
 ['remote "push"']
     url = webdavs://uni-paderborn.sciebo.de/public.php/webdav
     user = XKrfO8JuRmm9pBo
+    timeout = 300
 ['remote "public"']
     url = webdavs://uni-paderborn.sciebo.de/public.php/webdav
     user = zkYThpsdAk69ZOb
     password = ""
+    timeout = 300

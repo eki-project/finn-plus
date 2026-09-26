@@ -29,10 +29,11 @@ from qonnx.util.basic import (
 )
 from typing import Optional
 
-from finn.benchmarking.dut.microbench_base import MicrobenchDUT, stream_width_ok
+from finn.benchmarking.dut.microbench_base import MicrobenchDUT, resolve_part, stream_width_ok
 from finn.benchmarking.param_space import Choice, Conditional, Divisor, Fixed, ParamSpace, Pow2Range
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
+from finn.util.basic import get_dsp_block, get_dsp_datapath_limits
 
 SPARSITY_TYPES = (
     "none",
@@ -123,10 +124,15 @@ class bench_mvau(MicrobenchDUT):
                 return "MVAU_rtl only supports internal_decoupled mem_mode"
             if not wdt.signed():
                 return "MVAU_rtl only supports signed weights"
-            if idt.bitwidth() < 4 or idt.bitwidth() > 8:
-                return "MVAU_rtl supports 4..8 bit inputs"
-            if wdt.bitwidth() < 4 or wdt.bitwidth() > 8:
-                return "MVAU_rtl supports 4..8 bit weights"
+            dsp_block = get_dsp_block(resolve_part(params))
+            if dsp_block == "DSP48E1":
+                # DSP48E1 needs narrow-range weights, which random weights are not
+                return "MVAU_rtl on DSP48E1 requires narrow-range weights"
+            max_act, max_weight, _ = get_dsp_datapath_limits(dsp_block)
+            if not 2 <= idt.bitwidth() <= max_act:
+                return f"MVAU_rtl supports 2..{max_act} bit inputs on {dsp_block}"
+            if not 2 <= wdt.bitwidth() <= max_weight:
+                return f"MVAU_rtl supports 2..{max_weight} bit weights on {dsp_block}"
         if backend == "hls" and params["mem_mode"] == "internal_decoupled":
             # weight stream width limitation of the HLS MVAU
             if simd * pe * wdt.bitwidth() > 8191:

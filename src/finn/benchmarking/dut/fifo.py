@@ -1,4 +1,10 @@
-"""StreamingFIFO (RTL backend, rtl or vivado implementation) microbenchmark DUT."""
+"""StreamingFIFO (RTL) microbenchmark DUT.
+
+All RTL FIFOs are built from ``finn-rtllib/fifo/hdl/fifo.sv``; ``ram_style`` requests the
+storage (``auto`` lets the RTL's ladder decide, ``srl`` a shift register, ``block`` BRAM,
+``distributed`` LUTRAM, ``ultra`` URAM) and ``StreamingFIFO.resolve_ram_style()`` predicts
+what actually gets built (recorded as ``ram_style_eff``).
+"""
 
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
@@ -8,32 +14,28 @@ from qonnx.util.basic import qonnx_make_model
 from typing import Optional
 
 from finn.benchmarking.dut.microbench_base import (
-    MICROBENCH_BUILD_STEPS,
     MicrobenchDUT,
-    check_foreign,
     specialize_single_node,
     stream_width_ok,
 )
-from finn.benchmarking.param_space import Choice, Conditional, Fixed, ParamSpace
+from finn.benchmarking.param_space import Choice, Fixed, ParamSpace
+
+RAM_STYLES = ("auto", "srl", "block", "distributed", "ultra")
 
 
 class bench_fifo(MicrobenchDUT):
     NAME = "fifo"
     OP_TYPES = ("StreamingFIFO_rtl",)
     PARAMS = {
-        "impl_style": "rtl (SRL/LUT based) or vivado (FIFO generator IP)",
         "dtype": "element datatype",
         "elems": "elements per stream beat (width = elems * bits)",
         "n": "beats per input vector (loop bound only)",
         "depth": "FIFO depth",
-        "ram_style": "vivado only: auto, block, distributed or ultra (None for rtl)",
+        "ram_style": "requested storage: auto, srl, block, distributed or ultra",
     }
 
     @staticmethod
     def validate(params: dict) -> Optional[str]:
-        impl_style = params.get("impl_style")
-        if impl_style not in ("rtl", "vivado"):
-            return "impl_style must be rtl or vivado"
         bits = DataType[params["dtype"]].bitwidth()
         elems, n, depth = int(params["elems"]), int(params["n"]), int(params["depth"])
         if elems < 1 or n < 1:
@@ -42,42 +44,23 @@ class bench_fifo(MicrobenchDUT):
             return "depth must be >= 2"
         if not stream_width_ok(elems * bits):
             return "stream width exceeds the instrumentation limit"
-        if impl_style == "vivado":
-            if depth < 16:
-                return "vivado FIFOs need depth >= 16"
-            if params.get("ram_style") not in ("auto", "block", "distributed", "ultra"):
-                return "vivado ram_style must be auto, block, distributed or ultra"
-            return None
-        return check_foreign(params, ["ram_style"], "rtl FIFOs have no ram_style")
+        if params.get("ram_style") not in RAM_STYLES:
+            return f"ram_style must be one of {RAM_STYLES}"
+        return None
 
     @classmethod
     def param_space(cls) -> ParamSpace:
         return {
-            "impl_style": Choice(["rtl", "vivado"]),
             "dtype": Choice(
                 ["BINARY", "UINT2", "UINT4", "INT4", "UINT8", "INT8", "INT16", "INT32"]
             ),
             "elems": Choice([1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64]),
             "n": Fixed(64),
-            "depth": Conditional(
-                "impl_style",
-                {"rtl": Choice([2, 4, 8, 10, 12, 16, 24, 32, 40, 48, 64, 72, 96, 128, 192, 256])},
-                Choice([512, 1024, 2048, 4096, 8192, 16384, 32768]),
+            "depth": Choice(
+                [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
             ),
-            "ram_style": Conditional(
-                "impl_style",
-                {"rtl": Fixed(None)},
-                Choice(["auto", "block", "distributed", "ultra"]),
-            ),
+            "ram_style": Choice(list(RAM_STYLES)),
         }
-
-    @classmethod
-    def build_steps(cls, params: dict) -> list[str]:
-        steps = list(MICROBENCH_BUILD_STEPS)
-        if params.get("impl_style") == "vivado":
-            # the Vivado FIFO IP cannot be rtl-simulated
-            steps.remove("step_measure_rtlsim_performance")
-        return steps
 
     @classmethod
     def make_model(cls, params: dict, fpga_part: str):
@@ -98,6 +81,7 @@ class bench_fifo(MicrobenchDUT):
             folded_shape=folded_shape,
             normal_shape=normal_shape,
             dataType=dtype.name,
+            ram_style=params["ram_style"],
         )
         graph = helper.make_graph([node], "fifo_graph", [inp], [outp])
         model = ModelWrapper(qonnx_make_model(graph, producer_name="fifo-model"))
@@ -106,14 +90,11 @@ class bench_fifo(MicrobenchDUT):
 
         model = specialize_single_node(model, "rtl", fpga_part)
         inst = getCustomOp(model.graph.node[0])
-        inst.set_nodeattr("impl_style", params["impl_style"])
-        if params["impl_style"] == "vivado":
-            inst.set_nodeattr("ram_style", params["ram_style"])
+        inst.set_nodeattr("impl_style", "rtl")
         width = int(inst.get_instream_width())
-        depth_adjusted = int(inst.get_adjusted_depth())
         info = {
             "width_bits": width,
-            "depth_adjusted": depth_adjusted,
-            "capacity_bits": width * depth_adjusted,
+            "ram_style_eff": inst.resolve_ram_style(),
+            "capacity_bits": width * depth,
         }
         return model, info

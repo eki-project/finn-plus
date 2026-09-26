@@ -313,7 +313,7 @@ def bnn_make_step_streamline_bnn_pynq(
     """Produce a streamline step function, depending on the incoming model type."""
 
     def streamline(model: ModelWrapper, _: DataflowBuildConfig) -> ModelWrapper:
-        model = model.transform(absorb.AbsorbSignBiasIntoMultiThreshold())
+        model = model.transform(absorb.AbsorbScalarBiasIntoMultiThreshold())
         # move past any reshapes to be able to streamline input scaling
         model = model.transform(MoveScalarLinearPastInvariants())
         model = model.transform(Streamline())

@@ -121,12 +121,11 @@ _ROWS = {
         "dut_info.zero_weights": 0.07,
     },
     "fifo": {
-        "params.impl_style": "vivado",
         "params.ram_style": "block",
+        "dut_info.ram_style_eff": "block",
         "params.dtype": "INT8",
         "dut_info.width_bits": 64,
-        "params.depth": 1000,
-        "dut_info.depth_adjusted": 1024,
+        "params.depth": 1024,
         "dut_info.capacity_bits": 65536,
     },
     "dwc": {

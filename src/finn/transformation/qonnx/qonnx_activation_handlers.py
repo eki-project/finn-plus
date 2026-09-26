@@ -25,15 +25,12 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-"""Handlers for converting QONNX activations into FINN graph patterns."""
+"""Handlers converting QONNX quantized activations into FINN MultiThreshold nodes."""
 import numpy as np
 from abc import ABC, abstractmethod
 from onnx import TensorProto, helper
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp
-
-from finn.util.logging import log
 
 np_default_dtype = np.float32
 
@@ -102,6 +99,55 @@ class QuantActBaseHandler(ABC):
         dtype = dtype.name
         return dtype
 
+    def _get_channel_axis(self, tensor_name):
+        """Determine the channel axis of the Quant node from the SHAPE of its
+        scale initializer, mirroring the numpy broadcasting that Quant/IntQuant
+        use to apply the (possibly per-channel) scale. The scale shape is right-
+        aligned against the tensor shape (numpy broadcasting semantics) and the
+        single non-unit axis is the channel axis.
+
+        Returns the channel axis index into ``tensor_name``'s shape for per-
+        channel quantization, or None for a per-tensor (scalar / all-unit)
+        scale. Raises for multi-axis scales, which are not supported.
+        """
+        scale = np.asarray(self._model.get_initializer(self._q_node.input[1]))
+        tensor_shape = self._model.get_tensor_shape(tensor_name)
+        ndim = len(tensor_shape)
+        # Right-align the scale shape against the tensor shape, matching numpy
+        # broadcasting: a scale of shape (C,) aligns with the last axis, while a
+        # scale of shape (1, C, 1, 1) pins the channel to axis 1.
+        scale_shape = tuple(scale.shape)
+        padded = (1,) * (ndim - len(scale_shape)) + scale_shape
+        nonunit_axes = [axis for axis, dim in enumerate(padded) if dim != 1]
+        if len(nonunit_axes) == 0:
+            # per-tensor (global) scale: no channel axis
+            return None
+        if len(nonunit_axes) > 1:
+            raise ValueError(
+                f"Quant node {self._q_node.name} has a multi-axis scale of shape "
+                f"{scale_shape}; only per-tensor or per-channel scales are supported."
+            )
+        return nonunit_axes[0]
+
+    def _channel_axis_to_data_layout(self, channel_axis, ndim):
+        """Map a channel axis (as derived from the scale shape) to a FINN data
+        layout string for the MultiThreshold node. MultiThreshold only supports
+        the channel dimension at axis 1 (channels-first) or the last axis
+        (channels-last); any other position is unsupported.
+        """
+        channels_first = {2: "NC", 3: "NCW", 4: "NCHW"}
+        channels_last = {2: "NC", 3: "NWC", 4: "NHWC"}
+        if ndim not in channels_first:
+            raise ValueError(f"Unsupported tensor rank {ndim} for MultiThreshold data layout.")
+        if channel_axis == ndim - 1:
+            return channels_last[ndim]
+        if channel_axis == 1:
+            return channels_first[ndim]
+        raise ValueError(
+            f"Channel axis {channel_axis} (derived from the scale shape) is neither "
+            f"axis 1 nor the last axis; MultiThreshold cannot represent this layout."
+        )
+
     def calculate_node_parameters(self):
         """Calculate all parameters required for replacing the QONNX style activation
         with a FINN style one.
@@ -115,6 +161,7 @@ class QuantActBaseHandler(ABC):
 
     def replace_quant_node(self):
         """Replace the given QONNX style activation with a FINN style one."""
+
         # Check that we actually support what the user is trying to do
         self._check_compatibility()
 
@@ -141,7 +188,16 @@ class QuantActBaseHandler(ABC):
         graph.value_info.append(thresh_tensor)
         model.set_initializer(thresh_tensor.name, thresholds)
 
-        data_layout = model.get_tensor_layout(n.input[0])
+        # Derive the MultiThreshold data layout from the channel axis implied by
+        # the Quant scale shape. For a per-tensor scale there is no channel axis,
+        # so fall back to any existing layout annotation on the input tensor.
+        channel_axis = self._get_channel_axis(n.input[0])
+        if channel_axis is not None:
+            ndim = len(model.get_tensor_shape(n.input[0]))
+            data_layout = self._channel_axis_to_data_layout(channel_axis, ndim)
+        else:
+            annotated = model.get_tensor_layout(n.input[0])
+            data_layout = "".join(annotated) if annotated is not None else None
 
         # Insert MultiThreshold node
         outp_trans_node = helper.make_node(
@@ -160,8 +216,7 @@ class QuantActBaseHandler(ABC):
 
         # Inherit the data layout from the input tensor if available
         if data_layout is not None:
-            # Convert list to string representation of the data layout
-            mt_inst.set_nodeattr("data_layout", "".join(data_layout))
+            mt_inst.set_nodeattr("data_layout", data_layout)
 
         # Set scale and bias
         # If these values are scalar then they can be set as attributes
@@ -293,14 +348,14 @@ class QuantReluHandler(QuantActBaseHandler):
 
     @classmethod
     def valid_predecessor_op_types(self):
-        """Return supported predecessor op types for quantized ReLU."""
+        """Return the activation op types (Relu, Selu) allowed before the Quant node."""
         return [
             "Relu",
             "Selu",
         ]
 
     def _check_compatibility(self):
-        """Validate that the quantized activation is FINN-compatible."""
+        """Check that the quantizer's zero-point, narrow and signed settings are supported."""
         if self._q_node.op_type == "Quant":
             q_inst = getCustomOp(self._q_node)
             narrow = q_inst.get_nodeattr("narrow")
@@ -324,7 +379,7 @@ class QuantReluHandler(QuantActBaseHandler):
             raise RuntimeError("Got an unexpected quantizer node type")
 
     def _calculate_act_bias(self):
-        """Calculate activation bias for the replacement pattern."""
+        """Return the activation bias (0 for Relu, derived from the quantizer for Selu)."""
         # No bias allowed for Relu activations, see: https://github.com/Xilinx/
         # brevitas/blob/a5bfd6dc5e030f0047ac1ee47932b60e8e873e17/src/brevitas/
         # export/onnx/finn/handler/act.py#L48
@@ -356,7 +411,7 @@ class QuantReluHandler(QuantActBaseHandler):
         return bias
 
     def _calculate_thresholds(self):
-        """Calculate MultiThreshold thresholds for the activation."""
+        """Return the MultiThreshold thresholds for the Relu/Selu quantizer."""
         # Gather parameters
         if self._q_node.op_type == "Quant":
             bit_width = self._model.get_initializer(self._q_node.input[3])
@@ -373,11 +428,15 @@ class QuantReluHandler(QuantActBaseHandler):
             # onnx/finn/handler/act.py#L21
             num_distinct_values = 2**bit_width
             num_thresholds = int(num_distinct_values - 1)
-            flat_scale = quant_scale.flatten().astype(np.float32)
+            # Accumulate in float64 and narrow to the storage dtype once at the
+            # end, so the per-threshold value carries at most a single float32
+            # rounding step rather than accumulated error across min_threshold +
+            # step*t (see QuantIdentityHandler._calculate_thresholds).
+            flat_scale = quant_scale.flatten().astype(np.float64)
             num_scale_channels = flat_scale.shape[0]
-            step = np.abs(flat_scale).astype(np.float32)
+            step = np.abs(flat_scale)
             min_threshold = step / 2
-            thresholds = np.empty((num_scale_channels, num_thresholds), dtype=np_default_dtype)
+            thresholds = np.empty((num_scale_channels, num_thresholds), dtype=np.float64)
             for c in range(num_scale_channels):
                 for t in range(num_thresholds):
                     thresholds[c][t] = min_threshold[c] + step[c] * t
@@ -391,15 +450,15 @@ class QuantReluHandler(QuantActBaseHandler):
                 num_distinct_values = 2**bit_width
 
             num_thresholds = int(num_distinct_values - 1)
-            flat_scale = quant_scale.flatten().astype(np.float32)
+            flat_scale = quant_scale.flatten().astype(np.float64)
             num_scale_channels = flat_scale.shape[0]
-            scale = np.abs(flat_scale).astype(np.float32)
+            scale = np.abs(flat_scale)
             half_scale = scale / 2
             # alpha and lambda
             # from https://pytorch.org/docs/stable/generated/torch.nn.SELU.html
             alpha = 1.6732632423543772848170429916717
             selu_scale = 1.0507009873554804934193349852946
-            thresholds = np.empty((num_scale_channels, num_thresholds), dtype=np_default_dtype)
+            thresholds = np.empty((num_scale_channels, num_thresholds), dtype=np.float64)
             for c in range(num_scale_channels):
                 for t in range(num_thresholds):
                     step = -1.0 + half_scale[c] + scale[c] * t
@@ -408,49 +467,30 @@ class QuantReluHandler(QuantActBaseHandler):
                     else:
                         thresholds[c][t] = step / selu_scale
 
-        # Get the shape of the input (should also be the output) tensor
-        # Note: Querying the input is more safe as we do not want to
-        # propagate shapes backwards by accident.
-        shape = self._model.get_tensor_shape(self._q_node.input[0])
-        # First try to consider the tensor layout of the input for
-        # determining the number of output channels
-        layout = self._model.get_tensor_layout(self._q_node.input[0])
-        # If there is no layout annotation, guess based on rank of the
-        # tensor
-        # TODO: No support for Rank >= 5
-        if layout is None and len(shape) < 5:
-            # Maps tensor rank to layout annotation
-            rank_to_layout = {0: None, 1: "C", 2: "NC", 3: "NWC", 4: "NCHW"}
-            # Lookup the layout required by this input shape
-            layout = rank_to_layout[len(shape)]
-        # If there is a layout annotation, use this to determine the index
-        # of the channel dimension
-        if layout is not None and "C" in layout:  # noqa: Duplicate
-            # Lookup the index in list
-            cdim = layout.index("C")
-        # If no layout has been annotated or there is no channel dimension, fall
-        # back to the previous default assumption
-        else:
-            # Assume the channels to be in axis 1
-            cdim = 1
-            # Issue a warning to the user, so they are aware of this
-            log.warning(
-                f"No layout annotations for {self._q_node.input[0]}:"
-                f" Assuming channel dimension at index {cdim}"
+        # narrow back to the storage dtype only after the accumulation
+        thresholds = thresholds.astype(np_default_dtype)
+
+        # The channel axis is taken directly from the scale shape (the axis numpy
+        # broadcasting uses to apply the per-channel scale), so no data-layout
+        # guessing is needed. A per-tensor scale has no channel axis and must
+        # yield a single (global) threshold row.
+        channel_axis = self._get_channel_axis(self._q_node.input[0])
+        if channel_axis is None:
+            assert thresholds.shape[0] == 1, (
+                "Quant node cannot be converted to MultiThreshold: per-tensor "
+                "scale must yield a single (global) threshold row."
             )
-
-        # ToDo: The index 1 needs to be changed to -1 for the channels last format
-        num_output_channels = self._model.get_tensor_shape(self._q_node.output[0])[cdim]
-
-        assert (
-            thresholds.shape[0] == 1 or thresholds.shape[0] == num_output_channels
-        ), """Quant node cannot be converted to MultiThreshold because only
-            per tensor or per channel quantization supported."""
+        else:
+            num_output_channels = self._model.get_tensor_shape(self._q_node.output[0])[channel_axis]
+            assert thresholds.shape[0] == 1 or thresholds.shape[0] == num_output_channels, (
+                "Quant node cannot be converted to MultiThreshold because only "
+                "per tensor or per channel quantization is supported."
+            )
 
         return thresholds
 
     def _calculate_act_scale(self):
-        """Calculate activation scale for the replacement pattern."""
+        """Return the activation scale (the quantizer scale)."""
         # Gather parameters
         quant_scale = self._model.get_initializer(self._q_node.input[1])
         # Calculate scale, see: https://github.com/Xilinx/brevitas/blob/
@@ -460,12 +500,12 @@ class QuantReluHandler(QuantActBaseHandler):
         return scale
 
     def _remove_activation_node(self, multi_threshold_node):
-        """Remove the activation node preceding the Quant node."""
+        """Bypass and remove the Relu/Selu node preceding the Quant node."""
         # Find the activation node
         act_node = self._model.find_direct_predecessors(self._q_node)
         if act_node is None:
             raise RuntimeError(
-                "For handling of Relu activations a predecessor to the Quant node must exist."
+                "For handling of Relu activations a predecessor to " "the Quant node must exist."
             )
         act_node = act_node[0]
         if act_node.op_type not in self.valid_predecessor_op_types():
@@ -490,7 +530,7 @@ class QuantIdentityHandler(QuantActBaseHandler):
 
     @classmethod
     def valid_predecessor_op_types(self):
-        """Return supported predecessor op types for quantized identity."""
+        """Return the op types allowed before the Quant node (affine ops, DebugMarker or none)."""
         return [
             "BatchNormalization",
             "Sub",
@@ -502,13 +542,9 @@ class QuantIdentityHandler(QuantActBaseHandler):
         ]
 
     def _check_compatibility(self):
-        """Validate that the quantized identity is FINN-compatible."""
+        """Check that the quantizer zero-point (or bipolar scale) is supported by FINN."""
         # Gather parameters to check
         if self._q_node.op_type == "Quant":
-            q_inst = getCustomOp(self._q_node)
-            signed = q_inst.get_nodeattr("signed")
-            if not signed:
-                raise ValueError("FINN only supports signed Quant nodes for identity activations.")
             if not self._model.get_initializer(self._q_node.input[2]) == 0:
                 raise ValueError(
                     "Only Quant nodes with zero-point == 0 "
@@ -525,12 +561,13 @@ class QuantIdentityHandler(QuantActBaseHandler):
             raise RuntimeError("Got an unexpected quantizer node type")
 
     def _calculate_act_bias(self):
-        """Calculate activation bias for identity activations."""
+        """Return the activation bias derived from the quantizer's bit width and signedness."""
         # Gather parameters
         q_inst = getCustomOp(self._q_node)
         if self._q_node.op_type == "Quant":
             bit_width = self._model.get_initializer(self._q_node.input[3])
             narrow = q_inst.get_nodeattr("narrow")
+            signed = q_inst.get_nodeattr("signed")
         elif self._q_node.op_type == "BipolarQuant":
             bit_width = 1.0
         else:
@@ -541,21 +578,25 @@ class QuantIdentityHandler(QuantActBaseHandler):
         if bit_width == 1.0:
             bias = np.array([-0.5], dtype=np_default_dtype)
         else:
-            if narrow:
-                min_non_scaled_val = -(2 ** (bit_width - 1) - 1)
+            if not signed:
+                min_non_scaled_val = 0
             else:
-                min_non_scaled_val = -(2 ** (bit_width - 1))
+                if narrow:
+                    min_non_scaled_val = -(2 ** (bit_width - 1) - 1)
+                else:
+                    min_non_scaled_val = -(2 ** (bit_width - 1))
             bias = np.array([min_non_scaled_val], dtype=np_default_dtype)
         return bias
 
     def _calculate_thresholds(self):
-        """Calculate MultiThreshold thresholds for identity activations."""
+        """Return the MultiThreshold thresholds for the identity quantizer."""
         # Gather parameters
         quant_scale = self._model.get_initializer(self._q_node.input[1])
         q_inst = getCustomOp(self._q_node)
         if self._q_node.op_type == "Quant":
             bit_width = self._model.get_initializer(self._q_node.input[3])
             narrow = q_inst.get_nodeattr("narrow")
+            signed = q_inst.get_nodeattr("signed")
         elif self._q_node.op_type == "BipolarQuant":
             bit_width = 1.0
         else:
@@ -568,69 +609,60 @@ class QuantIdentityHandler(QuantActBaseHandler):
             thresholds = np.empty([1, 1], dtype=np_default_dtype)
             thresholds[0] = 0
             return thresholds
-        if narrow:
-            num_distinct_values = 2**bit_width - 1
         else:
-            num_distinct_values = 2**bit_width
+            if narrow:
+                num_distinct_values = 2**bit_width - 1
+            else:
+                num_distinct_values = 2**bit_width
 
-        num_thresholds = int(num_distinct_values - 1)
-        flat_scale = quant_scale.flatten()
-        num_scale_channels = flat_scale.shape[0]
-        step = np.abs(flat_scale)
-        half_step = step / 2.0
-        thresholds = np.empty((num_scale_channels, num_thresholds), dtype=np_default_dtype)
-        # compute the value of the smallest threshold, we'll neg-bias all
-        # generated thresholds by this much
-        min_threshold = -half_step - step * ((num_thresholds // 2) - 1)
-        if not narrow:
-            min_threshold -= step
-        for c in range(num_scale_channels):
-            for t in range(num_thresholds):
-                thresholds[c][t] = min_threshold[c] + step[c] * t
+            num_thresholds = int(num_distinct_values - 1)
+            # Accumulate the thresholds in float64. Each threshold is computed as
+            # a large base (min_threshold ~ -step*num_thresholds/2) plus a large
+            # multiple (step*t); doing this in float32 leaves ~1 ulp of error at
+            # the base's magnitude (~5e-7 for typical scales), which can shift a
+            # boundary below an input that Quant legitimately rounds down, causing
+            # a one-step MultiThreshold mismatch. float64 keeps that error ~1e-15.
+            flat_scale = quant_scale.flatten().astype(np.float64)
+            num_scale_channels = flat_scale.shape[0]
+            step = np.abs(flat_scale)
+            half_step = step / 2.0
+            thresholds = np.empty((num_scale_channels, num_thresholds), dtype=np.float64)
+            # compute the value of the smallest threshold, we'll neg-bias all
+            # generated thresholds by this much
+            min_threshold = -half_step - step * ((num_thresholds // 2) - 1)
+            if not narrow:
+                min_threshold -= step
+            if not signed:
+                min_threshold = half_step
+            for c in range(num_scale_channels):
+                for t in range(num_thresholds):
+                    thresholds[c][t] = min_threshold[c] + step[c] * t
+            # narrow back to the storage dtype only after the accumulation
+            thresholds = thresholds.astype(np_default_dtype)
 
-        # Get the shape of the input (should also be the output) tensor
-        # Note: Querying the input is more safe as we do not want to
-        # propagate shapes backwards by accident.
-        shape = self._model.get_tensor_shape(self._q_node.input[0])
-        # First try to consider the tensor layout of the input for
-        # determining the number of output channels
-        layout = self._model.get_tensor_layout(self._q_node.input[0])
-        # If there is no layout annotation, guess based on rank of the
-        # tensor
-        # TODO: No support for Rank >= 5
-        if layout is None and len(shape) < 5:
-            # Maps tensor rank to layout annotation
-            rank_to_layout = {0: None, 1: "C", 2: "NC", 3: "NWC", 4: "NCHW"}
-            # Lookup the layout required by this input shape
-            layout = rank_to_layout[len(shape)]
-        # If there is a layout annotation, use this to determine the index
-        # of the channel dimension
-        if layout is not None and "C" in layout:  # noqa: Duplicate
-            # Lookup the index in list
-            cdim = layout.index("C")
-        # If no layout has been annotated or there is no channel dimension,
-        # fall back to the previous default assumption
-        else:
-            # Assume the channels to be in axis 1
-            cdim = 1
-            # Issue a warning to the user, so they are aware of this
-            log.warning(
-                f"No layout annotations for {self._q_node.input[0]}:"
-                f" Assuming channel dimension at index {cdim}"
-            )
+            # The channel axis is taken directly from the scale shape (the axis
+            # numpy broadcasting uses to apply the per-channel scale), so no
+            # data-layout guessing is needed. A per-tensor scale has no channel
+            # axis and must yield a single (global) threshold row.
+            channel_axis = self._get_channel_axis(self._q_node.input[0])
+            if channel_axis is None:
+                assert thresholds.shape[0] == 1, (
+                    "Quant node cannot be converted to MultiThreshold: per-tensor "
+                    "scale must yield a single (global) threshold row."
+                )
+            else:
+                num_output_channels = self._model.get_tensor_shape(self._q_node.output[0])[
+                    channel_axis
+                ]
+                assert thresholds.shape[0] == 1 or thresholds.shape[0] == num_output_channels, (
+                    "Quant node cannot be converted to MultiThreshold because only "
+                    "per tensor or per channel quantization is supported."
+                )
 
-        # ToDo: The index 1 needs to be changed to -1 for the channels last format
-        num_output_channels = self._model.get_tensor_shape(self._q_node.output[0])[cdim]
-
-        assert (
-            thresholds.shape[0] == 1 or thresholds.shape[0] == num_output_channels
-        ), """Quant node cannot be converted to MultiThreshold because only
-                per tensor or per channel quantization supported."""
-
-        return thresholds
+            return thresholds
 
     def _calculate_act_scale(self):
-        """Calculate activation scale for identity activations."""
+        """Return the activation scale (the quantizer scale, doubled for bipolar)."""
         # Gather parameters
         if self._q_node.op_type == "Quant":
             bit_width = self._model.get_initializer(self._q_node.input[3])
@@ -651,6 +683,6 @@ class QuantIdentityHandler(QuantActBaseHandler):
         return scale
 
     def _remove_activation_node(self, multi_threshold_node):
-        """Remove the activation node if one exists (no-op)."""
+        """Do nothing; an identity quantizer has no explicit activation node."""
         # The Quant identity activation has per definition no explicit activation node
         return

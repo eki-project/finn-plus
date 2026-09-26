@@ -300,18 +300,17 @@ FIFO_SPEC = OperatorFeatureSpec(
     name="fifo",
     op_types=("StreamingFIFO_rtl",),
     feature_cols=[
-        "params.impl_style",
-        # vivado impl_style only (None for rtl)
+        # requested storage and what fifo.sv actually elaborates for depth/width
         "params.ram_style",
+        "dut_info.ram_style_eff",
         "dut_info.width_bits",
         "params.depth",
-        "dut_info.depth_adjusted",
         "dut_info.capacity_bits",
     ],
     derive_db_columns=_deriver(datatype_cols={"dtype": "params.dtype"}),
     # n (number of beats) is only the loop bound
     irrelevant_param_cols=["params.n"],
-    dut_info_keys=["width_bits", "depth_adjusted", "capacity_bits"],
+    dut_info_keys=["width_bits", "ram_style_eff", "capacity_bits"],
 )
 
 DWC_SPEC = OperatorFeatureSpec(

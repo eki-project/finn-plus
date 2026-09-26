@@ -18,7 +18,7 @@ class bench_dwc(MicrobenchDUT):
     NAME = "dwc"
     OP_TYPES = ("StreamingDataWidthConverter_hls", "StreamingDataWidthConverter_rtl")
     PARAMS = {
-        "backend": "hls or rtl (rtl requires an integer width ratio)",
+        "backend": "hls or rtl",
         "dtype": "element datatype",
         "in_elems": "elements per input beat (must divide ch)",
         "out_elems": "elements per output beat (must divide ch)",
@@ -43,9 +43,6 @@ class bench_dwc(MicrobenchDUT):
         in_width, out_width = in_elems * bits, out_elems * bits
         if not stream_width_ok(in_width) or not stream_width_ok(out_width):
             return "stream width exceeds the instrumentation limit"
-        integer_ratio = in_width % out_width == 0 or out_width % in_width == 0
-        if backend == "rtl" and not integer_ratio:
-            return "rtl DWC requires an integer width ratio"
         return None
 
     @classmethod

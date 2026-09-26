@@ -56,11 +56,11 @@ CI scripts run outside the FINN environment (`ci/qor/*.py` add `src/` to `sys.pa
 | `thresholding` | `Thresholding_hls`, `Thresholding_rtl` | `dut/thresholding.py` | `mem_mode`/`ram_style` hls only, depth triggers rtl only |
 | `swg` | `ConvolutionInputGenerator_rtl` | `dut/swg.py` | default and parallel-window implementation, 1D and 2D |
 | `vvau` | `VVAU_hls`, `VVAU_rtl` | `dut/vvau.py` | RTL variant requires a Versal part (not measurable on the RFSoC CI boards) |
-| `fifo` | `StreamingFIFO_rtl` | `dut/fifo.py` | `impl_style` rtl or vivado (no rtlsim for vivado) |
-| `dwc` | `StreamingDataWidthConverter_hls`, `_rtl` | `dut/dwc.py` | rtl requires an integer width ratio |
+| `fifo` | `StreamingFIFO_rtl` | `dut/fifo.py` | requested `ram_style` (auto/srl/block/distributed/ultra) and the style `fifo.sv` actually elaborates |
+| `dwc` | `StreamingDataWidthConverter_hls`, `_rtl` | `dut/dwc.py` | any width ratio (integer ratio is a feature) |
 | `pool` | `Pool_hls` | `dut/pool.py` | MaxPool and QuantAvgPool |
 | `fmpadding` | `FMPadding_rtl` | `dut/fmpadding.py` | |
-| `eltwise` | `ElementwiseAdd_hls/_rtl`, `ElementwiseMul_hls/_rtl` | `dut/eltwise.py` | constant (rhs) operand only; RTL variant requires Versal + FLOAT32 |
+| `eltwise` | `ElementwiseAdd_hls/_rtl`, `ElementwiseMul_hls/_rtl` | `dut/eltwise.py` | constant (rhs) operand only; RTL variant requires Versal and at least one FLOAT32 operand |
 
 Targets (one model per operator and target, `RESOURCE_TARGETS` in `estimator.py`):
 

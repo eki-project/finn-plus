@@ -30,7 +30,6 @@
 
 import math
 import numpy as np
-from numpy._typing._shape import _Shape
 from qonnx.core.datatype import BaseDataType, DataType
 from typing import TYPE_CHECKING, cast
 
@@ -94,61 +93,44 @@ class StreamingDataWidthConverter(HWCustomOp):
         oshape = cast("list[int]", self.get_nodeattr("outShape"))
         return oshape
 
-    def get_iowidth_lcm(self) -> int:
-        """Return iowidth lcm."""
-        iwidth = cast("int", self.get_nodeattr("inWidth"))
-        owidth = cast("int", self.get_nodeattr("outWidth"))
-        return int(np.lcm(iwidth, owidth))
+    def _folded_shape_for_width(self, width):
+        """Compute folded shape for a given stream width.
 
-    def needs_lcm(self) -> bool:
-        """Return needs lcm."""
-        iwidth = cast("int", self.get_nodeattr("inWidth"))
-        owidth = cast("int", self.get_nodeattr("outWidth"))
-        maxwidth = max(iwidth, owidth)
-        minwidth = min(iwidth, owidth)
-        return maxwidth % minwidth != 0
+        When the number of channels divides evenly by the number of elements
+        per stream word, returns shape[:-1] + [channels // elems, elems].
 
-    def check_divisible_iowidths(self) -> None:
-        """Return check divisible iowidths."""
+        When channels don't divide evenly (e.g., wide streams spanning multiple
+        spatial dimensions), falls back to flattening the entire tensor:
+        (total_elems // elems, elems).
+        """
+        shape = self.get_normal_input_shape()
+        bits = self.get_input_datatype().bitwidth()
+        assert (
+            width % bits == 0
+        ), """DWC stream width must be divisible by
+        input element bitwidth"""
+        elems = int(width // bits)
+        channels = shape[-1]
+        if channels % elems == 0:
+            return tuple(shape[:-1] + [int(channels // elems), elems])
 
-    def get_folded_input_shape(self, ind: int = 0) -> _Shape:  # noqa: ARG002
-        """Return folded input shape."""
-        self.check_divisible_iowidths()
-        iwidth = cast("int", self.get_nodeattr("inWidth"))
-        ishape = self.get_normal_input_shape()
-        dummy_t = np.empty(ishape)
-        ibits = self.get_input_datatype().bitwidth()
-        if iwidth % ibits != 0:
-            raise FINNInternalError(
-                f"DWC input width {iwidth} must be divisible by input element bitwidth {ibits}"
-            )
-        ielems = int(iwidth // ibits)
-        ichannels = ishape[-1]
-        new_shape = list(ishape[:-1])
-        new_shape.append(int(ichannels // ielems))
-        new_shape.append(ielems)
-        dummy_t = dummy_t.reshape(new_shape)
-        return dummy_t.shape
+        total_elems = int(np.prod(shape))
+        assert (
+            total_elems % elems == 0
+        ), "DWC stream width with %d elements does not divide tensor shape %s" % (elems, str(shape))
+        return (int(total_elems // elems), elems)
 
-    def get_folded_output_shape(self, ind: int = 0) -> _Shape:  # noqa: ARG002
-        """Return folded output shape."""
-        self.check_divisible_iowidths()
-        owidth = cast("int", self.get_nodeattr("outWidth"))
-        oshape = self.get_normal_output_shape()
-        dummy_t = np.empty(oshape)
-        obits = self.get_output_datatype().bitwidth()
-        if owidth % obits != 0:
-            raise FINNInternalError(
-                f"DWC output width {owidth} must be divisible by input element bitwidth {obits}"
-            )
-        oelems = int(owidth // obits)
-        ochannels = oshape[-1]
-        new_shape = list(oshape[:-1])
-        new_shape.append(int(ochannels // oelems))
-        new_shape.append(oelems)
-        dummy_t = dummy_t.reshape(new_shape)
+    def get_folded_input_shape(self, ind=0):
+        """Return the folded input shape, i.e. the input tensor shape with the
+        last axis split into (words, elements per input word)."""
+        iwidth = self.get_nodeattr("inWidth")
+        return self._folded_shape_for_width(iwidth)
 
-        return dummy_t.shape
+    def get_folded_output_shape(self, ind=0):
+        """Return the folded output shape, i.e. the output tensor shape with the
+        last axis split into (words, elements per output word)."""
+        owidth = self.get_nodeattr("outWidth")
+        return self._folded_shape_for_width(owidth)
 
     def get_instream_width(self, ind: int = 0) -> int:  # noqa: ARG002
         """Return instream width."""
@@ -208,7 +190,7 @@ class StreamingDataWidthConverter(HWCustomOp):
         output = np.asarray([output], dtype=np.float32).reshape(*exp_shape)
         context[node.output[0]] = output
 
-    def lut_estimation(self) -> int:
+    def lut_estimation(self, fpgapart: str) -> int:  # noqa: ARG002
         """Calculate resource estimations for LUTs."""
         inw = self.get_instream_width()
         outw = self.get_outstream_width()

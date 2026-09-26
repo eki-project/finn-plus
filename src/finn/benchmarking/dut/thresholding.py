@@ -33,7 +33,7 @@ class bench_thresholding(MicrobenchDUT):
         "pe": "channel parallelism (must divide ch)",
         "nhw": "number of input vectors, e.g. [1, 32, 32] (loop bound only)",
         "mem_mode": "hls only: internal_embedded or internal_decoupled (None for rtl)",
-        "ram_style": "hls only: distributed or block (None for rtl)",
+        "ram_style": "hls only: distributed, block or ultra (None for rtl)",
         "depth_trigger_bram": "rtl only: memory depth from which BRAM is used (0 = off)",
         "depth_trigger_uram": "rtl only: memory depth from which URAM is used (0 = off)",
     }
@@ -59,8 +59,8 @@ class bench_thresholding(MicrobenchDUT):
         if backend == "hls":
             if params.get("mem_mode") not in ("internal_embedded", "internal_decoupled"):
                 return "hls mem_mode must be internal_embedded or internal_decoupled"
-            if params.get("ram_style") not in ("distributed", "block"):
-                return "hls ram_style must be distributed or block"
+            if params.get("ram_style") not in ("distributed", "block", "ultra"):
+                return "hls ram_style must be distributed, block or ultra"
             return check_foreign(
                 params, ["depth_trigger_bram", "depth_trigger_uram"], "hls has no depth triggers"
             )
@@ -93,7 +93,7 @@ class bench_thresholding(MicrobenchDUT):
                 "backend", {"rtl": Fixed(None)}, Choice(["internal_embedded", "internal_decoupled"])
             ),
             "ram_style": Conditional(
-                "backend", {"rtl": Fixed(None)}, Choice(["distributed", "block"])
+                "backend", {"rtl": Fixed(None)}, Choice(["distributed", "block", "ultra"])
             ),
             "depth_trigger_bram": Conditional(
                 "backend", {"hls": Fixed(0)}, Choice([0, 32, 64, 128, 256, 512, 1024])

@@ -215,7 +215,7 @@ class BuildAllXOs(Transformation):
                     self.fpga_part,
                     self.synth_clk_period_ns,
                     sdp_node.name,
-                    vitis=True,
+                    run_synth=True,
                 ),
                 CreateVitisXO(sdp_node.name),
             ]
