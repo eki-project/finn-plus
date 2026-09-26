@@ -174,7 +174,7 @@ class VVAU_rtl(VVAU, RTLBackend):
             has to be set to one of the following value ("cppsim", "rtlsim")"""
             )
 
-    def lut_estimation(self) -> Literal[0]:
+    def lut_estimation(self, fpgapart) -> Literal[0]:
         """Estimate LUT utilization for this VVAU node.
 
         Returns

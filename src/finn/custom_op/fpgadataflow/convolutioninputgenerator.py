@@ -222,15 +222,15 @@ class ConvolutionInputGenerator(HWCustomOp):
         """Return exp cycles."""
         return 0
 
-    def bram_estimation(self):
+    def bram_estimation(self, fpgapart):
         """Return bram estimation."""
         return 0
 
-    def lut_estimation(self):
+    def lut_estimation(self, fpgapart):
         """Return lut estimation."""
         return 0
 
-    def uram_estimation(self):
+    def uram_estimation(self, fpgapart):
         """Return uram estimation."""
         return 0
 

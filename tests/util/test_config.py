@@ -10,6 +10,7 @@
 
 import pytest
 
+import logging
 import onnx
 import os
 from onnxscript import BOOL, FLOAT
@@ -194,3 +195,32 @@ def test_roundtrip_export_import() -> None:
 
     if config_json_file.exists():
         config_json_file.unlink()
+
+
+@pytest.mark.util
+def test_apply_config_reports_invalid_custom_op_attr() -> None:
+    """Test invalid custom-op configs fail instead of being silently ignored."""
+    model, _ = make_im2col_test_model()
+    im2col_node = model.graph.node[0]
+
+    with pytest.raises(Exception):
+        model.transform(ApplyConfig({im2col_node.name: {"not_an_im2col_attr": 1}}))
+
+
+@pytest.mark.util
+def test_apply_config_warns_for_non_custom_op_config(caplog: pytest.LogCaptureFixture) -> None:
+    """Test explicit configs for standard ONNX nodes are reported."""
+    model, _ = make_im2col_test_model()
+    if_node = model.graph.node[1]
+    config = {if_node.name: {"kernel_size": [1, 1]}}
+
+    def node_filter(node: onnx.NodeProto) -> bool:
+        return node.name == if_node.name
+
+    with caplog.at_level(logging.WARNING):
+        model.transform(ApplyConfig(config, node_filter=node_filter))
+
+    warning_messages = [record.getMessage() for record in caplog.records]
+    assert any("Configs can only be applied to custom ops" in msg for msg in warning_messages)
+    assert any(f"{if_node.name} ({if_node.op_type})" in msg for msg in warning_messages)
+    assert not any("Unused HW configurations" in msg for msg in warning_messages)

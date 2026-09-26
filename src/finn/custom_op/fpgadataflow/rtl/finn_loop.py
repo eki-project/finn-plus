@@ -27,10 +27,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 """Module for finn loop."""
+
 import copy
 import math
 import numpy as np
-import numpy.typing as npt
 import os
 import re
 import shutil
@@ -50,17 +50,19 @@ from finn.custom_op.fpgadataflow import templates
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
 from finn.custom_op.fpgadataflow.rtlbackend import RTLBackend
 from finn.transformation.fpgadataflow.annotate_cycles import AnnotateCycles
-from finn.util.basic import getHWCustomOp, make_build_dir
+from finn.util.basic import getHWCustomOp, make_build_dir, resolve_xilinx_tool
 from finn.util.create import adjacency_list
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 from finn.util.exception import FINNInternalError, FINNUserError
-from finn.util.mlo_sim import mlo_prehook_func_factory
+from finn.util.rtlsim import dat_file_to_numpy_array, mlo_prehook_func_factory
 from finn.util.settings import get_settings
 
 
 def collect_ip_dirs(model, ipstitch_path):
+    """Return the IP directories of all nodes in the model plus
+    the stitched IP and memstream dirs.
+    """
     # collect list of all IP dirs
-    """Return collect ip dirs."""
     ip_dirs = []
     need_memstreamer = False
     for node in model.graph.node:
@@ -87,7 +89,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
     out into a FINN-ONNX model of its own and are meant to be executed in a loop."""
 
     def get_nodeattr_types(self):
-        """Return nodeattr types."""
+        """Return node attribute types for the loop body, iteration count, datatypes and memory."""
         my_attrs = {
             "body": ("g", True, ""),
             "iteration": ("i", False, 1),
@@ -98,14 +100,16 @@ class FINNLoop(RTLBackend, HWCustomOp):
             # Path to save per-iteration execution context (cppsim only).
             # If non-empty, each iteration's full context is saved to this path.
             "iteration_context_path": ("s", False, ""),
+            # Memory type used to stream this loop's weights when running MLO.
+            # "DDR" enables DDR address offset assignment, any other value skips it.
+            # Empty means it is resolved from the target board at build
+            "mem_type": ("s", False, ""),
         }
         my_attrs.update(HWCustomOp.get_nodeattr_types(self))
         my_attrs.update(RTLBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def get_nodeattr(
-        self, name
-    ) -> ModelWrapper | int | float | str | bool | npt.NDArray | list[str | int | float]:
+    def get_nodeattr(self, name):
         """Get a node attribute by name. Data is stored inside the ONNX node's
         AttributeProto container. Attribute must be part of get_nodeattr_types.
         Default value is returned if attribute is not set."""
@@ -119,29 +123,22 @@ class FINNLoop(RTLBackend, HWCustomOp):
                     ret = attr.__getattribute__(dtype)
                     ret = ModelWrapper(qonnx_make_model(ret))
                     return ret
-                return super().get_nodeattr(name)
-            if req:
-                raise Exception(
-                    """Required attribute %s unspecified in
+                else:
+                    return super().get_nodeattr(name)
+            else:
+                if req:
+                    raise Exception(
+                        """Required attribute %s unspecified in
                     a %s node"""
-                    % (name, self.onnx_node.op_type)
-                )
-            # not set, return default value
-            return def_val
+                        % (name, self.onnx_node.op_type)
+                    )
+                else:
+                    # not set, return default value
+                    return def_val
         except KeyError:
             raise AttributeError("Op has no such attribute: " + name)
 
-    def set_nodeattr(
-        self,
-        name,
-        value: ModelWrapper
-        | GraphProto
-        | float
-        | str
-        | bool
-        | npt.NDArray
-        | list[str | int | float],
-    ):
+    def set_nodeattr(self, name, value):
         """Set a node attribute by name. Data is stored inside the ONNX node's
         AttributeProto container. Attribute must be part of get_nodeattr_types."""
         try:
@@ -166,7 +163,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
             raise AttributeError("Op has no such attribute: " + name)
 
     def get_normal_input_shape(self, ind=0):
-        """Return normal input shape."""
+        """Return the unfolded shape of input `ind` as seen by its consumer in the loop body."""
         loop_body = self.get_nodeattr("body")
         if ind == 0:
             # get first node in loop body and return
@@ -178,7 +175,6 @@ class FINNLoop(RTLBackend, HWCustomOp):
             else:
                 ishape = loop_body.get_tensor_shape(node.input[0])
         else:
-            loop_body = self.get_nodeattr("body")
             tensor = loop_body.graph.input[ind].name
             # get consumer, assuming the second input is the parameter input
             param_node = loop_body.find_consumer(tensor)
@@ -190,7 +186,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return ishape
 
     def get_normal_output_shape(self, ind=0):
-        """Return normal output shape."""
+        """Return the unfolded output shape of the last node in the loop body."""
         loop_body = self.get_nodeattr("body")
         # get last node in loop body and return
         # normal output shape
@@ -203,7 +199,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return oshape
 
     def get_folded_input_shape(self, ind=0):
-        """Return folded input shape."""
+        """Return the folded shape of input `ind` as seen by its consumer in the loop body."""
         loop_body = self.get_nodeattr("body")
         if ind == 0:
             # get first node in loop body and return
@@ -220,7 +216,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return ishape
 
     def get_folded_output_shape(self, ind=0):
-        """Return folded output shape."""
+        """Return the folded output shape of the last node in the loop body."""
         loop_body = self.get_nodeattr("body")
         # get last node in loop body and return
         # normal output shape
@@ -229,7 +225,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return inst.get_folded_output_shape(0)
 
     def infer_node_datatype(self, model):
-        """Infer node datatype."""
+        """Do nothing; datatypes are fixed by the inputDataType/outputDataType attributes."""
         pass
 
     def get_input_datatype(self, ind=0):
@@ -249,12 +245,12 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return idt
 
     def get_output_datatype(self, ind=0):
-        """Return output datatype."""
+        """Return the FINN DataType of the output."""
         odt = DataType[self.get_nodeattr("outputDataType")]
         return odt
 
     def get_instream_width(self, ind=0):
-        """Return instream width."""
+        """Return the width of input stream `ind` as seen by its consumer in the loop body."""
         loop_body = self.get_nodeattr("body")
         if ind == 0:
             # get first node in loop body and return
@@ -271,7 +267,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return iwidth
 
     def get_exp_cycles(self):
-        """Return exp cycles."""
+        """Return the expected cycle count from the body latency, throughput and iteration count."""
         loop_body = self.get_nodeattr("body")
         check_if_cycles_annotated = False
 
@@ -284,12 +280,14 @@ class FINNLoop(RTLBackend, HWCustomOp):
             loop_body = loop_body.transform(AnnotateCycles())
 
         iteration = self.get_nodeattr("iteration")
-        body_cycles = loop_body.analysis(dataflow_performance)["critical_path_cycles"]
+        perf = loop_body.analysis(dataflow_performance)
+        body_latency = perf["critical_path_cycles"]
+        body_throughput = perf["max_cycles"]
         overhead_per_iter = 40
-        return (body_cycles + overhead_per_iter) * iteration
+        return body_latency + (iteration - 1) * body_throughput + overhead_per_iter * iteration
 
     def get_outstream_width(self, ind=0):
-        """Return outstream width."""
+        """Return the output stream width of the last node in the loop body."""
         loop_body = self.get_nodeattr("body")
         # get last node in loop body and return
         # normal output shape
@@ -298,7 +296,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return inst.get_outstream_width(0)
 
     def get_number_output_values(self):
-        """Return number output values."""
+        """Return the number of output values of the last node in the loop body."""
         loop_body = self.get_nodeattr("body")
         # get last node in loop body and return
         # normal output values
@@ -309,8 +307,9 @@ class FINNLoop(RTLBackend, HWCustomOp):
     def prepare_rtlsim(self, behav=False):
         """Creates a xsi emulation library for the RTL code generated
         for this node, sets the rtlsim_so attribute to its path."""
+
         vivado_stitch_proj_dir = self.get_nodeattr("code_gen_dir_ipgen")
-        with open(vivado_stitch_proj_dir + "/all_verilog_srcs.txt") as f:
+        with open(vivado_stitch_proj_dir + "/all_verilog_srcs.txt", "r") as f:
             all_verilog_srcs = f.read().split()
         top_module_file_name = os.path.basename(os.path.realpath(self.get_nodeattr("ipgen_path")))
         top_module_name = top_module_file_name.strip(".v")
@@ -322,10 +321,10 @@ class FINNLoop(RTLBackend, HWCustomOp):
         )
         # save generated lib filename in attribute
         sim_base, sim_rel = rtlsim_so
-        self.set_nodeattr("rtlsim_so", str(sim_base) + "/" + str(sim_rel))
+        self.set_nodeattr("rtlsim_so", str(sim_base / sim_rel))
 
     def execute_node(self, context, graph):
-        """Execute node."""
+        """Execute the loop via rtlsim or by running the body model once per iteration in Python."""
         node = self.onnx_node
         inp_values = context[node.input[0]]
         if self.get_nodeattr("exec_mode") == "rtlsim":
@@ -391,49 +390,63 @@ class FINNLoop(RTLBackend, HWCustomOp):
         context[node.output[0]] = np.asarray(result, dtype=np.float32)
 
     def generate_hdl(self, model, fpgapart, clk):
+        """Generate the loop control wrapper, stream taps, parameters and body IP for this loop."""
         # Generate params as part of IP preparation
-        """Generate hdl."""
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         self.generate_hdl_stream_tap()
-        self.generate_params(model, code_gen_dir)
+        self.generate_params(model, code_gen_dir, fpgapart)
         code_gen_dict = {}
         code_gen_dict["$LOOP_CONTROL_WRAPPER_NAME$"] = [f"{self.onnx_node.name}_loop_cont_wrapper"]
         code_gen_dict["$N_MAX_LAYERS$"] = (str(self.get_nodeattr("iteration")),)
         code_gen_dict["$N_LAYERS$"] = [str(self.get_nodeattr("iteration"))]
+        code_gen_dict["$ELEM_BITS$"] = [str(self.get_input_datatype(0).bitwidth())]
         code_gen_dict["$ILEN_BITS$"] = [str(self.get_instream_width(0))]
         code_gen_dict["$OLEN_BITS$"] = [str(self.get_outstream_width(0))]
+        # Intermediate frame address offset
+        code_gen_dict["$ADDRESS_OFFSET$"] = [str(self.get_nodeattr("address_offset"))]
 
-        input_elements = np.prod(self.get_normal_input_shape(0))
-        input_bytes = (input_elements * self.get_input_datatype(0).bitwidth() + 8 - 1) // 8
-        output_elements = np.prod(self.get_normal_output_shape(0))
-        output_bytes = (output_elements * self.get_output_datatype(0).bitwidth() + 8 - 1) // 8
-        code_gen_dict["$INPUT_BYTES$"] = [str(input_bytes)]
-        code_gen_dict["$OUTPUT_BYTES$"] = [str(output_bytes)]
-
-        # round up to next power of 2
-        input_bytes_rounded_to_power_of_2 = 2 ** (math.ceil(math.log2(input_bytes)))
-        code_gen_dict["$LAYER_OFFS_INT$"] = [
-            str(input_bytes_rounded_to_power_of_2)
-        ]  # need to get correct value
+        input_elements = int(np.prod(self.get_normal_input_shape(0)))
+        code_gen_dict["$INPUT_ELEMS$"] = [str(input_elements)]
 
         template_path = os.path.join(get_settings().finn_rtllib, "mlo", "loop_control_wrapper.v")
-        with open(template_path) as f:
+        with open(template_path, "r") as f:
             template_wrapper = f.read()
-        for key in code_gen_dict:
+        for key, value in code_gen_dict.items():
             # transform list into long string separated by '\n'
-            code_gen_line = "\n".join(code_gen_dict[key])
+            code_gen_line = "\n".join(value)
             template_wrapper = template_wrapper.replace(key, code_gen_line)
+        if get_by_name(self.onnx_node.attribute, "address_offset") is not None:
+            template_wrapper = "`define HAS_BASE_ADDRESS\n" + template_wrapper
         with open(
             os.path.join(code_gen_dir, self.onnx_node.name + "_wrapper.v"),
             "w",
         ) as f:
             f.write(template_wrapper)
 
-    def generate_params(self, model: "ModelWrapper", path: str) -> None:
-        """Generate .dat files for loop parameters and concatenate them together."""
+    def generate_params(
+        self, model: "ModelWrapper", path: str, fpgapart: str | None = None
+    ) -> None:
+        """Generate .dat files for loop parameters and concatenate them together. For
+        DDR-streamed loops (address_offset assigned), also emit the address_config
+        wrapper that exposes the runtime base address."""
+        if get_by_name(self.onnx_node.attribute, "address_offset") is not None:
+            ac_template_path = os.path.join(
+                get_settings().finn_rtllib, "mlo", "address_config_wrapper.v"
+            )
+            ac_module_name = self.onnx_node.name + "_address_config_wrapper"
+            with open(ac_template_path, "r") as f:
+                ac_wrapper = f.read()
+            ac_wrapper = ac_wrapper.replace("$MODULE_NAME_AXI_WRAPPER$", ac_module_name)
+            with open(os.path.join(path, ac_module_name + ".v"), "w") as f:
+                f.write(ac_wrapper)
+
         iteration = cast("int", self.get_nodeattr("iteration"))
         loop_node = self.onnx_node
         loop_body = cast("ModelWrapper", self.get_nodeattr("body"))
+        # Nodes with multiple parameter inputs (e.g. Requant: scale+bias) are
+        # handled once, across all their param inputs, and skipped on later
+        # passes of the per-graph-input loop below.
+        handled_nodes = set()
         for i, inp in enumerate(loop_node.input[1:]):
             params = model.get_initializer(inp)
             param_dtype = model.get_tensor_datatype(inp)
@@ -454,14 +467,22 @@ class FINNLoop(RTLBackend, HWCustomOp):
                 raise FINNInternalError(
                     f"Could not find consumer of loop parameter tensor {loop_tensor} in loop body."
                 )
+            if param_node.name in handled_nodes:
+                continue
+            if param_node.op_type == "Requant_rtl":
+                self._generate_params_requant(
+                    model, path, loop_node, loop_body, param_node, fpgapart
+                )
+                handled_nodes.add(param_node.name)
+                continue
             inst = None
-            for it in range(iteration):
-                loop_body.set_initializer(loop_tensor, params[it])
+            for iter in range(iteration):
+                loop_body.set_initializer(loop_tensor, params[iter])
                 loop_body.set_tensor_datatype(loop_tensor, param_dtype)
                 inst = getHWCustomOp(param_node)
                 inst.generate_params(loop_body, path)
-                param_file = f"{path}/memblock.dat"
-                new_param_file = f"{path}/{param_node.op_type}_memblock_{it}.dat"
+                param_file = "{}/memblock.dat".format(path)
+                new_param_file = "{}/{}_memblock_{}.dat".format(path, param_node.op_type, iter)
                 if param_node.op_type.startswith("MVAU") or param_node.op_type.startswith(
                     "Elementwise"
                 ):
@@ -469,19 +490,25 @@ class FINNLoop(RTLBackend, HWCustomOp):
                     shutil.move(param_file, new_param_file)
                 elif param_node.op_type.startswith("Thresholding"):
                     # get all generated Thresholding dat files
-                    pe = cast("int", inst.get_nodeattr("PE"))
-                    output_data_type = cast("str", inst.get_nodeattr("outputDataType"))
+                    pe = inst.get_nodeattr("PE")
+                    output_data_type = inst.get_nodeattr("outputDataType")
                     o_bitwidth = DataType[output_data_type].bitwidth()
                     param_files = []
                     for stage in range(o_bitwidth):
                         for pe_value in range(pe):
                             param_files.append(
-                                path + f"/{param_node.name}_threshs_{pe_value}_{stage}.dat"
+                                path
+                                + "/%s_threshs_%s_%s.dat"
+                                % (
+                                    param_node.name,
+                                    pe_value,
+                                    stage,
+                                )
                             )
                     for param_file in param_files:
                         param_path = Path(param_file)
                         new_param_file = param_path.with_name(
-                            param_path.stem + "_i" + str(it) + param_path.suffix
+                            param_path.stem + "_i" + str(iter) + param_path.suffix
                         )
                         shutil.move(param_path, new_param_file)
                 else:
@@ -489,65 +516,76 @@ class FINNLoop(RTLBackend, HWCustomOp):
                         f"Node of type {param_node.op_type} not supported as loop node."
                     )
 
-            if param_node.op_type.startswith("MVAU") or param_node.op_type.startswith(
-                "Elementwise"
-            ):
-                # concatinate all .dat files together
-                param_file = Path(path) / f"memblock_{param_node.op_type}_id_{i + 1}.dat"
-                with param_file.open("w") as outfile:
-                    for it in range(iteration):
-                        memblock_file = Path(path) / f"{param_node.op_type}_memblock_{it}.dat"
-                        with memblock_file.open("r") as infile:
+            if param_node.op_type.startswith("MVAU"):
+                # Concatenate the per-iteration weights, padding each layer up to the
+                # AXI-bus offset (LAYER_OFFS in fetch_weights.sv) so that the DDR
+                # image built from this .dat reads layer i from i*LAYER_OFFS. The
+                # rtlsim memory model (mlo_sim.py) and the driver's DDR upload
+                # (make_driver.py) consume this file as-is. Written one hex byte per
+                # line.
+                param_file = "{}/memblock_{}_id_{}.dat".format(path, param_node.op_type, i + 1)
+                layer_bytes, layer_offs = getCustomOp(param_node).get_weight_mem_bytes()
+                padded = np.zeros(iteration * layer_offs, dtype=np.uint8)
+                for iter in range(iteration):
+                    memblock_file = "{}/{}_memblock_{}.dat".format(path, param_node.op_type, iter)
+                    layer = dat_file_to_numpy_array(memblock_file)
+                    padded[iter * layer_offs : iter * layer_offs + layer_bytes] = layer
+                    os.remove(memblock_file)
+                with open(param_file, "w") as outfile:
+                    outfile.write("\n".join("%02x" % b for b in padded))
+                    outfile.write("\n")
+            elif param_node.op_type.startswith("Elementwise"):
+                # Concatenate the per-iteration .dat files back-to-back into the
+                # single memblock the memstream reads (no DDR padding here, unlike
+                # the MVAU path above).
+                param_file = "{}/memblock_{}_id_{}.dat".format(path, param_node.op_type, i + 1)
+                with open(param_file, "w") as outfile:
+                    for iter in range(iteration):
+                        memblock_file = "{}/{}_memblock_{}.dat".format(
+                            path, param_node.op_type, iter
+                        )
+                        with open(memblock_file, "r") as infile:
                             for line in infile:
                                 outfile.write(line)
-                        memblock_file.unlink()  # remove the per-iteration file after concatenation
-                # Replace the path for the dat files in the ipgen files if Eltwise
+                        os.remove(memblock_file)
+                # Point the ipgen memstream wrapper at the concatenated .dat file.
                 # Adapted from transformations.fpgadataflow.replace_verilog_relpaths
-                if param_node.op_type.startswith("Elementwise"):
-                    param_customop = getCustomOp(param_node)
-                    ipgen_path_str = param_customop.get_nodeattr("code_gen_dir_ipgen")
-                    ipgen_path = Path(cast("str", ipgen_path_str))
-                    if ipgen_path.is_dir():
-                        init_file = Path(path) / f"memblock_{param_node.op_type}_id_{i + 1}.dat"
-                        pattern = re.compile(
-                            r'^(\s*parameter\s+INIT_FILE\s*=\s*")[^"]+(".*)$',
-                            re.MULTILINE,
+                param_customop = getCustomOp(param_node)
+                ipgen_path = Path(cast("str", param_customop.get_nodeattr("code_gen_dir_ipgen")))
+                if ipgen_path.is_dir():
+                    init_file = Path(path) / f"memblock_{param_node.op_type}_id_{i + 1}.dat"
+                    pattern = re.compile(
+                        r'^(\s*parameter\s+INIT_FILE\s*=\s*")[^"]+(".*)$',
+                        re.MULTILINE,
+                    )
+                    for fpath in ipgen_path.rglob("*_memstream_wrapper.v"):
+                        s = fpath.read_text()
+                        updated, n = pattern.subn(
+                            lambda m, init_file=init_file: (f"{m.group(1)}{init_file}{m.group(2)}"),
+                            s,
+                            count=1,
                         )
-                        for fpath in ipgen_path.rglob("*_memstream_wrapper.v"):
-                            s = fpath.read_text()
-                            updated, n = pattern.subn(
-                                lambda m, init_file=init_file: (
-                                    f"{m.group(1)}{init_file}{m.group(2)}"
-                                ),
-                                s,
-                                count=1,
-                            )
-                            if n:
-                                print(f"Updating INIT_FILE in {fpath} -> {init_file}")
-                                fpath.write_text(updated)
+                        if n:
+                            fpath.write_text(updated)
             elif param_node.op_type.startswith("Thresholding"):
                 # concatinate all .dat files together
-                if inst is None:
-                    raise FINNInternalError(
-                        "Expected inst to be set after loop over iterations, but it was not."
-                    )
-                pe = cast("int", inst.get_nodeattr("PE"))
-                output_data_type = cast("str", inst.get_nodeattr("outputDataType"))
+                pe = inst.get_nodeattr("PE")
+                output_data_type = inst.get_nodeattr("outputDataType")
                 o_bitwidth = DataType[output_data_type].bitwidth()
                 for stage in range(o_bitwidth):
                     for pe_value in range(pe):
-                        param_file = (
-                            Path(path) / f"Thresholding_id_{i + 1}_threshs_{pe_value}_{stage}.dat"
+                        param_file = path + "/Thresholding_id_%s_threshs_%s_%s.dat" % (
+                            i + 1,
+                            pe_value,
+                            stage,
                         )
-                        with param_file.open("w") as outfile:
-                            for it in range(iteration):
-                                iter_file = (
-                                    Path(path)
-                                    / f"{param_node.name}_threshs_{pe_value}_{stage}_i{it}.dat"
+                        with open(param_file, "w") as outfile:
+                            for iter in range(iteration):
+                                iter_file = "{}/{}_threshs_{}_{}_i{}.dat".format(
+                                    path, param_node.name, pe_value, stage, iter
                                 )
-                                with iter_file.open("r") as infile:
+                                with open(iter_file, "r") as infile:
                                     cnt = 0
-                                    hex_len = 0
                                     for line in infile:
                                         if cnt == 0:
                                             hex_len = len(line.strip())
@@ -561,13 +599,12 @@ class FINNLoop(RTLBackend, HWCustomOp):
                                         for _ in range(next_pow2 - cnt):
                                             # write out as hex of len hex_len
                                             outfile.write(hex(pad_val)[2:].zfill(hex_len) + "\n")
-                                iter_file.unlink()
+                                os.remove(iter_file)
 
                 # Replace the path for the dat files in the ipgen files
                 # Adapted from transformations.fpgadataflow.replace_verilog_relpaths
                 param_customop = getCustomOp(param_node)
-                ipgen_p = cast("str", param_customop.get_nodeattr("ipgen_path"))
-                ipgen_path = Path(ipgen_p)
+                ipgen_path = Path(cast("str", param_customop.get_nodeattr("ipgen_path")))
                 if ipgen_path.is_dir():
                     threshold_path = f"{path}/Thresholding_id_{i + 1}_"
                     pattern = re.compile(
@@ -575,7 +612,6 @@ class FINNLoop(RTLBackend, HWCustomOp):
                         re.MULTILINE,
                     )
                     for fpath in ipgen_path.rglob("*.v"):
-                        print(f"Checking {fpath} for THRESHOLDS_PATH to update...")
                         s = fpath.read_text()
                         updated, n = pattern.subn(
                             lambda m, threshold_path=threshold_path: (
@@ -586,6 +622,76 @@ class FINNLoop(RTLBackend, HWCustomOp):
                         )
                         if n:
                             fpath.write_text(updated)
+
+    def _generate_params_requant(self, model, path, loop_node, loop_body, param_node, fpgapart):
+        """Generate per-iteration memstream init files for a Requant_rtl body node.
+
+        Requant has two parameter inputs (scale=input[1], bias=input[2]) whose
+        fixed-point decomposition is *coupled*: the bias alignment depends on
+        the scale-derived per-channel tap of the SAME iteration. Therefore both
+        initializers must be set together for each iteration before calling
+        ``generate_params``.
+
+        Each iteration emits a single ``params_memblock.dat`` (unified struct
+        packing scale+tap+bias per PE lane); these are renamed per iteration,
+        then concatenated (set i at offset i*DEPTH) into
+        ``params_memblock_id_{gid}.dat``. The single memstream wrapper's
+        ``$INIT_FILE$`` path is rewritten to point at the concatenated file.
+        """
+        iteration = self.get_nodeattr("iteration")
+        inst = getCustomOp(param_node)
+
+        # Map the Requant's scale/bias tensors to loop-body graph-input ids.
+        graph_input_names = [x.name for x in loop_body.graph.input]
+        scale_tensor = param_node.input[1]
+        bias_tensor = param_node.input[2]
+        scale_gid = graph_input_names.index(scale_tensor)
+
+        # Stacked per-iteration params live on the matching FINNLoop inputs
+        # (loop_node.input[k] corresponds positionally to graph.input[k]).
+        scale_stack = model.get_initializer(loop_node.input[scale_gid])
+        bias_gid = graph_input_names.index(bias_tensor)
+        bias_stack = model.get_initializer(loop_node.input[bias_gid])
+        scale_dtype = model.get_tensor_datatype(loop_node.input[scale_gid])
+        bias_dtype = model.get_tensor_datatype(loop_node.input[bias_gid])
+        assert scale_stack.shape[0] == iteration
+        assert bias_stack.shape[0] == iteration
+
+        for iter in range(iteration):
+            # Set BOTH initializers for this iteration (coupled decomposition).
+            loop_body.set_initializer(scale_tensor, scale_stack[iter])
+            loop_body.set_tensor_datatype(scale_tensor, scale_dtype)
+            loop_body.set_initializer(bias_tensor, bias_stack[iter])
+            loop_body.set_tensor_datatype(bias_tensor, bias_dtype)
+            inst.generate_params(loop_body, path, fpgapart)
+            src = "{}/params_memblock.dat".format(path)
+            dst = "{}/params_memblock_{}.dat".format(path, iter)
+            shutil.move(src, dst)
+
+        # Concatenate per-iteration files into one memblock for the param stream.
+        # Use scale_gid as the canonical graph-input id for the unified stream.
+        concat_file = "{}/params_memblock_id_{}.dat".format(path, scale_gid)
+        with open(concat_file, "w") as outfile:
+            for iter in range(iteration):
+                memblock_file = "{}/params_memblock_{}.dat".format(path, iter)
+                with open(memblock_file, "r") as infile:
+                    for line in infile:
+                        outfile.write(line)
+                os.remove(memblock_file)
+
+        # Rewrite the memstream wrapper's $INIT_FILE$ path (Elementwise-style).
+        ipgen_path = inst.get_nodeattr("code_gen_dir_ipgen")
+        if ipgen_path is not None and os.path.isdir(ipgen_path):
+            for dname, dirs, files in os.walk(ipgen_path):
+                for fname in files:
+                    if fname.endswith("_params_memstream_wrapper.v"):
+                        fpath = os.path.join(dname, fname)
+                        with open(fpath, "r") as f:
+                            s = f.read()
+                        old = os.path.join(ipgen_path, "params_memblock.dat")
+                        s = s.replace(old, concat_file)
+                        with open(fpath, "w") as f:
+                            f.write(s)
 
     def generate_hdl_stream_tap(self):
         """Helper function to generate verilog code for stream tap components."""
@@ -609,32 +715,55 @@ class FINNLoop(RTLBackend, HWCustomOp):
                 tap_rep = 1
                 if node.op_type == "Thresholding_rtl":
                     tap_rep = np.prod(node_inst.get_folded_input_shape(0)[:-1])
-                stname = "IN_%s" % graph_inputs.index(node.input[1])
-                code_gen_dict = {
-                    "$MODULE_NAME$": [stname],
-                    "$DATA_WIDTH$": [str(data_width)],
-                    "$TAP_REP$": [str(tap_rep)],
-                }
-                # apply code generation to template
-                with open(template_path) as f:
-                    template_wrapper = f.read()
-                for key in code_gen_dict:
-                    # transform list into long string separated by '\n'
-                    code_gen_line = "\n".join(code_gen_dict[key])
-                    template_wrapper = template_wrapper.replace(key, code_gen_line)
-                with open(
-                    os.path.join(code_gen_dir, stname + "_stream_tap_wrapper.v"),
-                    "w",
-                ) as f:
-                    f.write(template_wrapper)
+                elif node.op_type.startswith("Elementwise") and hasattr(
+                    node_inst, "calc_wmem_reps"
+                ):
+                    tap_rep = node_inst.calc_wmem_reps()
+                elif node.op_type == "Requant_rtl":
+                    # The decoupled Requant core consumes one packed param word
+                    # per input beat, cycling through CF stored words (memstream
+                    # DEPTH=CF). The set index must be replayed once per spatial
+                    # position to re-stream the CF-word block.
+                    # folded_input_shape is [*numInputVectors, CF, PE].
+                    tap_rep = int(np.prod(node_inst.get_folded_input_shape(0)[:-2]))
+                # Emit one stream tap per parameter graph-input of this node.
+                # Single-param ops (MVAU/Thresholding/Elementwise) yield one
+                # tap. Requant packs scale+bias into a single unified memstream
+                # driven by the tap for input[1]; input[2] (bias) is internal
+                # to the struct and does not get its own tap.
+                param_inputs = node.input[1:]
+                if node.op_type == "Requant_rtl":
+                    param_inputs = node.input[1:2]
+                for pinp in param_inputs:
+                    if pinp not in graph_inputs:
+                        continue
+                    stname = "IN_%s" % graph_inputs.index(pinp)
+                    code_gen_dict = {
+                        "$MODULE_NAME$": [stname],
+                        "$DATA_WIDTH$": [str(data_width)],
+                        "$TAP_REP$": [str(tap_rep)],
+                    }
+                    # apply code generation to template
+                    with open(template_path, "r") as f:
+                        template_wrapper = f.read()
+                    for key, value in code_gen_dict.items():
+                        # transform list into long string separated by '\n'
+                        code_gen_line = "\n".join(value)
+                        template_wrapper = template_wrapper.replace(key, code_gen_line)
+                    with open(
+                        os.path.join(code_gen_dir, stname + "_stream_tap_wrapper.v"),
+                        "w",
+                    ) as f:
+                        f.write(template_wrapper)
 
     def ipgen_singlenode_code(self, fpgapart=None):
-        """Return ipgen singlenode code."""
+        """Build the Vivado block design and package the loop as a single IP."""
         prjname = "MakeLoopIP"
         block_name = self.onnx_node.name
         vivado_stitch_proj_dir = self.get_nodeattr("code_gen_dir_ipgen")
 
         cmd = []
+
         # add all the generated IP dirs to ip_repo_paths
         ip_dirs = ["list"]
         # add RTL streamer IP
@@ -661,7 +790,6 @@ class FINNLoop(RTLBackend, HWCustomOp):
         node_intf = self.get_verilog_top_module_intf_names()
         m_axis_intfs = node_intf["m_axis"]
         s_axis_intfs = node_intf["s_axis"]
-        control_intfs = node_intf["ap_none"]
         mm_intfs = node_intf["aximm"]
         for intf in m_axis_intfs:
             cmd.append(
@@ -678,13 +806,6 @@ class FINNLoop(RTLBackend, HWCustomOp):
                 "create_bd_intf_pin -mode Master "
                 "-vlnv xilinx.com:interface:aximm_rtl:1.0 /%s/%s" % (self.onnx_node.name, intf[0])
             )
-        for intf in control_intfs:
-            if intf == "done_if":
-                cmd.append(
-                    "create_bd_pin -from 1 -to 0 -dir O -type data /%s/%s"
-                    % (self.onnx_node.name, intf)
-                )
-
         # instantiate loop shell
         loop_shell_name = f"{self.onnx_node.name}/{self.onnx_node.name}_loop_cont_wrapper"
         cmd.append(
@@ -701,23 +822,14 @@ class FINNLoop(RTLBackend, HWCustomOp):
             % (self.onnx_node.name, clk_name, loop_shell_name, clk_name)
         )
         # "externalize" some of the loop shell signals
-        ext_intf_signals = ["in0_V", "out0_V", "m_axi_hbm"]
-        ext_signals = ["done_if"]
+        ext_intf_signals = ["in0_V", "out0_V", "m_axi_intermediate_frame"]
         for sig in ext_intf_signals:
             cmd.append(
                 "connect_bd_intf_net [get_bd_intf_pins %s/%s] [get_bd_intf_pins %s/%s]"
                 % (self.onnx_node.name, sig, loop_shell_name, sig)
             )
-        for sig in ext_signals:
-            cmd.append(
-                "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
-                % (self.onnx_node.name, sig, loop_shell_name, sig)
-            )
-
         # stream tap graph generation
         loop_body = self.get_nodeattr("body")
-        source_target = "./ip/verilog/rtl_ops/%s" % self.onnx_node.name
-        cmd.append("file mkdir %s" % source_target)
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         # create a hierarchy for this layer, with the same port names
         stg_intf = {}
@@ -742,14 +854,26 @@ class FINNLoop(RTLBackend, HWCustomOp):
             "create_bd_intf_pin -mode Slave "
             "-vlnv xilinx.com:interface:axis_rtl:1.0 /%s/s_axis_0" % bd_name
         )
-        for id, inp in enumerate(loop_body.graph.input[1:]):
+        # One tap per parameter graph-input, mirroring generate_hdl_stream_tap():
+        # Requant packs scale (input[1]) and bias (input[2]) into one memstream
+        # driven by the scale tap, so the bias gets no tap of its own.
+        taps = []
+        node_to_taps = {}
+        for gid, inp in enumerate(loop_body.graph.input[1:], start=1):
+            consumer = loop_body.find_consumer(inp.name)
+            if consumer.op_type == "Requant_rtl" and inp.name in consumer.input[2:]:
+                continue
+            taps.append((gid, "IN_%d_stream_tap_wrapper" % gid, consumer.name))
+            node_to_taps.setdefault(consumer.name, []).append(gid)
+        # number the master ports densely, to match the loop body IP's s_axis_1..N
+        for pid, _ in enumerate(taps, start=1):
             cmd.append(
                 "create_bd_intf_pin -mode Master "
-                "-vlnv xilinx.com:interface:axis_rtl:1.0 /%s/m_axis_%d" % (bd_name, id + 1)
+                "-vlnv xilinx.com:interface:axis_rtl:1.0 /%s/m_axis_%d" % (bd_name, pid)
             )
         # get stream tap (+ skid)  components
         skid_file = os.path.join(get_settings().finn_rtllib, "skid", "skid.sv")
-        stream_tap_dir = os.path.join(get_settings().finn_rtllib, "stream_tap", "hdl")
+        stream_tap_dir = os.path.join(get_settings().finn_rtllib, "stream_tap", "hdl") + "/"
         file_suffix = "_stream_tap_wrapper.v"
         # automatically find stream tap verilog components in code generation directory
         st_tmpl_names = []
@@ -758,49 +882,87 @@ class FINNLoop(RTLBackend, HWCustomOp):
             if fname.endswith(file_suffix):
                 st_verilog_files.append(os.path.join(code_gen_dir, fname))
                 st_tmpl_names.append(fname[:-2])
-        sourcefiles = st_verilog_files + [os.path.join(stream_tap_dir, "stream_tap.sv"), skid_file]
+        dwc_rtllib_dir = os.path.join(get_settings().finn_rtllib, "dwc/hdl/")
+        sourcefiles = st_verilog_files + [
+            stream_tap_dir + "stream_tap.sv",
+            skid_file,
+            dwc_rtllib_dir + "vpc.sv",
+        ]
         for f in sourcefiles:
-            cmd += ["add_files -copy_to %s -norecurse %s" % (source_target, f)]
+            cmd += ["add_files -norecurse %s" % f]
 
         adj_list = adjacency_list(
             loop_body,
             lambda node: (
                 node.op_type == "Thresholding_rtl"
-                or (
-                    node.op_type == "MVAU_rtl"
-                    and any(attr.name == "mlo_max_iter" and attr.i > 0 for attr in node.attribute)
-                )
-                or (
-                    node.op_type.startswith("Elementwise")
-                    and any(attr.name == "mlo_max_iter" and attr.i > 0 for attr in node.attribute)
-                )
+                and any(attr.name == "mlo_max_iter" and attr.i > 0 for attr in node.attribute)
+            )
+            or (
+                node.op_type == "MVAU_rtl"
+                and any(attr.name == "mlo_max_iter" and attr.i > 0 for attr in node.attribute)
+            )
+            or (
+                node.op_type.startswith("Elementwise")
+                and any(attr.name == "mlo_max_iter" and attr.i > 0 for attr in node.attribute)
+            )
+            or (
+                node.op_type == "Requant_rtl"
+                and any(attr.name == "mlo_max_iter" and attr.i > 0 for attr in node.attribute)
             ),
         )
 
-        # create map that maps each stream tap to its param node
-        st_map = {}
-        for id, inp in enumerate(loop_body.graph.input[1:]):
-            consumer = loop_body.find_consumer(inp.name)
-            st_map[consumer.name] = "IN_%d_stream_tap_wrapper" % (id + 1)
+        def node_entry(node_name):
+            """Return the entry tap (lowest gid) of a node, where the set index
+            enters the node's param taps. A multi-param node chains its taps
+            internally (below), so the index flows in here and out of node_exit."""
+            return "IN_%d_stream_tap_wrapper" % min(node_to_taps[node_name])
+
+        def node_exit(node_name):
+            """Return the exit tap (highest gid) of a node, which forwards the set
+            index onward to the next node in the chain. For a single-param node
+            entry == exit."""
+            return "IN_%d_stream_tap_wrapper" % max(node_to_taps[node_name])
+
+        def dst_entry_taps(dsts):
+            """Return one entry tap per destination node. Intra-node params (e.g.
+            Requant scale+bias) are chained in series internally, so a multi-param
+            node contributes exactly one sink here -- fork duplication only applies
+            across distinct destination nodes (branching dataflow)."""
+            return [node_entry(d) for d in dsts]
 
         # instantiate all stream taps and connect their clk and rst
-        for id, st_name in enumerate(st_map.values()):
+        for pid, (_gid, tap_name, _consumer) in enumerate(taps, start=1):
             cmd.append(
-                "create_bd_cell -type hier -reference %s /%s/%s" % (st_name, bd_name, st_name)
+                "create_bd_cell -type hier -reference %s /%s/%s" % (tap_name, bd_name, tap_name)
             )
             # connect
             cmd.append(
                 "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s/ap_clk]"
-                % (bd_name, clk_name, bd_name, st_name)
+                % (bd_name, clk_name, bd_name, tap_name)
             )
             cmd.append(
                 "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s/ap_rst_n]"
-                % (bd_name, rst_name, bd_name, st_name)
+                % (bd_name, rst_name, bd_name, tap_name)
             )
             cmd.append(
                 "connect_bd_intf_net [get_bd_intf_pins %s/m_axis_%s] "
-                "[get_bd_intf_pins %s/%s/m_axis_1]" % (bd_name, id + 1, bd_name, st_name)
+                "[get_bd_intf_pins %s/%s/m_axis_1]" % (bd_name, pid, bd_name, tap_name)
             )
+
+        # Chain a multi-param node's taps in series (e.g. Requant scale -> bias):
+        # each tap taps off its own m_axis_1 to its memstream and forwards the
+        # set index on m_axis_0 to the next param tap. This keeps every tap's
+        # forward output consumed (the stream_tap stalls if m_axis_0/ordy is left
+        # dangling) while still delivering the same index to all param memstreams.
+        for consumer_name, gids in node_to_taps.items():
+            ordered = sorted(gids)
+            for a, b in zip(ordered[:-1], ordered[1:]):
+                cmd.append(
+                    "connect_bd_intf_net "
+                    "[get_bd_intf_pins %s/IN_%d_stream_tap_wrapper/m_axis_0] "
+                    "[get_bd_intf_pins %s/IN_%d_stream_tap_wrapper/s_axis_0]"
+                    % (bd_name, a, bd_name, b)
+                )
 
         # prune adj_list to remove join duplicates
         pruned_adj_list = copy.deepcopy(adj_list)
@@ -853,12 +1015,18 @@ class FINNLoop(RTLBackend, HWCustomOp):
                 src_inst_name = bd_name
                 src_intf_name = "s_axis_0"
             else:
-                src_inst_name = bd_name + "/" + st_map[src]
+                # A multi-param node forwards the set index from its exit (last)
+                # tap; its internal params were already chained in series above.
+                src_inst_name = bd_name + "/" + node_exit(src)
                 src_intf_name = "m_axis_0"
 
+            # One sink per destination node (its entry tap). A multi-param node
+            # is a single sink here -- fork duplication is only for branching to
+            # distinct downstream nodes.
+            sink_taps = dst_entry_taps(dsts)
             dst_intf_name = "s_axis_0"
-            if len(dsts) == 1:
-                dst_inst_name = st_map[dsts[0]]
+            if len(sink_taps) == 1:
+                dst_inst_name = sink_taps[0]
                 cmd.append(
                     "connect_bd_intf_net [get_bd_intf_pins %s/%s] "
                     "[get_bd_intf_pins %s/%s/%s]"
@@ -872,7 +1040,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
                 )
             # if node is a fork connect data signals directly
             # and insert AND logic for rdy and vld signals
-            elif len(dsts) > 1:
+            elif len(sink_taps) > 1:
                 if "__INPUT0__" in src:
                     cmd.append(
                         "create_bd_cell -type ip "
@@ -881,7 +1049,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
                     )
                     cmd.append(
                         "set_property CONFIG.NUM_MI {%d} [get_bd_cells %s/axi_broadcaster_0]"
-                        % (len(dsts), src_inst_name)
+                        % (len(sink_taps), src_inst_name)
                     )
                     # connect component to clk, rst and input
                     cmd.append(
@@ -900,8 +1068,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
                         "[get_bd_intf_pins %s/axi_broadcaster_0/S_AXIS]"
                         % (src_inst_name, src_inst_name)
                     )
-                    for id, dst in enumerate(dsts):
-                        dst_inst_name = st_map[dst]
+                    for id, dst_inst_name in enumerate(sink_taps):
                         cmd.append(
                             "connect_bd_intf_net "
                             "[get_bd_intf_pins %s/axi_broadcaster_0/M0%s_AXIS] "
@@ -909,8 +1076,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
                             % (src_inst_name, id, src_inst_name, dst_inst_name, dst_intf_name)
                         )
                 else:
-                    for id, dst in enumerate(dsts):
-                        dst_inst_name = st_map[dst]
+                    for id, dst_inst_name in enumerate(sink_taps):
                         cmd.append(
                             "connect_bd_net "
                             "[get_bd_pins %s/%s_TDATA] [get_bd_pins %s/%s/%s_TDATA]"
@@ -943,7 +1109,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
                                     id,
                                 )
                             )
-                        elif id < len(dsts):
+                        elif id < len(sink_taps):
                             cmd.append(
                                 "connect_bd_net "
                                 "[get_bd_pins %s_util_vector_logic_%d/Res] "
@@ -963,13 +1129,12 @@ class FINNLoop(RTLBackend, HWCustomOp):
                         "[get_bd_pins %s_util_vector_logic_%d/Res] [get_bd_pins %s/%s_TREADY]"
                         % (
                             src_inst_name,
-                            len(dsts) - 1,
+                            len(sink_taps) - 1,
                             src_inst_name,
                             src_intf_name,
                         )
                     )
-                    for dst in dsts:
-                        dst_inst_name = st_map[dst]
+                    for dst_inst_name in sink_taps:
                         dst_intf_name = "s_axis_0"
                         cmd.append(
                             "connect_bd_net "
@@ -977,7 +1142,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
                             "[get_bd_pins %s/%s/%s_TVALID]"
                             % (
                                 src_inst_name,
-                                len(dsts) - 1,
+                                len(sink_taps) - 1,
                                 bd_name,
                                 dst_inst_name,
                                 dst_intf_name,
@@ -991,7 +1156,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         ]
         cmd.append(
             "connect_bd_intf_net [get_bd_intf_pins %s/m_axis_0] "
-            "[get_bd_intf_pins %s/%s/m_axis_0]" % (bd_name, bd_name, st_map[last_nodes[0]])
+            "[get_bd_intf_pins %s/%s/m_axis_0]" % (bd_name, bd_name, node_exit(last_nodes[0]))
         )
 
         # connect stream tap graph to clk and reset
@@ -1027,6 +1192,50 @@ class FINNLoop(RTLBackend, HWCustomOp):
             "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
             % (self.onnx_node.name, clk_name, finn_ip_name, clk_name)
         )
+        # Expose the loop body's sim_finish control to the top of the FINNLoop IP.
+        # The body's stitched IP carries a sim_ctrl (inserted by CreateStitchedIP)
+        # whose sim_finish input triggers $finish. Asserting it during rtlsim runs
+        # the SystemVerilog final blocks that flush and close the fifo_gauge log
+        # files; without this the gauge logs are left unflushed/empty during
+        # characterization-based FIFO sizing.
+        cmd.append("create_bd_pin -dir I /%s/sim_finish" % self.onnx_node.name)
+        cmd.append(
+            "connect_bd_net [get_bd_pins %s/sim_finish] [get_bd_pins %s/sim_finish]"
+            % (self.onnx_node.name, finn_ip_name)
+        )
+
+        if get_by_name(self.onnx_node.attribute, "address_offset") is not None:
+            ac_module_name = self.onnx_node.name + "_address_config_wrapper"
+            ac_inst_name = f"{self.onnx_node.name}/address_config"
+            cmd.append("add_files -norecurse %s/%s.v" % (code_gen_dir, ac_module_name))
+            cmd.append(
+                "create_bd_cell -type module -reference %s %s" % (ac_module_name, ac_inst_name)
+            )
+            cmd.append(
+                "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
+                % (self.onnx_node.name, rst_name, ac_inst_name, rst_name)
+            )
+            cmd.append(
+                "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
+                % (self.onnx_node.name, clk_name, ac_inst_name, clk_name)
+            )
+            cmd.append(
+                "connect_bd_net [get_bd_pins %s/base_address] [get_bd_pins %s/base_address]"
+                % (ac_inst_name, finn_ip_name)
+            )
+            cmd.append(
+                "connect_bd_net [get_bd_pins %s/base_address] [get_bd_pins %s/base_address]"
+                % (ac_inst_name, loop_shell_name)
+            )
+            cmd.append(
+                "create_bd_intf_pin -mode Slave "
+                "-vlnv xilinx.com:interface:aximm_rtl:1.0 /%s/s_axilite" % self.onnx_node.name
+            )
+            cmd.append(
+                "connect_bd_intf_net [get_bd_intf_pins %s/s_axilite] "
+                "[get_bd_intf_pins %s/s_axilite]" % (self.onnx_node.name, ac_inst_name)
+            )
+
         # "externalize" some of the loop shell signals
         ext_signals = loop_body_intf_names["aximm"]
         for sig in ext_signals:
@@ -1037,6 +1246,7 @@ class FINNLoop(RTLBackend, HWCustomOp):
         # connect components with each other
         # stream tap with finn ip
         connect_signals = loop_body_intf_names["s_axis"]
+        assert len(taps) == len(connect_signals) - 1, "stream tap / loop body param mismatch"
         for id, sig in enumerate(connect_signals[:-1]):
             cmd.append(
                 "connect_bd_intf_net "
@@ -1066,8 +1276,13 @@ class FINNLoop(RTLBackend, HWCustomOp):
         cmd.append("set_property name ap_clk [get_bd_ports ap_clk_0]")
         cmd.append("set_property name ap_rst_n [get_bd_ports ap_rst_n_0]")
         cmd.append("set_property name out0_V [get_bd_intf_ports out0_V_0]")
-        cmd.append("set_property name m_axi_hbm [get_bd_intf_ports m_axi_hbm_0]")
-        cmd.append("set_property name done_if [get_bd_ports done_if_0]")
+        cmd.append(
+            "set_property name m_axi_intermediate_frame "
+            "[get_bd_intf_ports m_axi_intermediate_frame_0]"
+        )
+        cmd.append("set_property name sim_finish [get_bd_ports sim_finish_0]")
+        if get_by_name(self.onnx_node.attribute, "address_offset") is not None:
+            cmd.append("set_property name s_axilite [get_bd_intf_ports s_axilite_0]")
         # set property name for aximm interfaces
         ext_signals = loop_body_intf_names["aximm"]
         for sig in ext_signals:
@@ -1108,10 +1323,14 @@ class FINNLoop(RTLBackend, HWCustomOp):
         # in some cases, the IP packager seems to infer an aperture of 64K or 4G,
         # preventing address assignment of the DDR_LOW and/or DDR_HIGH segments
         # the following is a hotfix to remove this aperture during IODMA packaging
-        cmd.append(
-            "ipx::remove_segment -quiet m_axi_gmem0:APERTURE_0 "
-            "[ipx::get_address_spaces m_axi_gmem0 -of_objects [ipx::current_core]]"
-        )
+        # Also used for MLO in the context of Zynq
+        loop_aximm_names = ["m_axi_intermediate_frame"] + [sig[0] for sig in ext_signals]
+        for aximm_name in loop_aximm_names:
+            cmd.append(
+                "ipx::remove_segment -quiet %s:APERTURE_0 "
+                "[ipx::get_address_spaces %s -of_objects [ipx::current_core]]"
+                % (aximm_name, aximm_name)
+            )
         cmd.append("set_property core_revision 2 [ipx::find_open_core %s]" % block_vlnv)
         cmd.append("ipx::create_xgui_files [ipx::find_open_core %s]" % block_vlnv)
         # mark bus interface params as user-resolvable to avoid FREQ_MHZ mismatches
@@ -1139,23 +1358,37 @@ class FINNLoop(RTLBackend, HWCustomOp):
         # create a shell script and call Vivado
         make_project_sh = vivado_stitch_proj_dir + "/make_loop_ip.sh"
         working_dir = os.environ["PWD"]
+        vivado_cmd = resolve_xilinx_tool("vivado")
         with open(make_project_sh, "w") as f:
             f.write("#!/bin/bash \n")
-            f.write(f"cd {vivado_stitch_proj_dir}\n")
-            f.write("vivado -mode batch -source make_loop_ip.tcl\n")
-            f.write(f"cd {working_dir}\n")
+            f.write("cd {}\n".format(vivado_stitch_proj_dir))
+            f.write("{} -mode batch -source make_loop_ip.tcl\n".format(vivado_cmd))
+            f.write("cd {}\n".format(working_dir))
         bash_command = ["bash", make_project_sh]
         process_compile = subprocess.Popen(bash_command, stdout=subprocess.PIPE)
         process_compile.communicate()
-        assert os.path.isfile(wrapper_filename), "IPGen failed: %s not found" % (wrapper_filename)
+        if not os.path.isfile(wrapper_filename):
+            # Vivado's own log is the only record of why the block design was not built;
+            # quote its errors so that a failure is diagnosable from the exception alone
+            # (e.g. from a CI job log, whose build directory is gone afterwards).
+            vivado_log = os.path.join(vivado_stitch_proj_dir, "vivado.log")
+            vivado_errors = ""
+            if os.path.isfile(vivado_log):
+                with open(vivado_log) as f:
+                    error_lines = [ln.rstrip() for ln in f if ln.startswith(("ERROR", "CRITICAL"))]
+                vivado_errors = "\n".join(error_lines[-20:])
+            raise FINNInternalError(
+                "IPGen failed: %s not found. Vivado log: %s\n%s"
+                % (wrapper_filename, vivado_log, vivado_errors)
+            )
         self.set_nodeattr("ipgen_path", wrapper_filename)
         self.set_nodeattr("ip_path", vivado_stitch_proj_dir + "/ip")
         self.set_nodeattr("gen_top_module", "%s_bd_design_wrapper" % block_name)
         self.set_nodeattr("ip_vlnv", block_vlnv)
 
     def get_verilog_top_module_intf_names(self):
+        """Return the top-level interface names grouped by protocol, including body AXI-MM ports."""
         # from wrapper template
-        """Return verilog top module intf names."""
         addr_bits = 64
 
         intf_names = {}
@@ -1174,15 +1407,11 @@ class FINNLoop(RTLBackend, HWCustomOp):
 
         intf_names["aximm"] = []
         # AXI4 master interface for intermediate buffering between layers
-        # TODO: rename because it might not be hbm?
-        intf_names["aximm"].append(["m_axi_hbm", str(addr_bits)])
-        intf_names["axilite"] = []
+        intf_names["aximm"].append(["m_axi_intermediate_frame", str(addr_bits)])
+        offset_attr = get_by_name(self.onnx_node.attribute, "address_offset") is not None
+        intf_names["axilite"] = ["s_axilite"] if offset_attr else []
 
-        # using ap_none field to add control signals
         intf_names["ap_none"] = []
-        # done_if should be externalize to a block diagram port
-        # and connected to the axil_iw_slv_mlo component
-        intf_names["ap_none"].append("done_if")
 
         loop_body = self.get_nodeattr("body")
         loop_body_intf = eval(loop_body.get_metadata_prop("vivado_stitch_ifnames"))
@@ -1192,7 +1421,9 @@ class FINNLoop(RTLBackend, HWCustomOp):
         return intf_names
 
     def code_generation_ipi(self):
-        """Return code generation ipi."""
+        """Construct and return the TCL for node instantiation in
+        Vivado IPI, adding IP repo paths.
+        """
         vlnv = self.get_nodeattr("ip_vlnv")
         cmd = []
         # add all the generated IP dirs to ip_repo_paths
@@ -1211,6 +1442,20 @@ class FINNLoop(RTLBackend, HWCustomOp):
         cmd.append("create_bd_cell -type ip -vlnv %s %s" % (vlnv, self.onnx_node.name))
         return cmd
 
-    def get_rtl_file_list(self, abspath: bool = False):
-        """Return rtl file list."""
-        return []
+    def get_rtl_file_list(self, abspath=False):
+        """Return no RTL files; the loop is packaged as a Vivado IP."""
+        pass
+
+    def intermediate_frame_bytes(self):
+        """Return the DDR bytes reserved for intermediate frames
+        (outstanding DMAs times frame size).
+        """
+        N_OUTSTANDING_DMAS = 128  # Currently hard-coded in intermediate_frames.sv
+        DATA_BITS = 256  # DMA bus width, hard-coded in loop_control_wrapper.v
+        input_elements = int(np.prod(self.get_normal_input_shape(0)))
+        elem_bits = self.get_input_datatype(0).bitwidth()
+        dma_pe = DATA_BITS // elem_bits
+        dma_beats = (input_elements + dma_pe - 1) // dma_pe
+        dma_beat_bytes = DATA_BITS // 8
+        slot_bytes = dma_beats * dma_beat_bytes
+        return N_OUTSTANDING_DMAS * slot_bytes

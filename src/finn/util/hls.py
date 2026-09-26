@@ -31,11 +31,10 @@
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from subprocess import CalledProcessError
 
-from finn.util.basic import launch_process_helper, which
+from finn.util.basic import get_vivado_version, launch_process_helper, resolve_xilinx_tool
 from finn.util.exception import FINNInternalError, FINNUserError
 
 
@@ -67,19 +66,19 @@ class CallHLS:
         vivado_path = os.environ.get("XILINX_VIVADO")
         if vivado_path is None:
             raise FINNUserError("XILINX_VIVADO was not set but is required.")
-        # xsi kernel lib name depends on Vivado version (renamed in 2024.2)
-        match = re.search(r"\b(20\d{2})\.(1|2)\b", vivado_path)
-        if match is None:
+        # HLS tool name depends on Vivado version (vitis_hls replaced by vitis-run after 2024.2)
+        vivado_version = get_vivado_version()
+        if vivado_version is None:
             raise FINNUserError(f"Could not find a version number in XILINX_VIVADO: {vivado_path}")
-        year, minor = int(match.group(1)), int(match.group(2))
-        if (year, minor) > (2024, 2):
-            if which("vitis-run") is None:
-                raise FINNUserError("vitis-run not found in PATH")
-            vitis_cmd = f"vitis-run --mode hls --tcl {self.tcl_script}\n"
-        else:
-            if which("vitis_hls") is None:
-                raise FINNUserError("vitis_hls was not found in PATH!")
-            vitis_cmd = f"vitis_hls {self.tcl_script}\n"
+        try:
+            if vivado_version > (2024, 2):
+                tool = resolve_xilinx_tool("vitis-run")
+                vitis_cmd = f"{tool} --mode hls --tcl {self.tcl_script}\n"
+            else:
+                tool = resolve_xilinx_tool("vitis_hls")
+                vitis_cmd = f"{tool} {self.tcl_script}\n"
+        except FileNotFoundError as e:
+            raise FINNUserError(str(e)) from e
         self.ipgen_script = self.code_gen_dir / "ipgen.sh"
         working_dir = Path.cwd()
         with self.ipgen_script.open("w") as f:
