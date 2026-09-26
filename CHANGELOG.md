@@ -6,30 +6,77 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
-## Unreleased
+## 1.6.0 - 28.09.2026
 
 ### Added
-- **Empirical QoR estimation**: regression models fitted on the CI microbenchmark database predict post-synthesis LUTs and power per layer
+- **Sync with upstream `dev` branch, including FINN v1.0.0-alpha** (Xilinx#1687, up to Xilinx#1703): pulls in all upstream `dev` changes since April 2026, see the sections below for the user-facing ones (eki-project#259)
+- **Empirical QoR estimation**: regression models fitted on the CI microbenchmark database predict post-synthesis LUTs and power per layer (eki-project#260)
     - *Corresponding poster @ FPT'25: ["Empirical QoR Estimation Flow for Fast Design Space Exploration of DNN Dataflow Accelerators"](https://doi.org/10.1109/ICFPT67023.2025.00044)*
-    - New package `finn.qor` (database loading, model fitting/selection, evaluation) and analysis passes in `finn.analysis.fpgadataflow.empirical_qor_estimation`
-    - `step_generate_estimate_reports` writes `estimate_layer_resources_empirical.json` and `estimate_power_empirical.json` if `FINN_QOR_MODEL_DIR` points to fitted models
-    - CI scripts `ci/qor/fit_estimators.py` (refit models whenever microbenchmark results are added) and `ci/qor/end2end_report.py` (figures/tables comparing estimates with measured results)
-    - See [QoR README](src/finn/qor/README.md); new core dependencies `scikit-learn` and `matplotlib`
-- `verify_nodewise_report` build option: the `folded_hls_cppsim` and `node_by_node_rtlsim` verification steps also execute the folded graph with the Python implementation of every layer and report the first node whose simulated output deviates
-- Multi-pass dataset validation in the Pynq driver (`passes` kwarg of `validate`): per-sample predictions are saved next to the report and samples with differing predictions between passes are re-run and listed
-- The driver's unit tests (`driver/tests`) run on the board at the start of every CI measurement
+    - See [QoR README](src/finn/qor/README.md); this is the initial implementation, extensions will follow soon
+- `verify_nodewise_report` build option: the `folded_hls_cppsim` and `node_by_node_rtlsim` verification steps also execute the folded graph with the Python implementation of every layer and report the first node whose simulated output deviates (eki-project#263)
+- Improved diagnostics in the PYNQ driver: multi-pass dataset validation (`passes` kwarg of `validate`) with per-sample predictions saved next to the report, and the driver's unit tests run on the board at the start of every CI measurement (eki-project#263)
+- Build config option `large_fifo_mem_style` is back (`auto`/`block`/`distributed`/`ultra`): it pins the memory style of the FIFOs that `fifo.sv` would back with BRAM/URAM after sizing, since the RTL's `auto` takes URAM for every FIFO deeper than 2028 entries (eki-project#259)
+- (Xilinx) New hardware operators: `PWPolyF` (piecewise-polynomial GELU/SiLU/Sigmoid/Tanh, RTL, Versal only) with a `PWPolyFunction` QONNX op and PyTorch export modules in `finn.util.torch_hw_modules` (Xilinx#1573), `HWWhere` (Xilinx#1579), `Pad1D` (1D padding / CLS token insertion) (Xilinx#1620), `SelectToken` and `Crop_rtl` (Xilinx#1639), `HWSoftmax_rtl` (Xilinx#1624)
+    - New conversion transformations in the `convert_to_hw` package: `InferPWPolyFLayer`, `InferWhereLayer`, `InferPad1DLayer`, `InferSelectTokenLayer`
+- (Xilinx) MLO: tiled RTL MVAU (`TH` attribute, Xilinx#1566, Xilinx#1594) and DDR weight streaming for `FINNLoop` (`mem_type`, `address_offset`, `AssignMemoryOffset`, new build step `step_assign_ddr_weight_offsets`, MLO weight export in the driver) (Xilinx#1607, Xilinx#1664)
+- (Xilinx) `Requant_rtl` supports `mem_mode=internal_decoupled` with memstreamed scale and bias, also inside `FINNLoop` (Xilinx#1657)
+- (Xilinx) URAM support and resource/efficiency estimation for `Thresholding_hls`, `Lookup` (new `ram_style` attribute), `ElementwiseBinary_hls` and the RTL sliding window generator (Xilinx#1586)
+- (Xilinx) RTL elementwise operations now support int/float and int/int operand combinations (Xilinx#1570, Xilinx#1649)
+- (Xilinx) `InnerShuffle` supports a fused reshape via the `transpose_in_shape` attribute (Xilinx#1649, Xilinx#1669)
+- (Xilinx) New streamlining transformations `ExtractMultiThresholdScaleBias` (Xilinx#1567) and `MoveMulPastJoinMul` (Xilinx#1275); unsigned identity Quant nodes are converted to MultiThreshold (Xilinx#1653)
+- (Xilinx) `AbsorbElementwiseOpsIntoRequant` absorbs scalar Mul/Add nodes into `Requant`; `InferRequantLayer` gained a `bitwidth_threshold` (build config `requant_bitwidth_threshold`, default 9) to prefer Requant over Thresholding for high-bitwidth activations (Xilinx#1569)
+- (Xilinx) Build config: `inject_steps_before`/`inject_steps_after` to run custom steps around named steps (Xilinx#1591), `verify_rtlsim_behavioral` (behavioral models + FIFO gauge for rtlsim verification) and `debug_fifo` (per-FIFO transaction logs in `<output_dir>/debug/fifo_logs`) (Xilinx#1592)
+- (Xilinx) rtlsim: watchdog timeouts are derived from the cycle estimate (`LIVENESS_THRESHOLD` only raises them), stitched-IP rtlsim of models with AXI-MM weight streaming loads the weight images automatically, `FINN_XELAB_MT` bounds the xelab thread count (Xilinx#1612, Xilinx#1614, Xilinx#1674)
+- (Xilinx) `FINN_TOOL_DIR_OVERRIDE` redirects Xilinx tool invocations (`vivado`, `vitis_hls`, `vitis-run`, `xelab`) to a shim directory (Xilinx#1600)
+- (Xilinx) `ApplyConfig` reports configurations for non-custom-op nodes instead of silently ignoring them (Xilinx#1593); `execute_onnx` validates input tensor names (Xilinx#1576)
+- (Xilinx) Board support: `AUP-ZU3_8GB` (Xilinx#1659)
+
+### Changed
+- New build step `step_minimize_bit_width_initial` runs the bit width minimization once directly after the conversion to HW layers (default steps and benchmark DUT step lists), so that layer specialization and folding see minimized datatypes instead of the placeholders left by datatype inference (32 bit MAC results, 64 bit initializers from the ONNX passes frontend). Upstream's datatype-only first pass `step_minimize_bit_width_datatype_only` (Xilinx#1700) is available as well but not used by default: with the INT64 placeholder annotation of the onnx-passes frontend a datatype-only pass leaves the inflated widths in place (eki-project#259)
+- `step_prepare_synthesis` is skipped when no bitfile is requested (in line with `step_synthesize_bitfile`) (eki-project#259)
+- `InferRequantLayer` derives the output datatype of converted `Quant` nodes from the node attributes instead of the (possibly missing) tensor annotation (eki-project#259); it skips signed-output `MultiThreshold` nodes with `out_bias == 0` and points to `AbsorbScalarBiasIntoMultiThreshold` (Xilinx#1699)
+- Improved stability and diagnostics of the test/regression CI infrastructure (eki-project#255, eki-project#259, eki-project#261, eki-project#267, eki-project#268, eki-project#272)
+- (Xilinx) FIFO consolidation (Xilinx#1658, Xilinx#1679): all RTL FIFOs are built from a single `finn-rtllib/fifo/hdl/fifo.sv` (SRL / LUTRAM / BRAM / URAM selected by `ram_style`, new value `srl`); the Vivado `axis_data_fifo` implementation (`impl_style=vivado`), `SplitLargeFIFOs` and the `split_large_fifos` build config option are removed
+- (Xilinx) Out-of-context synthesis now runs place & route inside the stitched-IP Vivado project (`CreateStitchedIP(run_synth, run_pnr)`); `step_out_of_context_synthesis` keeps its name and report (`ooc_synth_and_timing.json`) but reuses the stitched-IP project, the separate `vivadocompile` flow is gone. `CreateStitchedIP` takes `run_synth` instead of `vitis`. Power estimation opens the routed checkpoint. (Xilinx#1587)
+- (Xilinx) `AbsorbSignBiasIntoMultiThreshold` is renamed to `AbsorbScalarBiasIntoMultiThreshold` (absorbs any scalar bias, bounded by `max_bitwidth_increase`); the old name remains as a deprecated alias (Xilinx#1173)
+- (Xilinx) MVAU: the `dynamic_input` attribute is replaced by `mem_mode="dynamic"`, new memory mode `external_mem` for MLO weight streaming (Xilinx#1566)
+- (Xilinx) `InsertFIFO` takes `ram_style` instead of `max_qsrl_depth`/`vivado_ram_style`; `LoopExtraction` takes the loop body template path (default: build directory) instead of writing into the working directory (Xilinx#1680)
+- (Xilinx) `npy2apintstream`/`apintstream2npy` lost the element-bits template parameter and cnpy is vendored into `src/finn/templates/npy2stream` (no separate `cnpy` dependency anymore, cppsim compiles with C++17); `finnpy_to_packed_bytearray` lost the `fast_mode` argument and is much faster (Xilinx#1588, Xilinx#1625)
+- (Xilinx) `finn.util.mlo_sim` moved to `finn.util.rtlsim`, `is_mlo` to `finn.util.fpgadataflow`; `finn-rtllib/mlo/fetch_weights*` moved to `finn-rtllib/fetch_weights/`; upstream `derive_characteristic` based FIFO sizing remains removed in FINN+ (eki-project#259)
+- (Xilinx) finn-hlslib dependency bumped to `8d979e2b` (Xilinx#1588)
+- (Xilinx) Node-by-node rtlsim verification is skipped for models mixing HLS floating-point ops with RTL LayerNorm (known xsim DSP conflict) (Xilinx#1564)
+- (Xilinx) DWC consolidation (Xilinx#1660): the RTL DWC (`finn-rtllib/dwc/hdl/vpc.sv`) handles any input/output width ratio, so the integer-ratio restriction at specialization is gone
+- (Xilinx) RTL sources are referenced from `finn-rtllib` in the stitched-IP project instead of being copied per node (Xilinx#1703)
+- (Xilinx) RTL SWG index computations optimized for timing (Xilinx#1509); RTL elementwise broadcast memstreams compacted (Xilinx#1616)
+- (Xilinx) `finn-rtllib/swg` is identical to upstream again: the depthwise-mode deadlock fix and counter width tightening of Xilinx#1698 supersede the FINN+ fix (eki-project#264)
+- (Xilinx) RTL MVAU is selected for datatypes wider than 8 bit as well (Xilinx#1568), bounded by the DSP datapath widths of the target part (`get_dsp_datapath_limits`, Xilinx#1696)
+- (Xilinx) Datatype minimization for more layers: `Lookup` minimizes its embedding datatype and `GlobalAccPool` its output datatype (Xilinx#1701); `Pool` minimizes its accumulator/output datatype (`AccPool`/`AvgPool`; `AccumBits` of `QuantAvgPool`) and passes the input datatype through for `MaxPool` when datatypes change after conversion (Xilinx#1697, Xilinx#1701, eki-project#259)
 
 ### Changed
 - `ScaledDotProductAttention_hls`: the generated top function is now a dataflow region (`#pragma HLS dataflow disable_start_propagation`), so consecutive frames overlap inside the attention head instead of being processed one after the other. The frame interval drops from the head's latency to its throughput bound (XSI on small heads: 182 → 76 and 217 → 90 cycles per frame at unchanged single-frame latency and resources; the RadioML/vision/language transformers are expected to move from 16991/66335/528671 to about 16384/65536/524288 cycles per frame). Experimental: not yet measured on hardware
 
 ### Fixed
-- `StreamingSplit_hls` and `StreamingConcat_hls` moved one token per 5 cycles: the generated top function is not pipelined and executed the per-token hlslib call sequentially at its full latency, so a Split or Concat on the full embedding width was the throughput bottleneck of the RadioML and vision transformers (measured 20480 and 81920 cycles per frame against MVAU bounds of 16384 and 65536) while the analytical estimate (`get_exp_cycles`, one token per cycle) did not show it. The top function is now a dataflow region (`#pragma HLS dataflow disable_start_propagation`, as for `DuplicateStreams_hls`), which lets the hlslib function run free at one token per cycle
-- Multi-FPGA partitioning with Gurobi failed sporadically with `Gurobi environment could not be loaded, check your license` when the floating license token server was momentarily out of tokens or unreachable, which happened regularly in the highly parallel CI test suite; every partitioner kept its Gurobi environment (and thereby its token) alive until Python's cyclic garbage collector eventually got to it, which let a single test suite job hold several hundred tokens; the environment is now released as soon as the partitioner is dropped or closed, creating it is retried with an exponential backoff (number of attempts tunable through `FINN_MIP_SOLVER_MAX_ATTEMPTS`) and the final error reports Gurobi's actual reason instead of python-mip's generic license hint
-- The merged CI test report classified the retried attempt of a test as passed and thereby hid the final failure of tests that failed again on their rerun
-- The CMake build of the distributed RTL simulation backend (FIFO sizing, performance simulation) downloaded nlohmann/json from GitHub at configure time, so a network hiccup in the middle of a long build job failed it; the sources are now a regular external dependency (`nlohmann-json` in `external_dependencies.yaml`) fetched by `finn deps update` at the start of a job and cached in the dependency directory
-- ImageNet validation in the Pynq driver could count a first image in place of a last one at the end of a pass, making the reported top-1 accuracy vary by single images between runs of the same bitfile
-- Runtime-writable weights were never written on the CI board because the driver looked for `runtime_weights/` relative to the working directory and skipped the load silently when it was missing; the weight directory is now resolved next to `settings.json` and a missing directory is an error for accelerators with runtime-writable weights
-- The CIFAR-100 validation in the Pynq driver fed raw pixel values into the float input of the ResNet-18 accelerator; the CIFAR validator now normalizes the inputs (`normalize`, `norm_mean`, `norm_std` kwargs of `validate`)
+- ImageNet validation in the Pynq driver could count a first image in place of a last one at the end of a pass, making the reported top-1 accuracy vary by single images between runs of the same bitfile (eki-project#263)
+- Runtime-writable weights were never written on the CI board because the driver looked for `runtime_weights/` relative to the working directory and skipped the load silently when it was missing; the weight directory is now resolved next to `settings.json` and a missing directory is an error for accelerators with runtime-writable weights (eki-project#255)
+- The MLO (DDR) weight directory of the Pynq driver was resolved relative to the working directory as well; it is now taken from next to `settings.json` like `runtime_weights/`, and a missing directory reports what to pass instead of failing on the first `.dat` file (eki-project#259)
+- The distributed (FIFO-sizing) simulation rebuilt each isolated node from every declared attribute type, materializing defaults such as `address_offset=0`; since the FINNLoop/MVAU DDR base-address logic is gated on the presence of that attribute, the loop IP generation inside the sizing build failed for every non-tiled MLO design. Only the attributes a node carries are copied now, and a failed loop IP generation quotes Vivado's errors (eki-project#271, eki-project#259)
+- The per-node projects of the FIFO-sizing simulation synthesize with two Vivado jobs instead of one per FINN worker, which got parallel node builds OOM-killed (`CreateStitchedIP(synth_jobs=...)`); `Reshape_rtl` referenced the DWC source that upstream renamed to `vpc.sv` (eki-project#259)
+- The RTL sliding window generator deadlocked on the last element of a feature map when its input arrived no faster than its window rate (eki-project#264, superseded by Xilinx#1698)
+- The Pynq driver failed to unpack FLOAT outputs on the board (`packed_bytearray_to_finnpy_float` with reversed endianness) (eki-project#265)
+- The CIFAR-100 validation in the Pynq driver fed raw pixel values into the float input of the ResNet-18 accelerator; the CIFAR validator now normalizes the inputs (`normalize`, `norm_mean`, `norm_std` kwargs of `validate`) (eki-project#255)
+- The generated top functions of `StreamingSplit_hls` and `StreamingConcat_hls` were not pipelined and moved one token per 5 cycles, which made them the throughput bottleneck of the RadioML and vision transformers, and are now dataflow regions running at one token per cycle (eki-project#274)
+- (Xilinx) `OuterShuffle` cycle estimation works without Vivado (Xilinx#1688)
+- (Xilinx) HLS `Requant` achieves II=1 again on Vitis HLS 2024.2 (Xilinx#1563)
+- (Xilinx) `MoveAddPastMul` left a stale integer datatype annotation on the folded bias (Xilinx#1571)
+- (Xilinx) `Thresholding_rtl` rejects unsorted thresholds at code generation (Xilinx#1583) and lays out the runtime-writable threshold file like the RTL address space, which mismatched for `numSteps < 2^outputBits` (Xilinx#1685)
+- (Xilinx) MLO: stream width mismatch in the intermediate frame buffer when the first and last loop-body layers have different PE (Xilinx#1584), tiled MVAU fails at code generation instead of stalling in hardware when `TH` does not divide the tile (Xilinx#1606), FINNLoop adjacency guard for thresholding layers (Xilinx#1622), parameter stream numbering with decoupled `Requant_rtl` (Xilinx#1666)
+- (Xilinx) `ElementwiseBinary_hls` cppsim over-read a broadcast operand on the last axis (Xilinx#1610)
+- (Xilinx) Quant to MultiThreshold conversion accumulates thresholds in float64, so they no longer differ from the Quant node by one step at level boundaries (Xilinx#1635)
+- (Xilinx) rtlsim: the performance report separates end-to-end latency from steady-state throughput (Xilinx#1632), NaN/Inf values in rtlsim inputs or outputs raise a clear error (Xilinx#1564)
+
+### Removed
+- Not pulled from upstream: the SLASH/V80 linker (`alveo_build.py`), phase-based build steps, `build_dataflow_checks` (including the folding-config/target-fps and verification-prerequisite checks of Xilinx#1665/Xilinx#1673), the Jenkins CI package (eki-project#259)
+- The outdated `tutorials/fpga_flow` tutorial (still documented the Docker-based flow) (eki-project#259)
 
 ## 1.5.0 - 05.09.2026
 

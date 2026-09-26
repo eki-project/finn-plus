@@ -43,7 +43,7 @@ def StreamlinePlus():  # noqa: Uppercase
             BatchNormToAffine(),
             ConvertSignToThres(),
             MoveMulPastMaxPool(),
-            AbsorbSignBiasIntoMultiThreshold(),
+            AbsorbScalarBiasIntoMultiThreshold(),
             MoveScalarLinearPastInvariants(),
             MoveAddPastMul(),
             MoveScalarAddPastMatMul(),

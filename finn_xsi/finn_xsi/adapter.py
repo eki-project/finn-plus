@@ -16,10 +16,16 @@ import os
 import re
 import weakref
 from finn_xsi.sim_engine import SimEngine
+from finn_xsi.srcutil import order_pkg_first
 from pathlib import Path
 from typing import Literal
 
-from finn.util.basic import launch_process_helper, wait_for_file
+from finn.util.basic import (
+    get_rtlsim_timeout_error_message,
+    launch_process_helper,
+    resolve_xilinx_tool,
+    wait_for_file,
+)
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
@@ -64,7 +70,8 @@ def compile_sim_obj(
         verilog_headers = {str(Path(x).parent) for x in source_list if x.endswith((".vh", ".svh"))}
         verilog_header_incl_str = " ".join(["--include " + x for x in verilog_headers])
 
-        for src_line in source_list:
+        # packages must come before the modules that import them
+        for src_line in order_pkg_first(source_list):
             if src_line.endswith(".v"):
                 f.write(f"verilog work {verilog_header_incl_str} {src_line}\n")
             elif src_line.endswith(".vhd"):
@@ -99,11 +106,13 @@ def compile_sim_obj(
         "floating_point_v7_1_18",
         "floating_point_v7_1_15",
         "floating_point_v7_1_19",
+        "floating_point_v7_1_21",
+        "floating_point_v7_0_26",
         "work",
     ]
 
     cmd_xelab = [
-        "xelab",
+        resolve_xilinx_tool("xelab"),
         "work." + top_module_name if not fifosim else "finn_design_wrapper",
         "-relax",
         "-dll",
@@ -114,6 +123,14 @@ def compile_sim_obj(
         "rtlsim.prj",
         "-incr",
     ]
+    # Xelab defaults to "auto" threading, which can expand to hundreds of
+    # workers on shared servers. Large stitched FINNLoop designs have shown
+    # intermittent elaborator SIGABRTs in that mode, so keep the default
+    # bounded while still allowing explicit override.
+    xelab_mt = os.environ.get("FINN_XELAB_MT", os.environ.get("NUM_DEFAULT_WORKERS", "8"))
+    if xelab_mt == "1":
+        xelab_mt = "off"
+    cmd_xelab.extend(["--mt", xelab_mt])
     # Add debug flag if debug is enabled
     if debug:
         cmd_xelab.append("-debug")
@@ -244,6 +261,15 @@ def reset_rtlsim(
 
 def close_rtlsim(sim: SimEngine) -> None:
     """Close the RTL simulation, ensuring that any pending traces are flushed."""
+    # Drive sim_finish (if the design exposes it, see finn-rtllib/sim/hdl/sim_ctrl.v) so that
+    # simulation-only `final` blocks (e.g. FIFO gauge logs) are flushed before teardown
+    try:
+        sim_finish = sim.top.getPort("sim_finish")
+    except RuntimeError:
+        sim_finish = None
+    if sim_finish is not None:
+        sim_finish.set(1).write_back()
+        sim.cycle({})
     sim.close()
 
 
@@ -253,8 +279,13 @@ def rtlsim_multi_io(
     num_out_values: int | np.integer | dict[str, int | np.integer],
     sname: str = "_V_V",
     liveness_threshold: int = 10000,
+    liveness_estimate: int | float | None = None,
 ) -> int:
-    """Run the RTL simulation with multiple input and/or output streams."""
+    """Run the RTL simulation with multiple input and/or output streams.
+
+    ``liveness_threshold`` is the number of no-output cycles after which the watchdogs fire;
+    ``liveness_estimate`` is the (optional) derived cycle estimate it was based on, only used
+    to produce a more helpful error message on timeout."""
     if len(io_dict["outputs"]) > 1:
         if not isinstance(num_out_values, dict):
             raise FINNInternalError("num_out_values must be dict for multiple output streams")
@@ -281,23 +312,35 @@ def rtlsim_multi_io(
         sim.stream_input(stream_name, hexstring_input)
 
     hex_output_streams = {}
+    watchdogs = []
     for out in io_dict["outputs"]:
         stream_name = out + sname
+        watchdog = sim.create_watchdog(f"{stream_name} timeout", liveness_threshold)
+        watchdogs.append(watchdog)
         hex_output_streams[out] = sim.collect_output(
             stream_name,
             int(num_out_values[out]),
-            watchdog=sim.create_watchdog(f"{stream_name} timeout", liveness_threshold),
+            watchdog=watchdog,
         )
 
     start_ticks = sim.ticks
-    ret = sim.run()
-    if len(ret) > 0:
-        raise FINNUserError(
-            f"RTL simulation watchdogs {ret!s} timed out with {liveness_threshold} cycles. "
-            f"Check rtlsim_trace if any."
-        )
-    end_ticks = sim.ticks
-    for out in io_dict["outputs"]:
-        io_dict["outputs"][out] = [int(var, base=16) for var in hex_output_streams[out]]
+    try:
+        ret = sim.run()
+        if len(ret) > 0:
+            raise FINNUserError(
+                get_rtlsim_timeout_error_message(liveness_threshold, liveness_estimate)
+                + f" Triggered watchdogs: {ret!s}. Check rtlsim_trace if any."
+            )
+        end_ticks = sim.ticks
+        for out in io_dict["outputs"]:
+            io_dict["outputs"][out] = [int(var, base=16) for var in hex_output_streams[out]]
+    finally:
+        # Remove the per-output watchdogs so they do not outlive this data pass.
+        # sim.watchdogs is persistent; a leftover (already-exhausted) watchdog
+        # would keep ticking and prematurely abort any later sim.run(), e.g. a
+        # post-hook AXI-Lite weight read-back (see test_fpgadataflow_mvau).
+        for watchdog in watchdogs:
+            if watchdog in sim.watchdogs:
+                sim.remove_watchdog(watchdog)
 
     return end_ticks - start_ticks

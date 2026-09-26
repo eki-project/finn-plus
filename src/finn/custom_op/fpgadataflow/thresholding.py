@@ -152,10 +152,19 @@ class Thresholding(HWCustomOp):
         """Return FINN DataType of output."""
         return DataType[self.get_nodeattr("outputDataType")]
 
-    def minimize_weight_bit_width(self, model):
+    def minimize_weight_bit_width(self, model, datatype_only=False):
         """Minimize threshold datatype bitwidth based on actual threshold values.
         This function should not round or clip the threshold values,
-        that is done in RoundAndClipThresholds."""
+        that is done in RoundAndClipThresholds.
+
+        Parameters
+        ----------
+        datatype_only : bool
+            If True, skip value-based minimization.
+        """
+        if datatype_only:
+            return DataType[self.get_nodeattr("weightDataType")]
+
         thresholds = model.get_initializer(self.onnx_node.input[1])
         if self.get_nodeattr("runtime_writeable_weights") or self.get_nodeattr("mlo_max_iter"):
             return DataType[self.get_nodeattr("weightDataType")]
@@ -362,27 +371,9 @@ class Thresholding(HWCustomOp):
         th_val = context[node.input[1]]
         out_bias = self.get_nodeattr("ActVal")
 
-        # Consider the data layout for transposing the input into the format
-        # accepted by the multithreshold function above, i.e, the channel
-        # dimension is along the axis with index 1.
-        data_layout = None
-        # If there is no layout annotation, guess based on rank of the tensor
-        # TODO: Currently there is no mechanism here to get the layout
-        #  annotation, we allways guess, but this matches the previous behavior.
-        if len(inp_values.shape) < 5:
-            # Maps tensor rank to layout annotation
-            rank_to_layout = {0: None, 1: "C", 2: "NC", 3: "NWC", 4: "NHWC"}
-            # Lookup the layout required by this input shape
-            data_layout = rank_to_layout[len(inp_values.shape)]
-        # Lookup the index of the channel dimension in the data layout
-        # Note: Assumes there is at most one "C" which denotes the channel
-        # dimension
-        cdim = data_layout.index("C") if "C" in data_layout else 1
-        # Rearrange the input to the expected (N, C, ...) layout
-        inp_values = inp_values.swapaxes(cdim, 1)
-        y = multithreshold(inp_values, th_val, out_bias=out_bias)
-        # Rearrange the output back to the original layout
-        y = y.swapaxes(cdim, 1)
+        # HW activations are always channels-last, so threshold the last axis
+        # regardless of rank.
+        y = multithreshold(inp_values, th_val, out_bias=out_bias, channels_last=True)
 
         act = DataType[self.get_nodeattr("outputDataType")]
         if act == DataType["BIPOLAR"]:

@@ -48,7 +48,7 @@ from qonnx.core.onnx_exec import execute_onnx as execute_onnx_base
 from typing import TYPE_CHECKING, cast
 
 from finn.core.rtlsim_exec import rtlsim_exec
-from finn.util.exception import FINNInternalError
+from finn.util.exception import FINNInternalError, FINNUserError
 
 if TYPE_CHECKING:
     from finn.xsi import SimEngine
@@ -73,6 +73,17 @@ def execute_onnx(
     If they are set to particular ONNX nodes, only the subgraph between (and
     including) those nodes is executed.
     """
+    # validate that all provided input names exist in the model
+    # this catches common bugs like using outdated tensor names
+    valid_tensor_names = set(model.get_all_tensor_names())
+    for inp_name in input_dict:
+        if inp_name not in valid_tensor_names:
+            graph_input_names = sorted(t.name for t in model.graph.input)
+            raise FINNUserError(
+                f"Provided input '{inp_name}' not found in model. "
+                f"Valid graph inputs are: {graph_input_names}"
+            )
+
     # check if model has an execution mode set
     # if None, execute model node using the QONNX-provided execute_onnx impl
     # if set to "rtlsim" execute model using xsi

@@ -80,11 +80,10 @@ def driver_cli(bitfile_name, settings, function, ckwarg, fkwarg):
     """
     with open(settings, encoding="utf-8") as f:
         driver_settings = json.load(f)["driver_information"]
-    # the build flow places the runtime weight files next to settings.json
-    driver_settings.setdefault(
-        "runtime_weight_dir",
-        os.path.join(os.path.dirname(os.path.abspath(settings)), "runtime_weights"),
-    )
+    # the build flow places the weight files next to settings.json
+    settings_dir = os.path.dirname(os.path.abspath(settings))
+    driver_settings.setdefault("runtime_weight_dir", os.path.join(settings_dir, "runtime_weights"))
+    driver_settings.setdefault("mlo_weight_dir", os.path.join(settings_dir, "mlo_weights"))
 
     if ckwarg is None:
         ckwarg = {}

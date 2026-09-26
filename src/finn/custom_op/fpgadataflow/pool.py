@@ -31,6 +31,7 @@ import numpy as np
 from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hwcustomop import HWCustomOp
+from finn.util.logging import log
 
 
 class Pool(HWCustomOp):
@@ -164,13 +165,58 @@ class Pool(HWCustomOp):
     def infer_node_datatype(self, model):
         """Infers the datatype of the output from the node attribute."""
         node = self.onnx_node
-        # Get the new datatype
-        new_dtype = model.get_tensor_datatype(node.input[0])
-        # Set the new datatype attribute
-        self.set_nodeattr("InputDataType", new_dtype.name)
-        # data type stays the same
-        dtype = self.get_output_datatype()
-        model.set_tensor_datatype(node.output[0], dtype)
+        idt = model.get_tensor_datatype(node.input[0])
+        if idt != self.get_input_datatype():
+            log.warning(
+                "InputDataType changing for %s: %s -> %s"
+                % (node.name, str(self.get_input_datatype()), str(idt))
+            )
+        self.set_nodeattr("InputDataType", idt.name)
+        # Max pooling passes the input datatype through, otherwise the output
+        # datatype is determined by the accumulator (see minimize_accumulator_width)
+        if self.get_nodeattr("Function") == "MaxPool":
+            self.set_nodeattr("OutputDataType", idt.name)
+        odt = self.get_output_datatype()
+        model.set_tensor_datatype(node.output[0], odt)
+
+    def _get_accumulator_datatype(self):
+        """Return the smallest datatype holding the sum over the kernel window
+        of the current input datatype."""
+        idt = self.get_input_datatype()
+        k_prod = int(np.prod(self.get_nodeattr("KernelSize")))
+        minimum = k_prod * idt.min()
+        maximum = k_prod * idt.max()
+        if abs(minimum) > abs(maximum):
+            return DataType.get_smallest_possible(minimum)
+        return DataType.get_smallest_possible(maximum)
+
+    def minimize_accumulator_width(self, model, datatype_only=False):
+        """Tighten the accumulator (and, for the accumulating FINN+ pools, the output)
+        datatype to the range reachable from the current input datatype. The output type
+        is first set when the operator is inferred, which may happen before the input
+        datatype has been minimized. QuantAvgPool keeps its OutputDataType and only gets
+        AccumBits (Xilinx#1701). datatype_only is not used: Pool has no weights and always
+        uses the datatype bounds."""
+        fxn = self.get_nodeattr("Function")
+        if fxn not in ["AccPool", "AvgPool", "QuantAvgPool"]:
+            # MaxPool has no accumulator: nothing to minimize
+            return None
+        if not self.get_input_datatype().is_integer():
+            return None
+        adt = self._get_accumulator_datatype()
+        self.set_nodeattr("AccumBits", adt.bitwidth())
+        if fxn == "QuantAvgPool":
+            # the output datatype is a property of the quantized average, not of the sum
+            return adt
+        if fxn == "AccPool":
+            # the accumulated sum is the output
+            self.set_nodeattr("OutputDataType", adt.name)
+        else:
+            # the average fits the input datatype again
+            self.set_nodeattr("OutputDataType", self.get_input_datatype().name)
+        odt = self.get_output_datatype()
+        model.set_tensor_datatype(self.onnx_node.output[0], odt)
+        return odt
 
     def verify_node(self):
         """Verifies the node configuration attributes."""

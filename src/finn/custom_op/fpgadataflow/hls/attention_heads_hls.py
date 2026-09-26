@@ -118,7 +118,7 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
         self.code_gen_dict["$READNPYDATA$"] = [
             # Generate function call reading from file into the input stream
             #   Note: Inputs are always represented as numpy floats
-            'npy2apintstream<IPacked, IType, IType::width, float>(',
+            'npy2apintstream<IPacked, IType, float>(',
             f'"{code_gen_dir}/in.npy", in_{self.hls_sname()}, false',
             ');'
         ]
@@ -195,7 +195,7 @@ class SplitMultiHeads_hls(  # noqa: Class name does not follow
                 # Generate function call reading from stream into the output
                 # file
                 #   Note: Outputs are always represented as numpy floats
-                'apintstream2npy<OPacked, OType, OType::width, float>(',
+                'apintstream2npy<OPacked, OType, float>(',
                 f'{out(i)}, {shape}, "{code_gen_dir}/out{i}.npy", false',
                 ');'
             ]
@@ -382,7 +382,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
             self.code_gen_dict["$READNPYDATA$"] += [
                 # Generate function call reading from file into the input stream
                 #   Note: Inputs are always represented as numpy floats
-                'npy2apintstream<IPacked, IType, IType::width, float>(',
+                'npy2apintstream<IPacked, IType, float>(',
                 f'"{code_gen_dir}/in{i}.npy", in{i}_{self.hls_sname()}, false',
                 ');'
             ]
@@ -441,7 +441,7 @@ class MergeMultiHeads_hls(  # noqa: Class name does not follow
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
             # Generate function call reading from stream into the output file
             #   Note: Outputs are always represented as numpy floats
-            'apintstream2npy<OPacked, OType, OType::width, float>(',
+            'apintstream2npy<OPacked, OType, float>(',
             f'out_{self.hls_sname()}, {shape}, "{code_gen_dir}/out.npy", false',
             ');',
         ]
