@@ -93,6 +93,10 @@ class StreamingConcat_hls(StreamingConcat, HLSBackend):
         """Return pragmas."""
         n_inputs = self.get_n_inputs()
         pragmas = []
+        # StreamingConcat is a pipelined hlslib function (II=1) called once per token; the
+        # dataflow region lets it run free at one token per cycle instead of one token per
+        # top-function latency (5 cycles), like StreamingDup (see duplicatestreams_hls.py).
+        pragmas.append("#pragma HLS dataflow disable_start_propagation")
         for i in range(n_inputs):
             pragmas.append("#pragma HLS INTERFACE axis port=in%d_%s" % (i, self.hls_sname()))
         self.code_gen_dict["$PRAGMAS$"] = pragmas

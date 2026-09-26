@@ -61,6 +61,7 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 - The RTL sliding window generator deadlocked on the last element of a feature map when its input arrived no faster than its window rate (eki-project#264, superseded by Xilinx#1698)
 - The Pynq driver failed to unpack FLOAT outputs on the board (`packed_bytearray_to_finnpy_float` with reversed endianness) (eki-project#265)
 - The CIFAR-100 validation in the Pynq driver fed raw pixel values into the float input of the ResNet-18 accelerator; the CIFAR validator now normalizes the inputs (`normalize`, `norm_mean`, `norm_std` kwargs of `validate`) (eki-project#255)
+- The generated top functions of `StreamingSplit_hls` and `StreamingConcat_hls` were not pipelined and moved one token per 5 cycles, which made them the throughput bottleneck of the RadioML and vision transformers, and are now dataflow regions running at one token per cycle (eki-project#274)
 - (Xilinx) `OuterShuffle` cycle estimation works without Vivado (Xilinx#1688)
 - (Xilinx) HLS `Requant` achieves II=1 again on Vitis HLS 2024.2 (Xilinx#1563)
 - (Xilinx) `MoveAddPastMul` left a stale integer datatype annotation on the folded bias (Xilinx#1571)
