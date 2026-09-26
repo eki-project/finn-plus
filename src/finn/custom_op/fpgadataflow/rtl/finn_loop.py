@@ -912,21 +912,22 @@ class FINNLoop(RTLBackend, HWCustomOp):
         )
 
         def node_entry(node_name):
-            # Entry tap (lowest gid) of a node: where the set index enters the
-            # node's param taps. A multi-param node chains its taps internally
-            # (below), so the index flows in here and out of node_exit.
+            """Return the entry tap (lowest gid) of a node, where the set index
+            enters the node's param taps. A multi-param node chains its taps
+            internally (below), so the index flows in here and out of node_exit."""
             return "IN_%d_stream_tap_wrapper" % min(node_to_taps[node_name])
 
         def node_exit(node_name):
-            # Exit tap (highest gid) of a node: forwards the set index onward to
-            # the next node in the chain. For a single-param node entry == exit.
+            """Return the exit tap (highest gid) of a node, which forwards the set
+            index onward to the next node in the chain. For a single-param node
+            entry == exit."""
             return "IN_%d_stream_tap_wrapper" % max(node_to_taps[node_name])
 
         def dst_entry_taps(dsts):
-            # One entry tap per destination node. Intra-node params (e.g. Requant
-            # scale+bias) are chained in series internally, so a multi-param node
-            # contributes exactly one sink here -- fork duplication only applies
-            # across distinct destination nodes (branching dataflow).
+            """Return one entry tap per destination node. Intra-node params (e.g.
+            Requant scale+bias) are chained in series internally, so a multi-param
+            node contributes exactly one sink here -- fork duplication only applies
+            across distinct destination nodes (branching dataflow)."""
             return [node_entry(d) for d in dsts]
 
         # instantiate all stream taps and connect their clk and rst

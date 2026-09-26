@@ -220,13 +220,15 @@ def _determine_impl_style(node, fpgapart, model):
 
 
 def _mvu_rtl_possible(n, fpgapart, model):
-    # Checks whether RTL-based MVU is supported
-    # Currently, for DSP48 we only support computations up to
-    # 8sx8u (8-bit signed weights x 8-bit (un)signed activations)
-    # and for DSP58 we support up to 8sx9s.
-    # Please note, DSP48E1 does only support narrow range for weights
-    # Next to that, embedded thresholding functionality is not supported
-    # and neither binaryxnormode computation.
+    """Check whether the RTL-based MVU implementation is supported for given node.
+
+    RTL-MVU constraints:
+    - No embedded thresholding and no binary XNOR mode
+    - Signed weights of at least 2 bit; DSP48E1 additionally requires narrow-range weights
+    - Activations of at least 2 bit
+    - Activation, weight and accumulator widths must fit the DSP datapath of the
+      target FPGA part (see get_dsp_datapath_limits), otherwise the HLS MVU is used
+    """
     node_inst = getCustomOp(n)
     # first check if no Activation or binary xnor mode and return False
     # immediately if one of them is True

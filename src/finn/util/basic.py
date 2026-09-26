@@ -641,6 +641,18 @@ def get_dsp_datapath_limits(dsp_block):
 
 
 def get_driver_shapes(model: ModelWrapper) -> dict:
+    """Collect the I/O tensor information the generated driver needs from a
+    partitioned model: datatypes, normal/folded/packed shapes and the IODMA
+    instance names of all graph inputs and outputs.
+
+    Follows each graph input/output into its StreamingDataflowPartition and the
+    neighbouring partition to derive the folded shape from the first/last
+    dataflow node, and packs a dummy tensor to obtain the packed byte shape.
+
+    :param model: Parent model after CreateDataflowPartition (and IODMA insertion)
+    :return: Dictionary with keys ``idt``, ``idma_names``, ``ishape_normal``,
+        ``ishape_folded``, ``ishape_packed`` and their ``o*`` counterparts
+    """
     idt = []
     idma_names = []
     ishape_normal = []

@@ -121,10 +121,14 @@ class StreamingDataWidthConverter(HWCustomOp):
         return (int(total_elems // elems), elems)
 
     def get_folded_input_shape(self, ind=0):
+        """Return the folded input shape, i.e. the input tensor shape with the
+        last axis split into (words, elements per input word)."""
         iwidth = self.get_nodeattr("inWidth")
         return self._folded_shape_for_width(iwidth)
 
     def get_folded_output_shape(self, ind=0):
+        """Return the folded output shape, i.e. the output tensor shape with the
+        last axis split into (words, elements per output word)."""
         owidth = self.get_nodeattr("outWidth")
         return self._folded_shape_for_width(owidth)
 

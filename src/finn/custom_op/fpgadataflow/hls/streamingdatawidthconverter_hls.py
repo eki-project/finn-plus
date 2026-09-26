@@ -41,16 +41,21 @@ class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
     function."""
 
     def get_iowidth_lcm(self):
+        """Return the least common multiple of the input and output stream widths."""
         iwidth = self.get_nodeattr("inWidth")
         owidth = self.get_nodeattr("outWidth")
         return int(np.lcm(iwidth, owidth))
 
     def needs_lcm(self):
+        """Return whether the widths are non-integer ratios, i.e. whether the HLS
+        implementation has to go through an intermediate LCM-wide stream."""
         iwidth = self.get_nodeattr("inWidth")
         owidth = self.get_nodeattr("outWidth")
         return max(iwidth, owidth) % min(iwidth, owidth) != 0
 
     def _needs_element_width_split(self):
+        """Return whether the LCM-wide intermediate stream would exceed the
+        maximum ap_int width and the conversion must be split element-wise."""
         return self.needs_lcm() and self.get_iowidth_lcm() > 8191
 
     def get_nodeattr_types(self):
