@@ -6,10 +6,14 @@ from qonnx.transformation.base import Transformation
 from finn.analysis.fpgadataflow.dataflow_performance import dataflow_performance
 from finn.benchmarking.util import power_xml_to_dict
 from finn.transformation.fpgadataflow.templates import (
+    template_switching_simulation_sh,
     template_switching_simulation_tb,
+    template_switching_simulation_xsim_tcl,
     template_vivado_open_checkpoint,
     template_vivado_power_fixed,
-    template_vivado_power_simulated,
+    template_vivado_power_from_saif,
+    template_vivado_write_funcsim_netlist,
+    template_vivado_write_timesim_netlist,
 )
 from finn.util.basic import launch_process_helper, make_build_dir
 
@@ -32,6 +36,22 @@ class VivadoPowerEstimation(Transformation):
         self.clk_period_ns = clk_period_ns
         self.simulate_switching_activity = simulate_switching_activity
         self.vivado_power_simulation_type = vivado_power_simulation_type
+
+    def run_vivado_tcl(self, script, tmp_dir, name):
+        """Write the given Tcl script into tmp_dir and run it through Vivado in batch mode."""
+        tcl_path = f"{tmp_dir}/{name}.tcl"
+        with open(tcl_path, "w") as tcl_file:
+            tcl_file.write(script)
+        self.run_bash_script(
+            f"#!/bin/bash \nvivado -mode batch -source {tcl_path}\n", tmp_dir, name
+        )
+
+    def run_bash_script(self, script, tmp_dir, name):
+        """Write the given shell script into tmp_dir and run it."""
+        bash_path = f"{tmp_dir}/{name}.sh"
+        with open(bash_path, "w") as bash_file:
+            bash_file.write(script)
+        launch_process_helper(["bash", bash_path], cwd=tmp_dir)
 
     def apply(self, model):
         """Apply transformation."""
@@ -56,39 +76,59 @@ class VivadoPowerEstimation(Transformation):
             out_width = output_node_inst.get_outstream_width()
             dtype_width = model.get_tensor_datatype(input_tensor.name).bitwidth()
 
-            # Prepare tcl script
+            netlist_path = tmp_dir + "/post_impl_netlist.v"
+            sdf_path = tmp_dir + "/post_impl_netlist.sdf"
+            tb_path = tmp_dir + "/switching_simulation_tb.v"
+            sim_tcl_path = tmp_dir + "/switching_simulation.tcl"
+            saif_path = tmp_dir + "/switching.saif"
+
+            # Prepare testbench
             # TODO: infer top module name instead of hardcoding "finn_design_wrapper"
             # top_module_name = model.get_metadata_prop("wrapper_filename")
             # top_module_name = file_to_basename(top_module_name).strip(".v")
-            script = template_vivado_open_checkpoint.replace("$DCP_PATH$", routed_dcp)
-            script = script + template_vivado_power_simulated
-            script = script.replace("$TB_FILE_PATH$", tmp_dir + "/switching_simulation_tb.v")
-            script = script.replace("$SAIF_FILE_PATH$", tmp_dir + "/switching.saif")
-            script = script.replace("$SIM_TYPE$", self.vivado_power_simulation_type)
-            script = script.replace("$SIM_DURATION_NS$", str(int(sim_duration_ns)))
-            script = script.replace("$REPORT_PATH$", self.report_dir)
-            script = script.replace("$REPORT_NAME$", "power_estimate_sim")
-            with open(tmp_dir + "/power_report.tcl", "w") as tcl_file:
-                tcl_file.write(script)
-
-            # Prepare testbench
             testbench = template_switching_simulation_tb.replace("$INSTREAM_WIDTH$", str(in_width))
             testbench = testbench.replace("$OUTSTREAM_WIDTH$", str(out_width))
             testbench = testbench.replace("$DTYPE_WIDTH$", str(dtype_width))
             testbench = testbench.replace(
                 "$RANDOM_FUNCTION$", f"$urandom_range(0, {2**dtype_width - 1})"
             )
-            with open(tmp_dir + "/switching_simulation_tb.v", "w") as tb_file:
+            with open(tb_path, "w") as tb_file:
                 tb_file.write(testbench)
 
-            # Prepare shell script
-            bash_script = tmp_dir + "/report_power.sh"
-            with open(bash_script, "w") as script:
-                script.write("#!/bin/bash \n")
-                script.write(f"vivado -mode batch -source {tmp_dir}/power_report.tcl\n")
+            # Export a simulation netlist of the routed design from the checkpoint
+            if self.vivado_power_simulation_type == "timing":
+                script = template_vivado_write_timesim_netlist.replace("$SDF_PATH$", sdf_path)
+                # the timing netlist needs the SIMPRIM library and the delays of the routed
+                # design annotated onto the DUT instance
+                xelab_options = (
+                    "-L simprims_ver -L secureip -transport_int_delays -pulse_r 0 "
+                    f"-pulse_int_r 0 -sdfmax /switching_simulation_tb/dut={sdf_path}"
+                )
+            else:
+                script = template_vivado_write_funcsim_netlist
+                xelab_options = "-L unisims_ver -L unimacro_ver -L secureip"
+            script = script.replace("$DCP_PATH$", routed_dcp)
+            script = script.replace("$NETLIST_PATH$", netlist_path)
+            self.run_vivado_tcl(script, tmp_dir, "write_sim_netlist")
 
-            # Run script
-            launch_process_helper(["bash", bash_script], cwd=tmp_dir)
+            # Simulate the netlist to record switching activity into a SAIF file
+            sim_tcl = template_switching_simulation_xsim_tcl.replace("$SAIF_FILE_PATH$", saif_path)
+            sim_tcl = sim_tcl.replace("$SIM_DURATION_NS$", str(int(sim_duration_ns)))
+            with open(sim_tcl_path, "w") as tcl_file:
+                tcl_file.write(sim_tcl)
+            script = template_switching_simulation_sh.replace("$NETLIST_PATH$", netlist_path)
+            script = script.replace("$TB_FILE_PATH$", tb_path)
+            script = script.replace("$XELAB_OPTIONS$", xelab_options)
+            script = script.replace("$SIM_TCL_PATH$", sim_tcl_path)
+            self.run_bash_script(script, tmp_dir, "simulate_switching_activity")
+
+            # Read the switching activity back into the routed design and report power
+            script = template_vivado_open_checkpoint.replace("$DCP_PATH$", routed_dcp)
+            script = script + template_vivado_power_from_saif
+            script = script.replace("$SAIF_FILE_PATH$", saif_path)
+            script = script.replace("$REPORT_PATH$", self.report_dir)
+            script = script.replace("$REPORT_NAME$", "power_estimate_sim")
+            self.run_vivado_tcl(script, tmp_dir, "power_from_saif")
 
             # Parse results
             power_report_dict = power_xml_to_dict(f"{self.report_dir}/power_estimate_sim.xml")
@@ -121,17 +161,7 @@ class VivadoPowerEstimation(Transformation):
             script = script.replace("$REPORT_PATH$", self.report_dir)
             script = script.replace("$REPORT_NAME$", f"power_estimate_{toggle_rate}_{static_prob}")
         script = script + "\nclose_project\n"
-        with open(tmp_dir + "/power_report.tcl", "w") as tcl_file:
-            tcl_file.write(script)
-
-        # Prepare bash script
-        bash_script = tmp_dir + "/report_power.sh"
-        with open(bash_script, "w") as script:
-            script.write("#!/bin/bash \n")
-            script.write(f"vivado -mode batch -source {tmp_dir}/power_report.tcl\n")
-
-        # Run script
-        launch_process_helper(["bash", bash_script], cwd=tmp_dir)
+        self.run_vivado_tcl(script, tmp_dir, "power_report_fixed")
 
         # Parse results
         for toggle_rate, static_prob in activity_settings:
