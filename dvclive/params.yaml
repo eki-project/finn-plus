@@ -1,0 +1,20 @@
+params:
+  dut: cybsec
+  auto_fifo_depths: false
+  auto_fifo_strategy: live_fifo
+  generate_outputs:
+  - bitfile
+  - pynq_driver
+  - deployment_package
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+  validation_dataset: unswnb15
+  model_path: models/cybsec/unsw_nb15-mlp-w2a2.onnx
+  target_fps: None
+  folding_config_file: 
+    measurement_artifacts/runs_output/run_1/reports/experiment_fifosizing/exp_itr_1/forward/both/folding_config.json
+  fifo_config_file: 
+    measurement_artifacts/runs_output/run_1/reports/experiment_fifosizing/exp_itr_1/forward/both/fifo_config.json
+metadata:
+  tool_version: '2024.2'
