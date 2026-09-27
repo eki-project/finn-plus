@@ -26,9 +26,10 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Class B1: RTL stream data width converter (``finn-rtllib/dwc/hdl/dwc.sv``).
+"""Class B1: RTL stream data width converter (``finn-rtllib/dwc/hdl/vpc.sv`` behind ``dwc_axi.sv``).
 
-**Up-conversion** (``IBITS < OBITS``, ``K = OBITS/IBITS``, ``dwc.sv:genUp``): an assembly
+**Up-conversion** (``IBITS < OBITS``, ``K = OBITS/IBITS``, ``vpc.sv:genDes``, timing identical to
+the former ``dwc.sv:genUp`` whose line numbers the edges still cite): an assembly
 register ``ADat`` of ``K`` input words (valid, i.e. ``ovld``, when ``ACnt`` turns negative)
 and a one-word skid register ``BDat``/``BRdy`` in front of it (``irdy = BRdy``). Chains:
 
@@ -43,31 +44,24 @@ and a one-word skid register ``BDat``/``BRdy`` in front of it (``irdy = BRdy``).
   the next group happens no earlier than the output handshake of the previous one, same cycle
   allowed (``rdy`` is combinational in ``ordy``, ``:78``).
 
-**Down-conversion** (``IBITS > OBITS``, ``K = IBITS/OBITS``, ``dwc.sv:genDown``): the input
-word is loaded into ``ADat`` and its ``K`` sub-words move one per cycle through ``BDat`` into
-the output register ``CDat``/``CVld``. Chains:
+**Down-conversion** (``IBITS > OBITS``, ``K = IBITS/OBITS``, ``vpc.sv:genSer/genFull``, the
+full-rate serializer of the vector pack converter that replaced ``dwc.sv``): the input word is
+loaded in parallel into ``Buf`` and its ``K`` sub-words move one per cycle into the output
+side register ``Side``/``SVld``; sub-word 0 bypasses ``Buf`` and lands in ``Side`` in the
+cycle of the input handshake when ``Side`` is free or being consumed (``bypass``). Chains:
 
-* ``R``: input handshakes; ``S``: sub-word moves; ``W``: output handshakes.
-* ``R -> S`` split edge (``lf = 1``): sub-word ``i`` of a word accepted in ``t`` moves at
-  ``t + 1 + i`` at the earliest (``ADat`` loaded at the edge of ``t``, first move at ``t+1``,
-  ``:118-126``); only every ``K``-th ``S`` event reads the edge.
-* ``S -> W`` output edge (capacity 2 = ``BDat`` + ``CDat``, ``lf = 1``): a move in ``u``
-  raises ``CVld`` in ``u + 1`` (``:129-131``); moves stall when both registers hold unaccepted
-  sub-words (``BRdy``, ``:128``).
-* ``S -> R`` "input register free" edge (one initial token, ``lf = 0``): the next input is
-  accepted in the cycle of the last sub-word's move, which is the cycle in which ``ADat`` is
-  reloaded (``irdy = BRdy && !ACnt[$left]``, ``:133``; ``ACnt`` reaches 0 after ``K-1``
-  increments, ``:113-127``, and ``BRdy`` requires the output register to be free or
-  handshaking in the previous cycle, ``:128``, which the move's own space constraint on the
-  output edge expresses).
+* ``R``: input handshakes; ``S``: sub-word moves into ``Side``; ``W``: output handshakes.
+* ``R -> S`` split edge (``lf = 0``): sub-word 0 of a word accepted in ``t`` may move in
+  ``t`` itself (bypass load), later sub-words shift one per cycle (``shift``).
+* ``S -> W`` output edge (capacity 1 = ``Side``, ``lf = 1``, ``lb = 0``): a move in ``u``
+  raises ``SVld`` in ``u + 1``; the next move may happen in the cycle of the output
+  handshake (``bypass = !SVld || otrn``).
+* ``S -> R`` "buffer empty" edge (one initial token, ``lf = 1``): ``irdy`` is ``Cnt == 0``,
+  i.e. the next word is accepted in the cycle after the last sub-word of the previous one
+  left ``Buf``.
 
 Equal widths reduce to a wire (``genNoop``, see ``passthrough``). All latencies are
-transcriptions of the RTL and are confirmed by the differential test of the operator, with one
-known deviation of the down-converter: when the input runs empty while the output register is
-blocked, ``BRdy`` (``:128``) drops in the cycle after the last sub-word moved and only rises
-again with the next output handshake, so the RTL accepts the next word one handshake later than
-the model (which lets the empty converter accept one word into ``ADat``). The deviation is
-bounded by one word per input bubble under back-pressure and is optimistic for sizing.
+transcriptions of the RTL and are confirmed by the differential test of the operator.
 """
 
 from __future__ import annotations
@@ -122,9 +116,9 @@ def dwc_down(prefix: str, n_in: int, k: int, in_edge: str, out_edge: str) -> OpM
     w = Chain(f"{prefix}.W")
     w.events(n_in * k, 1, reads=[outq], writes=[out_edge])
     edges = [
-        FIFOEdge(split, r.name, s.name, depth=None, lf=1, lb=1),  # dwc.sv:118-126
-        FIFOEdge(outq, s.name, w.name, depth=2, lf=1, lb=1),  # dwc.sv:128-131
-        FIFOEdge(free, s.name, r.name, depth=None, lf=0, lb=1, initial_tokens=1),  # dwc.sv:133
+        FIFOEdge(split, r.name, s.name, depth=None, lf=0, lb=1),  # vpc.sv genFull: bypass load
+        FIFOEdge(outq, s.name, w.name, depth=1, lf=1, lb=0),  # vpc.sv: Side/SVld, bypass = otrn
+        FIFOEdge(free, s.name, r.name, depth=None, lf=1, lb=1, initial_tokens=1),  # irdy = Cnt == 0
     ]
     return OpModel([r, s, w], edges, [r.name], [w.name], {"K": k, "direction": "down"})
 

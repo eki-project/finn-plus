@@ -115,9 +115,10 @@ def _cfg_id(c: tuple) -> str:
     return f"{c[3]}_{c[1]}to{c[2]}_{'x'.join(map(str, c[0]))}"
 
 
-#: known deviation of the RTL down-converter model (see ``dwc_rtl.py``): input bubbles while
-#: the output is blocked let the RTL accept the next word one handshake later than the model
-KNOWN_DEVIATIONS = {("both_bursty", "rtl", "down")}
+#: (stall kind, implementation, direction) combinations with a documented model deviation;
+#: none since the RTL converter became vpc.sv (the former dwc.sv down-converter deviated
+#: under bursty back-pressure)
+KNOWN_DEVIATIONS: set[tuple[str, str, str]] = set()
 
 
 @pytest.mark.parametrize("cfg", CONFIGS, ids=_cfg_id)
