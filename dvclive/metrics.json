@@ -1,0 +1,71 @@
+{
+    "status": "ok",
+    "hls_estimate": {
+        "resources": {
+            "LUT": 93004.0,
+            "FF": 39935.0,
+            "DSP": 240.0,
+            "DSP48E": 0.0,
+            "BRAM_18K": 728.0,
+            "URAM": 0.0
+        }
+    },
+    "synth": {
+        "resources": {
+            "LUT": 172131,
+            "FF": 179125,
+            "SRL": 15359,
+            "DSP": 1074,
+            "BRAM_18K": 23,
+            "BRAM_36K": 284,
+            "URAM": 0
+        }
+    },
+    "measurement": {
+        "power": {
+            "avg_0V85_power": 3195.54375,
+            "avg_3V3_power": 1060.0,
+            "avg_total_power": 4255.54375,
+            "min_0V85_power": 3195.54375,
+            "min_3V3_power": 1060.0,
+            "min_total_power": 4255.54375,
+            "max_0V85_power": 3195.54375,
+            "max_3V3_power": 1060.0,
+            "max_total_power": 4255.54375
+        },
+        "report_experiment_instrumentation": {
+            "min_latency_ms": 0.04416,
+            "throughput_fps": 49875,
+            "interval_cycles": 2005,
+            "frequency_mhz": 100,
+            "min_pipeline_depth": 2.2,
+            "latency_ms": 0.06174,
+            "latency_cycles": 6174,
+            "min_latency_cycles": 4416,
+            "checksum": 11332,
+            "error": false,
+            "pipeline_depth": 3.08
+        }
+    },
+    "time": {
+        "export": 0,
+        "step_qonnx_to_finn": 0,
+        "step_tidy_up": 1,
+        "step_streamline": 6,
+        "step_convert_to_hw": 1,
+        "step_minimize_bit_width_initial": 1,
+        "step_create_dataflow_partition": 0,
+        "step_specialize_layers": 0,
+        "step_set_folding": 0,
+        "step_minimize_bit_width": 1,
+        "step_generate_estimate_reports": 0,
+        "step_generate_hardware": 67,
+        "step_create_stitched_ip": 45,
+        "step_measure_rtlsim_performance": 0,
+        "step_out_of_context_synthesis": 0,
+        "step_synthesize_bitfile": 2338,
+        "step_make_driver": 0,
+        "step_deployment_package": 0,
+        "total_build_time": 2460
+    }
+}
