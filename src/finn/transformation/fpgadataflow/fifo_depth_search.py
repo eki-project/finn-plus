@@ -45,13 +45,14 @@ import math
 from collections.abc import Callable
 from enum import Enum
 
-from finn.transformation.fpgadataflow.set_fifo_depths import get_fifo_split_configs
 from finn.util.exception import FINNInternalError
 
-#: Hardware BRAM FIFOs lose entries to internal pipeline registers compared to the software FIFO
-#: model (which has exact capacity). This constant accounts for that overhead so that the
-#: minimization algorithm finds depths that are safe to deploy on hardware.
-BRAM_FIFO_PIPELINE_OVERHEAD = 2
+#: The shared finn-rtllib FIFO (fifo/hdl/fifo.sv) implements the requested DEPTH exactly for
+#: every storage style (SRL, LUTRAM, BRAM, URAM) and is never decomposed into sub-FIFOs, so the
+#: software FIFO model and the hardware capacity agree and no pipeline-register overhead has to
+#: be accounted for. (The previous Vivado axis_data_fifo based implementation lost entries per
+#: power-of-two sub-FIFO, see git history.)
+BRAM_FIFO_PIPELINE_OVERHEAD = 0
 
 #: The result of ``test_depth``: (success, timeout)
 DepthTest = Callable[[int], tuple[bool, bool]]
@@ -76,43 +77,21 @@ class MinimizationOrder(Enum):
 
 
 # --------------------------------------------------------------------------- BRAM overhead
-def count_bram_sub_fifos(depth: int, max_qsrl_depth: int) -> int:
-    """Return the number of BRAM (vivado) sub-FIFOs that *depth* decomposes into.
+def effective_capacity(depth: int, max_qsrl_depth: int) -> int:  # noqa: ARG001
+    """Token capacity the hardware FIFO of nominal ``depth`` actually provides.
 
-    Non-power-of-two BRAM FIFOs are decomposed into several power-of-two sub-FIFOs by
-    get_fifo_split_configs.  Each sub-FIFO whose style is "vivado" has its own pipeline
-    register overhead, so the total overhead scales with the sub-FIFO count.
+    With fifo.sv this is the depth itself for every storage style; ``max_qsrl_depth`` is kept
+    for API compatibility.
     """
-    return sum(1 for _, style in get_fifo_split_configs(depth, max_qsrl_depth) if style == "vivado")
+    return depth
 
 
-def effective_capacity(depth: int, max_qsrl_depth: int) -> int:
-    """Token capacity the hardware FIFO of nominal ``depth`` actually provides."""
-    if depth <= max_qsrl_depth:
-        return depth
-    return depth - count_bram_sub_fifos(depth, max_qsrl_depth) * BRAM_FIFO_PIPELINE_OVERHEAD
-
-
-def safe_bram_starting_depth(peak_util: int, max_qsrl_depth: int) -> int:
-    """Return the smallest depth d such that d minus its BRAM pipeline overhead >= peak_util + 1.
-
-    For LUTRAM depths (d <= max_qsrl_depth) the software model is exact so no overhead is needed.
-    For BRAM depths the overhead depends on how many sub-FIFOs the decomposition produces,
-    which itself depends on d.  We iterate (typically 1-2 steps) until the overhead stabilises.
-    """
-    d = max(peak_util + 1, 32)
-    if d <= max_qsrl_depth:
-        return d
-    # Iteratively find d where d - num_vivado(d)*overhead >= peak_util + 1
-    overhead = 0
-    while True:
-        d = peak_util + 1 + overhead
-        num_vivado = count_bram_sub_fifos(d, max_qsrl_depth)
-        new_overhead = num_vivado * BRAM_FIFO_PIPELINE_OVERHEAD
-        if new_overhead <= overhead:
-            break
-        overhead = new_overhead
-    return max(d, 32)
+def safe_bram_starting_depth(peak_util: int, max_qsrl_depth: int) -> int:  # noqa: ARG001
+    """Return the smallest depth that covers the observed peak utilisation (peak_util + 1),
+    but at least 32. With fifo.sv the hardware capacity equals the requested depth for all
+    storage styles, so no additional overhead is needed (max_qsrl_depth is kept for API
+    compatibility)."""
+    return max(peak_util + 1, 32)
 
 
 # --------------------------------------------------------------------------- cost model

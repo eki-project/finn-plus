@@ -29,7 +29,6 @@
 
 import pytest
 
-import numpy as np
 from onnx import TensorProto, helper
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper

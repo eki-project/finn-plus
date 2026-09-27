@@ -32,7 +32,6 @@ from finn.transformation.fpgadataflow.fifo_depth_search import (
     MinimizationOrder,
     calculate_bram_blocks,
     calculate_bram_depth_range,
-    count_bram_sub_fifos,
     get_valid_block_counts,
     minimize_fifo_depth,
     needs_minimization,
@@ -52,10 +51,14 @@ from finn.util.basic import getHWCustomOp, make_build_dir
 from finn.util.exception import FINNInternalError, FINNUserError
 from finn.util.logging import log
 
+# The shared finn-rtllib FIFO (fifo/hdl/fifo.sv) implements the requested DEPTH exactly for
+# every storage style (SRL, LUTRAM, BRAM, URAM) and is never decomposed into sub-FIFOs, so the
+# software FIFO model and the hardware capacity agree and no pipeline-register overhead has to
+# be accounted for. (The previous Vivado axis_data_fifo based implementation lost
+# BRAM_FIFO_PIPELINE_OVERHEAD entries per power-of-two sub-FIFO, see git history.)
 # The BRAM overhead constant, the cost model and the search skeleton are shared with the
 # TEG-based abstract simulation and live in fifo_depth_search; they are re-exported here for
 # backwards compatibility.
-_count_bram_sub_fifos = count_bram_sub_fifos
 _safe_bram_starting_depth = safe_bram_starting_depth
 calculate_srl16e_depth_range = _fifo_depth_search.calculate_srl16e_depth_range
 calculate_srl16e_luts = _fifo_depth_search.calculate_srl16e_luts
@@ -979,22 +982,12 @@ class NodeConnectedSimulation(Simulation):
         )
         initial_depth: Any = [[depth]] * len(self.binaries) if isinstance(depth, int) else depth
 
-        # For BRAM FIFOs (depth > max_qsrl_depth), hardware loses BRAM_FIFO_PIPELINE_OVERHEAD
-        # entries to internal pipeline registers *per BRAM sub-FIFO*.  Non-power-of-two depths
-        # are decomposed into several power-of-two sub-FIFOs (see get_fifo_split_configs), so
-        # the total overhead is num_bram_sub_fifos * BRAM_FIFO_PIPELINE_OVERHEAD.
-        # Rounding to a full BRAM block before calling get_fifo_split_configs is NOT needed:
-        # the decomposition works on any depth, and we want the sub-FIFO count for the exact
-        # depth under test.
+        # fifo.sv implements the requested depth exactly for all storage styles, so the
+        # simulated capacity is the depth under test (BRAM_FIFO_PIPELINE_OVERHEAD is 0)
         if initial_depth is not None and not isinstance(initial_depth, int):
             adjusted_depth: Any = [
-                [
-                    d - _count_bram_sub_fifos(d, self.max_qsrl_depth) * BRAM_FIFO_PIPELINE_OVERHEAD
-                    if d > self.max_qsrl_depth
-                    else d
-                    for d in node_depths
-                ]
-                for node_depths in initial_depth
+                [d - BRAM_FIFO_PIPELINE_OVERHEAD if d > self.max_qsrl_depth else d for d in nd]
+                for nd in initial_depth
             ]
         else:
             adjusted_depth = initial_depth
@@ -1093,11 +1086,6 @@ class RunLayerParallelSimulation(Transformation):
         # Create fifo_depths (indexed by layer index and then stream index)
         fifo_depths: list[list[int]] = []  # Each entry is a list of fifo sizes for that node
         for val in initial_fifo_depths:
-            # Use _safe_bram_starting_depth so that simulate() (which subtracts
-            # num_sub_fifos*BRAM_FIFO_PIPELINE_OVERHEAD for BRAM depths) still sees a depth
-            # that covers the observed peak utilisation.  A flat +2 is insufficient when a
-            # depth decomposes into multiple BRAM sub-FIFOs (e.g. depth 1537 → 2 sub-FIFOs
-            # → 4 entries of overhead).
             fifo_depths.append(
                 [_safe_bram_starting_depth(v, self.max_qsrl_depth) for v in val["fifo_utilization"]]
             )

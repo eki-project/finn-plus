@@ -39,7 +39,7 @@ class GenerateNodeContainerStitched(Transformation):
                             self.cfg._resolve_fpga_part(),
                             self.cfg.synth_clk_period_ns,
                             ip_name=node.name,
-                            vitis=False,
+                            run_synth=False,
                             nodecontainer=True,
                         )
                     )
@@ -85,7 +85,7 @@ class GenerateNodeContainerStitched(Transformation):
                                 self.cfg._resolve_fpga_part(),
                                 self.cfg.synth_clk_period_ns,
                                 ip_name=f"{node.name}_{id}",
-                                vitis=False,
+                                run_synth=False,
                                 nodecontainer=True,
                             )
                         )

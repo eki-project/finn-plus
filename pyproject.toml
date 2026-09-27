@@ -22,9 +22,7 @@ packages = [
     { include = "custom_hls", to = "finn" },
 ]
 include = [
-    {path = "src/finn/util/vivado_scripts/*.sh", format = ["sdist", "wheel"]},
     {path = "src/finn/util/vivado_scripts/*.tcl", format = ["sdist", "wheel"]},
-    {path = "src/finn/util/vivado_scripts/*.xdc", format = ["sdist", "wheel"]},
     {path = "src/finn/interface/external_dependencies.yaml", format = ["sdist", "wheel"]},
     {path = "src/finn/analysis/fpgadataflow/teg/native/*.cpp", format = ["sdist", "wheel"]}
 ]
@@ -96,6 +94,7 @@ build-backend = "poetry_dynamic_versioning.backend"
 addopts = ["--verbose"]
 markers = [
     "slow: marks tests as slow",
+    "xslow: marks tests that take hours each and are not run by the CI test variants",
     "infrastructure: marks tests that refer to infrastructure functionality",
     "vivado: mark tests that require Vivado or Vivado HLS",
     "vitis: mark tests that require Vitis",
@@ -112,8 +111,7 @@ markers = [
     "bnn_pynq: mark tests that execute Pynq-Z1 BNN tests",
     "bnn_zcu104: mark tests that execute ZCU104 BNN tests",
     "analysis: mark tests that run analysis tests",
-    "multifpga: mark tests that run multifpga tests",
-    "fifo_model: mark tests of the TEG-based FIFO sizing (model validation against RTL)"
+    "multifpga: mark tests that run multifpga tests"
 ]
 norecursedirs = ["dist", "build", ".tox"]
 testpaths = "tests"

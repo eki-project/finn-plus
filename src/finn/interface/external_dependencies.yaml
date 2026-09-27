@@ -1,12 +1,7 @@
 git_deps:
-    cnpy:
-        url: "https://github.com/maltanar/cnpy.git"
-        commit: "8c82362372ce600bbd1cf11d64661ab69d38d7de"
-        pip_install: False
-        install_editable: False
     finn-hlslib:
         url: "https://github.com/Xilinx/finn-hlslib.git"
-        commit: "a2cd3e6ce653a03e59af6bcb9fbeaa71618d160e"
+        commit: "8d979e2bdced486dd25d26607d1ff5ae327ed6a8"
         pip_install: False
         install_editable: False
     attention-hlslib:

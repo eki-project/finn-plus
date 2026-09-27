@@ -59,6 +59,7 @@ from finn.util.basic import (
     make_build_dir,
     pynq_native_port_width,
     pynq_part_map,
+    resolve_xilinx_tool,
 )
 from finn.util.exception import FINNError, FINNSynthesisError
 from finn.util.logging import log
@@ -118,7 +119,7 @@ def _build_sdp_kernel(args):
                     fpga_part,
                     period_ns,
                     f"sdp_{pr_container_inst.onnx_node.name}_{id}",
-                    vitis=False,
+                    run_synth=False,
                 )
             )
             body_model.set_metadata_prop("platform", "zynq-iodma")
@@ -141,7 +142,7 @@ def _build_sdp_kernel(args):
     # Do not try to parallelize HLSSynthIP here (mp.pool within an mp.pool not allowed)
     kernel_model = kernel_model.transform(HLSSynthIP(num_workers=1))
     kernel_model = kernel_model.transform(
-        CreateStitchedIP(fpga_part, period_ns, sdp_node_name, False)
+        CreateStitchedIP(fpga_part, period_ns, sdp_node_name, run_synth=False)
     )
     kernel_model.set_metadata_prop("platform", "zynq-iodma")
     kernel_model.save(dataflow_model_filename)
@@ -179,6 +180,12 @@ def collect_ip_dirs(model, ipstitch_path):
         if node.op_type.startswith("MVAU") or node.op_type == "Thresholding_hls":
             if node_inst.get_nodeattr("mem_mode") == "internal_decoupled":
                 need_memstreamer = True
+        if node.op_type == "FINNLoop":
+            loop_body = node_inst.get_nodeattr("body")
+            loop_body_ipstitch_path = loop_body.get_metadata_prop("vivado_stitch_proj")
+            if loop_body_ipstitch_path is None:
+                raise FINNError(f"No stitched IPI design found for the body of {node.name}")
+            ip_dirs += collect_ip_dirs(loop_body, loop_body_ipstitch_path)
     ip_dirs += [ipstitch_path + "/ip"] if ipstitch_path else []
     if need_memstreamer:
         # add RTL streamer IP
@@ -720,15 +727,17 @@ class MakeZYNQProject(Transformation):
                 )
                 .replace("$BOARDFILES$", str(get_settings().finn_deps / "board_files"))
                 .replace("$PR_CONFIG$", pr_config)
+                .replace("$NUM_JOBS$", str(get_settings().num_default_workers))
             )
 
         # create a TCL recipe for the project
         synth_project_sh = vivado_pynq_proj_dir + "/synth_project.sh"
         working_dir = os.getcwd()
+        vivado_cmd = resolve_xilinx_tool("vivado")
         with open(synth_project_sh, "w") as f:
             f.write("#!/bin/bash \n")
             f.write(f"cd {vivado_pynq_proj_dir}\n")
-            f.write("vivado -mode batch -source %s\n" % ipcfg)
+            f.write(f"{vivado_cmd} -mode batch -source {ipcfg}\n")
             f.write(f"cd {working_dir}\n")
 
         # call the synthesis script
@@ -1628,7 +1637,7 @@ class MakeZYNQProject(Transformation):
                     "-flow {Vivado Implementation 2020} -pr_config %s" % (impl_run, config_name)
                 )
 
-        pr_config.append("launch_runs synth_1 -jobs 4")
+        pr_config.append(f"launch_runs synth_1 -jobs {get_settings().num_default_workers}")
         pr_config.append("wait_on_run synth_1")
 
         # Collect pblock info for every PR SDP before choosing the mode.
@@ -1706,7 +1715,8 @@ class MakeZYNQProject(Transformation):
                 "set_property STEPS.WRITE_BITSTREAM.ARGS.BIN_FILE true [get_runs %s]" % run_name
             )
 
-        pr_config.append("launch_runs impl_1 -to_step write_bitstream -jobs 4")
+        num_jobs = get_settings().num_default_workers
+        pr_config.append(f"launch_runs impl_1 -to_step write_bitstream -jobs {num_jobs}")
         pr_config.append("wait_on_run impl_1")
 
         if all_empty:
@@ -1724,7 +1734,10 @@ class MakeZYNQProject(Transformation):
 
         for body_id in range(1, num_bodies):
             impl_run = "impl_body_%d" % body_id
-            pr_config.append("launch_runs %s -to_step write_bitstream -jobs 4" % impl_run)
+            pr_config.append(
+                f"launch_runs {impl_run} -to_step write_bitstream "
+                f"-jobs {get_settings().num_default_workers}"
+            )
             pr_config.append("wait_on_run %s" % impl_run)
 
         pr_config.append(

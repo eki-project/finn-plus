@@ -44,7 +44,8 @@ from qonnx.util.basic import roundup_to_integer_multiple
 
 
 def array2hexstring(array, dtype, pad_to_nbits, prefix="0x", reverse=False):
-    """Pack given one-dimensional NumPy array with FINN DataType dtype into a hex
+    """
+    Pack given one-dimensional NumPy array with FINN DataType dtype into a hex
     string.
     Any BIPOLAR values will be converted to a single bit with a 0 representing
     -1.
@@ -54,6 +55,7 @@ def array2hexstring(array, dtype, pad_to_nbits, prefix="0x", reverse=False):
     packing.
 
     Examples:
+
     array2hexstring([1, 1, 1, 0], DataType["BINARY"], 4) = "0xe"
 
     array2hexstring([1, 1, 1, 0], DataType["BINARY"], 8) = "0x0e"
@@ -108,6 +110,7 @@ def hexstring2npbytearray(hexstring, remove_prefix="0x"):
     """Convert a hex string into a NumPy array of dtype uint8.
 
     Example:
+
     hexstring2npbytearray("0f01") = array([15,  1], dtype=uint8)
     """
     # remove prefix if found
@@ -122,6 +125,7 @@ def npbytearray2hexstring(npbytearray, prefix="0x"):
     """Convert a NumPy array of uint8 dtype into a hex string.
 
     Example:
+
     npbytearray2hexstring(array([15,  1], dtype=uint8)) = "0x0f01"
     """
     return prefix + binascii.hexlify(bytearray(npbytearray)).decode("utf-8")
@@ -134,6 +138,7 @@ def pack_innermost_dim_as_hex_string(
     strings using array2hexstring.
 
     Examples:
+
     A = [[1, 1, 1, 0], [0, 1, 1, 0]]
 
     eA = ["0e", "06"]
@@ -146,6 +151,7 @@ def pack_innermost_dim_as_hex_string(
 
     pack_innermost_dim_as_hex_string(B, DataType["UINT2"], 8) == eB
     """
+
     if type(ndarray) is not np.ndarray or ndarray.dtype not in [np.float32, np.float16]:
         # try to convert to a float numpy array (container dtype is float)
         ndarray = np.asarray(ndarray, dtype=np.float32)
@@ -164,6 +170,7 @@ def unpack_innermost_dim_from_hex_string(
     the hex strings into the specified data type. out_shape can be specified
     such that any padding in the packing dimension is removed. If reverse_inner
     is set, the innermost unpacked dimension will be reversed."""
+
     if type(ndarray) is not np.ndarray:
         raise Exception(
             """unpack_innermost_dim_from_hex_string needs ndarray
@@ -266,14 +273,16 @@ def numpy_to_hls_code(ndarray, dtype, hls_var_name, pack_innermost_dim=True, no_
     # define a function to convert a single element into a C++ init string
     # a single element can be a hex string if we are using packing
     def elem2str(x):
-        """Format a single element for C++ array initialization."""
+        """Convert a single element (hex string or float) into a C++ initializer string."""
         if type(x) is str or type(x) is np.str_:
             return '%s("%s", 16)' % (hls_dtype, x)
-        if type(x) is np.float32:
+        elif type(x) is np.float32:
             if dtype.is_integer():
                 return str(int(x))
-            return str(x)
-        raise Exception("Unsupported type for numpy_to_hls_code")
+            else:
+                return str(x)
+        else:
+            raise Exception("Unsupported type for numpy_to_hls_code")
 
     strarr = np.array2string(ndarray, separator=", ", formatter={"all": elem2str})
     np.set_printoptions(**orig_printops)
@@ -299,6 +308,11 @@ def npy_to_rtlsim_input(input_file, input_dtype, pad_to_nbits, reverse_inner=Tru
         inp = np.load(input_file)
     else:
         raise Exception("input_file must be ndarray or filename for .npy")
+
+    # Check for NaN/Inf before packing for rtlsim
+    assert not np.isnan(inp).any(), "NaN values detected in rtlsim input"
+    assert not np.isinf(inp).any(), "Inf values detected in rtlsim input"
+
     if (
         inp.shape[-1] == 1
         and input_dtype.is_integer()
@@ -322,6 +336,7 @@ def rtlsim_output_to_npy(output, path, dtype, shape, packedBits, targetBits, rev
     integer is assumed to be a packed array of targetBits-bit elements, which
     will be unpacked as the innermost dimension of the NumPy array. If path is
     not None it will also be saved as a npy file."""
+
     # TODO should have its own testbench?
     output = np.asarray([hex(int(x)) for x in output])
     out_array = unpack_innermost_dim_from_hex_string(
@@ -329,86 +344,198 @@ def rtlsim_output_to_npy(output, path, dtype, shape, packedBits, targetBits, rev
     )
     # make copy before saving the array
     out_array = out_array.copy()
+
+    # Check for NaN/Inf after unpacking rtlsim output
+    assert not np.isnan(out_array).any(), "NaN values detected in rtlsim output"
+    assert not np.isinf(out_array).any(), "Inf values detected in rtlsim output"
+
     if path is not None:
         np.save(path, out_array)
     return out_array
 
 
-def finnpy_to_packed_bytearray(
-    ndarray, dtype, reverse_inner=False, reverse_endian=False, fast_mode=False
-):
+def finnpy_to_packed_bytearray(ndarray, dtype, reverse_inner=False, reverse_endian=False):
     """Given a numpy ndarray with FINN DataType dtype, pack the innermost
     dimension and return the packed representation as an ndarray of uint8.
     The packed innermost dimension will be padded to the nearest multiple
     of 8 bits. The returned ndarray has the same number of dimensions as the
     input.
 
-    If fast_mode is enabled, will attempt to use shortcuts  to save
-    on runtime for certain cases:
-    * 8-bit ndarray -> 8-bit
-    * ndarray -> 1-bit and total bits % 8 == 0
-    This mode is currently not well-tested, use at your own risk!
+    Three packing paths are tried in order:
+    * whole-byte dtypes in a matching native container -> byte views/flips only
+    * 1-bit dtypes with no padding and both reverses -> direct np.packbits
+    * everything else -> general bit-level packing
+
+    Can return a non-contiguous ndarray. Use np.ascontiguousarray or np.copy to
+    make it contiguous.
     """
-    # handle fast_mode cases (currently only called from driver):
-    if issubclass(type(ndarray), np.ndarray) and fast_mode:
-        inp_is_byte = ndarray.dtype in [np.uint8, np.int8]
-        out_is_byte = dtype.bitwidth() == 8
-        double_reverse = reverse_inner and reverse_endian
-        # fast mode case: byte -> byte: cast
-        if inp_is_byte and out_is_byte and double_reverse:
-            return ndarray.view(np.uint8)
-        # fast mode case: xxx -> bit with nbits % 8 == 0: np.packbits
-        out_is_bit = dtype.bitwidth() == 1
-        bits = dtype.bitwidth() * ndarray.shape[-1]
-        bits_padded = roundup_to_integer_multiple(bits, 8)
-        no_pad = bits_padded == bits
-        if out_is_bit and no_pad and double_reverse:
-            in_as_int8 = ndarray.astype(np.int8)
-            # bipolar -> binary if needed
-            if dtype == DataType["BIPOLAR"]:
-                in_as_int8 = (in_as_int8 + 1) // 2
-            # reverse inner
-            in_as_int8 = np.flip(in_as_int8, axis=-1)
-            # pack with numpy
-            packed_data = np.packbits(in_as_int8, axis=-1)
-            # reverse endianness and return
-            return np.flip(packed_data, axis=-1)
+    if isinstance(ndarray, np.ndarray) and ndarray.ndim >= 1:
+        # fast path: whole-byte dtypes (int8/16/32/64, float16/32/64) whose
+        # container already holds the packed bit pattern -> byte views/flips only
+        packed = _pack_whole_byte_container(ndarray, dtype, reverse_inner, reverse_endian)
+        if packed is not None:
+            return packed
+        # fast path: 1-bit dtype, no padding, both reverses -> direct packbits
+        packed = _pack_bit_double_reverse(ndarray, dtype, reverse_inner, reverse_endian)
+        if packed is not None:
+            return packed
+    # general path
+    return _pack_general(ndarray, dtype, reverse_inner, reverse_endian)
 
-    if (not issubclass(type(ndarray), np.ndarray)) or ndarray.dtype != np.float32:
-        # try to convert to a float numpy array (container dtype is float)
-        ndarray = np.asarray(ndarray, dtype=np.float32)
-    # pack innermost dim to hex strings padded to 8 bits
-    bits = dtype.bitwidth() * ndarray.shape[-1]
-    bits_padded = roundup_to_integer_multiple(bits, 8)
-    packed_hexstring = pack_innermost_dim_as_hex_string(
-        ndarray, dtype, bits_padded, reverse_inner=reverse_inner
-    )
 
-    def fn(x):
-        """Convert a sequence of hex strings into byte arrays."""
-        return np.asarray(list(map(hexstring2npbytearray, x)))
-
-    if packed_hexstring.ndim == 0:
-        # scalar, call hexstring2npbytearray directly
-        ret = hexstring2npbytearray(np.asscalar(packed_hexstring))
+def _pack_whole_byte_container(ndarray, dtype, reverse_inner, reverse_endian):
+    """Fast path for whole-byte dtypes whose container already holds the packed
+    bit pattern (native ints, or matching-width floats). Packs with byte
+    views/flips only, no bit-level work. Returns None if not applicable."""
+    bitwidth = dtype.bitwidth()
+    if bitwidth % 8 != 0:
+        return None
+    nbytes = bitwidth // 8
+    arr_kind, arr_size = ndarray.dtype.kind, ndarray.dtype.itemsize
+    if dtype.name.startswith("FLOAT"):
+        if arr_kind != "f" or arr_size != nbytes:
+            return None
+    elif dtype.is_integer() and not dtype.is_fixed_point():
+        if arr_kind not in ("i", "u") or arr_size != nbytes:
+            return None
     else:
-        # convert ndarray of hex strings to byte array
-        ret = np.apply_along_axis(fn, packed_hexstring.ndim - 1, packed_hexstring)
+        return None
+    packed = ndarray.view(np.uint8)
+    if nbytes == 1:
+        # one byte per value: both flips act on the same axis
+        if reverse_inner != reverse_endian:
+            packed = np.flip(packed, axis=-1)
+        return packed
+    n = ndarray.shape[-1]
+    # split bytes into a (value, byte)
+    packed = packed.reshape(*ndarray.shape[:-1], n, nbytes)
+    if not reverse_endian:
+        packed = packed[..., ::-1]  # big-endian within value
+    if reverse_inner != reverse_endian:
+        packed = packed[..., ::-1, :]  # reverse value order
+    return packed.reshape(*ndarray.shape[:-1], n * nbytes)  # flatten back
+
+
+def _pack_bit_double_reverse(ndarray, dtype, reverse_inner, reverse_endian):
+    """Fast path for 1-bit dtypes with both reverses set and no padding (bits a
+    multiple of 8): packs directly with np.packbits. Returns None otherwise."""
+    if dtype.bitwidth() != 1 or not (reverse_inner and reverse_endian):
+        return None
+    bits = dtype.bitwidth() * ndarray.shape[-1]
+    if roundup_to_integer_multiple(bits, 8) != bits:
+        return None
+    in_as_int8 = ndarray.astype(np.int8)
+    # bipolar -> binary if needed
+    if dtype == DataType["BIPOLAR"]:
+        in_as_int8 = (in_as_int8 + 1) // 2
+    # reverse inner
+    in_as_int8 = np.flip(in_as_int8, axis=-1)
+    # pack with numpy
+    packed_data = np.packbits(in_as_int8, axis=-1)
+    # reverse endianness and return
+    return np.flip(packed_data, axis=-1)
+
+
+def _pack_general(ndarray, dtype, reverse_inner, reverse_endian):
+    """General fallback: convert to a float32 container, encode each value to its
+    target_bits-wide bit pattern, then bit-pack. Handles any dtype/shape (incl.
+    sub-byte widths and scalars) but is the slowest path."""
+    if (not isinstance(ndarray, np.ndarray)) or ndarray.dtype != np.float32:
+        # convert to a float numpy array
+        ndarray = np.asarray(ndarray, dtype=np.float32)
+    scalar_input = ndarray.ndim == 0
+    if scalar_input:
+        ndarray = ndarray.reshape(1)
+    # convert FINN values to their unsigned target_bits-wide bit pattern
+    int_array = finnpy_to_int_array(ndarray, dtype)
+    # reverse inner dim prior to packing, if desired (value 0 -> most significant)
+    if reverse_inner:
+        int_array = np.flip(int_array, axis=-1)
+    ret = int_array_to_packed_bytearray(int_array, dtype.bitwidth())
     if reverse_endian:
         # reverse the endianness of packing dimension
         ret = np.flip(ret, axis=-1)
+    if scalar_input:
+        ret = ret.reshape(-1)
     return ret
+
+
+def finnpy_to_int_array(ndarray, dtype):
+    """Encode a float32 container ndarray into an unsigned-integer ndarray whose
+    values are the target_bits-wide bit pattern of each element. Container is the
+    smallest uint that fits target_bits."""
+    target_bits = dtype.bitwidth()
+    # choose smallest unsigned container that fits target_bits
+    if target_bits <= 8:
+        target_dtype = np.uint8
+    elif target_bits <= 16:
+        target_dtype = np.uint16
+    elif target_bits <= 32:
+        target_dtype = np.uint32
+    elif target_bits <= 64:
+        target_dtype = np.uint64
+    else:
+        raise Exception("finnpy_to_int_array does not support target_bits > 64")
+
+    if dtype.name.startswith("FLOAT"):
+        # reinterpret the float bit pattern as an unsigned integer
+        nbytes = target_bits // 8
+        floats = ndarray.astype(">f%d" % nbytes)
+        return floats.view(">u%d" % nbytes).astype(target_dtype)
+
+    assert np.all(dtype.allowed(ndarray)), "This value is not permitted by chosen dtype."
+
+    if dtype.name == "BIPOLAR":
+        # bipolar {-1, +1} -> binary {0, 1}
+        vals = (ndarray + 1) / 2
+    elif dtype.is_fixed_point():
+        # rescale to signed integer representation
+        vals = ndarray / dtype.scale_factor()
+    else:
+        # integer-like (INT/UINT/BINARY/TERNARY)
+        vals = ndarray
+    ints = vals.astype(np.int64)
+
+    # mask to target_bits, which yields two's-complement for negative values.
+    mask = target_dtype((1 << target_bits) - 1)
+    return ints.astype(target_dtype) & mask
+
+
+def int_array_to_packed_bytearray(int_array, target_bits):
+    """Pack the innermost dimension of an unsigned-integer ndarray into uint8
+    bytes, MSB-first with value 0 occupying the most significant bits and the
+    word left-padded to the nearest multiple of 8 bits."""
+    itemsize = int_array.dtype.itemsize
+    # view each value as big-endian bytes, then expand to MSB-first bits
+    be_bytes = int_array.astype(">u%d" % itemsize).view(np.uint8)
+    be_bytes = be_bytes.reshape(*int_array.shape, itemsize)
+    bits = np.unpackbits(be_bytes, axis=-1)
+    # keep only the low target_bits of each value (still MSB-first within value)
+    bits = bits[..., -target_bits:]
+    # concatenate per-value bits into one word (value 0 -> most significant bits)
+    n_values = int_array.shape[-1]
+    total_bits = n_values * target_bits
+    word_bits = bits.reshape(*int_array.shape[:-1], total_bits)
+    # left-pad the word to a whole number of bytes before packing
+    bits_padded = roundup_to_integer_multiple(total_bits, 8)
+    pad = bits_padded - total_bits
+    if pad:
+        padding = np.zeros((*word_bits.shape[:-1], pad), dtype=np.uint8)
+        word_bits = np.concatenate([padding, word_bits], axis=-1)
+    return np.packbits(word_bits, axis=-1)
 
 
 def packed_bytearray_to_finnpy(
     packed_bytearray, dtype, output_shape, reverse_inner=False, reverse_endian=False
 ):
-    """Given a packed numpy uint8 ndarray, unpack it into a FINN array of
+    """
+    Given a packed numpy uint8 ndarray, unpack it into a FINN array of
     given DataType.
 
     output_shape must be specified to remove padding from the
     packed dimension
     """
+
     if (not issubclass(type(packed_bytearray), np.ndarray)) or packed_bytearray.dtype != np.uint8:
         raise Exception("packed_bytearray_to_finnpy needs NumPy uint8 arrays")
     if packed_bytearray.ndim == 0:
@@ -452,7 +579,7 @@ def prepare_values(
     reverse_inner,
     reverse_endian,
 ):
-    """Unpack bytes into an integer array matching dtype bitwidth."""
+    """Unpack a byte array into an unsigned integer array with one element per value of `dtype`."""
     target_bits = dtype.bitwidth()
 
     if reverse_endian:
@@ -506,7 +633,7 @@ def prepare_values(
 
 
 def unsiged_array_to_signed(data_array, bitsize):
-    """Convert an unsigned integer array to signed with sign extension."""
+    """Sign-extend `bitsize`-bit unsigned values into a signed numpy integer array."""
     # Convert uint to int (do the sign extension)
     data_type_bits = np.dtype(data_array.dtype).itemsize * 8
     shift_sign_value = (2 ** (data_type_bits - bitsize) - 1) << bitsize
@@ -525,27 +652,27 @@ def unsiged_array_to_signed(data_array, bitsize):
 
 
 def packed_bytearray_to_finnpy_fast(packed_bytearray, dtype, output_shape):
-    """Fast path for unpacking byte arrays into float32 arrays."""
+    """Reinterpret the byte array with the datatype's native numpy type and cast to float32."""
     as_np_type = packed_bytearray.view(dtype.to_numpy_dt())
     return as_np_type.reshape(output_shape).astype(np.float32)
 
 
 def data_prepared_to_finnpy_bipolar(data_prepared):
-    """Convert prepared integer data into bipolar float32 values."""
+    """Convert unpacked {0, 1} values into bipolar {-1, +1} float32 values."""
     data_prepared_converted = data_prepared.astype(np.int32)
     data_prepared_bipolar = data_prepared_converted * 2 - 1
     return data_prepared_bipolar.astype(np.float32)
 
 
 def data_prepared_to_finnpy_ternary(data_prepared):
-    """Convert prepared integer data into ternary float32 values."""
+    """Convert unpacked 2-bit ternary values into {-1, 0, +1} float32 values."""
     data_prepared_converted = data_prepared.astype(np.int32)
     data_prepared = np.where(data_prepared_converted == 3, -1, data_prepared_converted)
     return data_prepared.astype(np.float32)
 
 
 def data_prepared_to_finnpy_fixed(data_prepared, dtype):
-    """Convert prepared integer data into fixed-point float32 values."""
+    """Convert unpacked fixed-point bit patterns into float32 values."""
     int_bits = dtype.int_bits()
     frac_bits = dtype.frac_bits()
     # Mask data
@@ -562,19 +689,20 @@ def data_prepared_to_finnpy_fixed(data_prepared, dtype):
 
 
 def data_prepared_to_finnpy_int(data_prepared, dtype):
-    """Convert prepared integer data into signed or unsigned float32 values."""
+    """Convert unpacked integer bit patterns into float32 values, sign-extending if signed."""
     target_bits = dtype.bitwidth()
     signed = True if dtype.name.startswith("INT") or dtype.name == "BIPOLAR" else False
     if signed:
         unpacked_data = unsiged_array_to_signed(data_prepared, target_bits)
         return unpacked_data.astype(np.float32)
-    return data_prepared.astype(np.float32)
+    else:
+        return data_prepared.astype(np.float32)
 
 
 def packed_bytearray_to_finnpy_float(
     packed_bytearray, dtype, reverse_inner=False, reverse_endian=False
 ):
-    """Unpack packed bytes into float arrays for FLOAT datatypes."""
+    """Reinterpret the byte array as big-endian floats and return them as float32."""
     target_bits = dtype.bitwidth()
     if reverse_endian:
         # np.flip returns a negative-stride view; .view() with a different itemsize
@@ -590,6 +718,7 @@ def packed_bytearray_to_finnpy_float(
 def to_external_tensor(init, w_dtype):
     """Return an appropriately formatted and packed numpy byte array for given
     external parameter tensor."""
+
     weight_width = init.shape[1] * w_dtype.bitwidth()
     weight_width_padded = roundup_to_integer_multiple(weight_width, 4)
     hex_init = pack_innermost_dim_as_hex_string(init, w_dtype, weight_width_padded, prefix="0x")

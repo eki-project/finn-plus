@@ -27,14 +27,17 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import json
 import numpy as np
 from collections.abc import Callable
+from onnx import NodeProto
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from finn import xsi as finnxsi
-from finn.util.basic import get_liveness_threshold_cycles, getHWCustomOp, make_build_dir
+from finn.util.basic import get_watchdog_timeout_cycles, getHWCustomOp, make_build_dir
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
+from finn.util.rtlsim import dat_file_to_numpy_array, mlo_prehook_func_factory
 
 if TYPE_CHECKING:
     from qonnx.core.datatype import BaseDataType
@@ -44,6 +47,18 @@ if TYPE_CHECKING:
 from ast import literal_eval
 
 from finn.util.exception import FINNUserError
+
+
+def has_s_axis_port(node_onnx: NodeProto, node_inp_ind: int) -> bool:
+    """Whether input ``node_inp_ind`` of ``node_onnx`` is backed by an s_axis port.
+
+    Mirrors the skip rule in CreateStitchedIP.connect_s_axis_external: an input
+    beyond the node's declared s_axis interfaces gets no external port and does
+    not consume an s_axis_<n> index. Requant_rtl in MLO mode is such a case, as
+    it packs its bias (input[2]) into the input[1] parameter memstream.
+    """
+    s_axis_names = getHWCustomOp(node_onnx).get_verilog_top_module_intf_names()["s_axis"]
+    return node_inp_ind < len(s_axis_names)
 
 
 def prep_rtlsim_io_dict(
@@ -69,7 +84,9 @@ def prep_rtlsim_io_dict(
     batchsize = None
     first_node = None
     if_name = None
-    for i, i_vi in enumerate(model.graph.input):
+    # inputs without an s_axis port are skipped so that the rest stay aligned with if_dict
+    i = -1
+    for i_vi in model.graph.input:
         i_name = i_vi.name
         i_tensor = execution_context[i_name]
         i_dt = model.get_tensor_datatype(i_name)
@@ -81,6 +98,9 @@ def prep_rtlsim_io_dict(
             )
         first_node = getHWCustomOp(first_node_onnx)
         node_inp_ind = list(first_node_onnx.input).index(i_name)
+        if not has_s_axis_port(first_node_onnx, node_inp_ind):
+            continue
+        i += 1
         if node_inp_ind == 0:
             # default node input (input 0)
             i_stream_w = first_node.get_instream_width()
@@ -202,8 +222,10 @@ def rtlsim_exec_finnxsi(
         top_module_name = top_module_file_name.strip(".v")
         single_src_dir = Path(make_build_dir("rtlsim_" + top_module_name + "_"))
         debug = not (trace_file is None or trace_file == "")
+        # behavioral simulation (FINN_SIMULATION define: fifo_gauge, behavioral DSP models)
+        behav = model.get_metadata_prop("rtlsim_behavioral") == "1"
         rtlsim_so = finnxsi.compile_sim_obj(
-            top_module_name, all_verilog_srcs, single_src_dir, debug=debug
+            top_module_name, all_verilog_srcs, single_src_dir, debug=debug, behav=behav
         )
         # save generated lib filename in attribute
         model.set_metadata_prop("rtlsim_so", str(rtlsim_so[0] / rtlsim_so[1]))
@@ -219,14 +241,48 @@ def rtlsim_exec_finnxsi(
 
     # reset and call rtlsim, including any pre/post hooks
     finnxsi.reset_rtlsim(sim)
+
+    # automatically load AXI-MM weight images for external_mem nodes
+    aximm_weights_json = model.get_metadata_prop("vivado_stitch_aximm_weights")
+    if aximm_weights_json is not None:
+        aximm_weights = json.loads(aximm_weights_json)
+        for aximm_name, dat_path in aximm_weights.items():
+            # memblock.dat stores weights byte-aligned per SIMD group
+            # (roundup(SIMD*bitwidth, 8) bits per group), the layout fetch_weights
+            # expects in external memory (DDR, HBM, ...). Parse it (LSB-first) into a
+            # flat byte image, matching the MLO path in finn.util.rtlsim.
+            weight_data = dat_file_to_numpy_array(dat_path)
+            sim.aximm_ro_image(aximm_name, 0, weight_data.flatten())
+
+    if pre_hook is None:
+        # FINNLoop (MLO) models need their weight memories initialized via a pre-hook
+        finnloop_nodes = model.get_nodes_by_op_type("FINNLoop")
+        if len(finnloop_nodes) == 1:
+            pre_hook = mlo_prehook_func_factory(finnloop_nodes[0])
+        elif len(finnloop_nodes) > 1:
+            raise FINNUserError("rtlsim of models with multiple FINNLoop nodes is not supported")
     if pre_hook is not None:
         pre_hook(sim)
+
+    # The watchdog timeout is the derived cycle estimate (if any, set as metadata by the
+    # builder) raised to at least the LIVENESS_THRESHOLD override, scaled by the batch size
+    liveness_estimate_prop = model.get_metadata_prop("rtlsim_liveness_estimate")
+    liveness_estimate = (
+        int(liveness_estimate_prop) * batchsize if liveness_estimate_prop is not None else None
+    )
+    liveness_threshold = (
+        get_watchdog_timeout_cycles(
+            int(liveness_estimate_prop) if liveness_estimate_prop is not None else None
+        )
+        * batchsize
+    )
     n_cycles = finnxsi.rtlsim_multi_io(
         sim,
         io_dict,
         cast("dict[str, int | np.integer]|int", num_out_values),
         sname="",
-        liveness_threshold=get_liveness_threshold_cycles() * batchsize,
+        liveness_threshold=liveness_threshold,
+        liveness_estimate=liveness_estimate,
     )
     if post_hook is not None:
         post_hook(sim)

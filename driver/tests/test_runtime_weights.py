@@ -62,3 +62,24 @@ def test_external_weight_count_mismatch_is_an_error(tmp_path):
     inst = _bare_external_overlay(str(tmp_path), "1")
     with pytest.raises(FileNotFoundError):
         inst.load_external_weights()
+
+
+def _bare_mlo_overlay(mlo_weight_dir, mlo_weight_config):
+    """An overlay object for load_mlo_weights() without running __init__."""
+    inst = FINNDMAOverlay.__new__(FINNDMAOverlay)
+    inst.mlo_weight_dir = mlo_weight_dir
+    inst._io_shape_dict = {"mlo_weight_config": mlo_weight_config}
+    return inst
+
+
+def test_missing_mlo_dir_is_an_error_when_weights_are_streamed(tmp_path):
+    mlo_cfg = {"total_size_bytes": 8, "weights": [{"dat_file": "w.dat", "address_offset": 0}]}
+    inst = _bare_mlo_overlay(os.path.join(str(tmp_path), "does_not_exist"), mlo_cfg)
+    with pytest.raises(FileNotFoundError):
+        inst.load_mlo_weights()
+
+
+def test_missing_mlo_dir_is_ignored_without_mlo_weights(tmp_path):
+    inst = _bare_mlo_overlay(os.path.join(str(tmp_path), "does_not_exist"), None)
+    inst.load_mlo_weights()
+    assert inst.mlo_weight_buffer is None
