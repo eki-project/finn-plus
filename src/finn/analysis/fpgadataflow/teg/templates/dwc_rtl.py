@@ -60,16 +60,22 @@ cycle of the input handshake when ``Side`` is free or being consumed (``bypass``
   i.e. the next word is accepted in the cycle after the last sub-word of the previous one
   left ``Buf``.
 
-Equal widths reduce to a wire (``genNoop``, see ``passthrough``). All latencies are
+**Non-integer ratios** (``vpc.sv:genGeneric``): after normalising both widths by their gcd,
+the converter is an element FIFO of ``PI0 + PO0`` elements whose registered capacity counter
+gates both handshakes (``ovld``/``irdy`` one cycle after the beat that completes / frees the
+elements); see ``dwc_generic``. Equal widths reduce to a wire (``genNoop``, see
+``passthrough``). All latencies are
 transcriptions of the RTL and are confirmed by the differential test of the operator.
 """
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from typing import TYPE_CHECKING
 
-from finn.analysis.fpgadataflow.teg.model import Chain, FIFOEdge
+from finn.analysis.fpgadataflow.teg.model import Arc, Chain, FIFOEdge
 from finn.analysis.fpgadataflow.teg.templates import OpModel, register
 from finn.analysis.fpgadataflow.teg.templates.passthrough import passthrough
 from finn.util.exception import FINNUserError
@@ -123,6 +129,43 @@ def dwc_down(prefix: str, n_in: int, k: int, in_edge: str, out_edge: str) -> OpM
     return OpModel([r, s, w], edges, [r.name], [w.name], {"K": k, "direction": "down"})
 
 
+def dwc_generic(
+    prefix: str, n_in: int, n_out: int, pi0: int, po0: int, in_edge: str, out_edge: str
+) -> OpModel:
+    """Generic converter (``vpc.sv:genGeneric``): element FIFO of ``pi0 + po0`` elements.
+
+    Widths are normalised by their gcd: an input beat deposits ``pi0`` elements, an output beat
+    takes ``po0``. ``ovld`` and ``irdy`` are derived from the registered capacity counter
+    ``ICap``, so an output beat may follow the input beat that completed its elements one
+    cycle later and an input beat may follow the output beat that freed the slots of its
+    elements one cycle later (simultaneous handshakes are allowed). The counter is never
+    reset (``genSimple``: FINN instantiates the converter with ``N = IBITS * OBITS`` so no
+    padding beats exist), i.e. element indices run on across frames.
+    """
+    cap = pi0 + po0
+    r = Chain(f"{prefix}.R")
+    r.events(n_in, 1, reads=[in_edge])
+    w = Chain(f"{prefix}.W")
+    w.events(n_out, 1, writes=[out_edge])
+    # output beat j needs its last element (index (j+1)*po0-1), deposited by input beat i(j)
+    for j in range(n_out):
+        w.add_arc(j, Arc(r.name, ((j + 1) * po0 - 1) // pi0, 0, 1))
+    # input beat i needs the slot of element (i+1)*pi0-1-cap, taken by output beat j(i)
+    # (of the previous frame for the first beats of a frame)
+    for i in range(n_in):
+        e = (i + 1) * pi0 - 1 - cap
+        if e < 0:
+            e += n_out * po0
+            if e < 0:
+                continue
+            r.add_arc(i, Arc(w.name, e // po0, 1, 1))
+        else:
+            r.add_arc(i, Arc(w.name, e // po0, 0, 1))
+    r.history_window = -(-cap // pi0) + 4
+    w.history_window = -(-cap // po0) + 4
+    return OpModel([r, w], [], [r.name], [w.name], {"PI0": pi0, "PO0": po0, "direction": "generic"})
+
+
 @register("StreamingDataWidthConverter", "rtl")
 def dwc_rtl(node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[str]) -> OpModel:
     """Build the model of a ``StreamingDataWidthConverter_rtl`` node."""
@@ -130,10 +173,12 @@ def dwc_rtl(node: HWCustomOp, prefix: str, in_edges: list[str], out_edges: list[
     n_in = int(np.prod(node.get_folded_input_shape()[:-1]))
     if iw == ow:
         return passthrough(prefix, n_in, in_edges[0], out_edges[0])
-    if iw < ow:
-        if ow % iw:
-            raise FINNUserError("RTL DWC up-conversion needs an integer width ratio")
+    if iw < ow and ow % iw == 0:
         return dwc_up(prefix, n_in, ow // iw, in_edges[0], out_edges[0])
-    if iw % ow:
-        raise FINNUserError("RTL DWC down-conversion needs an integer width ratio")
-    return dwc_down(prefix, n_in, iw // ow, in_edges[0], out_edges[0])
+    if iw > ow and iw % ow == 0:
+        return dwc_down(prefix, n_in, iw // ow, in_edges[0], out_edges[0])
+    # non-integer ratio: vpc.sv normalises the widths by their gcd (dwc_axi.sv instantiates
+    # it with W = 1, PI = IBITS, PO = OBITS, N = IBITS * OBITS)
+    g = math.gcd(iw, ow)
+    n_out = int(np.prod(node.get_folded_output_shape()[:-1]))
+    return dwc_generic(prefix, n_in, n_out, iw // g, ow // g, in_edges[0], out_edges[0])

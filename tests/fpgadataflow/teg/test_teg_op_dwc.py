@@ -108,6 +108,10 @@ CONFIGS = [
     ((1, 2, 2, 12), 4, 12, "hls"),  # up
     ((1, 2, 2, 12), 12, 4, "hls"),  # down
     ((1, 24), 8, 12, "hls"),  # non-integer ratio: LCM stage
+    ((1, 24), 8, 12, "rtl"),  # non-integer ratio: vpc generic, PI0 = 2, PO0 = 3
+    ((1, 24), 12, 8, "rtl"),  # non-integer ratio: vpc generic, PI0 = 3, PO0 = 2
+    ((1, 28), 16, 28, "rtl"),  # tfc-w1a1's 28->49 ratio (PI0 = 4, PO0 = 7) on 4-bit elements
+    ((1, 28), 28, 16, "rtl"),  # PI0 = 7, PO0 = 4
 ]
 
 
