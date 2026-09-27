@@ -125,10 +125,11 @@ def stall_kinds_attention(seed: int) -> dict[str, tuple[list[StallPattern], Stal
 @pytest.mark.parametrize("kind", list(stall_kinds_attention(0)))
 @pytest.mark.xfail(
     strict=False,
-    reason="attention template under calibration: the per-frame region restart and the "
-    "process structure are modelled, but the query reads and the output start are still "
-    "2-5 cycles off and the real design shows one idle cycle per query row on the output "
-    "(softmax row hand-over) that the model does not reproduce",
+    reason="attention template under calibration: the process structure, the frame overlap "
+    "of the dataflow top (eki-project#275) and the per-row pipeline bubble are modelled "
+    "(RadioML head: period 1155 vs 1174 in XSI, first outputs exact), but the query reads "
+    "are still 2-5 cycles off and the softmax drain between frames of tiny heads is 7-9 "
+    "cycles short",
 )
 def test_teg_op_attention_hls(cfg: tuple, kind: str, finn_test_seed: int) -> None:
     """XSI and the abstract model must produce identical handshake traces on all streams."""

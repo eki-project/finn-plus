@@ -59,7 +59,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from finn.analysis.fpgadataflow.teg.hls_report import HLSLoopParams, hls_function_params
+from finn.analysis.fpgadataflow.teg.hls_report import (
+    HLSLoopParams,
+    csynth_report_path,
+    hls_function_params,
+    parse_pipeline_type,
+)
 from finn.analysis.fpgadataflow.teg.model import FIFOEdge
 from finn.analysis.fpgadataflow.teg.templates import OpModel, register
 from finn.analysis.fpgadataflow.teg.templates.hls_loop import Iteration, flp_loop
@@ -74,8 +79,11 @@ if TYPE_CHECKING:
 HLS_FIFO_LF = 0
 HLS_FIFO_LB = 1
 #: buffers of the stream tiler's dataflow array channel (1: the read loop of the next frame
-#: waits for the tile loop of this frame; 2: ping-pong)
+#: waits for the tile loop of this frame; 2: ping-pong). HLS builds a two-block PIPO, but as
+#: long as the top function restarts the whole region per frame the second block is never
+#: used; with a dataflow top (frames overlap, see below) both blocks are in flight.
 PIPO_BUFFERS = 1
+PIPO_BUFFERS_OVERLAP = 2
 #: cycles from the last read of the tiler's read loop to the first iteration of its tile loop
 #: (loop exit, pipeline drain and the start of the second loop)
 TILER_LOOP_GAP = 2
@@ -83,8 +91,25 @@ TILER_LOOP_GAP = 2
 TILER_RESTART_GAP = 1
 #: the region is invoked once per frame by the top function and restarts only after all of
 #: its processes completed: cycles from the last output handshake of frame n to the first
-#: event of any process in frame n + 1 (measured)
+#: event of any process in frame n + 1 (measured). Only applies when the generated top
+#: function is not itself a dataflow region (FINN+ before the attention frame overlap); with
+#: a dataflow top the head is a process of the top region and its processes run continuously
+#: across frames, each with its own drain gap.
 REGION_RESTART_GAP = 11
+#: idle cycles of the two matmul pipelines at every query-row boundary: the conditional
+#: stream read of the row's left-hand operand (``tc == 0``) breaks the flp pipeline. Measured
+#: on the output stream: one idle cycle per row with EmbFold 2 (QK4/QL4/KV4 and QK8/QL6/KV6),
+#: two with EmbFold 1 (QK16/QL64/KV64: rows of 16 iterations are 18 cycles apart).
+ROW_BUBBLE = {1: 2}
+ROW_BUBBLE_DEFAULT = 1
+
+
+def _top_is_dataflow(node: HWCustomOp) -> bool:
+    """Whether the generated top function is a dataflow region (frames overlap inside)."""
+    xml = csynth_report_path(node)
+    if xml is None or not xml.is_file():
+        return False
+    return parse_pipeline_type(xml)[0] == "dataflow"
 
 
 def _find(funcs: dict[str, HLSLoopParams], reads: set[str], writes: set[str]) -> HLSLoopParams:
@@ -130,6 +155,9 @@ def attention_hls(
     qlen, kvlen = node.get_nodeattr("QLen"), node.get_nodeattr("KVLen")
     embfold, seqfold = node.get_nodeattr("EmbFold"), node.get_nodeattr("SeqFold")
     funcs = hls_function_params(node)
+    overlap = _top_is_dataflow(node)
+    pipo = PIPO_BUFFERS_OVERLAP if overlap else PIPO_BUFFERS
+    row_bubble = ROW_BUBBLE.get(embfold, ROW_BUBBLE_DEFAULT)
 
     def e(name: str) -> str:
         return f"{prefix}.{name}"
@@ -153,14 +181,16 @@ def attention_hls(
         # buffer hand-over (full: filled buffers, free: released ones)
         fifos += [
             (full, None, 0, TILER_LOOP_GAP, 0),
-            (free, None, PIPO_BUFFERS, TILER_RESTART_GAP, 0),
+            (free, None, pipo, TILER_RESTART_GAP, 0),
             (tiles, embfold * seqfold, 0, HLS_FIFO_LF, HLS_FIFO_LB),
         ]
 
     # ---- QK matmul
     qk_out = e("qk_out")
     its: list[Iteration] = []
-    for _ in range(qlen):
+    for row in range(qlen):
+        if row:
+            its += [((), ())] * row_bubble
         for tc in range(seqfold):
             for tr in range(embfold):
                 rd = (q_in, e("k_tiles")) if tc == 0 else (e("k_tiles"),)
@@ -204,7 +234,9 @@ def attention_hls(
 
     # ---- AV matmul
     its_av: list[Iteration] = []
-    for _ in range(qlen):
+    for row in range(qlen):
+        if row:
+            its_av += [((), ())] * row_bubble
         for tc in range(embfold):
             for tr in range(seqfold):
                 rd = (sm_out, e("v_tiles")) if tc == 0 else (e("v_tiles"),)
@@ -230,35 +262,37 @@ def attention_hls(
                 name, writer[name], reader[name], depth=depth, lf=lf, lb=lb, initial_tokens=init
             )
         )
-    # ---- per-frame invocation: every process restarts after the region completed, i.e.
-    # after the last output handshake (the top function calls the region once per frame)
-    av_port = writer[out]
-    port_chain = next(c for c in chains if c.name == av_port)
-    restarts = []
-    for m in models:
-        r_chain = next(c for c in m.chains if c.name.endswith((".R", ".RW")))
-        name = f"{r_chain.name}.restart"
-        restarts.append(name)
-        r_chain.reads[0] = (*r_chain.reads[0], name)
-        edges.append(
-            FIFOEdge(
-                name,
-                av_port,
-                r_chain.name,
-                depth=None,
-                lf=REGION_RESTART_GAP,
-                lb=0,
-                initial_tokens=1,
+    # ---- per-frame invocation (top not a dataflow region): every process restarts after
+    # the region completed, i.e. after the last output handshake (the top function calls the
+    # region once per frame). With a dataflow top the processes overlap across frames.
+    if not overlap:
+        av_port = writer[out]
+        port_chain = next(c for c in chains if c.name == av_port)
+        restarts = []
+        for m in models:
+            r_chain = next(c for c in m.chains if c.name.endswith((".R", ".RW")))
+            name = f"{r_chain.name}.restart"
+            restarts.append(name)
+            r_chain.reads[0] = (*r_chain.reads[0], name)
+            edges.append(
+                FIFOEdge(
+                    name,
+                    av_port,
+                    r_chain.name,
+                    depth=None,
+                    lf=REGION_RESTART_GAP,
+                    lb=0,
+                    initial_tokens=1,
+                )
             )
-        )
-    port_chain.writes[-1] = (*port_chain.writes[-1], *restarts)
+        port_chain.writes[-1] = (*port_chain.writes[-1], *restarts)
     by_input = {q_in: reader[q_in], k_in: reader[k_in], v_in: reader[v_in]}
     return OpModel(
         chains=chains,
         internal_edges=edges,
         inputs=[by_input[q_in], by_input[k_in], by_input[v_in]],
         outputs=[writer[out]],
-        notes={"processes": [m.notes for m in models]},
+        notes={"overlap": overlap, "processes": [m.notes for m in models]},
     )
 
 
