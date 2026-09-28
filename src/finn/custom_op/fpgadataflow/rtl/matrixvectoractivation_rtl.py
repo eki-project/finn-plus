@@ -342,13 +342,15 @@ class MVAU_rtl(MVAU, RTLBackend):
         estimate as long as the solver has not run for this node)."""
         if not self._is_da_mode():
             return 0
+        # the flow-control bracket keeps an SRL output queue of one LUT per output bit
+        queue_luts = self.get_nodeattr("MH") * self.get_output_datatype().bitwidth()
         da_cost = self.get_nodeattr("da_cost")
         if da_cost > 0:
-            return int(math.ceil(da_cost * DA_LUT_PER_COST_BIT))
+            return int(math.ceil(da_cost * DA_LUT_PER_COST_BIT)) + queue_luts
         W = self.get_input_datatype(1).bitwidth()
         A = self.get_input_datatype(0).bitwidth()
         weights = self.get_nodeattr("MW") * self.get_nodeattr("MH")
-        return int(math.ceil(DA_FALLBACK_LUT_PER_WEIGHT_BIT * weights * (W + A)))
+        return int(math.ceil(DA_FALLBACK_LUT_PER_WEIGHT_BIT * weights * (W + A))) + queue_luts
 
     def dsp_estimation(self, fpgapart):
         """Estimate the number of DSPs used for the multiplications based on the DSP block type."""

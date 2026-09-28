@@ -54,8 +54,8 @@ specialize/folding config files:
 | `da_ternary_fuse` | 1 | fuse adder pairs into three-input adders (alkaid's default flow) |
 | `da_cost`, `da_adders`, `da_depth`, `da_latency_cycles` | – | written by the code generator: solver cost (active adder result bits), adder count, combinational depth and pipeline latency in cycles |
 
-`lut_estimation` returns `da_cost * DA_LUT_PER_COST_BIT` once the solver has
-run (`PrepareIP`, or `MVAU_rtl.prepare_da_solution(model, clk)`), before that a
+`lut_estimation` returns `da_cost * DA_LUT_PER_COST_BIT` plus one LUT per output
+bit for the SRL output queue once the solver has run (`PrepareIP`, or `MVAU_rtl.prepare_da_solution(model, clk)`), before that a
 coarse estimate of one LUT per weight and operand bit. `dsp_estimation` is 0.
 
 ## Files
