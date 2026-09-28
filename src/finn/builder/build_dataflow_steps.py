@@ -137,6 +137,7 @@ from finn.transformation.fpgadataflow.insert_dwc import InsertDWC
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.fpgadataflow.insert_iodma import InsertIODMA
 from finn.transformation.fpgadataflow.insert_tlastmarker import InsertTLastMarker
+from finn.transformation.fpgadataflow.ip_cache import RestoreCachedIPs, StoreGeneratedIPs
 from finn.transformation.fpgadataflow.loop_rolling import LoopExtraction, LoopRolling
 from finn.transformation.fpgadataflow.make_driver import (
     MakeCPPDriver,
@@ -604,7 +605,9 @@ def step_hw_codegen(
     model: ModelWrapper, cfg: DataflowBuildConfig, parent_node: str | None = None
 ) -> ModelWrapper:
     """Generate Vitis HLS code to prepare HLSBackend nodes for IP generation.
-    And fills RTL templates for RTLBackend nodes."""
+    And fills RTL templates for RTLBackend nodes.
+    If IP caching is enabled, previously generated IPs are restored from the cache first,
+    so that only the remaining nodes go through code generation (and HLS synthesis)."""
     model = model.transform(GiveUniqueNodeNamesRecursive(prefix=parent_node))
     if cfg.debug_fifo:
         # Let the FIFO gauge (behavioral FIFO model used with verify_rtlsim_behavioral) log
@@ -619,6 +622,12 @@ def step_hw_codegen(
                 node_inst.set_nodeattr(
                     "debug_log_path", str(fifo_log_dir / f"{prefix}{node.name}.log")
                 )
+    if cfg.use_ip_cache:
+        model = model.transform(
+            RestoreCachedIPs(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period()),
+            apply_to_subgraphs=True,
+            use_preorder_traversal=False,
+        )
     model = model.transform(
         PrepareIP(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period()),
         apply_to_subgraphs=True,
@@ -632,8 +641,14 @@ def step_hw_ipgen(
     model: ModelWrapper, cfg: DataflowBuildConfig, parent_node: str | None = None
 ) -> ModelWrapper:
     """Run Vitis HLS synthesis on generated code for HLSBackend nodes,
-    in order to generate IP blocks. For RTL nodes this step does not do anything."""
+    in order to generate IP blocks. For RTL nodes this step does not do anything.
+    If IP caching is enabled, all newly generated IPs (HLS and RTL) are added to the cache."""
     model = model.transform(HLSSynthIP(cfg._resolve_fpga_part()))
+    if cfg.use_ip_cache:
+        # Store before ReplaceVerilogRelPaths, so that cached entries stay relocatable
+        model = model.transform(
+            StoreGeneratedIPs(cfg._resolve_fpga_part(), cfg._resolve_hls_clk_period())
+        )
     model = model.transform(ReplaceVerilogRelPaths())
 
     # Emit resource consumption reports

@@ -32,7 +32,7 @@ from finn.interface.interface_utils import (
 )
 from finn.interface.manage_deps import DependencyUpdater
 from finn.interface.manage_tests import run_test
-from finn.interface.settings import FINNSettings
+from finn.interface.settings import IP_CACHE_DISABLED_VALUES, FINNSettings
 from finn.util.exception import FINNUserError, FINNValidationError
 from finn.util.multiprocessing import configure_start_method
 
@@ -88,6 +88,29 @@ def finn_build_dir(f: Callable) -> Callable[..., Any]:
         default="",
         type=NullablePath(),
     )(f)
+
+
+def finn_ip_cache(f: Callable) -> Callable[..., Any]:
+    """Add a click parameter named --ip-cache-path (-c) (finn_ip_cache) that defaults to
+    None if the param is empty, and a path otherwise."""
+    return click.option(
+        "--ip-cache-path",
+        "-c",
+        "finn_ip_cache",
+        help="Directory of the IP cache shared between builds (FINN_IP_CACHE setting). "
+        "Pass 'none' to disable IP caching for this run.",
+        default="",
+        type=NullablePath(),
+    )(f)
+
+
+def _resolve_ip_cache_arg(finn_ip_cache: Path | None) -> Path | str | None:
+    """Turn the --ip-cache-path value into an absolute path, "" (disabled) or None (not given)."""
+    if finn_ip_cache is None:
+        return None
+    if str(finn_ip_cache).strip().lower() in IP_CACHE_DISABLED_VALUES:
+        return ""
+    return finn_ip_cache.expanduser().absolute()
 
 
 def flow_config(f: Callable) -> Callable[..., Any]:
@@ -347,6 +370,14 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     )
     console.clear()
     console.print(
+        "[bold]FINN_IP_CACHE[/bold] points to the IP cache directory, in which generated "
+        "IPs are stored to be re-used by later builds. If relative, this path is "
+        "searched for from the root of the used FINN repository / installation. "
+        "Enter 'none' to disable IP caching.\n"
+    )
+    settings.finn_ip_cache = Prompt.ask("FINN_IP_CACHE", default="FINN_IP_CACHE")
+    console.clear()
+    console.print(
         "[bold]NUM_DEFAULT_WORKERS[/bold] specifies the number of "
         "workers to use in multithreaded contexts. By default "
         "if not set, this is set to 75% of your available CPU cores.\n"
@@ -386,6 +417,7 @@ def run_setup_wizard(settings: FINNSettings) -> None:
     console.print(f"[bold]FINN_BUILD_DIR[/bold]: {settings.finn_build_dir}")
     console.print(f"[bold]FINN_DEPS[/bold]: {settings.finn_deps}")
     console.print(f"[bold]FINN_DEPS_DEFINITIONS[/bold]: {settings.finn_deps_definitions}")
+    console.print(f"[bold]FINN_IP_CACHE[/bold]: {settings.finn_ip_cache or 'disabled'}")
     console.print(f"[bold]NUM_DEFAULT_WORKERS[/bold]: {settings.num_default_workers}")
     console.print(
         f"[bold]AUTOMATIC_DEPENDENCY_UPDATES[/bold]: {settings.automatic_dependency_updates}"
@@ -511,6 +543,7 @@ def prepare_finn(
     status(f"{'[FINN BUILD DIRECTORY]':<32} {settings.finn_build_dir!s:<50}")
     status(f"{'[DEPENDENCY PATH]':<32} {settings.finn_deps!s:<50}")
     status(f"{'[DEPENDENCY DEFINITIONS PATH]':<32} {settings.finn_deps_definitions!s:<50}")
+    status(f"{'[IP CACHE]':<32} {settings.finn_ip_cache or 'disabled'!s:<50}")
     status(f"{'[NUM WORKERS]':<32} {settings.num_default_workers!s:<50}")
     finn.util.settings._SETTINGS = settings  # noqa
 
@@ -627,6 +660,7 @@ def get_function_args() -> dict:
         "finn_deps",
         "finn_deps_definitions",
         "finn_build_dir",
+        "finn_ip_cache",
         "num_default_workers",
         "flow_config",
     ]
@@ -667,6 +701,7 @@ def _build(
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     finn_build_dir: Path | None,
+    finn_ip_cache: Path | None,
     verify_input: Path | None,
     verify_output: Path | None,
     num_default_workers: int,
@@ -696,6 +731,7 @@ def _build(
         finn_deps = finn_deps.expanduser().absolute()
     if finn_deps_definitions is not None:
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
+    finn_ip_cache = _resolve_ip_cache_arg(finn_ip_cache)
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
@@ -805,6 +841,7 @@ def _build(
 @finn_deps
 @finn_deps_definitions
 @finn_build_dir
+@finn_ip_cache
 @flow_config
 @model
 @verify_input
@@ -830,6 +867,7 @@ def build(
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     finn_build_dir: Path | None,
+    finn_ip_cache: Path | None,
     verify_input: Path | None,
     verify_output: Path | None,
     num_default_workers: int,
@@ -847,6 +885,7 @@ def build(
         finn_deps,
         finn_deps_definitions,
         finn_build_dir,
+        finn_ip_cache,
         verify_input,
         verify_output,
         num_default_workers,
@@ -864,6 +903,7 @@ def build(
 @finn_deps
 @finn_deps_definitions
 @finn_build_dir
+@finn_ip_cache
 @num_default_workers
 @skip_dep_update
 @batch
@@ -876,6 +916,7 @@ def run(
     finn_deps: Path | None,
     finn_deps_definitions: Path | None,
     finn_build_dir: Path | None,
+    finn_ip_cache: Path | None,
     skip_dep_update: bool,
     num_workers: int,
     script: Path,
@@ -893,6 +934,7 @@ def run(
         finn_deps = finn_deps.expanduser().absolute()
     if finn_deps_definitions is not None:
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
+    finn_ip_cache = _resolve_ip_cache_arg(finn_ip_cache)
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
@@ -954,7 +996,23 @@ def auto(batch: bool) -> None:
         else:
             model = potential_models[0]
     status(f"Trying to use {model} as a model file\n\n")
-    _build(None, False, None, None, None, None, None, -1, False, "", "", batch, flow_config, model)
+    _build(
+        None,
+        False,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        -1,
+        False,
+        "",
+        "",
+        batch,
+        flow_config,
+        model,
+    )
 
 
 @click.group(help="Run setup wizards for various tasks.")
@@ -992,6 +1050,7 @@ def settings_wizard() -> None:
 @finn_deps
 @finn_deps_definitions
 @finn_build_dir
+@finn_ip_cache
 @num_default_workers
 @batch
 def bench(
@@ -1000,6 +1059,7 @@ def bench(
     finn_deps_definitions: Path | None,
     num_default_workers: int,
     finn_build_dir: Path | None,
+    finn_ip_cache: Path | None,
     batch: bool,
 ) -> None:
     """Run a benchmark."""
@@ -1012,6 +1072,7 @@ def bench(
         finn_deps = finn_deps.expanduser().absolute()
     if finn_deps_definitions is not None:
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
+    finn_ip_cache = _resolve_ip_cache_arg(finn_ip_cache)
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=True,
@@ -1034,6 +1095,7 @@ def bench(
 @finn_deps
 @finn_deps_definitions
 @finn_build_dir
+@finn_ip_cache
 @num_default_workers
 @skip_dep_update
 @click.option(
@@ -1064,6 +1126,7 @@ def test(
     skip_dep_update: bool,
     num_test_workers: str,
     finn_build_dir: Path | None,
+    finn_ip_cache: Path | None,
     batch: bool,
 ) -> None:
     """Run a selected subset of the FINN(+) testsuite."""
@@ -1076,6 +1139,11 @@ def test(
         finn_deps_definitions = finn_deps_definitions.expanduser().absolute()
     if not finn_build_dir.exists():
         finn_build_dir.mkdir(parents=True, exist_ok=True)
+    # Tests must not share IPs with (or between) other runs unless explicitly requested,
+    # so IP caching is disabled by default for the test suite.
+    finn_ip_cache = _resolve_ip_cache_arg(finn_ip_cache)
+    if finn_ip_cache is None:
+        finn_ip_cache = ""
     settings = FINNSettings.init(
         auto_set_environment_vars=True,
         automatic_dependency_updates=not skip_dep_update,
