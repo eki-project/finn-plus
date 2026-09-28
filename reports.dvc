@@ -1,0 +1,6 @@
+outs:
+- md5: 8a051752e4871ef9a1bb2c319517ceca.dir
+  size: 2283322
+  nfiles: 24
+  hash: md5
+  path: reports
