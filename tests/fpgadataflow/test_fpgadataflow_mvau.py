@@ -37,6 +37,7 @@ from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
 from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.util.basic import (
     calculate_matvec_accumulator_range,
     calculate_signed_dot_prod_range,
@@ -1247,6 +1248,7 @@ def test_fpgadataflow_rtl_mvau_da_with_thresholding(idt_wdt, n_da):
     for name, (val, dt) in inits.items():
         model.set_initializer(name, val)
         model.set_tensor_datatype(name, dt)
+    model = model.transform(InferShapes())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
     model = model.transform(InferDataTypes())
