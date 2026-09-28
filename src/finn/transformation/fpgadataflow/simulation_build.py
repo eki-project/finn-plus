@@ -637,8 +637,16 @@ class SimulationBuilder:
                     params["rhs_style"] = "const"
                     params_changed = True
             if target_node.op_type.startswith("MVAU"):
-                params["mem_mode"] = "internal_decoupled"
-                params_changed = True
+                # Stream the weights instead of embedding them in HLS, except for the
+                # distributed-arithmetic RTL core, which only exists with embedded
+                # weights and simulates exactly as in the full design.
+                is_da_core = (
+                    target_node.op_type == "MVAU_rtl"
+                    and params.get("mem_mode") == "internal_embedded"
+                )
+                if not is_da_core:
+                    params["mem_mode"] = "internal_decoupled"
+                    params_changed = True
         if "mlo_max_iter" in params:
             del params["mlo_max_iter"]
             params_changed = True

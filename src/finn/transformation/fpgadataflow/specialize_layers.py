@@ -67,6 +67,17 @@ def _determine_impl_style(node, fpgapart, model):
     if impl_style == "":
         if rtl_variant:
             if optype == "MVAU":
+                if node_inst.get_nodeattr("mem_mode") == "internal_embedded":
+                    # the RTL variant with embedded weights is the distributed-arithmetic
+                    # core, which is opt-in (preferred_impl_style="rtl") for now
+                    da_possible, _ = _mvu_rtl_da_possible(node, model)
+                    if da_possible:
+                        log.info(
+                            f"{node.name}: mem_mode=internal_embedded qualifies for the "
+                            "distributed-arithmetic RTL MVU; set preferred_impl_style to "
+                            "'rtl' (with SIMD=MW, PE=MH) to use it instead of the HLS MVAU."
+                        )
+                    return "hls"
                 idt = node_inst.get_input_datatype(0)
                 wdt = node_inst.get_input_datatype(1)
                 inp_width_fit = idt.bitwidth() >= 4
@@ -134,6 +145,16 @@ def _determine_impl_style(node, fpgapart, model):
             )
     elif impl_style == "rtl":
         if optype == "MVAU":
+            if node_inst.get_nodeattr("mem_mode") == "internal_embedded":
+                da_possible, reason = _mvu_rtl_da_possible(node, model)
+                if da_possible:
+                    return "rtl"
+                raise FINNUserError(
+                    f"{node.name}: preferred_impl_style='rtl' with mem_mode="
+                    "'internal_embedded' selects the distributed-arithmetic RTL MVU, "
+                    f"but {reason}. Fix the configuration or use preferred_impl_style="
+                    "'hls' for the HLS MVAU with embedded weights."
+                )
             if _mvu_rtl_possible(node, fpgapart, model):
                 return "rtl"
             warn_str = """There is no RTL variant for %s. The node will automatically be
@@ -217,6 +238,44 @@ def _determine_impl_style(node, fpgapart, model):
         f"""Invalid value for attribute preferred_impl_style! Is currently set to: {impl_style}
             has to be set to one of the following value ("hls", "rtl")"""
     )
+
+
+def _mvu_rtl_da_possible(n, model):
+    """Check the folding-independent requirements of the distributed-arithmetic
+    RTL MVU (MVAU_rtl with mem_mode=internal_embedded, constant weights compiled
+    into a pipelined adder graph).
+
+    Returns (True, "") or (False, reason). The remaining requirement, SIMD=MW and
+    PE=MH, depends on the folding configuration that is applied after
+    specialization and is therefore checked at code generation time.
+    """
+    node_inst = getCustomOp(n)
+    checks = [
+        (node_inst.get_nodeattr("noActivation") == 1, "it requires standalone thresholds"),
+        (node_inst.get_nodeattr("binaryXnorMode") == 0, "it does not support binaryXnorMode"),
+        (model.get_initializer(n.input[1]) is not None, "it requires static weights"),
+        (
+            node_inst.get_nodeattr("runtime_writeable_weights") == 0,
+            "it does not support runtime_writeable_weights",
+        ),
+        (node_inst.get_nodeattr("resType") != "dsp", "it is LUT-only (resType='dsp' set)"),
+        (node_inst.get_nodeattr("TH") == 1, "it does not support tiling (TH>1)"),
+        (node_inst.get_nodeattr("mlo_max_iter") == 0, "it cannot stream per-iteration weights"),
+        (node_inst.get_nodeattr("pumpedMemory") == 0, "it does not support clock pumping"),
+        (
+            node_inst.get_input_datatype(0).is_integer()
+            and node_inst.get_input_datatype(1).is_integer(),
+            "it supports integer datatypes only",
+        ),
+        (
+            node_inst.get_input_datatype(1).bitwidth() <= 24,
+            "it supports weights of at most 24 bits",
+        ),
+    ]
+    for ok, reason in checks:
+        if not ok:
+            return False, reason
+    return True, ""
 
 
 def _mvu_rtl_possible(n, fpgapart, model):
