@@ -20,3 +20,8 @@ pip install pynqmetadata==0.1.5
 # Installs the driver together with its dependencies (numpy, grpcio, bitstring, qonnx,
 # click, matplotlib, h5py, pillow, finn-dataset-loading).
 pip install "$repo_root/driver"
+
+# pytest is needed to run the driver's own unit tests (driver/tests) on the board. They cover
+# the parts of the driver that do not need an accelerator, most notably the dataset validation
+# loop, whose loader API differs between the installed finn-dataset-loading versions.
+pip install pytest

@@ -12,6 +12,7 @@ steps:
   - finn.builder.custom_step_library.resnet.step_resnet50_tidy # Custom step
   - finn.builder.custom_step_library.resnet.step_resnet50_streamline # Custom step
   - finn.builder.custom_step_library.resnet.step_resnet50_convert_to_hw # Custom step
+  - step_minimize_bit_width_initial
   - step_create_dataflow_partition
   - step_specialize_layers
   - step_apply_folding_config

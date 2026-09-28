@@ -198,7 +198,7 @@ class RTLBackend(HWCustomOp, ABC):
                     )
                 inp_val = context[inp]
                 # Make sure the input has the right container datatype
-                if inp_val.dtype != np.float32:
+                if inp_val.dtype not in [np.float32, np.float16]:
                     # Issue a warning to make the user aware of this type-cast
                     log.warning(
                         f"{node.name}: Changing input container datatype from "

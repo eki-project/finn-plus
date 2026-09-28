@@ -14,11 +14,11 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_0": {
+  "MVAU_hls_0": {
     "PE": 1,
     "SIMD": 27,
     "ram_style": "auto",
-    "resType": "auto",
+    "resType": "lut",
     "mem_mode": "internal_decoupled",
     "runtime_writeable_weights": 0
   },
@@ -39,11 +39,11 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_1": {
+  "MVAU_hls_1": {
     "PE": 1,
     "SIMD": 288,
     "ram_style": "auto",
-    "resType": "auto",
+    "resType": "lut",
     "mem_mode": "internal_decoupled",
     "runtime_writeable_weights": 0
   },
@@ -61,11 +61,11 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_2": {
+  "MVAU_hls_2": {
     "PE": 1,
     "SIMD": 288,
     "ram_style": "auto",
-    "resType": "auto",
+    "resType": "lut",
     "mem_mode": "internal_decoupled",
     "runtime_writeable_weights": 0
   },
@@ -97,11 +97,11 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_3": {
+  "MVAU_hls_3": {
     "PE": 1,
     "SIMD": 288,
     "ram_style": "auto",
-    "resType": "auto",
+    "resType": "lut",
     "mem_mode": "internal_decoupled",
     "runtime_writeable_weights": 0
   },
@@ -119,11 +119,11 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_4": {
+  "MVAU_hls_4": {
     "PE": 1,
     "SIMD": 288,
     "ram_style": "auto",
-    "resType": "auto",
+    "resType": "lut",
     "mem_mode": "internal_decoupled",
     "runtime_writeable_weights": 0
   },
@@ -155,7 +155,7 @@
   "FMPadding_rtl_5": {
     "SIMD": 1
   },
-  "MVAU_rtl_5": {
+  "MVAU_rtl_0": {
     "PE": 1,
     "SIMD": 32,
     "ram_style": "auto",
@@ -174,7 +174,7 @@
     "depth_trigger_uram": 0,
     "depth_trigger_bram": 0
   },
-  "MVAU_rtl_6": {
+  "MVAU_rtl_1": {
     "PE": 1,
     "SIMD": 192,
     "ram_style": "auto",
@@ -196,7 +196,7 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_7": {
+  "MVAU_rtl_2": {
     "PE": 1,
     "SIMD": 288,
     "ram_style": "auto",
@@ -232,7 +232,7 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_8": {
+  "MVAU_rtl_3": {
     "PE": 1,
     "SIMD": 288,
     "ram_style": "auto",
@@ -254,7 +254,7 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_9": {
+  "MVAU_rtl_4": {
     "PE": 1,
     "SIMD": 288,
     "ram_style": "auto",
@@ -290,7 +290,7 @@
   "FMPadding_rtl_9": {
     "SIMD": 1
   },
-  "MVAU_rtl_10": {
+  "MVAU_rtl_5": {
     "PE": 1,
     "SIMD": 16,
     "ram_style": "auto",
@@ -309,7 +309,7 @@
     "depth_trigger_uram": 0,
     "depth_trigger_bram": 0
   },
-  "MVAU_rtl_11": {
+  "MVAU_rtl_6": {
     "PE": 1,
     "SIMD": 96,
     "ram_style": "auto",
@@ -331,7 +331,7 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_12": {
+  "MVAU_rtl_7": {
     "PE": 1,
     "SIMD": 288,
     "ram_style": "auto",
@@ -367,7 +367,7 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_13": {
+  "MVAU_rtl_8": {
     "PE": 1,
     "SIMD": 288,
     "ram_style": "auto",
@@ -389,7 +389,7 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_14": {
+  "MVAU_rtl_9": {
     "PE": 1,
     "SIMD": 288,
     "ram_style": "auto",
@@ -425,7 +425,7 @@
   "FMPadding_rtl_13": {
     "SIMD": 1
   },
-  "MVAU_rtl_15": {
+  "MVAU_rtl_10": {
     "PE": 1,
     "SIMD": 16,
     "ram_style": "auto",
@@ -444,7 +444,7 @@
     "depth_trigger_uram": 0,
     "depth_trigger_bram": 0
   },
-  "MVAU_rtl_16": {
+  "MVAU_rtl_11": {
     "PE": 1,
     "SIMD": 192,
     "ram_style": "auto",
@@ -466,13 +466,13 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_17": {
+  "MVAU_rtl_12": {
     "PE": 1,
     "SIMD": 288,
-    "ram_style": "distributed",
+    "ram_style": "ultra",
     "resType": "dsp",
     "mem_mode": "internal_decoupled",
-    "runtime_writeable_weights": 0
+    "runtime_writeable_weights": 1
   },
   "Thresholding_rtl_24": {
     "PE": 1,
@@ -502,13 +502,13 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_18": {
+  "MVAU_rtl_13": {
     "PE": 1,
-    "SIMD": 384,
-    "ram_style": "distributed",
+    "SIMD": 288,
+    "ram_style": "ultra",
     "resType": "dsp",
     "mem_mode": "internal_decoupled",
-    "runtime_writeable_weights": 0
+    "runtime_writeable_weights": 1
   },
   "Thresholding_rtl_26": {
     "PE": 1,
@@ -524,13 +524,13 @@
     "parallel_window": 0,
     "ram_style": "distributed"
   },
-  "MVAU_rtl_19": {
+  "MVAU_rtl_14": {
     "PE": 1,
-    "SIMD": 384,
-    "ram_style": "distributed",
+    "SIMD": 288,
+    "ram_style": "ultra",
     "resType": "dsp",
     "mem_mode": "internal_decoupled",
-    "runtime_writeable_weights": 0
+    "runtime_writeable_weights": 1
   },
   "Thresholding_rtl_27": {
     "PE": 1,
@@ -557,7 +557,7 @@
   "Pool_hls_0": {
     "PE": 1
   },
-  "MVAU_rtl_20": {
+  "MVAU_rtl_15": {
     "PE": 1,
     "SIMD": 1,
     "ram_style": "auto",

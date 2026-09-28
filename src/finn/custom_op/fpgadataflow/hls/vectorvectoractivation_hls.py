@@ -52,7 +52,7 @@ class VVAU_hls(VVAU, HLSBackend):
         my_attrs.update(HLSBackend.get_nodeattr_types(self))
         return my_attrs
 
-    def lut_estimation(self):
+    def lut_estimation(self, fpgapart):
         """Calculates resource estimations for LUTs based on:
         - FINN-R: An End-to-End Deep-Learning Framework for Fast
         Exploration of Quantized Neural Networks
@@ -331,7 +331,6 @@ class VVAU_hls(VVAU, HLSBackend):
         if dtype == DataType["BIPOLAR"]:
             # use binary for bipolar storage
             dtype = DataType["BINARY"]
-        elem_bits = dtype.bitwidth()
         packed_bits = self.get_instream_width(0)
         packed_hls_type = "ap_uint<%d>" % packed_bits
         elem_hls_type = dtype.get_hls_datatype_str()
@@ -340,11 +339,10 @@ class VVAU_hls(VVAU, HLSBackend):
         self.code_gen_dict["$READNPYDATA$"] = []
         # note: the innermost dim is reversed for the input
         self.code_gen_dict["$READNPYDATA$"].append(
-            'npy2apintstream<%s, %s, %d, %s>("%s", in0_V, false);'
+            'npy2apintstream<%s, %s, %s>("%s", in0_V, false);'
             % (
                 packed_hls_type,
                 elem_hls_type,
-                elem_bits,
                 npy_type,
                 npy_in,
             )
@@ -353,7 +351,6 @@ class VVAU_hls(VVAU, HLSBackend):
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "internal_decoupled" or mem_mode == "external":
             wdt = self.get_input_datatype(1)
-            elem_bits = wdt.bitwidth()
             packed_bits = self.get_instream_width(1)
             packed_hls_type = "ap_uint<%d>" % packed_bits
             elem_hls_type = wdt.get_hls_datatype_str()
@@ -361,11 +358,10 @@ class VVAU_hls(VVAU, HLSBackend):
             npy_in = "%s/weights.npy" % code_gen_dir
 
             self.code_gen_dict["$READNPYDATA$"].append(
-                'npy2apintstream<%s, %s, %d, %s>("%s", in1_V, false, numReps);'
+                'npy2apintstream<%s, %s, %s>("%s", in1_V, false, numReps);'
                 % (
                     packed_hls_type,
                     elem_hls_type,
-                    elem_bits,
                     npy_type,
                     npy_in,
                 )
@@ -444,7 +440,6 @@ class VVAU_hls(VVAU, HLSBackend):
         if dtype == DataType["BIPOLAR"]:
             # use binary for bipolar storage
             dtype = DataType["BINARY"]
-        elem_bits = dtype.bitwidth()
         packed_bits = self.get_outstream_width()
         packed_hls_type = "ap_uint<%d>" % packed_bits
         elem_hls_type = dtype.get_hls_datatype_str()
@@ -455,11 +450,10 @@ class VVAU_hls(VVAU, HLSBackend):
 
         # note: the innermost dim is not reversed for the output
         self.code_gen_dict["$DATAOUTSTREAM$"] = [
-            'apintstream2npy<%s, %s, %d, %s>(out0_V, %s, "%s", false);'
+            'apintstream2npy<%s, %s, %s>(out0_V, %s, "%s", false);'
             % (
                 packed_hls_type,
                 elem_hls_type,
-                elem_bits,
                 npy_type,
                 shape_cpp_str,
                 npy_out,
@@ -525,44 +519,50 @@ class VVAU_hls(VVAU, HLSBackend):
                 "#pragma HLS ARRAY_PARTITION variable=threshs.m_thresholds complete dim=3"
             )
 
-    def minimize_weight_bit_width(self, model) -> BaseDataType:
+    def minimize_weight_bit_width(self, model, datatype_only=False) -> BaseDataType:
         """Minimize weight and threshold datatypes, with HLS-specific adjustments.
 
         The HLS implementation uses the threshold datatype for comparisons.
         When the threshold datatype is narrower than the accumulator datatype,
         accumulator values get truncated, which can cause incorrect results.
         To prevent this, ensure threshold datatype is at least as wide as
-        accumulator datatype."""
-        # First, call the base class implementation to minimize weight datatype
-        wdt = super().minimize_weight_bit_width(model)
+        accumulator datatype.
+
+        Parameters
+        ----------
+        datatype_only : bool
+            If True, skip value-based minimization. See base class.
+        """
+        wdt = super().minimize_weight_bit_width(model, datatype_only=datatype_only)
 
         # Minimize threshold datatype if node has thresholds (noActivation=0)
         if self.get_nodeattr("noActivation") == 0 and len(self.onnx_node.input) > 2:
             thresholds = model.get_initializer(self.onnx_node.input[2])
             acc_dt = self.get_accumulator_datatype()
+            current_tdt = model.get_tensor_datatype(self.onnx_node.input[2])
 
             # Only minimize if accumulator and thresholds are integer
-            if (
-                acc_dt.is_integer()
-                and model.get_tensor_datatype(self.onnx_node.input[2]).is_integer()
-            ):
-                # Use double precision for intermediate calculations to prevent overflow
-                min_threshold = np.float64(thresholds.min())
-                max_threshold = np.float64(thresholds.max())
-                # Check if accumulator datatype is signed
-                acc_is_signed = acc_dt.signed()
-                if min_threshold < 0:
-                    if abs(min_threshold) > max_threshold:
-                        tdt = DataType.get_smallest_possible(min_threshold)
-                    else:
-                        tdt = DataType.get_smallest_possible(-max_threshold - 1)
+            if acc_dt.is_integer() and current_tdt.is_integer():
+                if datatype_only:
+                    tdt = current_tdt
                 else:
-                    # If accumulator is signed,
-                    # use signed threshold datatype even if thresholds are positive
-                    if acc_is_signed:
-                        tdt = DataType.get_smallest_possible(-max_threshold - 1)
+                    # Use double precision for intermediate calculations to prevent overflow
+                    min_threshold = np.float64(thresholds.min())
+                    max_threshold = np.float64(thresholds.max())
+                    # Check if accumulator datatype is signed
+                    acc_is_signed = acc_dt.signed()
+                    if min_threshold < 0:
+                        if abs(min_threshold) > max_threshold:
+                            tdt = DataType.get_smallest_possible(min_threshold)
+                        else:
+                            tdt = DataType.get_smallest_possible(-max_threshold - 1)
                     else:
-                        tdt = DataType.get_smallest_possible(max_threshold)
+                        # If accumulator is signed,
+                        # use signed threshold datatype even if thresholds are positive
+                        if acc_is_signed:
+                            tdt = DataType.get_smallest_possible(-max_threshold - 1)
+                        else:
+                            tdt = DataType.get_smallest_possible(max_threshold)
 
                 # HLS-specific: ensure threshold datatype is at least as wide as
                 # accumulator datatype to prevent truncation during comparison

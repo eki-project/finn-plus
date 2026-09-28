@@ -79,8 +79,8 @@ from finn.transformation.streamline.absorb import (
     AbsorbAddIntoMultiThreshold,
     AbsorbConsecutiveTransposes,
     AbsorbMulIntoMultiThreshold,
+    AbsorbScalarBiasIntoMultiThreshold,
     AbsorbScalarMulAddIntoTopK,
-    AbsorbSignBiasIntoMultiThreshold,
     AbsorbTransposeIntoMultiThreshold,
     FactorOutMulSignMagnitude,
 )
@@ -145,7 +145,7 @@ def step_resnet_streamline(model: ModelWrapper, cfg: DataflowBuildConfig) -> Mod
     transform = ComposedTransformation(
         [
             MoveMulPastAdd(),
-            AbsorbSignBiasIntoMultiThreshold(),
+            AbsorbScalarBiasIntoMultiThreshold(),
         ]
     )
     model = model.transform(transform)

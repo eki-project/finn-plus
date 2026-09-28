@@ -38,7 +38,7 @@ FINN+ incorporates all upstream FINN development while adding significant enhanc
 - **Transformer/Attention Support** - Native support for modern transformer architectures
 - **Enhanced Streamlining** - Improved optimization pipeline for better performance
 - **Smart FIFO Sizing** - Automatic folding and FIFO-sizing with better algorithms
-- **QoR Estimation (WIP)** - Empirical quality-of-result estimation for design space exploration
+- **QoR Estimation** - Empirical quality-of-result estimation for design space exploration
 
 ### Backend Extensions
 
@@ -122,7 +122,7 @@ If you use a specific feature, please additionally cite the corresponding public
 Publication pending
 ```
 
-**Simulation-based FIFO-sizing:** Jungemann, Wintermann et al., "Accelerating Buffer Sizing for Dataflow Architectures: Control-Path-Driven Black-Box RTL Simulation in FINN" (FPL '26 Poster)
+**Simulation-based FIFO-sizing:** Jungemann, Wintermann et al., "Rapid Dataflow Buffer Sizing for DNNs via Parallel RTL Control-Path Simulation for FINN" (H2RC Workshop at SC '26)
 
 ```bibtex
 Publication pending
@@ -138,6 +138,19 @@ Publication pending
   year      = {2027},
   pages     = {34--50},
   doi       = {10.1007/978-3-032-29365-7_3}
+}
+```
+
+**Empirical QoR Estimation:** Jentzsch et al., ["Empirical QoR Estimation Flow for Fast Design Space Exploration of DNN Dataflow Accelerators"](https://doi.org/10.1109/ICFPT67023.2025.00044) (FPT '25 Poster)
+
+```bibtex
+@inproceedings{finn-qor,
+  author    = {Jentzsch, Felix and Platzner, Marco},
+  title     = {Empirical {QoR} Estimation Flow for Fast Design Space Exploration of {DNN} Dataflow Accelerators},
+  booktitle = {International Conference on Field Programmable Technology (ICFPT)},
+  year      = {2025},
+  pages     = {231-232},
+  doi       = {10.1109/ICFPT67023.2025.00044}
 }
 ```
 

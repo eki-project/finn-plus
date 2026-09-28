@@ -65,7 +65,7 @@ def test_batchnorm_to_affine_cnv_w1a1() -> None:
     input_tensor = np.load(cifar_path)["arr_0"].astype(np.float32)
     input_tensor = input_tensor / 255
     assert input_tensor.shape == (1, 3, 32, 32)
-    input_dict = {"0": input_tensor}
+    input_dict = {model.graph.input[0].name: input_tensor}
     output_dict = oxe.execute_onnx(model, input_dict)
     expected = output_dict[next(iter(output_dict.keys()))]
     new_model = model.transform(BatchNormToAffine())
@@ -96,6 +96,6 @@ def test_batchnorm_to_affine_lfc_w1a1() -> None:
     raw_i = get_data("qonnx.data", "onnx/mnist-conv/test_data_set_0/input_0.pb")
     assert raw_i is not None
     input_tensor = onnx.load_tensor_from_string(raw_i)
-    input_dict = {"0": nph.to_array(input_tensor)}
+    input_dict = {model.graph.input[0].name: nph.to_array(input_tensor)}
     assert oxe.compare_execution(model, new_model, input_dict)
     Path(export_onnx_path).unlink()

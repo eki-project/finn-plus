@@ -45,6 +45,29 @@ def run_doctests(num_workers: int) -> bool:
     return any(rc not in (0, 5) for rc in returncodes)
 
 
+# Per-test wall-clock limit (setup + call + teardown) for the CI variants. The slowest
+# tests of the suite take a bit over an hour, so this only ever fires for a test that
+# is genuinely stuck (e.g. a deadlocked simulation), instead of the whole job idling
+# until the Slurm time limit kills it without a report.
+CI_TEST_TIMEOUT_S = 3 * 3600
+
+# The "thread" method is required, not a preference: pytest-timeout's default ("signal")
+# raises the timeout from a SIGALRM handler, which the interpreter only runs between
+# bytecodes. A test blocked inside a C extension - which is where our hangs are, xsim
+# simulation via XSI - never returns to the interpreter, so the alarm is never handled
+# and the test hangs anyway. The timer thread dumps the stacks of all threads and kills
+# the process; under pytest-xdist that surfaces as a crashed worker, which the crash
+# rerun below picks up.
+# The stack dump pytest-timeout prints on the way out goes to the worker's captured
+# stderr and never reaches the job log under xdist, so pytest's own faulthandler
+# plugin dumps all threads a minute earlier through the C-level faulthandler on the
+# real stderr fd, which does show up in the log (and works inside C extensions too).
+CI_TEST_TIMEOUT_ARGS = (
+    f"-o faulthandler_timeout={CI_TEST_TIMEOUT_S - 60} "
+    f"--timeout {CI_TEST_TIMEOUT_S} --timeout-method=thread"
+)
+
+
 def run_test(variant: str, num_workers: str, args: str = "") -> None:
     """Run a given test variant with the given number of workers."""
     original_dir = Path.cwd()
@@ -94,7 +117,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
             subprocess.run(
                 shlex.split(
                     f"{sys.executable} -m pytest -v -m 'not "
-                    f"(vivado or slow or vitis or board or bnn_pynq or end2end)' "
+                    f"(vivado or slow or vitis or board or bnn_pynq or end2end or xslow)' "
                     f"--dist=loadfile -n {num_workers}",
                     posix=IS_POSIX,
                 )
@@ -103,9 +126,10 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
             subprocess.run(
                 shlex.split(
                     f"{sys.executable} -m pytest -q -rf --tb=short -m 'not "
-                    f"(vivado or slow or vitis or board or bnn_pynq or end2end)' "
+                    f"(vivado or slow or vitis or board or bnn_pynq or end2end or xslow)' "
                     f"--junitxml={ci_project_dir}/reports/quick.xml "
                     f"--html={ci_project_dir}/reports/quick.html "
+                    f"{CI_TEST_TIMEOUT_ARGS} "
                     f"--reruns 1 --dist worksteal -n {num_workers}",
                     posix=IS_POSIX,
                 )
@@ -194,9 +218,10 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
             test_1_process = subprocess.Popen(
                 shlex.split(
                     (
-                        f"{sys.executable} -m pytest -q -rf --tb=short "
+                        f"{sys.executable} -m pytest -q -rf --tb=short -m 'not xslow' "
                         f"--junitxml={main_xml} "
                         f"--html={main_html} "
+                        f"{CI_TEST_TIMEOUT_ARGS} "
                         f"--reruns 1 --dist worksteal -n {num_workers}"
                     ),
                     posix=IS_POSIX,
@@ -232,6 +257,7 @@ def run_test(variant: str, num_workers: str, args: str = "") -> None:
                     f"{sys.executable} -m pytest -v "
                     f"--junitxml={shlex.quote(crash_xml)} "
                     f"--html={shlex.quote(crash_html)} "
+                    f"{CI_TEST_TIMEOUT_ARGS} "
                     f"--reruns 3 -n 1 "
                     f"{nodeids}"
                 )

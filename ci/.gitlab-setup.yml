@@ -1,5 +1,19 @@
 # This file defines some basic scripts used to setup the FINN environment on the runner
 
+# Retry a job when the GitLab/runner infrastructure fails (runner lost, API errors, artifact
+# upload problems, ...). Script failures are deliberately not retried here: transient network
+# errors inside scripts are handled per command via ci/retry.sh instead.
+.retry_on_infra_failure:
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+      - unknown_failure
+      - scheduler_failure
+      - data_integrity_failure
+
 .n2_setup_general:
   before_script:
     - ml lang/Python/3.14.2-GCCcore-15.2.0

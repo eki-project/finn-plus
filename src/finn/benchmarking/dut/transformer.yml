@@ -15,6 +15,7 @@ steps:
   # operator for scaled dot-product attention
   - finn.builder.custom_step_library.transformer_adhoc.step_convert_to_hw
   # Default FINN partitioning and specialization steps
+  - step_minimize_bit_width_initial
   - step_create_dataflow_partition
   - step_specialize_layers
   # Customized adhoc folding configuration

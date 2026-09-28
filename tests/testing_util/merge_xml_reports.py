@@ -3,6 +3,7 @@
 - Identity key: (classname, name)
 - If same testcase appears multiple times:
   - PASSED always wins over FAILED/ERROR/SKIPPED
+  - A retried attempt (<rerun>, pytest-rerunfailures) never wins over a final outcome
   - Otherwise, latest file wins (input order).
 
 Usage:
@@ -18,7 +19,11 @@ from junitparser.junitparser import TestCase
 from pathlib import Path
 from typing import Literal
 
-TestStatus = Literal["passed", "failed", "skipped", "unknown"]
+TestStatus = Literal["passed", "failed", "skipped", "rerun", "unknown"]
+
+# Result children that pytest-rerunfailures writes for every attempt that was retried. Such an
+# entry describes an attempt that did not count, never the final outcome of the test.
+RERUN_TAGS = {"rerun", "flakyFailure", "flakyError"}
 TestKey = tuple[str, str]
 
 
@@ -43,23 +48,31 @@ def testcase_status(tc: TestCase) -> TestStatus:
     - passed: no result children
     - failed: contains <failure> or <error>
     - skipped: contains <skipped>
+    - rerun: contains only <rerun>/<flakyFailure>/<flakyError> (pytest-rerunfailures writes one
+      such testcase per retried attempt, next to the testcase holding the final outcome)
     - unknown: any other non-empty result shape
 
     Args:
         tc: TestCase object.
 
     Returns:
-        One of: "passed", "failed", "skipped", "unknown".
+        One of: "passed", "failed", "skipped", "rerun", "unknown".
     """
-    result_items = tc.result
-    if not result_items:
+    # Look at the raw children: junitparser's `result` only knows failure/error/skipped and
+    # would report a rerun attempt as having no result, i.e. as passed.
+    tags = {child.tag for child in tc._elem}  # noqa: SLF001
+    tags.discard("system-out")
+    tags.discard("system-err")
+    tags.discard("properties")
+    if not tags:
         return "passed"
 
-    tags = {item._tag for item in result_items}  # noqa: SLF001
     if "failure" in tags or "error" in tags:
         return "failed"
     if "skipped" in tags:
         return "skipped"
+    if tags <= RERUN_TAGS:
+        return "rerun"
     return "unknown"
 
 
@@ -69,7 +82,8 @@ def should_replace(existing_tc: TestCase, new_tc: TestCase) -> bool:
     Priority:
     1) PASSED always wins over non-passed.
     2) If existing is passed, never replace with non-passed.
-    3) If neither side is passed, latest file wins (replace with new).
+    3) A rerun attempt never replaces a final outcome, and any final outcome replaces it.
+    4) If neither side is passed, latest file wins (replace with new).
 
     Args:
         existing_tc: Previously stored testcase for the same key.
@@ -85,6 +99,8 @@ def should_replace(existing_tc: TestCase, new_tc: TestCase) -> bool:
         return False
     if new_status == "passed":
         return True
+    if new_status == "rerun":
+        return old_status == "rerun"  # keep the final outcome, refresh a mere attempt
     return True  # latest wins if no pass involved
 
 

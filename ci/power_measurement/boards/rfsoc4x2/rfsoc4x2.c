@@ -260,6 +260,12 @@ int initialize() {
 
         unsigned int calibration_value = calculateCalibration(sensors[i].current_lsb, sensors[i].resistor_shunt);
         writeData(fdi2c, sensors[i].address, REG_CAL, calibration_value);
+
+        //also set configuration register to average over more samples (cf. INA226 setting of the rfsoc2x2)
+        // BRNG = 32 V, PG = /8 (+-320 mV) (chip defaults), BADC = SADC = 128 samples (68.1 ms), mode = "Shunt and Bus, Continuous"
+        int cfg_value = 0b0011111111111111;
+        writeData(fdi2c, sensors[i].address, REG_CONFIG, cfg_value);
+
         close(fdi2c);
     }
     printf("[I2C Driver] Calibrated %d INA220 sensors.\n", NUM_OF_RAILS);

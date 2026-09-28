@@ -29,6 +29,14 @@ class ExperimentManager:
         self._driver_info = config["driver_information"]
         self._experiment_info = config["experiment_information"]
 
+        # The build flow places the external/runtime-writable weight files next to
+        # settings.json. The driver's default for runtime_weight_dir is a path relative to the
+        # working directory, which is the CI checkout here, so resolve it explicitly.
+        self._driver_info.setdefault(
+            "runtime_weight_dir",
+            os.path.join(os.path.dirname(os.path.abspath(config_path)), "runtime_weights"),
+        )
+
         self._experiment_info["global"]["bitfile_name"] = os.path.join(
             working_dir, self._experiment_info["global"]["bitfile_name"]
         )

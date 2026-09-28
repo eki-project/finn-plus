@@ -20,6 +20,7 @@ import onnxscript
 from enum import Enum
 from onnxscript import ir
 from onnxscript.rewriter import pattern, rewrite
+from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.custom_op.registry import getCustomOp, is_custom_op
 from qonnx.transformation.base import Transformation
@@ -27,6 +28,8 @@ from qonnx.transformation.fold_constants import FoldConstants
 from typing import TYPE_CHECKING, cast
 
 from finn.util import onnxscript_helpers as osh
+from finn.util.basic import make_build_dir
+from finn.util.exception import FINNUserError
 from finn.util.logging import log
 
 if TYPE_CHECKING:
@@ -216,9 +219,16 @@ def build_loop_replace_pattern(graph, LoopBody):
 class LoopExtraction(Transformation):
     """Extract repeated subgraphs into a loop body template."""
 
-    def __init__(self, hierarchy_list: list[list[str]]):
-        """Initialize with a list of module hierarchies to extract."""
+    def __init__(
+        self, hierarchy_list: list[list[str]], loop_body_template_path: str | Path | None = None
+    ):
+        """Initialize with a list of module hierarchies to extract and the path the extracted
+        loop body template is saved to (defaults to a fresh build directory)."""
         super().__init__()
+        if loop_body_template_path is None:
+            template_dir = make_build_dir("loop_body_template_")
+            loop_body_template_path = Path(template_dir) / "loop-body-template.onnx"
+        self.loop_body_template_path = str(loop_body_template_path)
 
         assert isinstance(hierarchy_list, list), "Hierarchy list must be a list of strings"
         for hlist in hierarchy_list:
@@ -258,12 +268,12 @@ class LoopExtraction(Transformation):
                 log.warning("error: could not find metadata for node")
                 exit(1)
 
-            node.metadata_props["pkg.torch.onnx.name_scopes"] = mnode.metadata_props[
-                "pkg.torch.onnx.name_scopes"
-            ]
-            node.metadata_props["pkg.torch.onnx.class_hierarchy"] = mnode.metadata_props[
-                "pkg.torch.onnx.class_hierarchy"
-            ]
+            node.metadata_props["pkg.torch.onnx.name_scopes"] = mnode.metadata_props.get(
+                "pkg.torch.onnx.name_scopes", ""
+            )
+            node.metadata_props["pkg.torch.onnx.class_hierarchy"] = mnode.metadata_props.get(
+                "pkg.torch.onnx.class_hierarchy", ""
+            )
 
             assert P.add_node(node)
         graph.sort()
@@ -279,8 +289,8 @@ class LoopExtraction(Transformation):
         )
         proto = onnxscript.ir.serde.serialize_model(loop_body_model)
 
-        onnx.save(proto, "loop-body-template.onnx")
-        self.loop_body_template = LoopBodyTemplate("loop-body-template.onnx")
+        onnx.save(proto, self.loop_body_template_path)
+        self.loop_body_template = LoopBodyTemplate(self.loop_body_template_path)
 
         # Replace instances of the loop body with a function call to the loop body
         change_layers_to_function_calls = pattern.RewriteRule(
@@ -517,30 +527,33 @@ class LoopRolling(Transformation):
         # my loop rolling code assumes that the activation inputs are listed first and
         # that corresponding output activations have the same index as the input
         input_swaps = []
-        if len(nodes) == 1:
-            # find and label the activation inputs
-            for i, input in enumerate(nodes[0].inputs):
-                if not input.is_initializer():
-                    if input.is_graph_input() or input.producer().op_type != "Constant":
-                        input_swaps.append((len(input_swaps), i))
-        else:
-            for i in range(len(nodes) - 1):
-                a_node = nodes[i]
-                b_node = nodes[i + 1]
+        # MLO requires at least two repetitions of the loop body to roll into a
+        # FINNLoop. A single instance (iteration=1) cannot be handled by the
+        # downstream MLO machinery.
+        if len(nodes) < 2:
+            raise FINNUserError(
+                f"LoopRolling: MLO requires at least 2 repetitions of the loop "
+                f"body, but found {len(nodes)}. A single-instance model cannot be "
+                f"rolled into a FINNLoop. Disable 'mlo' (or fix 'loop_body_hierarchy'/"
+                f"'loop_body_range') for this model."
+            )
+        for i in range(len(nodes) - 1):
+            a_node = nodes[i]
+            b_node = nodes[i + 1]
 
-                for a_out in a_node.outputs:
-                    # Require that outputs of a have a single use of b_node
-                    assert len(a_out.uses()) == 1
-                    assert a_out.uses()[0][0] is b_node
+            for a_out in a_node.outputs:
+                # Require that outputs of a have a single use of b_node
+                assert len(a_out.uses()) == 1
+                assert a_out.uses()[0][0] is b_node
 
-                    a_use_index = a_out.uses()[0][1]
-                    input_swap = (a_out.index(), a_use_index)
-                    if i == 0:
-                        # add swaps from the first node
-                        input_swaps.append(input_swap)
-                    else:
-                        # check that they are the same in the rest
-                        assert input_swap in input_swaps
+                a_use_index = a_out.uses()[0][1]
+                input_swap = (a_out.index(), a_use_index)
+                if i == 0:
+                    # add swaps from the first node
+                    input_swaps.append(input_swap)
+                else:
+                    # check that they are the same in the rest
+                    assert input_swap in input_swaps
 
         # apply the input swaps to each nodes
         for node in nodes:

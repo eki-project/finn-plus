@@ -222,7 +222,8 @@ class bench_mvau(bench):
             - idt, wdt, act: Input, weight, and activation data types (strings)
             - nhw: Number of input vectors (list for tensor shape)
             - mw, mh: Matrix width (input features) and height (output features)
-            - sf, nf: Synapse (SIMD) and Neuron (PE) folding factors (-1 for maximum folding)
+            - sf, nf: Synapse (SIMD) and Neuron (PE) folding factors (-1 for maximum folding),
+                      alternatively simd, pe: parallelism directly
             - m: Sample-level parallelism factor (currently unused)
             - mem_mode: Weight memory mode
             - ram_style, ram_style_thr: RAM styles for weights and thresholds
@@ -243,8 +244,6 @@ class bench_mvau(bench):
         numInputVectors = self._params["nhw"]
         mw = self._params["mw"]
         mh = self._params["mh"]
-        sf = self._params["sf"]
-        nf = self._params["nf"]
         m = self._params["m"]
 
         mem_mode = self._params["mem_mode"]
@@ -261,16 +260,22 @@ class bench_mvau(bench):
         if act is not None:
             act = DataType[act]
 
-        # Determine and log folding
-        if sf > mw or nf > mh:
-            print("Invalid sf/nf configuration, skipping")
-            return "skipped"
-        if sf == -1:
-            sf = mw
-        simd = mw // sf
-        if nf == -1:
-            nf = mh
-        pe = mh // nf
+        # Determine and log folding, defined either via sf & nf or via simd & pe
+        if "sf" in self._params:
+            sf = self._params["sf"]
+            nf = self._params["nf"]
+            if sf > mw or nf > mh:
+                print("Invalid sf/nf configuration, skipping")
+                return "skipped"
+            if sf == -1:
+                sf = mw
+            simd = mw // sf
+            if nf == -1:
+                nf = mh
+            pe = mh // nf
+        else:
+            simd = self._params["simd"]
+            pe = self._params["pe"]
         if mw % simd != 0 or mh % pe != 0:
             print("Invalid simd/pe configuration, skipping")
             return "skipped"
@@ -299,6 +304,20 @@ class bench_mvau(bench):
             # TODO: narrow-range restrictions for DSP48E1
             # TODO: special case of 9-bit signed input
 
+        # Weight stream width limitation for HLS MVAU
+        if backend == "hls" and mem_mode == "internal_decoupled":
+            weighstream_width = simd * pe * wdt.bitwidth()
+            if weighstream_width > 8191:
+                print("HLS MVAU weight stream too wide (> 8191), skipping")
+                return "skipped"
+
+        # ram_style has no effect for internal_embedded mode
+        # LUTs (distributed) are always used, so skip if this is not explicitly requested
+        # to avoid confusion when interpreting microbenchmark results
+        if backend == "hls" and mem_mode == "internal_embedded":
+            if ram_style != "distributed":
+                return "skipped"
+
         # Generate weights
         np.random.seed(123456)  # TODO: verify or switch to modern numpy random generation
 
@@ -316,9 +335,9 @@ class bench_mvau(bench):
                     return "skipped"
         else:
             if self._params["sparsity_amount"] == 0:
-                print("sparsity amount = 0 not applicable for selected sparsity, skipping")
-                return "skipped"
-            if sparsity_type == "unstructured":
+                # keep the dense reference point of a sparsity sweep instead of skipping it
+                pass
+            elif sparsity_type == "unstructured":
                 idx = np.random.choice(
                     mw * mh, size=int(self._params["sparsity_amount"] * mw * mh), replace=False
                 )

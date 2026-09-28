@@ -128,7 +128,7 @@ Build:
       source .venv/bin/activate
       finn deps update --dependency-path ./deps --accept-defaults
       dvc config cache.dir $CI_DVC_CACHE_DIR
-      dvc pull
+      bash ci/retry.sh -n 4 -d 15 -- dvc pull
   artifacts:
     name: "finn-plus_package"
     paths:
@@ -182,7 +182,7 @@ FINN Test Suite 2024.2:
     - |
       source finn-plus-venv/bin/activate
       dvc config cache.dir $CI_DVC_CACHE_DIR
-      dvc pull
+      bash ci/retry.sh -n 4 -d 15 -- dvc pull
       finn test --variant $TEST_SUITE --dependency-path ./deps --build-path $FINN_BUILD_DIR --num-test-workers $PYTEST_WORKERS -n $PYTEST_FINN_WORKERS
   artifacts:
     name: "test_reports"
@@ -224,7 +224,16 @@ Bench (Basic):
     PARENT_PIPELINE_ID: $CI_PIPELINE_ID
   parallel:
     matrix:
-      - BENCH_CFG: [regression_basic, regression_extended, regression_transformer]
+      # One Slurm array task per experiment of the config, so PARALLEL_JOBS has to be kept in
+      # sync with the number of experiments in ci/cfg/<BENCH_CFG>.yml. The large models need
+      # a bigger node than the rest, hence the split into two configs.
+      - BENCH_CFG: [regression_small]
+        PARALLEL_JOBS: "13"
+      - BENCH_CFG: [regression_large]
+        PARALLEL_JOBS: "3"
+        BENCH_CPU_CORES: "128"
+        BENCH_FINN_WORKERS: "128"
+        MEM_BENCH: "512G"
 
 Bench (Extended):
   stage: test

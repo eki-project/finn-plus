@@ -199,6 +199,27 @@ proc assign_axi_addr_proc {axi_intf_path} {
 #custom IP instantiations/connections start here
 %s
 
+#MLO (Multi-Layer Offload) weight streaming
+if {$ZYNQ_TYPE == "zynq_us+"} {
+    set mlo_mm_pins [get_bd_intf_pins -quiet -of_objects [get_bd_cells] \
+        -filter {MODE == Master && (NAME == m_axi_intermediate_frame || NAME =~ m_axi_MVAU_*)}]
+    if {[llength $mlo_mm_pins] > 0} {
+        set_property -dict [list CONFIG.PSU__USE__S_AXI_GP3 {1}] [get_bd_cells zynq_ps]
+        create_bd_cell -type ip -vlnv $smartconnect_vlnv smartconnect_mlo
+        set_property -dict [list CONFIG.NUM_SI [llength $mlo_mm_pins]] [get_bd_cells smartconnect_mlo]
+        connect_bd_intf_net [get_bd_intf_pins smartconnect_mlo/M00_AXI] [get_bd_intf_pins zynq_ps/S_AXI_HP1_FPD]
+        set mlo_si_idx 0
+        foreach mlo_mm_pin $mlo_mm_pins {
+            set mlo_si_name [format "S%%02d_AXI" $mlo_si_idx]
+            connect_bd_intf_net $mlo_mm_pin [get_bd_intf_pins smartconnect_mlo/$mlo_si_name]
+            incr mlo_si_idx
+        }
+        connect_bd_net [get_bd_pins smartconnect_mlo/aclk] [get_bd_pins zynq_ps/pl_clk0]
+        connect_bd_net [get_bd_pins zynq_ps/saxihp1_fpd_aclk] [get_bd_pins zynq_ps/pl_clk0]
+        connect_bd_net [get_bd_pins smartconnect_mlo/aresetn] [get_bd_pins axi_interconnect_0/ARESETN]
+    }
+}
+
 # set up debug
 if {%d == 1} {
     set_property HDL_ATTRIBUTE.DEBUG true [get_bd_intf_nets {idma0_m_axis_0}]
@@ -287,8 +308,7 @@ $PR_CONFIG$
 if {$pr_flow == 0} {
     # out-of-context synth can't be used for bitstream generation
     # set_property -name {STEPS.SYNTH_DESIGN.ARGS.MORE OPTIONS} -value {-mode out_of_context} -objects [get_runs synth_1]
-    # TODO: make number of jobs configurable
-    launch_runs -jobs 4 -to_step write_bitstream impl_1
+    launch_runs -jobs $NUM_JOBS$ -to_step write_bitstream impl_1
     wait_on_run [get_runs impl_1]
 
 }
@@ -501,9 +521,27 @@ report_utilization -hierarchical -hierarchical_depth 5 -file $VITIS_PROJ_PATH$/s
 # Initially based on code from Lucas Reuter
 # Modified by Felix Jentzsch
 
-template_vivado_open = """
-open_project  $PROJ_PATH$
-open_run $RUN$
+template_vivado_open_checkpoint = """
+open_checkpoint $DCP_PATH$
+"""
+
+# Export a post-implementation simulation netlist from the routed OOC checkpoint.
+# The out-of-context flow only produces a checkpoint (no Vivado project with an
+# implementation run), so the switching activity simulation is run on this netlist
+# instead of via launch_simulation -mode post-implementation.
+template_vivado_write_funcsim_netlist = """
+open_checkpoint $DCP_PATH$
+write_verilog -force -mode funcsim -file $NETLIST_PATH$
+close_project
+"""
+
+# SDF annotation is requested via the xelab options of the simulation script instead of the
+# $sdf_annotate task, whose path would only resolve relative to the simulation directory
+template_vivado_write_timesim_netlist = """
+open_checkpoint $DCP_PATH$
+write_verilog -force -mode timesim -sdf_anno false -file $NETLIST_PATH$
+write_sdf -force -file $SDF_PATH$
+close_project
 """
 
 template_vivado_power_fixed = """
@@ -523,21 +561,33 @@ report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
 #reset_switching_activity -hier -type register [get_cells -r finn_design_i/.*]
 """
 
-template_vivado_power_simulated = """
-set_property SOURCE_SET sources_1 [get_filesets sim_1]
-import_files -fileset sim_1 -norecurse $TB_FILE_PATH$
-set_property top switching_simulation_tb [get_filesets sim_1]
-update_compile_order -fileset sim_1
+# Simulate the post-implementation netlist to record the switching activity of the design
+# into a SAIF file. xsim is driven directly instead of through Vivado's launch_simulation,
+# which is only available in project mode, while the out-of-context flow leaves just a
+# routed checkpoint behind.
+template_switching_simulation_sh = """#!/bin/bash
+set -e
+# the netlist written by write_verilog also defines the glbl module
+xvlog $NETLIST_PATH$ $TB_FILE_PATH$
+# multi-threading is disabled in an attempt to increase stability
+xelab --relax --debug typical --mt off $XELAB_OPTIONS$ \\
+    -s switching_simulation work.switching_simulation_tb work.glbl
+xsim switching_simulation -tclbatch $SIM_TCL_PATH$
+"""
 
-launch_simulation -mode post-implementation -type $SIM_TYPE$
-restart
+template_switching_simulation_xsim_tcl = """
 open_saif $SAIF_FILE_PATH$
 log_saif [get_objects -r *]
 run $SIM_DURATION_NS$ ns
 close_saif
+quit
+"""
 
+# Read the simulated switching activity back into the routed design and report power
+template_vivado_power_from_saif = """
 read_saif $SAIF_FILE_PATH$
 report_power -file $REPORT_PATH$/$REPORT_NAME$.xml -format xml
+close_project
 """
 
 # TODO: configurable clock frequency instead of hardcoded 100 MHz

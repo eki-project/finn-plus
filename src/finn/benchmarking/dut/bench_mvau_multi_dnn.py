@@ -331,7 +331,6 @@ class bench_mvau_multi_dnn(bench):
         cfg.console_log_level = build_cfg.LogLevel.ERROR
         cfg.enable_build_pdb_debug = False
         cfg.enable_exception_snapshots = True
-        cfg.split_large_fifos = True
         cfg.save_intermediate_models = True
         cfg.verify_save_full_context = True
         cfg.enable_instrumentation = True

@@ -16,6 +16,7 @@ from collections.abc import Callable
 from onnx import AttributeProto, GraphProto, NodeProto
 from pathlib import Path
 from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp, is_custom_op
 from qonnx.transformation.base import Transformation
 
 # Note: This transformation is migrated and extended from qonnx.transformation.general
@@ -53,6 +54,7 @@ class ApplyConfig(Transformation):
         self.node_filter = node_filter
         self.used_configurations = ["Defaults"]
         self.missing_configurations = []
+        self.ignored_non_custom_configurations: list[tuple[str, str]] = []
 
     def configure_network(
         self, target: GraphProto | ModelWrapper, model_config: dict, subgraph_hier: str | None
@@ -85,12 +87,7 @@ class ApplyConfig(Transformation):
                 self.missing_configurations += [node.name]
                 node_config = {}
 
-            if node_config:
-                self.used_configurations += [config_key]
-
-            from qonnx.custom_op.registry import getCustomOp
-
-            try:
+            if is_custom_op(node.domain, node.op_type):
                 inst = getCustomOp(node)
 
                 if "Defaults" in model_config.keys():
@@ -112,10 +109,22 @@ class ApplyConfig(Transformation):
 
                 # set node attributes from specified configuration
                 for attr_name, value in node_config.items():
+                    if attr_name == "impl_style" and node.op_type.startswith("StreamingFIFO"):
+                        # impl_style was retired for FIFOs upstream (fifo.sv is the only
+                        # backend); FINN+ still uses it for the "virtual" (live FIFO sizing)
+                        # gauge, so only tolerate the retired "vivado" value here.
+                        if value == "vivado":
+                            log.warning(
+                                f"Setting 'impl_style=vivado' on {node.name} is no longer "
+                                "supported and is ignored; remove it from your config."
+                            )
+                            continue
                     inst.set_nodeattr(attr_name, value)
-            except Exception:
-                # Node is not a custom op, but it might have subgraphs
-                pass
+
+                if node_config:
+                    self.used_configurations += [config_key]
+            elif node_config:
+                self.ignored_non_custom_configurations += [(config_key, node.op_type)]
 
             # Recursively handle nested subgraphs
             for attr in node.attribute:
@@ -148,8 +157,25 @@ class ApplyConfig(Transformation):
             log.warning("\nNo HW configuration for nodes: " + ", ".join(unique_missing))
 
         # Check for unused configs (top-level configs that weren't applied)
+        # Check for matched configs that couldn't be applied because they were
+        # specified for standard ONNX nodes instead of custom ops.
+        unique_non_custom = list(dict.fromkeys(self.ignored_non_custom_configurations))
+        if len(unique_non_custom) > 0:
+            formatted_non_custom = [f"{key} ({op_type})" for key, op_type in unique_non_custom]
+            log.warning(
+                "\nHW configurations for non-custom nodes were ignored: "
+                + ", ".join(formatted_non_custom)
+                + ". Configs can only be applied to custom ops."
+            )
+
+        # Check for unused configs (top-level configs that weren't applied)
+        ignored_configurations = [key for key, _ in self.ignored_non_custom_configurations]
         unused_configs = [
-            x for x in model_config if x not in self.used_configurations and x != "Defaults"
+            x
+            for x in model_config
+            if x not in self.used_configurations
+            and x not in ignored_configurations
+            and x != "Defaults"
         ]
         if len(unused_configs) > 0:
             log.warning("\nUnused HW configurations: " + ", ".join(unused_configs))

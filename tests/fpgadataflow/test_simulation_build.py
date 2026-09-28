@@ -6,6 +6,7 @@ import pytest
 
 import numpy as np
 from onnx import GraphProto, NodeProto, TensorProto, ValueInfoProto, helper
+from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
 from qonnx.util.basic import qonnx_make_model
 from typing import Protocol, TypedDict
@@ -816,6 +817,34 @@ def test_isolated_node_model_binary_target_with_dynamic_and_fixed_inputs(
         expected_target_inputs=expected_target_inputs,
         expected_target_outputs=["target_out_dummy"],
     )
+
+
+def test_isolated_node_model_propagates_tensor_datatypes() -> None:
+    """The isolated model must carry tensor datatype annotations.
+
+    onnx.helper.make_graph() drops the quantization annotations of the parent model. Custom
+    ops derive some code-generation parameters from tensor annotations instead of node
+    attributes (e.g. the MVAU/VVAU threshold datatype), so without them the isolated node
+    would be generated with float parameters and a broken pipeline II in HLS.
+    """
+    model = _build_binary_target_model(initializer_side="rhs")
+    # Annotate the parent: an initializer with a datatype unrelated to the node attributes
+    # and dynamic tensors with the datatypes the op reports
+    model.set_tensor_datatype("rhs_in", DataType["INT4"])
+    model.set_tensor_datatype("lhs_in", DataType["INT9"])
+    model.set_tensor_datatype("target_out", DataType["INT9"])
+    builder = SimulationBuilder(model, "xc7z020clg400-1", 5.0, "test_isolated_dt_")
+
+    isolated = _isolate_node_model(builder, 0)
+
+    # Initializer input keeps the annotation of the parent model
+    assert isolated.get_tensor_datatype("rhs_in") == DataType["INT4"]
+    # Dynamic input: graph input and dummy tensor carry the op's input datatype
+    assert isolated.get_tensor_datatype("lhs_in") == DataType["INT9"]
+    assert isolated.get_tensor_datatype("lhs_in_dummy") == DataType["INT9"]
+    # Output: graph output and dummy tensor carry the op's output datatype
+    assert isolated.get_tensor_datatype("target_out") == DataType["INT9"]
+    assert isolated.get_tensor_datatype("target_out_dummy") == DataType["INT9"]
 
 
 @pytest.mark.parametrize("fifo_between_depth", [1, 2])

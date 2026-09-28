@@ -101,6 +101,7 @@ PYBIND11_MODULE(xsi, m) {
         .def("as_unsigned", &Port::as_unsigned)
         .def("as_binstr", &Port::as_binstr)
         .def("as_hexstr", &Port::as_hexstr)
+        .def("as_hexstr_2state", &Port::as_hexstr_2state)
         .def("clear", &Port::clear, py::return_value_policy::reference_internal)
         .def("set", &Port::set, py::return_value_policy::reference_internal)
         .def("set_binstr", &Port::set_binstr, py::return_value_policy::reference_internal)

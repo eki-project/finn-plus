@@ -625,12 +625,24 @@ class ScaledDotProductAttention_hls(  # noqa: Class name does not follow
     def pragmas(self):
         """Generate C++ pragmas to be inserted into the main function.
 
-        Creates HLS interface directives specifying how to create RTL ports for
-        the top-level function arguments in both C++ simulation and ipgen-blackboxfunction.
+        Makes the top-level function a dataflow region and creates HLS interface
+        directives specifying how to create RTL ports for the top-level function
+        arguments in both C++ simulation and ipgen-blackboxfunction.
         """
-        # Add HLS interface directives specifying how to create RTL ports for
-        # the top-level function arguments
         self.code_gen_dict["$PRAGMAS$"] = [
+            # Make the top function a dataflow region: the attention head from
+            # the hlslib is a dataflow region itself (key/value tilers, the two
+            # matmuls and the softmax stages overlap within one frame), but as
+            # a plain function call inside a non-pipelined top it is executed
+            # sequentially per frame, i.e. the next frame's key/value tiling
+            # cannot start before the last output of the current frame has
+            # been written. As a dataflow region, the top lets consecutive
+            # frames overlap inside the head and the frame interval drops
+            # from the head's latency to its throughput bound
+            # (see the DuplicateStreams and StreamingSplit/Concat backends).
+            "#pragma HLS dataflow disable_start_propagation",
+            # Add HLS interface directives specifying how to create RTL ports
+            # for the top-level function arguments.
             # Connect the query input stream with an axi stream interface
             "#pragma HLS INTERFACE axis port=in0_V",
             # Connect the key input stream with an axi stream interface

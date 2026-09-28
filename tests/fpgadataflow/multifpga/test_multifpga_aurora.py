@@ -588,7 +588,7 @@ class TestAuroraFlowPartitioning:
                     )
 
                     # Get the objective function value out of the transformation
-                    value = partitioner.model.objective.x
+                    value = partitioner.objective_value
                     found_data[identifier] = value
 
                     # Run checks (only if no new values should be generated)

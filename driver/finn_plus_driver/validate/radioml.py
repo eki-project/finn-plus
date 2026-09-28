@@ -1,9 +1,11 @@
 """Validation script for the RadioML 2018.01A dataset."""
+
 import h5py
-import json
 import math
 import numpy as np
 import os
+
+from finn_plus_driver.validate.common import ValidationDataset, run_validation, validation_kwargs
 
 
 def quantize(data):
@@ -18,17 +20,8 @@ def quantize(data):
     return data_quant
 
 
-def validate(cls_inst, *args, **kwargs):
-    """Run RadioML validation and report accuracy on high-SNR test samples."""
-    report_dir = kwargs.get("report_dir")
-    dataset_path = kwargs.get(
-        "dataset_path", os.path.join(os.environ["DATASET_DIR"], "GOLD_XYZ_OSC.0001_1024.hdf5")
-    )
-    h5_file = h5py.File(dataset_path, "r", locking=False)
-    data_h5 = h5_file["X"]
-    label_mod = np.argmax(h5_file["Y"], axis=1)  # comes in one-hot encoding
-
-    # assemble list of test set indices
+def select_test_indices():
+    """Assemble the (sorted) list of high-SNR test set indices into the HDF5 file."""
     # do not pre-load large dataset into memory
     np.random.seed(2018)
     test_indices = []
@@ -43,38 +36,58 @@ def validate(cls_inst, *args, **kwargs):
 
             if snr_idx >= 25:  # select which SNRs to test on
                 test_indices.extend(val_indices_subclass)
+    return sorted(test_indices)
 
-    test_indices = sorted(test_indices)
 
-    ok = 0
-    nok = 0
-    total = len(test_indices)
-    batch_size = cls_inst.batch_size
-    for i_batch in range(math.ceil(total / batch_size)):
-        i_frame = i_batch * batch_size
-        if i_frame + batch_size > total:
-            batch_size = total - i_frame
-            cls_inst.batch_size = batch_size
-        batch_indices = test_indices[i_frame : i_frame + batch_size]
-        data, mod = data_h5[batch_indices], label_mod[batch_indices]
+class RadioMLDataset(ValidationDataset):
+    """High-SNR test samples of RadioML 2018.01A, read on demand from the HDF5 file."""
 
-        ibuf = quantize(data).reshape(cls_inst.ishape_normal(0))
-        obuf = cls_inst.execute(ibuf)
+    def __init__(self, dataset_path):
+        """Open the HDF5 file and select the test sample indices."""
+        self.h5_file = h5py.File(dataset_path, "r", locking=False)
+        self.data_h5 = self.h5_file["X"]
+        self.label_mod = np.argmax(self.h5_file["Y"], axis=1)  # comes in one-hot encoding
+        self.test_indices = np.array(select_test_indices())
 
-        pred = obuf.reshape(batch_size).astype(int)
+    def __len__(self):
+        """Number of test samples."""
+        return len(self.test_indices)
 
-        ok += np.equal(pred, mod).sum().item()
-        nok += np.not_equal(pred, mod).sum().item()
+    def sample_id(self, index):
+        """Index of the sample in the HDF5 file."""
+        return str(int(self.test_indices[index]))
 
-        print("batch %d : total OK %d NOK %d" % (i_batch, ok, nok))
+    def iter_batches(self, cls_inst):
+        """Yield the test samples in batches, shrinking the driver batch size for the last one."""
+        total = len(self)
+        batch_size = cls_inst.batch_size
+        for i_batch in range(math.ceil(total / batch_size)):
+            i_frame = i_batch * batch_size
+            if i_frame + batch_size > total:
+                # last, partial batch: shrink the driver batch size (restored by run_validation)
+                batch_size = total - i_frame
+                cls_inst.batch_size = batch_size
+            indices = np.arange(i_frame, i_frame + batch_size)
+            yield indices, self.load(cls_inst, indices), self.label_mod[self.test_indices[indices]]
 
-    acc = 100.0 * ok / (total)
-    print(f"Measured top-1 accuracy: {acc}%")
+    def load(self, cls_inst, indices):
+        """Read and quantize the given samples into one accelerator input batch."""
+        h5_indices = self.test_indices[np.asarray(indices)]
+        # h5py fancy indexing requires increasing, unique indices
+        unique, inverse = np.unique(h5_indices, return_inverse=True)
+        data = self.data_h5[unique.tolist()][inverse]
+        return quantize(data).reshape(cls_inst.ishape_normal(0))
 
-    # write report to file
-    report = {
-        "top-1_accuracy": acc,
-    }
-    reportfile = os.path.join(report_dir, "report_dma_validate.json")
-    with open(reportfile, "w") as f:
-        json.dump(report, f, indent=2)
+    def predict(self, obuf, batch_size):
+        """Predicted modulation class per sample."""
+        return obuf.reshape(batch_size).astype(int)
+
+
+def validate(cls_inst, *args, **kwargs):
+    """Run RadioML validation and report accuracy on high-SNR test samples."""
+    report_dir = kwargs.get("report_dir")
+    dataset_path = kwargs.get(
+        "dataset_path", os.path.join(os.environ["DATASET_DIR"], "GOLD_XYZ_OSC.0001_1024.hdf5")
+    )
+    dataset = RadioMLDataset(dataset_path)
+    run_validation(cls_inst, dataset, report_dir, **validation_kwargs(kwargs))

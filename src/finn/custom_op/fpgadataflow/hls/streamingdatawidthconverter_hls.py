@@ -40,6 +40,24 @@ class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
     """Class that corresponds to finn-hlslib StreamingDataWidthConverter_Batch
     function."""
 
+    def get_iowidth_lcm(self):
+        """Return the least common multiple of the input and output stream widths."""
+        iwidth = self.get_nodeattr("inWidth")
+        owidth = self.get_nodeattr("outWidth")
+        return int(np.lcm(iwidth, owidth))
+
+    def needs_lcm(self):
+        """Return whether the widths are non-integer ratios, i.e. whether the HLS
+        implementation has to go through an intermediate LCM-wide stream."""
+        iwidth = self.get_nodeattr("inWidth")
+        owidth = self.get_nodeattr("outWidth")
+        return max(iwidth, owidth) % min(iwidth, owidth) != 0
+
+    def _needs_element_width_split(self):
+        """Return whether the LCM-wide intermediate stream would exceed the
+        maximum ap_int width and the conversion must be split element-wise."""
+        return self.needs_lcm() and self.get_iowidth_lcm() > 8191
+
     def get_nodeattr_types(self):
         """Return nodeattr types."""
         my_attrs = {}
@@ -63,7 +81,17 @@ class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
             "#define NumInWords %d " % numInWords,
             "#define numReps %d" % numReps,
         ]
-        if self.needs_lcm():
+        if self._needs_element_width_split():
+            elemWidth = self.get_input_datatype().bitwidth()
+            assert inWidth % elemWidth == 0, "DWC input width must be element-aligned"
+            assert outWidth % elemWidth == 0, "DWC output width must be element-aligned"
+            numMiddleWords = numInWords * (inWidth // elemWidth)
+            assert (
+                numMiddleWords % (outWidth // elemWidth) == 0
+            ), "Error in DWC element-width split calculation"
+            self.code_gen_dict["$DEFINES$"].append("#define IntermediateWidth %d" % elemWidth)
+            self.code_gen_dict["$DEFINES$"].append("#define NumMiddleWords %d" % numMiddleWords)
+        elif self.needs_lcm():
             lcmWidth = self.get_iowidth_lcm()
             assert numInWords % (lcmWidth / inWidth) == 0, "Error in DWC LCM calculation"
             numLCMToOut = numInWords // (lcmWidth / inWidth)
@@ -84,7 +112,14 @@ class StreamingDataWidthConverter_hls(StreamingDataWidthConverter, HLSBackend):
         # TODO continue with fxns below, they are copy-pasted
         """Return docompute."""
         op = "StreamingDataWidthConverter_Batch"
-        if self.needs_lcm():
+        if self._needs_element_width_split():
+            self.code_gen_dict["$DOCOMPUTE$"] = [
+                'hls::stream<ap_uint<IntermediateWidth>> intermediate ("intermediate");',
+                "%s<InWidth, IntermediateWidth, NumInWords>(in0_V, intermediate, numReps);" % op,
+                "%s<IntermediateWidth, OutWidth, NumMiddleWords>(intermediate, out0_V, numReps);"
+                % op,
+            ]
+        elif self.needs_lcm():
             self.code_gen_dict["$DOCOMPUTE$"] = [
                 f'hls::stream<ap_uint<{self.get_iowidth_lcm()}>> intermediate ("intermediate");',
                 "%s<InWidth, LCMWidth, NumInWords>(in0_V, intermediate, numReps);" % op,

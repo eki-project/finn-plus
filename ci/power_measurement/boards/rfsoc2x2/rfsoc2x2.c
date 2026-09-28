@@ -215,6 +215,12 @@ int initialize() {
 
         //printf("bus: %s name: %s addr: 0x%02X cal_val: 0x%04X\n", sensors[i].bus, sensors[i].s_rail.rail_name, sensors[i].address, sensors[i].calibration_value);
         writeData(fdi2c, sensors[i].address, REG_CAL, sensors[i].calibration_value);
+
+        //also set configuration register
+        // AVG = 64, VBUSCT = 1.1 ms, VSHCT = 8.244 ms, mode = "Shunt and Bus, Continuous"
+        int cfg_value = 0b0100011100111111;
+        writeData(fdi2c, sensors[i].address, REG_CONFIG, cfg_value);
+
         close(fdi2c);
     }
     printf("[I2C Driver] Calibrated %d INA226 sensors.\n", NUM_OF_RAILS);

@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess as sp
 import sys
+import tarfile
 import time
 import traceback
 import yaml
@@ -39,6 +40,10 @@ HTTP_HEADER_TIMEOUT_S = 10.0
 
 # Headers used to identify the remote file version, in order of preference
 VERSION_HEADERS = ("etag", "last-modified", "content-length")
+
+# Archive formats a direct download dependency can be unpacked from
+ZIP_SUFFIXES = (".zip",)
+TAR_SUFFIXES = (".tar.xz", ".tar.gz", ".tar.bz2", ".tgz", ".tar")
 
 
 class Dependency:
@@ -422,6 +427,43 @@ class DependencyUpdater:
             shutil.copytree(source, target)
         return not self.is_outdated(package_name)
 
+    def _unpacked_path(self, url: str, target_directory: Path, do_unzip: bool) -> Path:
+        """Return the path a direct download dependency is installed at: the downloaded file
+        itself, or the file/directory its archive unpacks to (its name without the archive
+        suffix, e.g. "json.tar.xz" unpacks to "json")."""
+        name = Path(url).name
+        if not do_unzip:
+            return target_directory / name
+        for suffix in ZIP_SUFFIXES + TAR_SUFFIXES:
+            if name.endswith(suffix):
+                return target_directory / name[: -len(suffix)]
+        return (target_directory / name).with_suffix("")
+
+    def _unpack(self, archive: Path) -> bool:
+        """Unpack the archive into the directory it resides in. Return success."""
+        if archive.name.endswith(ZIP_SUFFIXES):
+            if shutil.which("unzip") is None:
+                raise FINNDependencyInstallationError(
+                    'Make sure that "unzip" is available on your system.'
+                )
+            return self._run_silent(f"unzip -o {archive.name}", cwd=archive.parent) == 0
+        if archive.name.endswith(TAR_SUFFIXES):
+            try:
+                with tarfile.open(archive) as tar:
+                    # The extraction filter exists from Python 3.11.4 / 3.12 on
+                    if hasattr(tarfile, "data_filter"):
+                        tar.extractall(archive.parent, filter="data")
+                    else:
+                        tar.extractall(archive.parent)
+            except (tarfile.TarError, OSError) as e:
+                debug(f"[{archive.name}] Unpacking failed: {e}", False)
+                return False
+            return True
+        raise FINNDependencyInstallationError(
+            f"Unsupported archive format: {archive.name} (supported: "
+            f"{', '.join(ZIP_SUFFIXES + TAR_SUFFIXES)})"
+        )
+
     def _version_file(self, url: str, target_directory: Path) -> Path:
         """Return the path of the sidecar file caching the version token of a download."""
         return target_directory / f".{Path(url).name}.version"
@@ -464,10 +506,10 @@ class DependencyUpdater:
     def _install_direct_download_dependency(self, package_name: str) -> bool:
         """Install a direct download dependency. Return success."""
         debug(f"Trying to install DIRECT DOWNLOAD dependency: {package_name}", False)
-        if shutil.which("wget") is None or shutil.which("unzip") is None:
-            # TODO: Allow curl and gzip etc. as well
+        if shutil.which("wget") is None:
+            # TODO: Allow curl as well
             raise FINNDependencyInstallationError(
-                'Make sure that both "wget" and "unzip" are available on your system.'
+                'Make sure that "wget" is available on your system.'
             )
         url, do_unzip, target_directory = self.deps.get_fields(
             package_name, "url", "do_unzip", "target_directory"
@@ -483,7 +525,7 @@ class DependencyUpdater:
 
         # Return if the download fails
         # Automatically skips if not modified
-        unzipped = (target / Path(url).name).with_suffix("")
+        unzipped = self._unpacked_path(url, target, do_unzip)
         debug(f"[{package_name}] Running: wget -N {url}", False)
         try:
             wget_download = sp.run(
@@ -502,13 +544,13 @@ class DependencyUpdater:
             return True
 
         debug(f"[{package_name}] Removing previous install if necessary.", False)
-        if unzipped.exists():
+        if do_unzip and unzipped.exists():
             shutil.rmtree(unzipped)
 
-        # Unzip
-        debug(f"[{package_name}] Unpacking..", False)
+        # Unpack
         if do_unzip:  # noqa
-            if self._run_silent(f"unzip -o {Path(url).name}", cwd=target) != 0:
+            debug(f"[{package_name}] Unpacking..", False)
+            if not self._unpack(target / Path(url).name):
                 return False
         if not unzipped.exists():
             return False
@@ -547,7 +589,7 @@ class DependencyUpdater:
             target_directory = self.dep_location / data.target_directory
             if not target_directory.exists():
                 target_directory.mkdir(parents=True)
-            installed_artifact = (target_directory / Path(url).name).with_suffix("")
+            installed_artifact = self._unpacked_path(url, target_directory, data.do_unzip)
             version_file = self._version_file(url, target_directory)
 
             remote_token = self._get_remote_version_token(url)
