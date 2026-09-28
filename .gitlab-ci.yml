@@ -234,6 +234,10 @@ Bench (Basic):
         BENCH_CPU_CORES: "128"
         BENCH_FINN_WORKERS: "128"
         MEM_BENCH: "512G"
+      # TODO(feature/mvau-rtl-da4ml): calibration sweeps of the distributed-arithmetic
+      # MVU, run in the PR pipeline on purpose; move to Bench (Extended) before merging
+      - BENCH_CFG: [microbenchmark_da_baseline, microbenchmark_da]
+        PARALLEL_JOBS: "8"
 
 Bench (Extended):
   stage: test
