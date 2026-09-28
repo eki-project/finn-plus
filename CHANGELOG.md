@@ -6,6 +6,12 @@ The changelog lists mostly user-facing changes. For more detailed information pl
 
 Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branch of FINN.
 
+## Unreleased
+
+### Added
+- **Distributed-arithmetic RTL MVU**: `MVAU_rtl` with `mem_mode=internal_embedded` compiles a fully unrolled constant weight matrix (`SIMD=MW`, `PE=MH`) into a pipelined, multiplier-free adder graph with the `alkaid` package (formerly `da4ml`: CSD recoding, cross-output subexpression sharing, exact per-node bit widths), wrapped in FINN's AXI-stream protocol without any HLS. Opt-in per layer via `preferred_impl_style: rtl` + `mem_mode: internal_embedded` (+ `resType: lut`, standalone thresholds); `SetFolding` unrolls such layers automatically. New node attributes `da_hard_dc`, `da_latency_cutoff`, `da_ternary_fuse` and the result attributes `da_cost`/`da_adders`/`da_depth`/`da_latency_cycles`, which also feed the LUT estimate. See [finn-rtllib/mvu_da/README.md](finn-rtllib/mvu_da/README.md). New dependency: `alkaid` (LGPL-3.0)
+- MVAU microbenchmark DUT: `backend: rtl` with `mem_mode: internal_embedded` builds the distributed-arithmetic core, and every fully unrolled experiment logs the alkaid cost of its weights (`da_cost`, `da_adders`, `da_depth` in `dut_info.json`); configs `ci/cfg/microbenchmark_da_baseline.yml` and `ci/cfg/microbenchmark_da.yml`
+
 ## 1.6.0 - 28.09.2026
 
 ### Added
