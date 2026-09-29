@@ -29,9 +29,9 @@
 import pytest
 
 import numpy as np
-import os
 import torch
 from brevitas.export import export_qonnx
+from pathlib import Path
 from PIL import Image
 from qonnx.core.datatype import DataType
 from qonnx.core.modelwrapper import ModelWrapper
@@ -60,7 +60,7 @@ from tests.testing_util.test import crop_center, get_test_model_trained, resize_
 @pytest.mark.xfail
 def test_brevitas_mobilenet():
     # get single image as input and prepare image
-    img = Image.open(os.path.join(os.environ["FINN_TESTS"], "brevitas/king_charles.jpg"))
+    img = Image.open(Path(__file__).parent / "king_charles.jpg")
     # resize smallest side of the image to 256 pixels and resize larger side
     # with same ratio
     img = resize_smaller_side(256, img)

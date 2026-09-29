@@ -1,7 +1,7 @@
 """Guard against test-only dependencies leaking into the finn-plus package.
 
-A plain ``pip install finn-plus`` does not install the test suite or its Python
-dependencies (pytest and friends, junitparser, ...). Any module of the ``finn`` package
+A plain ``pip install finn-plus`` does not install the test suite or its tooling (pytest
+and friends, junitparser, ...; the ``test`` extra). Any module of the ``finn`` package
 that imports one of them at module level breaks for those users, in the worst case
 already on ``finn --help`` (see finn-plus 1.6.0, where ``finn.interface.manage_tests``
 imported ``junitparser`` at module level). Such imports must stay local to the
@@ -16,7 +16,8 @@ from pathlib import Path
 
 import finn
 
-# Top-level names that only the test suite (finn-plus-tests) provides
+# Top-level names that only the test suite (repository tests/ directory) or the "test"
+# extra provide
 TEST_ONLY_MODULES = frozenset(
     {
         "pytest",

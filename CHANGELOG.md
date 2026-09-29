@@ -8,6 +8,10 @@ Entries marked with `(Xilinx)` are features pulled from AMD's upstream dev branc
 
 ## Unreleased
 
+### Changed
+- The `finn-plus-tests` package is gone: the test suite is the `tests/` directory of the repository and is no longer packaged or published. Its tooling (pytest and plugins, junitparser) moved into the `test` extra of `finn-plus`, so `pip install finn-plus[test]` (or `poetry install --all-extras` in a checkout) replaces `finn-plus[tests]`. `finn test` runs the suite from a checkout, located via the new `--tests-path` option, `$FINN_TESTS`, or `./tests`
+- CI installs the `test` extra from the built wheel and runs the `tests/` directory of the checkout against it; benchmark/regression pipelines are unchanged
+
 ### Fixed
 - A plain `pip install finn-plus` (without the `tests`/`all` extra) could not start the CLI: `finn.interface.manage_tests` imported `junitparser`, a dependency of the optional `finn-plus-tests` package, at module level. Test-only imports are now local to `finn test`, which reports clearly when the test suite is not installed, and a new test guards the package against such imports. The release workflow smoke-tests the plain install.
 

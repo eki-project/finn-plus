@@ -81,6 +81,8 @@ finn build build_config.yaml model.onnx   # Run a FINN+ build defined in a YAML 
 
 For more detailed instructions, like installation for development use, please refer to our [**Wiki**](https://github.com/eki-project/finn-plus/wiki)!
 
+The test suite is not part of the pip package. To run it, clone this repository, install the test tooling (`pip install finn-plus[test]`, or `poetry install --all-extras` in the checkout) and run `finn test` from the checkout root.
+
 > [!NOTE]
 > Please note, that `finn deps update` (and most other commands) will automatically download and update dependencies required for FINN to work (mostly the same as the original FINN repository).
 > This is done to provide a better user experience and to not require the user to manage a dozen dependencies on their own.
