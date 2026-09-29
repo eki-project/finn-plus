@@ -10,8 +10,8 @@
         "mem_mode": ["internal_embedded"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls"],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         "dut": ["mvau"],
@@ -21,8 +21,8 @@
         "mem_mode": ["internal_embedded"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["rtl"], "da_hard_dc": [-1, 2],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "rtlsim_performance", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth"]]
     },
     {
         "dut": ["mvau"],
@@ -32,8 +32,8 @@
         "mem_mode": ["internal_embedded"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls"],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         "dut": ["mvau"],
@@ -43,8 +43,8 @@
         "mem_mode": ["internal_embedded"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["rtl"], "da_hard_dc": [-1, 2],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         "dut": ["mvau"],
@@ -54,8 +54,8 @@
         "mem_mode": ["internal_embedded"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls"],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         "dut": ["mvau"],
@@ -65,8 +65,8 @@
         "mem_mode": ["internal_embedded"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["rtl"], "da_hard_dc": [-1, 2],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "rtlsim_performance", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "rtlsim_performance", "out_of_context_synth"]]
     },
     {
         "dut": ["mvau"],
@@ -76,8 +76,8 @@
         "mem_mode": ["internal_embedded"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls", "rtl"], "da_hard_dc": [2],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         # BIPOLAR weights cannot hold zeros: dense only
@@ -88,8 +88,8 @@
         "mem_mode": ["internal_embedded"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls", "rtl"], "da_hard_dc": [2],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         # bipolar activations: the 1-bit inputs take alkaid's partial-sum LUT path
@@ -100,7 +100,7 @@
         "mem_mode": ["internal_embedded"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls", "rtl"], "da_hard_dc": [2],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
 ]

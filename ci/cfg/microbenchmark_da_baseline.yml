@@ -11,8 +11,8 @@
         "mem_mode": ["internal_embedded", "internal_decoupled"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls"],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         "dut": ["mvau"],
@@ -22,8 +22,8 @@
         "mem_mode": ["internal_embedded", "internal_decoupled"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls"],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         "dut": ["mvau"],
@@ -33,8 +33,8 @@
         "mem_mode": ["internal_embedded", "internal_decoupled"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls"],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         "dut": ["mvau"],
@@ -44,8 +44,8 @@
         "mem_mode": ["internal_embedded", "internal_decoupled"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls"],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         # BIPOLAR weights cannot hold zeros: dense only
@@ -56,8 +56,8 @@
         "mem_mode": ["internal_embedded", "internal_decoupled"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls"],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
     {
         # WMEM sweep (1, 2, 4) at one shape: gradual effect of constant folding
@@ -68,7 +68,7 @@
         "mem_mode": ["internal_embedded", "internal_decoupled"],
         "ram_style": ["distributed"], "ram_style_thr": ["distributed"],
         "backend": ["hls"],
-        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [true],
-        "generate_outputs": [["estimate_reports", "out_of_context_synth"]]
+        "dut_duplication": [1], "instrumentation_no_dma": [true], "store_results_in_dvc_data": [false],
+        "generate_outputs": [["estimate_reports", "stitched_ip", "out_of_context_synth"]]
     },
 ]
