@@ -1,0 +1,42 @@
+params:
+  dut: mvau
+  idt: UINT4
+  wdt: BIPOLAR
+  act:
+  sparsity_type: none
+  sparsity_amount: 0
+  nhw:
+  - 1
+  - 8
+  - 8
+  mw: 16
+  mh: 64
+  sf: 1
+  nf: 1
+  m: 1
+  mem_mode: internal_embedded
+  ram_style: distributed
+  ram_style_thr: distributed
+  backend: hls
+  dut_duplication: 1
+  instrumentation_no_dma: true
+  store_results_in_dvc_data: false
+  generate_outputs:
+  - estimate_reports
+  - stitched_ip
+  - out_of_context_synth
+  synth_clk_period_ns: 10
+  board: RFSoC2x2
+  shell_flow_type: vivado_zynq
+metadata:
+  tool_version: '2024.2'
+dut_info:
+  simd: 16
+  pe: 64
+  zero_weights: 0.0
+  easy_weights: 1.0
+  da_cost: 1166.0
+  da_adders: 163
+  da_depth: 6.498046875
+  da_ops: 188
+  da_hard_dc: 2
