@@ -170,11 +170,16 @@ class MVAU_rtl(MVAU, RTLBackend):
         self.set_nodeattr("da_latency_cycles", core.latency_cycles)
         return core
 
-    def prepare_da_solution(self, model, clk):
+    def prepare_da_solution(self, model, clk=None):
         """Run the alkaid solver without writing HDL so that the da_* result
-        attributes (used by the resource estimation) are available early."""
+        attributes (used by the resource estimation) are available early. Without
+        a target clock the pipeline depth is not meaningful and da_latency_cycles
+        is left untouched."""
         self._check_da_constraints(model)
-        self._build_da_core(model, clk, self.get_verilog_top_module_name())
+        latency_cycles = self.get_nodeattr("da_latency_cycles")
+        self._build_da_core(model, clk if clk else 5.0, self.get_verilog_top_module_name())
+        if clk is None:
+            self.set_nodeattr("da_latency_cycles", latency_cycles)
 
     def _generate_hdl_da(self, model, clk, code_gen_dir):
         """Generate the distributed-arithmetic core and its AXI wrapper."""

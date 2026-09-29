@@ -5,11 +5,14 @@
 
 import pytest
 
+from functools import partial
+
 from qonnx.core.datatype import DataType
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.util.basic import gen_finn_dt_tensor
 
+from finn.analysis.fpgadataflow.res_estimation import res_estimation
 from finn.transformation.fpgadataflow.minimize_accumulator_width import MinimizeAccumulatorWidth
 from finn.transformation.fpgadataflow.minimize_weight_bit_width import MinimizeWeightBitWidth
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
@@ -176,3 +179,31 @@ def test_mvau_rtl_da_codegen_rejects_partial_folding():
     assert all(os.path.isfile(f) for f in files), files
     assert any(f.endswith("mvu_da_axi.sv") for f in files)
     assert any(f.endswith("_da_core_wrapper.v") for f in files)
+
+
+@pytest.mark.fpgadataflow
+def test_mvau_rtl_da_estimate_runs_solver():
+    """The estimate reports run before code generation; the analysis pass runs the
+    solver so that the LUT estimate is based on the adder graph."""
+    import math
+
+    model = make_embedded_mvau_model(preferred="rtl")
+    model = model.transform(SpecializeLayers(DSP48E2_PART))
+    inst = getCustomOp(model.graph.node[0])
+    inst.set_nodeattr("SIMD", 16)
+    inst.set_nodeattr("PE", 16)
+    fallback = inst.lut_estimation(DSP48E2_PART)
+    res = model.analysis(partial(res_estimation, fpgapart=DSP48E2_PART))
+    inst = getCustomOp(model.graph.node[0])
+    da_cost = inst.get_nodeattr("da_cost")
+    assert da_cost > 0
+    queue = 16 * inst.get_output_datatype().bitwidth()
+    assert res["MVAU_rtl_0"]["LUT"] == math.ceil(da_cost) + queue
+    assert res["MVAU_rtl_0"]["LUT"] != fallback
+    assert res["MVAU_rtl_0"]["DSP"] == 0
+    # partially folded: the solver is skipped and the fallback estimate remains
+    model2 = make_embedded_mvau_model(preferred="rtl")
+    model2 = model2.transform(SpecializeLayers(DSP48E2_PART))
+    res2 = model2.analysis(partial(res_estimation, fpgapart=DSP48E2_PART))
+    assert getCustomOp(model2.graph.node[0]).get_nodeattr("da_cost") == 0
+    assert res2["MVAU_rtl_0"]["LUT"] > 0
